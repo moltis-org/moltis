@@ -97,20 +97,27 @@ struct ChatMessage: Identifiable, Equatable {
 
 struct ChatSession: Identifiable, Equatable {
     let id: UUID
+    /// Gateway session key (e.g. "main", "session:<uuid>").
+    let key: String
     var title: String
     var messages: [ChatMessage]
     var updatedAt: Date
+    var messageCount: Int
 
     init(
         id: UUID = UUID(),
+        key: String = "main",
         title: String,
         messages: [ChatMessage] = [],
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        messageCount: Int = 0
     ) {
         self.id = id
+        self.key = key
         self.title = title
         self.messages = messages
         self.updatedAt = updatedAt
+        self.messageCount = messageCount
     }
 
     var previewText: String {

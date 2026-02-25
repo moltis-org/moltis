@@ -28,32 +28,30 @@ struct HttpdPane: View {
                         }
                     }
 
-                if settings.httpdEnabled {
-                    Picker("Bind address", selection: $settings.httpdBindMode) {
-                        Text("Loopback (127.0.0.1)").tag("loopback")
-                        Text("All interfaces (0.0.0.0)").tag("all")
-                    }
+                Picker("Bind address", selection: $settings.httpdBindMode) {
+                    Text("Loopback (127.0.0.1)").tag("loopback")
+                    Text("All interfaces (0.0.0.0)").tag("all")
+                }
+                .disabled(serverAddr != nil || isStarting)
+
+                TextField("Port", text: $settings.httpdPort)
                     .disabled(serverAddr != nil || isStarting)
 
-                    TextField("Port", text: $settings.httpdPort)
-                        .disabled(serverAddr != nil || isStarting)
-
-                    if isStarting {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Starting gateway…")
-                                .foregroundStyle(.secondary)
-                        }
-                        .font(.callout)
+                if isStarting {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Starting gateway…")
+                            .foregroundStyle(.secondary)
                     }
+                    .font(.callout)
+                }
 
-                    if let addr = serverAddr {
-                        LabeledContent("Listening on") {
-                            Text(addr)
-                                .font(.system(.body, design: .monospaced))
-                                .textSelection(.enabled)
-                        }
+                if let addr = serverAddr {
+                    LabeledContent("Listening on") {
+                        Text(addr)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
                     }
                 }
 

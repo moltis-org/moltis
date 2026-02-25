@@ -17,11 +17,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Model picker labels now show context size and tier badges
 - Provider model list sorting by context window size
 - Version loaded on app launch via `chatStore.loadVersion()`
+- Persistent session storage via FFI — sessions backed by JSONL files shared
+  with the web UI and TUI (no longer ephemeral in-memory arrays)
+- Session CRUD FFI functions: `moltis_list_sessions`, `moltis_switch_session`,
+  `moltis_create_session`, `moltis_session_chat_stream`
+- Session sidebar now loads from disk and shows message counts
+- Chat messages are persisted to `~/.moltis/data/sessions/<key>.jsonl`
 
 ### Changed
 
 - HTTP Server description updated to reflect full gateway capability
 - Server start/stop controls disabled while startup is in progress
+- Chat is no longer tied to HTTP server — works with or without HTTPD enabled
+
+### Fixed
+
+- Bind address picker and port field now visible before enabling HTTP server
+  (previously hidden inside the enable-toggle conditional block)
 
 ## 2025-02-25
 

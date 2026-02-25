@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Swift bridge: persistent session storage via FFI — `moltis_list_sessions`, `moltis_switch_session`, `moltis_create_session`, `moltis_session_chat_stream` functions backed by JSONL files shared across all UIs (macOS app, web, TUI)
 - `send_image` tool for sending local image files (PNG, JPEG, GIF, WebP) to channel targets like Telegram, with optional caption support
 - GraphQL API at `/graphql` (GET serves GraphiQL playground and WebSocket subscriptions, POST handles queries/mutations) exposing all RPC methods as typed operations
 - New `moltis-graphql` crate with queries, mutations, subscriptions, custom `Json` scalar, and `ServiceCaller` trait abstraction

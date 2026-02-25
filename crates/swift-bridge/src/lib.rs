@@ -20,6 +20,11 @@ use {
         known_providers,
     },
     moltis_providers::ProviderRegistry,
+    moltis_sessions::{
+        message::PersistedMessage,
+        metadata::{SessionEntry, SessionMetadata},
+        store::SessionStore,
+    },
     serde::{Deserialize, Serialize},
     tokio_stream::StreamExt,
 };
@@ -29,6 +34,8 @@ use {
 struct BridgeState {
     runtime: tokio::runtime::Runtime,
     registry: RwLock<ProviderRegistry>,
+    session_store: SessionStore,
+    session_metadata: RwLock<SessionMetadata>,
 }
 
 impl BridgeState {
@@ -41,10 +48,31 @@ impl BridgeState {
             .unwrap_or_else(|e| panic!("failed to create tokio runtime: {e}"));
 
         let registry = build_registry();
+
+        // Initialize persistent session storage.
+        let data_dir = moltis_config::data_dir();
+        let sessions_dir = data_dir.join("sessions");
+        if let Err(e) = std::fs::create_dir_all(&sessions_dir) {
+            emit_log("ERROR", "bridge", &format!("Failed to create sessions dir: {e}"));
+        }
+        let session_store = SessionStore::new(sessions_dir);
+
+        let metadata_path = data_dir.join("session_metadata.json");
+        let session_metadata = match SessionMetadata::load(metadata_path) {
+            Ok(m) => m,
+            Err(e) => {
+                emit_log("WARN", "bridge", &format!("Failed to load session metadata: {e}"));
+                SessionMetadata::load(data_dir.join("session_metadata.json"))
+                    .unwrap_or_else(|_| panic!("cannot create session metadata"))
+            },
+        };
+
         emit_log("INFO", "bridge", "Bridge initialized successfully");
         Self {
             runtime,
             registry: RwLock::new(registry),
+            session_store,
+            session_metadata: RwLock::new(session_metadata),
         }
     }
 }
@@ -189,6 +217,59 @@ struct VersionResponse {
     config_dir: String,
 }
 
+// ── Session types ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct SwitchSessionRequest {
+    key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateSessionRequest {
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// Compact session entry for the Swift side.
+#[derive(Debug, Serialize)]
+struct BridgeSessionEntry {
+    key: String,
+    label: Option<String>,
+    message_count: u32,
+    created_at: u64,
+    updated_at: u64,
+    preview: Option<String>,
+}
+
+impl From<&SessionEntry> for BridgeSessionEntry {
+    fn from(e: &SessionEntry) -> Self {
+        Self {
+            key: e.key.clone(),
+            label: e.label.clone(),
+            message_count: e.message_count,
+            created_at: e.created_at,
+            updated_at: e.updated_at,
+            preview: e.preview.clone(),
+        }
+    }
+}
+
+/// Session history: entry + messages.
+#[derive(Debug, Serialize)]
+struct BridgeSessionHistory {
+    entry: BridgeSessionEntry,
+    messages: Vec<serde_json::Value>,
+}
+
+/// Chat request with session key.
+#[derive(Debug, Deserialize)]
+struct SessionChatRequest {
+    session_key: String,
+    message: String,
+    #[serde(default)]
+    model: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct ErrorEnvelope<'a> {
     error: ErrorPayload<'a>,
@@ -317,10 +398,14 @@ fn config_dir_string() -> String {
 // ── Chat with real LLM ────────────────────────────────────────────────────
 
 fn resolve_provider(request: &ChatRequest) -> Option<std::sync::Arc<dyn LlmProvider>> {
+    resolve_provider_for_model(request.model.as_deref())
+}
+
+fn resolve_provider_for_model(model: Option<&str>) -> Option<std::sync::Arc<dyn LlmProvider>> {
     let registry = BRIDGE.registry.read().unwrap_or_else(|e| e.into_inner());
 
     // Try explicit model first
-    if let Some(model_id) = &request.model
+    if let Some(model_id) = model
         && let Some(provider) = registry.get(model_id)
     {
         emit_log("DEBUG", "bridge", &format!(
@@ -1014,6 +1099,264 @@ pub extern "C" fn moltis_httpd_status() -> *mut c_char {
     })
 }
 
+// ── Session FFI exports ─────────────────────────────────────────────────
+
+/// Returns JSON array of all session entries (sorted by updated_at desc).
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_list_sessions() -> *mut c_char {
+    record_call("moltis_list_sessions");
+    trace_call("moltis_list_sessions");
+
+    with_ffi_boundary(|| {
+        let metadata = BRIDGE.session_metadata.read().unwrap_or_else(|e| e.into_inner());
+        let mut entries: Vec<BridgeSessionEntry> = metadata.list().iter().map(BridgeSessionEntry::from).collect();
+        entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        emit_log("DEBUG", "bridge.sessions", &format!("Listed {} sessions", entries.len()));
+        encode_json(&entries)
+    })
+}
+
+/// Switches to a session by key. Returns entry + message history.
+/// If the session doesn't exist yet, it will be created.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_switch_session(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_switch_session");
+    trace_call("moltis_switch_session");
+
+    with_ffi_boundary(|| {
+        let raw = match read_c_string(request_json) {
+            Ok(value) => value,
+            Err(message) => return encode_error("null_pointer_or_invalid_utf8", &message),
+        };
+
+        let request = match serde_json::from_str::<SwitchSessionRequest>(&raw) {
+            Ok(r) => r,
+            Err(e) => return encode_error("invalid_json", &e.to_string()),
+        };
+
+        // Ensure metadata entry exists.
+        {
+            let mut metadata = BRIDGE.session_metadata.write().unwrap_or_else(|e| e.into_inner());
+            metadata.upsert(&request.key, None);
+            if let Err(e) = metadata.save() {
+                emit_log("WARN", "bridge.sessions", &format!("Failed to save metadata: {e}"));
+            }
+        }
+
+        // Read message history from JSONL.
+        let messages = match BRIDGE.runtime.block_on(BRIDGE.session_store.read(&request.key)) {
+            Ok(msgs) => msgs,
+            Err(e) => {
+                emit_log("WARN", "bridge.sessions", &format!("Failed to read session: {e}"));
+                vec![]
+            },
+        };
+
+        let metadata = BRIDGE.session_metadata.read().unwrap_or_else(|e| e.into_inner());
+        let entry = metadata.get(&request.key).map(BridgeSessionEntry::from);
+
+        match entry {
+            Some(entry) => {
+                emit_log("INFO", "bridge.sessions", &format!(
+                    "Switched to session '{}' ({} messages)", request.key, messages.len()
+                ));
+                encode_json(&BridgeSessionHistory { entry, messages })
+            },
+            None => encode_error("session_not_found", &format!("Session '{}' not found", request.key)),
+        }
+    })
+}
+
+/// Creates a new session with an optional label. Returns the entry.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_create_session(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_create_session");
+    trace_call("moltis_create_session");
+
+    with_ffi_boundary(|| {
+        let request: CreateSessionRequest = if request_json.is_null() {
+            CreateSessionRequest { label: None }
+        } else {
+            match read_c_string(request_json) {
+                Ok(raw) => match serde_json::from_str(&raw) {
+                    Ok(r) => r,
+                    Err(e) => return encode_error("invalid_json", &e.to_string()),
+                },
+                Err(msg) => return encode_error("null_pointer_or_invalid_utf8", &msg),
+            }
+        };
+
+        let key = format!("session:{}", uuid::Uuid::new_v4());
+        let label = request.label.unwrap_or_else(|| "New Session".to_owned());
+
+        let mut metadata = BRIDGE.session_metadata.write().unwrap_or_else(|e| e.into_inner());
+        metadata.upsert(&key, Some(label));
+        if let Err(e) = metadata.save() {
+            emit_log("WARN", "bridge.sessions", &format!("Failed to save metadata: {e}"));
+        }
+
+        let entry = metadata.get(&key).map(BridgeSessionEntry::from);
+        match entry {
+            Some(entry) => {
+                emit_log("INFO", "bridge.sessions", &format!("Created session '{}'", key));
+                encode_json(&entry)
+            },
+            None => encode_error("create_failed", "Failed to create session"),
+        }
+    })
+}
+
+/// Streaming chat within a session. Persists user message before streaming,
+/// persists assistant message when done. Events delivered via callback.
+///
+/// # Safety
+///
+/// Same requirements as `moltis_chat_stream`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn moltis_session_chat_stream(
+    request_json: *const c_char,
+    callback: StreamCallback,
+    user_data: *mut c_void,
+) {
+    record_call("moltis_session_chat_stream");
+    trace_call("moltis_session_chat_stream");
+
+    let send_error = |msg: String| {
+        let event = BridgeStreamEvent::Error { message: msg };
+        let json = encode_json(&event);
+        if let Ok(c_str) = CString::new(json) {
+            unsafe { callback(c_str.as_ptr(), user_data); }
+        }
+    };
+
+    let raw = match read_c_string(request_json) {
+        Ok(value) => value,
+        Err(message) => {
+            send_error(message);
+            return;
+        },
+    };
+
+    let request = match serde_json::from_str::<SessionChatRequest>(&raw) {
+        Ok(r) => r,
+        Err(e) => {
+            send_error(e.to_string());
+            return;
+        },
+    };
+
+    let provider = match resolve_provider_for_model(request.model.as_deref()) {
+        Some(p) => p,
+        None => {
+            send_error("No LLM provider configured".to_owned());
+            return;
+        },
+    };
+
+    let session_key = request.session_key.clone();
+
+    // Persist user message.
+    let user_msg = PersistedMessage::user(&request.message);
+    let user_value = user_msg.to_value();
+    if let Err(e) = BRIDGE.runtime.block_on(BRIDGE.session_store.append(&session_key, &user_value)) {
+        emit_log("WARN", "bridge.session_chat", &format!("Failed to persist user message: {e}"));
+    }
+
+    // Update metadata.
+    {
+        let mut metadata = BRIDGE.session_metadata.write().unwrap_or_else(|e| e.into_inner());
+        metadata.upsert(&session_key, None);
+        let msg_count = BRIDGE.runtime.block_on(BRIDGE.session_store.read(&session_key))
+            .map(|m| m.len() as u32)
+            .unwrap_or(0);
+        metadata.touch(&session_key, msg_count);
+        let _ = metadata.save();
+    }
+
+    let model_id = provider.id().to_string();
+    let provider_name = provider.name().to_string();
+    let messages = vec![AgentChatMessage::User {
+        content: UserContent::text(&request.message),
+    }];
+
+    let ctx = StreamCallbackCtx { callback, user_data };
+
+    emit_log("INFO", "bridge.session_chat", &format!(
+        "Starting session stream: session={} provider={}/{}", session_key, provider_name, model_id
+    ));
+
+    BRIDGE.runtime.spawn(async move {
+        let start = std::time::Instant::now();
+        let result = catch_unwind(AssertUnwindSafe(|| provider.stream(messages)));
+
+        let mut stream = match result {
+            Ok(s) => s,
+            Err(_) => {
+                ctx.send(&BridgeStreamEvent::Error {
+                    message: "panic during stream creation".to_owned(),
+                });
+                return;
+            },
+        };
+
+        let mut usage = Usage::default();
+        let mut full_text = String::new();
+
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::Delta(text) => {
+                    full_text.push_str(&text);
+                    ctx.send(&BridgeStreamEvent::Delta { text });
+                },
+                StreamEvent::Done(u) => {
+                    usage = u;
+                    break;
+                },
+                StreamEvent::Error(message) => {
+                    ctx.send(&BridgeStreamEvent::Error { message });
+                    return;
+                },
+                _ => {},
+            }
+        }
+
+        let elapsed = start.elapsed().as_millis() as u64;
+
+        // Persist assistant message.
+        let assistant_msg = PersistedMessage::assistant(
+            &full_text,
+            &model_id,
+            &provider_name,
+            usage.input_tokens,
+            usage.output_tokens,
+            None, // audio
+        );
+        let assistant_value = assistant_msg.to_value();
+        if let Err(e) = BRIDGE.session_store.append(&session_key, &assistant_value).await {
+            emit_log("WARN", "bridge.session_chat", &format!("Failed to persist assistant message: {e}"));
+        }
+
+        // Update metadata — read message count before acquiring lock.
+        let msg_count = BRIDGE.session_store.read(&session_key).await
+            .map(|m| m.len() as u32)
+            .unwrap_or(0);
+        {
+            let mut metadata = BRIDGE.session_metadata.write().unwrap_or_else(|e| e.into_inner());
+            metadata.touch(&session_key, msg_count);
+            metadata.set_model(&session_key, Some(model_id.clone()));
+            let _ = metadata.save();
+        }
+
+        ctx.send(&BridgeStreamEvent::Done {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            duration_ms: elapsed,
+            model: Some(model_id),
+            provider: Some(provider_name),
+        });
+    });
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_shutdown() {
     record_call("moltis_shutdown");
@@ -1305,6 +1648,62 @@ mod tests {
         assert!(
             !received.is_empty(),
             "should receive at least one stream event"
+        );
+    }
+
+    #[test]
+    fn list_sessions_returns_array() {
+        let payload = json_from_ptr(moltis_list_sessions());
+        assert!(
+            payload.as_array().is_some(),
+            "list_sessions should return a JSON array"
+        );
+    }
+
+    #[test]
+    fn create_and_switch_session() {
+        // Create a session with a label.
+        let request = r#"{"label":"Test Session"}"#;
+        let c_request = CString::new(request).unwrap_or_else(|e| panic!("{e}"));
+        let payload = json_from_ptr(moltis_create_session(c_request.as_ptr()));
+
+        let key = payload.get("key").and_then(Value::as_str).unwrap_or_default();
+        assert!(
+            key.starts_with("session:"),
+            "created session key should start with 'session:'"
+        );
+        assert_eq!(
+            payload.get("label").and_then(Value::as_str),
+            Some("Test Session"),
+        );
+
+        // Switch to the created session.
+        let switch_request = serde_json::json!({"key": key}).to_string();
+        let c_switch = CString::new(switch_request).unwrap_or_else(|e| panic!("{e}"));
+        let history = json_from_ptr(moltis_switch_session(c_switch.as_ptr()));
+
+        assert!(
+            history.get("entry").is_some(),
+            "switch should return entry"
+        );
+        assert!(
+            history.get("messages").and_then(Value::as_array).is_some(),
+            "switch should return messages array"
+        );
+    }
+
+    #[test]
+    fn create_session_with_null_uses_defaults() {
+        let payload = json_from_ptr(moltis_create_session(std::ptr::null()));
+
+        let key = payload.get("key").and_then(Value::as_str).unwrap_or_default();
+        assert!(
+            key.starts_with("session:"),
+            "session key should start with 'session:'"
+        );
+        assert_eq!(
+            payload.get("label").and_then(Value::as_str),
+            Some("New Session"),
         );
     }
 }

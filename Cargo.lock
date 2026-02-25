@@ -5199,12 +5199,14 @@ dependencies = [
  "moltis-gateway",
  "moltis-provider-setup",
  "moltis-providers",
+ "moltis-sessions",
  "moltis-web",
  "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

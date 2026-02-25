@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Foundation
 
 // MARK: - Rust Bridge Log Forwarding
@@ -126,6 +127,95 @@ struct BridgeModelInfo: Decodable, Identifiable {
 struct BridgeHttpdStatus: Decodable {
     let running: Bool
     let addr: String?
+}
+
+// MARK: - Session types
+
+struct BridgeSessionEntry: Decodable {
+    let key: String
+    let label: String?
+    let messageCount: UInt32
+    let createdAt: UInt64
+    let updatedAt: UInt64
+    let preview: String?
+}
+
+struct BridgeSessionHistory: Decodable {
+    let entry: BridgeSessionEntry
+    let messages: [BridgePersistedMessage]
+}
+
+/// Represents a persisted message from the JSONL session store.
+/// Uses a tagged union on "role" to match the Rust PersistedMessage enum.
+struct BridgePersistedMessage: Decodable {
+    let role: String
+    let content: BridgeMessageContent?
+    let createdAt: UInt64?
+    let model: String?
+    let provider: String?
+    let inputTokens: UInt32?
+    let outputTokens: UInt32?
+    let durationMs: UInt64?
+
+    private enum CodingKeys: String, CodingKey {
+        case role, content, model, provider
+        case createdAt = "created_at"
+        case inputTokens, outputTokens, durationMs
+    }
+
+    /// Extract plain text from the content field (handles string or multimodal array).
+    var textContent: String {
+        guard let content else { return "" }
+        switch content {
+        case let .text(str):
+            return str
+        case let .multimodal(blocks):
+            return blocks
+                .compactMap { block in
+                    if case let .text(blockText) = block { return blockText }
+                    return nil
+                }
+                .joined(separator: "\n")
+        }
+    }
+}
+
+/// Content can be a plain string or multimodal array.
+enum BridgeMessageContent: Decodable {
+    case text(String)
+    case multimodal([BridgeContentBlock])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let str = try? container.decode(String.self) {
+            self = .text(str)
+        } else if let blocks = try? container.decode([BridgeContentBlock].self) {
+            self = .multimodal(blocks)
+        } else {
+            self = .text("")
+        }
+    }
+}
+
+enum BridgeContentBlock: Decodable {
+    case text(String)
+    case other
+
+    private enum CodingKeys: String, CodingKey {
+        case blockType = "type"
+        case text
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let blockType = try container.decode(String.self, forKey: .blockType)
+        if blockType == "text",
+           let text = try container.decodeIfPresent(String.self, forKey: .text) {
+            self = .text(text)
+        } else {
+            self = .other
+        }
+    }
 }
 
 // MARK: - Ok response
@@ -339,6 +429,53 @@ struct MoltisClient {
         return try decode(payload, as: BridgeHttpdStatus.self)
     }
 
+    // MARK: - Session operations
+
+    func listSessions() throws -> [BridgeSessionEntry] {
+        let payload = try consumeCStringPointer(moltis_list_sessions())
+        return try decode(payload, as: [BridgeSessionEntry].self)
+    }
+
+    func switchSession(key: String) throws -> BridgeSessionHistory {
+        try callBridge(
+            SwitchSessionRequest(key: key),
+            via: moltis_switch_session
+        )
+    }
+
+    func createSession(label: String?) throws -> BridgeSessionEntry {
+        try callBridge(
+            CreateSessionRequest(label: label),
+            via: moltis_create_session
+        )
+    }
+
+    func sessionChatStream(
+        sessionKey: String,
+        message: String,
+        model: String? = nil,
+        onEvent: @escaping (StreamEventType) -> Void
+    ) {
+        let request = SessionChatRequest(
+            sessionKey: sessionKey,
+            message: message,
+            model: model
+        )
+        guard let data = try? encoder.encode(request),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            onEvent(.error(message: "Failed to encode session chat request"))
+            return
+        }
+
+        let context = StreamContext(onEvent: onEvent)
+        let retained = Unmanaged.passRetained(context).toOpaque()
+
+        json.withCString { ptr in
+            moltis_session_chat_stream(ptr, streamCallbackHandler, retained)
+        }
+    }
+
     func chatStream(
         message: String,
         model: String? = nil,
@@ -432,4 +569,18 @@ private struct SaveProviderRequest: Encodable {
 private struct StartHttpdRequest: Encodable {
     let host: String
     let port: UInt16
+}
+
+private struct SwitchSessionRequest: Encodable {
+    let key: String
+}
+
+private struct CreateSessionRequest: Encodable {
+    let label: String?
+}
+
+private struct SessionChatRequest: Encodable {
+    let sessionKey: String
+    let message: String
+    let model: String?
 }

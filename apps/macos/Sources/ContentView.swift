@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import SwiftUI
 
 let shortTimeFormatter: DateFormatter = {
@@ -50,6 +51,7 @@ struct ContentView: View {
 
 private struct SessionsSidebarView: View {
     @ObservedObject var chatStore: ChatStore
+    @State private var selectedKey: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -68,19 +70,26 @@ private struct SessionsSidebarView: View {
             .padding(.horizontal, 12)
 
             ScrollViewReader { proxy in
-                List(selection: $chatStore.selectedSessionID) {
+                List(selection: $selectedKey) {
                     ForEach(chatStore.sessions) { session in
                         SessionRowView(session: session)
-                            .tag(Optional(session.id))
-                            .id(session.id)
+                            .tag(Optional(session.key))
+                            .id(session.key)
                     }
                 }
                 .listStyle(.sidebar)
-                .onChange(of: chatStore.selectedSessionID) { _, newID in
-                    guard let newID else { return }
+                .onChange(of: selectedKey) { _, newKey in
+                    guard let newKey else { return }
+                    chatStore.switchSession(key: newKey)
                     withAnimation(.easeInOut(duration: 0.35)) {
-                        proxy.scrollTo(newID, anchor: .top)
+                        proxy.scrollTo(newKey, anchor: .top)
                     }
+                }
+                .onChange(of: chatStore.selectedSessionKey) { _, newKey in
+                    selectedKey = newKey
+                }
+                .onAppear {
+                    selectedKey = chatStore.selectedSessionKey
                 }
             }
         }
@@ -103,10 +112,18 @@ private struct SessionRowView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            Text(session.previewText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 6) {
+                Text(session.previewText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if session.messageCount > 0 {
+                    Spacer()
+                    Text("\(session.messageCount)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
         .padding(.vertical, 4)
     }

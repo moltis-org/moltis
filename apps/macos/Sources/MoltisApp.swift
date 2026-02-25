@@ -44,11 +44,15 @@ struct MoltisApp: App {
             Group {
                 if onboardingState.isCompleted {
                     ContentView(chatStore: chatStore, settings: settings, providerStore: providerStore)
-                        .onAppear { chatStore.loadVersion() }
+                        .onAppear {
+                            chatStore.loadVersion()
+                            chatStore.loadSessions()
+                        }
                 } else {
                     OnboardingView(settings: settings, providerStore: providerStore) {
                         onboardingState.complete()
                         chatStore.loadVersion()
+                        chatStore.loadSessions()
                     }
                 }
             }
