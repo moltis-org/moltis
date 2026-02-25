@@ -16,7 +16,7 @@ import {
 	validateChannelFields,
 } from "./channel-utils.js";
 import { EmojiPicker } from "./emoji-picker.js";
-import { onEvent } from "./events.js";
+import { eventListeners, onEvent } from "./events.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
@@ -47,7 +47,14 @@ var wsStarted = false;
 function ensureWsConnected() {
 	if (wsStarted) return;
 	wsStarted = true;
-	connectWs({ backoff: { factor: 2, max: 10000 } });
+	connectWs({
+		backoff: { factor: 2, max: 10000 },
+		onFrame: (frame) => {
+			if (frame.type !== "event") return;
+			var listeners = eventListeners[frame.event] || [];
+			listeners.forEach((h) => h(frame.payload || {}));
+		},
+	});
 }
 
 // ── Step indicator ──────────────────────────────────────────
