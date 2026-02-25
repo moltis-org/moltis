@@ -7,11 +7,6 @@ name              = "moltis"
 repository        = "https://github.com/moltis-org/moltis"
 version.workspace = true
 
-[package.metadata.binstall]
-bin-dir = "{ bin }{ binary-ext }"
-pkg-fmt = "tgz"
-pkg-url = "{ repo }/releases/download/v{ version }/moltis-{ version }-{ target }.tar.gz"
-
 [package.metadata.deb]
 assets     = [["target/release/moltis", "usr/bin/", "755"]]
 copyright  = "2025, Moltis Contributors"
