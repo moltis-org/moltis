@@ -35,5 +35,6 @@ struct MoltisApp: App {
         Settings {
             SettingsView(settings: settings, providerStore: providerStore)
         }
+        .windowResizability(.contentMinSize)
     }
 }

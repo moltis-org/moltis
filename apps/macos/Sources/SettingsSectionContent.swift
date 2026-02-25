@@ -5,7 +5,7 @@ import SwiftUI
 struct SettingsSectionContent: View {
     let section: SettingsSection
     @ObservedObject var settings: AppSettings
-    var providerStore: ProviderStore?
+    @ObservedObject var providerStore: ProviderStore
 
     var body: some View {
         switch section {
@@ -176,17 +176,8 @@ private extension SettingsSectionContent {
         }
     }
 
-    @ViewBuilder
     var llmsPane: some View {
-        if let providerStore {
-            ProviderGridPane(providerStore: providerStore)
-        } else {
-            Group {
-                TextField("Provider", text: $settings.llmProvider)
-                TextField("Model", text: $settings.llmModel)
-                SecureField("API key", text: $settings.llmApiKey)
-            }
-        }
+        ProviderGridPane(providerStore: providerStore)
     }
 
     var mcpPane: some View {
@@ -239,19 +230,11 @@ private extension SettingsSectionContent {
         }
     }
 
-    @ViewBuilder
     var voicePane: some View {
-        if let providerStore {
-            VoiceProviderGridPane(
-                providerStore: providerStore,
-                settings: settings
-            )
-        } else {
-            Group {
-                Toggle("Enable voice", isOn: $settings.voiceEnabled)
-                SecureField("Voice API key", text: $settings.voiceApiKey)
-            }
-        }
+        VoiceProviderGridPane(
+            providerStore: providerStore,
+            settings: settings
+        )
     }
 }
 

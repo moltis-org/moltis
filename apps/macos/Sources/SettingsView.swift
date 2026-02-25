@@ -8,15 +8,6 @@ enum SettingsGroup: String, CaseIterable, Hashable {
     case integrations = "Integrations"
     case systems = "Systems"
 
-    var icon: String {
-        switch self {
-        case .general: return "gearshape"
-        case .security: return "lock.shield"
-        case .integrations: return "puzzlepiece.extension"
-        case .systems: return "wrench.and.screwdriver"
-        }
-    }
-
     var sections: [SettingsSection] {
         SettingsSection.allCases.filter { $0.group == self }
     }
@@ -50,95 +41,198 @@ enum SettingsSection: String, CaseIterable, Hashable {
         Self.iconMap[self] ?? "gearshape"
     }
 
+    var iconColor: Color {
+        Self.colorMap[self] ?? .gray
+    }
+
     var group: SettingsGroup {
         Self.groupMap[self] ?? .general
     }
 
+    // swiftlint:disable colon
     private static let iconMap: [SettingsSection: String] = [
-        .identity: "person.crop.circle",
-        .environment: "terminal",
-        .memory: "externaldrive",
-        .notifications: "bell",
-        .crons: "clock.arrow.circlepath",
-        .heartbeat: "heart.text.square",
-        .security: "lock.shield",
-        .tailscale: "network",
-        .channels: "point.3.connected.trianglepath.dotted",
-        .hooks: "wrench.and.screwdriver",
-        .llms: "square.stack.3d.down.forward",
-        .mcp: "link",
-        .skills: "sparkles",
-        .voice: "mic",
-        .terminal: "apple.terminal",
-        .sandboxes: "shippingbox",
-        .monitoring: "chart.bar",
-        .logs: "doc.plaintext",
-        .graphql: "dot.squareshape.split.2x2",
+        .identity:      "person.crop.circle.fill",
+        .environment:   "terminal.fill",
+        .memory:        "externaldrive.fill",
+        .notifications: "bell.fill",
+        .crons:         "clock.arrow.circlepath",
+        .heartbeat:     "heart.text.square.fill",
+        .security:      "lock.shield.fill",
+        .tailscale:     "network",
+        .channels:      "bubble.left.and.bubble.right.fill",
+        .hooks:         "wrench.and.screwdriver.fill",
+        .llms:          "cpu.fill",
+        .mcp:           "link",
+        .skills:        "sparkles",
+        .voice:         "mic.fill",
+        .terminal:      "apple.terminal.fill",
+        .sandboxes:     "shippingbox.fill",
+        .monitoring:    "chart.bar.fill",
+        .logs:          "doc.plaintext.fill",
+        .graphql:       "point.3.connected.trianglepath.dotted",
         .configuration: "slider.horizontal.3"
     ]
 
+    private static let colorMap: [SettingsSection: Color] = [
+        .identity:      .blue,
+        .environment:   .gray,
+        .memory:        .purple,
+        .notifications: .red,
+        .crons:         .orange,
+        .heartbeat:     .pink,
+        .security:      .green,
+        .tailscale:     .cyan,
+        .channels:      .indigo,
+        .hooks:         .brown,
+        .llms:          .teal,
+        .mcp:           .blue,
+        .skills:        .yellow,
+        .voice:         .mint,
+        .terminal:      .gray,
+        .sandboxes:     .orange,
+        .monitoring:    .green,
+        .logs:          .secondary,
+        .graphql:       .pink,
+        .configuration: .purple
+    ]
+
     private static let groupMap: [SettingsSection: SettingsGroup] = [
-        .identity: .general,
-        .environment: .general,
-        .memory: .general,
+        .identity:      .general,
+        .environment:   .general,
+        .memory:        .general,
         .notifications: .general,
-        .crons: .general,
-        .heartbeat: .general,
-        .security: .security,
-        .tailscale: .security,
-        .channels: .integrations,
-        .hooks: .integrations,
-        .llms: .integrations,
-        .mcp: .integrations,
-        .skills: .integrations,
-        .voice: .integrations,
-        .terminal: .systems,
-        .sandboxes: .systems,
-        .monitoring: .systems,
-        .logs: .systems,
-        .graphql: .systems,
+        .crons:         .general,
+        .heartbeat:     .general,
+        .security:      .security,
+        .tailscale:     .security,
+        .channels:      .integrations,
+        .hooks:         .integrations,
+        .llms:          .integrations,
+        .mcp:           .integrations,
+        .skills:        .integrations,
+        .voice:         .integrations,
+        .terminal:      .systems,
+        .sandboxes:     .systems,
+        .monitoring:    .systems,
+        .logs:          .systems,
+        .graphql:       .systems,
         .configuration: .systems
     ]
+    // swiftlint:enable colon
 }
 
-// MARK: - Settings View (toolbar tabs like System Settings)
+// MARK: - Settings View (sidebar + detail like macOS System Settings)
 
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var providerStore: ProviderStore
+    @State private var selectedSection: SettingsSection? = .identity
+    @State private var searchText = ""
 
-    var body: some View {
-        TabView {
-            ForEach(SettingsGroup.allCases, id: \.self) { group in
-                SettingsGroupTab(group: group, settings: settings, providerStore: providerStore)
-                    .tabItem {
-                        Label(group.rawValue, systemImage: group.icon)
-                    }
+    private var filteredGroups: [(group: SettingsGroup, sections: [SettingsSection])] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return SettingsGroup.allCases.compactMap { group in
+            let sections = group.sections.filter { section in
+                query.isEmpty || section.title.lowercased().contains(query)
             }
+            return sections.isEmpty ? nil : (group, sections)
         }
-        .frame(minWidth: 580, minHeight: 460)
     }
-}
-
-// MARK: - Tab Content (Form + .grouped like System Settings)
-
-private struct SettingsGroupTab: View {
-    let group: SettingsGroup
-    @ObservedObject var settings: AppSettings
-    @ObservedObject var providerStore: ProviderStore
 
     var body: some View {
-        Form {
-            ForEach(group.sections, id: \.self) { section in
-                Section(section.title) {
-                    SettingsSectionContent(
-                        section: section,
-                        settings: settings,
-                        providerStore: (section == .llms || section == .voice) ? providerStore : nil
-                    )
+        NavigationSplitView(columnVisibility: .constant(.all)) {
+            settingsSidebar
+        } detail: {
+            settingsDetail
+        }
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 720, idealWidth: 960, maxWidth: .infinity,
+               minHeight: 520, idealHeight: 780, maxHeight: .infinity)
+        .background(WindowResizableAccessor())
+    }
+
+    // MARK: Sidebar
+
+    private var settingsSidebar: some View {
+        List(selection: $selectedSection) {
+            ForEach(filteredGroups, id: \.group) { item in
+                Section(item.group.rawValue) {
+                    ForEach(item.sections, id: \.self) { section in
+                        Label {
+                            Text(section.title)
+                        } icon: {
+                            SettingsIconView(
+                                systemName: section.icon,
+                                color: section.iconColor
+                            )
+                        }
+                        .tag(section)
+                    }
                 }
             }
         }
-        .formStyle(.grouped)
+        .listStyle(.sidebar)
+        .toolbar(removing: .sidebarToggle)
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Search")
+        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
+    }
+
+    // MARK: Detail
+
+    private var settingsDetail: some View {
+        Group {
+            if let section = selectedSection {
+                Form {
+                    SettingsSectionContent(
+                        section: section,
+                        settings: settings,
+                        providerStore: providerStore
+                    )
+                }
+                .formStyle(.grouped)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.tertiary)
+                    Text("Select a setting")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
     }
 }
+
+// MARK: - Colorful icon badge (macOS System Settings style)
+
+struct SettingsIconView: View {
+    let systemName: String
+    let color: Color
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 20, height: 20)
+            .background(color, in: RoundedRectangle(cornerRadius: 5))
+    }
+}
+
+// MARK: - Make the Settings window resizable via AppKit
+
+private struct WindowResizableAccessor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            view.window?.styleMask.insert(.resizable)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        nsView.window?.styleMask.insert(.resizable)
+    }
+}
+

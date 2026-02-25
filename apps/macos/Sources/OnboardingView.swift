@@ -75,7 +75,8 @@ private extension OnboardingView {
                 Section(currentStep.title) {
                     SettingsSectionContent(
                         section: section,
-                        settings: settings
+                        settings: settings,
+                        providerStore: providerStore
                     )
                 }
             }
