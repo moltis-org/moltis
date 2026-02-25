@@ -1,5 +1,7 @@
 // Settings > Terminal (host shell via PTY + xterm.js over WebSocket)
 
+import { localizedApiErrorMessage } from "./helpers.js";
+
 var _container = null;
 var resizeObserver = null;
 var themeObserver = null;
@@ -250,7 +252,7 @@ async function fetchTerminalWindows() {
 		payload = {};
 	}
 	if (!response.ok) {
-		throw new Error(payload?.error || "Failed to list tmux windows");
+		throw new Error(localizedApiErrorMessage(payload, "Failed to list tmux windows"));
 	}
 	return payload;
 }
@@ -345,7 +347,7 @@ async function createTerminalWindow() {
 			payload = {};
 		}
 		if (!response.ok) {
-			throw new Error(payload?.error || "Failed to create tmux window");
+			throw new Error(localizedApiErrorMessage(payload, "Failed to create tmux window"));
 		}
 		var createdWindowId = payload?.window?.id || payload?.windowId || null;
 		if (Array.isArray(payload?.windows)) {

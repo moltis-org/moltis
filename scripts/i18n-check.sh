@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-locales_dir="$repo_root/crates/gateway/src/assets/js/locales"
+locales_dir="$repo_root/crates/web/src/assets/js/locales"
 
 if [[ ! -d "$locales_dir/en" ]]; then
 	echo "Missing English locale directory: $locales_dir/en" >&2

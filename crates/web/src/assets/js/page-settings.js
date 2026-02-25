@@ -8,7 +8,8 @@ import { EmojiPicker } from "./emoji-picker.js";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
-import { sendRpc } from "./helpers.js";
+import { localizedApiErrorMessage, sendRpc } from "./helpers.js";
+import { setLocale } from "./i18n.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { initAgents, teardownAgents } from "./page-agents.js";
 // Moved page init/teardown imports
@@ -304,19 +305,24 @@ var DEFAULT_SOUL =
 function IdentitySection() {
 	var id = identity.value;
 	var isNew = !(id && (id.name || id.user_name));
+	var storedLocale = localStorage.getItem("moltis-locale");
 
 	var [name, setName] = useState(id?.name || "");
 	var [emoji, setEmoji] = useState(id?.emoji || "");
 	var [theme, setTheme] = useState(id?.theme || "");
 	var [userName, setUserName] = useState(id?.user_name || "");
 	var [soul, setSoul] = useState(id?.soul || "");
+	var [uiLanguage, setUiLanguage] = useState(storedLocale || "auto");
 	var [saving, setSaving] = useState(false);
 	var [emojiSaving, setEmojiSaving] = useState(false);
 	var [nameSaving, setNameSaving] = useState(false);
 	var [userNameSaving, setUserNameSaving] = useState(false);
+	var [languageSaving, setLanguageSaving] = useState(false);
 	var [saved, setSaved] = useState(false);
+	var [languageSaved, setLanguageSaved] = useState(false);
 	var [showFaviconReloadHint, setShowFaviconReloadHint] = useState(false);
 	var [error, setError] = useState(null);
+	var [languageError, setLanguageError] = useState(null);
 
 	// Sync state when identity loads asynchronously
 	useEffect(() => {
@@ -459,6 +465,32 @@ function IdentitySection() {
 		window.location.reload();
 	}
 
+	function onApplyLanguage() {
+		setLanguageSaving(true);
+		setLanguageSaved(false);
+		setLanguageError(null);
+
+		var nextLanguage = uiLanguage === "auto" ? navigator.language || "en" : uiLanguage;
+		setLocale(nextLanguage)
+			.then(() => {
+				if (uiLanguage === "auto") {
+					localStorage.removeItem("moltis-locale");
+				}
+				setLanguageSaving(false);
+				setLanguageSaved(true);
+				setTimeout(() => {
+					setLanguageSaved(false);
+					rerender();
+				}, 2000);
+				rerender();
+			})
+			.catch((err) => {
+				setLanguageSaving(false);
+				setLanguageError(err?.message || "Failed to update language");
+				rerender();
+			});
+	}
+
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Identity</h2>
 		${
@@ -511,6 +543,42 @@ function IdentitySection() {
 							placeholder="e.g. Alice" />
 					</div>
 				</div>
+
+			<!-- Language section -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Language</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Choose the UI language for this browser.</p>
+				<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+					<label for="identityLanguageSelect" class="text-xs text-[var(--muted)]">UI language</label>
+					<select
+						id="identityLanguageSelect"
+						class="provider-key-input"
+						style="max-width:220px;"
+						value=${uiLanguage}
+						onChange=${(e) => {
+							setUiLanguage(e.target.value);
+							setLanguageSaved(false);
+							setLanguageError(null);
+							rerender();
+						}}
+					>
+						<option value="auto">Browser default</option>
+						<option value="en">English</option>
+						<option value="fr">French</option>
+					</select>
+					<button
+						type="button"
+						id="identityLanguageApplyBtn"
+						class="provider-btn provider-btn-secondary"
+						disabled=${languageSaving}
+						onClick=${onApplyLanguage}
+					>
+						${languageSaving ? "Applying..." : "Apply language"}
+					</button>
+					${languageSaved ? html`<span class="text-xs" style="color:var(--accent);">Language updated</span>` : null}
+					${languageError ? html`<span class="text-xs" style="color:var(--error);">${languageError}</span>` : null}
+				</div>
+			</div>
 
 			<!-- Soul section -->
 			<div>
@@ -607,7 +675,7 @@ function EnvironmentSection() {
 					}, 2000);
 					fetchEnvVars();
 				} else {
-					return r.json().then((d) => setEnvErr(d.error || "Failed to save"));
+					return r.json().then((d) => setEnvErr(localizedApiErrorMessage(d, "Failed to save")));
 				}
 				setSaving(false);
 				rerender();

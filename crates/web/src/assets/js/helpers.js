@@ -198,6 +198,26 @@ export function localizedRpcErrorMessage(error) {
 	return error.message || t("errors:generic.title");
 }
 
+export function localizedApiErrorMessage(payload, fallbackMessage) {
+	if (payload && typeof payload.error === "object") {
+		return localizedRpcErrorMessage(payload.error);
+	}
+	if (payload && payload.code) {
+		var key = `errors:codes.${payload.code}`;
+		var translated = t(key);
+		if (translated && translated !== key) {
+			return translated;
+		}
+	}
+	if (payload && typeof payload.error === "string" && payload.error.trim()) {
+		return payload.error;
+	}
+	if (payload && typeof payload.message === "string" && payload.message.trim()) {
+		return payload.message;
+	}
+	return fallbackMessage || t("errors:generic.title");
+}
+
 export function localizeRpcError(error) {
 	if (!error) return error;
 	var message = localizedRpcErrorMessage(error);
