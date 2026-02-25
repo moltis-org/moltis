@@ -15,6 +15,7 @@ import { eventListeners } from "./events.js";
 import {
 	formatTokenSpeed,
 	formatTokens,
+	localizeStructuredError,
 	renderAudioPlayer,
 	renderMapLinks,
 	renderMapPointGroups,
@@ -731,7 +732,7 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	removeThinking();
 	clearStaleRunningToolCards();
 	if (p.error?.title) {
-		chatAddErrorCard(p.error);
+		chatAddErrorCard(localizeStructuredError(p.error));
 	} else {
 		chatAddErrorMsg(p.message || "unknown");
 	}

@@ -168,6 +168,7 @@ else
   fmt_cmd="cargo +${nightly_toolchain} fmt --all -- --check"
 fi
 biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/web/src/assets/js/}"
+i18n_cmd="${LOCAL_VALIDATE_I18N_CMD:-./scripts/i18n-check.sh}"
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --min-severity high}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
@@ -388,6 +389,8 @@ run_check_async "local/fmt" "$fmt_cmd"
 fmt_pid="$RUN_CHECK_ASYNC_PID"
 run_check_async "local/biome" "$biome_cmd"
 biome_pid="$RUN_CHECK_ASYNC_PID"
+run_check_async "local/i18n" "$i18n_cmd"
+i18n_pid="$RUN_CHECK_ASYNC_PID"
 run_check_async "local/zizmor" "$zizmor_cmd"
 zizmor_pid="$RUN_CHECK_ASYNC_PID"
 
@@ -396,6 +399,8 @@ if ! wait "$fmt_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/fmt" "$fmt_pid"; then parallel_failed=1; fi
 if ! wait "$biome_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/biome" "$biome_pid"; then parallel_failed=1; fi
+if ! wait "$i18n_pid"; then parallel_failed=1; fi
+if ! report_async_result "local/i18n" "$i18n_pid"; then parallel_failed=1; fi
 
 if [[ "$parallel_failed" -ne 0 ]]; then
   echo "One or more parallel local checks failed." >&2

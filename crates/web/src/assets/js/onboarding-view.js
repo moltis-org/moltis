@@ -18,6 +18,7 @@ import {
 import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
@@ -49,6 +50,9 @@ function ensureWsConnected() {
 	connectWs({ backoff: { factor: 2, max: 10000 } });
 }
 
+var WS_RETRY_LIMIT = 75;
+var WS_RETRY_DELAY_MS = 200;
+
 // ── Step indicator ──────────────────────────────────────────
 
 function preferredChatPath() {
@@ -67,7 +71,7 @@ function detectBrowserTimezone() {
 
 function ErrorPanel({ message }) {
 	return html`<div role="alert" class="alert-error-text whitespace-pre-line">
-		<span class="text-[var(--error)] font-medium">Error:</span> ${message}
+		<span class="text-[var(--error)] font-medium">${t("onboarding:errorPrefix")}</span> ${message}
 	</div>`;
 }
 
@@ -336,7 +340,7 @@ function AuthStep({ onNext, skippable }) {
 	// Setup already complete (passkeys/password configured) — let user proceed.
 	if (setupComplete) {
 		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:auth.secureYourInstance")}</h2>
 			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
 				<span class="icon icon-checkmark"></span>
 				Authentication is already configured.
@@ -397,7 +401,7 @@ function AuthStep({ onNext, skippable }) {
 	// ── After passkey registration: optional password ────────
 	if (passkeyDone) {
 		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:auth.secureYourInstance")}</h2>
 
 			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
 				<span class="icon icon-checkmark"></span>
@@ -437,7 +441,7 @@ function AuthStep({ onNext, skippable }) {
 
 	// ── Method selection ─────────────────────────────────────
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:auth.secureYourInstance")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
 			${
 				localhostOnly
@@ -493,7 +497,11 @@ function AuthStep({ onNext, skippable }) {
 				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>
 					${saving ? "Registering\u2026" : "Register passkey"}
 				</button>
-				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+				${
+					skippable
+						? html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>`
+						: null
+				}
 			</div>
 		</div>`
 		}
@@ -518,7 +526,11 @@ function AuthStep({ onNext, skippable }) {
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
 				</button>
-				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+				${
+					skippable
+						? html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>`
+						: null
+				}
 			</div>
 		</form>`
 		}
@@ -526,7 +538,11 @@ function AuthStep({ onNext, skippable }) {
 		${
 			method === null &&
 			html`<div class="flex flex-wrap items-center gap-3 mt-1">
-			${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+			${
+				skippable
+					? html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>`
+					: null
+			}
 		</div>`
 		}
 	</div>`;
@@ -586,7 +602,7 @@ function IdentityStep({ onNext, onBack }) {
 	}
 
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Set up your identity</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:identity.title")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Tell us about yourself and customise your agent.</p>
 		<form onSubmit=${onSubmit} class="flex flex-col gap-4">
 			<!-- User section -->
@@ -619,7 +635,11 @@ function IdentityStep({ onNext, onBack }) {
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex flex-wrap items-center gap-3 mt-1">
-				${onBack && html`<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>`}
+				${
+					onBack
+						? html`<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>`
+						: null
+				}
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Saving\u2026" : "Continue"}
 				</button>
@@ -1065,9 +1085,12 @@ function ProviderStep({ onNext, onBack }) {
 					return;
 				}
 
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
 					attempts += 1;
-					window.setTimeout(loadProviders, 200);
+					window.setTimeout(loadProviders, WS_RETRY_DELAY_MS);
 					return;
 				}
 
@@ -1481,13 +1504,13 @@ function ProviderStep({ onNext, onBack }) {
 	// ── Render ────────────────────────────────────────────────
 
 	if (loading) {
-		return html`<div class="text-sm text-[var(--muted)]">Loading LLMs\u2026</div>`;
+		return html`<div class="text-sm text-[var(--muted)]">${t("onboarding:provider.loadingLlms")}</div>`;
 	}
 
 	var configuredProviders = providers.filter((p) => p.configured);
 
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Add LLMs</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:provider.addLlms")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Configure one or more LLM providers to power your agent. You can add more later in Settings.</p>
 		${
 			configuredProviders.length > 0
@@ -1541,9 +1564,9 @@ function ProviderStep({ onNext, onBack }) {
 		</div>
 		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>Continue</button>
-			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>
+			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>${t("common:actions.continue")}</button>
+			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>
 		</div>
 	</div>`;
 }
@@ -1720,9 +1743,12 @@ function VoiceStep({ onNext, onBack }) {
 					setLoading(false);
 					return;
 				}
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
 					attempts += 1;
-					window.setTimeout(load, 200);
+					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;
 				}
 				// Voice not compiled → skip
@@ -2068,9 +2094,9 @@ function VoiceStep({ onNext, onBack }) {
 
 		${error && !configuring ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			<button class="provider-btn" onClick=${onNext}>Continue</button>
-			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>
+			<button class="provider-btn" onClick=${onNext}>${t("common:actions.continue")}</button>
+			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>
 		</div>
 	</div>`;
 }
@@ -2354,9 +2380,9 @@ function ChannelStep({ onNext, onBack }) {
 		${phase === "form" && selectedType === "msteams" && html`<${TeamsForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "success" && html`<${ChannelSuccess} channelName=${connectedName} channelType=${connectedType} onAnother=${onAnother} />`}
 		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button type="button" class="provider-btn provider-btn-secondary" onClick=${showBackSelector ? () => setPhase("select") : onBack}>Back</button>
-			${phase === "success" && html`<button type="button" class="provider-btn" onClick=${onNext}>Continue</button>`}
-			<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
+			<button type="button" class="provider-btn provider-btn-secondary" onClick=${showBackSelector ? () => setPhase("select") : onBack}>${t("common:actions.back")}</button>
+			${phase === "success" && html`<button type="button" class="provider-btn" onClick=${onNext}>${t("common:actions.continue")}</button>`}
+			<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>
 		</div>
 	</div>`;
 }
@@ -2659,7 +2685,7 @@ function SummaryStep({ onBack, onFinish }) {
 	if (loading || !data) {
 		return html`<div class="flex flex-col items-center justify-center gap-3 min-h-[200px]">
 			<div class="inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin"></div>
-			<div class="text-sm text-[var(--muted)]">Loading summary\u2026</div>
+			<div class="text-sm text-[var(--muted)]">${t("onboarding:summary.loadingSummary")}</div>
 		</div>`;
 	}
 
@@ -2667,7 +2693,7 @@ function SummaryStep({ onBack, onFinish }) {
 	var configuredProviders = data.providers.filter((p) => p.configured);
 
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Setup Summary</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:summary.title")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Overview of your configuration. You can change any of these later in Settings.</p>
 
 		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto -mr-4 pr-4">
@@ -2802,7 +2828,7 @@ function SummaryStep({ onBack, onFinish }) {
 		</div>
 
 		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>
 			<div class="flex-1" />
 			<button class="provider-btn" onClick=${onFinish}>${data.identity?.emoji || ""} ${data.identity?.name || "Your agent"}, reporting for duty</button>
 		</div>
@@ -2873,18 +2899,17 @@ function OnboardingPage() {
 
 	if (step === -1) {
 		return html`<div class="onboarding-card">
-			<div class="text-sm text-[var(--muted)]">Loading\u2026</div>
+			<div class="text-sm text-[var(--muted)]">${t("common:status.loading")}</div>
 		</div>`;
 	}
 
 	// Build step list dynamically based on auth + voice + openclaw availability
 	var openclawDetected = getGon("openclaw_detected") === true;
-	var allLabels = ["Security"];
-	if (openclawDetected) allLabels.push("Import");
-	allLabels.push("LLM");
-	if (voiceAvailable) allLabels.push("Voice");
-	allLabels.push("Channel", "Identity", "Summary");
-
+	var allLabels = [t("onboarding:steps.security")];
+	if (openclawDetected) allLabels.push(t("onboarding:steps.import"));
+	allLabels.push(t("onboarding:steps.llm"));
+	if (voiceAvailable) allLabels.push(t("onboarding:steps.voice"));
+	allLabels.push(t("onboarding:steps.channel"), t("onboarding:steps.identity"), t("onboarding:steps.summary"));
 	var steps = authNeeded ? allLabels : allLabels.slice(1);
 	var stepIndex = authNeeded ? step : step - 1;
 

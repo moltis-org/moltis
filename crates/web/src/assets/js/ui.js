@@ -3,6 +3,7 @@
 import { signal } from "@preact/signals";
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { t } from "./i18n.js";
 
 // ── Toast notifications ──────────────────────────────────────
 export var toasts = signal([]);
@@ -89,14 +90,14 @@ export function ConfirmDialog() {
 		confirmState.value = null;
 	}
 
-	var label = s.opts.confirmLabel || "Confirm";
+	var label = s.opts.confirmLabel || t("common:actions.confirm");
 	var danger = s.opts.danger;
 	var btnClass = danger ? "provider-btn provider-btn-danger" : "provider-btn";
 
-	return html`<${Modal} show=${true} onClose=${no} title="Confirm">
+	return html`<${Modal} show=${true} onClose=${no} title=${t("common:actions.confirm")}>
     <p style="font-size:.85rem;color:var(--text);margin:0 0 16px;">${s.message}</p>
     <div style="display:flex;gap:8px;justify-content:flex-end;">
-      <button onClick=${no} class="provider-btn provider-btn-secondary">Cancel</button>
+      <button onClick=${no} class="provider-btn provider-btn-secondary">${t("common:actions.cancel")}</button>
       <button onClick=${yes} class=${btnClass}>${label}</button>
     </div>
   </${Modal}>`;
@@ -129,11 +130,11 @@ export function confirmDialog(message) {
 
 		var cancelBtn = document.createElement("button");
 		cancelBtn.className = "provider-btn provider-btn-secondary";
-		cancelBtn.textContent = "Cancel";
+		cancelBtn.textContent = t("common:actions.cancel");
 
 		var deleteBtn = document.createElement("button");
 		deleteBtn.className = "provider-btn provider-btn-danger";
-		deleteBtn.textContent = "Delete";
+		deleteBtn.textContent = t("common:actions.delete");
 
 		function close(val) {
 			backdrop.remove();
@@ -174,11 +175,11 @@ export function shareVisibilityDialog() {
 
 		var title = document.createElement("div");
 		title.className = "provider-item-name";
-		title.textContent = "Share session snapshot";
+		title.textContent = t("chat:share.title");
 
 		var cancelTopBtn = document.createElement("button");
 		cancelTopBtn.className = "provider-btn provider-btn-secondary provider-btn-sm";
-		cancelTopBtn.textContent = "Cancel";
+		cancelTopBtn.textContent = t("common:actions.cancel");
 
 		var body = document.createElement("div");
 		body.className = "provider-modal-body";
@@ -186,13 +187,12 @@ export function shareVisibilityDialog() {
 
 		var hint = document.createElement("p");
 		hint.style.cssText = "font-size:.8rem;color:var(--muted);margin:0";
-		hint.textContent = "A snapshot is frozen at this point, later chat messages stay private.";
+		hint.textContent = t("chat:share.hint");
 
 		var warning = document.createElement("p");
 		warning.style.cssText =
 			"font-size:.8rem;color:var(--text);margin:0;padding:8px 10px;border:1px solid color-mix(in srgb,var(--warn) 55%,var(--border) 45%);background:color-mix(in srgb,var(--warn) 12%,var(--surface2) 88%);border-radius:var(--radius-sm);line-height:1.45";
-		warning.textContent =
-			"We do best-effort redaction for API keys and tokens in shared tool output, but always review before sharing.";
+		warning.textContent = t("chat:share.redactionWarning");
 
 		var publicBtn = document.createElement("button");
 		publicBtn.className = "provider-item";
@@ -200,10 +200,10 @@ export function shareVisibilityDialog() {
 		publicBtn.setAttribute("data-share-visibility", "public");
 		var publicName = document.createElement("div");
 		publicName.className = "provider-item-name";
-		publicName.textContent = "Public link";
+		publicName.textContent = t("chat:share.publicLink");
 		var publicBadge = document.createElement("span");
 		publicBadge.className = "provider-item-badge configured";
-		publicBadge.textContent = "Open";
+		publicBadge.textContent = t("chat:share.publicBadge");
 		publicBtn.appendChild(publicName);
 		publicBtn.appendChild(publicBadge);
 
@@ -213,10 +213,10 @@ export function shareVisibilityDialog() {
 		privateBtn.setAttribute("data-share-visibility", "private");
 		var privateName = document.createElement("div");
 		privateName.className = "provider-item-name";
-		privateName.textContent = "Private link";
+		privateName.textContent = t("chat:share.privateLink");
 		var privateBadge = document.createElement("span");
 		privateBadge.className = "provider-item-badge api-key";
-		privateBadge.textContent = "Key required";
+		privateBadge.textContent = t("chat:share.privateBadge");
 		privateBtn.appendChild(privateName);
 		privateBtn.appendChild(privateBadge);
 
@@ -272,11 +272,11 @@ export function shareLinkDialog(url, visibility) {
 
 		var title = document.createElement("div");
 		title.className = "provider-item-name";
-		title.textContent = "Share link ready";
+		title.textContent = t("chat:share.linkReady");
 
 		var closeTopBtn = document.createElement("button");
 		closeTopBtn.className = "provider-btn provider-btn-secondary";
-		closeTopBtn.textContent = "Close";
+		closeTopBtn.textContent = t("common:actions.close");
 		closeTopBtn.setAttribute("data-share-link-close", "true");
 
 		var body = document.createElement("div");
@@ -285,10 +285,7 @@ export function shareLinkDialog(url, visibility) {
 
 		var hint = document.createElement("p");
 		hint.style.cssText = "font-size:.8rem;color:var(--muted);margin:0";
-		hint.textContent =
-			visibility === "private"
-				? "This is a private share link with an embedded key. Send it only to trusted people."
-				: "This snapshot is frozen at this point in time.";
+		hint.textContent = visibility === "private" ? t("chat:share.privateHint") : t("chat:share.publicHint");
 
 		var input = document.createElement("input");
 		input.className = "provider-key-input";
@@ -303,12 +300,12 @@ export function shareLinkDialog(url, visibility) {
 
 		var openBtn = document.createElement("button");
 		openBtn.className = "provider-btn provider-btn-secondary";
-		openBtn.textContent = "Open link";
+		openBtn.textContent = t("common:actions.openLink");
 		openBtn.setAttribute("data-share-link-open", "true");
 
 		var copyBtn = document.createElement("button");
 		copyBtn.className = "provider-btn";
-		copyBtn.textContent = "Copy link";
+		copyBtn.textContent = t("common:actions.copyLink");
 		copyBtn.setAttribute("data-share-link-copy", "true");
 
 		function close(value) {
@@ -325,7 +322,7 @@ export function shareLinkDialog(url, visibility) {
 			try {
 				if (navigator.clipboard?.writeText) {
 					await navigator.clipboard.writeText(url);
-					showToast("Share link copied", "success");
+					showToast(t("chat:share.linkCopied"), "success");
 					close("copied");
 					return;
 				}
@@ -341,11 +338,11 @@ export function shareLinkDialog(url, visibility) {
 				copied = false;
 			}
 			if (copied) {
-				showToast("Share link copied", "success");
+				showToast(t("chat:share.linkCopied"), "success");
 				close("copied");
 				return;
 			}
-			showToast("Copy failed. Copy the link manually.", "error");
+			showToast(t("errors:copyFailed"), "error");
 		}
 
 		copyBtn.addEventListener("click", () => {
@@ -459,7 +456,7 @@ export function ModelSelect({ models, value, onChange, placeholder }) {
             ${m.provider && html`<span class="model-item-provider">${m.provider}</span>`}
           </div>`,
 				)}
-        ${filtered.length === 0 && html`<div class="model-dropdown-empty">No matches</div>`}
+        ${filtered.length === 0 && html`<div class="model-dropdown-empty">${t("common:labels.noMatches")}</div>`}
       </div>
     </div>`
 		}
@@ -558,7 +555,7 @@ export function ComboSelect({ options, value, onChange, placeholder, searchPlace
             <span class="model-item-label">${o.label}</span>
           </div>`,
 				)}
-        ${filtered.length === 0 && html`<div class="model-dropdown-empty">No matches</div>`}
+        ${filtered.length === 0 && html`<div class="model-dropdown-empty">${t("common:labels.noMatches")}</div>`}
       </div>
     </div>`
 		}

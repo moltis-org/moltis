@@ -16,6 +16,9 @@ use moltis_metrics::MetricsSnapshot;
 #[cfg(feature = "metrics")]
 use crate::server::AppState;
 
+#[cfg(feature = "metrics")]
+const METRICS_NOT_ENABLED: &str = "METRICS_NOT_ENABLED";
+
 /// Prometheus metrics endpoint handler.
 ///
 /// Returns metrics in Prometheus text exposition format, suitable for scraping
@@ -67,6 +70,7 @@ pub async fn api_metrics_handler(State(state): State<AppState>) -> impl IntoResp
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
+                "code": METRICS_NOT_ENABLED,
                 "error": "Metrics not enabled"
             })),
         )

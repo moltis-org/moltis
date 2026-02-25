@@ -4,6 +4,7 @@ import { signal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
+import { localizedApiErrorMessage } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { sandboxInfo } from "./signals.js";
 
@@ -29,6 +30,20 @@ var SANDBOX_DISABLED_HINT =
 
 function sandboxRuntimeAvailable() {
 	return (sandboxInfo.value?.backend || "none") !== "none";
+}
+
+async function responseErrorMessage(response, fallback) {
+	try {
+		var payload = await response.json();
+		return localizedApiErrorMessage(payload, fallback);
+	} catch {
+		try {
+			var text = await response.text();
+			return text || fallback;
+		} catch {
+			return fallback;
+		}
+	}
 }
 
 function fetchImages() {
@@ -82,7 +97,7 @@ function doBuild(name, base, pkgs) {
 		.then((r) => r.json())
 		.then((data) => {
 			if (data.error) {
-				buildStatus.value = `Error: ${data.error}`;
+				buildStatus.value = `Error: ${localizedApiErrorMessage(data, "Failed to build image.")}`;
 			} else {
 				buildStatus.value = `Built: ${data.tag}`;
 				buildName.value = "";
@@ -173,11 +188,11 @@ function stopContainer(name) {
 
 function removeContainer(name) {
 	fetch(`/api/sandbox/containers/${encodeURIComponent(name)}`, { method: "DELETE" })
-		.then((r) => {
+		.then(async (r) => {
 			if (!r.ok) {
-				return r.text().then((t) => {
-					containerError.value = `Failed to delete ${name}: ${t || r.statusText}`;
-				});
+				var msg = await responseErrorMessage(r, r.statusText);
+				containerError.value = `Failed to delete ${name}: ${msg}`;
+				return;
 			}
 			fetchContainers();
 		})
@@ -200,11 +215,11 @@ function fetchDiskUsage() {
 function cleanAllContainers() {
 	cleaningAll.value = true;
 	fetch("/api/sandbox/containers/clean", { method: "POST" })
-		.then((r) => {
+		.then(async (r) => {
 			if (!r.ok) {
-				return r.text().then((t) => {
-					containerError.value = `Failed to clean containers: ${t || r.statusText}`;
-				});
+				var msg = await responseErrorMessage(r, r.statusText);
+				containerError.value = `Failed to clean containers: ${msg}`;
+				return;
 			}
 			fetchContainers();
 			fetchDiskUsage();
@@ -220,11 +235,11 @@ function cleanAllContainers() {
 function restartDaemon() {
 	restarting.value = true;
 	fetch("/api/sandbox/daemon/restart", { method: "POST" })
-		.then((r) => {
+		.then(async (r) => {
 			if (!r.ok) {
-				return r.text().then((t) => {
-					containerError.value = `Failed to restart daemon: ${t || r.statusText}`;
-				});
+				var msg = await responseErrorMessage(r, r.statusText);
+				containerError.value = `Failed to restart daemon: ${msg}`;
+				return;
 			}
 			fetchContainers();
 			fetchDiskUsage();

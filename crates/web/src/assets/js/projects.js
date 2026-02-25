@@ -1,5 +1,6 @@
 // ── Projects (sidebar filter) ────────────────────────────────
 
+import { t } from "./i18n.js";
 import { updateNavCount } from "./nav-counts.js";
 import { renderSessionProjectSelect } from "./project-combo.js";
 import * as S from "./state.js";
@@ -29,7 +30,7 @@ function selectFilter(id) {
 	// Dual-write to state.js for backward compat
 	S.setProjectFilterId(id);
 	var p = projectStore.getById(id);
-	label.textContent = p ? p.label || p.id : "All sessions";
+	label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
 	closeDropdown();
 	document.dispatchEvent(new CustomEvent("moltis:render-session-list"));
 }
@@ -56,13 +57,14 @@ function renderList(query) {
 	var allProjects = projectStore.projects.value;
 
 	// "All sessions" option — always shown unless query excludes it
-	if (!q || "all sessions".indexOf(q) !== -1) {
+	var allSessionsLabel = t("common:sessions.allSessions");
+	if (!q || allSessionsLabel.toLowerCase().indexOf(q) !== -1) {
 		var allEl = document.createElement("div");
 		allEl.className = "model-dropdown-item";
 		if (!filterId) allEl.classList.add("selected");
 		var allLabel = document.createElement("span");
 		allLabel.className = "model-item-label";
-		allLabel.textContent = "All sessions";
+		allLabel.textContent = allSessionsLabel;
 		allEl.appendChild(allLabel);
 		allEl.addEventListener("click", () => selectFilter(""));
 		list.appendChild(allEl);
@@ -89,7 +91,7 @@ function renderList(query) {
 	if (list.children.length === 0) {
 		var empty = document.createElement("div");
 		empty.className = "model-dropdown-empty";
-		empty.textContent = "No matching projects";
+		empty.textContent = t("common:sessions.noMatchingProjects");
 		list.appendChild(empty);
 	}
 }
@@ -114,13 +116,13 @@ export function renderProjectSelect() {
 			projectStore.setFilterId("");
 			S.setProjectFilterId("");
 		}
-		label.textContent = "All sessions";
+		label.textContent = t("common:sessions.allSessions");
 		return;
 	}
 	if (wrapper) wrapper.classList.remove("hidden");
 
 	var p = projectStore.getById(filterId);
-	label.textContent = p ? p.label || p.id : "All sessions";
+	label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
 }
 
 btn.addEventListener("click", () => {
@@ -164,5 +166,13 @@ if (searchInput) {
 document.addEventListener("click", (e) => {
 	if (combo && !combo.contains(e.target)) {
 		closeDropdown();
+	}
+});
+
+window.addEventListener("moltis:locale-changed", () => {
+	renderProjectSelect();
+	if (!dropdown.classList.contains("hidden")) {
+		var query = searchInput ? searchInput.value.trim() : "";
+		renderList(query);
 	}
 });

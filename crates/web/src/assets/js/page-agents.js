@@ -14,6 +14,9 @@ import { settingsPath } from "./routes.js";
 import { fetchSessions } from "./sessions.js";
 import { confirmDialog } from "./ui.js";
 
+var WS_RETRY_LIMIT = 75;
+var WS_RETRY_DELAY_MS = 200;
+
 var _mounted = false;
 var containerRef = null;
 
@@ -47,9 +50,12 @@ function AgentForm({ agent, onSave, onCancel }) {
 		var attempts = 0;
 		function load() {
 			sendRpc("agents.identity.get", { agent_id: agentId }).then((res) => {
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
 					attempts += 1;
-					window.setTimeout(load, 200);
+					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;
 				}
 				if (res?.ok && res.payload?.soul) {
@@ -257,9 +263,12 @@ function AgentsPage({ subPath }) {
 		var attempts = 0;
 		function load() {
 			sendRpc("agents.list", {}).then((res) => {
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
 					attempts += 1;
-					window.setTimeout(load, 200);
+					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;
 				}
 				setLoading(false);

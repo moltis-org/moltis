@@ -34,6 +34,8 @@ jobs:
             context: local/fmt
           - label: biome
             context: local/biome
+          - label: i18n
+            context: local/i18n
           - label: zizmor
             context: local/zizmor
           - label: clippy
@@ -82,6 +84,7 @@ jobs:
         with:
           version: "2.3.13"
       - run: biome ci crates/web/src/assets/js/
+      - run: ./scripts/i18n-check.sh
 
   fmt:
     name: Format

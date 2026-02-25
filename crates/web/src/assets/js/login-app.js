@@ -2,9 +2,13 @@ import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { formatLoginTitle } from "./branding.js";
+import { init as initI18n, t } from "./i18n.js";
 import { initTheme } from "./theme.js";
 
 initTheme();
+var i18nReady = initI18n().catch((err) => {
+	console.warn("[i18n] login init failed", err);
+});
 
 // Read identity from server-injected gon data (name for title).
 var gon = window.__MOLTIS__ || {};
@@ -45,13 +49,13 @@ async function parseLoginFailure(response) {
 	}
 
 	var bodyText = await response.text();
-	return { type: "error", message: bodyText || "Login failed" };
+	return { type: "error", message: bodyText || t("login:loginFailed") };
 }
 
 function startPasskeyLogin(setError, setLoading) {
 	setError(null);
 	if (/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[")) {
-		setError(`Passkeys require a domain name. Use localhost instead of ${location.hostname}`);
+		setError(t("login:passkeyRequiresDomain", { hostname: location.hostname }));
 		return;
 	}
 	setLoading(true);
@@ -94,14 +98,14 @@ function startPasskeyLogin(setError, setLoading) {
 			if (r.ok) {
 				location.href = "/";
 			} else {
-				return r.text().then((t) => {
-					setError(t || "Passkey authentication failed");
+				return r.text().then((msg) => {
+					setError(msg || t("login:passkeyAuthFailed"));
 					setLoading(false);
 				});
 			}
 		})
 		.catch((err) => {
-			setError(err.message || "Passkey authentication failed");
+			setError(err.message || t("login:passkeyAuthFailed"));
 			setLoading(false);
 		});
 }
@@ -121,28 +125,28 @@ function renderLoginCard({
 }) {
 	return html`<div class="auth-card">
 		<h1 class="auth-title">${title}</h1>
-		<p class="auth-subtitle">Sign in to continue</p>
+		<p class="auth-subtitle">${t("login:signInToContinue")}</p>
 		${
 			showPassword
 				? html`<form onSubmit=${onPasswordLogin} class="flex flex-col gap-3">
 			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Password</label>
+				<label class="text-xs text-[var(--muted)] mb-1 block">${t("login:password")}</label>
 				<input
 					type="password"
 					class="provider-key-input w-full"
 					value=${password}
 					onInput=${(e) => setPassword(e.target.value)}
-					placeholder="Enter password"
+					placeholder=${t("login:enterPassword")}
 					autofocus
 				/>
 			</div>
 			<button type="submit" class="provider-btn w-full mt-1" disabled=${loading || retrySecondsLeft > 0}>
-				${loading ? "Signing in\u2026" : retrySecondsLeft > 0 ? `Retry in ${retrySecondsLeft}s` : "Sign in"}
+				${loading ? t("login:signingIn") : retrySecondsLeft > 0 ? t("login:retryIn", { seconds: retrySecondsLeft }) : t("login:signIn")}
 			</button>
 		</form>`
 				: null
 		}
-		${showDivider ? html`<div class="auth-divider"><span>or</span></div>` : null}
+		${showDivider ? html`<div class="auth-divider"><span>${t("login:or")}</span></div>` : null}
 		${
 			showPasskeys
 				? html`<button
@@ -151,7 +155,7 @@ function renderLoginCard({
 				onClick=${onPasskeyLogin}
 				disabled=${loading}
 			>
-				Sign in with passkey
+				${t("login:signInWithPasskey")}
 			</button>`
 				: null
 		}
@@ -213,9 +217,9 @@ function LoginApp() {
 				var failure = await parseLoginFailure(r);
 				if (failure.type === "retry") {
 					setRetrySecondsLeft(failure.retryAfter);
-					setError("Wrong password");
+					setError(t("login:wrongPassword"));
 				} else if (failure.type === "invalid_password") {
-					setError("Invalid password");
+					setError(t("login:invalidPassword"));
 				} else {
 					setError(failure.message);
 				}
@@ -233,7 +237,7 @@ function LoginApp() {
 
 	if (!ready) {
 		return html`<div class="auth-card">
-			<div class="text-sm text-[var(--muted)]">Loading\u2026</div>
+			<div class="text-sm text-[var(--muted)]">${t("common:status.loading")}</div>
 		</div>`;
 	}
 
@@ -279,5 +283,7 @@ function bufferToBase64(buf) {
 
 var root = document.getElementById("loginRoot");
 if (root) {
-	render(html`<${LoginApp} />`, root);
+	i18nReady.finally(() => {
+		render(html`<${LoginApp} />`, root);
+	});
 }
