@@ -1,5 +1,52 @@
 import Foundation
 
+// MARK: - Rust Bridge Log Forwarding
+
+/// Decoded payload from Rust `emit_log` JSON.
+private struct BridgeLogPayload: Decodable {
+    let level: String
+    let target: String
+    let message: String
+    let fields: [String: String]?
+}
+
+/// Global reference to the `LogStore` used by the Rust log callback.
+/// Set once during app startup via `MoltisClient.installLogCallback`.
+private var globalLogStore: LogStore?
+private let logDecoder = JSONDecoder()
+
+/// C-callable callback that receives Rust log events as JSON strings.
+private func rustLogCallbackHandler(logJson: UnsafePointer<CChar>?) {
+    guard let logJson else { return }
+    let jsonString = String(cString: logJson)
+    let data = Data(jsonString.utf8)
+
+    guard let payload = try? logDecoder.decode(
+        BridgeLogPayload.self, from: data
+    ) else { return }
+
+    let level: LogLevel
+    switch payload.level {
+    case "TRACE": level = .trace
+    case "DEBUG": level = .debug
+    case "INFO": level = .info
+    case "WARN": level = .warn
+    case "ERROR": level = .error
+    default: level = .debug
+    }
+
+    DispatchQueue.main.async {
+        globalLogStore?.log(
+            level,
+            target: payload.target,
+            message: payload.message,
+            fields: payload.fields ?? [:]
+        )
+    }
+}
+
+// MARK: - Client Errors
+
 enum MoltisClientError: Error, LocalizedError {
     case nilResponsePointer
     case jsonEncodingFailed
@@ -91,9 +138,112 @@ private struct BridgeErrorPayload: Decodable {
     let message: String
 }
 
+// MARK: - Stream event
+
+enum StreamEventType {
+    case delta(text: String)
+    case done(
+        inputTokens: UInt32, outputTokens: UInt32, durationMs: UInt64,
+        model: String?, provider: String?
+    )
+    case error(message: String)
+}
+
+private struct BridgeStreamEventPayload: Decodable {
+    let type_: String
+    let text: String?
+    let message: String?
+    let inputTokens: UInt32?
+    let outputTokens: UInt32?
+    let durationMs: UInt64?
+    let model: String?
+    let provider: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case type_  = "type"
+        case text
+        case message
+        case inputTokens = "input_tokens"
+        case outputTokens = "output_tokens"
+        case durationMs = "duration_ms"
+        case model
+        case provider
+    }
+}
+
+/// Holds the callback closure retained for the lifetime of one streaming call.
+/// Retained via `Unmanaged.passRetained` and released on terminal events.
+private final class StreamContext {
+    let onEvent: (StreamEventType) -> Void
+    let decoder: JSONDecoder
+
+    init(onEvent: @escaping (StreamEventType) -> Void) {
+        self.onEvent = onEvent
+        let decoder = JSONDecoder()
+        self.decoder = decoder
+    }
+}
+
+/// C-callable callback that bridges from the Rust FFI into Swift closures.
+private func streamCallbackHandler(
+    eventJson: UnsafePointer<CChar>?,
+    userData: UnsafeMutableRawPointer?
+) {
+    guard let eventJson, let userData else { return }
+
+    let context = Unmanaged<StreamContext>.fromOpaque(userData)
+        .takeUnretainedValue()
+
+    let jsonString = String(cString: eventJson)
+    let data = Data(jsonString.utf8)
+
+    guard let payload = try? context.decoder.decode(
+        BridgeStreamEventPayload.self, from: data
+    ) else {
+        let event = StreamEventType.error(message: "Failed to decode stream event")
+        context.onEvent(event)
+        Unmanaged<StreamContext>.fromOpaque(userData).release()
+        return
+    }
+
+    let event: StreamEventType
+    var isTerminal = false
+
+    switch payload.type_ {
+    case "delta":
+        event = .delta(text: payload.text ?? "")
+    case "done":
+        event = .done(
+            inputTokens: payload.inputTokens ?? 0,
+            outputTokens: payload.outputTokens ?? 0,
+            durationMs: payload.durationMs ?? 0,
+            model: payload.model,
+            provider: payload.provider
+        )
+        isTerminal = true
+    case "error":
+        event = .error(message: payload.message ?? "Unknown error")
+        isTerminal = true
+    default:
+        return
+    }
+
+    context.onEvent(event)
+
+    if isTerminal {
+        Unmanaged<StreamContext>.fromOpaque(userData).release()
+    }
+}
+
 // MARK: - Client
 
 struct MoltisClient {
+    /// Install the Rust→Swift log bridge. Call once at app startup.
+    static func installLogCallback(logStore: LogStore) {
+        globalLogStore = logStore
+        moltis_set_log_callback(rustLogCallbackHandler)
+    }
+
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -163,6 +313,32 @@ struct MoltisClient {
     func refreshRegistry() throws {
         let payload = try consumeCStringPointer(moltis_refresh_registry())
         _ = try decode(payload, as: BridgeOkPayload.self)
+    }
+
+    func chatStream(
+        message: String,
+        model: String? = nil,
+        onEvent: @escaping (StreamEventType) -> Void
+    ) {
+        let request = ChatRequest(
+            message: message,
+            model: model,
+            provider: nil,
+            configToml: nil
+        )
+        guard let data = try? encoder.encode(request),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            onEvent(.error(message: "Failed to encode chat request"))
+            return
+        }
+
+        let context = StreamContext(onEvent: onEvent)
+        let retained = Unmanaged.passRetained(context).toOpaque()
+
+        json.withCString { ptr in
+            moltis_chat_stream(ptr, streamCallbackHandler, retained)
+        }
     }
 
     // MARK: - Private helpers

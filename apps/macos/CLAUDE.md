@@ -1,4 +1,8 @@
 
+# macOS App Guidelines
+
+The macOS app should match the Moltis web UI (`crates/web/src/assets/`) in layout, behavior, and visual style. When implementing a feature, refer to the web UI as the source of truth for how it should look and work. Use native macOS/SwiftUI controls but keep the same information hierarchy, spacing, and flow.
+
 # List of nice opensource MacOS apps to use inspiration from for UI and widgets:
 
 https://github.com/coteditor/CotEditor

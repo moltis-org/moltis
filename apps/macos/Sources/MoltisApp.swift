@@ -19,15 +19,24 @@ struct MoltisApp: App {
     @StateObject private var chatStore: ChatStore
     @StateObject private var onboardingState: OnboardingState
     @StateObject private var providerStore: ProviderStore
+    @StateObject private var logStore: LogStore
 
     init() {
         let settings = AppSettings()
         let onboardingState = OnboardingState()
-        let providerStore = ProviderStore()
+        let logStore = LogStore()
+
+        // Install Rust→Swift log bridge before any FFI calls
+        MoltisClient.installLogCallback(logStore: logStore)
+
+        let providerStore = ProviderStore(logStore: logStore)
         _settings = StateObject(wrappedValue: settings)
-        _chatStore = StateObject(wrappedValue: ChatStore(settings: settings, providerStore: providerStore))
+        _chatStore = StateObject(wrappedValue: ChatStore(
+            settings: settings, providerStore: providerStore, logStore: logStore
+        ))
         _onboardingState = StateObject(wrappedValue: onboardingState)
         _providerStore = StateObject(wrappedValue: providerStore)
+        _logStore = StateObject(wrappedValue: logStore)
     }
 
     var body: some Scene {
@@ -46,7 +55,7 @@ struct MoltisApp: App {
         .windowResizability(.contentSize)
 
         WindowGroup("Moltis Settings", id: "settings") {
-            SettingsView(settings: settings, providerStore: providerStore)
+            SettingsView(settings: settings, providerStore: providerStore, logStore: logStore)
         }
         .defaultSize(width: 960, height: 780)
         .windowResizability(.contentMinSize)

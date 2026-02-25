@@ -7,6 +7,17 @@ let shortTimeFormatter: DateFormatter = {
     return formatter
 }()
 
+/// Format token count with K/M suffixes (matches web UI formatTokens).
+func formatTokens(_ count: UInt32) -> String {
+    if count >= 1_000_000 {
+        return String(format: "%.1fM", Double(count) / 1_000_000)
+    }
+    if count >= 1_000 {
+        return String(format: "%.1fK", Double(count) / 1_000)
+    }
+    return "\(count)"
+}
+
 struct ContentView: View {
     @ObservedObject var chatStore: ChatStore
     @ObservedObject var settings: AppSettings
@@ -139,6 +150,8 @@ private struct ChatDetailView: View {
                 debugPanel
             }
 
+            tokenBar
+
             Divider()
 
             inputBar
@@ -180,16 +193,14 @@ private struct ChatDetailView: View {
         HStack(spacing: 12) {
             // Model picker
             if !providerStore.models.isEmpty {
-                Picker("Model", selection: $providerStore.selectedModelID) {
-                    Text("Default").tag(nil as String?)
-                    ForEach(providerStore.models) { model in
-                        Text("\(model.displayName) (\(model.provider))")
-                            .tag(Optional(model.id))
+                SearchablePopoverPicker(
+                    label: "",
+                    selection: $providerStore.selectedModelID,
+                    options: providerStore.models.map {
+                        (id: $0.id, display: $0.displayName, detail: $0.provider)
                     }
-                }
-                .labelsHidden()
+                )
                 .controlSize(.small)
-                .frame(maxWidth: 240)
             }
 
             Divider()
@@ -326,6 +337,44 @@ private struct ChatDetailView: View {
                 }
             }
         }
+    }
+
+    // ── Token bar (matches web UI .token-bar) ──
+
+    private var tokenBarText: String {
+        var parts: [String] = []
+
+        if let session = chatStore.selectedSession {
+            let totalIn = session.messages.compactMap(\.inputTokens).reduce(0, +)
+            let totalOut = session.messages.compactMap(\.outputTokens).reduce(0, +)
+            let total = totalIn + totalOut
+            parts.append("\(formatTokens(totalIn)) in / \(formatTokens(totalOut)) out")
+            parts.append("\(formatTokens(total)) tokens")
+        } else {
+            parts.append("0 in / 0 out")
+            parts.append("0 tokens")
+        }
+
+        if let model = providerStore.selectedModelID {
+            let provider = settings.llmProvider.isEmpty ? nil : settings.llmProvider
+            if let provider {
+                parts.append("\(provider) / \(model)")
+            } else {
+                parts.append(model)
+            }
+        }
+
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    private var tokenBar: some View {
+        Text(tokenBarText)
+            .font(.system(size: 10))
+            .foregroundStyle(MoltisTheme.muted)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 2)
+            .background(MoltisTheme.surface)
     }
 
     private var inputBar: some View {

@@ -126,6 +126,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var providerStore: ProviderStore
+    @ObservedObject var logStore: LogStore
     @State private var selectedSection: SettingsSection? = .identity
     @State private var searchText = ""
 
@@ -192,14 +193,20 @@ struct SettingsView: View {
     private var settingsDetail: some View {
         Group {
             if let section = selectedSection {
-                Form {
-                    SettingsSectionContent(
-                        section: section,
-                        settings: settings,
-                        providerStore: providerStore
-                    )
+                if section == .logs {
+                    LogsPane(logStore: logStore)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Form {
+                        SettingsSectionContent(
+                            section: section,
+                            settings: settings,
+                            providerStore: providerStore,
+                            logStore: logStore
+                        )
+                    }
+                    .formStyle(.grouped)
                 }
-                .formStyle(.grouped)
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "gearshape")
@@ -229,5 +236,3 @@ struct SettingsIconView: View {
             .background(color, in: RoundedRectangle(cornerRadius: 5))
     }
 }
-
-

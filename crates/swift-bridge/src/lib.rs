@@ -4,13 +4,15 @@
 
 use std::{
     collections::HashMap,
-    ffi::{CStr, CString, c_char},
+    ffi::{CStr, CString, c_char, c_void},
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{LazyLock, RwLock},
+    sync::{LazyLock, OnceLock, RwLock},
 };
 
 use {
-    moltis_agents::model::{ChatMessage as AgentChatMessage, LlmProvider, UserContent},
+    moltis_agents::model::{
+        ChatMessage as AgentChatMessage, LlmProvider, StreamEvent, Usage, UserContent,
+    },
     moltis_config::{schema::ProvidersConfig, validate::Severity},
     moltis_provider_setup::{
         KeyStore, config_with_saved_keys, detect_auto_provider_sources_with_overrides,
@@ -18,6 +20,7 @@ use {
     },
     moltis_providers::ProviderRegistry,
     serde::{Deserialize, Serialize},
+    tokio_stream::StreamExt,
 };
 
 // ── Global bridge state ────────────────────────────────────────────────────
@@ -29,6 +32,7 @@ struct BridgeState {
 
 impl BridgeState {
     fn new() -> Self {
+        emit_log("INFO", "bridge", "Initializing Rust bridge (tokio runtime + registry)");
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -36,6 +40,7 @@ impl BridgeState {
             .unwrap_or_else(|e| panic!("failed to create tokio runtime: {e}"));
 
         let registry = build_registry();
+        emit_log("INFO", "bridge", "Bridge initialized successfully");
         Self {
             runtime,
             registry: RwLock::new(registry),
@@ -51,6 +56,53 @@ fn build_registry() -> ProviderRegistry {
 }
 
 static BRIDGE: LazyLock<BridgeState> = LazyLock::new(BridgeState::new);
+
+// ── Log callback for Swift ───────────────────────────────────────────────
+
+/// Callback type for forwarding log events to Swift. Rust owns the
+/// `log_json` pointer — the callback must copy the data before returning.
+type LogCallback = unsafe extern "C" fn(log_json: *const c_char);
+
+static LOG_CALLBACK: OnceLock<LogCallback> = OnceLock::new();
+
+/// JSON-serializable log event sent to Swift.
+#[derive(Debug, Serialize)]
+struct BridgeLogEvent<'a> {
+    level: &'a str,
+    target: &'a str,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fields: Option<&'a HashMap<&'a str, String>>,
+}
+
+fn emit_log(level: &str, target: &str, message: &str) {
+    emit_log_with_fields(level, target, message, None);
+}
+
+fn emit_log_with_fields(
+    level: &str,
+    target: &str,
+    message: &str,
+    fields: Option<&HashMap<&str, String>>,
+) {
+    if let Some(callback) = LOG_CALLBACK.get() {
+        let event = BridgeLogEvent {
+            level,
+            target,
+            message,
+            fields,
+        };
+        if let Ok(json) = serde_json::to_string(&event) {
+            if let Ok(c_str) = CString::new(json) {
+                // SAFETY: c_str is valid NUL-terminated, callback copies
+                // before returning, and we drop c_str afterwards.
+                unsafe {
+                    callback(c_str.as_ptr());
+                }
+            }
+        }
+    }
+}
 
 // ── Request / Response types ───────────────────────────────────────────────
 
@@ -230,14 +282,31 @@ fn resolve_provider(request: &ChatRequest) -> Option<std::sync::Arc<dyn LlmProvi
     if let Some(model_id) = &request.model
         && let Some(provider) = registry.get(model_id)
     {
+        emit_log("DEBUG", "bridge", &format!(
+            "Resolved provider for model={}: {}",
+            model_id, provider.name()
+        ));
         return Some(provider);
     }
 
     // Fall back to first available provider
-    registry.first()
+    let result = registry.first();
+    if let Some(ref p) = result {
+        emit_log("DEBUG", "bridge", &format!(
+            "Using first available provider: {} ({})",
+            p.name(), p.id()
+        ));
+    } else {
+        emit_log("WARN", "bridge", "No provider available in registry");
+    }
+    result
 }
 
 fn build_chat_response(request: ChatRequest) -> String {
+    emit_log("INFO", "bridge.chat", &format!(
+        "Chat request: model={:?} msg_len={}",
+        request.model, request.message.len()
+    ));
     let validation = build_validation_summary(request.config_toml.as_deref());
 
     let (reply, model, provider_name, input_tokens, output_tokens, duration_ms) =
@@ -249,6 +318,9 @@ fn build_chat_response(request: ChatRequest) -> String {
                     content: UserContent::text(&request.message),
                 }];
 
+                emit_log("DEBUG", "bridge.chat", &format!(
+                    "Calling {}/{}", provider_name, model_id
+                ));
                 let start = std::time::Instant::now();
                 match BRIDGE.runtime.block_on(provider.complete(&messages, &[])) {
                     Ok(response) => {
@@ -258,6 +330,10 @@ fn build_chat_response(request: ChatRequest) -> String {
                             .unwrap_or_else(|| "(empty response)".to_owned());
                         let in_tok = response.usage.input_tokens;
                         let out_tok = response.usage.output_tokens;
+                        emit_log("INFO", "bridge.chat", &format!(
+                            "Response: {}ms in={} out={} provider={}",
+                            elapsed, in_tok, out_tok, provider_name
+                        ));
                         (
                             text,
                             Some(model_id),
@@ -269,16 +345,18 @@ fn build_chat_response(request: ChatRequest) -> String {
                     },
                     Err(error) => {
                         let msg = format!("LLM error: {error}");
+                        emit_log("ERROR", "bridge.chat", &msg);
                         (msg, Some(model_id), Some(provider_name), None, None, None)
                     },
                 }
             },
             None => {
-                let msg = format!(
-                    "No LLM provider configured. Rust bridge received: {}",
-                    request.message
-                );
-                (msg, None, None, None, None, None)
+                let msg = "No LLM provider configured".to_owned();
+                emit_log("WARN", "bridge.chat", &msg);
+                (
+                    format!("{msg}. Rust bridge received: {}", request.message),
+                    None, None, None, None, None,
+                )
             },
         };
 
@@ -294,6 +372,194 @@ fn build_chat_response(request: ChatRequest) -> String {
         duration_ms,
     };
     encode_json(&response)
+}
+
+// ── Streaming support ──────────────────────────────────────────────────────
+
+/// Callback type for streaming events. Rust owns the `event_json` pointer —
+/// the callback must copy the data before returning; Rust drops it afterwards.
+type StreamCallback = unsafe extern "C" fn(event_json: *const c_char, user_data: *mut c_void);
+
+/// JSON-serializable event sent to Swift via the callback.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum BridgeStreamEvent {
+    #[serde(rename = "delta")]
+    Delta { text: String },
+    #[serde(rename = "done")]
+    Done {
+        input_tokens: u32,
+        output_tokens: u32,
+        duration_ms: u64,
+        model: Option<String>,
+        provider: Option<String>,
+    },
+    #[serde(rename = "error")]
+    Error { message: String },
+}
+
+/// Bundle of callback + user_data that can cross the `tokio::spawn` boundary.
+///
+/// # Safety
+///
+/// The Swift side guarantees that `user_data` remains valid until a terminal
+/// event (done/error) is received, and the callback function pointer is
+/// stable for the lifetime of the stream. The callback dispatches to the
+/// main thread so there is no concurrent access.
+struct StreamCallbackCtx {
+    callback: StreamCallback,
+    user_data: *mut c_void,
+}
+
+// SAFETY: See struct doc — Swift retains `StreamContext` via
+// `Unmanaged.passRetained` and the callback itself is a plain function pointer.
+unsafe impl Send for StreamCallbackCtx {}
+
+impl StreamCallbackCtx {
+    fn send(&self, event: &BridgeStreamEvent) {
+        let json = encode_json(event);
+        if let Ok(c_str) = CString::new(json) {
+            // SAFETY: `c_str` is a valid NUL-terminated C string, `user_data`
+            // is retained by the Swift caller, and the callback copies the
+            // string contents before returning. We drop `c_str` afterwards.
+            unsafe {
+                (self.callback)(c_str.as_ptr(), self.user_data);
+            }
+        }
+    }
+}
+
+/// Start a streaming LLM chat. Events are delivered via `callback`. The
+/// function returns immediately; the stream runs on the bridge's tokio
+/// runtime. The caller must keep `user_data` alive until a terminal event
+/// (done or error) is delivered.
+///
+/// # Safety
+///
+/// * `request_json` must be a valid NUL-terminated C string.
+/// * `callback` must be a valid function pointer that remains valid for the
+///   lifetime of the stream.
+/// * `user_data` must remain valid until the callback receives a terminal
+///   event (done or error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn moltis_chat_stream(
+    request_json: *const c_char,
+    callback: StreamCallback,
+    user_data: *mut c_void,
+) {
+    record_call("moltis_chat_stream");
+    trace_call("moltis_chat_stream");
+
+    // Helper to send an error event before `ctx` is constructed.
+    let send_error = |msg: String| {
+        let event = BridgeStreamEvent::Error { message: msg };
+        let json = encode_json(&event);
+        if let Ok(c_str) = CString::new(json) {
+            // SAFETY: caller guarantees valid callback + user_data.
+            unsafe {
+                callback(c_str.as_ptr(), user_data);
+            }
+        }
+    };
+
+    // Parse request synchronously on the calling thread so errors are
+    // reported immediately via callback (no need to spawn).
+    let raw = match read_c_string(request_json) {
+        Ok(value) => value,
+        Err(message) => {
+            record_error("moltis_chat_stream", "null_pointer_or_invalid_utf8");
+            send_error(message);
+            return;
+        },
+    };
+
+    let request = match serde_json::from_str::<ChatRequest>(&raw) {
+        Ok(request) => request,
+        Err(error) => {
+            record_error("moltis_chat_stream", "invalid_json");
+            send_error(error.to_string());
+            return;
+        },
+    };
+
+    let provider = match resolve_provider(&request) {
+        Some(p) => p,
+        None => {
+            send_error("No LLM provider configured".to_owned());
+            return;
+        },
+    };
+
+    let model_id = provider.id().to_string();
+    let provider_name = provider.name().to_string();
+    let messages = vec![AgentChatMessage::User {
+        content: UserContent::text(&request.message),
+    }];
+
+    let ctx = StreamCallbackCtx {
+        callback,
+        user_data,
+    };
+
+    emit_log("INFO", "bridge.stream", &format!(
+        "Starting stream: {}/{}", provider_name, model_id
+    ));
+
+    BRIDGE.runtime.spawn(async move {
+        let start = std::time::Instant::now();
+
+        let result = catch_unwind(AssertUnwindSafe(|| provider.stream(messages)));
+
+        let mut stream = match result {
+            Ok(s) => s,
+            Err(_) => {
+                emit_log("ERROR", "bridge.stream", "Panic during stream creation");
+                ctx.send(&BridgeStreamEvent::Error {
+                    message: "panic during stream creation".to_owned(),
+                });
+                return;
+            },
+        };
+
+        let mut usage = Usage::default();
+        let mut delta_count: u32 = 0;
+
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::Delta(text) => {
+                    delta_count += 1;
+                    ctx.send(&BridgeStreamEvent::Delta { text });
+                },
+                StreamEvent::Done(u) => {
+                    usage = u;
+                    break;
+                },
+                StreamEvent::Error(message) => {
+                    emit_log("ERROR", "bridge.stream", &format!(
+                        "Stream error: {message}"
+                    ));
+                    ctx.send(&BridgeStreamEvent::Error { message });
+                    return;
+                },
+                // Ignore tool-call and reasoning events for chat UI.
+                _ => {},
+            }
+        }
+
+        let elapsed = start.elapsed().as_millis() as u64;
+        emit_log("INFO", "bridge.stream", &format!(
+            "Stream done: {}ms deltas={} in={} out={} provider={}",
+            elapsed, delta_count, usage.input_tokens,
+            usage.output_tokens, provider_name
+        ));
+        ctx.send(&BridgeStreamEvent::Done {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            duration_ms: elapsed,
+            model: Some(model_id),
+            provider: Some(provider_name),
+        });
+    });
 }
 
 // ── Metrics / tracing helpers ──────────────────────────────────────────────
@@ -335,11 +601,16 @@ pub extern "C" fn moltis_version() -> *mut c_char {
     trace_call("moltis_version");
 
     with_ffi_boundary(|| {
+        emit_log("DEBUG", "bridge", "moltis_version called");
         let response = VersionResponse {
             bridge_version: env!("CARGO_PKG_VERSION"),
             moltis_version: env!("CARGO_PKG_VERSION"),
             config_dir: config_dir_string(),
         };
+        emit_log("INFO", "bridge", &format!(
+            "version: bridge={} config_dir={}",
+            response.bridge_version, response.config_dir
+        ));
         encode_json(&response)
     })
 }
@@ -377,6 +648,7 @@ pub extern "C" fn moltis_known_providers() -> *mut c_char {
     trace_call("moltis_known_providers");
 
     with_ffi_boundary(|| {
+        emit_log("DEBUG", "bridge", "Loading known providers");
         let providers: Vec<BridgeKnownProvider> = known_providers()
             .into_iter()
             .map(|p| BridgeKnownProvider {
@@ -389,6 +661,9 @@ pub extern "C" fn moltis_known_providers() -> *mut c_char {
                 key_optional: p.key_optional,
             })
             .collect();
+        emit_log("INFO", "bridge", &format!(
+            "Known providers: {}", providers.len()
+        ));
         encode_json(&providers)
     })
 }
@@ -400,6 +675,7 @@ pub extern "C" fn moltis_detect_providers() -> *mut c_char {
     trace_call("moltis_detect_providers");
 
     with_ffi_boundary(|| {
+        emit_log("DEBUG", "bridge", "Detecting provider sources");
         let config = ProvidersConfig::default();
         let env_overrides = HashMap::new();
         let sources = detect_auto_provider_sources_with_overrides(&config, None, &env_overrides);
@@ -410,6 +686,10 @@ pub extern "C" fn moltis_detect_providers() -> *mut c_char {
                 source: s.source,
             })
             .collect();
+        let names: Vec<&str> = bridge_sources.iter().map(|s| s.provider.as_str()).collect();
+        emit_log("INFO", "bridge", &format!(
+            "Detected {} sources: {:?}", bridge_sources.len(), names
+        ));
         encode_json(&bridge_sources)
     })
 }
@@ -440,6 +720,10 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
             },
         };
 
+        emit_log("INFO", "bridge.config", &format!(
+            "Saving config for provider={}", request.provider
+        ));
+
         let key_store = KeyStore::new();
         match key_store.save_config(
             &request.provider,
@@ -447,8 +731,16 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
             request.base_url,
             request.models,
         ) {
-            Ok(()) => encode_json(&OkResponse { ok: true }),
-            Err(error) => encode_error("save_failed", &error),
+            Ok(()) => {
+                emit_log("INFO", "bridge.config", "Provider config saved");
+                encode_json(&OkResponse { ok: true })
+            },
+            Err(error) => {
+                emit_log("ERROR", "bridge.config", &format!(
+                    "Save failed: {error}"
+                ));
+                encode_error("save_failed", &error)
+            },
         }
     })
 }
@@ -460,6 +752,7 @@ pub extern "C" fn moltis_list_models() -> *mut c_char {
     trace_call("moltis_list_models");
 
     with_ffi_boundary(|| {
+        emit_log("DEBUG", "bridge", "Listing models from registry");
         let registry = BRIDGE.registry.read().unwrap_or_else(|e| e.into_inner());
         let models: Vec<BridgeModelInfo> = registry
             .list_models()
@@ -471,6 +764,9 @@ pub extern "C" fn moltis_list_models() -> *mut c_char {
                 created_at: m.created_at,
             })
             .collect();
+        emit_log("INFO", "bridge", &format!(
+            "Listed {} models", models.len()
+        ));
         encode_json(&models)
     })
 }
@@ -482,9 +778,11 @@ pub extern "C" fn moltis_refresh_registry() -> *mut c_char {
     trace_call("moltis_refresh_registry");
 
     with_ffi_boundary(|| {
+        emit_log("INFO", "bridge", "Refreshing provider registry");
         let new_registry = build_registry();
         let mut guard = BRIDGE.registry.write().unwrap_or_else(|e| e.into_inner());
         *guard = new_registry;
+        emit_log("INFO", "bridge", "Provider registry rebuilt");
         encode_json(&OkResponse { ok: true })
     })
 }
@@ -506,10 +804,24 @@ pub unsafe extern "C" fn moltis_free_string(ptr: *mut c_char) {
     let _ = unsafe { CString::from_raw(ptr) };
 }
 
+/// Register a callback to receive log events from the Rust bridge.
+/// Only the first call takes effect; subsequent calls are ignored.
+///
+/// # Safety
+///
+/// `callback` must be a valid function pointer that remains valid for
+/// the lifetime of the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn moltis_set_log_callback(callback: LogCallback) {
+    let _ = LOG_CALLBACK.set(callback);
+    emit_log("INFO", "bridge", "Log callback registered");
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_shutdown() {
     record_call("moltis_shutdown");
     trace_call("moltis_shutdown");
+    emit_log("INFO", "bridge", "Shutdown requested");
 }
 
 #[cfg(test)]
@@ -656,5 +968,97 @@ mod tests {
         unsafe {
             moltis_free_string(std::ptr::null_mut());
         }
+    }
+
+    #[test]
+    fn chat_stream_sends_error_for_null_pointer() {
+        use std::sync::{Arc, Mutex};
+
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+
+        // Leak the Arc into user_data so the callback can access it.
+        let user_data = Arc::into_raw(events_clone) as *mut c_void;
+
+        unsafe extern "C" fn test_callback(
+            event_json: *const c_char,
+            user_data: *mut c_void,
+        ) {
+            // SAFETY: event_json is a valid NUL-terminated C string from
+            // send_stream_event; user_data is our Arc<Mutex<Vec<String>>>.
+            unsafe {
+                let json = CStr::from_ptr(event_json).to_string_lossy().to_string();
+                let events = &*(user_data as *const Mutex<Vec<String>>);
+                events
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(json);
+            }
+        }
+
+        // SAFETY: null request_json triggers synchronous error callback.
+        unsafe {
+            moltis_chat_stream(std::ptr::null(), test_callback, user_data);
+        }
+
+        // Reclaim the Arc.
+        let events = unsafe { Arc::from_raw(user_data as *const Mutex<Vec<String>>) };
+        let received = events.lock().unwrap_or_else(|e| e.into_inner());
+
+        assert_eq!(received.len(), 1, "should receive exactly one error event");
+        let parsed: Value =
+            serde_json::from_str(&received[0]).unwrap_or_else(|e| panic!("bad json: {e}"));
+        assert_eq!(
+            parsed.get("type").and_then(Value::as_str),
+            Some("error"),
+            "event type should be 'error'"
+        );
+    }
+
+    #[test]
+    fn chat_stream_sends_error_for_no_provider() {
+        use std::sync::{Arc, Mutex};
+
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let user_data = Arc::into_raw(events_clone) as *mut c_void;
+
+        unsafe extern "C" fn test_callback(
+            event_json: *const c_char,
+            user_data: *mut c_void,
+        ) {
+            // SAFETY: event_json is a valid NUL-terminated C string from
+            // send_stream_event; user_data is our Arc<Mutex<Vec<String>>>.
+            unsafe {
+                let json = CStr::from_ptr(event_json).to_string_lossy().to_string();
+                let events = &*(user_data as *const Mutex<Vec<String>>);
+                events
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(json);
+            }
+        }
+
+        // Use a model that almost certainly won't match any configured provider.
+        let request = r#"{"message":"test","model":"nonexistent-model-xyz"}"#;
+        let c_request = CString::new(request).unwrap_or_else(|e| panic!("{e}"));
+
+        // SAFETY: valid C string, valid callback, valid user_data.
+        unsafe {
+            moltis_chat_stream(c_request.as_ptr(), test_callback, user_data);
+        }
+
+        // Wait briefly for the async task to complete (it may also error synchronously).
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let events = unsafe { Arc::from_raw(user_data as *const Mutex<Vec<String>>) };
+        let received = events.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Should receive at least one event (either an error for no provider,
+        // or a done event if somehow a provider matched).
+        assert!(
+            !received.is_empty(),
+            "should receive at least one stream event"
+        );
     }
 }

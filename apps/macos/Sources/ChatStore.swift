@@ -6,21 +6,25 @@ final class ChatStore: ObservableObject {
     @Published var selectedSessionID: UUID?
     @Published var draftMessage = ""
     @Published var isSending = false
+    @Published private(set) var streamingMessageID: UUID?
     @Published var statusText = "Ready"
     @Published var bridgeSummary = "Bridge metadata not loaded"
 
     private let client: MoltisClient
     let settings: AppSettings
     let providerStore: ProviderStore
+    private let logStore: LogStore?
 
     init(
         client: MoltisClient = MoltisClient(),
         settings: AppSettings,
-        providerStore: ProviderStore
+        providerStore: ProviderStore,
+        logStore: LogStore? = nil
     ) {
         self.client = client
         self.settings = settings
         self.providerStore = providerStore
+        self.logStore = logStore
 
         let initialSession = ChatSession(
             title: "Session 1",
@@ -52,6 +56,7 @@ final class ChatStore: ObservableObject {
     }
 
     func loadVersion() {
+        logStore?.log(.info, target: "ChatStore", message: "Loading bridge version")
         do {
             let version = try client.version()
             bridgeSummary = "Bridge \(version.bridgeVersion) - Moltis \(version.moltisVersion)"
@@ -61,10 +66,16 @@ final class ChatStore: ObservableObject {
                 role: .system,
                 text: "Using config dir: \(version.configDir)"
             )
+            logStore?.log(.info, target: "ChatStore", message: "Bridge loaded", fields: [
+                "bridge": version.bridgeVersion,
+                "moltis": version.moltisVersion,
+                "configDir": version.configDir
+            ])
         } catch {
             let text = error.localizedDescription
             statusText = text
             appendMessage(role: .error, text: text)
+            logStore?.log(.error, target: "ChatStore", message: "Failed to load version: \(text)")
         }
     }
 
@@ -86,61 +97,79 @@ final class ChatStore: ObservableObject {
         updateSessionTitleIfNeeded(with: trimmed)
         draftMessage = ""
 
-        let rawConfig = settings.configurationToml.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        let configToml: String? = rawConfig.isEmpty ? nil : rawConfig
+        // Create a streaming placeholder message
+        let placeholderID = UUID()
+        appendMessage(role: .assistant, text: "", id: placeholderID, isStreaming: true)
+        streamingMessageID = placeholderID
 
         isSending = true
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let result: Result<BridgeChatPayload, Error>
-            do {
-                let payload = try self.client.chat(
-                    message: trimmed,
-                    model: self.providerStore.selectedModelID,
-                    configToml: configToml
-                )
-                result = .success(payload)
-            } catch {
-                result = .failure(error)
-            }
+        statusText = "Thinking..."
 
+        logStore?.log(.info, target: "ChatStore", message: "Sending message", fields: [
+            "model": providerStore.selectedModelID ?? "default",
+            "length": "\(trimmed.count)"
+        ])
+
+        client.chatStream(
+            message: trimmed,
+            model: providerStore.selectedModelID
+        ) { [weak self] event in
             DispatchQueue.main.async {
-                self.handleChatResult(result)
+                guard let self else { return }
+                self.handleStreamEvent(event, placeholderID: placeholderID)
             }
         }
     }
 
-    private func handleChatResult(_ result: Result<BridgeChatPayload, Error>) {
-        switch result {
-        case let .success(payload):
-            settings.environmentConfigDir = payload.configDir
-            settings.identitySoul = payload.defaultSoul
+    private func handleStreamEvent(_ event: StreamEventType, placeholderID: UUID) {
+        guard let index = selectedSessionIndex(),
+              let msgIndex = sessions[index].messages.firstIndex(where: {
+                  $0.id == placeholderID
+              })
+        else { return }
 
-            if let model = payload.model, let provider = payload.provider {
+        switch event {
+        case let .delta(text):
+            sessions[index].messages[msgIndex].text += text
+
+        case let .done(inputTokens, outputTokens, durationMs, model, provider):
+            sessions[index].messages[msgIndex].isStreaming = false
+            sessions[index].messages[msgIndex].inputTokens = inputTokens
+            sessions[index].messages[msgIndex].outputTokens = outputTokens
+            sessions[index].messages[msgIndex].durationMs = durationMs
+            sessions[index].messages[msgIndex].model = model
+            sessions[index].messages[msgIndex].provider = provider
+            sessions[index].updatedAt = Date()
+
+            if let model, let provider {
                 settings.llmModel = model
                 settings.llmProvider = provider
             }
 
-            appendMessage(
-                role: .assistant,
-                text: payload.reply,
-                provider: payload.provider,
-                model: payload.model,
-                inputTokens: payload.inputTokens,
-                outputTokens: payload.outputTokens,
-                durationMs: payload.durationMs
-            )
-            appendValidationSummary(payload.validation)
-            statusText = "Received response via \(payload.provider ?? "unknown")."
+            streamingMessageID = nil
+            isSending = false
+            statusText = "Received response via \(provider ?? "unknown")."
 
-        case let .failure(error):
-            let text = error.localizedDescription
-            statusText = text
-            appendMessage(role: .error, text: text)
+            logStore?.log(.info, target: "ChatStore", message: "Stream completed", fields: [
+                "provider": provider ?? "?",
+                "model": model ?? "?",
+                "inputTokens": "\(inputTokens)",
+                "outputTokens": "\(outputTokens)",
+                "durationMs": "\(durationMs)"
+            ])
+
+        case let .error(message):
+            sessions[index].messages[msgIndex].isStreaming = false
+            sessions[index].messages[msgIndex].text = message
+            sessions[index].messages[msgIndex].role = .error
+            sessions[index].updatedAt = Date()
+
+            streamingMessageID = nil
+            isSending = false
+            statusText = message
+
+            logStore?.log(.error, target: "ChatStore", message: "Stream error: \(message)")
         }
-        isSending = false
     }
 
     private func appendValidationSummary(_ validation: BridgeValidationPayload?) {
@@ -158,6 +187,8 @@ final class ChatStore: ObservableObject {
     private func appendMessage(
         role: ChatMessageRole,
         text: String,
+        id: UUID = UUID(),
+        isStreaming: Bool = false,
         provider: String? = nil,
         model: String? = nil,
         inputTokens: UInt32? = nil,
@@ -170,8 +201,10 @@ final class ChatStore: ObservableObject {
 
         var session = sessions[index]
         session.messages.append(ChatMessage(
+            id: id,
             role: role,
             text: text,
+            isStreaming: isStreaming,
             provider: provider,
             model: model,
             inputTokens: inputTokens,

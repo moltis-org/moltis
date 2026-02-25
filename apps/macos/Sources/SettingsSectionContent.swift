@@ -6,6 +6,7 @@ struct SettingsSectionContent: View {
     let section: SettingsSection
     @ObservedObject var settings: AppSettings
     @ObservedObject var providerStore: ProviderStore
+    var logStore: LogStore?
 
     var body: some View {
         switch section {
@@ -267,14 +268,16 @@ private extension SettingsSectionContent {
         }
     }
 
+    @ViewBuilder
     var logsPane: some View {
-        Group {
-            Picker("Log level", selection: $settings.logLevel) {
-                ForEach(settings.logLevels, id: \.self) { level in
-                    Text(level.uppercased()).tag(level)
-                }
-            }
-            Toggle("Persist logs to disk", isOn: $settings.persistLogs)
+        if let logStore {
+            LogsPane(logStore: logStore)
+        } else {
+            SettingsEmptyState(
+                icon: "doc.plaintext",
+                title: "Logs Unavailable",
+                subtitle: "Log store not connected"
+            )
         }
     }
 

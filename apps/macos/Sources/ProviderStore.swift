@@ -37,31 +37,49 @@ final class ProviderStore: ObservableObject {
     @Published var voiceApiKeyDraft = ""
 
     private let client: MoltisClient
+    private let logStore: LogStore?
 
-    init(client: MoltisClient = MoltisClient()) {
+    init(client: MoltisClient = MoltisClient(), logStore: LogStore? = nil) {
         self.client = client
+        self.logStore = logStore
+        loadAll()
     }
 
     // MARK: - Data loading
 
     func loadKnownProviders() {
+        logStore?.log(.debug, target: "ProviderStore", message: "Loading known providers")
         do {
             knownProviders = try client.knownProviders()
+            logStore?.log(.info, target: "ProviderStore", message: "Loaded known providers", fields: [
+                "count": "\(knownProviders.count)"
+            ])
         } catch {
             knownProviders = []
+            let msg = "Failed to load providers: \(error.localizedDescription)"
+            logStore?.log(.error, target: "ProviderStore", message: msg)
         }
     }
 
     func loadDetectedSources() {
+        logStore?.log(.debug, target: "ProviderStore", message: "Detecting sources")
         do {
             detectedSources = try client.detectProviders()
+            let providers = detectedSources.map(\.provider).joined(separator: ", ")
+            logStore?.log(.info, target: "ProviderStore", message: "Detected sources", fields: [
+                "count": "\(detectedSources.count)",
+                "providers": providers
+            ])
         } catch {
             detectedSources = []
+            let msg = "Failed to detect sources: \(error.localizedDescription)"
+            logStore?.log(.error, target: "ProviderStore", message: msg)
         }
     }
 
     func loadModels() {
         isLoadingModels = true
+        logStore?.log(.debug, target: "ProviderStore", message: "Loading models")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let result: [BridgeModelInfo]
@@ -69,10 +87,17 @@ final class ProviderStore: ObservableObject {
                 result = try self.client.listModels()
             } catch {
                 result = []
+                DispatchQueue.main.async {
+                    let msg = "Failed to load models: \(error.localizedDescription)"
+                    self.logStore?.log(.error, target: "ProviderStore", message: msg)
+                }
             }
             DispatchQueue.main.async {
                 self.models = result
                 self.isLoadingModels = false
+                self.logStore?.log(.info, target: "ProviderStore", message: "Loaded models", fields: [
+                    "count": "\(result.count)"
+                ])
             }
         }
     }
@@ -92,6 +117,12 @@ final class ProviderStore: ObservableObject {
         let url = baseUrlDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let modelList: [String]? = selectedModelID.map { [$0] }
 
+        logStore?.log(.info, target: "ProviderStore", message: "Saving provider config", fields: [
+            "provider": name,
+            "hasKey": key.isEmpty ? "false" : "true",
+            "hasUrl": url.isEmpty ? "false" : "true"
+        ])
+
         try client.saveProviderConfig(
             provider: name,
             apiKey: key.isEmpty ? nil : key,
@@ -100,6 +131,7 @@ final class ProviderStore: ObservableObject {
         )
 
         try client.refreshRegistry()
+        logStore?.log(.info, target: "ProviderStore", message: "Registry refreshed after save")
         loadDetectedSources()
         loadModels()
     }

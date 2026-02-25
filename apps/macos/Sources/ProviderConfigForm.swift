@@ -81,6 +81,23 @@ struct ProviderConfigForm: View {
                         .tag(Optional(model.id))
                 }
             }
+
+            // Alternative searchable pickers kept for reference:
+            //
+            // let options = providerModels.map { (id: $0.id, display: $0.displayName) }
+            //
+            // SearchablePopoverPicker(
+            //     label: "Model",
+            //     selection: $providerStore.selectedModelID,
+            //     options: options
+            // )
+            //
+            // SearchableComboBoxPicker(
+            //     label: "Model",
+            //     selection: $providerStore.selectedModelID,
+            //     options: options
+            // )
+            // .frame(height: 24)
         } else if providerStore.isLoadingModels {
             HStack(spacing: 6) {
                 Text("Model")

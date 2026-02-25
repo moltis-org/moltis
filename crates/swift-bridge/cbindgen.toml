@@ -13,6 +13,8 @@ clean = true
 include = [
   "moltis_version",
   "moltis_chat_json",
+  "moltis_chat_stream",
+  "moltis_set_log_callback",
   "moltis_free_string",
   "moltis_shutdown",
 ]
