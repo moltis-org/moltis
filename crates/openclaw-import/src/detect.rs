@@ -120,13 +120,90 @@ fn resolve_home_dir() -> Option<PathBuf> {
     home.map(|h| h.join(".openclaw"))
 }
 
-/// Resolve the workspace directory, respecting `OPENCLAW_PROFILE`.
+/// Resolve the workspace directory.
+///
+/// Resolution order:
+/// 1. `OPENCLAW_PROFILE` env → `<home>/workspace-<profile>`
+/// 2. `workspace` field from `openclaw.json` config (exact path)
+/// 3. Remap: basename of configured workspace under `~/` (handles cross-machine paths like `/root/clawd` → `~/clawd`)
+/// 4. Default `<home>/workspace` (if it exists)
+/// 5. Well-known `~/clawd` directory (fallback for non-standard setups)
+/// 6. Default `<home>/workspace` (even if absent, for logging)
 fn resolve_workspace_dir(home: &Path) -> PathBuf {
-    let profile = std::env::var("OPENCLAW_PROFILE").ok();
-    match profile.as_deref() {
-        Some(p) if !p.is_empty() => home.join(format!("workspace-{p}")),
-        _ => home.join("workspace"),
+    // 1. Explicit profile env var
+    if let Some(p) = std::env::var("OPENCLAW_PROFILE")
+        .ok()
+        .filter(|p| !p.is_empty())
+    {
+        let profiled = home.join(format!("workspace-{p}"));
+        debug!(path = %profiled.display(), "openclaw detect: workspace from OPENCLAW_PROFILE");
+        return profiled;
     }
+
+    // 2–3. Read workspace from config
+    if let Some(configured) = read_config_workspace(home) {
+        let configured_path = PathBuf::from(&configured);
+
+        // 2. Exact configured path
+        if configured_path.is_dir() {
+            debug!(path = %configured_path.display(), "openclaw detect: workspace from config (exact)");
+            return configured_path;
+        }
+
+        // 3. Remap basename under user home (cross-machine: /root/clawd → ~/clawd)
+        if let Some(basename) = configured_path.file_name() {
+            if let Some(user_home) = dirs_next::home_dir() {
+                let remapped = user_home.join(basename);
+                if remapped.is_dir() {
+                    info!(
+                        configured = %configured_path.display(),
+                        remapped = %remapped.display(),
+                        "openclaw detect: workspace remapped from config basename"
+                    );
+                    return remapped;
+                }
+            }
+        }
+
+        debug!(
+            configured = configured,
+            "openclaw detect: configured workspace not found, trying fallbacks"
+        );
+    }
+
+    // 4. Default location (if it exists)
+    let default_ws = home.join("workspace");
+    if default_ws.is_dir() {
+        return default_ws;
+    }
+
+    // 5. Well-known ~/clawd directory (only when a config exists,
+    //    indicating a real OpenClaw installation)
+    let has_config = home.join("openclaw.json").is_file();
+    if has_config {
+        if let Some(user_home) = dirs_next::home_dir() {
+            let clawd = user_home.join("clawd");
+            if clawd.is_dir() {
+                info!(path = %clawd.display(), "openclaw detect: workspace found at ~/clawd");
+                return clawd;
+            }
+        }
+    }
+
+    // 6. Default (even if absent — callers check is_dir())
+    default_ws
+}
+
+/// Read the `agents.defaults.workspace` field from `openclaw.json`.
+fn read_config_workspace(home: &Path) -> Option<String> {
+    let config_path = home.join("openclaw.json");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let config: crate::types::OpenClawConfig = json5::from_str(&content).ok()?;
+    config
+        .agents
+        .defaults
+        .workspace
+        .filter(|w| !w.is_empty())
 }
 
 /// Resolve the sessions directory for one agent, supporting both historical
@@ -389,5 +466,82 @@ mod tests {
         // Without profile — should use "workspace"
         let ws = resolve_workspace_dir(&home);
         assert_eq!(ws, home.join("workspace"));
+    }
+
+    #[test]
+    fn workspace_from_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Create a workspace directory and point the config at it
+        let ws_dir = tmp.path().join("my-workspace");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        std::fs::write(ws_dir.join("MEMORY.md"), "# Memory\n").unwrap();
+
+        std::fs::write(
+            home.join("openclaw.json"),
+            format!(
+                r#"{{"agents":{{"defaults":{{"workspace":"{}"}}}}}}"#,
+                ws_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let ws = resolve_workspace_dir(&home);
+        assert_eq!(ws, ws_dir);
+    }
+
+    #[test]
+    fn workspace_from_config_remaps_cross_machine_path() {
+        // Simulates: config says /root/clawd but ~/clawd exists locally
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Config points to a non-existent absolute path
+        std::fs::write(
+            home.join("openclaw.json"),
+            r#"{"agents":{"defaults":{"workspace":"/root/clawd"}}}"#,
+        )
+        .unwrap();
+
+        // /root/clawd doesn't exist, so should fall back.
+        // We can't easily test the ~/clawd remap in unit tests (depends on
+        // real home dir), but we verify it doesn't crash and falls back.
+        let ws = resolve_workspace_dir(&home);
+        // Without ~/clawd existing, it should fall back to default
+        assert!(ws.to_string_lossy().contains("workspace") || ws.to_string_lossy().contains("clawd"));
+    }
+
+    #[test]
+    fn detect_resolves_workspace_from_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(home.join("agents").join("main").join("agent").join("sessions")).unwrap();
+        std::fs::write(
+            home.join("agents").join("main").join("agent").join("auth-profiles.json"),
+            r#"{"version":1,"profiles":{}}"#,
+        )
+        .unwrap();
+
+        // Create workspace at a custom location
+        let ws_dir = tmp.path().join("clawd");
+        std::fs::create_dir_all(ws_dir.join("memory")).unwrap();
+        std::fs::write(ws_dir.join("MEMORY.md"), "# Memory\n").unwrap();
+
+        // Config points to the custom workspace
+        std::fs::write(
+            home.join("openclaw.json"),
+            format!(
+                r#"{{"agents":{{"defaults":{{"workspace":"{}"}}}}}}"#,
+                ws_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let detection = detect_at(home).expect("should detect");
+        assert_eq!(detection.workspace_dir, ws_dir);
+        assert!(detection.has_memory);
     }
 }

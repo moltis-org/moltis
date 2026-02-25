@@ -219,13 +219,14 @@ fn synthesize_from_detection(
 
 /// Resolve the workspace directory for a specific agent.
 ///
-/// Priority: configured workspace path → agent's `agent/` subdir → detection workspace
+/// Priority: configured workspace path → remap basename under `~/` →
+/// agent's `agent/` subdir → detection workspace
 fn resolve_agent_workspace(
     configured_workspace: Option<&str>,
     agent_id: &str,
     detection: &OpenClawDetection,
 ) -> Option<PathBuf> {
-    // 1. Configured workspace path
+    // 1. Configured workspace path (exact)
     if let Some(ws) = configured_workspace {
         let path = if PathBuf::from(ws).is_absolute() {
             PathBuf::from(ws)
@@ -234,6 +235,23 @@ fn resolve_agent_workspace(
         };
         if path.is_dir() {
             return Some(path);
+        }
+
+        // 1b. Remap: basename under ~/ (cross-machine, e.g. /root/clawd → ~/clawd)
+        let abs_path = PathBuf::from(ws);
+        if let Some(basename) = abs_path.file_name() {
+            if let Some(user_home) = dirs_next::home_dir() {
+                let remapped = user_home.join(basename);
+                if remapped.is_dir() {
+                    debug!(
+                        configured = ws,
+                        remapped = %remapped.display(),
+                        agent_id,
+                        "openclaw agents: workspace remapped from config basename"
+                    );
+                    return Some(remapped);
+                }
+            }
         }
     }
 
