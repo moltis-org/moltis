@@ -28,9 +28,12 @@ pub use {
     },
     schema::{
         AgentIdentity, AuthConfig, CalDavAccountConfig, CalDavConfig, ChatConfig, GeoLocation,
-        MessageQueueMode, MoltisConfig, ResolvedIdentity, Timezone, UserProfile, VoiceConfig,
-        VoiceElevenLabsConfig, VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig,
-        VoiceWhisperConfig,
+        MemoryBootstrapSectionOptions, MessageQueueMode, MoltisConfig, PromptProfileConfig,
+        PromptProfileMatch, PromptProfileOverride, PromptProfilesConfig, PromptSectionId,
+        PromptSectionOptions, ResolvedIdentity, RuntimeDatetimeTailMode,
+        RuntimeDatetimeTailSectionOptions, RuntimeSectionOptions, Timezone, UserDetailsMode,
+        UserDetailsSectionOptions, UserProfile, VoiceConfig, VoiceElevenLabsConfig,
+        VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceWhisperConfig,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };

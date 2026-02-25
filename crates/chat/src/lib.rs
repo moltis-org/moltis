@@ -28,8 +28,8 @@ use {
         multimodal::parse_data_uri,
         prompt::{
             PromptHostRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
-            VOICE_REPLY_SUFFIX, build_system_prompt_minimal_runtime,
-            build_system_prompt_with_session_runtime,
+            build_system_prompt_minimal_with_profile, build_system_prompt_with_profile,
+            default_prompt_template, prompt_template_variables,
         },
         runner::{RunnerEvent, run_agent_loop_streaming},
         tool_registry::{AgentTool, ToolRegistry},
@@ -416,6 +416,309 @@ pub fn model_matches_allowlist_with_provider(
     model_matches_allowlist(model, patterns)
 }
 
+#[derive(Debug, Clone)]
+struct PromptProfileResolution {
+    name: String,
+    profile: moltis_config::PromptProfileConfig,
+}
+
+fn prompt_glob_matches(pattern: &str, text: &str) -> bool {
+    let trimmed = pattern.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let pattern_bytes = trimmed.as_bytes();
+    let text_bytes = text.as_bytes();
+    let mut pattern_index = 0usize;
+    let mut text_index = 0usize;
+    let mut star_index: Option<usize> = None;
+    let mut backtrack_text_index = 0usize;
+
+    while text_index < text_bytes.len() {
+        if pattern_index < pattern_bytes.len()
+            && (pattern_bytes[pattern_index] == b'?'
+                || pattern_bytes[pattern_index].eq_ignore_ascii_case(&text_bytes[text_index]))
+        {
+            pattern_index += 1;
+            text_index += 1;
+            continue;
+        }
+
+        if pattern_index < pattern_bytes.len() && pattern_bytes[pattern_index] == b'*' {
+            star_index = Some(pattern_index);
+            backtrack_text_index = text_index;
+            pattern_index += 1;
+            continue;
+        }
+
+        if let Some(star) = star_index {
+            pattern_index = star + 1;
+            backtrack_text_index += 1;
+            text_index = backtrack_text_index;
+            continue;
+        }
+
+        return false;
+    }
+
+    while pattern_index < pattern_bytes.len() && pattern_bytes[pattern_index] == b'*' {
+        pattern_index += 1;
+    }
+
+    pattern_index == pattern_bytes.len()
+}
+
+fn prompt_profile_override_matches(
+    rule: &moltis_config::PromptProfileOverride,
+    provider: &str,
+    model_full: &str,
+    model_raw: &str,
+    provider_model: &str,
+) -> bool {
+    let provider_matches = rule
+        .effective_provider()
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .is_none_or(|pattern| prompt_glob_matches(&pattern.to_ascii_lowercase(), provider));
+    if !provider_matches {
+        return false;
+    }
+
+    rule.effective_model()
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .is_none_or(|pattern| {
+            let normalized = pattern.to_ascii_lowercase();
+            prompt_glob_matches(&normalized, model_full)
+                || prompt_glob_matches(&normalized, model_raw)
+                || prompt_glob_matches(&normalized, provider_model)
+        })
+}
+
+fn resolve_prompt_profile(
+    config: &moltis_config::MoltisConfig,
+    provider_name: &str,
+    model_id: &str,
+) -> PromptProfileResolution {
+    let profiles = &config.prompt_profiles;
+    let provider = provider_name.trim().to_ascii_lowercase();
+    let model_full = model_id.trim().to_ascii_lowercase();
+    let model_raw = raw_model_id(model_id).trim().to_ascii_lowercase();
+    let provider_model = format!("{provider}/{model_raw}");
+
+    for rule in &profiles.overrides {
+        if !prompt_profile_override_matches(
+            rule,
+            &provider,
+            &model_full,
+            &model_raw,
+            &provider_model,
+        ) {
+            continue;
+        }
+
+        if let Some(profile) = profiles
+            .profiles
+            .iter()
+            .find(|profile| profile.name == rule.profile)
+            .cloned()
+        {
+            return PromptProfileResolution {
+                name: profile.name.clone(),
+                profile,
+            };
+        }
+
+        warn!(
+            profile = %rule.profile,
+            provider = provider_name,
+            model = model_id,
+            "prompt profile override references an unknown profile"
+        );
+    }
+
+    let default_profile = profiles
+        .profiles
+        .iter()
+        .find(|profile| profile.name == profiles.default)
+        .cloned()
+        .or_else(|| profiles.profiles.first().cloned())
+        .unwrap_or_default();
+
+    PromptProfileResolution {
+        name: default_profile.name.clone(),
+        profile: default_profile,
+    }
+}
+
+fn default_prompt_profile_resolution(
+    config: &moltis_config::MoltisConfig,
+) -> PromptProfileResolution {
+    let default_profile = config
+        .prompt_profiles
+        .profiles
+        .iter()
+        .find(|profile| profile.name == config.prompt_profiles.default)
+        .cloned()
+        .or_else(|| config.prompt_profiles.profiles.first().cloned())
+        .unwrap_or_default();
+
+    PromptProfileResolution {
+        name: default_profile.name.clone(),
+        profile: default_profile,
+    }
+}
+
+fn resolve_prompt_profile_by_name_or_default(
+    config: &moltis_config::MoltisConfig,
+    profile_name: &str,
+) -> PromptProfileResolution {
+    if let Some(profile) = config
+        .prompt_profiles
+        .profiles
+        .iter()
+        .find(|profile| profile.name == profile_name)
+        .cloned()
+    {
+        return PromptProfileResolution {
+            name: profile.name.clone(),
+            profile,
+        };
+    }
+
+    let mut fallback = default_prompt_profile_resolution(config).profile;
+    fallback.name = profile_name.to_string();
+    PromptProfileResolution {
+        name: profile_name.to_string(),
+        profile: fallback,
+    }
+}
+
+pub fn parse_optional_trimmed_string_param(
+    params: &Value,
+    key: &str,
+) -> Result<Option<Option<String>>, String> {
+    let Some(value) = params.get(key) else {
+        return Ok(None);
+    };
+
+    if value.is_null() {
+        return Ok(Some(None));
+    }
+
+    let Some(raw) = value.as_str() else {
+        return Err(format!("'{key}' must be a string or null"));
+    };
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        Ok(Some(None))
+    } else {
+        Ok(Some(Some(raw.to_string())))
+    }
+}
+
+fn parse_optional_profile_name_param(params: &Value, key: &str) -> Result<Option<String>, String> {
+    let Some(value) = params.get(key) else {
+        return Ok(None);
+    };
+
+    let Some(raw) = value.as_str() else {
+        return Err(format!("'{key}' must be a string"));
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_string()))
+    }
+}
+
+fn prompt_template_payload(profile: &moltis_config::PromptProfileConfig) -> Value {
+    let variables: Vec<Value> = prompt_template_variables()
+        .iter()
+        .map(|variable| {
+            serde_json::json!({
+                "name": variable.name,
+                "description": variable.description,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "promptTemplate": profile.prompt_template.clone(),
+        "promptTailTemplate": profile.prompt_tail_template.clone(),
+        "defaultPromptTemplate": default_prompt_template(),
+        "variables": variables,
+    })
+}
+
+/// Apply section_options fields from a JSON object to the given options struct.
+pub fn apply_section_options(options: &mut moltis_config::PromptSectionOptions, value: &Value) {
+    if let Some(runtime) = value.get("runtime") {
+        if let Some(v) = runtime.get("include_host_fields").and_then(|v| v.as_bool()) {
+            options.runtime.include_host_fields = v;
+        }
+        if let Some(v) = runtime
+            .get("include_sandbox_fields")
+            .and_then(|v| v.as_bool())
+        {
+            options.runtime.include_sandbox_fields = v;
+        }
+        if let Some(v) = runtime
+            .get("include_network_sudo_fields")
+            .and_then(|v| v.as_bool())
+        {
+            options.runtime.include_network_sudo_fields = v;
+        }
+    }
+    if let Some(user_details) = value.get("user_details")
+        && let Some(mode_str) = user_details.get("mode").and_then(|v| v.as_str())
+    {
+        match mode_str {
+            "name_only" => options.user_details.mode = moltis_config::UserDetailsMode::NameOnly,
+            "full_profile" => {
+                options.user_details.mode = moltis_config::UserDetailsMode::FullProfile;
+            },
+            _ => {},
+        }
+    }
+    if let Some(memory) = value.get("memory_bootstrap") {
+        if let Some(v) = memory
+            .get("include_memory_md_snapshot")
+            .and_then(|v| v.as_bool())
+        {
+            options.memory_bootstrap.include_memory_md_snapshot = v;
+        }
+        if let Some(v) = memory
+            .get("force_memory_search_guidance")
+            .and_then(|v| v.as_bool())
+        {
+            options.memory_bootstrap.force_memory_search_guidance = v;
+        }
+    }
+    if let Some(tail) = value.get("runtime_datetime_tail")
+        && let Some(mode_str) = tail.get("mode").and_then(|v| v.as_str())
+    {
+        match mode_str {
+            "datetime" => {
+                options.runtime_datetime_tail.mode =
+                    moltis_config::RuntimeDatetimeTailMode::Datetime;
+            },
+            "date_only" => {
+                options.runtime_datetime_tail.mode =
+                    moltis_config::RuntimeDatetimeTailMode::DateOnly;
+            },
+            "disabled" => {
+                options.runtime_datetime_tail.mode =
+                    moltis_config::RuntimeDatetimeTailMode::Disabled;
+            },
+            _ => {},
+        }
+    }
+}
+
 fn provider_filter_from_params(params: &Value) -> Option<String> {
     params
         .get("provider")
@@ -775,6 +1078,7 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
     ReplyMedium::Text
 }
 
+#[cfg(test)]
 fn runtime_datetime_prompt_tail(runtime_context: Option<&PromptRuntimeContext>) -> Option<String> {
     let runtime = runtime_context?;
     if let Some(time) = runtime
@@ -793,11 +1097,14 @@ fn runtime_datetime_prompt_tail(runtime_context: Option<&PromptRuntimeContext>) 
         .map(|today| format!("\nThe current user date is {today}.\n"))
 }
 
+#[cfg(test)]
 fn apply_voice_reply_suffix(
     system_prompt: String,
     desired_reply_medium: ReplyMedium,
     runtime_context: Option<&PromptRuntimeContext>,
 ) -> String {
+    use moltis_agents::prompt::VOICE_REPLY_SUFFIX;
+
     if desired_reply_medium != ReplyMedium::Voice {
         return system_prompt;
     }
@@ -1082,7 +1389,7 @@ fn load_prompt_persona_for_session(session_entry: Option<&SessionEntry>) -> Prom
 
 async fn build_prompt_runtime_context(
     state: &Arc<dyn ChatRuntime>,
-    provider: &Arc<dyn moltis_agents::model::LlmProvider>,
+    provider: Option<&Arc<dyn moltis_agents::model::LlmProvider>>,
     session_key: &str,
     session_entry: Option<&SessionEntry>,
 ) -> PromptRuntimeContext {
@@ -1144,8 +1451,8 @@ async fn build_prompt_runtime_context(
         arch: Some(std::env::consts::ARCH.to_string()),
         shell: detect_runtime_shell(),
         time: None,
-        provider: Some(provider.name().to_string()),
-        model: Some(provider.id().to_string()),
+        provider: provider.map(|p| p.name().to_string()),
+        model: provider.map(|p| p.id().to_string()),
         session_key: Some(session_key.to_string()),
         data_dir: Some(data_dir_display),
         sudo_non_interactive,
@@ -3066,7 +3373,7 @@ impl ChatService for LiveChatService {
             .unwrap_or(false);
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
-            &provider,
+            Some(&provider),
             &session_key,
             session_entry.as_ref(),
         )
@@ -3564,7 +3871,7 @@ impl ChatService for LiveChatService {
         let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
-            &provider,
+            Some(&provider),
             &session_key,
             session_entry.as_ref(),
         )
@@ -4307,24 +4614,44 @@ impl ChatService for LiveChatService {
             .and_then(|v| v.as_str())
             .map(String::from);
 
+        let preview_mode = params
+            .get("preview_mode")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let preview_profile_name = parse_optional_profile_name_param(&params, "prompt_profile")
+            .map_err(ServiceError::message)?;
+        let prompt_template_override =
+            parse_optional_trimmed_string_param(&params, "prompt_template")
+                .map_err(ServiceError::message)?;
+        let prompt_tail_template_override =
+            parse_optional_trimmed_string_param(&params, "prompt_tail_template")
+                .map_err(ServiceError::message)?;
+
         // Resolve provider.
         let history = self
             .session_store
             .read(&session_key)
             .await
             .unwrap_or_default();
-        let provider = self
-            .resolve_provider(&session_key, &history)
-            .await
-            .map_err(ServiceError::message)?;
-        let native_tools = provider.supports_tools();
+        let provider = match self.resolve_provider(&session_key, &history).await {
+            Ok(provider) => Some(provider),
+            Err(error) => {
+                if preview_mode {
+                    warn!(session = %session_key, error = %error, "raw_prompt preview proceeding without provider");
+                    None
+                } else {
+                    return Err(ServiceError::message(error));
+                }
+            },
+        };
+        let native_tools = provider.as_ref().is_some_and(|p| p.supports_tools());
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
         let persona = load_prompt_persona_for_session(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
-            &provider,
+            provider.as_ref(),
             &session_key,
             session_entry.as_ref(),
         )
@@ -4364,15 +4691,31 @@ impl ChatService for LiveChatService {
                     mcp_disabled,
                 )
             } else {
-                registry_guard.clone_without(&[])
+                ToolRegistry::new()
             }
         };
 
         let tool_count = filtered_registry.list_schemas().len();
+        let mut prompt_profile = if let Some(profile_name) = preview_profile_name.as_deref() {
+            resolve_prompt_profile_by_name_or_default(&persona.config, profile_name)
+        } else if let Some(provider) = provider.as_ref() {
+            resolve_prompt_profile(&persona.config, provider.name(), provider.id())
+        } else {
+            default_prompt_profile_resolution(&persona.config)
+        };
+        if let Some(template) = prompt_template_override {
+            prompt_profile.profile.prompt_template = template;
+        }
+        if let Some(template) = prompt_tail_template_override {
+            prompt_profile.profile.prompt_tail_template = template;
+        }
+        if let Some(opts) = params.get("section_options") {
+            apply_section_options(&mut prompt_profile.profile.section_options, opts);
+        }
 
         // Build the system prompt.
         let system_prompt = if native_tools {
-            build_system_prompt_with_session_runtime(
+            build_system_prompt_with_profile(
                 &filtered_registry,
                 native_tools,
                 project_context.as_deref(),
@@ -4384,9 +4727,11 @@ impl ChatService for LiveChatService {
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
                 persona.memory_text.as_deref(),
+                Some(&prompt_profile.profile),
+                false,
             )
         } else {
-            build_system_prompt_minimal_runtime(
+            build_system_prompt_minimal_with_profile(
                 project_context.as_deref(),
                 Some(&persona.identity),
                 Some(&persona.user),
@@ -4395,16 +4740,22 @@ impl ChatService for LiveChatService {
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
                 persona.memory_text.as_deref(),
+                Some(&prompt_profile.profile),
+                false,
             )
         };
 
         let char_count = system_prompt.len();
+        let estimated_tokens = estimate_text_tokens(&system_prompt);
 
         Ok(serde_json::json!({
             "prompt": system_prompt,
             "charCount": char_count,
+            "estimatedTokens": estimated_tokens,
             "native_tools": native_tools,
             "toolCount": tool_count,
+            "profile": prompt_profile.name,
+            "template": prompt_template_payload(&prompt_profile.profile),
         }))
     }
 
@@ -4443,7 +4794,7 @@ impl ChatService for LiveChatService {
         let persona = load_prompt_persona_for_session(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
-            &provider,
+            Some(&provider),
             &session_key,
             session_entry.as_ref(),
         )
@@ -4486,10 +4837,12 @@ impl ChatService for LiveChatService {
                 registry_guard.clone_without(&[])
             }
         };
+        let prompt_profile =
+            resolve_prompt_profile(&persona.config, provider.name(), provider.id());
 
         // Build the system prompt.
         let system_prompt = if native_tools {
-            build_system_prompt_with_session_runtime(
+            build_system_prompt_with_profile(
                 &filtered_registry,
                 native_tools,
                 project_context.as_deref(),
@@ -4501,9 +4854,11 @@ impl ChatService for LiveChatService {
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
                 persona.memory_text.as_deref(),
+                Some(&prompt_profile.profile),
+                false,
             )
         } else {
-            build_system_prompt_minimal_runtime(
+            build_system_prompt_minimal_with_profile(
                 project_context.as_deref(),
                 Some(&persona.identity),
                 Some(&persona.user),
@@ -4512,6 +4867,8 @@ impl ChatService for LiveChatService {
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
                 persona.memory_text.as_deref(),
+                Some(&prompt_profile.profile),
+                false,
             )
         };
 
@@ -4571,6 +4928,8 @@ impl ChatService for LiveChatService {
             "messageCount": message_count,
             "systemPromptChars": system_prompt_chars,
             "totalChars": total_chars,
+            "profile": prompt_profile.name,
+            "template": prompt_template_payload(&prompt_profile.profile),
         }))
     }
 
@@ -5456,6 +5815,7 @@ async fn run_with_tools(
     let persona = load_prompt_persona_for_agent(agent_id);
 
     let native_tools = provider.supports_tools();
+    let prompt_profile = resolve_prompt_profile(&persona.config, provider.name(), provider.id());
 
     let mut filtered_registry = {
         let registry_guard = tool_registry.read().await;
@@ -5469,10 +5829,8 @@ async fn run_with_tools(
         install_agent_scoped_memory_tools(&mut filtered_registry, manager, agent_id);
     }
 
-    // Use a minimal prompt without tool schemas for providers that don't support tools.
-    // This reduces context size and avoids confusing the LLM with unusable instructions.
     let system_prompt = if native_tools {
-        build_system_prompt_with_session_runtime(
+        build_system_prompt_with_profile(
             &filtered_registry,
             native_tools,
             project_context,
@@ -5484,10 +5842,11 @@ async fn run_with_tools(
             persona.tools_text.as_deref(),
             runtime_context,
             persona.memory_text.as_deref(),
+            Some(&prompt_profile.profile),
+            desired_reply_medium == ReplyMedium::Voice,
         )
     } else {
-        // Minimal prompt without tools for local LLMs
-        build_system_prompt_minimal_runtime(
+        build_system_prompt_minimal_with_profile(
             project_context,
             Some(&persona.identity),
             Some(&persona.user),
@@ -5496,13 +5855,10 @@ async fn run_with_tools(
             persona.tools_text.as_deref(),
             runtime_context,
             persona.memory_text.as_deref(),
+            Some(&prompt_profile.profile),
+            desired_reply_medium == ReplyMedium::Voice,
         )
     };
-
-    // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
-    // Keep the runtime datetime/date sentence as the final prompt line for better cache locality.
-    let system_prompt =
-        apply_voice_reply_suffix(system_prompt, desired_reply_medium, runtime_context);
 
     // Determine sandbox mode for this session.
     let session_is_sandboxed = if let Some(router) = state.sandbox_router() {
@@ -6319,8 +6675,9 @@ async fn run_streaming(
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
+    let prompt_profile = resolve_prompt_profile(&persona.config, provider.name(), provider.id());
 
-    let system_prompt = build_system_prompt_minimal_runtime(
+    let system_prompt = build_system_prompt_minimal_with_profile(
         project_context,
         Some(&persona.identity),
         Some(&persona.user),
@@ -6329,12 +6686,9 @@ async fn run_streaming(
         persona.tools_text.as_deref(),
         runtime_context,
         persona.memory_text.as_deref(),
+        Some(&prompt_profile.profile),
+        desired_reply_medium == ReplyMedium::Voice,
     );
-
-    // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
-    // Keep the runtime datetime/date sentence as the final prompt line for better cache locality.
-    let system_prompt =
-        apply_voice_reply_suffix(system_prompt, desired_reply_medium, runtime_context);
 
     let mut messages: Vec<ChatMessage> = Vec::new();
     messages.push(ChatMessage::system(system_prompt));
@@ -9017,6 +9371,157 @@ mod tests {
 
         let result = serde_json::json!({ "cleared": removed.len() });
         assert_eq!(result["cleared"], 0);
+    }
+
+    fn prompt_profile_named(name: &str) -> moltis_config::PromptProfileConfig {
+        moltis_config::PromptProfileConfig {
+            name: name.to_string(),
+            ..moltis_config::PromptProfileConfig::default()
+        }
+    }
+
+    #[test]
+    fn prompt_glob_matches_supports_star_and_question() {
+        assert!(prompt_glob_matches("gpt-5*", "gpt-5.3"));
+        assert!(prompt_glob_matches("gpt-5?", "gpt-53"));
+        assert!(!prompt_glob_matches("gpt-5?", "gpt-5.3"));
+        assert!(prompt_glob_matches("openai", "openai"));
+        assert!(!prompt_glob_matches("openai", "anthropic"));
+    }
+
+    #[test]
+    fn prompt_profile_resolution_uses_first_matching_override() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.prompt_profiles.default = "balanced-default".to_string();
+        cfg.prompt_profiles.profiles = vec![
+            prompt_profile_named("balanced-default"),
+            prompt_profile_named("openai-gpt5"),
+            prompt_profile_named("fallback"),
+        ];
+        cfg.prompt_profiles.overrides = vec![
+            moltis_config::PromptProfileOverride {
+                provider: Some("openai".to_string()),
+                model: Some("gpt-5*".to_string()),
+                profile: "openai-gpt5".to_string(),
+                ..Default::default()
+            },
+            moltis_config::PromptProfileOverride {
+                provider: Some("openai".to_string()),
+                model: Some("*".to_string()),
+                profile: "fallback".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let resolved = resolve_prompt_profile(&cfg, "openai", "openai::gpt-5.3");
+        assert_eq!(resolved.name, "openai-gpt5");
+    }
+
+    #[test]
+    fn prompt_profile_resolution_falls_back_to_default_profile() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.prompt_profiles.default = "my-default".to_string();
+        cfg.prompt_profiles.profiles = vec![prompt_profile_named("my-default")];
+        cfg.prompt_profiles.overrides = vec![moltis_config::PromptProfileOverride {
+            provider: Some("anthropic".to_string()),
+            model: Some("claude*".to_string()),
+            profile: "claude-profile".to_string(),
+            ..Default::default()
+        }];
+
+        let resolved = resolve_prompt_profile(&cfg, "openai", "openai::gpt-5.2");
+        assert_eq!(resolved.name, "my-default");
+    }
+
+    #[test]
+    fn prompt_template_payload_includes_templates_and_variable_catalog() {
+        let mut profile = prompt_profile_named("templated");
+        profile.prompt_template = Some("{{default_prompt}}".to_string());
+        profile.prompt_tail_template = Some("Tail {{runtime_today}}".to_string());
+
+        let payload = prompt_template_payload(&profile);
+        assert_eq!(payload["promptTemplate"], "{{default_prompt}}");
+        assert_eq!(payload["promptTailTemplate"], "Tail {{runtime_today}}");
+        assert_eq!(
+            payload["defaultPromptTemplate"],
+            "{{default_prefix}}{{stable_sections}}{{dynamic_tail_sections}}"
+        );
+        let variables = payload["variables"].as_array().cloned().unwrap_or_default();
+        assert!(
+            variables
+                .iter()
+                .any(|variable| variable.get("name").and_then(Value::as_str)
+                    == Some("default_prompt"))
+        );
+        assert!(
+            variables
+                .iter()
+                .any(|variable| variable.get("name").and_then(Value::as_str)
+                    == Some("runtime_today"))
+        );
+    }
+
+    #[test]
+    fn resolve_prompt_profile_by_name_uses_named_profile() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.prompt_profiles.default = "balanced-default".to_string();
+        cfg.prompt_profiles.profiles = vec![
+            prompt_profile_named("balanced-default"),
+            prompt_profile_named("minimal"),
+        ];
+
+        let resolved = resolve_prompt_profile_by_name_or_default(&cfg, "minimal");
+        assert_eq!(resolved.name, "minimal");
+        assert_eq!(resolved.profile.name, "minimal");
+    }
+
+    #[test]
+    fn resolve_prompt_profile_by_name_falls_back_to_default_shape_and_keeps_requested_name() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.prompt_profiles.default = "balanced-default".to_string();
+        cfg.prompt_profiles.profiles = vec![prompt_profile_named("balanced-default")];
+
+        let resolved = resolve_prompt_profile_by_name_or_default(&cfg, "custom-preview");
+        assert_eq!(resolved.name, "custom-preview");
+        assert_eq!(resolved.profile.name, "custom-preview");
+        assert_eq!(
+            resolved.profile.enabled_sections,
+            cfg.prompt_profiles.profiles[0].enabled_sections
+        );
+    }
+
+    #[test]
+    fn parse_optional_trimmed_string_param_handles_null_empty_missing_and_invalid() {
+        let params = serde_json::json!({
+            "template": "  {{runtime_today}}  ",
+            "tail": null,
+            "empty": "   ",
+            "invalid": 7,
+            "profile": "  balanced-default  ",
+        });
+
+        assert_eq!(
+            parse_optional_trimmed_string_param(&params, "missing").unwrap_or_default(),
+            None
+        );
+        assert_eq!(
+            parse_optional_trimmed_string_param(&params, "template").unwrap_or_default(),
+            Some(Some("  {{runtime_today}}  ".to_string()))
+        );
+        assert_eq!(
+            parse_optional_trimmed_string_param(&params, "tail").unwrap_or_default(),
+            Some(None)
+        );
+        assert_eq!(
+            parse_optional_trimmed_string_param(&params, "empty").unwrap_or_default(),
+            Some(None)
+        );
+        assert!(parse_optional_trimmed_string_param(&params, "invalid").is_err());
+
+        assert_eq!(
+            parse_optional_profile_name_param(&params, "profile").unwrap_or_default(),
+            Some("balanced-default".to_string())
+        );
     }
 
     #[test]

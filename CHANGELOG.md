@@ -27,6 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Teams channel management in the web UI (add/edit/remove accounts, sender review, session/channel badges)
 - Guided Teams bootstrap tooling via `moltis channels teams bootstrap` plus an in-UI endpoint generator in Settings → Channels
 - Multi-agent personas with per-agent workspaces (`data_dir()/agents/<id>/`), `agents.*` RPC methods, and session-level `agent_id` binding/switching across web + Telegram flows
+- System prompt profile CRUD: create, delete, and set-default profile from the
+  settings UI via new `system_prompt.config.create`, `.delete`, and
+  `.set_default` RPC methods.
+- Section Options panel in system prompt settings: toggle runtime, user details,
+  memory bootstrap, and datetime tail options per profile with live preview.
+- Enabled Sections toggle grid: enable/disable individual prompt sections per
+  profile (required sections are locked).
+- Resolved profile name now shown in the Live Preview header.
+- Template variables list is collapsible (hidden by default).
+- Model overrides UI: route specific providers/models to different prompt
+  profiles using glob patterns. Flattened `[[prompt_profiles.overrides]]` TOML
+  schema (backward compatible) and new `system_prompt.config.overrides.save` RPC.
+
 ### Changed
 
 - **Crate restructure**: gateway crate reduced from ~42K to ~29K lines by extracting `moltis-chat` (chat engine, agent orchestration), `moltis-auth` (password + passkey auth), `moltis-tls` (TLS/HTTPS termination), `moltis-service-traits` (shared service interfaces), and moving share rendering into `moltis-web`
@@ -56,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed extra indentation in settings page for system-prompt, security,
+  tailscale, voice, notifications, and config sections.
+- Deduplicated `parse_optional_trimmed_string_param` between chat.rs and
+  methods.rs (single `pub` copy in chat.rs).
 - Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
 - OpenAI TTS and Whisper STT now correctly reuse OpenAI credentials from
   voice config, `OPENAI_API_KEY`, or the LLM OpenAI provider config.

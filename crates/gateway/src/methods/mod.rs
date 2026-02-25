@@ -107,6 +107,7 @@ const READ_METHODS: &[&str] = &[
     "voice.elevenlabs.catalog",
     #[cfg(feature = "graphql")]
     "graphql.config.get",
+    "system_prompt.config.get",
     "memory.status",
     "memory.config.get",
     "memory.qmd.status",
@@ -213,6 +214,11 @@ const WRITE_METHODS: &[&str] = &[
     "voice.override.channel.clear",
     #[cfg(feature = "graphql")]
     "graphql.config.set",
+    "system_prompt.config.update",
+    "system_prompt.config.create",
+    "system_prompt.config.delete",
+    "system_prompt.config.set_default",
+    "system_prompt.config.overrides.save",
     "memory.config.update",
     "hooks.enable",
     "hooks.disable",
@@ -373,6 +379,45 @@ impl MethodRegistry {
         let mut names: Vec<_> = self.handlers.keys().cloned().collect();
         names.sort();
         names
+    }
+
+    /// Build the shared JSON response for `system_prompt.config.*` methods.
+    pub(crate) fn build_system_prompt_config_response() -> Result<serde_json::Value, ErrorShape> {
+        let config = moltis_config::discover_and_load();
+        let template_variables: Vec<serde_json::Value> =
+            moltis_agents::prompt::prompt_template_variables()
+                .iter()
+                .map(|variable| {
+                    serde_json::json!({
+                        "name": variable.name,
+                        "description": variable.description,
+                    })
+                })
+                .collect();
+
+        let section_to_str = |id: &moltis_config::PromptSectionId| -> Option<String> {
+            serde_json::to_value(id)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+        };
+        let all_section_ids: Vec<String> = moltis_agents::prompt::all_prompt_sections()
+            .iter()
+            .filter_map(section_to_str)
+            .collect();
+        let required_section_ids: Vec<String> = moltis_agents::prompt::required_sections(true)
+            .iter()
+            .filter_map(section_to_str)
+            .collect();
+
+        Ok(serde_json::json!({
+            "default": config.prompt_profiles.default,
+            "profiles": config.prompt_profiles.profiles,
+            "overrides": config.prompt_profiles.overrides,
+            "default_prompt_template": moltis_agents::prompt::default_prompt_template(),
+            "template_variables": template_variables,
+            "all_section_ids": all_section_ids,
+            "required_section_ids": required_section_ids,
+        }))
     }
 
     fn register_defaults(&mut self) {

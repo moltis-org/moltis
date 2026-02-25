@@ -188,6 +188,7 @@ pub struct MoltisConfig {
     pub server: ServerConfig,
     pub providers: ProvidersConfig,
     pub chat: ChatConfig,
+    pub prompt_profiles: PromptProfilesConfig,
     pub tools: ToolsConfig,
     pub skills: SkillsConfig,
     pub mcp: McpConfig,
@@ -1143,6 +1144,253 @@ impl Default for TlsConfig {
             http_redirect_port: None,
         }
     }
+}
+
+/// System prompt profile configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptProfilesConfig {
+    /// Name of the default prompt profile.
+    pub default: String,
+    /// Available prompt profiles.
+    pub profiles: Vec<PromptProfileConfig>,
+    /// Optional model/provider overrides.
+    pub overrides: Vec<PromptProfileOverride>,
+}
+
+impl Default for PromptProfilesConfig {
+    fn default() -> Self {
+        Self {
+            default: default_prompt_profile_name(),
+            profiles: vec![PromptProfileConfig::default()],
+            overrides: Vec::new(),
+        }
+    }
+}
+
+fn default_prompt_profile_name() -> String {
+    "balanced-default".to_string()
+}
+
+fn default_prompt_enabled_sections() -> Vec<PromptSectionId> {
+    vec![
+        PromptSectionId::Identity,
+        PromptSectionId::UserDetails,
+        PromptSectionId::ProjectContext,
+        PromptSectionId::Runtime,
+        PromptSectionId::Skills,
+        PromptSectionId::WorkspaceFiles,
+        PromptSectionId::MemoryBootstrap,
+        PromptSectionId::AvailableTools,
+        PromptSectionId::ToolCallGuidance,
+        PromptSectionId::Guidelines,
+        PromptSectionId::VoiceReplyMode,
+        PromptSectionId::RuntimeDatetimeTail,
+    ]
+}
+
+fn default_prompt_section_order() -> Vec<PromptSectionId> {
+    vec![
+        PromptSectionId::Identity,
+        PromptSectionId::UserDetails,
+        PromptSectionId::ProjectContext,
+        PromptSectionId::Runtime,
+        PromptSectionId::Skills,
+        PromptSectionId::WorkspaceFiles,
+        PromptSectionId::MemoryBootstrap,
+        PromptSectionId::AvailableTools,
+        PromptSectionId::ToolCallGuidance,
+        PromptSectionId::Guidelines,
+        PromptSectionId::VoiceReplyMode,
+    ]
+}
+
+fn default_prompt_dynamic_tail_sections() -> Vec<PromptSectionId> {
+    vec![PromptSectionId::RuntimeDatetimeTail]
+}
+
+/// Named prompt profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptProfileConfig {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional full prompt template using `{{variable}}` placeholders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_template: Option<String>,
+    /// Optional per-request reinforcement tail template appended after the prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tail_template: Option<String>,
+    pub enabled_sections: Vec<PromptSectionId>,
+    pub section_order: Vec<PromptSectionId>,
+    pub dynamic_tail_sections: Vec<PromptSectionId>,
+    pub section_options: PromptSectionOptions,
+}
+
+impl Default for PromptProfileConfig {
+    fn default() -> Self {
+        Self {
+            name: default_prompt_profile_name(),
+            description: Some(
+                "Default profile balancing context richness and cache locality.".to_string(),
+            ),
+            prompt_template: None,
+            prompt_tail_template: None,
+            enabled_sections: default_prompt_enabled_sections(),
+            section_order: default_prompt_section_order(),
+            dynamic_tail_sections: default_prompt_dynamic_tail_sections(),
+            section_options: PromptSectionOptions::default(),
+        }
+    }
+}
+
+/// Prompt profile selection override for provider/model patterns.
+///
+/// Supports both flat format (preferred) and legacy nested `[match]`:
+/// ```toml
+/// [[prompt_profiles.overrides]]
+/// profile = "minimal"
+/// model = "gpt-4o-mini*"
+/// provider = "openai"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptProfileOverride {
+    /// Legacy nested match rule — read for backwards compat, not written.
+    #[serde(rename = "match", default, skip_serializing)]
+    pub match_rule: PromptProfileMatch,
+    /// Provider glob (for example: "openai", "minimax*").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Model glob (for example: "gpt-5*", "minimax/*").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Target profile name.
+    pub profile: String,
+}
+
+impl PromptProfileOverride {
+    /// Effective provider pattern, preferring flat field over legacy nested.
+    pub fn effective_provider(&self) -> Option<&str> {
+        self.provider
+            .as_deref()
+            .or(self.match_rule.provider.as_deref())
+    }
+
+    /// Effective model pattern, preferring flat field over legacy nested.
+    pub fn effective_model(&self) -> Option<&str> {
+        self.model.as_deref().or(self.match_rule.model.as_deref())
+    }
+}
+
+/// Legacy nested match selector used by profile overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptProfileMatch {
+    /// Provider glob (for example: "openai", "minimax*").
+    pub provider: Option<String>,
+    /// Model glob (for example: "gpt-5*", "minimax/*").
+    pub model: Option<String>,
+}
+
+/// Typed section identifiers for prompt assembly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptSectionId {
+    Identity,
+    UserDetails,
+    ProjectContext,
+    WorkspaceFiles,
+    MemoryBootstrap,
+    AvailableTools,
+    ToolCallGuidance,
+    Runtime,
+    Guidelines,
+    Skills,
+    VoiceReplyMode,
+    RuntimeDatetimeTail,
+}
+
+/// Per-section options for prompt rendering.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptSectionOptions {
+    pub runtime: RuntimeSectionOptions,
+    pub user_details: UserDetailsSectionOptions,
+    pub memory_bootstrap: MemoryBootstrapSectionOptions,
+    pub runtime_datetime_tail: RuntimeDatetimeTailSectionOptions,
+}
+
+/// Runtime section detail toggles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RuntimeSectionOptions {
+    /// Include `Host: ...` line.
+    pub include_host_fields: bool,
+    /// Include `Sandbox(exec): ...` line.
+    pub include_sandbox_fields: bool,
+    /// Include network/sudo/timezone fields in runtime context.
+    pub include_network_sudo_fields: bool,
+}
+
+impl Default for RuntimeSectionOptions {
+    fn default() -> Self {
+        Self {
+            include_host_fields: true,
+            include_sandbox_fields: true,
+            include_network_sudo_fields: true,
+        }
+    }
+}
+
+/// User details render mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserDetailsMode {
+    #[default]
+    NameOnly,
+    FullProfile,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UserDetailsSectionOptions {
+    pub mode: UserDetailsMode,
+}
+
+/// Long-term memory section toggles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryBootstrapSectionOptions {
+    /// Include direct `MEMORY.md` snapshot content.
+    pub include_memory_md_snapshot: bool,
+    /// Keep the memory-search guidance line even without the `memory_search` tool.
+    pub force_memory_search_guidance: bool,
+}
+
+impl Default for MemoryBootstrapSectionOptions {
+    fn default() -> Self {
+        Self {
+            include_memory_md_snapshot: true,
+            force_memory_search_guidance: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeDatetimeTailMode {
+    #[default]
+    Datetime,
+    DateOnly,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RuntimeDatetimeTailSectionOptions {
+    pub mode: RuntimeDatetimeTailMode,
 }
 
 /// Chat configuration.

@@ -41,6 +41,7 @@ test.describe("Settings navigation", () => {
 		{ id: "identity", heading: "Identity" },
 		{ id: "memory", heading: "Memory" },
 		{ id: "environment", heading: "Environment" },
+		{ id: "system-prompt", heading: "System Prompt" },
 		{ id: "crons", heading: "Cron Jobs" },
 		{ id: "voice", heading: "Voice" },
 		{ id: "security", heading: "Security" },
@@ -180,6 +181,165 @@ test.describe("Settings navigation", () => {
 		await expect(page.getByPlaceholder("Value")).toHaveAttribute("autocomplete", "new-password");
 	});
 
+	test("system prompt page exposes template controls, variable insertion, and live preview", async ({ page }) => {
+		await navigateAndWait(page, "/settings/system-prompt");
+		await expect(page.getByRole("heading", { name: "System Prompt", exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Use Default Template", exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Copy Profile Snippet", exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Copy Variable List", exact: true })).toBeVisible();
+		await expect(page.getByText("Live Preview", { exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Save", exact: true })).toBeVisible();
+
+		// Template variables list is collapsed by default
+		const toggleVariablesBtn = page.getByRole("button", { name: /Show Template Variables/ });
+		await expect(toggleVariablesBtn).toBeVisible();
+		await toggleVariablesBtn.click();
+
+		const templateEditor = page.locator("textarea").nth(0);
+		await templateEditor.fill("before after");
+		await templateEditor.evaluate((node) => {
+			node.focus();
+			node.setSelectionRange(7, 7);
+		});
+		const variableCode = page.locator("button code").first();
+		const variableToken = ((await variableCode.textContent()) || "").trim();
+		await variableCode.click();
+		await expect(templateEditor).toHaveValue(`before ${variableToken}after`);
+		await templateEditor.fill("{{ def");
+		await expect(page.locator("button code", { hasText: "{{default_prompt}}" }).first()).toBeVisible();
+		await templateEditor.press("Tab");
+		await expect(templateEditor).toHaveValue("{{default_prompt}}");
+		await expect(page.getByText(/~\d+ tokens/)).toBeVisible();
+	});
+
+	test("system prompt profile CRUD: create, set default, delete", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/system-prompt");
+		await waitForWsConnected(page);
+		await expect(page.getByRole("heading", { name: "System Prompt", exact: true })).toBeVisible();
+
+		// Open create form
+		const newBtn = page.getByRole("button", { name: "+ New Profile", exact: true });
+		await expect(newBtn).toBeVisible();
+		await newBtn.click();
+
+		// Fill and create
+		const nameInput = page.getByPlaceholder("e.g. minimal-fast");
+		await expect(nameInput).toBeVisible();
+		await nameInput.fill("e2e-test-profile");
+		const descInput = page.getByPlaceholder("Brief description");
+		await descInput.fill("E2E test profile");
+		await page.getByRole("button", { name: "Create", exact: true }).click();
+		await expect(page.getByText('Profile "e2e-test-profile" created.', { exact: false })).toBeVisible();
+
+		// Select the new profile
+		const profileSelect = page.locator("select").first();
+		await expect(profileSelect).toHaveValue("e2e-test-profile");
+
+		// Set as default
+		const setDefaultBtn = page.getByRole("button", { name: "Set as Default", exact: true });
+		await expect(setDefaultBtn).toBeVisible();
+		await setDefaultBtn.click();
+		await expect(page.getByText("is now the default profile", { exact: false })).toBeVisible();
+
+		// Now restore original default: select the other profile and set as default
+		await profileSelect.selectOption({ index: 0 });
+		const restoreDefaultBtn = page.getByRole("button", { name: "Set as Default", exact: true });
+		if (await restoreDefaultBtn.isVisible()) {
+			await restoreDefaultBtn.click();
+			await expect(page.getByText("is now the default profile", { exact: false })).toBeVisible();
+		}
+
+		// Select and delete the test profile
+		await profileSelect.selectOption("e2e-test-profile");
+		const deleteBtn = page.getByRole("button", { name: "Delete Profile", exact: true });
+		await expect(deleteBtn).toBeVisible();
+		page.on("dialog", (dialog) => dialog.accept());
+		await deleteBtn.click();
+		await expect(page.getByText("Profile deleted.", { exact: false })).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("system prompt section options toggle and save", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/system-prompt");
+		await waitForWsConnected(page);
+		await expect(page.getByRole("heading", { name: "System Prompt", exact: true })).toBeVisible();
+
+		// Section options is hidden by default
+		const toggleBtn = page.getByRole("button", { name: "Show Section Options", exact: true });
+		await expect(toggleBtn).toBeVisible();
+		await toggleBtn.click();
+
+		// Verify section option checkboxes appear
+		await expect(page.getByText("Include host fields", { exact: true })).toBeVisible();
+		await expect(page.getByText("Include sandbox fields", { exact: true })).toBeVisible();
+		await expect(page.getByText("Runtime Section", { exact: true })).toBeVisible();
+		await expect(page.getByText("User Details", { exact: true })).toBeVisible();
+		await expect(page.getByText("Memory Bootstrap", { exact: true })).toBeVisible();
+		await expect(page.getByText("Datetime Tail", { exact: true })).toBeVisible();
+
+		// Toggle hide
+		await page.getByRole("button", { name: "Hide Section Options", exact: true }).click();
+		await expect(page.getByText("Include host fields", { exact: true })).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("system prompt template variables list is collapsed by default", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/system-prompt");
+		await expect(page.getByRole("heading", { name: "System Prompt", exact: true })).toBeVisible();
+
+		// Variables should be hidden by default
+		const toggleBtn = page.getByRole("button", { name: /Show Template Variables/ });
+		await expect(toggleBtn).toBeVisible();
+		await expect(page.locator("button code", { hasText: "{{default_prompt}}" })).toHaveCount(0);
+
+		// Click to expand
+		await toggleBtn.click();
+		await expect(page.locator("button code", { hasText: "{{default_prompt}}" }).first()).toBeVisible();
+
+		// Click to collapse
+		await page.getByRole("button", { name: /Hide Template Variables/ }).click();
+		await expect(page.locator("button code", { hasText: "{{default_prompt}}" })).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("system prompt model overrides panel toggle and add/remove", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/system-prompt");
+		await expect(page.getByRole("heading", { name: "System Prompt", exact: true })).toBeVisible();
+
+		// Overrides panel should be hidden by default
+		const toggleBtn = page.getByRole("button", { name: /Show Model Overrides/ });
+		await expect(toggleBtn).toBeVisible();
+		await expect(page.getByRole("button", { name: "+ Add Override" })).toHaveCount(0);
+
+		// Click to expand
+		await toggleBtn.click();
+		const addBtn = page.getByRole("button", { name: "+ Add Override" });
+		await expect(addBtn).toBeVisible();
+
+		// Add an override row
+		await addBtn.click();
+		await expect(page.locator("input[placeholder='e.g. *sonnet*']")).toHaveCount(1);
+
+		// Remove it
+		const removeBtn = page.getByRole("button", { name: "\u00d7" });
+		await expect(removeBtn).toHaveCount(1);
+		await removeBtn.click();
+		await expect(page.locator("input[placeholder='e.g. *sonnet*']")).toHaveCount(0);
+
+		// Collapse
+		await page.getByRole("button", { name: /Hide Model Overrides/ }).click();
+		await expect(page.getByRole("button", { name: "+ Add Override" })).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("security page renders", async ({ page }) => {
 		await navigateAndWait(page, "/settings/security");
 		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
@@ -307,6 +467,7 @@ test.describe("Settings navigation", () => {
 			"Identity",
 			"Agents",
 			"Environment",
+			"System Prompt",
 			"Memory",
 			"Notifications",
 			"Crons",

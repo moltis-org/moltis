@@ -116,6 +116,11 @@ var sections = [
 		icon: html`<span class="icon icon-terminal"></span>`,
 	},
 	{
+		id: "system-prompt",
+		label: "System Prompt",
+		icon: html`<span class="icon icon-document"></span>`,
+	},
+	{
 		id: "memory",
 		label: "Memory",
 		icon: html`<span class="icon icon-database"></span>`,
@@ -3272,6 +3277,1103 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 	</${Modal}>`;
 }
 
+// ── System Prompt section ────────────────────────────────────
+
+var SYSTEM_PROMPT_TEMPLATE_VARIABLE_FALLBACK = [
+	{
+		name: "default_prompt",
+		description: "Default full prompt generated from section toggles/order.",
+	},
+	{
+		name: "runtime_today",
+		description: "Runtime date (`YYYY-MM-DD`).",
+	},
+	{
+		name: "guidelines",
+		description: "Rendered guidelines section.",
+	},
+];
+
+function SystemPromptSection() {
+	var [loadingPromptConfig, setLoadingPromptConfig] = useState(true);
+	var [savingPromptConfig, setSavingPromptConfig] = useState(false);
+	var [defaultProfileName, setDefaultProfileName] = useState("");
+	var [profiles, setProfiles] = useState([]);
+	var [selectedProfileName, setSelectedProfileName] = useState("");
+	var [promptTemplate, setPromptTemplate] = useState("");
+	var [promptTailTemplate, setPromptTailTemplate] = useState("");
+	var [defaultPromptTemplate, setDefaultPromptTemplate] = useState("");
+	var [templateVariables, setTemplateVariables] = useState(SYSTEM_PROMPT_TEMPLATE_VARIABLE_FALLBACK);
+	var [previewLoading, setPreviewLoading] = useState(false);
+	var [previewPrompt, setPreviewPrompt] = useState("");
+	var [previewCharCount, setPreviewCharCount] = useState(0);
+	var [previewEstimatedTokens, setPreviewEstimatedTokens] = useState(0);
+	var [previewProfileName, setPreviewProfileName] = useState("");
+	var [previewError, setPreviewError] = useState(null);
+	var [autocomplete, setAutocomplete] = useState(null);
+	var [msg, setMsg] = useState(null);
+	var [error, setError] = useState(null);
+	var [showCreateForm, setShowCreateForm] = useState(false);
+	var [newProfileName, setNewProfileName] = useState("");
+	var [newProfileDescription, setNewProfileDescription] = useState("");
+	var [creatingProfile, setCreatingProfile] = useState(false);
+	var [deletingProfile, setDeletingProfile] = useState(false);
+	var [settingDefault, setSettingDefault] = useState(false);
+	var [showSectionOptions, setShowSectionOptions] = useState(false);
+	var [sectionOptRuntime, setSectionOptRuntime] = useState({
+		include_host_fields: true,
+		include_sandbox_fields: true,
+		include_network_sudo_fields: true,
+	});
+	var [sectionOptUserDetails, setSectionOptUserDetails] = useState({ mode: "name_only" });
+	var [sectionOptMemory, setSectionOptMemory] = useState({
+		include_memory_md_snapshot: true,
+		force_memory_search_guidance: false,
+	});
+	var [sectionOptDatetimeTail, setSectionOptDatetimeTail] = useState({ mode: "datetime" });
+	var [enabledSections, setEnabledSections] = useState([]);
+	var [allSectionIds, setAllSectionIds] = useState([]);
+	var [requiredSectionIds, setRequiredSectionIds] = useState([]);
+	var [showVariables, setShowVariables] = useState(false);
+	var [overrides, setOverrides] = useState([]);
+	var [showOverrides, setShowOverrides] = useState(false);
+	var [savingOverrides, setSavingOverrides] = useState(false);
+	var promptTemplateRef = useRef(null);
+	var promptTailTemplateRef = useRef(null);
+	var activeEditorRef = useRef("prompt");
+	var promptSelectionRef = useRef({ start: 0, end: 0 });
+	var tailSelectionRef = useRef({ start: 0, end: 0 });
+	var previewTimerRef = useRef(null);
+	var previewRequestSeqRef = useRef(0);
+
+	function estimateTokensFallback(text) {
+		if (!text?.trim()) return 0;
+		return Math.max(1, Math.ceil(text.length / 4));
+	}
+
+	function rememberSelection(editor, target) {
+		if (!target) return;
+		var start = Number.isInteger(target.selectionStart) ? target.selectionStart : 0;
+		var end = Number.isInteger(target.selectionEnd) ? target.selectionEnd : start;
+		activeEditorRef.current = editor;
+		if (editor === "tail") {
+			tailSelectionRef.current = { start, end };
+		} else {
+			promptSelectionRef.current = { start, end };
+		}
+	}
+
+	function closeAutocomplete(editor) {
+		setAutocomplete((current) => {
+			if (!current) return null;
+			if (editor && current.editor !== editor) return current;
+			return null;
+		});
+	}
+
+	function updateAutocomplete(editor, target) {
+		if (!target) {
+			closeAutocomplete(editor);
+			return;
+		}
+		var value = target.value || "";
+		var cursor = Number.isInteger(target.selectionStart) ? target.selectionStart : value.length;
+		var prefix = value.slice(0, cursor);
+		var match = prefix.match(/{{\s*([a-zA-Z0-9_-]*)$/);
+		if (!match) {
+			closeAutocomplete(editor);
+			return;
+		}
+
+		var query = (match[1] || "").toLowerCase();
+		var matches = templateVariables
+			.filter((entry) => entry?.name)
+			.filter((entry) => entry.name.toLowerCase().startsWith(query))
+			.slice(0, 8);
+		if (!matches.length) {
+			closeAutocomplete(editor);
+			return;
+		}
+
+		var replaceFrom = cursor - match[0].length;
+		setAutocomplete((current) => {
+			var nextIndex = 0;
+			if (current?.editor === editor && current?.items?.length) {
+				nextIndex = Math.min(current.activeIndex || 0, matches.length - 1);
+			}
+			return {
+				editor,
+				items: matches,
+				activeIndex: nextIndex,
+				from: replaceFrom,
+				to: cursor,
+			};
+		});
+	}
+
+	function applyAutocompleteSuggestion(name) {
+		if (!(name && autocomplete?.editor)) return;
+		var editor = autocomplete.editor;
+		var currentValue = editor === "tail" ? promptTailTemplate : promptTemplate;
+		var from = Math.max(0, Math.min(autocomplete.from || 0, currentValue.length));
+		var to = Math.max(from, Math.min(autocomplete.to || from, currentValue.length));
+		var suffix = currentValue.slice(to);
+		var consumeExtra = suffix.startsWith("}}") ? 2 : 0;
+		var token = `{{${name}}}`;
+		var nextValue = `${currentValue.slice(0, from)}${token}${currentValue.slice(to + consumeExtra)}`;
+		var nextPos = from + token.length;
+
+		if (editor === "tail") {
+			tailSelectionRef.current = { start: nextPos, end: nextPos };
+			setPromptTailTemplate(nextValue);
+		} else {
+			promptSelectionRef.current = { start: nextPos, end: nextPos };
+			setPromptTemplate(nextValue);
+		}
+		setAutocomplete(null);
+
+		requestAnimationFrame(() => {
+			var target = editor === "tail" ? promptTailTemplateRef.current : promptTemplateRef.current;
+			if (!target) return;
+			target.focus();
+			target.setSelectionRange(nextPos, nextPos);
+		});
+	}
+
+	function onEditorKeyDown(editor, e) {
+		var active = autocomplete && autocomplete.editor === editor && autocomplete.items?.length;
+		if (!active) return;
+
+		if (e.key === "ArrowDown") {
+			e.preventDefault();
+			setAutocomplete((current) => {
+				if (!current) return current;
+				return {
+					...current,
+					activeIndex: (current.activeIndex + 1) % current.items.length,
+				};
+			});
+			return;
+		}
+		if (e.key === "ArrowUp") {
+			e.preventDefault();
+			setAutocomplete((current) => {
+				if (!current) return current;
+				return {
+					...current,
+					activeIndex: (current.activeIndex - 1 + current.items.length) % current.items.length,
+				};
+			});
+			return;
+		}
+		if (e.key === "Tab" || e.key === "Enter") {
+			e.preventDefault();
+			var selected = autocomplete.items[autocomplete.activeIndex] || autocomplete.items[0];
+			applyAutocompleteSuggestion(selected?.name);
+			return;
+		}
+		if (e.key === "Escape") {
+			e.preventDefault();
+			closeAutocomplete(editor);
+		}
+	}
+
+	function selectProfile(profileName, profileList) {
+		var profile = profileList.find((entry) => entry?.name === profileName);
+		setSelectedProfileName(profileName || "");
+		setPromptTemplate(profile?.prompt_template || "");
+		setPromptTailTemplate(profile?.prompt_tail_template || "");
+		setAutocomplete(null);
+		promptSelectionRef.current = { start: 0, end: 0 };
+		tailSelectionRef.current = { start: 0, end: 0 };
+		activeEditorRef.current = "prompt";
+
+		var opts = profile?.section_options || {};
+		setSectionOptRuntime({
+			include_host_fields: opts.runtime?.include_host_fields ?? true,
+			include_sandbox_fields: opts.runtime?.include_sandbox_fields ?? true,
+			include_network_sudo_fields: opts.runtime?.include_network_sudo_fields ?? true,
+		});
+		setSectionOptUserDetails({ mode: opts.user_details?.mode || "name_only" });
+		setSectionOptMemory({
+			include_memory_md_snapshot: opts.memory_bootstrap?.include_memory_md_snapshot ?? true,
+			force_memory_search_guidance: opts.memory_bootstrap?.force_memory_search_guidance ?? false,
+		});
+		setSectionOptDatetimeTail({ mode: opts.runtime_datetime_tail?.mode || "datetime" });
+		setEnabledSections(Array.isArray(profile?.enabled_sections) ? [...profile.enabled_sections] : []);
+	}
+
+	function applyPromptConfig(payload, preferredProfileName) {
+		var profileList = Array.isArray(payload?.profiles) ? payload.profiles : [];
+		var variableList = Array.isArray(payload?.template_variables) ? payload.template_variables : [];
+		if (!variableList.length) {
+			variableList = SYSTEM_PROMPT_TEMPLATE_VARIABLE_FALLBACK;
+		}
+		if (!profileList.length) {
+			var fallbackProfileName = (payload?.default || "").trim() || "balanced-default";
+			profileList = [{ name: fallbackProfileName, description: "", prompt_template: "", prompt_tail_template: "" }];
+		}
+		var preferredName = preferredProfileName || selectedProfileName || payload?.default || "";
+		if (!profileList.some((entry) => entry?.name === preferredName)) {
+			preferredName = payload?.default || profileList[0]?.name || "";
+		}
+
+		setProfiles(profileList);
+		setDefaultProfileName(payload?.default || profileList[0]?.name || "");
+		setDefaultPromptTemplate(payload?.default_prompt_template || "");
+		setTemplateVariables(variableList);
+		if (Array.isArray(payload?.all_section_ids)) setAllSectionIds(payload.all_section_ids);
+		if (Array.isArray(payload?.required_section_ids)) setRequiredSectionIds(payload.required_section_ids);
+		if (Array.isArray(payload?.overrides)) setOverrides(payload.overrides.map((o) => ({ ...o })));
+		selectProfile(preferredName, profileList);
+	}
+
+	function loadPromptConfig(preferredProfileName) {
+		setLoadingPromptConfig(true);
+		setError(null);
+		setMsg(null);
+		sendRpc("system_prompt.config.get", {}).then((res) => {
+			setLoadingPromptConfig(false);
+			if (!res?.ok) {
+				setError(res?.error?.message || "Failed to load system prompt settings.");
+				return;
+			}
+			applyPromptConfig(res.payload, preferredProfileName);
+		});
+	}
+
+	function loadPromptPreview(profileName, templateValue, tailValue) {
+		if (!profileName) {
+			setPreviewPrompt("");
+			setPreviewCharCount(0);
+			setPreviewEstimatedTokens(0);
+			setPreviewError(null);
+			return;
+		}
+
+		var reqId = previewRequestSeqRef.current + 1;
+		previewRequestSeqRef.current = reqId;
+		setPreviewLoading(true);
+
+		sendRpc("chat.raw_prompt", {
+			preview_mode: true,
+			prompt_profile: profileName,
+			prompt_template: templateValue,
+			prompt_tail_template: tailValue,
+			section_options: buildSectionOptionsPayload(),
+		})
+			.then((res) => {
+				if (reqId !== previewRequestSeqRef.current) return;
+				setPreviewLoading(false);
+				if (!res?.ok) {
+					setPreviewError(res?.error?.message || "Failed to render preview.");
+					return;
+				}
+				var payload = res.payload || {};
+				var renderedPrompt = payload.prompt || "";
+				var charCount = Number(payload.charCount || renderedPrompt.length || 0);
+				var estimatedTokens = Number(payload.estimatedTokens || estimateTokensFallback(renderedPrompt));
+				setPreviewPrompt(renderedPrompt);
+				setPreviewCharCount(charCount);
+				setPreviewEstimatedTokens(estimatedTokens);
+				setPreviewProfileName(payload.profile || "");
+				setPreviewError(null);
+			})
+			.catch(() => {
+				if (reqId !== previewRequestSeqRef.current) return;
+				setPreviewLoading(false);
+				setPreviewError("Failed to render preview.");
+			});
+	}
+
+	function normalizedTemplateValue(value) {
+		var trimmed = value.trim();
+		return trimmed ? value : null;
+	}
+
+	function copyToClipboard(text, successLabel) {
+		if (!navigator?.clipboard?.writeText) {
+			setError("Clipboard API is unavailable in this browser.");
+			return;
+		}
+		navigator.clipboard
+			.writeText(text)
+			.then(() => {
+				setError(null);
+				setMsg(successLabel);
+			})
+			.catch(() => {
+				setError("Failed to copy to clipboard.");
+			});
+	}
+
+	function activeProfile() {
+		return profiles.find((entry) => entry?.name === selectedProfileName) || null;
+	}
+
+	function buildProfileSnippet() {
+		if (!selectedProfileName) return "";
+		var profile = activeProfile();
+		if (!profile) return "";
+		var lines = [`[[prompt_profiles.profiles]]`, `name = ${JSON.stringify(profile.name)}`];
+		if (profile.description) {
+			lines.push(`description = ${JSON.stringify(profile.description)}`);
+		}
+		var templateValue = normalizedTemplateValue(promptTemplate);
+		var tailValue = normalizedTemplateValue(promptTailTemplate);
+		if (templateValue) {
+			lines.push(`prompt_template = ${JSON.stringify(templateValue)}`);
+		}
+		if (tailValue) {
+			lines.push(`prompt_tail_template = ${JSON.stringify(tailValue)}`);
+		}
+		return `${lines.join("\n")}\n`;
+	}
+
+	function copyTemplateVariables() {
+		var lines = templateVariables.map((entry) => `- {{${entry.name}}}: ${entry.description || ""}`);
+		copyToClipboard(lines.join("\n"), "Template variable list copied.");
+	}
+
+	function insertTemplateVariable(name) {
+		var token = `{{${name}}}`;
+		var editor = activeEditorRef.current === "tail" ? "tail" : "prompt";
+		var currentValue = editor === "tail" ? promptTailTemplate : promptTemplate;
+		var cursorRef = editor === "tail" ? tailSelectionRef : promptSelectionRef;
+		var start = Number.isInteger(cursorRef.current?.start) ? cursorRef.current.start : currentValue.length;
+		var end = Number.isInteger(cursorRef.current?.end) ? cursorRef.current.end : start;
+		start = Math.max(0, Math.min(start, currentValue.length));
+		end = Math.max(start, Math.min(end, currentValue.length));
+
+		var nextValue = `${currentValue.slice(0, start)}${token}${currentValue.slice(end)}`;
+		var nextPos = start + token.length;
+		cursorRef.current = { start: nextPos, end: nextPos };
+		if (editor === "tail") {
+			setPromptTailTemplate(nextValue);
+		} else {
+			setPromptTemplate(nextValue);
+		}
+		setMsg(null);
+		setError(null);
+		setAutocomplete(null);
+
+		requestAnimationFrame(() => {
+			var target = editor === "tail" ? promptTailTemplateRef.current : promptTemplateRef.current;
+			if (!target) return;
+			target.focus();
+			target.setSelectionRange(nextPos, nextPos);
+		});
+	}
+
+	function renderAutocomplete(editor) {
+		var active = autocomplete && autocomplete.editor === editor && autocomplete.items?.length;
+		if (!active) return null;
+
+		return html`<div
+			class="provider-item"
+			style="margin-top:6px;padding:6px;display:flex;flex-direction:column;gap:4px;"
+		>
+			${autocomplete.items.map(
+				(entry, index) => html`<button
+					type="button"
+					key=${entry.name}
+					class="provider-btn provider-btn-secondary provider-btn-sm"
+					style=${`justify-content:flex-start;display:flex;align-items:flex-start;gap:8px;text-align:left;padding:6px 8px;${
+						index === autocomplete.activeIndex
+							? "border-color:var(--brand);background:color-mix(in srgb, var(--brand) 12%, transparent);"
+							: ""
+					}`}
+					onMouseDown=${(e) => e.preventDefault()}
+					onClick=${() => applyAutocompleteSuggestion(entry.name)}
+				>
+					<code>{{${entry.name}}}</code>
+					<span class="text-xs text-[var(--muted)]" style="line-height:1.4;">${entry.description || ""}</span>
+				</button>`,
+			)}
+		</div>`;
+	}
+
+	function buildSectionOptionsPayload() {
+		return {
+			runtime: sectionOptRuntime,
+			user_details: sectionOptUserDetails,
+			memory_bootstrap: sectionOptMemory,
+			runtime_datetime_tail: sectionOptDatetimeTail,
+		};
+	}
+
+	function onSave(e) {
+		e.preventDefault();
+		setError(null);
+		setMsg(null);
+		if (!selectedProfileName) {
+			setError("Select a profile first.");
+			return;
+		}
+		setSavingPromptConfig(true);
+		sendRpc("system_prompt.config.update", {
+			profile: selectedProfileName,
+			prompt_template: normalizedTemplateValue(promptTemplate),
+			prompt_tail_template: normalizedTemplateValue(promptTailTemplate),
+			section_options: buildSectionOptionsPayload(),
+			enabled_sections: enabledSections.length ? enabledSections : null,
+		}).then((res) => {
+			setSavingPromptConfig(false);
+			if (!res?.ok) {
+				setError(res?.error?.message || "Failed to save system prompt template settings.");
+				return;
+			}
+			applyPromptConfig(res.payload, selectedProfileName);
+			setMsg("System prompt template settings saved.");
+		});
+	}
+
+	function onCreateProfile() {
+		var name = newProfileName.trim();
+		if (!name) return;
+		setCreatingProfile(true);
+		setError(null);
+		setMsg(null);
+		sendRpc("system_prompt.config.create", {
+			name,
+			description: newProfileDescription.trim() || null,
+		}).then((res) => {
+			setCreatingProfile(false);
+			if (!res?.ok) {
+				setError(res?.error?.message || "Failed to create profile.");
+				return;
+			}
+			setShowCreateForm(false);
+			setNewProfileName("");
+			setNewProfileDescription("");
+			applyPromptConfig(res.payload, name);
+			setMsg(`Profile "${name}" created.`);
+		});
+	}
+
+	function onDeleteProfile() {
+		if (!selectedProfileName || selectedProfileName === defaultProfileName) return;
+		if (!confirm(`Delete profile "${selectedProfileName}"?`)) return;
+		setDeletingProfile(true);
+		setError(null);
+		setMsg(null);
+		sendRpc("system_prompt.config.delete", { name: selectedProfileName }).then((res) => {
+			setDeletingProfile(false);
+			if (!res?.ok) {
+				setError(res?.error?.message || "Failed to delete profile.");
+				return;
+			}
+			applyPromptConfig(res.payload, "");
+			setMsg("Profile deleted.");
+		});
+	}
+
+	function onSetDefault() {
+		if (!selectedProfileName || selectedProfileName === defaultProfileName) return;
+		setSettingDefault(true);
+		setError(null);
+		setMsg(null);
+		sendRpc("system_prompt.config.set_default", { name: selectedProfileName }).then((res) => {
+			setSettingDefault(false);
+			if (!res?.ok) {
+				setError(res?.error?.message || "Failed to set default profile.");
+				return;
+			}
+			applyPromptConfig(res.payload, selectedProfileName);
+			setMsg(`"${selectedProfileName}" is now the default profile.`);
+		});
+	}
+
+	function onAddOverride() {
+		setOverrides((prev) => [...prev, { profile: defaultProfileName || "", provider: "", model: "" }]);
+	}
+
+	function onRemoveOverride(index) {
+		setOverrides((prev) => prev.filter((_, i) => i !== index));
+	}
+
+	function onMoveOverride(index, direction) {
+		setOverrides((prev) => {
+			var next = [...prev];
+			var target = index + direction;
+			if (target < 0 || target >= next.length) return prev;
+			[next[index], next[target]] = [next[target], next[index]];
+			return next;
+		});
+	}
+
+	function onUpdateOverride(index, field, value) {
+		setOverrides((prev) => prev.map((o, i) => (i === index ? { ...o, [field]: value } : o)));
+	}
+
+	function onSaveOverrides() {
+		setSavingOverrides(true);
+		setError(null);
+		setMsg(null);
+		var payload = overrides
+			.filter((o) => o.profile && (o.provider || o.model))
+			.map((o) => {
+				var entry = { profile: o.profile };
+				if (o.provider) entry.provider = o.provider;
+				if (o.model) entry.model = o.model;
+				return entry;
+			});
+		sendRpc("system_prompt.config.overrides.save", { overrides: payload }).then((res) => {
+			setSavingOverrides(false);
+			if (!res?.ok) {
+				setError(res?.error?.message || "Failed to save overrides.");
+				return;
+			}
+			applyPromptConfig(res.payload, selectedProfileName);
+			setMsg("Model overrides saved.");
+		});
+	}
+
+	useEffect(() => {
+		loadPromptConfig("");
+	}, []);
+
+	useEffect(() => {
+		if (loadingPromptConfig || !selectedProfileName) return;
+		if (previewTimerRef.current) {
+			clearTimeout(previewTimerRef.current);
+		}
+		previewTimerRef.current = setTimeout(() => {
+			loadPromptPreview(
+				selectedProfileName,
+				normalizedTemplateValue(promptTemplate),
+				normalizedTemplateValue(promptTailTemplate),
+			);
+		}, 250);
+		return () => {
+			if (previewTimerRef.current) {
+				clearTimeout(previewTimerRef.current);
+				previewTimerRef.current = null;
+			}
+		};
+	}, [
+		loadingPromptConfig,
+		selectedProfileName,
+		promptTemplate,
+		promptTailTemplate,
+		sectionOptRuntime,
+		sectionOptUserDetails,
+		sectionOptMemory,
+		sectionOptDatetimeTail,
+	]);
+
+	if (loadingPromptConfig) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">System Prompt</h2>
+			<div class="text-xs text-[var(--muted)]">Loading…</div>
+		</div>`;
+	}
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">System Prompt</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form m-0">
+			Customize prompt templates per profile with <code>{{variable}}</code> placeholders.
+			Use the tail template to append reinforcement instructions after each request, useful for
+			models that need persistent reminders. Type <code>{{ partial</code> for autocomplete, or click
+			a variable below to insert it at the cursor.
+		</p>
+
+		<form onSubmit=${onSave} class="flex flex-col gap-4" style="max-width:900px;">
+			<div class="grid grid-cols-2 gap-x-4 gap-y-2">
+				<div>
+					<div class="text-xs text-[var(--muted)] mb-1">Profile</div>
+					<select
+						class="provider-key-input w-full"
+						value=${selectedProfileName}
+						onChange=${(e) => {
+							setMsg(null);
+							setError(null);
+							selectProfile(e.target.value, profiles);
+						}}
+					>
+						${profiles.map(
+							(profile) =>
+								html`<option key=${profile.name} value=${profile.name}>
+									${profile.name}${profile.name === defaultProfileName ? " (default)" : ""}
+								</option>`,
+						)}
+					</select>
+				</div>
+				<div>
+					<div class="text-xs text-[var(--muted)] mb-1">Default Profile</div>
+					<div class="provider-item-name pt-2">${defaultProfileName || "none"}</div>
+				</div>
+			</div>
+			<div class="flex items-center gap-2 flex-wrap">
+				<button
+					type="button"
+					class="provider-btn provider-btn-secondary provider-btn-sm"
+					onClick=${() => {
+						setShowCreateForm(!showCreateForm);
+						setMsg(null);
+						setError(null);
+					}}
+				>
+					${showCreateForm ? "Cancel" : "+ New Profile"}
+				</button>
+				${
+					selectedProfileName && selectedProfileName !== defaultProfileName
+						? html`<button
+						type="button"
+						class="provider-btn provider-btn-secondary provider-btn-sm"
+						disabled=${settingDefault}
+						onClick=${onSetDefault}
+					>
+						${settingDefault ? "Setting…" : "Set as Default"}
+					</button>`
+						: null
+				}
+				${
+					selectedProfileName && selectedProfileName !== defaultProfileName && profiles.length > 1
+						? html`<button
+						type="button"
+						class="provider-btn provider-btn-danger provider-btn-sm"
+						disabled=${deletingProfile}
+						onClick=${onDeleteProfile}
+					>
+						${deletingProfile ? "Deleting…" : "Delete Profile"}
+					</button>`
+						: null
+				}
+			</div>
+			${
+				showCreateForm
+					? html`<div class="provider-item flex flex-col gap-2 p-3">
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Profile Name</div>
+						<input
+							class="provider-key-input w-full"
+							type="text"
+							placeholder="e.g. minimal-fast"
+							value=${newProfileName}
+							onInput=${(e) => setNewProfileName(e.target.value)}
+						/>
+					</div>
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Description (optional)</div>
+						<input
+							class="provider-key-input w-full"
+							type="text"
+							placeholder="Brief description"
+							value=${newProfileDescription}
+							onInput=${(e) => setNewProfileDescription(e.target.value)}
+						/>
+					</div>
+					<div>
+						<button
+							type="button"
+							class="provider-btn provider-btn-sm"
+							disabled=${creatingProfile || !newProfileName.trim()}
+							onClick=${onCreateProfile}
+						>
+							${creatingProfile ? "Creating…" : "Create"}
+						</button>
+					</div>
+				</div>`
+					: null
+			}
+
+			<div>
+				<div class="flex items-center justify-between mb-1">
+					<div class="text-xs text-[var(--muted)]">Prompt Template (optional)</div>
+					<div class="flex gap-1.5 flex-wrap">
+						<button
+							type="button"
+							class="provider-btn provider-btn-secondary provider-btn-sm"
+							onClick=${() => {
+								setPromptTemplate(defaultPromptTemplate || "{{default_prompt}}");
+								setMsg(null);
+								setError(null);
+							}}
+						>
+							Use Default Template
+						</button>
+						<button
+							type="button"
+							class="provider-btn provider-btn-secondary provider-btn-sm"
+							onClick=${() => copyToClipboard(promptTemplate || "", "Prompt template copied.")}
+						>
+							Copy
+						</button>
+					</div>
+				</div>
+				<textarea
+					ref=${promptTemplateRef}
+					class="provider-key-input w-full"
+					rows="10"
+					style="min-height:11rem;resize:vertical;font-family:var(--font-mono);font-size:.78rem;line-height:1.5;"
+					placeholder=${defaultPromptTemplate || "{{default_prompt}}"}
+					value=${promptTemplate}
+					onFocus=${(e) => {
+						rememberSelection("prompt", e.target);
+						updateAutocomplete("prompt", e.target);
+					}}
+					onClick=${(e) => {
+						rememberSelection("prompt", e.target);
+						updateAutocomplete("prompt", e.target);
+					}}
+					onKeyUp=${(e) => {
+						rememberSelection("prompt", e.target);
+						updateAutocomplete("prompt", e.target);
+					}}
+					onSelect=${(e) => {
+						rememberSelection("prompt", e.target);
+						updateAutocomplete("prompt", e.target);
+					}}
+					onKeyDown=${(e) => onEditorKeyDown("prompt", e)}
+					onBlur=${() => setTimeout(() => closeAutocomplete("prompt"), 120)}
+					onInput=${(e) => {
+						rememberSelection("prompt", e.target);
+						updateAutocomplete("prompt", e.target);
+						setPromptTemplate(e.target.value);
+					}}
+					spellcheck="false"
+				/>
+				${renderAutocomplete("prompt")}
+			</div>
+
+			<div>
+				<div class="flex items-center justify-between mb-1">
+					<div class="text-xs text-[var(--muted)]">Prompt Tail Template (optional)</div>
+					<button
+						type="button"
+						class="provider-btn provider-btn-secondary provider-btn-sm"
+						onClick=${() => copyToClipboard(promptTailTemplate || "", "Tail template copied.")}
+					>
+						Copy
+					</button>
+				</div>
+				<textarea
+					ref=${promptTailTemplateRef}
+					class="provider-key-input w-full"
+					rows="6"
+					style="min-height:7rem;resize:vertical;font-family:var(--font-mono);font-size:.78rem;line-height:1.5;"
+					placeholder="Keep responses concise and action-oriented."
+					value=${promptTailTemplate}
+					onFocus=${(e) => {
+						rememberSelection("tail", e.target);
+						updateAutocomplete("tail", e.target);
+					}}
+					onClick=${(e) => {
+						rememberSelection("tail", e.target);
+						updateAutocomplete("tail", e.target);
+					}}
+					onKeyUp=${(e) => {
+						rememberSelection("tail", e.target);
+						updateAutocomplete("tail", e.target);
+					}}
+					onSelect=${(e) => {
+						rememberSelection("tail", e.target);
+						updateAutocomplete("tail", e.target);
+					}}
+					onKeyDown=${(e) => onEditorKeyDown("tail", e)}
+					onBlur=${() => setTimeout(() => closeAutocomplete("tail"), 120)}
+					onInput=${(e) => {
+						rememberSelection("tail", e.target);
+						updateAutocomplete("tail", e.target);
+						setPromptTailTemplate(e.target.value);
+					}}
+					spellcheck="false"
+				/>
+				${renderAutocomplete("tail")}
+			</div>
+
+			<div>
+				<button
+					type="button"
+					class="provider-btn provider-btn-secondary provider-btn-sm mb-2"
+					onClick=${() => setShowSectionOptions(!showSectionOptions)}
+				>
+					${showSectionOptions ? "Hide Section Options" : "Show Section Options"}
+				</button>
+				${
+					showSectionOptions
+						? html`<div class="provider-item flex flex-col gap-3 p-3">
+						<div>
+							<div class="text-xs font-medium text-[var(--text-strong)] mb-1">Runtime Section</div>
+							<div class="flex flex-col gap-1">
+								<label class="flex items-center gap-2 text-xs text-[var(--text)]">
+									<input type="checkbox" checked=${sectionOptRuntime.include_host_fields}
+										onChange=${(e) => setSectionOptRuntime({ ...sectionOptRuntime, include_host_fields: e.target.checked })} />
+									Include host fields
+								</label>
+								<label class="flex items-center gap-2 text-xs text-[var(--text)]">
+									<input type="checkbox" checked=${sectionOptRuntime.include_sandbox_fields}
+										onChange=${(e) => setSectionOptRuntime({ ...sectionOptRuntime, include_sandbox_fields: e.target.checked })} />
+									Include sandbox fields
+								</label>
+								<label class="flex items-center gap-2 text-xs text-[var(--text)]">
+									<input type="checkbox" checked=${sectionOptRuntime.include_network_sudo_fields}
+										onChange=${(e) => setSectionOptRuntime({ ...sectionOptRuntime, include_network_sudo_fields: e.target.checked })} />
+									Include network/sudo fields
+								</label>
+							</div>
+						</div>
+						<div>
+							<div class="text-xs font-medium text-[var(--text-strong)] mb-1">User Details</div>
+							<div class="flex gap-1">
+								<button type="button"
+									class=${`provider-btn provider-btn-sm ${sectionOptUserDetails.mode === "name_only" ? "" : "provider-btn-secondary"}`}
+									onClick=${() => setSectionOptUserDetails({ mode: "name_only" })}
+								>Name Only</button>
+								<button type="button"
+									class=${`provider-btn provider-btn-sm ${sectionOptUserDetails.mode === "full_profile" ? "" : "provider-btn-secondary"}`}
+									onClick=${() => setSectionOptUserDetails({ mode: "full_profile" })}
+								>Full Profile</button>
+							</div>
+						</div>
+						<div>
+							<div class="text-xs font-medium text-[var(--text-strong)] mb-1">Memory Bootstrap</div>
+							<div class="flex flex-col gap-1">
+								<label class="flex items-center gap-2 text-xs text-[var(--text)]">
+									<input type="checkbox" checked=${sectionOptMemory.include_memory_md_snapshot}
+										onChange=${(e) => setSectionOptMemory({ ...sectionOptMemory, include_memory_md_snapshot: e.target.checked })} />
+									Include MEMORY.md snapshot
+								</label>
+								<label class="flex items-center gap-2 text-xs text-[var(--text)]">
+									<input type="checkbox" checked=${sectionOptMemory.force_memory_search_guidance}
+										onChange=${(e) => setSectionOptMemory({ ...sectionOptMemory, force_memory_search_guidance: e.target.checked })} />
+									Force memory search guidance
+								</label>
+							</div>
+						</div>
+						<div>
+							<div class="text-xs font-medium text-[var(--text-strong)] mb-1">Datetime Tail</div>
+							<div class="flex gap-1">
+								<button type="button"
+									class=${`provider-btn provider-btn-sm ${sectionOptDatetimeTail.mode === "datetime" ? "" : "provider-btn-secondary"}`}
+									onClick=${() => setSectionOptDatetimeTail({ mode: "datetime" })}
+								>Datetime</button>
+								<button type="button"
+									class=${`provider-btn provider-btn-sm ${sectionOptDatetimeTail.mode === "date_only" ? "" : "provider-btn-secondary"}`}
+									onClick=${() => setSectionOptDatetimeTail({ mode: "date_only" })}
+								>Date Only</button>
+								<button type="button"
+									class=${`provider-btn provider-btn-sm ${sectionOptDatetimeTail.mode === "disabled" ? "" : "provider-btn-secondary"}`}
+									onClick=${() => setSectionOptDatetimeTail({ mode: "disabled" })}
+								>Disabled</button>
+							</div>
+						</div>
+
+						${
+							allSectionIds.length
+								? html`<div>
+								<div class="text-xs font-medium text-[var(--text-strong)] mb-1">Enabled Sections</div>
+								<div class="grid grid-cols-2 gap-1">
+									${allSectionIds.map((id) => {
+										var isRequired = requiredSectionIds.includes(id);
+										var isEnabled = enabledSections.includes(id);
+										return html`<label key=${id} class="flex items-center gap-2 text-xs text-[var(--text)]">
+												<input type="checkbox"
+													checked=${isEnabled || isRequired}
+													disabled=${isRequired}
+													onChange=${(e) => {
+														if (isRequired) return;
+														setEnabledSections((prev) =>
+															e.target.checked ? [...prev.filter((s) => s !== id), id] : prev.filter((s) => s !== id),
+														);
+													}}
+												/>
+												${id.replace(/_/g, " ")}${isRequired ? " (required)" : ""}
+											</label>`;
+									})}
+								</div>
+							</div>`
+								: null
+						}
+					</div>`
+						: null
+				}
+			</div>
+
+			<div class="flex items-center gap-2 flex-wrap">
+				<button type="submit" class="provider-btn" disabled=${savingPromptConfig}>
+					${savingPromptConfig ? "Saving…" : "Save"}
+				</button>
+				<button
+					type="button"
+					class="provider-btn provider-btn-secondary"
+					disabled=${savingPromptConfig}
+					onClick=${() => loadPromptConfig(selectedProfileName)}
+				>
+					Reload
+				</button>
+				<button
+					type="button"
+					class="provider-btn provider-btn-secondary"
+					disabled=${!selectedProfileName}
+					onClick=${() => copyToClipboard(buildProfileSnippet(), "Profile template snippet copied.")}
+				>
+					Copy Profile Snippet
+				</button>
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${copyTemplateVariables}>
+					Copy Variable List
+				</button>
+				${msg ? html`<span class="text-xs text-[var(--ok)]">${msg}</span>` : null}
+				${error ? html`<span class="text-xs text-[var(--error)]">${error}</span>` : null}
+			</div>
+		</form>
+
+		<div class="border-t border-[var(--border)] pt-3" style="max-width:900px;">
+			<button
+				type="button"
+				class="provider-btn provider-btn-secondary provider-btn-sm mb-2"
+				onClick=${() => setShowOverrides(!showOverrides)}
+			>
+				${showOverrides ? "Hide" : "Show"} Model Overrides (${overrides.length})
+			</button>
+			<p class="text-xs text-[var(--muted)] m-0 mb-2">
+				Route specific providers or models to a different prompt profile using glob patterns (e.g. <code>*sonnet*</code>, <code>openai</code>).
+			</p>
+			${
+				showOverrides
+					? html`<div class="flex flex-col gap-2">
+					${overrides.map(
+						(o, index) => html`<div key=${index} class="provider-item flex items-center gap-2 m-0 p-2">
+							<div class="flex flex-col gap-1 flex-1 min-w-0">
+								<div class="grid grid-cols-3 gap-2">
+									<div>
+										<div class="text-xs text-[var(--muted)] mb-0.5">Profile</div>
+										<select
+											class="provider-key-input w-full"
+											value=${o.profile}
+											onChange=${(e) => onUpdateOverride(index, "profile", e.target.value)}
+										>
+											${profiles.map((p) => html`<option key=${p.name} value=${p.name}>${p.name}</option>`)}
+										</select>
+									</div>
+									<div>
+										<div class="text-xs text-[var(--muted)] mb-0.5">Provider (glob)</div>
+										<input
+											class="provider-key-input w-full"
+											type="text"
+											placeholder="e.g. openai"
+											value=${o.provider || ""}
+											onInput=${(e) => onUpdateOverride(index, "provider", e.target.value)}
+										/>
+									</div>
+									<div>
+										<div class="text-xs text-[var(--muted)] mb-0.5">Model (glob)</div>
+										<input
+											class="provider-key-input w-full"
+											type="text"
+											placeholder="e.g. *sonnet*"
+											value=${o.model || ""}
+											onInput=${(e) => onUpdateOverride(index, "model", e.target.value)}
+										/>
+									</div>
+								</div>
+							</div>
+							<div class="flex flex-col gap-0.5">
+								<button
+									type="button"
+									class="provider-btn provider-btn-secondary provider-btn-sm"
+									disabled=${index === 0}
+									onClick=${() => onMoveOverride(index, -1)}
+									title="Move up"
+								>\u2191</button>
+								<button
+									type="button"
+									class="provider-btn provider-btn-secondary provider-btn-sm"
+									disabled=${index === overrides.length - 1}
+									onClick=${() => onMoveOverride(index, 1)}
+									title="Move down"
+								>\u2193</button>
+							</div>
+							<button
+								type="button"
+								class="provider-btn provider-btn-danger provider-btn-sm"
+								onClick=${() => onRemoveOverride(index)}
+								title="Remove override"
+							>\u00d7</button>
+						</div>`,
+					)}
+					<div class="flex items-center gap-2">
+						<button
+							type="button"
+							class="provider-btn provider-btn-secondary provider-btn-sm"
+							onClick=${onAddOverride}
+						>+ Add Override</button>
+						<button
+							type="button"
+							class="provider-btn provider-btn-sm"
+							disabled=${savingOverrides}
+							onClick=${onSaveOverrides}
+						>${savingOverrides ? "Saving\u2026" : "Save Overrides"}</button>
+					</div>
+				</div>`
+					: null
+			}
+		</div>
+
+		<div class="border border-[var(--border)] rounded-lg p-3" style="max-width:900px;">
+			<div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+				<div class="flex items-center gap-2">
+					<h3 class="text-sm font-medium text-[var(--text-strong)]">Live Preview</h3>
+					${
+						previewProfileName
+							? html`<span class="text-xs text-[var(--muted)]">Profile: ${previewProfileName}</span>`
+							: null
+					}
+				</div>
+				<div class="flex items-center gap-2 text-xs text-[var(--muted)]">
+					<span>${previewCharCount} chars</span>
+					<span>~${previewEstimatedTokens} tokens</span>
+					${previewLoading ? html`<span>Updating…</span>` : null}
+				</div>
+			</div>
+			${previewError ? html`<div class="text-xs text-[var(--error)] mb-2">${previewError}</div>` : null}
+			<pre
+				class="provider-key-input text-xs text-[var(--text)]"
+				style="margin:0;white-space:pre-wrap;word-break:break-word;line-height:1.45;min-height:9rem;max-height:24rem;overflow:auto;font-family:var(--font-mono);"
+			>${previewPrompt || "Preview renders live as you edit the template and tail."}</pre>
+		</div>
+
+		<div class="border-t border-[var(--border)] pt-3" style="max-width:900px;">
+			<button
+				type="button"
+				class="provider-btn provider-btn-secondary provider-btn-sm mb-2"
+				onClick=${() => setShowVariables(!showVariables)}
+			>
+				${showVariables ? "Hide" : "Show"} Template Variables (${templateVariables.length})
+			</button>
+			${
+				showVariables
+					? html`<div class="flex flex-col gap-1.5">
+					${templateVariables.map(
+						(entry) => html`<div
+							key=${entry.name}
+							class="provider-item flex items-center gap-2.5 m-0 p-2"
+						>
+							<button
+								type="button"
+								class="provider-btn provider-btn-secondary provider-btn-sm"
+								onClick=${() => insertTemplateVariable(entry.name)}
+							>
+								<code>{{${entry.name}}}</code>
+							</button>
+							<button
+								type="button"
+								class="provider-btn provider-btn-secondary provider-btn-sm"
+								onClick=${() => copyToClipboard(`{{${entry.name}}}`, `Copied {{${entry.name}}}.`)}
+							>
+								Copy
+							</button>
+							<div class="text-xs text-[var(--muted)] leading-snug">${entry.description || ""}</div>
+						</div>`,
+					)}
+				</div>`
+					: null
+			}
+		</div>
+	</div>`;
+}
+
 // ── Memory section ────────────────────────────────────────────
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Large component managing memory settings with QMD integration
@@ -3878,6 +4980,7 @@ function SettingsPage() {
 							: null
 					}
 					${section === "identity" ? html`<${IdentitySection} />` : null}
+					${section === "system-prompt" ? html`<${SystemPromptSection} />` : null}
 					${section === "memory" ? html`<${MemorySection} />` : null}
 					${section === "environment" ? html`<${EnvironmentSection} />` : null}
 						${section === "security" ? html`<${SecuritySection} />` : null}

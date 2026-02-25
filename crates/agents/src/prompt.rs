@@ -1,7 +1,12 @@
 use {
     crate::tool_registry::ToolRegistry,
-    moltis_config::{AgentIdentity, DEFAULT_SOUL, UserProfile},
+    moltis_config::{
+        AgentIdentity, DEFAULT_SOUL, MemoryBootstrapSectionOptions, PromptProfileConfig,
+        PromptSectionId, PromptSectionOptions, RuntimeDatetimeTailMode, RuntimeSectionOptions,
+        UserDetailsMode, UserDetailsSectionOptions, UserProfile,
+    },
     moltis_skills::types::SkillMetadata,
+    std::collections::{HashMap, HashSet},
 };
 
 /// Runtime context for the host process running the current agent turn.
@@ -116,6 +121,39 @@ pub fn build_system_prompt_with_session_runtime(
     runtime_context: Option<&PromptRuntimeContext>,
     memory_text: Option<&str>,
 ) -> String {
+    build_system_prompt_with_profile(
+        tools,
+        native_tools,
+        project_context,
+        skills,
+        identity,
+        user,
+        soul_text,
+        agents_text,
+        tools_text,
+        runtime_context,
+        memory_text,
+        None,
+        false,
+    )
+}
+
+/// Build the system prompt with explicit runtime context and profile overrides.
+pub fn build_system_prompt_with_profile(
+    tools: &ToolRegistry,
+    native_tools: bool,
+    project_context: Option<&str>,
+    skills: &[SkillMetadata],
+    identity: Option<&AgentIdentity>,
+    user: Option<&UserProfile>,
+    soul_text: Option<&str>,
+    agents_text: Option<&str>,
+    tools_text: Option<&str>,
+    runtime_context: Option<&PromptRuntimeContext>,
+    memory_text: Option<&str>,
+    profile: Option<&PromptProfileConfig>,
+    voice_reply_mode: bool,
+) -> String {
     build_system_prompt_full(
         tools,
         native_tools,
@@ -129,6 +167,8 @@ pub fn build_system_prompt_with_session_runtime(
         runtime_context,
         true, // include_tools
         memory_text,
+        profile,
+        voice_reply_mode,
     )
 }
 
@@ -143,6 +183,33 @@ pub fn build_system_prompt_minimal_runtime(
     runtime_context: Option<&PromptRuntimeContext>,
     memory_text: Option<&str>,
 ) -> String {
+    build_system_prompt_minimal_with_profile(
+        project_context,
+        identity,
+        user,
+        soul_text,
+        agents_text,
+        tools_text,
+        runtime_context,
+        memory_text,
+        None,
+        false,
+    )
+}
+
+/// Build a minimal prompt with explicit runtime context and profile overrides.
+pub fn build_system_prompt_minimal_with_profile(
+    project_context: Option<&str>,
+    identity: Option<&AgentIdentity>,
+    user: Option<&UserProfile>,
+    soul_text: Option<&str>,
+    agents_text: Option<&str>,
+    tools_text: Option<&str>,
+    runtime_context: Option<&PromptRuntimeContext>,
+    memory_text: Option<&str>,
+    profile: Option<&PromptProfileConfig>,
+    voice_reply_mode: bool,
+) -> String {
     build_system_prompt_full(
         &ToolRegistry::new(),
         true,
@@ -156,7 +223,21 @@ pub fn build_system_prompt_minimal_runtime(
         runtime_context,
         false, // include_tools
         memory_text,
+        profile,
+        voice_reply_mode,
     )
+}
+
+/// Returns the default prompt template string used for copy/share workflows.
+#[must_use]
+pub fn default_prompt_template() -> &'static str {
+    DEFAULT_PROMPT_TEMPLATE
+}
+
+/// Returns the catalog of supported prompt template variables.
+#[must_use]
+pub fn prompt_template_variables() -> &'static [PromptTemplateVariable] {
+    &PROMPT_TEMPLATE_VARIABLES
 }
 
 /// Maximum number of characters from `MEMORY.md` injected into the system
@@ -207,6 +288,616 @@ const MINIMAL_GUIDELINES: &str = concat!(
     "- If you don't know something, say so rather than making things up.\n",
     "- For coding questions, provide clear explanations with examples.\n",
 );
+const DEFAULT_TOOLS_PROMPT_PREFIX: &str =
+    "You are a helpful assistant. You can use tools when needed.\n\n";
+const DEFAULT_MINIMAL_PROMPT_PREFIX: &str =
+    "You are a helpful assistant. Answer questions clearly and concisely.\n\n";
+const DEFAULT_PROMPT_TEMPLATE: &str = concat!(
+    "{{default_prefix}}",
+    "{{stable_sections}}",
+    "{{dynamic_tail_sections}}",
+);
+
+#[derive(Debug, Clone, Copy)]
+pub struct PromptTemplateVariable {
+    pub name: &'static str,
+    pub description: &'static str,
+}
+
+const PROMPT_TEMPLATE_VARIABLES: [PromptTemplateVariable; 44] = [
+    PromptTemplateVariable {
+        name: "default_prompt",
+        description: "Default full prompt generated from section toggles/order.",
+    },
+    PromptTemplateVariable {
+        name: "default_prefix",
+        description: "Default leading sentence for tools/minimal modes.",
+    },
+    PromptTemplateVariable {
+        name: "default_sections",
+        description: "All rendered sections (stable + dynamic tail).",
+    },
+    PromptTemplateVariable {
+        name: "stable_sections",
+        description: "Rendered stable section block.",
+    },
+    PromptTemplateVariable {
+        name: "dynamic_tail_sections",
+        description: "Rendered dynamic tail section block.",
+    },
+    PromptTemplateVariable {
+        name: "profile_name",
+        description: "Resolved prompt profile name.",
+    },
+    PromptTemplateVariable {
+        name: "profile_description",
+        description: "Resolved prompt profile description.",
+    },
+    PromptTemplateVariable {
+        name: "tool_count",
+        description: "Number of available tools.",
+    },
+    PromptTemplateVariable {
+        name: "flag_include_tools",
+        description: "Whether tool sections are enabled for this request.",
+    },
+    PromptTemplateVariable {
+        name: "flag_native_tools",
+        description: "Whether provider-native tool calling is active.",
+    },
+    PromptTemplateVariable {
+        name: "flag_voice_reply_mode",
+        description: "Whether voice reply mode is active.",
+    },
+    PromptTemplateVariable {
+        name: "assistant_name",
+        description: "Assistant identity name.",
+    },
+    PromptTemplateVariable {
+        name: "assistant_emoji",
+        description: "Assistant identity emoji.",
+    },
+    PromptTemplateVariable {
+        name: "assistant_creature",
+        description: "Assistant identity creature.",
+    },
+    PromptTemplateVariable {
+        name: "assistant_vibe",
+        description: "Assistant identity vibe.",
+    },
+    PromptTemplateVariable {
+        name: "user_name",
+        description: "User display name.",
+    },
+    PromptTemplateVariable {
+        name: "user_timezone",
+        description: "User timezone name.",
+    },
+    PromptTemplateVariable {
+        name: "user_location",
+        description: "User location string.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_host",
+        description: "Runtime host machine name.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_os",
+        description: "Runtime host OS.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_arch",
+        description: "Runtime host architecture.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_shell",
+        description: "Runtime host shell.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_time",
+        description: "Localized runtime datetime string.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_today",
+        description: "Runtime date (`YYYY-MM-DD`).",
+    },
+    PromptTemplateVariable {
+        name: "runtime_provider",
+        description: "Resolved provider key for this request.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_model",
+        description: "Resolved model id for this request.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_session_key",
+        description: "Session key for this request.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_data_dir",
+        description: "Resolved Moltis data dir path.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_timezone",
+        description: "Runtime/user timezone value.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_accept_language",
+        description: "Accepted language header from request context.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_remote_ip",
+        description: "Remote client IP when available.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_location",
+        description: "Runtime location (`lat,lon`) when available.",
+    },
+    PromptTemplateVariable {
+        name: "identity",
+        description: "Rendered identity section.",
+    },
+    PromptTemplateVariable {
+        name: "user_details",
+        description: "Rendered user details section.",
+    },
+    PromptTemplateVariable {
+        name: "project_context",
+        description: "Rendered project context section.",
+    },
+    PromptTemplateVariable {
+        name: "workspace_files",
+        description: "Rendered workspace files section.",
+    },
+    PromptTemplateVariable {
+        name: "memory_bootstrap",
+        description: "Rendered long-term memory section.",
+    },
+    PromptTemplateVariable {
+        name: "available_tools",
+        description: "Rendered available tools section.",
+    },
+    PromptTemplateVariable {
+        name: "tool_call_guidance",
+        description: "Rendered tool-call instructions section.",
+    },
+    PromptTemplateVariable {
+        name: "runtime",
+        description: "Rendered runtime section.",
+    },
+    PromptTemplateVariable {
+        name: "guidelines",
+        description: "Rendered guidelines section.",
+    },
+    PromptTemplateVariable {
+        name: "skills",
+        description: "Rendered skills section.",
+    },
+    PromptTemplateVariable {
+        name: "voice_reply_mode",
+        description: "Rendered voice reply mode section.",
+    },
+    PromptTemplateVariable {
+        name: "runtime_datetime_tail",
+        description: "Rendered datetime/date tail section.",
+    },
+];
+
+#[derive(Debug, Clone)]
+struct PromptSectionPlan {
+    stable_prefix: Vec<PromptSectionId>,
+    dynamic_tail: Vec<PromptSectionId>,
+    options: PromptSectionOptions,
+}
+
+struct PromptRenderContext<'a> {
+    native_tools: bool,
+    include_tools: bool,
+    project_context: Option<&'a str>,
+    skills: &'a [SkillMetadata],
+    identity: Option<&'a AgentIdentity>,
+    user: Option<&'a UserProfile>,
+    soul_text: Option<&'a str>,
+    agents_text: Option<&'a str>,
+    tools_text: Option<&'a str>,
+    runtime_context: Option<&'a PromptRuntimeContext>,
+    memory_text: Option<&'a str>,
+    tool_schemas: &'a [serde_json::Value],
+    voice_reply_mode: bool,
+    section_options: &'a PromptSectionOptions,
+}
+
+/// Returns the sections that are always required (cannot be disabled).
+pub fn required_sections(include_tools: bool) -> Vec<PromptSectionId> {
+    let mut required = vec![PromptSectionId::Guidelines];
+    if include_tools {
+        required.push(PromptSectionId::AvailableTools);
+        required.push(PromptSectionId::ToolCallGuidance);
+    }
+    required
+}
+
+fn dedupe_section_list(items: Vec<PromptSectionId>) -> Vec<PromptSectionId> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for item in items {
+        if seen.insert(item) {
+            out.push(item);
+        }
+    }
+    out
+}
+
+fn resolve_section_plan(
+    profile: Option<&PromptProfileConfig>,
+    include_tools: bool,
+) -> PromptSectionPlan {
+    let default_profile = PromptProfileConfig::default();
+    let active_profile = profile.unwrap_or(&default_profile);
+
+    let mut enabled = if active_profile.enabled_sections.is_empty() {
+        default_profile.enabled_sections.clone()
+    } else {
+        active_profile.enabled_sections.clone()
+    };
+
+    for section in required_sections(include_tools) {
+        if !enabled.contains(&section) {
+            enabled.push(section);
+        }
+    }
+    enabled = dedupe_section_list(enabled);
+
+    let order = if active_profile.section_order.is_empty() {
+        default_profile.section_order.clone()
+    } else {
+        active_profile.section_order.clone()
+    };
+
+    let mut dynamic_tail = if active_profile.dynamic_tail_sections.is_empty() {
+        default_profile.dynamic_tail_sections.clone()
+    } else {
+        active_profile.dynamic_tail_sections.clone()
+    };
+    dynamic_tail.retain(|section| enabled.contains(section));
+    dynamic_tail = dedupe_section_list(dynamic_tail);
+
+    if enabled.contains(&PromptSectionId::RuntimeDatetimeTail) {
+        dynamic_tail.retain(|section| *section != PromptSectionId::RuntimeDatetimeTail);
+        dynamic_tail.push(PromptSectionId::RuntimeDatetimeTail);
+    } else {
+        dynamic_tail.retain(|section| *section != PromptSectionId::RuntimeDatetimeTail);
+    }
+
+    let dynamic_set: HashSet<PromptSectionId> = dynamic_tail.iter().copied().collect();
+    let mut stable_prefix = Vec::new();
+    for section in order {
+        if enabled.contains(&section) && !dynamic_set.contains(&section) {
+            stable_prefix.push(section);
+        }
+    }
+    stable_prefix = dedupe_section_list(stable_prefix);
+
+    for section in enabled {
+        if !dynamic_set.contains(&section) && !stable_prefix.contains(&section) {
+            stable_prefix.push(section);
+        }
+    }
+
+    PromptSectionPlan {
+        stable_prefix,
+        dynamic_tail,
+        options: active_profile.section_options.clone(),
+    }
+}
+
+/// Returns all prompt section IDs in their canonical order.
+pub fn all_prompt_sections() -> [PromptSectionId; 12] {
+    [
+        PromptSectionId::Identity,
+        PromptSectionId::UserDetails,
+        PromptSectionId::ProjectContext,
+        PromptSectionId::WorkspaceFiles,
+        PromptSectionId::MemoryBootstrap,
+        PromptSectionId::AvailableTools,
+        PromptSectionId::ToolCallGuidance,
+        PromptSectionId::Runtime,
+        PromptSectionId::Guidelines,
+        PromptSectionId::Skills,
+        PromptSectionId::VoiceReplyMode,
+        PromptSectionId::RuntimeDatetimeTail,
+    ]
+}
+
+fn section_template_variable_name(section: PromptSectionId) -> &'static str {
+    match section {
+        PromptSectionId::Identity => "identity",
+        PromptSectionId::UserDetails => "user_details",
+        PromptSectionId::ProjectContext => "project_context",
+        PromptSectionId::WorkspaceFiles => "workspace_files",
+        PromptSectionId::MemoryBootstrap => "memory_bootstrap",
+        PromptSectionId::AvailableTools => "available_tools",
+        PromptSectionId::ToolCallGuidance => "tool_call_guidance",
+        PromptSectionId::Runtime => "runtime",
+        PromptSectionId::Guidelines => "guidelines",
+        PromptSectionId::Skills => "skills",
+        PromptSectionId::VoiceReplyMode => "voice_reply_mode",
+        PromptSectionId::RuntimeDatetimeTail => "runtime_datetime_tail",
+    }
+}
+
+fn render_section_to_string(section: PromptSectionId, ctx: &PromptRenderContext<'_>) -> String {
+    let mut text = String::new();
+    render_section(&mut text, section, ctx);
+    text
+}
+
+fn render_section_list(
+    sections: &[PromptSectionId],
+    ctx: &PromptRenderContext<'_>,
+) -> (String, HashMap<PromptSectionId, String>) {
+    let mut rendered = String::new();
+    let mut by_section = HashMap::new();
+
+    for section in sections {
+        let text = render_section_to_string(*section, ctx);
+        rendered.push_str(&text);
+        let _ = by_section.insert(*section, text);
+    }
+
+    (rendered, by_section)
+}
+
+fn render_template_with_values(template: &str, values: &HashMap<String, String>) -> String {
+    let mut rendered = String::with_capacity(template.len() + 256);
+    let mut cursor = 0usize;
+
+    while let Some(rel_open) = template[cursor..].find("{{") {
+        let open = cursor + rel_open;
+        rendered.push_str(&template[cursor..open]);
+        let after_open = open + 2;
+        let Some(rel_close) = template[after_open..].find("}}") else {
+            rendered.push_str(&template[open..]);
+            return rendered;
+        };
+        let close = after_open + rel_close;
+        let var_name = template[after_open..close].trim();
+        if let Some(value) = values.get(var_name) {
+            rendered.push_str(value);
+        }
+        cursor = close + 2;
+    }
+
+    rendered.push_str(&template[cursor..]);
+    rendered
+}
+
+fn append_block_with_spacing(prompt: &mut String, block: &str) {
+    if block.trim().is_empty() {
+        return;
+    }
+
+    if !prompt.is_empty() && !prompt.ends_with('\n') {
+        prompt.push('\n');
+    }
+    if !prompt.is_empty() && !prompt.ends_with("\n\n") {
+        prompt.push('\n');
+    }
+    prompt.push_str(block);
+}
+
+fn build_template_values(
+    default_prefix: &str,
+    stable_sections: &str,
+    dynamic_tail_sections: &str,
+    section_blocks: &HashMap<PromptSectionId, String>,
+    active_profile: &PromptProfileConfig,
+    render_context: &PromptRenderContext<'_>,
+) -> HashMap<String, String> {
+    let default_sections = format!("{stable_sections}{dynamic_tail_sections}");
+    let default_prompt = format!("{default_prefix}{default_sections}");
+    let mut values = HashMap::new();
+
+    let _ = values.insert("default_prompt".to_string(), default_prompt);
+    let _ = values.insert("default_prefix".to_string(), default_prefix.to_string());
+    let _ = values.insert("default_sections".to_string(), default_sections);
+    let _ = values.insert("stable_sections".to_string(), stable_sections.to_string());
+    let _ = values.insert(
+        "dynamic_tail_sections".to_string(),
+        dynamic_tail_sections.to_string(),
+    );
+    let _ = values.insert("profile_name".to_string(), active_profile.name.clone());
+    let _ = values.insert(
+        "profile_description".to_string(),
+        active_profile.description.clone().unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "tool_count".to_string(),
+        render_context.tool_schemas.len().to_string(),
+    );
+    let _ = values.insert(
+        "flag_include_tools".to_string(),
+        render_context.include_tools.to_string(),
+    );
+    let _ = values.insert(
+        "flag_native_tools".to_string(),
+        render_context.native_tools.to_string(),
+    );
+    let _ = values.insert(
+        "flag_voice_reply_mode".to_string(),
+        render_context.voice_reply_mode.to_string(),
+    );
+
+    let _ = values.insert(
+        "assistant_name".to_string(),
+        render_context
+            .identity
+            .and_then(|identity| identity.name.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "assistant_emoji".to_string(),
+        render_context
+            .identity
+            .and_then(|identity| identity.emoji.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "user_name".to_string(),
+        render_context
+            .user
+            .and_then(|user| user.name.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "user_timezone".to_string(),
+        render_context
+            .user
+            .and_then(|user| user.timezone.as_ref())
+            .map(|tz| tz.name().to_string())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "user_location".to_string(),
+        render_context
+            .user
+            .and_then(|user| user.location.as_ref().map(ToString::to_string))
+            .unwrap_or_default(),
+    );
+
+    let host = render_context.runtime_context.map(|runtime| &runtime.host);
+    let _ = values.insert(
+        "runtime_host".to_string(),
+        host.and_then(|host| host.host.clone()).unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_os".to_string(),
+        host.and_then(|host| host.os.clone()).unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_arch".to_string(),
+        host.and_then(|host| host.arch.clone()).unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_shell".to_string(),
+        host.and_then(|host| host.shell.clone()).unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_time".to_string(),
+        host.and_then(|host| host.time.clone()).unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_today".to_string(),
+        host.and_then(|host| host.today.clone()).unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_provider".to_string(),
+        host.and_then(|host| host.provider.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_model".to_string(),
+        host.and_then(|host| host.model.clone()).unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_session_key".to_string(),
+        host.and_then(|host| host.session_key.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_data_dir".to_string(),
+        host.and_then(|host| host.data_dir.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_timezone".to_string(),
+        host.and_then(|host| host.timezone.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_accept_language".to_string(),
+        host.and_then(|host| host.accept_language.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_remote_ip".to_string(),
+        host.and_then(|host| host.remote_ip.clone())
+            .unwrap_or_default(),
+    );
+    let _ = values.insert(
+        "runtime_location".to_string(),
+        host.and_then(|host| host.location.clone())
+            .unwrap_or_default(),
+    );
+
+    for section in all_prompt_sections() {
+        let key = section_template_variable_name(section);
+        let value = section_blocks.get(&section).cloned().unwrap_or_default();
+        let _ = values.insert(key.to_string(), value);
+    }
+
+    values
+}
+
+fn append_prompt_tail_template(
+    prompt: &mut String,
+    tail_template: Option<&str>,
+    template_values: &HashMap<String, String>,
+) {
+    let Some(template) = tail_template.filter(|template| !template.trim().is_empty()) else {
+        return;
+    };
+
+    let rendered_tail = render_template_with_values(template, template_values);
+    append_block_with_spacing(prompt, &rendered_tail);
+}
+
+fn render_section(prompt: &mut String, section: PromptSectionId, ctx: &PromptRenderContext<'_>) {
+    match section {
+        PromptSectionId::Identity => append_identity_section(prompt, ctx.identity, ctx.soul_text),
+        PromptSectionId::UserDetails => {
+            append_user_details_section(prompt, ctx.user, &ctx.section_options.user_details);
+        },
+        PromptSectionId::ProjectContext => append_project_context(prompt, ctx.project_context),
+        PromptSectionId::WorkspaceFiles => {
+            append_workspace_files_section(prompt, ctx.agents_text, ctx.tools_text);
+        },
+        PromptSectionId::MemoryBootstrap => append_memory_section(
+            prompt,
+            ctx.memory_text,
+            ctx.tool_schemas,
+            &ctx.section_options.memory_bootstrap,
+        ),
+        PromptSectionId::AvailableTools => {
+            append_available_tools_section(prompt, ctx.native_tools, ctx.tool_schemas);
+        },
+        PromptSectionId::ToolCallGuidance => {
+            append_tool_call_guidance(prompt, ctx.native_tools, ctx.tool_schemas);
+        },
+        PromptSectionId::Runtime => append_runtime_section(
+            prompt,
+            ctx.runtime_context,
+            ctx.include_tools,
+            &ctx.section_options.runtime,
+        ),
+        PromptSectionId::Guidelines => append_guidelines_section(prompt, ctx.include_tools),
+        PromptSectionId::Skills => append_skills_section(prompt, ctx.include_tools, ctx.skills),
+        PromptSectionId::VoiceReplyMode => {
+            append_voice_reply_mode_section(prompt, ctx.voice_reply_mode)
+        },
+        PromptSectionId::RuntimeDatetimeTail => append_runtime_datetime_tail(
+            prompt,
+            ctx.runtime_context,
+            ctx.section_options.runtime_datetime_tail.mode,
+        ),
+    }
+}
+
+fn append_voice_reply_mode_section(prompt: &mut String, enabled: bool) {
+    if enabled {
+        prompt.push_str(VOICE_REPLY_SUFFIX);
+    }
+}
 
 /// Internal: build system prompt with full control over what's included.
 fn build_system_prompt_full(
@@ -222,36 +913,77 @@ fn build_system_prompt_full(
     runtime_context: Option<&PromptRuntimeContext>,
     include_tools: bool,
     memory_text: Option<&str>,
+    profile: Option<&PromptProfileConfig>,
+    voice_reply_mode: bool,
 ) -> String {
     let tool_schemas = if include_tools {
         tools.list_schemas()
     } else {
         Vec::new()
     };
-    let mut prompt = String::from(if include_tools {
-        "You are a helpful assistant. You can use tools when needed.\n\n"
+    let fallback_profile = PromptProfileConfig::default();
+    let active_profile = profile.unwrap_or(&fallback_profile);
+    let section_plan = resolve_section_plan(profile, include_tools);
+    let default_prefix = if include_tools {
+        DEFAULT_TOOLS_PROMPT_PREFIX
     } else {
-        "You are a helpful assistant. Answer questions clearly and concisely.\n\n"
-    });
+        DEFAULT_MINIMAL_PROMPT_PREFIX
+    };
 
-    append_identity_and_user_sections(&mut prompt, identity, user, soul_text);
-    append_project_context(&mut prompt, project_context);
-    append_runtime_section(&mut prompt, runtime_context, include_tools);
-    append_skills_section(&mut prompt, include_tools, skills);
-    append_workspace_files_section(&mut prompt, agents_text, tools_text);
-    append_memory_section(&mut prompt, memory_text, &tool_schemas);
-    append_available_tools_section(&mut prompt, native_tools, &tool_schemas);
-    append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas);
-    append_guidelines_section(&mut prompt, include_tools);
-    append_runtime_datetime_tail(&mut prompt, runtime_context);
+    let render_ctx = PromptRenderContext {
+        native_tools,
+        include_tools,
+        project_context,
+        skills,
+        identity,
+        user,
+        soul_text,
+        agents_text,
+        tools_text,
+        runtime_context,
+        memory_text,
+        tool_schemas: &tool_schemas,
+        voice_reply_mode,
+        section_options: &section_plan.options,
+    };
 
+    let (stable_sections, mut section_blocks) =
+        render_section_list(&section_plan.stable_prefix, &render_ctx);
+    let (dynamic_tail_sections, dynamic_tail_blocks) =
+        render_section_list(&section_plan.dynamic_tail, &render_ctx);
+    section_blocks.extend(dynamic_tail_blocks);
+
+    let default_prompt = format!("{default_prefix}{stable_sections}{dynamic_tail_sections}");
+    let template_values = build_template_values(
+        default_prefix,
+        &stable_sections,
+        &dynamic_tail_sections,
+        &section_blocks,
+        active_profile,
+        &render_ctx,
+    );
+
+    let mut prompt = if let Some(template) = active_profile
+        .prompt_template
+        .as_deref()
+        .filter(|template| !template.trim().is_empty())
+    {
+        render_template_with_values(template, &template_values)
+    } else {
+        default_prompt
+    };
+
+    append_prompt_tail_template(
+        &mut prompt,
+        active_profile.prompt_tail_template.as_deref(),
+        &template_values,
+    );
     prompt
 }
 
-fn append_identity_and_user_sections(
+fn append_identity_section(
     prompt: &mut String,
     identity: Option<&AgentIdentity>,
-    user: Option<&UserProfile>,
     soul_text: Option<&str>,
 ) {
     if let Some(id) = identity {
@@ -272,11 +1004,35 @@ fn append_identity_and_user_sections(
         prompt.push_str(soul_text.unwrap_or(DEFAULT_SOUL));
         prompt.push('\n');
     }
+}
 
-    if let Some(name) = user.and_then(|profile| profile.name.as_deref()) {
+fn append_user_details_section(
+    prompt: &mut String,
+    user: Option<&UserProfile>,
+    options: &UserDetailsSectionOptions,
+) {
+    let Some(user) = user else {
+        return;
+    };
+
+    let mut emitted = false;
+    if let Some(name) = user.name.as_deref() {
         prompt.push_str(&format!("The user's name is {name}.\n"));
+        emitted = true;
     }
-    if identity.is_some() || user.is_some() {
+
+    if options.mode == UserDetailsMode::FullProfile {
+        if let Some(timezone) = user.timezone.as_ref() {
+            prompt.push_str(&format!("The user's timezone is {}.\n", timezone.name()));
+            emitted = true;
+        }
+        if let Some(location) = user.location.as_ref() {
+            prompt.push_str(&format!("The user's location is {location}.\n"));
+            emitted = true;
+        }
+    }
+
+    if emitted {
         prompt.push('\n');
     }
 }
@@ -297,13 +1053,21 @@ fn append_runtime_section(
     prompt: &mut String,
     runtime_context: Option<&PromptRuntimeContext>,
     include_tools: bool,
+    options: &RuntimeSectionOptions,
 ) {
     let Some(runtime) = runtime_context else {
         return;
     };
 
-    let host_line = format_host_runtime_line(&runtime.host);
-    let sandbox_line = runtime.sandbox.as_ref().map(format_sandbox_runtime_line);
+    let host_line = options
+        .include_host_fields
+        .then(|| format_host_runtime_line(&runtime.host, options.include_network_sudo_fields))
+        .flatten();
+    let sandbox_line = if options.include_sandbox_fields {
+        runtime.sandbox.as_ref().map(format_sandbox_runtime_line)
+    } else {
+        None
+    };
     if host_line.is_none() && sandbox_line.is_none() {
         return;
     }
@@ -366,11 +1130,17 @@ fn append_memory_section(
     prompt: &mut String,
     memory_text: Option<&str>,
     tool_schemas: &[serde_json::Value],
+    options: &MemoryBootstrapSectionOptions,
 ) {
     let has_memory_search = has_tool_schema(tool_schemas, "memory_search");
     let has_memory_save = has_tool_schema(tool_schemas, "memory_save");
-    let memory_content = memory_text.filter(|text| !text.is_empty());
-    if memory_content.is_none() && !has_memory_search && !has_memory_save {
+    let show_memory_search_guidance = has_memory_search || options.force_memory_search_guidance;
+    let memory_content = if options.include_memory_md_snapshot {
+        memory_text.filter(|text| !text.is_empty())
+    } else {
+        None
+    };
+    if memory_content.is_none() && !show_memory_search_guidance && !has_memory_save {
         return;
     }
 
@@ -397,6 +1167,10 @@ fn append_memory_section(
             "The long-term memory system holds user facts, past decisions, project context, ",
             "and anything previously stored.\n",
         ));
+    } else if options.force_memory_search_guidance {
+        prompt.push_str(
+            "\nAlways search long-term memory before claiming you don't know something.\n",
+        );
     }
     if has_memory_save {
         prompt.push_str(concat!(
@@ -481,16 +1255,22 @@ fn append_guidelines_section(prompt: &mut String, include_tools: bool) {
 fn append_runtime_datetime_tail(
     prompt: &mut String,
     runtime_context: Option<&PromptRuntimeContext>,
+    mode: RuntimeDatetimeTailMode,
 ) {
+    if mode == RuntimeDatetimeTailMode::Disabled {
+        return;
+    }
+
     let Some(runtime) = runtime_context else {
         return;
     };
 
-    if let Some(time) = runtime
-        .host
-        .time
-        .as_deref()
-        .filter(|value| !value.is_empty())
+    if mode == RuntimeDatetimeTailMode::Datetime
+        && let Some(time) = runtime
+            .host
+            .time
+            .as_deref()
+            .filter(|value| !value.is_empty())
     {
         prompt.push_str("\nThe current user datetime is ");
         prompt.push_str(time);
@@ -516,7 +1296,10 @@ fn push_non_empty_runtime_field(parts: &mut Vec<String>, key: &str, value: Optio
     }
 }
 
-fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
+fn format_host_runtime_line(
+    host: &PromptHostRuntimeContext,
+    include_network_sudo_fields: bool,
+) -> Option<String> {
     let mut parts = Vec::new();
     for (key, value) in [
         ("host", host.host.as_deref()),
@@ -531,17 +1314,19 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
     ] {
         push_non_empty_runtime_field(&mut parts, key, value);
     }
-    if let Some(sudo_non_interactive) = host.sudo_non_interactive {
-        parts.push(format!("sudo_non_interactive={sudo_non_interactive}"));
-    }
-    for (key, value) in [
-        ("sudo_status", host.sudo_status.as_deref()),
-        ("timezone", host.timezone.as_deref()),
-        ("accept_language", host.accept_language.as_deref()),
-        ("remote_ip", host.remote_ip.as_deref()),
-        ("location", host.location.as_deref()),
-    ] {
-        push_non_empty_runtime_field(&mut parts, key, value);
+    if include_network_sudo_fields {
+        if let Some(sudo_non_interactive) = host.sudo_non_interactive {
+            parts.push(format!("sudo_non_interactive={sudo_non_interactive}"));
+        }
+        for (key, value) in [
+            ("sudo_status", host.sudo_status.as_deref()),
+            ("timezone", host.timezone.as_deref()),
+            ("accept_language", host.accept_language.as_deref()),
+            ("remote_ip", host.remote_ip.as_deref()),
+            ("location", host.location.as_deref()),
+        ] {
+            push_non_empty_runtime_field(&mut parts, key, value);
+        }
     }
 
     (!parts.is_empty()).then(|| format!("Host: {}", parts.join(" | ")))
@@ -1261,5 +2046,334 @@ mod tests {
 
         assert!(!prompt.contains("The current user datetime is "));
         assert!(!prompt.contains("The current user date is "));
+    }
+
+    #[test]
+    fn test_profile_section_order_and_dynamic_tail_rendering() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("devbox".to_string()),
+                time: Some("2026-02-17 16:18:00 CET".to_string()),
+                today: Some("2026-02-17".to_string()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+        let profile = PromptProfileConfig {
+            name: "ordered".to_string(),
+            description: None,
+            prompt_template: None,
+            prompt_tail_template: None,
+            enabled_sections: vec![
+                PromptSectionId::Runtime,
+                PromptSectionId::Guidelines,
+                PromptSectionId::VoiceReplyMode,
+                PromptSectionId::RuntimeDatetimeTail,
+            ],
+            section_order: vec![
+                PromptSectionId::Runtime,
+                PromptSectionId::Guidelines,
+                PromptSectionId::VoiceReplyMode,
+            ],
+            dynamic_tail_sections: vec![PromptSectionId::RuntimeDatetimeTail],
+            section_options: PromptSectionOptions::default(),
+        };
+
+        let prompt = build_system_prompt_with_profile(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+            Some(&profile),
+            true,
+        );
+
+        let runtime_ix = prompt.find("## Runtime");
+        let guidelines_ix = prompt.find("## Guidelines");
+        let voice_ix = prompt.find("## Voice Reply Mode");
+        let tail_ix = prompt.rfind("The current user datetime is 2026-02-17 16:18:00 CET.");
+        assert!(runtime_ix.is_some());
+        assert!(guidelines_ix.is_some());
+        assert!(voice_ix.is_some());
+        assert!(tail_ix.is_some());
+        assert!(runtime_ix.is_some_and(|ix| guidelines_ix.is_some_and(|next| ix < next)));
+        assert!(guidelines_ix.is_some_and(|ix| voice_ix.is_some_and(|next| ix < next)));
+        assert!(voice_ix.is_some_and(|ix| tail_ix.is_some_and(|next| ix < next)));
+        assert!(
+            prompt
+                .trim_end()
+                .ends_with("The current user datetime is 2026-02-17 16:18:00 CET.")
+        );
+    }
+
+    #[test]
+    fn test_required_guidelines_are_enforced_even_when_disabled() {
+        let tools = ToolRegistry::new();
+        let profile = PromptProfileConfig {
+            name: "unsafe".to_string(),
+            description: None,
+            prompt_template: None,
+            prompt_tail_template: None,
+            enabled_sections: vec![PromptSectionId::Runtime],
+            section_order: vec![PromptSectionId::Runtime],
+            dynamic_tail_sections: vec![],
+            section_options: PromptSectionOptions::default(),
+        };
+
+        let prompt = build_system_prompt_with_profile(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&profile),
+            false,
+        );
+
+        assert!(prompt.contains("## Guidelines"));
+    }
+
+    #[test]
+    fn test_runtime_section_option_hides_network_and_sudo_fields() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("devbox".to_string()),
+                os: Some("linux".to_string()),
+                sudo_non_interactive: Some(true),
+                sudo_status: Some("passwordless".to_string()),
+                timezone: Some("UTC".to_string()),
+                remote_ip: Some("203.0.113.22".to_string()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+        let profile = PromptProfileConfig {
+            name: "runtime-lite".to_string(),
+            description: None,
+            prompt_template: None,
+            prompt_tail_template: None,
+            enabled_sections: vec![PromptSectionId::Runtime, PromptSectionId::Guidelines],
+            section_order: vec![PromptSectionId::Runtime, PromptSectionId::Guidelines],
+            dynamic_tail_sections: vec![],
+            section_options: PromptSectionOptions {
+                runtime: RuntimeSectionOptions {
+                    include_host_fields: true,
+                    include_sandbox_fields: true,
+                    include_network_sudo_fields: false,
+                },
+                ..PromptSectionOptions::default()
+            },
+        };
+
+        let prompt = build_system_prompt_with_profile(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+            Some(&profile),
+            false,
+        );
+
+        assert!(prompt.contains("Host: host=devbox"));
+        assert!(!prompt.contains("| sudo_non_interactive=true"));
+        assert!(!prompt.contains("| sudo_status=passwordless"));
+        assert!(!prompt.contains("| timezone=UTC"));
+        assert!(!prompt.contains("| remote_ip=203.0.113.22"));
+    }
+
+    #[test]
+    fn test_runtime_datetime_tail_mode_date_only() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                time: Some("2026-02-17 16:18:00 CET".to_string()),
+                today: Some("2026-02-17".to_string()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+        let profile = PromptProfileConfig {
+            name: "date-only".to_string(),
+            description: None,
+            prompt_template: None,
+            prompt_tail_template: None,
+            enabled_sections: vec![
+                PromptSectionId::Guidelines,
+                PromptSectionId::RuntimeDatetimeTail,
+            ],
+            section_order: vec![PromptSectionId::Guidelines],
+            dynamic_tail_sections: vec![PromptSectionId::RuntimeDatetimeTail],
+            section_options: PromptSectionOptions {
+                runtime_datetime_tail: moltis_config::RuntimeDatetimeTailSectionOptions {
+                    mode: RuntimeDatetimeTailMode::DateOnly,
+                },
+                ..PromptSectionOptions::default()
+            },
+        };
+
+        let prompt = build_system_prompt_with_profile(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+            Some(&profile),
+            false,
+        );
+
+        assert!(!prompt.contains("The current user datetime is 2026-02-17 16:18:00 CET."));
+        assert!(prompt.contains("The current user date is 2026-02-17."));
+    }
+
+    #[test]
+    fn test_custom_prompt_template_renders_variables_and_tail() {
+        let identity = AgentIdentity {
+            name: Some("Momo".to_string()),
+            ..Default::default()
+        };
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                today: Some("2026-02-17".to_string()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+        let profile = PromptProfileConfig {
+            name: "templated".to_string(),
+            description: None,
+            prompt_template: Some(
+                "{{default_prefix}}Name={{assistant_name}}\n{{guidelines}}".to_string(),
+            ),
+            prompt_tail_template: Some("Tail date={{runtime_today}}".to_string()),
+            enabled_sections: vec![PromptSectionId::Guidelines],
+            section_order: vec![PromptSectionId::Guidelines],
+            dynamic_tail_sections: vec![],
+            section_options: PromptSectionOptions::default(),
+        };
+
+        let prompt = build_system_prompt_minimal_with_profile(
+            None,
+            Some(&identity),
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+            Some(&profile),
+            false,
+        );
+
+        assert!(prompt.contains("Name=Momo"));
+        assert!(prompt.contains("## Guidelines"));
+        assert!(prompt.trim_end().ends_with("Tail date=2026-02-17"));
+    }
+
+    #[test]
+    fn test_custom_template_respects_exact_body_without_implicit_tool_sections() {
+        let tools = registry_with_tools(&["calc"]);
+        let profile = PromptProfileConfig {
+            name: "custom".to_string(),
+            description: None,
+            prompt_template: Some("Custom template body.".to_string()),
+            prompt_tail_template: None,
+            enabled_sections: vec![PromptSectionId::Runtime],
+            section_order: vec![PromptSectionId::Runtime],
+            dynamic_tail_sections: vec![],
+            section_options: PromptSectionOptions::default(),
+        };
+
+        let prompt = build_system_prompt_with_profile(
+            &tools,
+            false,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&profile),
+            false,
+        );
+
+        assert!(prompt.starts_with("Custom template body."));
+        assert_eq!(prompt.trim(), "Custom template body.");
+    }
+
+    #[test]
+    fn test_unknown_template_variables_render_as_empty() {
+        let profile = PromptProfileConfig {
+            name: "unknown-var".to_string(),
+            description: None,
+            prompt_template: Some("A{{does_not_exist}}B".to_string()),
+            prompt_tail_template: None,
+            enabled_sections: vec![PromptSectionId::Guidelines],
+            section_order: vec![PromptSectionId::Guidelines],
+            dynamic_tail_sections: vec![],
+            section_options: PromptSectionOptions::default(),
+        };
+
+        let prompt = build_system_prompt_minimal_with_profile(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&profile),
+            false,
+        );
+
+        assert!(prompt.contains("AB"));
+        assert!(!prompt.contains("## Guidelines"));
+    }
+
+    #[test]
+    fn test_prompt_template_variable_catalog_contains_core_variables() {
+        let names: HashSet<&str> = prompt_template_variables()
+            .iter()
+            .map(|variable| variable.name)
+            .collect();
+        assert!(names.contains("default_prompt"));
+        assert!(names.contains("default_prefix"));
+        assert!(names.contains("guidelines"));
+        assert!(names.contains("runtime_today"));
+        assert_eq!(
+            default_prompt_template(),
+            "{{default_prefix}}{{stable_sections}}{{dynamic_tail_sections}}"
+        );
     }
 }

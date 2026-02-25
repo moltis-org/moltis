@@ -285,6 +285,63 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let prompt_profile_entry = || {
+        Struct(HashMap::from([
+            ("name", Leaf),
+            ("description", Leaf),
+            ("prompt_template", Leaf),
+            ("prompt_tail_template", Leaf),
+            ("enabled_sections", Leaf),
+            ("section_order", Leaf),
+            ("dynamic_tail_sections", Leaf),
+            (
+                "section_options",
+                Struct(HashMap::from([
+                    (
+                        "runtime",
+                        Struct(HashMap::from([
+                            ("include_host_fields", Leaf),
+                            ("include_sandbox_fields", Leaf),
+                            ("include_network_sudo_fields", Leaf),
+                        ])),
+                    ),
+                    ("user_details", Struct(HashMap::from([("mode", Leaf)]))),
+                    (
+                        "memory_bootstrap",
+                        Struct(HashMap::from([
+                            ("include_memory_md_snapshot", Leaf),
+                            ("force_memory_search_guidance", Leaf),
+                        ])),
+                    ),
+                    (
+                        "runtime_datetime_tail",
+                        Struct(HashMap::from([("mode", Leaf)])),
+                    ),
+                ])),
+            ),
+        ]))
+    };
+
+    let prompt_profile_override = || {
+        Struct(HashMap::from([
+            (
+                "match",
+                Struct(HashMap::from([("provider", Leaf), ("model", Leaf)])),
+            ),
+            ("provider", Leaf),
+            ("model", Leaf),
+            ("profile", Leaf),
+        ]))
+    };
+
+    let prompt_profiles = || {
+        Struct(HashMap::from([
+            ("default", Leaf),
+            ("profiles", Array(Box::new(prompt_profile_entry()))),
+            ("overrides", Array(Box::new(prompt_profile_override()))),
+        ]))
+    };
+
     Struct(HashMap::from([
         (
             "server",
@@ -309,6 +366,7 @@ fn build_schema_map() -> KnownKeys {
                 ("allowed_models", Leaf),
             ])),
         ),
+        ("prompt_profiles", prompt_profiles()),
         ("tools", tools()),
         (
             "skills",

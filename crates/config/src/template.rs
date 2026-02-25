@@ -182,6 +182,76 @@ message_queue_mode = "followup"   # Default: process queued messages one-by-one 
 # allowed_models = ["gpt 5.2"]  # Legacy field (currently ignored).
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SYSTEM PROMPT PROFILES
+# ══════════════════════════════════════════════════════════════════════════════
+
+[prompt_profiles]
+default = "balanced-default"       # Default profile used when no override matches
+
+[[prompt_profiles.profiles]]
+name = "balanced-default"
+description = "Default profile balancing context richness and cache locality."
+# Optional full template (`{{variable}}` placeholders). If omitted, section toggles/order are used.
+# Common variables:
+#   {{default_prompt}} {{default_prefix}} {{stable_sections}} {{dynamic_tail_sections}}
+#   {{identity}} {{user_details}} {{project_context}} {{runtime}} {{skills}}
+#   {{workspace_files}} {{memory_bootstrap}} {{available_tools}} {{tool_call_guidance}}
+#   {{guidelines}} {{voice_reply_mode}} {{runtime_datetime_tail}}
+# prompt_template = "{{default_prompt}}"
+# Optional per-request tail appended after prompt render (for reinforcement patterns).
+# prompt_tail_template = "Keep replies short and action-oriented."
+enabled_sections = [
+  "identity",
+  "user_details",
+  "project_context",
+  "runtime",
+  "skills",
+  "workspace_files",
+  "memory_bootstrap",
+  "available_tools",
+  "tool_call_guidance",
+  "guidelines",
+  "voice_reply_mode",
+  "runtime_datetime_tail",
+]
+section_order = [
+  "identity",
+  "user_details",
+  "project_context",
+  "runtime",
+  "skills",
+  "workspace_files",
+  "memory_bootstrap",
+  "available_tools",
+  "tool_call_guidance",
+  "guidelines",
+  "voice_reply_mode",
+]
+dynamic_tail_sections = ["runtime_datetime_tail"] # Rendered last for cache locality
+
+[prompt_profiles.profiles.section_options.runtime]
+include_host_fields = true
+include_sandbox_fields = true
+include_network_sudo_fields = true
+
+[prompt_profiles.profiles.section_options.user_details]
+mode = "name_only"                 # "name_only" or "full_profile"
+
+[prompt_profiles.profiles.section_options.memory_bootstrap]
+include_memory_md_snapshot = true
+force_memory_search_guidance = false
+
+[prompt_profiles.profiles.section_options.runtime_datetime_tail]
+mode = "datetime"                  # "datetime", "date_only", or "disabled"
+
+# Optional model/provider overrides (first match wins):
+# [[prompt_profiles.overrides]]
+# profile = "balanced-default"
+# [prompt_profiles.overrides.match]
+# provider = "openai"
+# model = "gpt-5*"
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
 # ══════════════════════════════════════════════════════════════════════════════
 
