@@ -10,7 +10,6 @@ use std::{
 };
 
 use {
-    anyhow::{Context, Result, bail},
     tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
         process::{Child, Command},
@@ -20,6 +19,7 @@ use {
 };
 
 use crate::{
+    error::{Context, Error, Result},
     traits::McpTransport,
     types::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse},
 };
@@ -181,11 +181,10 @@ impl McpTransport for StdioTransport {
             })?;
 
         if let Some(ref err) = resp.error {
-            bail!(
+            return Err(Error::message(format!(
                 "MCP error on '{method}': code={} message={}",
-                err.code,
-                err.message
-            );
+                err.code, err.message
+            )));
         }
 
         Ok(resp)

@@ -17,7 +17,7 @@ use {
     moltis_sessions::metadata::SqliteSessionMetadata,
 };
 
-use crate::services::{ChannelService, ServiceResult};
+use crate::services::{ChannelService, ServiceError, ServiceResult};
 
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
@@ -122,7 +122,7 @@ impl ChannelService for LiveChannelService {
             .unwrap_or("telegram");
 
         if channel_type != "telegram" {
-            return Err(format!("unsupported channel type: {channel_type}"));
+            return Err(format!("unsupported channel type: {channel_type}").into());
         }
 
         let account_id = params
@@ -248,7 +248,7 @@ impl ChannelService for LiveChannelService {
             .message_log
             .unique_senders(account_id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         // Read allowlist from current config to tag each sender.
         let tg = self.telegram.read().await;
@@ -312,7 +312,7 @@ impl ChannelService for LiveChannelService {
             .store
             .get(account_id)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(ServiceError::message)?
             .ok_or_else(|| format!("channel '{account_id}' not found in store"))?;
 
         let mut config = stored.config.clone();
@@ -381,7 +381,7 @@ impl ChannelService for LiveChannelService {
             .store
             .get(account_id)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(ServiceError::message)?
             .ok_or_else(|| format!("channel '{account_id}' not found in store"))?;
 
         let mut config = stored.config.clone();

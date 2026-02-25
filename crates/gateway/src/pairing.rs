@@ -7,6 +7,23 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("pair request not found")]
+    PairRequestNotFound,
+
+    #[error("pair request already {0:?}")]
+    PairRequestNotPending(PairStatus),
+
+    #[error("pair request expired")]
+    PairRequestExpired,
+
+    #[error("device not found")]
+    DeviceNotFound,
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,17 +117,17 @@ impl PairingState {
     }
 
     /// Approve a pending pair request. Issues a device token.
-    pub fn approve(&mut self, pair_id: &str) -> Result<DeviceToken, String> {
+    pub fn approve(&mut self, pair_id: &str) -> Result<DeviceToken> {
         let req = self
             .pending
             .get_mut(pair_id)
-            .ok_or_else(|| "pair request not found".to_string())?;
+            .ok_or(Error::PairRequestNotFound)?;
         if req.status != PairStatus::Pending {
-            return Err(format!("pair request already {:?}", req.status));
+            return Err(Error::PairRequestNotPending(req.status));
         }
         if Instant::now() > req.expires_at {
             req.status = PairStatus::Expired;
-            return Err("pair request expired".into());
+            return Err(Error::PairRequestExpired);
         }
         req.status = PairStatus::Approved;
 
@@ -133,13 +150,13 @@ impl PairingState {
     }
 
     /// Reject a pending pair request.
-    pub fn reject(&mut self, pair_id: &str) -> Result<(), String> {
+    pub fn reject(&mut self, pair_id: &str) -> Result<()> {
         let req = self
             .pending
             .get_mut(pair_id)
-            .ok_or_else(|| "pair request not found".to_string())?;
+            .ok_or(Error::PairRequestNotFound)?;
         if req.status != PairStatus::Pending {
-            return Err(format!("pair request already {:?}", req.status));
+            return Err(Error::PairRequestNotPending(req.status));
         }
         req.status = PairStatus::Rejected;
         Ok(())
@@ -151,11 +168,11 @@ impl PairingState {
     }
 
     /// Rotate a device token: revoke old, issue new.
-    pub fn rotate_token(&mut self, device_id: &str) -> Result<DeviceToken, String> {
+    pub fn rotate_token(&mut self, device_id: &str) -> Result<DeviceToken> {
         let existing = self
             .devices
             .get_mut(device_id)
-            .ok_or_else(|| "device not found".to_string())?;
+            .ok_or(Error::DeviceNotFound)?;
         existing.revoked = true;
 
         let new_token = DeviceToken {
@@ -174,11 +191,11 @@ impl PairingState {
     }
 
     /// Revoke a device token permanently.
-    pub fn revoke_token(&mut self, device_id: &str) -> Result<(), String> {
+    pub fn revoke_token(&mut self, device_id: &str) -> Result<()> {
         let existing = self
             .devices
             .get_mut(device_id)
-            .ok_or_else(|| "device not found".to_string())?;
+            .ok_or(Error::DeviceNotFound)?;
         existing.revoked = true;
         Ok(())
     }

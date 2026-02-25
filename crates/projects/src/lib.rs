@@ -7,11 +7,13 @@
 pub mod complete;
 pub mod context;
 pub mod detect;
+pub mod error;
 pub mod store;
 pub mod types;
 pub mod worktree;
 
 pub use {
+    error::{Error, Result},
     store::{ProjectStore, SqliteProjectStore, TomlProjectStore},
     types::{ContextFile, Project, ProjectContext},
     worktree::WorktreeManager,
@@ -21,7 +23,7 @@ pub use {
 ///
 /// This creates the `projects` table and indexes. Should be called at
 /// application startup before using [`SqliteProjectStore`].
-pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+pub async fn run_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations")
         .set_ignore_missing(true)
         .run(pool)

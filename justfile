@@ -13,8 +13,12 @@ format:
 format-check:
     cargo +{{nightly_toolchain}} fmt --all -- --check
 
+# Verify Cargo.lock is in sync with workspace manifests.
+lockfile-check:
+    cargo fetch --locked
+
 # Lint Rust code using clippy
-lint:
+lint: lockfile-check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
 # Build the project
@@ -185,7 +189,7 @@ flatpak:
 ci: format-check lint build test
 
 # Run the same Rust preflight gates used before release packaging.
-release-preflight:
+release-preflight: lockfile-check
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
@@ -196,19 +200,21 @@ ship commit_message='' pr_title='' pr_body='':
 
 # Run all tests
 test:
-    cargo test --all-features
+    cargo nextest run --all-features
 
 # Install browser tooling for gateway web UI e2e tests.
 ui-e2e-install:
-    cd crates/gateway/ui && npm install && npm run e2e:install
+    cd crates/web/ui && npm install && npm run e2e:install
 
 # Run gateway web UI e2e tests (Playwright).
 ui-e2e:
-    cd crates/gateway/ui && npm run e2e
+    cargo build --bin moltis
+    cd crates/web/ui && npm run e2e
 
 # Run gateway web UI e2e tests with headed browser.
 ui-e2e-headed:
-    cd crates/gateway/ui && npm run e2e:headed
+    cargo build --bin moltis
+    cd crates/web/ui && npm run e2e:headed
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
 packages-all: deb-all rpm-all arch-pkg-all

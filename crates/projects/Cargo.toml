@@ -4,12 +4,12 @@ name              = "moltis-projects"
 version.workspace = true
 
 [dependencies]
-anyhow         = { workspace = true }
 async-trait    = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 sqlx           = { workspace = true }
+thiserror      = { workspace = true }
 tokio          = { workspace = true }
 toml           = { workspace = true }
 tracing        = { workspace = true }

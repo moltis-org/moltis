@@ -112,7 +112,9 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("api_key", Leaf),
             ("base_url", Leaf),
-            ("model", Leaf),
+            ("models", Leaf),
+            ("fetch_models", Leaf),
+            ("stream_transport", Leaf),
             ("alias", Leaf),
         ]))
     };
@@ -130,6 +132,7 @@ fn build_schema_map() -> KnownKeys {
             ("mode", Leaf),
             ("scope", Leaf),
             ("workspace_mount", Leaf),
+            ("home_persistence", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
@@ -155,6 +158,7 @@ fn build_schema_map() -> KnownKeys {
             ("max_results", Leaf),
             ("timeout_seconds", Leaf),
             ("cache_ttl_minutes", Leaf),
+            ("duckduckgo_fallback", Leaf),
             ("perplexity", perplexity()),
         ]))
     };
@@ -167,6 +171,7 @@ fn build_schema_map() -> KnownKeys {
             ("cache_ttl_minutes", Leaf),
             ("max_redirects", Leaf),
             ("readability", Leaf),
+            ("ssrf_allowlist", Leaf),
         ]))
     };
 
@@ -198,6 +203,9 @@ fn build_schema_map() -> KnownKeys {
             ("sandbox", Leaf),
             ("sandbox_image", Leaf),
             ("allowed_domains", Leaf),
+            ("low_memory_threshold_mb", Leaf),
+            ("persist_profile", Leaf),
+            ("profile_dir", Leaf),
         ]))
     };
 
@@ -220,8 +228,19 @@ fn build_schema_map() -> KnownKeys {
                     ("fetch", web_fetch()),
                 ])),
             ),
+            ("maps", Struct(HashMap::from([("provider", Leaf)]))),
             ("agent_timeout_secs", Leaf),
+            ("agent_max_iterations", Leaf),
             ("max_tool_result_bytes", Leaf),
+        ]))
+    };
+
+    let mcp_oauth_override = || {
+        Struct(HashMap::from([
+            ("client_id", Leaf),
+            ("auth_url", Leaf),
+            ("token_url", Leaf),
+            ("scopes", Leaf),
         ]))
     };
 
@@ -233,6 +252,7 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("transport", Leaf),
             ("url", Leaf),
+            ("oauth", mcp_oauth_override()),
         ]))
     };
 
@@ -273,6 +293,7 @@ fn build_schema_map() -> KnownKeys {
                 ("port", Leaf),
                 ("http_request_logs", Leaf),
                 ("ws_request_logs", Leaf),
+                ("log_buffer_size", Leaf),
                 ("update_repository_url", Leaf),
             ])),
         ),
@@ -320,11 +341,13 @@ fn build_schema_map() -> KnownKeys {
             ])),
         ),
         ("auth", Struct(HashMap::from([("disabled", Leaf)]))),
+        ("graphql", Struct(HashMap::from([("enabled", Leaf)]))),
         (
             "metrics",
             Struct(HashMap::from([
                 ("enabled", Leaf),
                 ("prometheus_endpoint", Leaf),
+                ("history_points", Leaf),
                 ("labels", Map(Box::new(Leaf))),
             ])),
         ),
@@ -333,8 +356,7 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("name", Leaf),
                 ("emoji", Leaf),
-                ("creature", Leaf),
-                ("vibe", Leaf),
+                ("theme", Leaf),
             ])),
         ),
         (
@@ -353,6 +375,7 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("backend", Leaf),
                 ("provider", Leaf),
+                ("disable_rag", Leaf),
                 ("base_url", Leaf),
                 ("model", Leaf),
                 ("api_key", Leaf),
@@ -393,6 +416,7 @@ fn build_schema_map() -> KnownKeys {
                 ("rate_limit_window_secs", Leaf),
             ])),
         ),
+        ("env", Map(Box::new(Leaf))),
         (
             "caldav",
             Struct(HashMap::from([
@@ -440,7 +464,9 @@ fn build_schema_map() -> KnownKeys {
                             Struct(HashMap::from([
                                 ("api_key", Leaf),
                                 ("language_code", Leaf),
-                                ("voice_name", Leaf),
+                                ("voice", Leaf),
+                                ("speaking_rate", Leaf),
+                                ("pitch", Leaf),
                             ])),
                         ),
                         ("piper", Struct(HashMap::from([("model_path", Leaf)]))),
@@ -766,6 +792,10 @@ fn check_provider_names(
         if PROVIDERS_META_KEYS.contains(&name.as_str()) {
             continue;
         }
+        // Custom providers (user-added OpenAI-compatible endpoints) are valid.
+        if name.starts_with("custom-") {
+            continue;
+        }
         if !KNOWN_PROVIDER_NAMES.contains(&name.as_str()) {
             let suggestion = suggest(name, KNOWN_PROVIDER_NAMES, 3);
             let msg = if let Some(s) = suggestion {
@@ -839,6 +869,38 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
             category: "security",
             path: "tools.exec.sandbox.mode".into(),
             message: "sandbox mode is disabled — commands run without isolation".into(),
+        });
+    }
+
+    // Loop limit must be positive to avoid immediate run failures.
+    if config.tools.agent_max_iterations == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.agent_max_iterations".into(),
+            message: "tools.agent_max_iterations must be at least 1".into(),
+        });
+    }
+
+    // SSRF allowlist CIDR validation
+    for (idx, entry) in config.tools.web.fetch.ssrf_allowlist.iter().enumerate() {
+        if entry.parse::<ipnet::IpNet>().is_err() {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "security",
+                path: format!("tools.web.fetch.ssrf_allowlist[{idx}]"),
+                message: format!(
+                    "\"{entry}\" is not a valid CIDR range (expected e.g. \"172.22.0.0/16\")"
+                ),
+            });
+        }
+    }
+    if !config.tools.web.fetch.ssrf_allowlist.is_empty() {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "security",
+            path: "tools.web.fetch.ssrf_allowlist".into(),
+            message: "ssrf_allowlist is set — SSRF protection is relaxed for the listed ranges. Ensure these are trusted networks.".into(),
         });
     }
 
@@ -1024,6 +1086,18 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 }
             }
         }
+    }
+
+    // Browser profile_dir should be an absolute path
+    if let Some(ref dir) = config.tools.browser.profile_dir
+        && !Path::new(dir).is_absolute()
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.browser.profile_dir".into(),
+            message: "profile_dir should be an absolute path".into(),
+        });
     }
 
     // port == 0
@@ -1235,7 +1309,7 @@ port = 8080
 
 [providers.anthropic]
 enabled = true
-model = "claude-sonnet-4-20250514"
+models = ["claude-sonnet-4-20250514"]
 
 [auth]
 disabled = false
@@ -1444,6 +1518,23 @@ provider = "pinecone"
         assert!(
             warning.is_some(),
             "expected warning for unknown memory provider"
+        );
+    }
+
+    #[test]
+    fn memory_disable_rag_is_valid_field() {
+        let toml = r#"
+[memory]
+disable_rag = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path == "memory.disable_rag");
+        assert!(
+            unknown.is_none(),
+            "memory.disable_rag should be accepted as a known field"
         );
     }
 
@@ -1717,6 +1808,90 @@ enabled = true
         assert!(
             warnings.is_empty(),
             "known providers should not be warned about: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn env_section_passes_validation() {
+        let toml = r#"
+[env]
+BRAVE_API_KEY = "test-key"
+OPENROUTER_API_KEY = "sk-or-test"
+CUSTOM_VAR = "some-value"
+"#;
+        let result = validate_toml_str(toml);
+        let errors: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "env section should not produce errors: {errors:?}"
+        );
+        let unknown_fields: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-field" && d.path.starts_with("env"))
+            .collect();
+        assert!(
+            unknown_fields.is_empty(),
+            "env keys should not be flagged as unknown: {unknown_fields:?}"
+        );
+    }
+
+    #[test]
+    fn custom_provider_prefix_suppresses_unknown_provider_warning() {
+        let toml = r#"
+[providers.custom-together-ai]
+enabled = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown_providers: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-provider")
+            .collect();
+        assert!(
+            unknown_providers.is_empty(),
+            "custom- prefix should not trigger unknown-provider warning: {unknown_providers:?}"
+        );
+    }
+
+    #[test]
+    fn non_custom_unknown_provider_still_warns() {
+        let toml = r#"
+[providers.typo-anthropc]
+enabled = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown_providers: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-provider")
+            .collect();
+        assert!(
+            !unknown_providers.is_empty(),
+            "misspelled provider should trigger unknown-provider warning"
+        );
+    }
+
+    #[test]
+    fn tools_agent_max_iterations_must_be_positive() {
+        let toml = r#"
+[tools]
+agent_max_iterations = 0
+"#;
+        let result = validate_toml_str(toml);
+        let invalid = result.diagnostics.iter().find(|d| {
+            d.path == "tools.agent_max_iterations"
+                && d.severity == Severity::Error
+                && d.category == "invalid-value"
+        });
+        assert!(
+            invalid.is_some(),
+            "expected tools.agent_max_iterations invalid-value error, got: {:?}",
+            result.diagnostics
         );
     }
 }

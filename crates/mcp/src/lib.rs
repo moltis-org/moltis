@@ -7,7 +7,9 @@
 //! - Server lifecycle management (`manager`)
 //! - Persisted server registry (`registry`)
 
+pub mod auth;
 pub mod client;
+pub mod error;
 pub mod manager;
 pub mod registry;
 pub mod tool_bridge;
@@ -18,9 +20,12 @@ pub mod types;
 pub mod sse_transport;
 
 pub use {
+    auth::{McpAuthProvider, McpAuthState, McpOAuthOverride, McpOAuthProvider, SharedAuthProvider},
     client::{McpClient, McpClientState},
+    error::{Context, Error, Result},
     manager::McpManager,
-    registry::{McpRegistry, McpServerConfig, TransportType},
+    registry::{McpOAuthConfig, McpRegistry, McpServerConfig, TransportType},
     tool_bridge::{McpAgentTool, McpToolBridge},
     traits::{McpClientTrait, McpTransport},
+    types::{McpManagerError, McpTransportError},
 };

@@ -77,6 +77,23 @@ workloads.
 The web UI allows toggling sandboxing per session and selecting a custom
 container image. These overrides persist across gateway restarts.
 
+## Home persistence
+
+By default, `/home/sandbox` is persisted in a shared host folder so that CLI
+auth/config files survive container recreation. You can change this with
+`home_persistence`:
+
+```toml
+[tools.exec.sandbox]
+home_persistence = "session"   # "off", "session", or "shared" (default)
+```
+
+- `off`: no home mount, container home is ephemeral
+- `session`: mount a per-session host folder to `/home/sandbox`
+- `shared`: mount one shared host folder to `/home/sandbox` for all sessions
+
+Moltis stores persisted homes under `data_dir()/sandbox/home/`.
+
 ## Resource limits
 
 ```toml

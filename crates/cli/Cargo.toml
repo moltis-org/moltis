@@ -37,6 +37,7 @@ anyhow             = { workspace = true }
 clap               = { workspace = true }
 dotenvy            = { workspace = true }
 moltis-agents      = { workspace = true }
+moltis-browser     = { workspace = true }
 moltis-common      = { workspace = true }
 moltis-config      = { workspace = true }
 moltis-cron        = { workspace = true }
@@ -49,6 +50,7 @@ moltis-projects    = { workspace = true }
 moltis-sessions    = { workspace = true }
 moltis-skills      = { workspace = true }
 moltis-tools       = { workspace = true }
+moltis-web         = { optional = true, workspace = true }
 open               = { workspace = true }
 reqwest            = { workspace = true }
 secrecy            = { workspace = true }
@@ -60,16 +62,48 @@ tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 which              = { workspace = true }
 
+[target.'cfg(all(not(target_os = "windows"), not(all(target_os = "linux", target_arch = "aarch64"))))'.dependencies]
+tikv-jemallocator = { optional = true, workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
 [features]
-caldav             = ["moltis-gateway/caldav"]
-default            = ["caldav", "push-notifications", "tailscale", "tls", "voice"]
-push-notifications = ["moltis-gateway/push-notifications"]
-tailscale          = ["moltis-gateway/tailscale"]
+caldav = ["moltis-gateway/caldav"]
+default = [
+  "caldav",
+  "file-watcher",
+  "graphql",
+  "jemalloc",
+  "local-llm",
+  "metrics",
+  "prometheus",
+  "push-notifications",
+  "qmd",
+  "tailscale",
+  "tls",
+  "vault",
+  "voice",
+  "web-ui",
+]
+# Minimal build for memory-constrained devices (Raspberry Pi, etc.).
+# Build with: cargo build --release --no-default-features --features lightweight
+file-watcher = ["moltis-gateway/file-watcher"]
+graphql      = ["moltis-gateway/graphql", "moltis-web?/graphql"]
+jemalloc     = ["dep:tikv-jemallocator"]
+# jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
+# crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
+lightweight        = ["jemalloc", "tls", "web-ui"]
+local-llm          = ["moltis-gateway/local-llm"]
+metrics            = ["moltis-gateway/metrics", "moltis-web?/metrics"]
+prometheus         = ["moltis-gateway/prometheus"]
+push-notifications = ["moltis-gateway/push-notifications", "moltis-web?/push-notifications"]
+qmd                = ["moltis-gateway/qmd"]
+tailscale          = ["moltis-gateway/tailscale", "moltis-web?/tailscale"]
 tls                = ["moltis-gateway/tls"]
-voice              = ["moltis-gateway/voice"]
+vault              = ["moltis-gateway/vault", "moltis-web?/vault"]
+voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
+web-ui             = ["dep:moltis-web", "moltis-gateway/web-ui"]
 
 [lints]
 workspace = true

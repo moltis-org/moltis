@@ -143,6 +143,21 @@ pass `session_id` explicitly:
 
 This prevents pool exhaustion from LLMs that forget to pass the session_id.
 
+### Browser selection
+
+You can ask for a specific browser at runtime (host mode):
+
+```json
+{ "action": "navigate", "url": "https://example.com", "browser": "brave" }
+```
+
+Supported values: `auto`, `chrome`, `chromium`, `edge`, `brave`, `opera`,
+`vivaldi`, `arc`.
+
+`auto` (default) picks the first detected installed browser. If none are
+installed, Moltis will attempt a best-effort auto-install, then retry
+detection.
+
 ### Workflow Example
 
 ```json

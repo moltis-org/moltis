@@ -5,84 +5,96 @@ repository.workspace = true
 version.workspace    = true
 
 [dependencies]
-anyhow             = { workspace = true }
-argon2             = { workspace = true }
-askama             = { optional = true, workspace = true }
-async-trait        = { workspace = true }
-axum               = { workspace = true }
-axum-extra         = { features = ["cookie"], workspace = true }
-axum-server        = { optional = true, workspace = true }
-base64             = { workspace = true }
-bytes              = { workspace = true }
-chrono             = { features = ["serde"], optional = true, workspace = true }
-chrono-tz          = { workspace = true }
-dashmap            = { workspace = true }
-futures            = { workspace = true }
-gix                = { workspace = true }
-hostname           = { workspace = true }
-include_dir        = { optional = true, workspace = true }
-moltis-agents      = { workspace = true }
-moltis-browser     = { workspace = true }
-moltis-caldav      = { optional = true, workspace = true }
-moltis-canvas      = { workspace = true }
-moltis-channels    = { workspace = true }
-moltis-common      = { workspace = true }
-moltis-config      = { workspace = true }
-moltis-cron        = { workspace = true }
-moltis-mcp         = { workspace = true }
-moltis-media       = { workspace = true }
-moltis-memory      = { workspace = true }
-moltis-metrics     = { optional = true, workspace = true }
-moltis-oauth       = { workspace = true }
-moltis-onboarding  = { workspace = true }
-moltis-plugins     = { workspace = true }
-moltis-projects    = { workspace = true }
-moltis-protocol    = { workspace = true }
-moltis-qmd         = { optional = true, workspace = true }
-moltis-routing     = { workspace = true }
-moltis-sessions    = { workspace = true }
-moltis-skills      = { workspace = true }
-moltis-telegram    = { workspace = true }
-moltis-tools       = { workspace = true }
-moltis-voice       = { optional = true, workspace = true }
-p256               = { features = ["ecdsa"], optional = true, workspace = true }
-password-hash      = { workspace = true }
-pulldown-cmark     = { features = ["html"], workspace = true }
-rand               = { workspace = true }
-rcgen              = { optional = true, workspace = true }
-reqwest            = { workspace = true }
-rustls             = { optional = true, workspace = true }
-rustls-pemfile     = { optional = true, workspace = true }
-secrecy            = { workspace = true }
-serde              = { workspace = true }
-serde_json         = { workspace = true }
-sha2               = { workspace = true }
-sqlx               = { workspace = true }
-sysinfo            = { workspace = true }
-thiserror          = { workspace = true }
-time               = { optional = true, workspace = true }
-tokio              = { workspace = true }
-tokio-rustls       = { optional = true, workspace = true }
-tokio-stream       = { workspace = true }
-tokio-tungstenite  = { workspace = true }
-tokio-util         = { workspace = true }
-toml               = { workspace = true }
-tower-http         = { features = ["catch-panic", "compression-gzip", "compression-zstd", "cors", "limit", "request-id", "sensitive-headers", "set-header", "trace"], workspace = true }
-tracing            = { workspace = true }
-tracing-subscriber = { workspace = true }
-uuid               = { workspace = true }
-web-push           = { optional = true, workspace = true }
-webauthn-rs        = { features = ["danger-allow-state-serialisation"], workspace = true }
-webauthn-rs-proto  = { workspace = true }
-# OpenSSL vendored for cross-compilation (required by webauthn-rs)
-openssl     = { workspace = true }
-urlencoding = { workspace = true }
+anyhow                = { workspace = true }
+async-graphql         = { optional = true, workspace = true }
+async-graphql-axum    = { optional = true, workspace = true }
+async-trait           = { workspace = true }
+axum                  = { workspace = true }
+axum-extra            = { features = ["cookie"], workspace = true }
+axum-server           = { optional = true, workspace = true }
+base64                = { workspace = true }
+bytes                 = { workspace = true }
+chrono                = { features = ["serde"], optional = true, workspace = true }
+chrono-tz             = { workspace = true }
+dashmap               = { workspace = true }
+futures               = { workspace = true }
+gix                   = { workspace = true }
+hostname              = { workspace = true }
+hyper                 = { optional = true, workspace = true }
+hyper-util            = { optional = true, workspace = true }
+include_dir           = { optional = true, workspace = true }
+moltis-agents         = { workspace = true }
+moltis-auth           = { workspace = true }
+moltis-browser        = { workspace = true }
+moltis-caldav         = { optional = true, workspace = true }
+moltis-canvas         = { workspace = true }
+moltis-channels       = { workspace = true }
+moltis-chat           = { workspace = true }
+moltis-common         = { workspace = true }
+moltis-config         = { workspace = true }
+moltis-cron           = { workspace = true }
+moltis-graphql        = { optional = true, workspace = true }
+moltis-mcp            = { workspace = true }
+moltis-media          = { workspace = true }
+moltis-memory         = { workspace = true }
+moltis-metrics        = { optional = true, workspace = true }
+moltis-oauth          = { workspace = true }
+moltis-onboarding     = { workspace = true }
+moltis-plugins        = { workspace = true }
+moltis-projects       = { workspace = true }
+moltis-protocol       = { workspace = true }
+moltis-provider-setup = { workspace = true }
+moltis-providers      = { workspace = true }
+moltis-qmd            = { optional = true, workspace = true }
+moltis-routing        = { workspace = true }
+moltis-service-traits = { workspace = true }
+moltis-sessions       = { workspace = true }
+moltis-skills         = { workspace = true }
+moltis-tailscale      = { optional = true, workspace = true }
+moltis-telegram       = { workspace = true }
+moltis-tls            = { optional = true, workspace = true }
+moltis-tools          = { workspace = true }
+moltis-vault          = { optional = true, workspace = true }
+moltis-voice          = { optional = true, workspace = true }
+p256                  = { features = ["ecdsa"], optional = true, workspace = true }
+portable-pty          = { optional = true, workspace = true }
+pulldown-cmark        = { features = ["html"], workspace = true }
+rand                  = { workspace = true }
+rcgen                 = { optional = true, workspace = true }
+reqwest               = { workspace = true }
+rustls                = { optional = true, workspace = true }
+rustls-pemfile        = { optional = true, workspace = true }
+secrecy               = { workspace = true }
+serde                 = { workspace = true }
+serde_json            = { workspace = true }
+sha2                  = { workspace = true }
+sqlx                  = { workspace = true }
+sysinfo               = { workspace = true }
+thiserror             = { workspace = true }
+time                  = { optional = true, workspace = true }
+tokio                 = { workspace = true }
+tokio-rustls          = { optional = true, workspace = true }
+tokio-stream          = { workspace = true }
+tokio-tungstenite     = { workspace = true }
+tokio-util            = { workspace = true }
+toml                  = { workspace = true }
+tower                 = { optional = true, workspace = true }
+tower-http            = { features = ["catch-panic", "compression-gzip", "compression-zstd", "cors", "limit", "request-id", "sensitive-headers", "set-header", "trace"], workspace = true }
+tracing               = { workspace = true }
+tracing-subscriber    = { workspace = true }
+url                   = { workspace = true }
+urlencoding           = { workspace = true }
+uuid                  = { workspace = true }
+web-push              = { optional = true, workspace = true }
+webauthn-rs           = { features = ["danger-allow-state-serialisation"], workspace = true }
+which                 = { optional = true, workspace = true }
 
 [features]
 caldav = ["dep:moltis-caldav"]
 default = [
   "caldav",
   "file-watcher",
+  "graphql",
   "local-llm",
   "metrics",
   "prometheus",
@@ -90,31 +102,43 @@ default = [
   "qmd",
   "tailscale",
   "tls",
+  "vault",
   "voice",
   "web-ui",
 ]
 file-watcher = ["moltis-memory/file-watcher", "moltis-skills/file-watcher"]
+graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 local-embeddings = ["moltis-memory/local-embeddings"]
-local-llm = ["moltis-agents/local-llm"]
-local-llm-cuda = ["moltis-agents/local-llm-cuda"]
-local-llm-metal = ["moltis-agents/local-llm-metal"]
-metrics = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
+local-llm = [
+  "moltis-chat/local-llm",
+  "moltis-provider-setup/local-llm",
+  "moltis-providers/local-llm",
+]
+local-llm-cuda = ["moltis-providers/local-llm-cuda"]
+local-llm-metal = ["moltis-providers/local-llm-metal"]
+metrics = ["dep:moltis-metrics", "moltis-chat/metrics", "moltis-metrics/sqlite"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
-push-notifications = ["dep:chrono", "dep:p256", "dep:web-push"]
+push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
 qmd = ["dep:moltis-qmd"]
-tailscale = []
+tailscale = ["dep:moltis-tailscale"]
 tls = [
   "dep:axum-server",
+  "dep:hyper",
+  "dep:hyper-util",
+  "dep:moltis-tls",
   "dep:rcgen",
   "dep:rustls",
   "dep:rustls-pemfile",
   "dep:time",
   "dep:tokio-rustls",
+  "dep:tower",
 ]
+vault = ["dep:moltis-vault", "moltis-auth/vault"]
 voice = ["dep:moltis-voice"]
-web-ui = ["dep:askama", "dep:include_dir"]
+web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
 
 [dev-dependencies]
+moltis-web        = { workspace = true }
 reqwest           = { workspace = true }
 sqlx              = { workspace = true }
 tempfile          = { workspace = true }

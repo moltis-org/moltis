@@ -24,6 +24,7 @@ file-watcher = ["dep:notify-debouncer-full"]
 metrics      = ["dep:moltis-metrics"]
 
 [dev-dependencies]
+rstest   = { workspace = true }
 tempfile = { workspace = true }
 tokio    = { features = ["macros", "rt"], workspace = true }
 

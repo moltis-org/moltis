@@ -317,7 +317,7 @@ mod tests {
                 repo_name: "repo".into(),
                 installed_at_ms: 0,
                 commit_sha: None,
-                format: crate::formats::PluginFormat::Skill,
+                format: PluginFormat::Skill,
                 skills: vec![
                     SkillState {
                         name: "a".into(),

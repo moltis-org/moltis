@@ -81,7 +81,7 @@ jobs:
       - uses: biomejs/setup-biome@29711cbb52afee00eb13aeb30636592f9edc0088 # v2.7.0
         with:
           version: "2.3.13"
-      - run: biome ci crates/gateway/src/assets/js/
+      - run: biome ci crates/web/src/assets/js/
 
   fmt:
     name: Format
@@ -140,13 +140,23 @@ jobs:
             git tag v0.0.0
           fi
       - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
-      - run: cargo test -Z unstable-options --all-features --timings
       - name: Upload cargo timing reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cargo-timings-rust-ci-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/cargo-timings/
+          if-no-files-found: ignore
+      - uses: taiki-e/install-action@f176c07a0a40cbfdd08ee9aa8bf1655701d11e69 # v2.67.25
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --all-features --profile ci
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/nextest/ci/junit.xml
           if-no-files-found: ignore
 
   coverage:
@@ -171,7 +181,7 @@ jobs:
         with:
           toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: coverage-v1
           cache-all-crates: true
@@ -225,15 +235,15 @@ jobs:
           package-manager-cache: false
 
       - name: Install npm dependencies
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         run: npm ci
 
       - name: Install Playwright browsers
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         env:
           CI: "true"
         run: npx playwright test
@@ -244,8 +254,8 @@ jobs:
         with:
           name: e2e-test-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            crates/gateway/ui/playwright-report/
-            crates/gateway/ui/test-results/
+            crates/web/ui/playwright-report/
+            crates/web/ui/test-results/
           if-no-files-found: ignore
           retention-days: 14
 

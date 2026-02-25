@@ -23,6 +23,8 @@ pub mod chat;
 pub mod chat_error;
 pub mod cron;
 pub mod env_routes;
+#[cfg(feature = "graphql")]
+pub mod graphql_routes;
 #[cfg(feature = "local-llm")]
 pub mod local_llm_setup;
 pub mod logs;
@@ -47,6 +49,8 @@ pub mod request_throttle;
 pub mod server;
 pub mod services;
 pub mod session;
+pub mod session_types;
+pub mod share_store;
 pub mod state;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;

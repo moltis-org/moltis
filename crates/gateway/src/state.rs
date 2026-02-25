@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -48,12 +48,17 @@ impl MetricsHistory {
     pub fn iter(&self) -> impl Iterator<Item = &MetricsHistoryPoint> {
         self.points.iter()
     }
+
+    /// Return the configured maximum capacity.
+    pub fn capacity(&self) -> usize {
+        self.max_points
+    }
 }
 
 #[cfg(feature = "metrics")]
 impl Default for MetricsHistory {
     fn default() -> Self {
-        Self::new(60480) // 7 days at 10-second intervals
+        Self::new(360) // 1 hour at 10-second intervals
     }
 }
 
@@ -67,7 +72,7 @@ pub struct MetricsUpdatePayload {
     pub point: MetricsHistoryPoint,
 }
 
-use moltis_protocol::ConnectParams;
+use moltis_protocol::{ConnectParams, EventFrame};
 
 use moltis_tools::sandbox::SandboxRouter;
 
@@ -95,8 +100,8 @@ pub struct TtsRuntimeOverride {
 pub struct ConnectedClient {
     pub conn_id: String,
     pub connect_params: ConnectParams,
-    /// Channel for sending serialized frames to this client's write loop.
-    pub sender: mpsc::UnboundedSender<String>,
+    /// Bounded channel for sending serialized frames to this client's write loop.
+    pub sender: mpsc::Sender<String>,
     pub connected_at: Instant,
     pub last_activity: Instant,
     /// The `Accept-Language` header from the WebSocket upgrade request, forwarded
@@ -130,8 +135,11 @@ impl ConnectedClient {
     }
 
     /// Send a serialized JSON frame to this client.
+    ///
+    /// Uses `try_send` to avoid blocking; drops the frame if the client's
+    /// outbound buffer is full (slow consumer protection).
     pub fn send(&self, frame: &str) -> bool {
-        self.sender.send(frame.to_string()).is_ok()
+        self.sender.try_send(frame.to_string()).is_ok()
     }
 
     /// Touch the activity timestamp.
@@ -283,12 +291,14 @@ pub struct GatewayInner {
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<crate::push::PushService>>,
     /// LLM provider registry for lightweight generation (e.g. TTS phrases).
-    pub llm_providers: Option<Arc<tokio::sync::RwLock<moltis_agents::providers::ProviderRegistry>>>,
+    pub llm_providers: Option<Arc<RwLock<moltis_providers::ProviderRegistry>>>,
     /// Cached user geolocation from browser Geolocation API, persisted to `USER.md`.
     pub cached_location: Option<moltis_config::GeoLocation>,
     /// Per-session buffer for channel status messages (tool use, model selection).
     /// Drained when the final response is delivered to the channel.
     pub channel_status_log: HashMap<String, Vec<String>>,
+    /// Sessions currently in channel command mode (/sh passthrough).
+    pub channel_command_mode_sessions: HashSet<String>,
 }
 
 impl GatewayInner {
@@ -319,6 +329,7 @@ impl GatewayInner {
             llm_providers: None,
             cached_location: moltis_config::load_user().and_then(|u| u.location),
             channel_status_log: HashMap::new(),
+            channel_command_mode_sessions: HashSet::new(),
         }
     }
 
@@ -372,17 +383,28 @@ pub struct GatewayState {
     pub tls_active: bool,
     /// Whether WebSocket request/response logging is enabled.
     pub ws_request_logs: bool,
+    /// Runtime GraphQL availability toggle.
+    #[cfg(feature = "graphql")]
+    pub graphql_enabled: AtomicBool,
+    /// Broadcast channel for GraphQL subscriptions. Events are `(event_name, payload)`.
+    #[cfg(feature = "graphql")]
+    pub graphql_broadcast: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
     /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
     /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
     pub deploy_platform: Option<String>,
     /// The port the gateway is bound to.
     pub port: u16,
+    /// Monotonic process start timestamp used for uptime calculations.
+    pub started_at: Instant,
     /// Metrics handle for Prometheus export (None if metrics disabled).
     #[cfg(feature = "metrics")]
     pub metrics_handle: Option<MetricsHandle>,
     /// Persistent metrics store (SQLite or other backend).
     #[cfg(feature = "metrics")]
     pub metrics_store: Option<Arc<dyn MetricsStore>>,
+    /// Encryption-at-rest vault for environment variables.
+    #[cfg(feature = "vault")]
+    pub vault: Option<Arc<moltis_vault::Vault>>,
 
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     /// Monotonically increasing sequence counter for broadcast events.
@@ -414,6 +436,8 @@ impl GatewayState {
             None,
             #[cfg(feature = "metrics")]
             None,
+            #[cfg(feature = "vault")]
+            None,
         )
     }
 
@@ -433,6 +457,7 @@ impl GatewayState {
         deploy_platform: Option<String>,
         #[cfg(feature = "metrics")] metrics_handle: Option<MetricsHandle>,
         #[cfg(feature = "metrics")] metrics_store: Option<Arc<dyn MetricsStore>>,
+        #[cfg(feature = "vault")] vault: Option<Arc<moltis_vault::Vault>>,
     ) -> Arc<Self> {
         let hostname = hostname::get()
             .ok()
@@ -453,14 +478,29 @@ impl GatewayState {
             ws_request_logs,
             deploy_platform,
             port,
+            started_at: Instant::now(),
+            #[cfg(feature = "graphql")]
+            graphql_enabled: AtomicBool::new(true),
             #[cfg(feature = "metrics")]
             metrics_handle,
             #[cfg(feature = "metrics")]
             metrics_store,
+            #[cfg(feature = "vault")]
+            vault,
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
+            #[cfg(feature = "graphql")]
+            graphql_broadcast: {
+                let (tx, _) = tokio::sync::broadcast::channel(256);
+                tx
+            },
             inner: RwLock::new(GatewayInner::new(hook_registry)),
         })
+    }
+
+    /// Process uptime in milliseconds since this gateway state was created.
+    pub fn uptime_ms(&self) -> u64 {
+        self.started_at.elapsed().as_millis() as u64
     }
 
     /// Set a late-bound chat service (for circular init).
@@ -498,6 +538,16 @@ impl GatewayState {
 
     pub fn next_seq(&self) -> u64 {
         self.seq.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    #[cfg(feature = "graphql")]
+    pub fn is_graphql_enabled(&self) -> bool {
+        self.graphql_enabled.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "graphql")]
+    pub fn set_graphql_enabled(&self, enabled: bool) {
+        self.graphql_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Register a new client connection.
@@ -597,6 +647,27 @@ impl GatewayState {
             .unwrap_or_default()
     }
 
+    /// Enable or disable /sh command mode for a channel session.
+    pub async fn set_channel_command_mode(&self, session_key: &str, enabled: bool) {
+        let mut inner = self.inner.write().await;
+        if enabled {
+            inner
+                .channel_command_mode_sessions
+                .insert(session_key.to_string());
+        } else {
+            inner.channel_command_mode_sessions.remove(session_key);
+        }
+    }
+
+    /// Check whether /sh command mode is enabled for a channel session.
+    pub async fn is_channel_command_mode_enabled(&self, session_key: &str) -> bool {
+        self.inner
+            .read()
+            .await
+            .channel_command_mode_sessions
+            .contains(session_key)
+    }
+
     /// Close a client: remove from registry and unregister from nodes.
     pub async fn close_client(&self, conn_id: &str) -> Option<ConnectedClient> {
         let mut inner = self.inner.write().await;
@@ -610,5 +681,162 @@ impl GatewayState {
         let _ = count;
 
         removed
+    }
+
+    /// Disconnect all WebSocket clients: send an `auth.credentials_changed`
+    /// event so browsers can redirect to login, then drain every connection.
+    pub async fn disconnect_all_clients(&self, reason: &str) {
+        let mut inner = self.inner.write().await;
+
+        // Build and serialize the notification frame.
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let frame = EventFrame::new(
+            "auth.credentials_changed",
+            serde_json::json!({ "reason": reason }),
+            seq,
+        );
+        if let Ok(json) = serde_json::to_string(&frame) {
+            for client in inner.clients.values() {
+                let _ = client.send(&json);
+            }
+        }
+
+        // Drain all state keyed by connection.
+        inner.nodes.clear();
+        inner.clients.clear();
+        inner.active_sessions.clear();
+        inner.active_projects.clear();
+
+        drop(inner);
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(0.0);
+
+        tracing::info!(
+            reason,
+            "disconnected all WebSocket clients (credentials changed)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use {
+        super::*,
+        crate::{
+            auth::{AuthMode, ResolvedAuth},
+            services::GatewayServices,
+        },
+    };
+
+    fn test_state() -> Arc<GatewayState> {
+        GatewayState::new(
+            ResolvedAuth {
+                mode: AuthMode::Token,
+                token: None,
+                password: None,
+            },
+            GatewayServices::noop(),
+        )
+    }
+
+    fn mock_client(conn_id: &str) -> (ConnectedClient, mpsc::Receiver<String>) {
+        let (tx, rx) = mpsc::channel(512);
+        let client = ConnectedClient {
+            conn_id: conn_id.to_string(),
+            connect_params: ConnectParams {
+                min_protocol: 1,
+                max_protocol: 1,
+                client: moltis_protocol::ClientInfo {
+                    id: "test".into(),
+                    display_name: None,
+                    version: "0.0.0".into(),
+                    platform: "test".into(),
+                    device_family: None,
+                    model_identifier: None,
+                    mode: "operator".into(),
+                    instance_id: None,
+                },
+                caps: None,
+                commands: None,
+                permissions: None,
+                path_env: None,
+                role: None,
+                scopes: None,
+                device: None,
+                auth: None,
+                locale: None,
+                user_agent: None,
+                timezone: None,
+            },
+            sender: tx,
+            connected_at: Instant::now(),
+            last_activity: Instant::now(),
+            accept_language: None,
+            remote_ip: None,
+            timezone: None,
+        };
+        (client, rx)
+    }
+
+    #[tokio::test]
+    async fn disconnect_all_clients_drains_state_and_notifies() {
+        let state = test_state();
+
+        let (c1, mut rx1) = mock_client("conn-1");
+        let (c2, mut rx2) = mock_client("conn-2");
+        state.register_client(c1).await;
+        state.register_client(c2).await;
+
+        // Set up some active_sessions / active_projects entries.
+        {
+            let mut inner = state.inner.write().await;
+            inner
+                .active_sessions
+                .insert("conn-1".into(), "session-a".into());
+            inner
+                .active_projects
+                .insert("conn-2".into(), "project-b".into());
+        }
+
+        assert_eq!(state.client_count().await, 2);
+
+        state.disconnect_all_clients("test_reason").await;
+
+        // All clients are removed.
+        assert_eq!(state.client_count().await, 0);
+
+        // active_sessions and active_projects are cleared.
+        {
+            let inner = state.inner.read().await;
+            assert!(inner.active_sessions.is_empty());
+            assert!(inner.active_projects.is_empty());
+        }
+
+        // Both receivers got the event frame before the channel closed.
+        let msg1 = rx1.recv().await.expect("should receive event");
+        let msg2 = rx2.recv().await.expect("should receive event");
+
+        let frame1: serde_json::Value = serde_json::from_str(&msg1).unwrap();
+        assert_eq!(frame1["event"], "auth.credentials_changed");
+        assert_eq!(frame1["payload"]["reason"], "test_reason");
+
+        let frame2: serde_json::Value = serde_json::from_str(&msg2).unwrap();
+        assert_eq!(frame2["event"], "auth.credentials_changed");
+
+        // Channels are closed (all senders dropped).
+        assert!(rx1.recv().await.is_none());
+        assert!(rx2.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn disconnect_all_clients_is_noop_when_empty() {
+        let state = test_state();
+        assert_eq!(state.client_count().await, 0);
+        // Should not panic.
+        state.disconnect_all_clients("noop").await;
+        assert_eq!(state.client_count().await, 0);
     }
 }
