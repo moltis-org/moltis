@@ -60,8 +60,7 @@ test.describe("Settings navigation", () => {
 	for (const section of settingsSections) {
 		test(`settings/${section.id} loads without errors`, async ({ page }) => {
 			const pageErrors = watchPageErrors(page);
-			await page.goto(`/settings/${section.id}`);
-			await expectPageContentMounted(page);
+			await navigateAndWait(page, `/settings/${section.id}`);
 
 			await expect(page).toHaveURL(new RegExp(`/settings/${section.id}$`));
 

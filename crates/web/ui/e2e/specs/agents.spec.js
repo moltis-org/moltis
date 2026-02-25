@@ -7,6 +7,34 @@ const {
 	watchPageErrors,
 } = require("../helpers");
 
+async function waitForWelcomeOrNoProvidersCard(page) {
+	await page.waitForSelector("#welcomeCard, #noProvidersCard", {
+		state: "visible",
+		timeout: 10_000,
+	});
+
+	const noProvidersCard = page.locator("#noProvidersCard");
+	const noProvidersVisible = await noProvidersCard.isVisible().catch(() => false);
+	if (noProvidersVisible) {
+		await expect(noProvidersCard.getByRole("heading", { name: "No LLMs Connected", exact: true })).toBeVisible();
+		await expect(noProvidersCard.getByRole("link", { name: "Go to LLMs", exact: true })).toBeVisible();
+		return null;
+	}
+
+	const welcomeCard = page.locator("#welcomeCard");
+	await expect(welcomeCard).toBeVisible({ timeout: 10_000 });
+	return welcomeCard;
+}
+
+async function deleteAgentByName(page, agentName) {
+	await navigateAndWait(page, "/settings/agents");
+	const testCard = page.locator(".backend-card").filter({ hasText: agentName });
+	await expect(testCard).toBeVisible({ timeout: 10_000 });
+	await testCard.getByRole("button", { name: "Delete", exact: true }).click();
+	await page.locator(".provider-modal").getByRole("button", { name: "Delete", exact: true }).click();
+	await expect(testCard).toHaveCount(0, { timeout: 10_000 });
+}
+
 test.describe("Agents settings page", () => {
 	test("settings/agents loads and shows heading", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -193,14 +221,17 @@ test.describe("Welcome card agent picker", () => {
 	test("welcome card shows main agent chip and hatch button with one agent", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
-		// Navigate to a new session — even with only the main agent, the picker row is visible
+		// Navigate to a new session and wait for whichever empty chat card is valid for this runtime.
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
 		await waitForWsConnected(page);
 		await createSession(page);
 
-		const welcomeCard = page.locator("#welcomeCard");
-		await expect(welcomeCard).toBeVisible({ timeout: 10_000 });
+		const welcomeCard = await waitForWelcomeOrNoProvidersCard(page);
+		if (!welcomeCard) {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
 
 		// Agent chips container should be visible with main chip + hatch button
 		const agentsContainer = page.locator("[data-welcome-agents]");
@@ -220,8 +251,11 @@ test.describe("Welcome card agent picker", () => {
 		await waitForWsConnected(page);
 		await createSession(page);
 
-		const welcomeCard = page.locator("#welcomeCard");
-		await expect(welcomeCard).toBeVisible({ timeout: 10_000 });
+		const welcomeCard = await waitForWelcomeOrNoProvidersCard(page);
+		if (!welcomeCard) {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
 
 		// Click the "Hatch a new agent" button
 		const hatchBtn = page.locator("[data-welcome-agents]").getByRole("button", { name: /Hatch a new agent/ });
@@ -237,6 +271,7 @@ test.describe("Welcome card agent picker", () => {
 
 	test("agent chips appear on welcome card when multiple agents exist", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+		const testAgentName = "Welcome Test Agent";
 
 		// Create a second agent via the settings page
 		await navigateAndWait(page, "/settings/agents");
@@ -246,17 +281,24 @@ test.describe("Welcome card agent picker", () => {
 		await expect(page.getByText("Create Agent", { exact: true })).toBeVisible();
 
 		await page.getByPlaceholder("e.g. writer, coder, researcher").fill("welcome-test");
-		await page.getByPlaceholder("Creative Writer").fill("Welcome Test Agent");
+		await page.getByPlaceholder("Creative Writer").fill(testAgentName);
 		await page.getByRole("button", { name: "Create", exact: true }).click();
 
 		// Wait for the agent to appear in the list
 		await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible({ timeout: 10_000 });
-		await expect(page.locator(".backend-card").filter({ hasText: "Welcome Test Agent" })).toBeVisible();
+		await expect(page.locator(".backend-card").filter({ hasText: testAgentName })).toBeVisible();
 
 		// Navigate to chats and create a new session — welcome card should show agent chips
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
 		await createSession(page);
+
+		const welcomeCard = await waitForWelcomeOrNoProvidersCard(page);
+		if (!welcomeCard) {
+			await deleteAgentByName(page, testAgentName);
+			expect(pageErrors).toEqual([]);
+			return;
+		}
 
 		const agentsContainer = page.locator("[data-welcome-agents]");
 		await expect(agentsContainer).toBeVisible({ timeout: 10_000 });
@@ -265,15 +307,10 @@ test.describe("Welcome card agent picker", () => {
 		const chips = agentsContainer.getByRole("button");
 		const chipCount = await chips.count();
 		expect(chipCount).toBeGreaterThanOrEqual(2);
-		await expect(agentsContainer.getByRole("button", { name: /Welcome Test Agent/ })).toBeVisible();
+		await expect(agentsContainer.getByRole("button", { name: new RegExp(testAgentName) })).toBeVisible();
 
 		// Clean up: delete the test agent
-		await navigateAndWait(page, "/settings/agents");
-		const testCard = page.locator(".backend-card").filter({ hasText: "Welcome Test Agent" });
-		await testCard.getByRole("button", { name: "Delete", exact: true }).click();
-		// confirmDialog shows a custom modal — click the modal's Delete button
-		await page.locator(".provider-modal").getByRole("button", { name: "Delete", exact: true }).click();
-		await expect(testCard).toHaveCount(0, { timeout: 10_000 });
+		await deleteAgentByName(page, testAgentName);
 
 		expect(pageErrors).toEqual([]);
 	});
