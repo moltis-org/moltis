@@ -33,6 +33,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
     case monitoring = "Monitoring"
     case logs = "Logs"
     case graphql = "GraphQL"
+    case httpd = "HTTP Server"
     case configuration = "Configuration"
 
     var title: String { rawValue }
@@ -70,6 +71,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .monitoring:    "chart.bar.fill",
         .logs:          "doc.plaintext.fill",
         .graphql:       "point.3.connected.trianglepath.dotted",
+        .httpd:         "server.rack",
         .configuration: "slider.horizontal.3"
     ]
 
@@ -93,6 +95,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .monitoring:    .green,
         .logs:          .secondary,
         .graphql:       .pink,
+        .httpd:         .blue,
         .configuration: .purple
     ]
 
@@ -116,6 +119,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .monitoring:    .systems,
         .logs:          .systems,
         .graphql:       .systems,
+        .httpd:         .systems,
         .configuration: .systems
     ]
     // swiftlint:enable colon

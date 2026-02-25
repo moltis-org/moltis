@@ -44,6 +44,7 @@ struct MoltisApp: App {
             Group {
                 if onboardingState.isCompleted {
                     ContentView(chatStore: chatStore, settings: settings, providerStore: providerStore)
+                        .onAppear { chatStore.loadVersion() }
                 } else {
                     OnboardingView(settings: settings, providerStore: providerStore) {
                         onboardingState.complete()

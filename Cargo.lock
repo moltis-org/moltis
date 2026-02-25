@@ -5192,11 +5192,14 @@ name = "moltis-swift-bridge"
 version = "0.9.10"
 dependencies = [
  "anyhow",
+ "axum",
  "metrics 0.24.3",
  "moltis-agents",
  "moltis-config",
+ "moltis-gateway",
  "moltis-provider-setup",
  "moltis-providers",
+ "moltis-web",
  "serde",
  "serde_json",
  "tokio",

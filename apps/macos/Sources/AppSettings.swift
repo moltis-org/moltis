@@ -57,6 +57,12 @@ final class AppSettings: ObservableObject {
     @Published var graphqlEnabled = false
     @Published var graphqlPath = "/graphql"
 
+    @Published var httpdEnabled = false
+    @Published var httpdBindMode = "loopback"
+    @Published var httpdPort = "8080"
+
+    let httpdBindModes = ["loopback", "all"]
+
     @Published var configurationToml = ""
 
     let memoryModes = ["workspace", "global", "off"]

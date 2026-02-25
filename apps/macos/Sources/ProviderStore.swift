@@ -93,7 +93,12 @@ final class ProviderStore: ObservableObject {
                 }
             }
             DispatchQueue.main.async {
-                self.models = result
+                self.models = result.sorted { a, b in
+                    let aTime = a.createdAt ?? 0
+                    let bTime = b.createdAt ?? 0
+                    if aTime != bTime { return aTime > bTime }
+                    return a.displayName.localizedCompare(b.displayName) == .orderedAscending
+                }
                 self.isLoadingModels = false
                 self.logStore?.log(.info, target: "ProviderStore", message: "Loaded models", fields: [
                     "count": "\(result.count)"

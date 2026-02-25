@@ -37,8 +37,17 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridging-Header.h
         OTHER_LDFLAGS:
           - "-lmoltis_bridge"
+          - "-lsqlite3"
           - "-framework"
           - "SystemConfiguration"
+          - "-framework"
+          - "Security"
+          - "-framework"
+          - "CoreFoundation"
+          - "-framework"
+          - "IOKit"
+          - "-framework"
+          - "CoreServices"
     scheme:
       testTargets:
         - MoltisTests

@@ -121,6 +121,13 @@ struct BridgeModelInfo: Decodable, Identifiable {
     let createdAt: Int?
 }
 
+// MARK: - HTTPD status
+
+struct BridgeHttpdStatus: Decodable {
+    let running: Bool
+    let addr: String?
+}
+
 // MARK: - Ok response
 
 private struct BridgeOkPayload: Decodable {
@@ -315,6 +322,23 @@ struct MoltisClient {
         _ = try decode(payload, as: BridgeOkPayload.self)
     }
 
+    func startHttpd(host: String, port: UInt16) throws -> BridgeHttpdStatus {
+        try callBridge(
+            StartHttpdRequest(host: host, port: port),
+            via: moltis_start_httpd
+        )
+    }
+
+    func stopHttpd() throws -> BridgeHttpdStatus {
+        let payload = try consumeCStringPointer(moltis_stop_httpd())
+        return try decode(payload, as: BridgeHttpdStatus.self)
+    }
+
+    func httpdStatus() throws -> BridgeHttpdStatus {
+        let payload = try consumeCStringPointer(moltis_httpd_status())
+        return try decode(payload, as: BridgeHttpdStatus.self)
+    }
+
     func chatStream(
         message: String,
         model: String? = nil,
@@ -403,4 +427,9 @@ private struct SaveProviderRequest: Encodable {
     let apiKey: String?
     let baseUrl: String?
     let models: [String]?
+}
+
+private struct StartHttpdRequest: Encodable {
+    let host: String
+    let port: UInt16
 }

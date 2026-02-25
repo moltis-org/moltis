@@ -77,27 +77,10 @@ struct ProviderConfigForm: View {
             Picker("Model", selection: $providerStore.selectedModelID) {
                 Text("Default").tag(nil as String?)
                 ForEach(providerModels) { model in
-                    Text(model.displayName)
+                    modelLabel(model)
                         .tag(Optional(model.id))
                 }
             }
-
-            // Alternative searchable pickers kept for reference:
-            //
-            // let options = providerModels.map { (id: $0.id, display: $0.displayName) }
-            //
-            // SearchablePopoverPicker(
-            //     label: "Model",
-            //     selection: $providerStore.selectedModelID,
-            //     options: options
-            // )
-            //
-            // SearchableComboBoxPicker(
-            //     label: "Model",
-            //     selection: $providerStore.selectedModelID,
-            //     options: options
-            // )
-            // .frame(height: 24)
         } else if providerStore.isLoadingModels {
             HStack(spacing: 6) {
                 Text("Model")
@@ -106,5 +89,29 @@ struct ProviderConfigForm: View {
                     .controlSize(.mini)
             }
         }
+    }
+
+    private func modelLabel(_ model: BridgeModelInfo) -> some View {
+        HStack {
+            Text(model.displayName)
+            if let dateText = Self.formatModelDate(model.createdAt) {
+                Spacer()
+                Text(dateText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static let monthYearFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM yyyy"
+        return f
+    }()
+
+    private static func formatModelDate(_ epoch: Int?) -> String? {
+        guard let epoch, epoch > 0 else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(epoch))
+        return monthYearFormatter.string(from: date)
     }
 }

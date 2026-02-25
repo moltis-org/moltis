@@ -29,6 +29,7 @@ struct SettingsSectionContent: View {
         case .monitoring: monitoringPane
         case .logs: logsPane
         case .graphql: graphqlPane
+        case .httpd: httpdPane
         case .configuration: configurationPane
         }
     }
@@ -286,6 +287,10 @@ private extension SettingsSectionContent {
             Toggle("Enable GraphQL", isOn: $settings.graphqlEnabled)
             TextField("GraphQL path", text: $settings.graphqlPath)
         }
+    }
+
+    var httpdPane: some View {
+        HttpdPane(settings: settings)
     }
 
     var configurationPane: some View {

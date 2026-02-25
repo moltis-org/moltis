@@ -5,8 +5,9 @@
 use std::{
     collections::HashMap,
     ffi::{CStr, CString, c_char, c_void},
+    net::SocketAddr,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{LazyLock, OnceLock, RwLock},
+    sync::{LazyLock, Mutex, OnceLock, RwLock},
 };
 
 use {
@@ -56,6 +57,46 @@ fn build_registry() -> ProviderRegistry {
 }
 
 static BRIDGE: LazyLock<BridgeState> = LazyLock::new(BridgeState::new);
+
+// ── HTTP Server ──────────────────────────────────────────────────────────
+
+/// Handle to a running httpd server, used to shut it down.
+struct HttpdHandle {
+    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    addr: SocketAddr,
+    /// Keep the gateway state alive while the server is running.
+    _state: std::sync::Arc<moltis_gateway::state::GatewayState>,
+}
+
+/// Global server handle — `None` when stopped, `Some` when running.
+static HTTPD: Mutex<Option<HttpdHandle>> = Mutex::new(None);
+
+#[derive(Debug, Deserialize)]
+struct StartHttpdRequest {
+    #[serde(default = "default_httpd_host")]
+    host: String,
+    #[serde(default = "default_httpd_port")]
+    port: u16,
+    #[serde(default)]
+    config_dir: Option<String>,
+    #[serde(default)]
+    data_dir: Option<String>,
+}
+
+fn default_httpd_host() -> String {
+    "127.0.0.1".to_owned()
+}
+
+fn default_httpd_port() -> u16 {
+    8080
+}
+
+#[derive(Debug, Serialize)]
+struct HttpdStatusResponse {
+    running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    addr: Option<String>,
+}
 
 // ── Log callback for Swift ───────────────────────────────────────────────
 
@@ -817,6 +858,162 @@ pub unsafe extern "C" fn moltis_set_log_callback(callback: LogCallback) {
     emit_log("INFO", "bridge", "Log callback registered");
 }
 
+/// Starts the embedded HTTP server with the full Moltis gateway.
+/// Returns JSON with `{"running": true, "addr": "..."}`.
+/// If already running, returns the current status without restarting.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_start_httpd");
+    trace_call("moltis_start_httpd");
+
+    with_ffi_boundary(|| {
+        let request: StartHttpdRequest = if request_json.is_null() {
+            StartHttpdRequest {
+                host: default_httpd_host(),
+                port: default_httpd_port(),
+                config_dir: None,
+                data_dir: None,
+            }
+        } else {
+            match read_c_string(request_json) {
+                Ok(raw) => match serde_json::from_str(&raw) {
+                    Ok(r) => r,
+                    Err(e) => return encode_error("invalid_json", &e.to_string()),
+                },
+                Err(msg) => return encode_error("null_pointer_or_invalid_utf8", &msg),
+            }
+        };
+
+        let mut guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Already running — return current status.
+        if let Some(handle) = guard.as_ref() {
+            emit_log("INFO", "bridge.httpd", &format!(
+                "Server already running on {}", handle.addr
+            ));
+            return encode_json(&HttpdStatusResponse {
+                running: true,
+                addr: Some(handle.addr.to_string()),
+            });
+        }
+
+        let bind_addr = format!("{}:{}", request.host, request.port);
+        emit_log("INFO", "bridge.httpd", &format!("Starting full gateway on {bind_addr}"));
+
+        // Prepare the full gateway (config, DB migrations, service wiring,
+        // background tasks). This runs on the bridge runtime via block_on —
+        // valid because this is an extern "C" fn, not async.
+        let prepared = match BRIDGE.runtime.block_on(
+            moltis_gateway::server::prepare_gateway(
+                &request.host,
+                request.port,
+                true, // no_tls — the macOS app manages its own TLS if needed
+                None, // log_buffer
+                request.config_dir.map(std::path::PathBuf::from),
+                request.data_dir.map(std::path::PathBuf::from),
+                Some(moltis_web::web_routes), // full web UI
+            ),
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                emit_log("ERROR", "bridge.httpd", &format!("Gateway init failed: {e}"));
+                return encode_error("gateway_init_failed", &e.to_string());
+            },
+        };
+
+        let gateway_state = prepared.state;
+
+        // Bind the TCP listener synchronously so we can report errors immediately.
+        let listener = match BRIDGE.runtime.block_on(
+            tokio::net::TcpListener::bind(&bind_addr),
+        ) {
+            Ok(l) => l,
+            Err(e) => {
+                emit_log("ERROR", "bridge.httpd", &format!("Bind failed: {e}"));
+                return encode_error("bind_failed", &e.to_string());
+            },
+        };
+
+        let addr = match listener.local_addr() {
+            Ok(a) => a,
+            Err(e) => return encode_error("addr_error", &e.to_string()),
+        };
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let app = prepared.app;
+
+        BRIDGE.runtime.spawn(async move {
+            let server = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            });
+            if let Err(e) = server.await {
+                emit_log("ERROR", "bridge.httpd", &format!("Server error: {e}"));
+            }
+            emit_log("INFO", "bridge.httpd", "Server stopped");
+        });
+
+        emit_log("INFO", "bridge.httpd", &format!("Gateway listening on {addr}"));
+        *guard = Some(HttpdHandle {
+            shutdown_tx,
+            addr,
+            _state: gateway_state,
+        });
+
+        encode_json(&HttpdStatusResponse {
+            running: true,
+            addr: Some(addr.to_string()),
+        })
+    })
+}
+
+/// Stops the embedded HTTP server. Returns `{"running": false}`.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_stop_httpd() -> *mut c_char {
+    record_call("moltis_stop_httpd");
+    trace_call("moltis_stop_httpd");
+
+    with_ffi_boundary(|| {
+        let mut guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(handle) = guard.take() {
+            emit_log("INFO", "bridge.httpd", &format!(
+                "Stopping httpd on {}", handle.addr
+            ));
+            let _ = handle.shutdown_tx.send(());
+        } else {
+            emit_log("DEBUG", "bridge.httpd", "Stop called but server not running");
+        }
+        encode_json(&HttpdStatusResponse {
+            running: false,
+            addr: None,
+        })
+    })
+}
+
+/// Returns the current httpd server status.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_httpd_status() -> *mut c_char {
+    record_call("moltis_httpd_status");
+    trace_call("moltis_httpd_status");
+
+    with_ffi_boundary(|| {
+        let guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(handle) => encode_json(&HttpdStatusResponse {
+                running: true,
+                addr: Some(handle.addr.to_string()),
+            }),
+            None => encode_json(&HttpdStatusResponse {
+                running: false,
+                addr: None,
+            }),
+        }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_shutdown() {
     record_call("moltis_shutdown");
@@ -1012,6 +1209,55 @@ mod tests {
             parsed.get("type").and_then(Value::as_str),
             Some("error"),
             "event type should be 'error'"
+        );
+    }
+
+    #[test]
+    fn httpd_start_and_stop() {
+        // Start on a random high port to avoid conflicts.
+        let request = r#"{"host":"127.0.0.1","port":0}"#;
+        let c_request = CString::new(request).unwrap_or_else(|e| panic!("{e}"));
+
+        let payload = json_from_ptr(moltis_start_httpd(c_request.as_ptr()));
+        assert_eq!(
+            payload.get("running").and_then(Value::as_bool),
+            Some(true),
+            "server should be running after start"
+        );
+        assert!(
+            payload.get("addr").and_then(Value::as_str).is_some(),
+            "should report the bound address"
+        );
+
+        // Status should confirm running.
+        let status = json_from_ptr(moltis_httpd_status());
+        assert_eq!(
+            status.get("running").and_then(Value::as_bool),
+            Some(true),
+        );
+
+        // Stop.
+        let stopped = json_from_ptr(moltis_stop_httpd());
+        assert_eq!(
+            stopped.get("running").and_then(Value::as_bool),
+            Some(false),
+        );
+
+        // Status after stop.
+        let status2 = json_from_ptr(moltis_httpd_status());
+        assert_eq!(
+            status2.get("running").and_then(Value::as_bool),
+            Some(false),
+        );
+    }
+
+    #[test]
+    fn httpd_stop_when_not_running() {
+        // Stop without start should still return running: false.
+        let payload = json_from_ptr(moltis_stop_httpd());
+        assert_eq!(
+            payload.get("running").and_then(Value::as_bool),
+            Some(false),
         );
     }
 
