@@ -2,6 +2,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use {
     anyhow::{Result, bail},
+    regex::RegexSet,
     serde::{Deserialize, Serialize},
     tokio::sync::{RwLock, oneshot},
     tracing::{debug, warn},
@@ -132,6 +133,64 @@ pub const SAFE_BINS: &[&str] = &[
     "command",
 ];
 
+/// Dangerous command patterns that force approval even when `approval_mode` is
+/// off or `security_level` is full.  Each entry: `(regex_pattern, description)`.
+static DANGEROUS_PATTERN_DEFS: &[(&str, &str)] = &[
+    // Filesystem destruction
+    (
+        r"rm\s+(-\S*[rR]\S*\s+)*/(\s|$|\*)",
+        "rm -r on filesystem root",
+    ),
+    (
+        r"rm\s+(-\S*[rR]\S*\s+)+(~|\$HOME)",
+        "rm -r on home directory",
+    ),
+    (r"\bmkfs\b", "make filesystem"),
+    (
+        r"\bdd\b.*\bif=/dev/(zero|urandom)\b",
+        "disk overwrite with dd",
+    ),
+    (r":\(\)\s*\{.*\|.*&\s*\}\s*;", "fork bomb"),
+    // Git destructive operations
+    (r"git\s+reset\s+--hard", "git reset --hard"),
+    (
+        r"git\s+push\s+.*(-\S*f\S*|--force\b|--force-with-lease\b)",
+        "git force push",
+    ),
+    (r"git\s+clean\s+(-\S*f)", "git clean with force"),
+    (r"git\s+stash\s+(drop|clear)\b", "git stash drop/clear"),
+    // Database destruction
+    (
+        r"(?i)\bDROP\s+(TABLE|DATABASE|SCHEMA)\b",
+        "DROP TABLE/DATABASE",
+    ),
+    (r"(?i)\bTRUNCATE\b", "TRUNCATE"),
+    // Container / infrastructure destruction
+    (r"docker\s+system\s+prune", "docker system prune"),
+    (r"kubectl\s+delete\s+namespace", "kubectl delete namespace"),
+    (r"terraform\s+destroy", "terraform destroy"),
+    // System-level danger
+    (
+        r"chmod\s+(-\S*R\S*\s+)*777\s+/",
+        "recursive chmod 777 on root",
+    ),
+];
+
+static DANGEROUS_SET: std::sync::LazyLock<RegexSet> = std::sync::LazyLock::new(|| {
+    RegexSet::new(DANGEROUS_PATTERN_DEFS.iter().map(|(p, _)| *p))
+        .unwrap_or_else(|e| panic!("built-in dangerous patterns must be valid regex: {e}"))
+});
+
+/// Check if a command matches any dangerous pattern.
+/// Returns the description of the first matching pattern.
+pub fn check_dangerous(command: &str) -> Option<&'static str> {
+    DANGEROUS_SET
+        .matches(command)
+        .iter()
+        .next()
+        .map(|i| DANGEROUS_PATTERN_DEFS[i].1)
+}
+
 /// Extract the first command/binary from a shell command string.
 fn extract_first_bin(command: &str) -> Option<&str> {
     let trimmed = command.trim();
@@ -208,6 +267,15 @@ impl ApprovalManager {
     /// Decide whether a command needs approval.
     /// Returns Ok(()) if the command can proceed, Err if denied.
     pub async fn check_command(&self, command: &str) -> Result<ApprovalAction> {
+        // Safety floor: dangerous patterns force approval regardless of mode.
+        if let Some(desc) = check_dangerous(command) {
+            if !matches_allowlist(command, &self.allowlist) {
+                warn!(command, pattern = %desc, "dangerous command detected, forcing approval");
+                return Ok(ApprovalAction::NeedsApproval);
+            }
+            debug!(command, pattern = %desc, "dangerous command allowed by explicit allowlist");
+        }
+
         match self.security_level {
             SecurityLevel::Deny => bail!("exec denied: security level is 'deny'"),
             SecurityLevel::Full => return Ok(ApprovalAction::Proceed),
@@ -358,7 +426,8 @@ mod tests {
             mode: ApprovalMode::Off,
             ..Default::default()
         };
-        let action = mgr.check_command("rm -rf /").await.unwrap();
+        // Non-dangerous commands proceed when mode is off.
+        let action = mgr.check_command("curl https://example.com").await.unwrap();
         assert_eq!(action, ApprovalAction::Proceed);
     }
 
@@ -393,5 +462,164 @@ mod tests {
             ..Default::default()
         };
         assert!(mgr.check_command("echo hi").await.is_err());
+    }
+
+    // --- Dangerous pattern detection ---
+
+    #[test]
+    fn test_dangerous_rm_rf_root() {
+        assert_eq!(
+            check_dangerous("rm -rf /"),
+            Some("rm -r on filesystem root")
+        );
+        assert_eq!(
+            check_dangerous("rm -rf /*"),
+            Some("rm -r on filesystem root")
+        );
+        assert_eq!(check_dangerous("rm -r /"), Some("rm -r on filesystem root"));
+    }
+
+    #[test]
+    fn test_dangerous_rm_rf_home() {
+        assert_eq!(check_dangerous("rm -rf ~"), Some("rm -r on home directory"));
+        assert_eq!(
+            check_dangerous("rm -rf $HOME"),
+            Some("rm -r on home directory")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_git_reset_hard() {
+        assert_eq!(
+            check_dangerous("git reset --hard"),
+            Some("git reset --hard")
+        );
+        assert_eq!(
+            check_dangerous("git reset --hard HEAD~1"),
+            Some("git reset --hard")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_git_force_push() {
+        assert_eq!(
+            check_dangerous("git push --force origin main"),
+            Some("git force push")
+        );
+        assert_eq!(
+            check_dangerous("git push -f origin main"),
+            Some("git force push")
+        );
+        assert_eq!(
+            check_dangerous("git push --force-with-lease origin main"),
+            Some("git force push")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_drop_table() {
+        assert_eq!(
+            check_dangerous(r#"psql -c "DROP TABLE users""#),
+            Some("DROP TABLE/DATABASE")
+        );
+        assert_eq!(
+            check_dangerous("DROP DATABASE production"),
+            Some("DROP TABLE/DATABASE")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_mkfs() {
+        assert_eq!(
+            check_dangerous("mkfs.ext4 /dev/sda1"),
+            Some("make filesystem")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_docker_prune() {
+        assert_eq!(
+            check_dangerous("docker system prune"),
+            Some("docker system prune")
+        );
+        assert_eq!(
+            check_dangerous("docker system prune -a --volumes"),
+            Some("docker system prune")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_truncate() {
+        assert_eq!(check_dangerous("TRUNCATE TABLE sessions"), Some("TRUNCATE"));
+    }
+
+    #[test]
+    fn test_dangerous_terraform_destroy() {
+        assert_eq!(
+            check_dangerous("terraform destroy -auto-approve"),
+            Some("terraform destroy")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_git_clean_force() {
+        assert_eq!(
+            check_dangerous("git clean -fd"),
+            Some("git clean with force")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_git_stash_drop() {
+        assert_eq!(
+            check_dangerous("git stash drop"),
+            Some("git stash drop/clear")
+        );
+        assert_eq!(
+            check_dangerous("git stash clear"),
+            Some("git stash drop/clear")
+        );
+    }
+
+    #[test]
+    fn test_safe_commands_not_flagged() {
+        assert!(check_dangerous("git status").is_none());
+        assert!(check_dangerous("ls -la").is_none());
+        assert!(check_dangerous("cargo build").is_none());
+        assert!(check_dangerous("echo hello").is_none());
+        assert!(check_dangerous("git push origin main").is_none());
+        assert!(check_dangerous("rm file.txt").is_none());
+        assert!(check_dangerous("docker ps").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_dangerous_overridden_by_allowlist() {
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            allowlist: vec!["rm*".into()],
+            ..Default::default()
+        };
+        let action = mgr.check_command("rm -rf /").await.unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[tokio::test]
+    async fn test_dangerous_forces_approval_when_mode_off() {
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            ..Default::default()
+        };
+        let action = mgr.check_command("rm -rf /").await.unwrap();
+        assert_eq!(action, ApprovalAction::NeedsApproval);
+    }
+
+    #[tokio::test]
+    async fn test_dangerous_forces_approval_when_full() {
+        let mgr = ApprovalManager {
+            security_level: SecurityLevel::Full,
+            ..Default::default()
+        };
+        let action = mgr.check_command("git reset --hard").await.unwrap();
+        assert_eq!(action, ApprovalAction::NeedsApproval);
     }
 }

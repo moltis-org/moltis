@@ -150,7 +150,7 @@ pub async fn session_upload(
                         "filename": filename,
                         "contentType": content_type,
                         "size": size,
-                        "transcriptionError": e,
+                        "transcriptionError": e.to_string(),
                     })),
                 )
                     .into_response();

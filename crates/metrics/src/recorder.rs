@@ -1,6 +1,6 @@
 //! Metrics recorder initialization and configuration.
 
-use {anyhow::Result, tracing::info};
+use {crate::Result, tracing::info};
 
 /// Handle to the metrics system, providing access to exported metrics.
 #[derive(Clone)]

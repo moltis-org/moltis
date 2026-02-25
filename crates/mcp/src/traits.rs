@@ -3,10 +3,11 @@
 //! These traits allow swapping the underlying MCP implementation (e.g. stdio vs rmcp-sdk)
 //! without changing call sites in `manager.rs`, `tool_bridge.rs`, or `mcp_service.rs`.
 
-use {anyhow::Result, async_trait::async_trait, serde_json::Value};
+use {async_trait::async_trait, serde_json::Value};
 
 use crate::{
     client::McpClientState,
+    error::Result,
     types::{JsonRpcResponse, McpToolDef, ToolsCallResult},
 };
 

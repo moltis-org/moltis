@@ -89,7 +89,7 @@ Or configure in `moltis.toml`:
 ```toml
 [voice.tts]
 enabled = true
-provider = "elevenlabs"  # or "openai"
+# provider = "openai"    # Omit to auto-select the first configured provider
 providers = []           # Optional UI allowlist, empty = show all TTS providers
 auto = "off"             # "always", "off", "inbound", "tagged"
 max_text_length = 2000
@@ -102,7 +102,8 @@ stability = 0.5
 similarity_boost = 0.75
 
 [voice.tts.openai]
-api_key = "sk-..."
+# No api_key needed if OpenAI is configured as an LLM provider or OPENAI_API_KEY is set.
+# api_key = "sk-..."
 voice = "alloy"  # alloy, echo, fable, onyx, nova, shimmer
 model = "tts-1"
 speed = 1.0
@@ -306,12 +307,13 @@ Moltis supports multiple STT providers across cloud and local backends.
 ```toml
 [voice.stt]
 enabled = true
-provider = "whisper"  # set to any configured STT provider id
-providers = []        # Optional UI allowlist, empty = show all STT providers
+# provider = "whisper"  # Omit to auto-select the first configured provider
+providers = []          # Optional UI allowlist, empty = show all STT providers
 
 # Cloud providers - API key required
 [voice.stt.whisper]
-api_key = "sk-..."  # Uses OPENAI_API_KEY if not set
+# No api_key needed if OpenAI is configured as an LLM provider or OPENAI_API_KEY is set.
+# api_key = "sk-..."
 model = "whisper-1"
 language = "en"     # Optional ISO 639-1 hint
 

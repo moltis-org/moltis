@@ -7,14 +7,13 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-/// Agent identity (name, emoji, creature, vibe).
+/// Agent identity (name, emoji, theme).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
     pub name: Option<String>,
     pub emoji: Option<String>,
-    pub creature: Option<String>,
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
 }
 
 /// IANA timezone (e.g. `"Europe/Paris"`).
@@ -23,6 +22,12 @@ pub struct AgentIdentity {
 /// compatible with the YAML frontmatter in `USER.md`.
 #[derive(Debug, Clone)]
 pub struct Timezone(pub chrono_tz::Tz);
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown IANA timezone: {value}")]
+pub struct TimezoneParseError {
+    value: String,
+}
 
 impl Timezone {
     /// The IANA name, e.g. `"Europe/Paris"`.
@@ -45,12 +50,14 @@ impl std::fmt::Display for Timezone {
 }
 
 impl std::str::FromStr for Timezone {
-    type Err = String;
+    type Err = TimezoneParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         s.parse::<chrono_tz::Tz>()
             .map(Self)
-            .map_err(|_| format!("unknown IANA timezone: {s}"))
+            .map_err(|_| TimezoneParseError {
+                value: s.to_string(),
+            })
     }
 }
 
@@ -69,9 +76,7 @@ impl Serialize for Timezone {
 impl<'de> Deserialize<'de> for Timezone {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
-        s.parse::<chrono_tz::Tz>()
-            .map(Self)
-            .map_err(serde::de::Error::custom)
+        s.parse::<Self>().map_err(serde::de::Error::custom)
     }
 }
 
@@ -147,8 +152,7 @@ pub struct UserProfile {
 pub struct ResolvedIdentity {
     pub name: String,
     pub emoji: Option<String>,
-    pub creature: Option<String>,
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
     pub soul: Option<String>,
     pub user_name: Option<String>,
 }
@@ -158,8 +162,7 @@ impl ResolvedIdentity {
         Self {
             name: cfg.identity.name.clone().unwrap_or_else(|| "moltis".into()),
             emoji: cfg.identity.emoji.clone(),
-            creature: cfg.identity.creature.clone(),
-            vibe: cfg.identity.vibe.clone(),
+            theme: cfg.identity.theme.clone(),
             soul: None,
             user_name: cfg.user.name.clone(),
         }
@@ -171,8 +174,7 @@ impl Default for ResolvedIdentity {
         Self {
             name: "moltis".into(),
             emoji: None,
-            creature: None,
-            vibe: None,
+            theme: None,
             soul: None,
             user_name: None,
         }
@@ -192,6 +194,7 @@ pub struct MoltisConfig {
     pub channels: ChannelsConfig,
     pub tls: TlsConfig,
     pub auth: AuthConfig,
+    pub graphql: GraphqlConfig,
     pub metrics: MetricsConfig,
     pub identity: AgentIdentity,
     pub user: UserProfile,
@@ -202,6 +205,12 @@ pub struct MoltisConfig {
     pub heartbeat: HeartbeatConfig,
     pub voice: VoiceConfig,
     pub cron: CronConfig,
+    pub caldav: CalDavConfig,
+    /// Environment variables injected into the Moltis process at startup.
+    /// Useful for API keys in Docker where you can't easily set env vars.
+    /// Process env vars take precedence (existing vars are not overwritten).
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -218,7 +227,8 @@ pub struct VoiceConfig {
 pub struct VoiceTtsConfig {
     /// Enable TTS globally.
     pub enabled: bool,
-    /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
+    /// Active provider: "openai", "elevenlabs", "google", "piper", "coqui".
+    /// Empty string means auto-select the first configured provider.
     pub provider: String,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
@@ -237,8 +247,8 @@ pub struct VoiceTtsConfig {
 impl Default for VoiceTtsConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            provider: "elevenlabs".into(),
+            enabled: true,
+            provider: String::new(),
             providers: Vec::new(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
@@ -354,8 +364,8 @@ impl Default for VoiceCoquiTtsConfig {
 pub struct VoiceSttConfig {
     /// Enable STT globally.
     pub enabled: bool,
-    /// Default provider.
-    pub provider: VoiceSttProvider,
+    /// Active provider. None means auto-select the first configured provider.
+    pub provider: Option<VoiceSttProvider>,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
     /// Whisper (OpenAI) settings.
@@ -381,8 +391,8 @@ pub struct VoiceSttConfig {
 impl Default for VoiceSttConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            provider: VoiceSttProvider::Whisper,
+            enabled: true,
+            provider: None,
             providers: Vec::new(),
             whisper: VoiceWhisperConfig::default(),
             groq: VoiceGroqSttConfig::default(),
@@ -633,10 +643,19 @@ pub struct ServerConfig {
     /// Enable WebSocket request/response logs (`ws:` entries).
     /// Useful for debugging RPC calls from the web UI.
     pub ws_request_logs: bool,
+    /// Maximum number of log entries kept in the in-memory ring buffer.
+    /// Older entries are persisted to disk and available via the web UI.
+    /// Defaults to 1000. Increase for busy servers, decrease for memory-constrained devices.
+    #[serde(default = "default_log_buffer_size")]
+    pub log_buffer_size: usize,
     /// Optional GitHub repository URL used by the update checker.
     ///
     /// When unset, Moltis falls back to the package repository metadata.
     pub update_repository_url: Option<String>,
+}
+
+fn default_log_buffer_size() -> usize {
+    1000
 }
 
 impl Default for ServerConfig {
@@ -646,6 +665,7 @@ impl Default for ServerConfig {
             port: 0, // Will be replaced with a random port when config is created
             http_request_logs: false,
             ws_request_logs: false,
+            log_buffer_size: default_log_buffer_size(),
             update_repository_url: None,
         }
     }
@@ -752,6 +772,70 @@ impl Default for CronConfig {
     }
 }
 
+/// CalDAV integration configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalDavConfig {
+    /// Whether CalDAV integration is enabled.
+    pub enabled: bool,
+    /// Default account name to use when none is specified.
+    pub default_account: Option<String>,
+    /// Named CalDAV accounts.
+    #[serde(default)]
+    pub accounts: HashMap<String, CalDavAccountConfig>,
+}
+
+/// Configuration for a single CalDAV account.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalDavAccountConfig {
+    /// CalDAV server URL (e.g. "https://caldav.fastmail.com/dav/calendars").
+    pub url: Option<String>,
+    /// Username for authentication.
+    pub username: Option<String>,
+    /// Password or app-specific password.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub password: Option<Secret<String>>,
+    /// Provider hint: "fastmail", "icloud", or "generic".
+    pub provider: Option<String>,
+    /// HTTP request timeout in seconds.
+    #[serde(default = "default_caldav_timeout")]
+    pub timeout_seconds: u64,
+}
+
+impl Default for CalDavAccountConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            username: None,
+            password: None,
+            provider: None,
+            timeout_seconds: default_caldav_timeout(),
+        }
+    }
+}
+
+impl std::fmt::Debug for CalDavAccountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CalDavAccountConfig")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("provider", &self.provider)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
+}
+
+fn default_caldav_timeout() -> u64 {
+    30
+}
+
 /// Tailscale Serve/Funnel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -782,6 +866,9 @@ pub struct MemoryEmbeddingConfig {
     pub backend: Option<String>,
     /// Embedding provider: "local", "ollama", "openai", "custom", or None for auto-detect.
     pub provider: Option<String>,
+    /// Disable RAG embeddings and force keyword-only memory search.
+    #[serde(default)]
+    pub disable_rag: bool,
     /// Base URL for the embedding API (e.g. "http://localhost:11434/v1" for Ollama).
     pub base_url: Option<String>,
     /// Model name (e.g. "nomic-embed-text" for Ollama, "text-embedding-3-small" for OpenAI).
@@ -865,6 +952,20 @@ pub struct AuthConfig {
     pub disabled: bool,
 }
 
+/// Runtime GraphQL server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GraphqlConfig {
+    /// Whether GraphQL HTTP/WS handlers accept requests.
+    pub enabled: bool,
+}
+
+impl Default for GraphqlConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 /// Metrics and observability configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -875,9 +976,18 @@ pub struct MetricsConfig {
     /// Whether to expose the `/metrics` Prometheus endpoint.
     #[serde(default = "default_true")]
     pub prometheus_endpoint: bool,
+    /// Maximum number of in-memory history points for time-series charts.
+    /// Points are sampled every 10 seconds. Defaults to 360 (1 hour).
+    /// Historical data is persisted to SQLite regardless of this setting.
+    #[serde(default = "default_metrics_history_points")]
+    pub history_points: usize,
     /// Additional labels to add to all metrics.
     #[serde(default)]
     pub labels: HashMap<String, String>,
+}
+
+fn default_metrics_history_points() -> usize {
+    360
 }
 
 impl Default for MetricsConfig {
@@ -885,6 +995,7 @@ impl Default for MetricsConfig {
         Self {
             enabled: true,
             prometheus_endpoint: true,
+            history_points: default_metrics_history_points(),
             labels: HashMap::new(),
         }
     }
@@ -947,18 +1058,63 @@ pub struct McpServerEntry {
     /// URL for SSE transport. Required when `transport` is "sse".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Manual OAuth override for servers that don't support standard discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthOverrideEntry>,
+}
+
+/// Manual OAuth configuration override for an MCP server.
+///
+/// Used when the server doesn't implement RFC 9728/8414 discovery or
+/// when dynamic client registration is not available.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpOAuthOverrideEntry {
+    /// The OAuth client ID.
+    pub client_id: String,
+    /// The authorization endpoint URL.
+    pub auth_url: String,
+    /// The token endpoint URL.
+    pub token_url: String,
+    /// OAuth scopes to request.
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 /// Channel configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChannelsConfig {
+    /// Which channel types are offered in the web UI (onboarding + channels page).
+    /// Defaults to `["telegram"]`. Set to `["telegram", "msteams"]` to opt in to Teams.
+    #[serde(
+        default = "default_channels_offered",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub offered: Vec<String>,
     /// Telegram bot accounts, keyed by account ID.
     #[serde(default)]
     pub telegram: HashMap<String, serde_json::Value>,
     /// WhatsApp linked-device accounts, keyed by account ID.
     #[serde(default)]
     pub whatsapp: HashMap<String, serde_json::Value>,
+    /// Microsoft Teams bot accounts, keyed by account ID.
+    #[serde(default)]
+    pub msteams: HashMap<String, serde_json::Value>,
+}
+
+fn default_channels_offered() -> Vec<String> {
+    vec!["telegram".into()]
+}
+
+impl Default for ChannelsConfig {
+    fn default() -> Self {
+        Self {
+            offered: default_channels_offered(),
+            telegram: HashMap::new(),
+            whatsapp: HashMap::new(),
+            msteams: HashMap::new(),
+        }
+    }
 }
 
 /// TLS configuration for the gateway HTTPS server.
@@ -994,18 +1150,33 @@ impl Default for TlsConfig {
 }
 
 /// Chat configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChatConfig {
     /// How to handle messages that arrive while an agent run is active.
+    #[serde(default = "default_message_queue_mode")]
     pub message_queue_mode: MessageQueueMode,
     /// Preferred model IDs to show first in selectors (full or raw model IDs).
     pub priority_models: Vec<String>,
-    /// Optional allowlist of patterns to filter which models are shown.
-    /// Each pattern is matched case-insensitively as a substring against model
-    /// IDs and display names. An empty list (the default) means show all models.
+    /// Legacy model allowlist. Kept for backward compatibility.
+    /// Model visibility is provider-driven (`providers.<name>.models` +
+    /// live discovery), so this field is currently ignored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_models: Vec<String>,
+}
+
+fn default_message_queue_mode() -> MessageQueueMode {
+    MessageQueueMode::Followup
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        Self {
+            message_queue_mode: default_message_queue_mode(),
+            priority_models: Vec::new(),
+            allowed_models: Vec::new(),
+        }
+    }
 }
 
 /// Behaviour when `chat.send()` is called during an active run.
@@ -1026,10 +1197,14 @@ pub struct ToolsConfig {
     pub exec: ExecConfig,
     pub policy: ToolPolicyConfig,
     pub web: WebConfig,
+    pub maps: MapsConfig,
     pub browser: BrowserConfig,
     /// Maximum wall-clock seconds for an agent run (0 = no timeout). Default 600.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
+    /// Maximum number of agent loop iterations before aborting. Default 25.
+    #[serde(default = "default_agent_max_iterations")]
+    pub agent_max_iterations: usize,
     /// Maximum bytes for a single tool result before truncation. Default 50KB.
     #[serde(default = "default_max_tool_result_bytes")]
     pub max_tool_result_bytes: usize,
@@ -1041,8 +1216,10 @@ impl Default for ToolsConfig {
             exec: ExecConfig::default(),
             policy: ToolPolicyConfig::default(),
             web: WebConfig::default(),
+            maps: MapsConfig::default(),
             browser: BrowserConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
+            agent_max_iterations: default_agent_max_iterations(),
             max_tool_result_bytes: default_max_tool_result_bytes(),
         }
     }
@@ -1052,8 +1229,32 @@ fn default_agent_timeout_secs() -> u64 {
     600
 }
 
+fn default_agent_max_iterations() -> usize {
+    25
+}
+
 fn default_max_tool_result_bytes() -> usize {
     50_000
+}
+
+/// Map tools configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MapsConfig {
+    /// Preferred map provider used by `show_map`.
+    pub provider: MapProvider,
+}
+
+/// Map provider selection for map links.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MapProvider {
+    #[default]
+    #[serde(rename = "google_maps")]
+    GoogleMaps,
+    #[serde(rename = "apple_maps")]
+    AppleMaps,
+    #[serde(rename = "openstreetmap")]
+    OpenStreetMap,
 }
 
 /// Web tools configuration (search, fetch).
@@ -1093,6 +1294,9 @@ pub struct WebSearchConfig {
     pub timeout_seconds: u64,
     /// In-memory cache TTL in minutes (0 to disable).
     pub cache_ttl_minutes: u64,
+    /// Enable DuckDuckGo HTML fallback when no provider API key is configured.
+    /// Disabled by default because it may trigger CAPTCHA challenges.
+    pub duckduckgo_fallback: bool,
     /// Perplexity-specific settings.
     pub perplexity: PerplexityConfig,
 }
@@ -1106,6 +1310,7 @@ impl Default for WebSearchConfig {
             max_results: 5,
             timeout_seconds: 30,
             cache_ttl_minutes: 15,
+            duckduckgo_fallback: false,
             perplexity: PerplexityConfig::default(),
         }
     }
@@ -1143,6 +1348,10 @@ pub struct WebFetchConfig {
     pub max_redirects: u8,
     /// Use readability extraction for HTML pages.
     pub readability: bool,
+    /// CIDR ranges exempt from SSRF blocking (e.g. `["172.22.0.0/16"]`).
+    /// Default: empty (all private IPs blocked).
+    #[serde(default)]
+    pub ssrf_allowlist: Vec<String>,
 }
 
 impl Default for WebFetchConfig {
@@ -1154,6 +1363,7 @@ impl Default for WebFetchConfig {
             cache_ttl_minutes: 15,
             max_redirects: 3,
             readability: true,
+            ssrf_allowlist: Vec::new(),
         }
     }
 }
@@ -1199,10 +1409,31 @@ pub struct BrowserConfig {
     /// Supports wildcards: "*.example.com" matches subdomains.
     #[serde(default)]
     pub allowed_domains: Vec<String>,
+    /// Total system RAM threshold (MB) below which memory-saving Chrome flags
+    /// are injected automatically. Set to 0 to disable. Default: 2048.
+    #[serde(default = "default_low_memory_threshold_mb")]
+    pub low_memory_threshold_mb: u64,
+    /// Whether to persist the Chrome user profile across sessions.
+    /// When enabled, cookies, auth state, and local storage survive browser restarts.
+    /// Profile is stored at `data_dir()/browser/profile/` unless `profile_dir` overrides it.
+    #[serde(default = "default_persist_profile")]
+    pub persist_profile: bool,
+    /// Custom path for the persistent Chrome profile directory.
+    /// When set, `persist_profile` is implicitly true.
+    /// If not set and `persist_profile` is true, defaults to `data_dir()/browser/profile/`.
+    pub profile_dir: Option<String>,
 }
 
 fn default_sandbox_image() -> String {
     "browserless/chrome".to_string()
+}
+
+const fn default_low_memory_threshold_mb() -> u64 {
+    2048
+}
+
+const fn default_persist_profile() -> bool {
+    true
 }
 
 impl Default for BrowserConfig {
@@ -1222,6 +1453,9 @@ impl Default for BrowserConfig {
             chrome_args: Vec::new(),
             sandbox_image: default_sandbox_image(),
             allowed_domains: Vec::new(),
+            low_memory_threshold_mb: default_low_memory_threshold_mb(),
+            persist_profile: default_persist_profile(),
+            profile_dir: None,
         }
     }
 }
@@ -1263,6 +1497,16 @@ pub struct ResourceLimitsConfig {
     pub pids_max: Option<u32>,
 }
 
+/// Persistence strategy for `/home/sandbox` in sandbox containers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HomePersistenceConfig {
+    Off,
+    Session,
+    #[default]
+    Shared,
+}
+
 /// Sandbox configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1270,6 +1514,8 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Persistence strategy for `/home/sandbox`: off, session, or shared.
+    pub home_persistence: HomePersistenceConfig,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
@@ -1307,6 +1553,7 @@ fn default_sandbox_packages() -> Vec<String> {
         "npm",
         "ruby",
         "ruby-dev",
+        "golang-go",
         // Build toolchain & native deps
         "build-essential",
         "clang",
@@ -1445,6 +1692,7 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            home_persistence: HomePersistenceConfig::default(),
             image: None,
             container_prefix: None,
             no_network: true,
@@ -1481,8 +1729,9 @@ pub struct OAuthProviderConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProvidersConfig {
-    /// Optional allowlist of providers offered in web UI pickers (onboarding and
-    /// "add provider" modal). Empty means show all known providers.
+    /// Optional allowlist of enabled providers. This also controls which
+    /// providers are offered in web UI pickers (onboarding and "add provider"
+    /// modal). Empty means all providers are enabled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offered: Vec<String>,
 
@@ -1495,6 +1744,19 @@ pub struct ProvidersConfig {
     /// This is populated at runtime by the gateway and not persisted.
     #[serde(skip)]
     pub local_models: Vec<String>,
+}
+
+/// Streaming transport for provider response streams.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderStreamTransport {
+    /// Use HTTP + SSE streaming (current default).
+    #[default]
+    Sse,
+    /// Use WebSocket mode when supported by the provider API.
+    Websocket,
+    /// Try WebSocket first, then fall back to SSE on transport/setup failure.
+    Auto,
 }
 
 /// Configuration for a single LLM provider.
@@ -1515,8 +1777,20 @@ pub struct ProviderEntry {
     /// Override the base URL.
     pub base_url: Option<String>,
 
-    /// Default model ID for this provider.
-    pub model: Option<String>,
+    /// Preferred model IDs for this provider.
+    /// These are shown first in model pickers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+
+    /// Whether to fetch provider model catalogs dynamically when available.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub fetch_models: bool,
+
+    /// Streaming transport for this provider (`sse`, `websocket`, `auto`).
+    ///
+    /// Defaults to `sse` for compatibility.
+    #[serde(default, skip_serializing_if = "is_default_provider_stream_transport")]
+    pub stream_transport: ProviderStreamTransport,
 
     /// Optional alias for this provider instance.
     ///
@@ -1533,7 +1807,9 @@ impl std::fmt::Debug for ProviderEntry {
             .field("enabled", &self.enabled)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("base_url", &self.base_url)
-            .field("model", &self.model)
+            .field("models", &self.models)
+            .field("fetch_models", &self.fetch_models)
+            .field("stream_transport", &self.stream_transport)
             .field("alias", &self.alias)
             .finish()
     }
@@ -1545,7 +1821,9 @@ impl Default for ProviderEntry {
             enabled: true,
             api_key: None,
             base_url: None,
-            model: None,
+            models: Vec::new(),
+            fetch_models: true,
+            stream_transport: ProviderStreamTransport::Sse,
             alias: None,
         }
     }
@@ -1571,15 +1849,65 @@ where
     Ok(opt.map(Secret::new))
 }
 
+const fn is_true(value: &bool) -> bool {
+    *value
+}
+
+const fn is_default_provider_stream_transport(value: &ProviderStreamTransport) -> bool {
+    matches!(value, ProviderStreamTransport::Sse)
+}
+
 impl ProvidersConfig {
+    fn normalize_provider_name(value: &str) -> String {
+        value.trim().to_ascii_lowercase()
+    }
+
+    fn provider_name_matches(left: &str, right: &str) -> bool {
+        if left == right {
+            return true;
+        }
+        matches!(
+            (left, right),
+            ("local", "local-llm") | ("local-llm", "local")
+        )
+    }
+
+    fn is_offered(&self, name: &str) -> bool {
+        if self.offered.is_empty() {
+            return true;
+        }
+        let normalized = Self::normalize_provider_name(name);
+        self.offered.iter().any(|entry| {
+            let offered = Self::normalize_provider_name(entry);
+            Self::provider_name_matches(&offered, &normalized)
+        })
+    }
+
+    fn provider_entry(&self, name: &str) -> Option<&ProviderEntry> {
+        match name {
+            "local" => self
+                .providers
+                .get("local")
+                .or_else(|| self.providers.get("local-llm")),
+            "local-llm" => self
+                .providers
+                .get("local-llm")
+                .or_else(|| self.providers.get("local")),
+            _ => self.providers.get(name),
+        }
+    }
+
     /// Check if a provider is enabled (defaults to true if not configured).
     pub fn is_enabled(&self, name: &str) -> bool {
-        self.providers.get(name).is_none_or(|e| e.enabled)
+        if !self.is_offered(name) {
+            return false;
+        }
+        self.provider_entry(name).is_none_or(|e| e.enabled)
     }
 
     /// Get the configured entry for a provider, if any.
     pub fn get(&self, name: &str) -> Option<&ProviderEntry> {
-        self.providers.get(name)
+        self.provider_entry(name)
     }
 }
 
@@ -1637,5 +1965,134 @@ mod tests {
         let loc = GeoLocation::now(37.0, -122.0, Some("San Francisco".to_string()));
         assert_eq!(loc.place.as_deref(), Some("San Francisco"));
         assert!(loc.updated_at.is_some());
+    }
+
+    #[test]
+    fn env_section_parses() {
+        let toml = r#"
+[env]
+BRAVE_API_KEY = "test-key"
+OPENROUTER_API_KEY = "sk-or-test"
+"#;
+        let config: MoltisConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.env.len(), 2);
+        assert_eq!(config.env.get("BRAVE_API_KEY").unwrap(), "test-key");
+        assert_eq!(config.env.get("OPENROUTER_API_KEY").unwrap(), "sk-or-test");
+    }
+
+    #[test]
+    fn env_section_defaults_to_empty() {
+        let config: MoltisConfig = toml::from_str("").unwrap();
+        assert!(config.env.is_empty());
+    }
+
+    #[test]
+    fn chat_config_default_queue_mode_is_followup() {
+        let cfg = ChatConfig::default();
+        assert_eq!(cfg.message_queue_mode, MessageQueueMode::Followup);
+    }
+
+    #[test]
+    fn chat_config_toml_missing_queue_mode_defaults_to_followup() {
+        let cfg: ChatConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.message_queue_mode, MessageQueueMode::Followup);
+    }
+
+    #[test]
+    fn providers_config_local_alias_maps_local_llm_to_local() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert("local-llm".into(), ProviderEntry {
+            enabled: false,
+            ..ProviderEntry::default()
+        });
+
+        assert!(!config.is_enabled("local"));
+        assert!(!config.is_enabled("local-llm"));
+        assert!(config.get("local").is_some());
+    }
+
+    #[test]
+    fn providers_config_local_alias_prefers_exact_key() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert("local".into(), ProviderEntry {
+            enabled: false,
+            ..ProviderEntry::default()
+        });
+        config.providers.insert("local-llm".into(), ProviderEntry {
+            enabled: true,
+            ..ProviderEntry::default()
+        });
+
+        assert!(!config.is_enabled("local"));
+        assert!(config.is_enabled("local-llm"));
+    }
+
+    #[test]
+    fn providers_config_offered_controls_enablement() {
+        let config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
+        assert!(config.is_enabled("openai"));
+        assert!(!config.is_enabled("anthropic"));
+    }
+
+    #[test]
+    fn providers_config_offered_handles_local_alias() {
+        let config = ProvidersConfig {
+            offered: vec!["local-llm".into()],
+            ..ProvidersConfig::default()
+        };
+        assert!(config.is_enabled("local"));
+        assert!(config.is_enabled("local-llm"));
+    }
+
+    #[test]
+    fn providers_config_enabled_flag_still_applies_with_offered_allowlist() {
+        let mut config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
+        config.providers.insert("openai".into(), ProviderEntry {
+            enabled: false,
+            ..ProviderEntry::default()
+        });
+        assert!(!config.is_enabled("openai"));
+    }
+
+    #[test]
+    fn provider_entry_defaults_fetch_models_enabled() {
+        let entry = ProviderEntry::default();
+        assert!(entry.fetch_models);
+        assert!(entry.models.is_empty());
+    }
+
+    #[test]
+    fn channels_config_defaults_to_telegram_offered() {
+        let config = ChannelsConfig::default();
+        assert_eq!(config.offered, vec!["telegram".to_string()]);
+    }
+
+    #[test]
+    fn channels_config_empty_toml_defaults_offered() {
+        let config: ChannelsConfig = toml::from_str("").unwrap();
+        assert_eq!(config.offered, vec!["telegram".to_string()]);
+    }
+
+    #[test]
+    fn channels_config_explicit_offered() {
+        let config: ChannelsConfig =
+            toml::from_str(r#"offered = ["telegram", "msteams"]"#).unwrap();
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "msteams".to_string()
+        ]);
+    }
+
+    #[test]
+    fn sandbox_defaults_include_go_runtime() {
+        let sandbox = SandboxConfig::default();
+        assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
+        assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
     }
 }

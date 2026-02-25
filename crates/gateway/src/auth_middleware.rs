@@ -1,14 +1,16 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::{ConnectInfo, FromRef, FromRequestParts, State},
+    extract::{ConnectInfo, FromRef, FromRequestParts},
     http::{HeaderMap, StatusCode, request::Parts},
-    middleware::Next,
-    response::{IntoResponse, Json},
 };
 
-#[cfg(feature = "web-ui")]
-use axum::response::Redirect;
+#[cfg(any(feature = "web-ui", feature = "vault"))]
+use axum::{
+    extract::State,
+    middleware::Next,
+    response::{IntoResponse, Json, Redirect},
+};
 
 use crate::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
@@ -121,7 +123,7 @@ pub async fn auth_gate(
                     method: AuthMethod::Loopback,
                 });
                 next.run(request).await
-            } else if path.starts_with("/api/") || path == "/ws" {
+            } else if path.starts_with("/api/") || path.starts_with("/ws/") {
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({"error": "setup required"})),
@@ -132,7 +134,7 @@ pub async fn auth_gate(
             }
         },
         AuthResult::Unauthorized => {
-            if path.starts_with("/api/") || path == "/ws" {
+            if path.starts_with("/api/") || path.starts_with("/ws/") {
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({"error": "not authenticated"})),
@@ -152,7 +154,41 @@ fn is_public_path(path: &str) -> bool {
         path,
         "/health" | "/auth/callback" | "/manifest.json" | "/sw.js" | "/login"
     ) || path.starts_with("/api/auth/")
+        || path.starts_with("/api/channels/msteams/")
         || path.starts_with("/assets/")
+        || path.starts_with("/share/")
+}
+
+// ── Vault guard ─────────────────────────────────────────────────────────────
+
+/// Middleware that blocks API requests when the vault is sealed.
+///
+/// Returns 423 Locked for API endpoints (except auth and gon) when the vault
+/// is in `Sealed` state. `Uninitialized` is not blocked — the vault doesn't
+/// exist yet and there's nothing to protect.
+#[cfg(feature = "vault")]
+pub async fn vault_guard(
+    State(state): State<super::server::AppState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> axum::response::Response {
+    let Some(ref vault) = state.gateway.vault else {
+        return next.run(request).await;
+    };
+    let path = request.uri().path();
+    // Allow auth, gon, and non-API routes through.
+    if !path.starts_with("/api/") || path.starts_with("/api/auth/") || path == "/api/gon" {
+        return next.run(request).await;
+    }
+    // Only block when Sealed (not Uninitialized).
+    if matches!(vault.status().await, Ok(moltis_vault::VaultStatus::Sealed)) {
+        return (
+            StatusCode::LOCKED,
+            Json(serde_json::json!({"error": "vault is sealed", "status": "sealed"})),
+        )
+            .into_response();
+    }
+    next.run(request).await
 }
 
 // ── AuthSession extractor ───────────────────────────────────────────────────
@@ -243,5 +279,23 @@ mod tests {
         );
         assert_eq!(parse_cookie("other=def", "moltis_session"), None);
         assert_eq!(parse_cookie("", "moltis_session"), None);
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn terminal_ws_path_is_not_public() {
+        assert!(!is_public_path("/api/terminal/ws"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn chat_ws_path_is_not_public() {
+        assert!(!is_public_path("/ws/chat"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn graphql_paths_are_not_public() {
+        assert!(!is_public_path("/graphql"));
     }
 }

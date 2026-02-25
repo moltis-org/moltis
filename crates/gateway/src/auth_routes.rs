@@ -2,18 +2,21 @@ use std::{net::SocketAddr, sync::Arc};
 
 use secrecy::ExposeSecret;
 
-use axum::{
-    Json,
-    extract::{ConnectInfo, State},
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{delete, get, post},
+use {
+    axum::{
+        Json,
+        extract::{ConnectInfo, State},
+        http::StatusCode,
+        response::IntoResponse,
+        routing::{delete, get, post},
+    },
+    axum_extra::extract::Host,
 };
 
 use crate::{
     auth::CredentialStore,
     auth_middleware::{AuthResult, AuthSession, SESSION_COOKIE, check_auth},
-    auth_webauthn::WebAuthnState,
+    auth_webauthn::WebAuthnRegistry,
     server::is_local_connection,
     state::GatewayState,
 };
@@ -22,7 +25,7 @@ use crate::{
 #[derive(Clone)]
 pub struct AuthState {
     pub credential_store: Arc<CredentialStore>,
-    pub webauthn_state: Option<Arc<WebAuthnState>>,
+    pub webauthn_registry: Option<Arc<WebAuthnRegistry>>,
     pub gateway_state: Arc<GatewayState>,
 }
 
@@ -75,6 +78,22 @@ pub fn auth_router() -> axum::Router<AuthState> {
             post(setup_passkey_register_finish_handler),
         )
         .route("/reset", post(reset_auth_handler))
+        // Vault endpoints (encryption-at-rest).
+        .merge(vault_routes())
+}
+
+/// Build vault-specific routes (no-op when vault feature is disabled).
+#[cfg(feature = "vault")]
+fn vault_routes() -> axum::Router<AuthState> {
+    axum::Router::new()
+        .route("/vault/status", get(vault_status_handler))
+        .route("/vault/unlock", post(vault_unlock_handler))
+        .route("/vault/recovery", post(vault_recovery_handler))
+}
+
+#[cfg(not(feature = "vault"))]
+fn vault_routes() -> axum::Router<AuthState> {
+    axum::Router::new()
 }
 
 // ── Status ───────────────────────────────────────────────────────────────────
@@ -96,12 +115,12 @@ async fn status_handler(
 
     let setup_code_required = state.gateway_state.inner.read().await.setup_code.is_some();
 
-    let webauthn_available = state.webauthn_state.is_some();
+    let webauthn_available = state.webauthn_registry.is_some();
 
     let passkey_origins: Vec<String> = state
-        .webauthn_state
+        .webauthn_registry
         .as_ref()
-        .map(|wa| wa.get_allowed_origins())
+        .map(|reg| reg.get_all_origins())
         .unwrap_or_default();
 
     let setup_complete = state.credential_store.is_setup_complete();
@@ -153,7 +172,13 @@ async fn setup_handler(
     let is_local = is_local_connection(&headers, addr, state.gateway_state.behind_proxy);
     if password.is_empty() && is_local {
         // Local connection with no password: skip setup without setting one.
-        state.credential_store.clear_auth_disabled();
+        if let Err(e) = state.credential_store.clear_auth_disabled().await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to clear auth-disabled state: {e}"),
+            )
+                .into_response();
+        }
     } else {
         if password.len() < 8 {
             return (
@@ -171,10 +196,55 @@ async fn setup_handler(
         }
     }
 
-    // Clear setup code and create session.
+    // Initialize the vault when a password was set.
+    #[cfg(feature = "vault")]
+    let vault_recovery_key = if !password.is_empty() {
+        if let Some(ref vault) = state.gateway_state.vault {
+            match vault.initialize(&password).await {
+                Ok(rk) => {
+                    tracing::info!("vault initialized");
+                    run_vault_env_migration(&state).await;
+                    Some(rk.phrase().to_owned())
+                },
+                Err(moltis_vault::VaultError::AlreadyInitialized) => {
+                    tracing::debug!("vault already initialized, skipping");
+                    None
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "vault initialization failed");
+                    None
+                },
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Disconnect pre-setup WebSocket clients and clear setup code.
+    state
+        .gateway_state
+        .disconnect_all_clients("setup_complete")
+        .await;
     state.gateway_state.inner.write().await.setup_code = None;
     match state.credential_store.create_session().await {
-        Ok(token) => session_response(token, &headers),
+        Ok(token) => {
+            #[cfg(feature = "vault")]
+            if let Some(rk) = vault_recovery_key {
+                let domain_attr = localhost_cookie_domain(&headers);
+                let cookie = format!(
+                    "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000{domain_attr}"
+                );
+                return (
+                    StatusCode::OK,
+                    [(axum::http::header::SET_COOKIE, cookie)],
+                    Json(serde_json::json!({ "ok": true, "recovery_key": rk })),
+                )
+                    .into_response();
+            }
+            session_response(token, &headers)
+        },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to create session: {e}"),
@@ -196,13 +266,28 @@ async fn login_handler(
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
     match state.credential_store.verify_password(&body.password).await {
-        Ok(true) => match state.credential_store.create_session().await {
-            Ok(token) => session_response(token, &headers),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session error: {e}"),
-            )
-                .into_response(),
+        Ok(true) => {
+            // Best-effort vault unseal on successful login.
+            #[cfg(feature = "vault")]
+            if let Some(ref vault) = state.gateway_state.vault {
+                match vault.unseal(&body.password).await {
+                    Ok(()) => {
+                        tracing::info!("vault unsealed on login");
+                        run_vault_env_migration(&state).await;
+                    },
+                    Err(e) => {
+                        tracing::debug!(error = %e, "vault unseal on login skipped");
+                    },
+                }
+            }
+            match state.credential_store.create_session().await {
+                Ok(token) => session_response(token, &headers),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("session error: {e}"),
+                )
+                    .into_response(),
+            }
         },
         Ok(false) => (StatusCode::UNAUTHORIZED, "invalid password").into_response(),
         Err(e) => (
@@ -234,7 +319,11 @@ async fn reset_auth_handler(
 ) -> impl IntoResponse {
     match state.credential_store.reset_all().await {
         Ok(()) => {
-            // Generate a new setup code so the re-setup flow is protected.
+            // Disconnect all clients before generating new setup code.
+            state
+                .gateway_state
+                .disconnect_all_clients("auth_reset")
+                .await;
             let code = generate_setup_code();
             tracing::info!("setup code: {code} (enter this in the browser to set your password)");
             state.gateway_state.inner.write().await.setup_code = Some(secrecy::Secret::new(code));
@@ -274,7 +363,40 @@ async fn change_password_handler(
             .add_password(&body.new_password)
             .await
         {
-            Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+            Ok(()) => {
+                // Initialize the vault now that we have a password.
+                #[cfg(feature = "vault")]
+                let vault_recovery_key = if let Some(ref vault) = state.gateway_state.vault {
+                    match vault.initialize(&body.new_password).await {
+                        Ok(rk) => {
+                            tracing::info!("vault initialized on first password set");
+                            run_vault_env_migration(&state).await;
+                            Some(rk.phrase().to_owned())
+                        },
+                        Err(moltis_vault::VaultError::AlreadyInitialized) => {
+                            tracing::debug!("vault already initialized, unsealing");
+                            let _ = vault.unseal(&body.new_password).await;
+                            None
+                        },
+                        Err(e) => {
+                            tracing::warn!(error = %e, "vault initialization failed");
+                            None
+                        },
+                    }
+                } else {
+                    None
+                };
+                state
+                    .gateway_state
+                    .disconnect_all_clients("password_changed")
+                    .await;
+                #[cfg(feature = "vault")]
+                if let Some(rk) = vault_recovery_key {
+                    return Json(serde_json::json!({ "ok": true, "recovery_key": rk }))
+                        .into_response();
+                }
+                Json(serde_json::json!({ "ok": true })).into_response()
+            },
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         };
     }
@@ -285,7 +407,24 @@ async fn change_password_handler(
         .change_password(&current_password, &body.new_password)
         .await
     {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(()) => {
+            // Best-effort vault password rotation.
+            #[cfg(feature = "vault")]
+            if let Some(ref vault) = state.gateway_state.vault {
+                match vault
+                    .change_password(&current_password, &body.new_password)
+                    .await
+                {
+                    Ok(()) => tracing::info!("vault password rotated"),
+                    Err(e) => tracing::warn!(error = %e, "vault password rotation failed"),
+                }
+            }
+            state
+                .gateway_state
+                .disconnect_all_clients("password_changed")
+                .await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        },
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("incorrect") {
@@ -373,8 +512,19 @@ async fn remove_passkey_handler(
     State(state): State<AuthState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> impl IntoResponse {
+    let was_setup_complete = state.credential_store.is_setup_complete();
     match state.credential_store.remove_passkey(id).await {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(()) => {
+            // If removing the last credential flipped setup_complete from true→false,
+            // disconnect all clients so they are forced through re-setup.
+            if was_setup_complete && !state.credential_store.is_setup_complete() {
+                state
+                    .gateway_state
+                    .disconnect_all_clients("last_credential_removed")
+                    .await;
+            }
+            Json(serde_json::json!({ "ok": true })).into_response()
+        },
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -464,9 +614,17 @@ fn localhost_cookie_domain(headers: &axum::http::HeaderMap) -> &'static str {
 async fn passkey_register_begin_handler(
     _session: AuthSession,
     State(state): State<AuthState>,
+    Host(host): Host,
 ) -> impl IntoResponse {
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let existing = crate::auth_webauthn::load_passkeys(&state.credential_store)
@@ -493,10 +651,18 @@ struct PasskeyRegisterFinishRequest {
 async fn passkey_register_finish_handler(
     _session: AuthSession,
     State(state): State<AuthState>,
+    Host(host): Host,
     Json(body): Json<PasskeyRegisterFinishRequest>,
 ) -> impl IntoResponse {
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkey = match wa.finish_registration(&body.challenge_id, &body.credential) {
@@ -528,9 +694,19 @@ async fn passkey_register_finish_handler(
 
 // ── Passkey authentication (no session required) ─────────────────────────────
 
-async fn passkey_auth_begin_handler(State(state): State<AuthState>) -> impl IntoResponse {
-    let Some(ref wa) = state.webauthn_state else {
+async fn passkey_auth_begin_handler(
+    State(state): State<AuthState>,
+    Host(host): Host,
+) -> impl IntoResponse {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkeys = match crate::auth_webauthn::load_passkeys(&state.credential_store).await {
@@ -556,11 +732,19 @@ struct PasskeyAuthFinishRequest {
 
 async fn passkey_auth_finish_handler(
     State(state): State<AuthState>,
+    Host(host): Host,
     headers: axum::http::HeaderMap,
     Json(body): Json<PasskeyAuthFinishRequest>,
 ) -> impl IntoResponse {
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     match wa.finish_authentication(&body.challenge_id, &body.credential) {
@@ -581,6 +765,7 @@ struct SetupPasskeyBeginRequest {
 
 async fn setup_passkey_register_begin_handler(
     State(state): State<AuthState>,
+    Host(host): Host,
     Json(body): Json<SetupPasskeyBeginRequest>,
 ) -> impl IntoResponse {
     if state.credential_store.is_setup_complete() {
@@ -597,8 +782,15 @@ async fn setup_passkey_register_begin_handler(
         }
     }
 
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let existing = crate::auth_webauthn::load_passkeys(&state.credential_store)
@@ -625,6 +817,7 @@ struct SetupPasskeyFinishRequest {
 
 async fn setup_passkey_register_finish_handler(
     State(state): State<AuthState>,
+    Host(host): Host,
     headers: axum::http::HeaderMap,
     Json(body): Json<SetupPasskeyFinishRequest>,
 ) -> impl IntoResponse {
@@ -642,8 +835,15 @@ async fn setup_passkey_register_finish_handler(
         }
     }
 
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkey = match wa.finish_registration(&body.challenge_id, &body.credential) {
@@ -679,7 +879,11 @@ async fn setup_passkey_register_finish_handler(
             .into_response();
     }
 
-    // Clear setup code and create session.
+    // Disconnect pre-setup WebSocket clients and clear setup code.
+    state
+        .gateway_state
+        .disconnect_all_clients("setup_complete")
+        .await;
     state.gateway_state.inner.write().await.setup_code = None;
     match state.credential_store.create_session().await {
         Ok(token) => session_response(token, &headers),
@@ -691,11 +895,105 @@ async fn setup_passkey_register_finish_handler(
     }
 }
 
+/// Look up the `WebAuthnState` whose RP ID matches the hostname from the
+/// request. `host` is the value from `axum::extract::Host` (handles both
+/// HTTP/1.1 `Host` header and HTTP/2 `:authority` pseudo-header).
+fn host_to_webauthn<'a>(
+    host: &str,
+    registry: &'a WebAuthnRegistry,
+) -> Option<&'a crate::auth_webauthn::WebAuthnState> {
+    registry.get_for_host(host)
+}
+
 fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<&str> {
     let cookie_header = headers
         .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())?;
     crate::auth_middleware::parse_cookie(cookie_header, SESSION_COOKIE)
+}
+
+// ── Vault handlers ──────────────────────────────────────────────────────────
+
+#[cfg(feature = "vault")]
+async fn vault_status_handler(State(state): State<AuthState>) -> impl IntoResponse {
+    let status = if let Some(ref vault) = state.gateway_state.vault {
+        match vault.status().await {
+            Ok(s) => format!("{s:?}").to_lowercase(),
+            Err(_) => "error".to_owned(),
+        }
+    } else {
+        "disabled".to_owned()
+    };
+    Json(serde_json::json!({ "status": status }))
+}
+
+#[cfg(feature = "vault")]
+#[derive(serde::Deserialize)]
+struct VaultUnlockRequest {
+    password: String,
+}
+
+#[cfg(feature = "vault")]
+async fn vault_unlock_handler(
+    State(state): State<AuthState>,
+    Json(body): Json<VaultUnlockRequest>,
+) -> impl IntoResponse {
+    let Some(ref vault) = state.gateway_state.vault else {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    };
+    match vault.unseal(&body.password).await {
+        Ok(()) => {
+            run_vault_env_migration(&state).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        },
+        Err(moltis_vault::VaultError::BadCredential) => {
+            (StatusCode::LOCKED, "invalid password").into_response()
+        },
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[cfg(feature = "vault")]
+#[derive(serde::Deserialize)]
+struct VaultRecoveryRequest {
+    recovery_key: String,
+}
+
+#[cfg(feature = "vault")]
+async fn vault_recovery_handler(
+    State(state): State<AuthState>,
+    Json(body): Json<VaultRecoveryRequest>,
+) -> impl IntoResponse {
+    let Some(ref vault) = state.gateway_state.vault else {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    };
+    match vault.unseal_with_recovery(&body.recovery_key).await {
+        Ok(()) => {
+            run_vault_env_migration(&state).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        },
+        Err(moltis_vault::VaultError::BadCredential) => {
+            (StatusCode::LOCKED, "invalid recovery key").into_response()
+        },
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Migrate unencrypted env vars to encrypted after vault unseal.
+#[cfg(feature = "vault")]
+async fn run_vault_env_migration(state: &AuthState) {
+    if let Some(vault) = state.credential_store.vault() {
+        let pool = state.credential_store.db_pool();
+        match moltis_vault::migration::migrate_env_vars(vault, pool).await {
+            Ok(n) if n > 0 => {
+                tracing::info!(count = n, "migrated env vars to encrypted");
+            },
+            Ok(_) => {},
+            Err(e) => {
+                tracing::warn!(error = %e, "env var migration failed");
+            },
+        }
+    }
 }
 
 #[cfg(test)]

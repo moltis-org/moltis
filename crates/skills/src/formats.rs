@@ -4,7 +4,10 @@
 //! This module detects the format and normalizes repo contents into
 //! `SkillMetadata` + body pairs that feed into the skills system.
 
-use std::path::Path;
+use std::{
+    collections::HashSet,
+    path::{Component, Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -77,6 +80,26 @@ struct ClaudePluginJson {
     author: Option<PluginAuthor>,
 }
 
+/// Claude Code marketplace metadata from `.claude-plugin/marketplace.json`.
+#[derive(Debug, Deserialize)]
+struct ClaudeMarketplaceJson {
+    #[serde(default)]
+    plugins: Vec<ClaudeMarketplacePlugin>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeMarketplacePlugin {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    author: Option<PluginAuthor>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    skills: Vec<String>,
+}
+
 /// Author field can be a string or an object with `name` (and optionally `email`).
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -98,6 +121,148 @@ impl PluginAuthor {
 pub struct ClaudeCodeAdapter;
 
 impl ClaudeCodeAdapter {
+    fn slug_to_display_name(slug: &str) -> String {
+        slug.split('-')
+            .map(|w| {
+                let mut c = w.chars();
+                match c.next() {
+                    Some(first) => first.to_uppercase().to_string() + c.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Resolve `relative` against `base`, rejecting path traversal / absolute paths.
+    fn resolve_relative_safe(base: &Path, relative: &str) -> Option<PathBuf> {
+        let trimmed = relative.trim();
+        let rel = if trimmed.is_empty() {
+            "."
+        } else {
+            trimmed
+        };
+        let mut normalized = PathBuf::new();
+        for component in Path::new(rel).components() {
+            match component {
+                Component::Normal(seg) => normalized.push(seg),
+                Component::CurDir => {},
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+            }
+        }
+        if normalized.as_os_str().is_empty() {
+            Some(base.to_path_buf())
+        } else {
+            Some(base.join(normalized))
+        }
+    }
+
+    fn scan_marketplace_manifest(
+        &self,
+        repo_dir: &Path,
+        seen_names: &mut HashSet<String>,
+    ) -> anyhow::Result<Vec<PluginSkillEntry>> {
+        let marketplace_json_path = repo_dir.join(".claude-plugin/marketplace.json");
+        let marketplace: ClaudeMarketplaceJson =
+            serde_json::from_str(&std::fs::read_to_string(&marketplace_json_path)?)?;
+
+        let mut results = Vec::new();
+        for plugin in marketplace.plugins {
+            if plugin.name.trim().is_empty() {
+                tracing::warn!(path = %marketplace_json_path.display(), "skipping marketplace plugin with empty name");
+                continue;
+            }
+            let plugin_name = plugin.name;
+            let plugin_description = plugin.description;
+            let author = plugin.author.as_ref().map(|a| a.name().to_string());
+            let source = plugin.source.unwrap_or_else(|| ".".to_string());
+            let Some(plugin_base) = Self::resolve_relative_safe(repo_dir, &source) else {
+                tracing::warn!(plugin = %plugin_name, source = %source, "skipping marketplace plugin with unsafe source path");
+                continue;
+            };
+            if !plugin_base.is_dir() {
+                tracing::debug!(plugin = %plugin_name, source = %source, "skipping marketplace plugin source that is not a directory");
+                continue;
+            }
+
+            for skill_ref in plugin.skills {
+                let Some(skill_base) = Self::resolve_relative_safe(&plugin_base, &skill_ref) else {
+                    tracing::warn!(plugin = %plugin_name, skill = %skill_ref, "skipping marketplace skill with unsafe path");
+                    continue;
+                };
+
+                let (skill_dir, skill_md) = if skill_base
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                    && skill_base.is_file()
+                {
+                    let Some(parent) = skill_base.parent() else {
+                        continue;
+                    };
+                    (parent.to_path_buf(), skill_base)
+                } else {
+                    let skill_md = skill_base.join("SKILL.md");
+                    (skill_base, skill_md)
+                };
+
+                if !skill_md.is_file() {
+                    tracing::debug!(plugin = %plugin_name, skill = %skill_ref, path = %skill_md.display(), "marketplace skill path has no SKILL.md");
+                    continue;
+                }
+
+                let raw = match std::fs::read_to_string(&skill_md) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        tracing::warn!(path = %skill_md.display(), %e, "failed to read marketplace SKILL.md");
+                        continue;
+                    },
+                };
+
+                let content = match crate::parse::parse_skill(&raw, &skill_dir) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        tracing::warn!(path = %skill_md.display(), %e, "failed to parse marketplace SKILL.md");
+                        continue;
+                    },
+                };
+
+                let slug = content.metadata.name.clone();
+                let namespaced_name = format!("{plugin_name}:{slug}");
+                if !seen_names.insert(namespaced_name.clone()) {
+                    continue;
+                }
+
+                let source_file = skill_md
+                    .strip_prefix(repo_dir)
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string());
+
+                let mut meta = content.metadata;
+                meta.name = namespaced_name;
+                meta.description = if meta.description.is_empty() {
+                    plugin_description.clone().unwrap_or_default()
+                } else {
+                    meta.description
+                };
+                if meta.homepage.is_none() {
+                    meta.homepage = author.as_ref().map(|a| format!("https://github.com/{a}"));
+                }
+                meta.source = Some(SkillSource::Plugin);
+
+                results.push(PluginSkillEntry {
+                    metadata: meta,
+                    body: content.body,
+                    display_name: Some(Self::slug_to_display_name(&slug)),
+                    author: author.clone(),
+                    source_file,
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Scan a single plugin directory (one that has `.claude-plugin/plugin.json`).
     /// `repo_root` is the top-level repo directory; `source_file` paths are
     /// computed relative to it so that GitHub URLs work for marketplace repos.
@@ -162,17 +327,7 @@ impl ClaudeCodeAdapter {
                 let namespaced_name = format!("{plugin_name}:{stem}");
 
                 // Build display name from stem: "code-reviewer" → "Code Reviewer"
-                let display_name = stem
-                    .split('-')
-                    .map(|w| {
-                        let mut c = w.chars();
-                        match c.next() {
-                            Some(first) => first.to_uppercase().to_string() + c.as_str(),
-                            None => String::new(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let display_name = Self::slug_to_display_name(&stem);
 
                 // Relative path within repo root (e.g. "plugins/pr-review-toolkit/agents/code-reviewer.md")
                 let source_file = path
@@ -225,8 +380,14 @@ impl FormatAdapter for ClaudeCodeAdapter {
             return self.scan_single_plugin(repo_dir, repo_dir);
         }
 
+        let mut seen_names = HashSet::new();
+        let mut results = if repo_dir.join(".claude-plugin/marketplace.json").is_file() {
+            self.scan_marketplace_manifest(repo_dir, &mut seen_names)?
+        } else {
+            Vec::new()
+        };
+
         // Marketplace repo: scan plugins/ and external_plugins/ subdirs
-        let mut results = Vec::new();
         for container in &["plugins", "external_plugins"] {
             let container_dir = repo_dir.join(container);
             if !container_dir.is_dir() {
@@ -245,7 +406,14 @@ impl FormatAdapter for ClaudeCodeAdapter {
                     continue;
                 }
                 match self.scan_single_plugin(&path, repo_dir) {
-                    Ok(skills) => results.extend(skills),
+                    Ok(skills) => {
+                        for skill in skills {
+                            if !seen_names.insert(skill.metadata.name.clone()) {
+                                continue;
+                            }
+                            results.push(skill);
+                        }
+                    },
                     Err(e) => {
                         tracing::warn!(?path, %e, "failed to scan sub-plugin");
                     },
@@ -548,6 +716,80 @@ mod tests {
             helper.source_file.as_deref(),
             Some("external_plugins/ext-plugin/agents/helper.md")
         );
+    }
+
+    #[test]
+    fn test_claude_code_marketplace_scan_skills_array() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        std::fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            root.join(".claude-plugin/marketplace.json"),
+            r#"{
+  "name": "anthropic-agent-skills",
+  "plugins": [
+    {
+      "name": "document-skills",
+      "description": "Document processing skills",
+      "source": "./",
+      "skills": ["./skills/xlsx", "./skills/pdf"]
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(root.join("skills/xlsx")).unwrap();
+        std::fs::write(
+            root.join("skills/xlsx/SKILL.md"),
+            r#"---
+name: xlsx
+description: Work with spreadsheets
+---
+
+Read and write spreadsheets.
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(root.join("skills/pdf")).unwrap();
+        std::fs::write(
+            root.join("skills/pdf/SKILL.md"),
+            r#"---
+name: pdf
+description: Work with PDF documents
+---
+
+Read and write PDF documents.
+"#,
+        )
+        .unwrap();
+
+        let adapter = ClaudeCodeAdapter;
+        assert!(adapter.detect(root));
+
+        let results = adapter.scan_skills(root).unwrap();
+        assert_eq!(results.len(), 2);
+
+        let xlsx = results
+            .iter()
+            .find(|e| e.metadata.name == "document-skills:xlsx")
+            .unwrap();
+        assert_eq!(xlsx.display_name.as_deref(), Some("Xlsx"));
+        assert_eq!(xlsx.source_file.as_deref(), Some("skills/xlsx/SKILL.md"));
+        assert_eq!(xlsx.metadata.source, Some(SkillSource::Plugin));
+        assert_eq!(xlsx.metadata.path, root.join("skills/xlsx"));
+        assert!(xlsx.body.contains("spreadsheets"));
+
+        let pdf = results
+            .iter()
+            .find(|e| e.metadata.name == "document-skills:pdf")
+            .unwrap();
+        assert_eq!(pdf.source_file.as_deref(), Some("skills/pdf/SKILL.md"));
+        assert_eq!(pdf.metadata.source, Some(SkillSource::Plugin));
+        assert_eq!(pdf.metadata.path, root.join("skills/pdf"));
+        assert!(pdf.body.contains("PDF"));
     }
 
     #[test]

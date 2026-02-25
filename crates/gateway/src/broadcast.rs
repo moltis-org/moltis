@@ -55,6 +55,14 @@ pub async fn broadcast(
         },
     };
 
+    // Forward to GraphQL subscription broadcast channel.
+    #[cfg(feature = "graphql")]
+    if let Some(ref payload) = frame.payload {
+        let _ = state
+            .graphql_broadcast
+            .send((event.to_string(), payload.clone()));
+    }
+
     let guards = event_scope_guards();
     let required_scopes = guards.get(event);
 

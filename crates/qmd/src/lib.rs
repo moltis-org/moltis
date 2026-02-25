@@ -3,7 +3,7 @@
 //! This crate provides an alternative memory backend that uses the QMD sidecar process
 //! for hybrid search (BM25 + vector + LLM reranking).
 //!
-//! QMD must be installed separately. See: https://github.com/qmd/qmd
+//! QMD must be installed separately. See: https://github.com/tobi/qmd
 
 mod manager;
 mod store;

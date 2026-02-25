@@ -39,6 +39,14 @@ fn status() -> Result<()> {
         println!("  chrome_path:    (auto-detect)");
     }
 
+    let detected = moltis_browser::detect::detect_browsers(browser.chrome_path.as_deref());
+    if detected.is_empty() {
+        println!("  detected:       none");
+    } else {
+        let labels = moltis_browser::detect::installed_browser_labels(&detected);
+        println!("  detected:       {}", labels.join(", "));
+    }
+
     println!("  sandbox_image:  {}", browser.sandbox_image);
     println!("  (sandbox mode follows session sandbox mode, controlled by exec.sandbox.mode)");
 

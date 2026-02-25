@@ -12,7 +12,7 @@ The goal is simple: catch web UI regressions before they ship.
 
 ## Current Setup
 
-The e2e harness lives in `crates/gateway/ui`:
+The e2e harness lives in `crates/web/ui`:
 
 - `playwright.config.js` configures Playwright and web server startup.
 - `e2e/start-gateway.sh` boots the gateway in deterministic test mode.
@@ -48,7 +48,7 @@ Headed mode:
 just ui-e2e-headed
 ```
 
-Directly from `crates/gateway/ui`:
+Directly from `crates/web/ui`:
 
 ```bash
 npm install
@@ -60,13 +60,13 @@ npm run e2e
 
 On failures, Playwright stores artifacts in:
 
-- `crates/gateway/ui/test-results/` (screenshots, video, traces)
-- `crates/gateway/ui/playwright-report/` (HTML report)
+- `crates/web/ui/test-results/` (screenshots, video, traces)
+- `crates/web/ui/playwright-report/` (HTML report)
 
 Open a trace with:
 
 ```bash
-cd crates/gateway/ui
+cd crates/web/ui
 npx playwright show-trace test-results/<test-dir>/trace.zip
 ```
 

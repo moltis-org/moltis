@@ -1,9 +1,20 @@
+#[cfg(all(
+    feature = "jemalloc",
+    not(target_os = "windows"),
+    not(all(target_os = "linux", target_arch = "aarch64"))
+))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 mod auth_commands;
 mod browser_commands;
+mod channel_commands;
 mod config_commands;
 mod db_commands;
 mod doctor_commands;
 mod hooks_commands;
+#[cfg(feature = "openclaw-import")]
+mod import_commands;
 mod memory_commands;
 mod sandbox_commands;
 #[cfg(feature = "tailscale")]
@@ -72,7 +83,7 @@ enum Commands {
     /// Channel management.
     Channels {
         #[command(subcommand)]
-        action: ChannelAction,
+        action: channel_commands::ChannelAction,
     },
     /// Send a message.
     Send {
@@ -132,6 +143,12 @@ enum Commands {
         #[command(subcommand)]
         action: memory_commands::MemoryAction,
     },
+    #[cfg(feature = "openclaw-import")]
+    /// Import data from an OpenClaw installation.
+    Import {
+        #[command(subcommand)]
+        action: import_commands::ImportAction,
+    },
     /// Tailscale Serve/Funnel management.
     #[cfg(feature = "tailscale")]
     Tailscale {
@@ -141,13 +158,6 @@ enum Commands {
     /// Install the Moltis CA certificate into the system trust store.
     #[cfg(feature = "tls")]
     TrustCa,
-}
-
-#[derive(Subcommand)]
-enum ChannelAction {
-    Status,
-    Login,
-    Logout,
 }
 
 #[derive(Subcommand)]
@@ -303,7 +313,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Create the log buffer only for the gateway command so the web UI can
-    // display captured log entries.
+    // display captured log entries. Default capacity (1000) can be overridden
+    // via `server.log_buffer_size` in moltis.toml.
     let log_buffer = if matches!(cli.command, None | Some(Commands::Gateway)) {
         Some(LogBuffer::default())
     } else {
@@ -367,6 +378,12 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(not(feature = "tailscale"))]
             let tailscale_opts: Option<()> = None;
             let _ = &tailscale_opts; // suppress unused warning when feature disabled
+            #[cfg(feature = "web-ui")]
+            let extra_routes: Option<moltis_gateway::server::RouteEnhancer> =
+                Some(moltis_web::web_routes);
+            #[cfg(not(feature = "web-ui"))]
+            let extra_routes: Option<moltis_gateway::server::RouteEnhancer> = None;
+
             moltis_gateway::server::start_gateway(
                 &bind,
                 port,
@@ -376,6 +393,7 @@ async fn main() -> anyhow::Result<()> {
                 cli.data_dir,
                 #[cfg(feature = "tailscale")]
                 tailscale_opts,
+                extra_routes,
             )
             .await
         },
@@ -384,12 +402,18 @@ async fn main() -> anyhow::Result<()> {
             println!("{result}");
             Ok(())
         },
-        Some(Commands::Onboard) => moltis_onboarding::wizard::run_onboarding().await,
+        Some(Commands::Onboard) => {
+            moltis_onboarding::wizard::run_onboarding().await?;
+            Ok(())
+        },
+        Some(Commands::Channels { action }) => channel_commands::handle_channels(action).await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
         Some(Commands::Db { action }) => db_commands::handle_db(action).await,
         Some(Commands::Memory { action }) => memory_commands::handle_memory(action).await,
+        #[cfg(feature = "openclaw-import")]
+        Some(Commands::Import { action }) => import_commands::handle_import(action).await,
         #[cfg(feature = "tailscale")]
         Some(Commands::Tailscale { action }) => tailscale_commands::handle_tailscale(action).await,
         Some(Commands::Skills { action }) => handle_skills(action).await,

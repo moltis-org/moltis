@@ -8,6 +8,10 @@
 //! 5. Channel binding (channel + wildcard account)
 //! 6. Default agent (agents.defaults.id)
 
+pub mod error;
 pub mod resolve;
 
-pub use resolve::resolve_agent_route;
+pub use {
+    error::{Error, Result},
+    resolve::resolve_agent_route,
+};

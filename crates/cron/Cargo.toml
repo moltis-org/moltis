@@ -4,18 +4,18 @@ name              = "moltis-cron"
 version.workspace = true
 
 [dependencies]
-anyhow         = { workspace = true }
 async-trait    = { workspace = true }
 chrono         = { workspace = true }
 chrono-tz      = { workspace = true }
 cron           = { workspace = true }
-dirs-next      = { workspace = true }
 moltis-agents  = { workspace = true }
 moltis-common  = { workspace = true }
+moltis-config  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 sqlx           = { workspace = true }
+thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
 uuid           = { workspace = true }
@@ -25,6 +25,7 @@ default = []
 metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
+rstest   = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

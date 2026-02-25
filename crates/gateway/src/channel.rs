@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use {
     async_trait::async_trait,
@@ -11,14 +11,18 @@ use {
     moltis_channels::{
         ChannelPlugin, ChannelType,
         message_log::MessageLog,
-        plugin::ChannelOutbound,
+        plugin::ChannelHealthSnapshot,
         store::{ChannelStore, StoredChannel},
     },
+    moltis_msteams::MsTeamsPlugin,
     moltis_sessions::metadata::SqliteSessionMetadata,
     moltis_telegram::TelegramPlugin,
 };
 
-use crate::services::{ChannelService, ServiceResult};
+#[cfg(feature = "whatsapp")]
+use moltis_whatsapp::WhatsAppPlugin;
+
+use crate::services::{ChannelService, ServiceError, ServiceResult};
 
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
@@ -27,101 +31,134 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
-/// Multi-channel service supporting Telegram and WhatsApp.
-///
-/// Each plugin type is stored as a concrete field behind its feature flag.
-/// Telegram-specific features (OTP, allowlist hot-update) use the direct
-/// `telegram` reference. The `account_types` reverse map is shared with
-/// `MultiChannelOutbound` for routing.
+/// Live channel service backed by Telegram, Microsoft Teams, and WhatsApp plugins.
 pub struct LiveChannelService {
+    telegram: Arc<RwLock<TelegramPlugin>>,
+    msteams: Arc<RwLock<MsTeamsPlugin>>,
+    #[cfg(feature = "whatsapp")]
+    whatsapp: Arc<RwLock<WhatsAppPlugin>>,
     store: Arc<dyn ChannelStore>,
     message_log: Arc<dyn MessageLog>,
     session_metadata: Arc<SqliteSessionMetadata>,
-    /// Reverse map: account_id → ChannelType. Shared with `MultiChannelOutbound`.
-    account_types: Arc<RwLock<HashMap<String, ChannelType>>>,
-    /// Direct reference to the Telegram plugin.
-    telegram: Option<Arc<RwLock<TelegramPlugin>>>,
-    /// Direct reference to the WhatsApp plugin.
-    #[cfg(feature = "whatsapp")]
-    whatsapp: Option<Arc<RwLock<moltis_whatsapp::WhatsAppPlugin>>>,
 }
 
 impl LiveChannelService {
     pub fn new(
+        telegram: Arc<RwLock<TelegramPlugin>>,
+        msteams: Arc<RwLock<MsTeamsPlugin>>,
+        #[cfg(feature = "whatsapp")] whatsapp: Arc<RwLock<WhatsAppPlugin>>,
         store: Arc<dyn ChannelStore>,
         message_log: Arc<dyn MessageLog>,
         session_metadata: Arc<SqliteSessionMetadata>,
     ) -> Self {
         Self {
+            telegram,
+            msteams,
+            #[cfg(feature = "whatsapp")]
+            whatsapp,
             store,
             message_log,
             session_metadata,
-            account_types: Arc::new(RwLock::new(HashMap::new())),
-            telegram: None,
-            #[cfg(feature = "whatsapp")]
-            whatsapp: None,
         }
     }
 
-    /// Register a Telegram plugin.
-    pub fn register_telegram(&mut self, plugin: TelegramPlugin) {
-        self.telegram = Some(Arc::new(RwLock::new(plugin)));
-    }
+    async fn resolve_channel_type(
+        &self,
+        params: &Value,
+        account_id: &str,
+        default_when_unknown: ChannelType,
+    ) -> Result<ChannelType, String> {
+        if let Some(type_str) = params.get("type").and_then(|v| v.as_str()) {
+            return type_str.parse::<ChannelType>().map_err(|e| e.to_string());
+        }
 
-    /// Register a WhatsApp plugin.
-    #[cfg(feature = "whatsapp")]
-    pub fn register_whatsapp(&mut self, plugin: moltis_whatsapp::WhatsAppPlugin) {
-        self.whatsapp = Some(Arc::new(RwLock::new(plugin)));
-    }
-
-    /// Get a shared reference to the account_types map (for `MultiChannelOutbound`).
-    pub fn account_types(&self) -> Arc<RwLock<HashMap<String, ChannelType>>> {
-        Arc::clone(&self.account_types)
-    }
-
-    /// Resolve account_id → ChannelType from the in-memory reverse map,
-    /// falling back to the persistent store.
-    async fn resolve_type(&self, account_id: &str) -> Option<ChannelType> {
+        // Check which plugins currently hold this account.
+        let mut matches = Vec::new();
         {
-            let map = self.account_types.read().await;
-            if let Some(ct) = map.get(account_id) {
-                return Some(*ct);
+            let tg = self.telegram.read().await;
+            if tg.has_account(account_id) {
+                matches.push(ChannelType::Telegram);
             }
         }
-        // Fall back to store.
-        if let Ok(Some(stored)) = self.store.get(account_id).await
-            && let Ok(ct) = stored.channel_type.parse::<ChannelType>()
         {
-            let mut map = self.account_types.write().await;
-            map.insert(account_id.to_string(), ct);
-            return Some(ct);
+            let ms = self.msteams.read().await;
+            if ms.has_account(account_id) {
+                matches.push(ChannelType::MsTeams);
+            }
         }
-        None
+        #[cfg(feature = "whatsapp")]
+        {
+            let wa = self.whatsapp.read().await;
+            if wa.has_account(account_id) {
+                matches.push(ChannelType::Whatsapp);
+            }
+        }
+
+        match matches.len() {
+            1 => return Ok(matches[0]),
+            n if n > 1 => {
+                return Err(format!(
+                    "account_id '{account_id}' exists in multiple channel types; pass explicit 'type'"
+                ));
+            },
+            _ => {},
+        }
+
+        // Fall back to store lookup.
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::MsTeams,
+            ChannelType::Whatsapp,
+        ] {
+            if self
+                .store
+                .get(ct.as_str(), account_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                matches.push(ct);
+            }
+        }
+        match matches.len() {
+            1 => Ok(matches[0]),
+            n if n > 1 => Err(format!(
+                "account_id '{account_id}' exists in multiple stored channel types; pass explicit 'type'"
+            )),
+            _ => Ok(default_when_unknown),
+        }
     }
 
-    /// Record an account → type mapping.
-    async fn track_account(&self, account_id: &str, ct: ChannelType) {
-        let mut map = self.account_types.write().await;
-        map.insert(account_id.to_string(), ct);
-    }
+    /// Build a status entry for a single channel account.
+    async fn channel_status_entry(
+        &self,
+        channel_type: ChannelType,
+        display_name: &str,
+        account_id: &str,
+        snap: ChannelHealthSnapshot,
+        config: Option<Value>,
+    ) -> Value {
+        let mut entry = serde_json::json!({
+            "type": channel_type.as_str(),
+            "name": format!("{display_name} ({account_id})"),
+            "account_id": account_id,
+            "status": if snap.connected { "connected" } else { "disconnected" },
+            "details": snap.details,
+        });
+        if let Some(cfg) = config {
+            entry["config"] = cfg;
+        }
 
-    /// Remove an account → type mapping.
-    async fn untrack_account(&self, account_id: &str) {
-        let mut map = self.account_types.write().await;
-        map.remove(account_id);
-    }
-
-    /// Helper: build session info for an account.
-    async fn session_info(&self, ct_str: &str, account_id: &str) -> Vec<serde_json::Value> {
+        let ct = channel_type.as_str();
         let bound = self
             .session_metadata
-            .list_account_sessions(ct_str, account_id)
+            .list_account_sessions(ct, account_id)
             .await;
         let active_map = self
             .session_metadata
-            .list_active_sessions(ct_str, account_id)
+            .list_active_sessions(ct, account_id)
             .await;
-        bound
+        let sessions: Vec<_> = bound
             .iter()
             .map(|s| {
                 let is_active = active_map.iter().any(|(_, sk)| sk == &s.key);
@@ -132,183 +169,251 @@ impl LiveChannelService {
                     "active": is_active,
                 })
             })
-            .collect()
+            .collect();
+        if !sessions.is_empty() {
+            entry["sessions"] = serde_json::json!(sessions);
+        }
+        entry
     }
 
-    /// Collect Telegram channel status entries.
-    async fn telegram_status(&self) -> Vec<serde_json::Value> {
-        let mut channels = Vec::new();
-        let Some(ref tg_arc) = self.telegram else {
-            return channels;
-        };
-        let tg = tg_arc.read().await;
-        let account_ids = tg.account_ids();
-        let Some(status) = tg.status() else {
-            return channels;
-        };
-
-        let ct_str = ChannelType::Telegram.as_str();
-        for aid in &account_ids {
-            match status.probe(aid).await {
-                Ok(snap) => {
-                    let mut entry = serde_json::json!({
-                        "type": ct_str,
-                        "name": format!("Telegram ({aid})"),
-                        "account_id": aid,
-                        "status": if snap.connected { "connected" } else { "disconnected" },
-                        "details": snap.details,
-                    });
-                    if let Some(cfg) = tg.account_config(aid) {
-                        entry["config"] = cfg;
-                    }
-                    let sessions = self.session_info(ct_str, aid).await;
-                    if !sessions.is_empty() {
-                        entry["sessions"] = serde_json::json!(sessions);
-                    }
-                    channels.push(entry);
-                },
-                Err(e) => {
-                    channels.push(serde_json::json!({
-                        "type": ct_str,
-                        "name": format!("Telegram ({aid})"),
-                        "account_id": aid,
-                        "status": "error",
-                        "details": e.to_string(),
-                    }));
-                },
-            }
+    /// Start an account on the appropriate plugin.
+    async fn start_plugin_account(
+        &self,
+        channel_type: ChannelType,
+        account_id: &str,
+        config: Value,
+    ) -> Result<(), String> {
+        match channel_type {
+            ChannelType::Telegram => {
+                let mut tg = self.telegram.write().await;
+                tg.start_account(account_id, config).await
+            },
+            ChannelType::MsTeams => {
+                let mut ms = self.msteams.write().await;
+                ms.start_account(account_id, config).await
+            },
+            #[cfg(feature = "whatsapp")]
+            ChannelType::Whatsapp => {
+                let mut wa = self.whatsapp.write().await;
+                wa.start_account(account_id, config).await
+            },
+            #[cfg(not(feature = "whatsapp"))]
+            ChannelType::Whatsapp => {
+                return Err("WhatsApp support is not enabled".to_string());
+            },
         }
-        channels
+        .map_err(|e| {
+            error!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to start account");
+            e.to_string()
+        })
     }
 
-    /// Collect WhatsApp channel status entries.
-    #[cfg(feature = "whatsapp")]
-    async fn whatsapp_status(&self) -> Vec<serde_json::Value> {
-        let mut channels = Vec::new();
-        let Some(ref wa_arc) = self.whatsapp else {
-            return channels;
-        };
-        let wa = wa_arc.read().await;
-        let account_ids = wa.account_ids();
-        let Some(status) = wa.status() else {
-            return channels;
-        };
-
-        let ct_str = ChannelType::Whatsapp.as_str();
-        for aid in &account_ids {
-            match status.probe(aid).await {
-                Ok(snap) => {
-                    let qr = wa.latest_qr(aid);
-                    let status_str = if snap.connected {
-                        "connected"
-                    } else if qr.is_some() {
-                        "pairing"
-                    } else {
-                        "disconnected"
-                    };
-                    let mut entry = serde_json::json!({
-                        "type": ct_str,
-                        "name": format!("WhatsApp ({aid})"),
-                        "account_id": aid,
-                        "status": status_str,
-                        "details": snap.details,
-                    });
-                    if let Some(ref qr_data) = qr {
-                        entry["qr_data"] = serde_json::json!(qr_data);
-                    }
-                    if let Some(cfg) = wa.account_config(aid) {
-                        entry["config"] = cfg;
-                    }
-                    let sessions = self.session_info(ct_str, aid).await;
-                    if !sessions.is_empty() {
-                        entry["sessions"] = serde_json::json!(sessions);
-                    }
-                    channels.push(entry);
-                },
-                Err(e) => {
-                    channels.push(serde_json::json!({
-                        "type": ct_str,
-                        "name": format!("WhatsApp ({aid})"),
-                        "account_id": aid,
-                        "status": "error",
-                        "details": e.to_string(),
-                    }));
-                },
-            }
+    /// Stop an account on the appropriate plugin.
+    async fn stop_plugin_account(
+        &self,
+        channel_type: ChannelType,
+        account_id: &str,
+    ) -> Result<(), String> {
+        match channel_type {
+            ChannelType::Telegram => {
+                let mut tg = self.telegram.write().await;
+                tg.stop_account(account_id).await
+            },
+            ChannelType::MsTeams => {
+                let mut ms = self.msteams.write().await;
+                ms.stop_account(account_id).await
+            },
+            #[cfg(feature = "whatsapp")]
+            ChannelType::Whatsapp => {
+                let mut wa = self.whatsapp.write().await;
+                wa.stop_account(account_id).await
+            },
+            #[cfg(not(feature = "whatsapp"))]
+            ChannelType::Whatsapp => {
+                return Err("WhatsApp support is not enabled".to_string());
+            },
         }
-        channels
+        .map_err(|e| {
+            error!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to stop account");
+            e.to_string()
+        })
+    }
+
+    /// Hot-update account config on the live plugin.
+    async fn hot_update_config(&self, channel_type: ChannelType, account_id: &str, config: Value) {
+        let result = match channel_type {
+            ChannelType::Telegram => {
+                let tg = self.telegram.read().await;
+                tg.update_account_config(account_id, config)
+            },
+            ChannelType::MsTeams => {
+                let ms = self.msteams.read().await;
+                ms.update_account_config(account_id, config)
+            },
+            #[cfg(feature = "whatsapp")]
+            ChannelType::Whatsapp => {
+                let wa = self.whatsapp.read().await;
+                wa.update_account_config(account_id, config)
+            },
+            #[cfg(not(feature = "whatsapp"))]
+            ChannelType::Whatsapp => return,
+        };
+        if let Err(e) = result {
+            warn!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to hot-update config");
+        }
+    }
+
+    /// Read the allowlist from a live plugin account config.
+    async fn read_allowlist(&self, channel_type: ChannelType, account_id: &str) -> Vec<String> {
+        let cfg = match channel_type {
+            ChannelType::Telegram => {
+                let tg = self.telegram.read().await;
+                tg.account_config(account_id)
+            },
+            ChannelType::MsTeams => {
+                let ms = self.msteams.read().await;
+                ms.account_config(account_id)
+            },
+            #[cfg(feature = "whatsapp")]
+            ChannelType::Whatsapp => {
+                let wa = self.whatsapp.read().await;
+                wa.account_config(account_id)
+            },
+            #[cfg(not(feature = "whatsapp"))]
+            ChannelType::Whatsapp => None,
+        };
+        cfg.and_then(|c| c.get("allowlist").cloned())
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
     }
 }
 
 #[async_trait]
 impl ChannelService for LiveChannelService {
     async fn status(&self) -> ServiceResult {
-        let mut channels = self.telegram_status().await;
+        let mut channels = Vec::new();
+
+        {
+            let tg = self.telegram.read().await;
+            let account_ids = tg.account_ids();
+            if let Some(status) = tg.status() {
+                for aid in &account_ids {
+                    match status.probe(aid).await {
+                        Ok(snap) => {
+                            let entry = self
+                                .channel_status_entry(
+                                    ChannelType::Telegram,
+                                    "Telegram",
+                                    aid,
+                                    snap,
+                                    tg.account_config(aid),
+                                )
+                                .await;
+                            channels.push(entry);
+                        },
+                        Err(e) => channels.push(serde_json::json!({
+                            "type": "telegram",
+                            "name": format!("Telegram ({aid})"),
+                            "account_id": aid,
+                            "status": "error",
+                            "details": e.to_string(),
+                        })),
+                    }
+                }
+            }
+        }
+
+        {
+            let ms = self.msteams.read().await;
+            let account_ids = ms.account_ids();
+            if let Some(status) = ms.status() {
+                for aid in &account_ids {
+                    match status.probe(aid).await {
+                        Ok(snap) => {
+                            let entry = self
+                                .channel_status_entry(
+                                    ChannelType::MsTeams,
+                                    "Microsoft Teams",
+                                    aid,
+                                    snap,
+                                    ms.account_config(aid),
+                                )
+                                .await;
+                            channels.push(entry);
+                        },
+                        Err(e) => channels.push(serde_json::json!({
+                            "type": "msteams",
+                            "name": format!("Microsoft Teams ({aid})"),
+                            "account_id": aid,
+                            "status": "error",
+                            "details": e.to_string(),
+                        })),
+                    }
+                }
+            }
+        }
+
         #[cfg(feature = "whatsapp")]
-        channels.extend(self.whatsapp_status().await);
+        {
+            let wa = self.whatsapp.read().await;
+            let account_ids = wa.account_ids();
+            if let Some(status) = wa.status() {
+                for aid in &account_ids {
+                    match status.probe(aid).await {
+                        Ok(snap) => {
+                            let entry = self
+                                .channel_status_entry(
+                                    ChannelType::Whatsapp,
+                                    "WhatsApp",
+                                    aid,
+                                    snap,
+                                    wa.account_config(aid),
+                                )
+                                .await;
+                            channels.push(entry);
+                        },
+                        Err(e) => channels.push(serde_json::json!({
+                            "type": "whatsapp",
+                            "name": format!("WhatsApp ({aid})"),
+                            "account_id": aid,
+                            "status": "error",
+                            "details": e.to_string(),
+                        })),
+                    }
+                }
+            }
+        }
+
         Ok(serde_json::json!({ "channels": channels }))
     }
 
     async fn add(&self, params: Value) -> ServiceResult {
-        let channel_type_str = params
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("telegram");
-
-        let ct: ChannelType = channel_type_str
-            .parse()
-            .map_err(|_| format!("unsupported channel type: {channel_type_str}"))?;
-
         let account_id = params
             .get("account_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'account_id'".to_string())?;
-
+        let channel_type = self
+            .resolve_channel_type(&params, account_id, ChannelType::Telegram)
+            .await?;
         let config = params
             .get("config")
             .cloned()
             .unwrap_or(Value::Object(Default::default()));
 
-        info!(account_id, channel_type = %ct, "adding channel account");
-
-        match ct {
-            ChannelType::Telegram => {
-                if let Some(ref tg_arc) = self.telegram {
-                    let mut tg = tg_arc.write().await;
-                    tg.start_account(account_id, config.clone())
-                        .await
-                        .map_err(|e| {
-                            error!(error = %e, account_id, "failed to start telegram account");
-                            e.to_string()
-                        })?;
-                } else {
-                    return Err("telegram plugin not registered".into());
-                }
-            },
-            #[cfg(feature = "whatsapp")]
-            ChannelType::Whatsapp => {
-                if let Some(ref wa_arc) = self.whatsapp {
-                    let mut wa = wa_arc.write().await;
-                    wa.start_account(account_id, config.clone())
-                        .await
-                        .map_err(|e| {
-                            error!(error = %e, account_id, "failed to start whatsapp account");
-                            e.to_string()
-                        })?;
-                } else {
-                    return Err("whatsapp plugin not registered".into());
-                }
-            },
-            #[allow(unreachable_patterns)]
-            _ => return Err(format!("unsupported channel type: {ct}")),
-        }
+        info!(
+            account_id,
+            channel_type = channel_type.as_str(),
+            "adding channel account"
+        );
+        self.start_plugin_account(channel_type, account_id, config.clone())
+            .await?;
 
         let now = unix_now();
         if let Err(e) = self
             .store
             .upsert(StoredChannel {
                 account_id: account_id.to_string(),
-                channel_type: ct.to_string(),
+                channel_type: channel_type.to_string(),
                 config,
                 created_at: now,
                 updated_at: now,
@@ -318,9 +423,10 @@ impl ChannelService for LiveChannelService {
             warn!(error = %e, account_id, "failed to persist channel");
         }
 
-        self.track_account(account_id, ct).await;
-
-        Ok(serde_json::json!({ "added": account_id }))
+        Ok(serde_json::json!({
+            "added": account_id,
+            "type": channel_type.to_string()
+        }))
     }
 
     async fn remove(&self, params: Value) -> ServiceResult {
@@ -328,45 +434,25 @@ impl ChannelService for LiveChannelService {
             .get("account_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'account_id'".to_string())?;
+        let channel_type = self
+            .resolve_channel_type(&params, account_id, ChannelType::Telegram)
+            .await?;
 
-        let ct = self
-            .resolve_type(account_id)
-            .await
-            .ok_or_else(|| format!("unknown account: {account_id}"))?;
+        info!(
+            account_id,
+            channel_type = channel_type.as_str(),
+            "removing channel account"
+        );
+        self.stop_plugin_account(channel_type, account_id).await?;
 
-        info!(account_id, channel_type = %ct, "removing channel account");
-
-        match ct {
-            ChannelType::Telegram => {
-                if let Some(ref tg_arc) = self.telegram {
-                    let mut tg = tg_arc.write().await;
-                    tg.stop_account(account_id).await.map_err(|e| {
-                        error!(error = %e, account_id, "failed to stop telegram account");
-                        e.to_string()
-                    })?;
-                }
-            },
-            #[cfg(feature = "whatsapp")]
-            ChannelType::Whatsapp => {
-                if let Some(ref wa_arc) = self.whatsapp {
-                    let mut wa = wa_arc.write().await;
-                    wa.stop_account(account_id).await.map_err(|e| {
-                        error!(error = %e, account_id, "failed to stop whatsapp account");
-                        e.to_string()
-                    })?;
-                }
-            },
-            #[allow(unreachable_patterns)]
-            _ => {},
-        }
-
-        if let Err(e) = self.store.delete(account_id).await {
+        if let Err(e) = self.store.delete(channel_type.as_str(), account_id).await {
             warn!(error = %e, account_id, "failed to delete channel from store");
         }
 
-        self.untrack_account(account_id).await;
-
-        Ok(serde_json::json!({ "removed": account_id }))
+        Ok(serde_json::json!({
+            "removed": account_id,
+            "type": channel_type.to_string()
+        }))
     }
 
     async fn logout(&self, params: Value) -> ServiceResult {
@@ -378,63 +464,38 @@ impl ChannelService for LiveChannelService {
             .get("account_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'account_id'".to_string())?;
-
+        let channel_type = self
+            .resolve_channel_type(&params, account_id, ChannelType::Telegram)
+            .await?;
         let config = params
             .get("config")
             .cloned()
             .ok_or_else(|| "missing 'config'".to_string())?;
 
-        let ct = self
-            .resolve_type(account_id)
+        info!(
+            account_id,
+            channel_type = channel_type.as_str(),
+            "updating channel account"
+        );
+        self.stop_plugin_account(channel_type, account_id).await?;
+        self.start_plugin_account(channel_type, account_id, config.clone())
+            .await?;
+
+        let created_at = self
+            .store
+            .get(channel_type.as_str(), account_id)
             .await
-            .ok_or_else(|| format!("unknown account: {account_id}"))?;
-
-        info!(account_id, channel_type = %ct, "updating channel account");
-
-        match ct {
-            ChannelType::Telegram => {
-                if let Some(ref tg_arc) = self.telegram {
-                    let mut tg = tg_arc.write().await;
-                    tg.stop_account(account_id).await.map_err(|e| {
-                        error!(error = %e, account_id, "failed to stop telegram for update");
-                        e.to_string()
-                    })?;
-                    tg.start_account(account_id, config.clone())
-                        .await
-                        .map_err(|e| {
-                            error!(error = %e, account_id, "failed to restart telegram after update");
-                            e.to_string()
-                        })?;
-                }
-            },
-            #[cfg(feature = "whatsapp")]
-            ChannelType::Whatsapp => {
-                if let Some(ref wa_arc) = self.whatsapp {
-                    let mut wa = wa_arc.write().await;
-                    wa.stop_account(account_id).await.map_err(|e| {
-                        error!(error = %e, account_id, "failed to stop whatsapp for update");
-                        e.to_string()
-                    })?;
-                    wa.start_account(account_id, config.clone())
-                        .await
-                        .map_err(|e| {
-                            error!(error = %e, account_id, "failed to restart whatsapp after update");
-                            e.to_string()
-                        })?;
-                }
-            },
-            #[allow(unreachable_patterns)]
-            _ => return Err(format!("unsupported channel type: {ct}")),
-        }
-
+            .map_err(|e| e.to_string())?
+            .map(|s| s.created_at)
+            .unwrap_or_else(unix_now);
         let now = unix_now();
         if let Err(e) = self
             .store
             .upsert(StoredChannel {
                 account_id: account_id.to_string(),
-                channel_type: ct.to_string(),
+                channel_type: channel_type.to_string(),
                 config,
-                created_at: now,
+                created_at,
                 updated_at: now,
             })
             .await
@@ -442,7 +503,10 @@ impl ChannelService for LiveChannelService {
             warn!(error = %e, account_id, "failed to persist channel update");
         }
 
-        Ok(serde_json::json!({ "updated": account_id }))
+        Ok(serde_json::json!({
+            "updated": account_id,
+            "type": channel_type.to_string()
+        }))
     }
 
     async fn send(&self, _params: Value) -> ServiceResult {
@@ -454,56 +518,23 @@ impl ChannelService for LiveChannelService {
             .get("account_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'account_id'".to_string())?;
+        let channel_type = self
+            .resolve_channel_type(&params, account_id, ChannelType::Telegram)
+            .await?;
 
         let senders = self
             .message_log
-            .unique_senders(account_id)
+            .unique_senders(channel_type.as_str(), account_id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
-        let ct = self.resolve_type(account_id).await;
+        let allowlist = self.read_allowlist(channel_type, account_id).await;
 
-        // Collect allowlist and OTP challenges (serialized to Value for type
-        // uniformity across Telegram and WhatsApp plugin types).
-        let (allowlist, otp_challenges): (Vec<String>, Vec<Value>) = match ct {
-            Some(ChannelType::Telegram) => {
-                if let Some(ref tg_arc) = self.telegram {
-                    let tg = tg_arc.read().await;
-                    let al: Vec<String> = tg
-                        .account_config(account_id)
-                        .and_then(|cfg| cfg.get("allowlist").cloned())
-                        .and_then(|v| serde_json::from_value(v).ok())
-                        .unwrap_or_default();
-                    let otp: Vec<Value> = tg
-                        .pending_otp_challenges(account_id)
-                        .into_iter()
-                        .filter_map(|c| serde_json::to_value(c).ok())
-                        .collect();
-                    (al, otp)
-                } else {
-                    (Vec::new(), Vec::new())
-                }
-            },
-            #[cfg(feature = "whatsapp")]
-            Some(ChannelType::Whatsapp) => {
-                if let Some(ref wa_arc) = self.whatsapp {
-                    let wa = wa_arc.read().await;
-                    let al: Vec<String> = wa
-                        .account_config(account_id)
-                        .and_then(|cfg| cfg.get("allowlist").cloned())
-                        .and_then(|v| serde_json::from_value(v).ok())
-                        .unwrap_or_default();
-                    let otp: Vec<Value> = wa
-                        .pending_otp_challenges(account_id)
-                        .into_iter()
-                        .filter_map(|c| serde_json::to_value(c).ok())
-                        .collect();
-                    (al, otp)
-                } else {
-                    (Vec::new(), Vec::new())
-                }
-            },
-            _ => (Vec::new(), Vec::new()),
+        let otp_challenges = if channel_type == ChannelType::Telegram {
+            let tg = self.telegram.read().await;
+            Some(tg.pending_otp_challenges(account_id))
+        } else {
+            None
         };
 
         let list: Vec<Value> = senders
@@ -524,18 +555,23 @@ impl ChannelService for LiveChannelService {
                     "last_seen": s.last_seen,
                     "allowed": is_allowed,
                 });
-                if let Some(otp) = otp_challenges.iter().find(|c| {
-                    c.get("peer_id")
-                        .and_then(|v| v.as_str())
-                        .is_some_and(|pid| pid == s.peer_id)
-                }) {
-                    entry["otp_pending"] = otp.clone();
+                if let Some(otp) = otp_challenges
+                    .as_ref()
+                    .and_then(|pending| pending.iter().find(|c| c.peer_id == s.peer_id))
+                {
+                    entry["otp_pending"] = serde_json::json!({
+                        "code": otp.code,
+                        "expires_at": otp.expires_at,
+                    });
                 }
                 entry
             })
             .collect();
 
-        Ok(serde_json::json!({ "senders": list }))
+        Ok(serde_json::json!({
+            "senders": list,
+            "type": channel_type.to_string()
+        }))
     }
 
     async fn sender_approve(&self, params: Value) -> ServiceResult {
@@ -543,24 +579,26 @@ impl ChannelService for LiveChannelService {
             .get("account_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'account_id'".to_string())?;
-
         let identifier = params
             .get("identifier")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'identifier'".to_string())?;
+        let channel_type = self
+            .resolve_channel_type(&params, account_id, ChannelType::Telegram)
+            .await?;
 
-        let ct = self
-            .resolve_type(account_id)
-            .await
-            .ok_or_else(|| format!("unknown account: {account_id}"))?;
-
-        // Update allowlist and persist.
         let stored = self
             .store
-            .get(account_id)
+            .get(channel_type.as_str(), account_id)
             .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("channel '{account_id}' not found in store"))?;
+            .map_err(ServiceError::message)?
+            .ok_or_else(|| {
+                format!(
+                    "channel '{}' ({}) not found in store",
+                    account_id,
+                    channel_type.as_str()
+                )
+            })?;
 
         let mut config = stored.config.clone();
         let allowlist = config
@@ -568,7 +606,6 @@ impl ChannelService for LiveChannelService {
             .ok_or_else(|| "config is not an object".to_string())?
             .entry("allowlist")
             .or_insert_with(|| serde_json::json!([]));
-
         let arr = allowlist
             .as_array_mut()
             .ok_or_else(|| "allowlist is not an array".to_string())?;
@@ -580,52 +617,37 @@ impl ChannelService for LiveChannelService {
         {
             arr.push(serde_json::json!(identifier));
         }
-
-        // Also ensure dm_policy is set to "allowlist" so the list is enforced.
         if let Some(obj) = config.as_object_mut() {
             obj.insert("dm_policy".into(), serde_json::json!("allowlist"));
         }
 
-        let now = unix_now();
         if let Err(e) = self
             .store
             .upsert(StoredChannel {
                 account_id: account_id.to_string(),
-                channel_type: ct.to_string(),
+                channel_type: channel_type.to_string(),
                 config: config.clone(),
                 created_at: stored.created_at,
-                updated_at: now,
+                updated_at: unix_now(),
             })
             .await
         {
             warn!(error = %e, account_id, "failed to persist sender approval");
         }
 
-        // Hot-update the in-memory config for the correct plugin.
-        match ct {
-            ChannelType::Telegram => {
-                if let Some(ref tg_arc) = self.telegram {
-                    let tg = tg_arc.read().await;
-                    if let Err(e) = tg.update_account_config(account_id, config) {
-                        warn!(error = %e, account_id, "failed to hot-update telegram config");
-                    }
-                }
-            },
-            #[cfg(feature = "whatsapp")]
-            ChannelType::Whatsapp => {
-                if let Some(ref wa_arc) = self.whatsapp {
-                    let wa = wa_arc.read().await;
-                    if let Err(e) = wa.update_account_config(account_id, config) {
-                        warn!(error = %e, account_id, "failed to hot-update whatsapp config");
-                    }
-                }
-            },
-            #[allow(unreachable_patterns)]
-            _ => {},
-        }
+        self.hot_update_config(channel_type, account_id, config)
+            .await;
 
-        info!(account_id, identifier, "sender approved");
-        Ok(serde_json::json!({ "approved": identifier }))
+        info!(
+            account_id,
+            identifier,
+            channel_type = channel_type.as_str(),
+            "sender approved"
+        );
+        Ok(serde_json::json!({
+            "approved": identifier,
+            "type": channel_type.to_string()
+        }))
     }
 
     async fn sender_deny(&self, params: Value) -> ServiceResult {
@@ -633,23 +655,26 @@ impl ChannelService for LiveChannelService {
             .get("account_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'account_id'".to_string())?;
-
         let identifier = params
             .get("identifier")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'identifier'".to_string())?;
-
-        let ct = self
-            .resolve_type(account_id)
-            .await
-            .ok_or_else(|| format!("unknown account: {account_id}"))?;
+        let channel_type = self
+            .resolve_channel_type(&params, account_id, ChannelType::Telegram)
+            .await?;
 
         let stored = self
             .store
-            .get(account_id)
+            .get(channel_type.as_str(), account_id)
             .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("channel '{account_id}' not found in store"))?;
+            .map_err(ServiceError::message)?
+            .ok_or_else(|| {
+                format!(
+                    "channel '{}' ({}) not found in store",
+                    account_id,
+                    channel_type.as_str()
+                )
+            })?;
 
         let mut config = stored.config.clone();
         if let Some(arr) = config
@@ -661,125 +686,32 @@ impl ChannelService for LiveChannelService {
             arr.retain(|v| v.as_str().is_none_or(|s| s.to_lowercase() != id_lower));
         }
 
-        let now = unix_now();
         if let Err(e) = self
             .store
             .upsert(StoredChannel {
                 account_id: account_id.to_string(),
-                channel_type: ct.to_string(),
+                channel_type: channel_type.to_string(),
                 config: config.clone(),
                 created_at: stored.created_at,
-                updated_at: now,
+                updated_at: unix_now(),
             })
             .await
         {
             warn!(error = %e, account_id, "failed to persist sender denial");
         }
 
-        // Hot-update the in-memory config for the correct plugin.
-        match ct {
-            ChannelType::Telegram => {
-                if let Some(ref tg_arc) = self.telegram {
-                    let tg = tg_arc.read().await;
-                    if let Err(e) = tg.update_account_config(account_id, config) {
-                        warn!(error = %e, account_id, "failed to hot-update telegram config");
-                    }
-                }
-            },
-            #[cfg(feature = "whatsapp")]
-            ChannelType::Whatsapp => {
-                if let Some(ref wa_arc) = self.whatsapp {
-                    let wa = wa_arc.read().await;
-                    if let Err(e) = wa.update_account_config(account_id, config) {
-                        warn!(error = %e, account_id, "failed to hot-update whatsapp config");
-                    }
-                }
-            },
-            #[allow(unreachable_patterns)]
-            _ => {},
-        }
+        self.hot_update_config(channel_type, account_id, config)
+            .await;
 
-        info!(account_id, identifier, "sender denied");
-        Ok(serde_json::json!({ "denied": identifier }))
-    }
-}
-
-/// Multi-channel outbound that routes send operations to the correct plugin
-/// based on the account_id → ChannelType mapping.
-pub struct MultiChannelOutbound {
-    telegram_outbound: Option<Arc<dyn ChannelOutbound>>,
-    #[cfg(feature = "whatsapp")]
-    whatsapp_outbound: Option<Arc<dyn ChannelOutbound>>,
-    account_types: Arc<RwLock<HashMap<String, ChannelType>>>,
-}
-
-impl MultiChannelOutbound {
-    pub fn new(account_types: Arc<RwLock<HashMap<String, ChannelType>>>) -> Self {
-        Self {
-            telegram_outbound: None,
-            #[cfg(feature = "whatsapp")]
-            whatsapp_outbound: None,
-            account_types,
-        }
-    }
-
-    pub fn with_telegram(mut self, outbound: Arc<dyn ChannelOutbound>) -> Self {
-        self.telegram_outbound = Some(outbound);
-        self
-    }
-
-    #[cfg(feature = "whatsapp")]
-    pub fn with_whatsapp(mut self, outbound: Arc<dyn ChannelOutbound>) -> Self {
-        self.whatsapp_outbound = Some(outbound);
-        self
-    }
-
-    async fn resolve(&self, account_id: &str) -> Option<Arc<dyn ChannelOutbound>> {
-        let map = self.account_types.read().await;
-        match map.get(account_id) {
-            Some(ChannelType::Telegram) => self.telegram_outbound.clone(),
-            #[cfg(feature = "whatsapp")]
-            Some(ChannelType::Whatsapp) => self.whatsapp_outbound.clone(),
-            _ => self.telegram_outbound.clone(), // default fallback
-        }
-    }
-}
-
-#[async_trait]
-impl ChannelOutbound for MultiChannelOutbound {
-    async fn send_text(
-        &self,
-        account_id: &str,
-        to: &str,
-        text: &str,
-        reply_to: Option<&str>,
-    ) -> anyhow::Result<()> {
-        if let Some(ob) = self.resolve(account_id).await {
-            ob.send_text(account_id, to, text, reply_to).await
-        } else {
-            Err(anyhow::anyhow!("no outbound for account: {account_id}"))
-        }
-    }
-
-    async fn send_media(
-        &self,
-        account_id: &str,
-        to: &str,
-        payload: &moltis_common::types::ReplyPayload,
-        reply_to: Option<&str>,
-    ) -> anyhow::Result<()> {
-        if let Some(ob) = self.resolve(account_id).await {
-            ob.send_media(account_id, to, payload, reply_to).await
-        } else {
-            Err(anyhow::anyhow!("no outbound for account: {account_id}"))
-        }
-    }
-
-    async fn send_typing(&self, account_id: &str, to: &str) -> anyhow::Result<()> {
-        if let Some(ob) = self.resolve(account_id).await {
-            ob.send_typing(account_id, to).await
-        } else {
-            Ok(()) // typing is best-effort
-        }
+        info!(
+            account_id,
+            identifier,
+            channel_type = channel_type.as_str(),
+            "sender denied"
+        );
+        Ok(serde_json::json!({
+            "denied": identifier,
+            "type": channel_type.to_string()
+        }))
     }
 }

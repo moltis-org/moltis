@@ -10,3 +10,9 @@ prompts
 features/
 .moltis/
 docs/book/
+crates/web/ui/node_modules/
+crates/web/ui/playwright-report/
+crates/web/ui/test-results/
+crates/gateway/ui/node_modules/
+crates/gateway/ui/playwright-report/
+crates/gateway/ui/test-results/

@@ -6,5 +6,8 @@
 
 pub mod chunk;
 pub mod directives;
+pub mod error;
 pub mod queue;
 pub mod reply;
+
+pub use error::{Error, Result};

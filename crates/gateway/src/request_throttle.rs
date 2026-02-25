@@ -33,6 +33,7 @@ enum ThrottleScope {
     Login,
     AuthApi,
     Api,
+    Share,
     Ws,
 }
 
@@ -47,7 +48,10 @@ impl ThrottleScope {
         if path.starts_with("/api/") {
             return Some(Self::Api);
         }
-        if path == "/ws" {
+        if path.starts_with("/share/") {
+            return Some(Self::Share);
+        }
+        if path.starts_with("/ws/") {
             return Some(Self::Ws);
         }
         None
@@ -77,6 +81,7 @@ struct ThrottleLimits {
     login: RateLimit,
     auth_api: RateLimit,
     api: RateLimit,
+    share: RateLimit,
     ws: RateLimit,
 }
 
@@ -96,6 +101,11 @@ impl Default for ThrottleLimits {
             // Normal API usage: allow sustained usage while preventing abuse.
             api: RateLimit {
                 max_requests: 180,
+                window: Duration::from_secs(60),
+            },
+            // Public share links should be accessible but protected from abuse.
+            share: RateLimit {
+                max_requests: 90,
                 window: Duration::from_secs(60),
             },
             // Limit reconnect storms for websocket upgrades.
@@ -131,6 +141,7 @@ impl RequestThrottle {
             ThrottleScope::Login => self.limits.login,
             ThrottleScope::AuthApi => self.limits.auth_api,
             ThrottleScope::Api => self.limits.api,
+            ThrottleScope::Share => self.limits.share,
             ThrottleScope::Ws => self.limits.ws,
         }
     }
@@ -193,6 +204,7 @@ impl RequestThrottle {
             self.limits.login.window,
             self.limits.auth_api.window,
             self.limits.api.window,
+            self.limits.share.window,
             self.limits.ws.window,
         ]
         .into_iter()
@@ -342,8 +354,21 @@ mod tests {
     #[test]
     fn classify_ws_request() {
         assert_eq!(
-            ThrottleScope::from_request(&Method::GET, "/ws"),
+            ThrottleScope::from_request(&Method::GET, "/ws/chat"),
             Some(ThrottleScope::Ws)
+        );
+    }
+
+    #[test]
+    fn legacy_ws_root_path_is_not_classified() {
+        assert_eq!(ThrottleScope::from_request(&Method::GET, "/ws"), None);
+    }
+
+    #[test]
+    fn classify_share_request() {
+        assert_eq!(
+            ThrottleScope::from_request(&Method::GET, "/share/abc123"),
+            Some(ThrottleScope::Share)
         );
     }
 
@@ -359,6 +384,10 @@ mod tests {
                 window: Duration::from_secs(10),
             },
             api: RateLimit {
+                max_requests: 100,
+                window: Duration::from_secs(10),
+            },
+            share: RateLimit {
                 max_requests: 100,
                 window: Duration::from_secs(10),
             },

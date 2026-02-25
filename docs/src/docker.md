@@ -120,6 +120,22 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 ```
 
+### Coolify (Hetzner/VPS)
+
+For Coolify service stacks, use
+[`examples/docker-compose.coolify.yml`](../examples/docker-compose.coolify.yml).
+It is preconfigured for reverse-proxy deployments (`--no-tls`) and includes
+the Docker socket mount for sandboxed command execution.
+
+Key points:
+
+- Set `MOLTIS_PASSWORD` in the Coolify UI before first deploy.
+- Set `SERVICE_FQDN_MOLTIS_13131` to your app domain.
+- Keep Moltis in `--no-tls` mode behind Coolify's reverse proxy. If requests
+  are redirected to `:13131`, check that TLS is disabled in Moltis.
+- Keep `/var/run/docker.sock:/var/run/docker.sock` mounted if you want sandbox
+  isolation for exec tools.
+
 Start with:
 
 ```bash
@@ -184,6 +200,49 @@ docker run -d \
   -v ./data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/moltis-org/moltis:latest
+```
+
+### API Keys and the `[env]` Section
+
+Features like web search (Brave), embeddings, and LLM provider API calls read
+keys from process environment variables (`std::env::var`). In Docker, there are
+two ways to provide these:
+
+**Option 1: `docker -e` flags** (takes precedence)
+
+```bash
+docker run -d \
+  --name moltis \
+  -e BRAVE_API_KEY=your-key \
+  -e OPENROUTER_API_KEY=sk-or-... \
+  ...
+  ghcr.io/moltis-org/moltis:latest
+```
+
+**Option 2: `[env]` section in `moltis.toml`**
+
+Add an `[env]` section to your config file. These variables are injected into
+the Moltis process at startup, making them available to all features:
+
+```toml
+[env]
+BRAVE_API_KEY = "your-brave-key"
+OPENROUTER_API_KEY = "sk-or-..."
+```
+
+If a variable is set both via `docker -e` and `[env]`, the Docker/host
+environment value wins — `[env]` never overwrites existing variables.
+
+```admonish info title="Settings UI env vars"
+Environment variables set through the Settings UI (Settings > Environment)
+are stored in SQLite. At startup, Moltis injects them into the process
+environment so they are available to all features (search, embeddings,
+provider API calls), not just sandbox commands.
+
+Precedence order (highest wins):
+1. Host / `docker -e` environment variables
+2. Config file `[env]` section
+3. Settings UI environment variables
 ```
 
 ## Building Locally
