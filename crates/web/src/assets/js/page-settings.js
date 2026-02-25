@@ -1514,8 +1514,14 @@ function VaultSection() {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Encryption</h2>
 
 		<div style="max-width:600px;">
+			<p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0 0 8px;">
+				Your API keys and secrets are encrypted at rest using <strong class="text-[var(--text)]">XChaCha20-Poly1305</strong> AEAD with keys derived from your password via <strong class="text-[var(--text)]">Argon2id</strong>.
+			</p>
+			<p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0 0 8px;">
+				The vault uses a two-layer key hierarchy: your password derives a Key Encryption Key (KEK) which unwraps a random 256-bit Data Encryption Key (DEK). Changing your password only re-wraps the DEK \u2014 all encrypted data stays intact. A recovery key (shown once at setup) provides emergency access if you forget your password.
+			</p>
 			<p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0 0 12px;">
-				Your API keys and secrets are encrypted before being stored in the database. The vault locks automatically when the server restarts and unlocks when you log in.
+				The vault locks automatically when the server restarts and unlocks when you log in.
 			</p>
 
 			<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
