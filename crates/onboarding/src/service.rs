@@ -115,7 +115,8 @@ impl LiveOnboardingService {
                 "identity": {
                     "name": config.identity.name,
                     "emoji": config.identity.emoji,
-                    "theme": config.identity.theme,
+                    "creature": config.identity.creature,
+                    "vibe": config.identity.vibe,
                 },
                 "user": {
                     "name": config.user.name,
@@ -198,12 +199,11 @@ impl LiveOnboardingService {
         if let Some(v) = str_field(&params, "emoji") {
             identity.emoji = v;
         }
-        // Accept "theme" directly, or "creature"/"vibe" as backward-compat aliases.
-        if let Some(v) = str_field(&params, "theme")
-            .or_else(|| str_field(&params, "creature"))
-            .or_else(|| str_field(&params, "vibe"))
-        {
-            identity.theme = v;
+        if let Some(v) = str_field(&params, "creature") {
+            identity.creature = v;
+        }
+        if let Some(v) = str_field(&params, "vibe") {
+            identity.vibe = v;
         }
         if let Some(v) = params.get("soul") {
             let soul = if v.is_null() {
@@ -237,7 +237,8 @@ impl LiveOnboardingService {
         Ok(json!({
             "name": identity.name,
             "emoji": identity.emoji,
-            "theme": identity.theme,
+            "creature": identity.creature,
+            "vibe": identity.vibe,
             "soul": moltis_config::load_soul(),
             "user_name": user.name,
             "user_timezone": user.timezone.as_ref().map(|tz| tz.name()),
@@ -263,8 +264,11 @@ impl LiveOnboardingService {
                 if let Some(emoji) = file_identity.emoji {
                     id.emoji = Some(emoji);
                 }
-                if let Some(theme) = file_identity.theme {
-                    id.theme = Some(theme);
+                if let Some(creature) = file_identity.creature {
+                    id.creature = Some(creature);
+                }
+                if let Some(vibe) = file_identity.vibe {
+                    id.vibe = Some(vibe);
                 }
             }
             if let Some(file_user) = moltis_config::load_user()
@@ -281,7 +285,8 @@ impl LiveOnboardingService {
                 id.name = name;
             }
             id.emoji = file_identity.emoji;
-            id.theme = file_identity.theme;
+            id.creature = file_identity.creature;
+            id.vibe = file_identity.vibe;
         }
         if let Some(file_user) = moltis_config::load_user() {
             id.user_name = file_user.name;
@@ -303,8 +308,11 @@ fn merge_identity(dst: &mut AgentIdentity, src: &AgentIdentity) {
     if src.emoji.is_some() {
         dst.emoji = src.emoji.clone();
     }
-    if src.theme.is_some() {
-        dst.theme = src.theme.clone();
+    if src.creature.is_some() {
+        dst.creature = src.creature.clone();
+    }
+    if src.vibe.is_some() {
+        dst.vibe = src.vibe.clone();
     }
 }
 
@@ -337,7 +345,7 @@ fn current_value(ws: &WizardState) -> Option<&str> {
         UserName => ws.user.name.as_deref(),
         AgentName => ws.identity.name.as_deref(),
         AgentEmoji => ws.identity.emoji.as_deref(),
-        AgentTheme => ws.identity.theme.as_deref(),
+        AgentVibe => ws.identity.vibe.as_deref(),
         _ => None,
     }
 }
@@ -450,7 +458,7 @@ mod tests {
             .identity_update(json!({
                 "name": "Rex",
                 "emoji": "\u{1f436}",
-                "theme": "chill dog",
+                "vibe": "chill dog",
                 "user_name": "Alice",
                 "user_timezone": "America/New_York",
             }))
@@ -459,18 +467,18 @@ mod tests {
         assert_eq!(res["user_name"], "Alice");
         assert_eq!(res["user_timezone"], "America/New_York");
 
-        // Partial update: only change theme
+        // Partial update: only change vibe
         let res = svc
-            .identity_update(json!({ "theme": "playful pup" }))
+            .identity_update(json!({ "vibe": "playful pup" }))
             .unwrap();
         assert_eq!(res["name"], "Rex");
-        assert_eq!(res["theme"], "playful pup");
+        assert_eq!(res["vibe"], "playful pup");
         assert_eq!(res["emoji"], "\u{1f436}");
 
         // Verify identity_get reflects updates
         let id = svc.identity_get();
         assert_eq!(id.name, "Rex");
-        assert_eq!(id.theme.as_deref(), Some("playful pup"));
+        assert_eq!(id.vibe.as_deref(), Some("playful pup"));
         assert_eq!(id.user_name.as_deref(), Some("Alice"));
         let user = moltis_config::load_user().expect("load user");
         assert_eq!(

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `graphql` feature flag (default on) in gateway and CLI crates for compile-time opt-out
 - Settings > GraphQL page embedding GraphiQL playground at `/settings/graphql`
 - Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
+- Multi-agent personas with per-agent workspaces (`data_dir()/agents/<id>/`), `agents.*` RPC methods, and session-level `agent_id` binding/switching across web + Telegram flows
 ### Changed
 
 - **Crate restructure**: gateway crate reduced from ~42K to ~29K lines by extracting `moltis-chat` (chat engine, agent orchestration), `moltis-auth` (password + passkey auth), `moltis-tls` (TLS/HTTPS termination), `moltis-service-traits` (shared service interfaces), and moving share rendering into `moltis-web`
@@ -33,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GraphQL `logs.ack` mutation now matches backend behavior and no longer takes an `ids` argument
 - Providers now support `stream_transport = "sse" | "websocket" | "auto"` in config. OpenAI can stream via Responses API WebSocket mode, and `auto` falls back to SSE when WebSocket setup is unavailable.
 - Agent Identity emoji picker now includes 🐰 🐹 🦀 🦞 🦝 🦭 🧠 🧭 options
+- Chat/system prompt resolution is now agent-aware, loading `IDENTITY.md`, `SOUL.md`, `MEMORY.md`, `AGENTS.md`, and `TOOLS.md` from the active session agent workspace with backward-compatible fallbacks
+- Memory tool operations and compaction memory writes are now agent-scoped, preventing cross-agent memory leakage during search/read/write flows
 - Default sandbox package set now includes `golang-go`, and pre-built sandbox images install the latest `gog` (`steipete/gogcli`) as `gog` and `gogcli`
 - Sandbox config now supports `/home/sandbox` persistence strategies (`off`, `session`, `shared`), with `shared` as the default and a shared host folder mounted from `data_dir()/sandbox/home/shared`
 

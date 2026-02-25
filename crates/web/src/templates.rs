@@ -70,6 +70,7 @@ pub(crate) struct GonData {
     sandbox: SandboxGonInfo,
     routes: SpaRoutes,
     started_at: u64,
+    agents: Vec<serde_json::Value>,
     #[cfg(feature = "vault")]
     vault_status: String,
 }
@@ -297,6 +298,22 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         }
     };
 
+    // Fetch agent personas for the gon data.
+    let agents: Vec<serde_json::Value> = if let Some(ref store) = gw.services.agent_persona_store {
+        store
+            .list()
+            .await
+            .ok()
+            .map(|list| {
+                list.into_iter()
+                    .map(|a| serde_json::to_value(a).unwrap_or_default())
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
     GonData {
         identity,
         port,
@@ -314,6 +331,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         sandbox,
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
+        agents,
         #[cfg(feature = "vault")]
         vault_status: {
             if let Some(ref vault) = gw.vault {

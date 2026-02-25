@@ -502,6 +502,31 @@ pub async fn handle_message_direct(
                 }
 
                 // For /model without args, send an inline keyboard to pick a model.
+                if cmd == "agent" && cmd_text.trim() == "agent" {
+                    let list_result = sink.dispatch_command("agent", reply_target.clone()).await;
+                    let bot = {
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+                        accts.get(account_id).map(|s| s.bot.clone())
+                    };
+                    if let Some(bot) = bot {
+                        match list_result {
+                            Ok(text) => {
+                                send_agent_keyboard(&bot, &reply_target.chat_id, &text).await;
+                            },
+                            Err(e) => {
+                                let _ = bot
+                                    .send_message(
+                                        ChatId(reply_target.chat_id.parse().unwrap_or(0)),
+                                        format!("Error: {e}"),
+                                    )
+                                    .await;
+                            },
+                        }
+                    }
+                    return Ok(());
+                }
+
+                // For /model without args, send an inline keyboard to pick a model.
                 if cmd == "model" && cmd_text.trim() == "model" {
                     let list_result = sink.dispatch_command("model", reply_target.clone()).await;
                     let bot = {
@@ -579,7 +604,7 @@ pub async fn handle_message_direct(
                 }
 
                 let response = if cmd == "help" {
-                    "Available commands:\n/new — Start a new session\n/sessions — List and switch sessions\n/model — Switch provider/model\n/sandbox — Toggle sandbox and choose image\n/sh — Enable command mode (/sh off to exit)\n/clear — Clear session history\n/compact — Compact session (summarize)\n/context — Show session context info\n/help — Show this help".to_string()
+                    "Available commands:\n/new — Start a new session\n/sessions — List and switch sessions\n/agent — Switch session agent\n/model — Switch provider/model\n/sandbox — Toggle sandbox and choose image\n/sh — Enable command mode (/sh off to exit)\n/clear — Clear session history\n/compact — Compact session (summarize)\n/context — Show session context info\n/help — Show this help".to_string()
                 } else {
                     match sink.dispatch_command(cmd_text, reply_target.clone()).await {
                         Ok(msg) => msg,
@@ -636,7 +661,8 @@ pub async fn handle_message_direct(
 
 fn should_intercept_slash_command(cmd: &str, cmd_text: &str) -> bool {
     match cmd {
-        "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "help" => true,
+        "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "agent"
+        | "help" => true,
         "sh" => {
             let args = cmd_text.strip_prefix(cmd).unwrap_or("").trim();
             args.is_empty() || matches!(args, "on" | "off" | "exit" | "status")
@@ -967,6 +993,44 @@ async fn send_sessions_keyboard(bot: &Bot, chat_id: &str, sessions_text: &str) {
         .await;
 }
 
+/// Send agent selection as an inline keyboard.
+///
+/// Parses numbered lines like:
+/// `1. 🤖 Main [main] (default) *`
+async fn send_agent_keyboard(bot: &Bot, chat_id: &str, agents_text: &str) {
+    let chat = ChatId(chat_id.parse().unwrap_or(0));
+    let mut buttons: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    for line in agents_text.lines() {
+        let trimmed = line.trim();
+        if let Some(dot_pos) = trimmed.find(". ")
+            && let Ok(n) = trimmed[..dot_pos].parse::<usize>()
+        {
+            let label_part = &trimmed[dot_pos + 2..];
+            let is_active = label_part.ends_with('*');
+            let display = if is_active {
+                format!("● {}", label_part.trim_end_matches('*').trim())
+            } else {
+                format!("○ {label_part}")
+            };
+            buttons.push(vec![InlineKeyboardButton::callback(
+                display,
+                format!("agent_switch:{n}"),
+            )]);
+        }
+    }
+
+    if buttons.is_empty() {
+        let _ = bot.send_message(chat, agents_text).await;
+        return;
+    }
+
+    let keyboard = InlineKeyboardMarkup::new(buttons);
+    let _ = bot
+        .send_message(chat, "Select an agent:")
+        .reply_markup(keyboard)
+        .await;
+}
+
 /// Send context info as a formatted HTML card with blockquote sections.
 ///
 /// Parses the markdown context response from `dispatch_command("context")`
@@ -1191,6 +1255,8 @@ pub async fn handle_callback_query(
     // Determine which command this callback is for.
     let cmd_text = if let Some(n_str) = data.strip_prefix("sessions_switch:") {
         Some(format!("sessions {n_str}"))
+    } else if let Some(n_str) = data.strip_prefix("agent_switch:") {
+        Some(format!("agent {n_str}"))
     } else if let Some(n_str) = data.strip_prefix("model_switch:") {
         Some(format!("model {n_str}"))
     } else if let Some(val) = data.strip_prefix("sandbox_toggle:") {

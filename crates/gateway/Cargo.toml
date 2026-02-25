@@ -90,8 +90,10 @@ webauthn-rs           = { features = ["danger-allow-state-serialisation"], works
 which                 = { optional = true, workspace = true }
 
 [features]
+agent = []
 caldav = ["dep:moltis-caldav"]
 default = [
+  "agent",
   "caldav",
   "file-watcher",
   "graphql",

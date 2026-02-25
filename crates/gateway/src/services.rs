@@ -1200,6 +1200,8 @@ pub struct GatewayServices {
     pub session_store: Option<Arc<moltis_sessions::store::SessionStore>>,
     /// Optional session share store for immutable snapshot links.
     pub session_share_store: Option<Arc<crate::share_store::ShareStore>>,
+    /// Optional agent persona store for multi-agent support.
+    pub agent_persona_store: Option<Arc<crate::agent_persona::AgentPersonaStore>>,
 }
 
 impl GatewayServices {
@@ -1279,6 +1281,7 @@ impl GatewayServices {
             session_metadata: None,
             session_store: None,
             session_share_store: None,
+            agent_persona_store: None,
         }
     }
 
@@ -1312,6 +1315,14 @@ impl GatewayServices {
 
     pub fn with_session_share_store(mut self, store: Arc<crate::share_store::ShareStore>) -> Self {
         self.session_share_store = Some(store);
+        self
+    }
+
+    pub fn with_agent_persona_store(
+        mut self,
+        store: Arc<crate::agent_persona::AgentPersonaStore>,
+    ) -> Self {
+        self.agent_persona_store = Some(store);
         self
     }
 

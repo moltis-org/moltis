@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::{Duration, Instant},
@@ -32,11 +32,12 @@ use {
             build_system_prompt_with_session_runtime,
         },
         runner::{RunnerEvent, run_agent_loop_streaming},
-        tool_registry::ToolRegistry,
+        tool_registry::{AgentTool, ToolRegistry},
     },
     moltis_providers::{ProviderRegistry, raw_model_id},
     moltis_sessions::{
-        ContentBlock, MessageContent, PersistedMessage, metadata::SqliteSessionMetadata,
+        ContentBlock, MessageContent, PersistedMessage,
+        metadata::{SessionEntry, SqliteSessionMetadata},
         store::SessionStore,
     },
     moltis_skills::discover::SkillDiscoverer,
@@ -909,7 +910,7 @@ fn detect_runtime_shell() -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let name = std::path::Path::new(trimmed)
+    let name = Path::new(trimmed)
         .file_name()
         .and_then(OsStr::to_str)
         .unwrap_or(trimmed)
@@ -1010,22 +1011,51 @@ struct PromptPersona {
     memory_text: Option<String>,
 }
 
-/// Load identity, user profile, soul, and workspace text from config + data files.
+fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> String {
+    let Some(entry) = session_entry else {
+        return "main".to_string();
+    };
+    let Some(agent_id) = entry
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return "main".to_string();
+    };
+    if agent_id == "main" {
+        return "main".to_string();
+    }
+    if moltis_config::agent_workspace_dir(agent_id).exists() {
+        return agent_id.to_string();
+    }
+    warn!(
+        session = %entry.key,
+        agent_id,
+        "session references unknown agent workspace, falling back to main prompt persona"
+    );
+    "main".to_string()
+}
+
+/// Load identity, user profile, soul, and workspace text for one agent.
 ///
 /// Both `run_with_tools` and `run_streaming` need the same persona data;
 /// this function avoids duplicating the merge logic.
-fn load_prompt_persona() -> PromptPersona {
+fn load_prompt_persona_for_agent(agent_id: &str) -> PromptPersona {
     let config = moltis_config::discover_and_load();
     let mut identity = config.identity.clone();
-    if let Some(file_identity) = moltis_config::load_identity() {
+    if let Some(file_identity) = moltis_config::load_identity_for_agent(agent_id) {
         if file_identity.name.is_some() {
             identity.name = file_identity.name;
         }
         if file_identity.emoji.is_some() {
             identity.emoji = file_identity.emoji;
         }
-        if file_identity.theme.is_some() {
-            identity.theme = file_identity.theme;
+        if file_identity.creature.is_some() {
+            identity.creature = file_identity.creature;
+        }
+        if file_identity.vibe.is_some() {
+            identity.vibe = file_identity.vibe;
         }
     }
     let mut user = config.user.clone();
@@ -1041,18 +1071,23 @@ fn load_prompt_persona() -> PromptPersona {
         config,
         identity,
         user,
-        soul_text: moltis_config::load_soul(),
-        agents_text: moltis_config::load_agents_md(),
-        tools_text: moltis_config::load_tools_md(),
-        memory_text: moltis_config::load_memory_md(),
+        soul_text: moltis_config::load_soul_for_agent(agent_id),
+        agents_text: moltis_config::load_agents_md_for_agent(agent_id),
+        tools_text: moltis_config::load_tools_md_for_agent(agent_id),
+        memory_text: moltis_config::load_memory_md_for_agent(agent_id),
     }
+}
+
+fn load_prompt_persona_for_session(session_entry: Option<&SessionEntry>) -> PromptPersona {
+    let agent_id = resolve_prompt_agent_id(session_entry);
+    load_prompt_persona_for_agent(&agent_id)
 }
 
 async fn build_prompt_runtime_context(
     state: &Arc<dyn ChatRuntime>,
     provider: &Arc<dyn moltis_agents::model::LlmProvider>,
     session_key: &str,
-    session_entry: Option<&moltis_sessions::metadata::SessionEntry>,
+    session_entry: Option<&SessionEntry>,
 ) -> PromptRuntimeContext {
     let data_dir = moltis_config::data_dir();
     let data_dir_display = data_dir.display().to_string();
@@ -2358,7 +2393,7 @@ impl LiveChatService {
             .await
             .ok()?;
         let dir = val.get("directory").and_then(|v| v.as_str())?;
-        let files = match moltis_projects::context::load_context_files(std::path::Path::new(dir)) {
+        let files = match moltis_projects::context::load_context_files(Path::new(dir)) {
             Ok(f) => f,
             Err(e) => {
                 warn!("failed to load project context: {e}");
@@ -2372,9 +2407,7 @@ impl LiveChatService {
             .await
             .and_then(|e| e.worktree_branch)
             .and_then(|_| {
-                let wt_path = std::path::Path::new(dir)
-                    .join(".moltis-worktrees")
-                    .join(session_key);
+                let wt_path = Path::new(dir).join(".moltis-worktrees").join(session_key);
                 if wt_path.exists() {
                     Some(wt_path)
                 } else {
@@ -3029,6 +3062,7 @@ impl ChatService for LiveChatService {
         // Check if MCP tools are disabled for this session and capture
         // per-session sandbox override details for prompt runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
+        let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         let mcp_disabled = session_entry
             .as_ref()
             .and_then(|entry| entry.mcp_disabled)
@@ -3082,6 +3116,7 @@ impl ChatService for LiveChatService {
         let model_store = Arc::clone(&self.model_store);
         let session_store = Arc::clone(&self.session_store);
         let session_metadata = Arc::clone(&self.session_metadata);
+        let session_agent_id_clone = session_agent_id.clone();
         let session_key_clone = session_key.clone();
         let accept_language = params
             .get("_accept_language")
@@ -3278,6 +3313,7 @@ impl ChatService for LiveChatService {
                         &provider_name,
                         &history,
                         &session_key_clone,
+                        &session_agent_id_clone,
                         desired_reply_medium,
                         ctx_ref,
                         user_message_index,
@@ -3299,6 +3335,7 @@ impl ChatService for LiveChatService {
                         &provider_name,
                         &history,
                         &session_key_clone,
+                        &session_agent_id_clone,
                         desired_reply_medium,
                         ctx_ref,
                         Some(&runtime_context),
@@ -3527,6 +3564,7 @@ impl ChatService for LiveChatService {
         let _ = self.session_metadata.upsert(&session_key, None).await;
         self.session_metadata.touch(&session_key, 1).await;
         let session_entry = self.session_metadata.get(&session_key).await;
+        let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
@@ -3592,6 +3630,7 @@ impl ChatService for LiveChatService {
                 &provider_name,
                 &history,
                 &session_key,
+                &session_agent_id,
                 desired_reply_medium,
                 None,
                 user_message_index,
@@ -3613,6 +3652,7 @@ impl ChatService for LiveChatService {
                 &provider_name,
                 &history,
                 &session_key,
+                &session_agent_id,
                 desired_reply_medium,
                 None,
                 Some(&runtime_context),
@@ -3832,6 +3872,8 @@ impl ChatService for LiveChatService {
                 .map(String::from);
             self.session_key_for(conn_id.as_deref()).await
         };
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
 
         let history = self
             .session_store
@@ -3861,7 +3903,9 @@ impl ChatService for LiveChatService {
             && let Ok(provider) = self.resolve_provider(&session_key, &history).await
         {
             let chat_history_for_memory = values_to_chat_messages(&history);
-            let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> = Arc::clone(mm) as _;
+            let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> = Arc::new(
+                AgentScopedMemoryWriter::new(Arc::clone(mm), session_agent_id.clone()),
+            );
             match moltis_agents::silent_turn::run_silent_memory_turn(
                 provider,
                 &chat_history_for_memory,
@@ -3956,7 +4000,7 @@ impl ChatService for LiveChatService {
 
         // Save compaction summary to memory file and trigger sync.
         if let Some(mm) = self.state.memory_manager() {
-            let memory_dir = moltis_config::data_dir().join("memory");
+            let memory_dir = moltis_config::agent_workspace_dir(&session_agent_id).join("memory");
             if let Err(e) = tokio::fs::create_dir_all(&memory_dir).await {
                 warn!(error = %e, "compact: failed to create memory dir");
             } else {
@@ -4060,8 +4104,7 @@ impl ChatService for LiveChatService {
                 Ok(val) => {
                     let dir = val.get("directory").and_then(|v| v.as_str());
                     let context_files = if let Some(d) = dir {
-                        match moltis_projects::context::load_context_files(std::path::Path::new(d))
-                        {
+                        match moltis_projects::context::load_context_files(Path::new(d)) {
                             Ok(files) => files
                                 .iter()
                                 .map(|f| {
@@ -4279,11 +4322,9 @@ impl ChatService for LiveChatService {
             .map_err(ServiceError::message)?;
         let native_tools = provider.supports_tools();
 
-        // Load persona data.
-        let persona = load_prompt_persona();
-
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
+        let persona = load_prompt_persona_for_session(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
@@ -4400,11 +4441,9 @@ impl ChatService for LiveChatService {
             .map_err(ServiceError::message)?;
         let native_tools = provider.supports_tools();
 
-        // Load persona data.
-        let persona = load_prompt_persona();
-
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
+        let persona = load_prompt_persona_for_session(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
@@ -5027,6 +5066,371 @@ async fn run_explicit_shell_command(
     }
 }
 
+const MAX_AGENT_MEMORY_WRITE_BYTES: usize = 50 * 1024;
+const MEMORY_SEARCH_FETCH_MULTIPLIER: usize = 8;
+const MEMORY_SEARCH_MIN_FETCH: usize = 25;
+
+fn is_valid_agent_memory_leaf_name(name: &str) -> bool {
+    if name.is_empty() || name.contains('/') || !name.ends_with(".md") {
+        return false;
+    }
+    if name.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let stem = &name[..name.len() - 3];
+    !(stem.is_empty() || stem.starts_with('.'))
+}
+
+fn resolve_agent_memory_target_path(agent_id: &str, file: &str) -> anyhow::Result<PathBuf> {
+    let trimmed = file.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("memory path cannot be empty");
+    }
+
+    let workspace = moltis_config::agent_workspace_dir(agent_id);
+    if trimmed == "MEMORY.md" || trimmed == "memory.md" {
+        return Ok(workspace.join("MEMORY.md"));
+    }
+
+    let Some(name) = trimmed.strip_prefix("memory/") else {
+        anyhow::bail!(
+            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
+        );
+    };
+    if !is_valid_agent_memory_leaf_name(name) {
+        anyhow::bail!(
+            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
+        );
+    }
+    Ok(workspace.join("memory").join(name))
+}
+
+fn is_path_in_agent_memory_scope(path: &Path, agent_id: &str) -> bool {
+    let workspace = moltis_config::agent_workspace_dir(agent_id);
+    let workspace_memory_dir = workspace.join("memory");
+    if path == workspace.join("MEMORY.md")
+        || path == workspace.join("memory.md")
+        || path.starts_with(&workspace_memory_dir)
+    {
+        return true;
+    }
+
+    if agent_id != "main" {
+        return false;
+    }
+
+    let data_dir = moltis_config::data_dir();
+    let root_memory_dir = data_dir.join("memory");
+    path == data_dir.join("MEMORY.md")
+        || path == data_dir.join("memory.md")
+        || path.starts_with(&root_memory_dir)
+}
+
+struct AgentScopedMemoryWriter {
+    manager: Arc<moltis_memory::manager::MemoryManager>,
+    agent_id: String,
+}
+
+impl AgentScopedMemoryWriter {
+    fn new(manager: Arc<moltis_memory::manager::MemoryManager>, agent_id: String) -> Self {
+        Self { manager, agent_id }
+    }
+}
+
+#[async_trait]
+impl moltis_agents::memory_writer::MemoryWriter for AgentScopedMemoryWriter {
+    async fn write_memory(
+        &self,
+        file: &str,
+        content: &str,
+        append: bool,
+    ) -> anyhow::Result<moltis_agents::memory_writer::MemoryWriteResult> {
+        if content.len() > MAX_AGENT_MEMORY_WRITE_BYTES {
+            anyhow::bail!(
+                "content exceeds maximum size of {} bytes ({} bytes provided)",
+                MAX_AGENT_MEMORY_WRITE_BYTES,
+                content.len()
+            );
+        }
+
+        let path = resolve_agent_memory_target_path(&self.agent_id, file)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let final_content = if append && tokio::fs::try_exists(&path).await? {
+            let existing = tokio::fs::read_to_string(&path).await?;
+            format!("{existing}\n\n{content}")
+        } else {
+            content.to_string()
+        };
+        let bytes_written = final_content.len();
+
+        tokio::fs::write(&path, &final_content).await?;
+        if let Err(error) = self.manager.sync_path(&path).await {
+            warn!(path = %path.display(), %error, "agent memory write re-index failed");
+        }
+
+        Ok(moltis_agents::memory_writer::MemoryWriteResult {
+            location: path.to_string_lossy().into_owned(),
+            bytes_written,
+        })
+    }
+}
+
+struct AgentScopedMemorySearchTool {
+    manager: Arc<moltis_memory::manager::MemoryManager>,
+    agent_id: String,
+}
+
+impl AgentScopedMemorySearchTool {
+    fn new(manager: Arc<moltis_memory::manager::MemoryManager>, agent_id: String) -> Self {
+        Self { manager, agent_id }
+    }
+}
+
+#[async_trait]
+impl AgentTool for AgentScopedMemorySearchTool {
+    fn name(&self) -> &str {
+        "memory_search"
+    }
+
+    fn description(&self) -> &str {
+        "Search agent memory using hybrid vector + keyword search. Returns relevant chunks from daily logs and long-term memory files."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return",
+                    "default": 5
+                }
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing 'query' parameter"))?;
+        let requested_limit = params.get("limit").and_then(Value::as_u64).unwrap_or(5) as usize;
+        let limit = requested_limit.clamp(1, 50);
+        let search_limit = limit
+            .saturating_mul(MEMORY_SEARCH_FETCH_MULTIPLIER)
+            .max(MEMORY_SEARCH_MIN_FETCH)
+            .max(limit);
+
+        let mut results: Vec<moltis_memory::search::SearchResult> = self
+            .manager
+            .search(query, search_limit)
+            .await?
+            .into_iter()
+            .filter(|result| is_path_in_agent_memory_scope(Path::new(&result.path), &self.agent_id))
+            .collect();
+        results.truncate(limit);
+
+        let include_citations = moltis_memory::search::SearchResult::should_include_citations(
+            &results,
+            self.manager.citation_mode(),
+        );
+        let items: Vec<Value> = results
+            .iter()
+            .map(|result| {
+                let text = if include_citations {
+                    result.text_with_citation()
+                } else {
+                    result.text.clone()
+                };
+                serde_json::json!({
+                    "chunk_id": result.chunk_id,
+                    "path": result.path,
+                    "source": result.source,
+                    "start_line": result.start_line,
+                    "end_line": result.end_line,
+                    "score": result.score,
+                    "text": text,
+                    "citation": format!("{}#{}", result.path, result.start_line),
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "results": items,
+            "citations_enabled": include_citations
+        }))
+    }
+}
+
+struct AgentScopedMemoryGetTool {
+    manager: Arc<moltis_memory::manager::MemoryManager>,
+    agent_id: String,
+}
+
+impl AgentScopedMemoryGetTool {
+    fn new(manager: Arc<moltis_memory::manager::MemoryManager>, agent_id: String) -> Self {
+        Self { manager, agent_id }
+    }
+}
+
+#[async_trait]
+impl AgentTool for AgentScopedMemoryGetTool {
+    fn name(&self) -> &str {
+        "memory_get"
+    }
+
+    fn description(&self) -> &str {
+        "Retrieve a specific memory chunk by its ID. Use this to get the full text of a chunk found via memory_search."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "chunk_id": {
+                    "type": "string",
+                    "description": "The chunk ID to retrieve"
+                }
+            },
+            "required": ["chunk_id"]
+        })
+    }
+
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let chunk_id = params
+            .get("chunk_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing 'chunk_id' parameter"))?;
+
+        match self.manager.get_chunk(chunk_id).await? {
+            Some(chunk)
+                if is_path_in_agent_memory_scope(Path::new(&chunk.path), &self.agent_id) =>
+            {
+                Ok(serde_json::json!({
+                    "chunk_id": chunk.id,
+                    "path": chunk.path,
+                    "source": chunk.source,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "text": chunk.text,
+                }))
+            },
+            _ => Ok(serde_json::json!({
+                "error": "chunk not found",
+                "chunk_id": chunk_id,
+            })),
+        }
+    }
+}
+
+struct AgentScopedMemorySaveTool {
+    writer: AgentScopedMemoryWriter,
+}
+
+impl AgentScopedMemorySaveTool {
+    fn new(manager: Arc<moltis_memory::manager::MemoryManager>, agent_id: String) -> Self {
+        Self {
+            writer: AgentScopedMemoryWriter::new(manager, agent_id),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for AgentScopedMemorySaveTool {
+    fn name(&self) -> &str {
+        "memory_save"
+    }
+
+    fn description(&self) -> &str {
+        "Save content to long-term memory. Writes to MEMORY.md or memory/<name>.md. Content persists across sessions and is searchable via memory_search."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The content to save to memory"
+                },
+                "file": {
+                    "type": "string",
+                    "description": "Target file: MEMORY.md, memory.md, or memory/<name>.md",
+                    "default": "MEMORY.md"
+                },
+                "append": {
+                    "type": "boolean",
+                    "description": "Append to existing file (true) or overwrite (false)",
+                    "default": true
+                }
+            },
+            "required": ["content"]
+        })
+    }
+
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let content = params
+            .get("content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing 'content' parameter"))?;
+        let file = params
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or("MEMORY.md");
+        let append = params
+            .get("append")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+
+        use moltis_agents::memory_writer::MemoryWriter;
+        let result = self.writer.write_memory(file, content, append).await?;
+
+        Ok(serde_json::json!({
+            "saved": true,
+            "path": file,
+            "bytes_written": result.bytes_written,
+        }))
+    }
+}
+
+fn install_agent_scoped_memory_tools(
+    registry: &mut ToolRegistry,
+    manager: &Arc<moltis_memory::manager::MemoryManager>,
+    agent_id: &str,
+) {
+    let had_search = registry.unregister("memory_search");
+    let had_get = registry.unregister("memory_get");
+    let had_save = registry.unregister("memory_save");
+
+    let agent_id_owned = agent_id.to_string();
+    if had_search {
+        registry.register(Box::new(AgentScopedMemorySearchTool::new(
+            Arc::clone(manager),
+            agent_id_owned.clone(),
+        )));
+    }
+    if had_get {
+        registry.register(Box::new(AgentScopedMemoryGetTool::new(
+            Arc::clone(manager),
+            agent_id_owned.clone(),
+        )));
+    }
+    if had_save {
+        registry.register(Box::new(AgentScopedMemorySaveTool::new(
+            Arc::clone(manager),
+            agent_id_owned,
+        )));
+    }
+}
+
 async fn run_with_tools(
     state: &Arc<dyn ChatRuntime>,
     model_store: &Arc<RwLock<DisabledModelsStore>>,
@@ -5038,6 +5442,7 @@ async fn run_with_tools(
     provider_name: &str,
     history_raw: &[Value],
     session_key: &str,
+    agent_id: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
@@ -5052,11 +5457,11 @@ async fn run_with_tools(
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
-    let persona = load_prompt_persona();
+    let persona = load_prompt_persona_for_agent(agent_id);
 
     let native_tools = provider.supports_tools();
 
-    let filtered_registry = {
+    let mut filtered_registry = {
         let registry_guard = tool_registry.read().await;
         if native_tools {
             apply_runtime_tool_filters(&registry_guard, &persona.config, skills, mcp_disabled)
@@ -5064,6 +5469,9 @@ async fn run_with_tools(
             registry_guard.clone_without(&[])
         }
     };
+    if native_tools && let Some(manager) = state.memory_manager() {
+        install_agent_scoped_memory_tools(&mut filtered_registry, manager, agent_id);
+    }
 
     // Use a minimal prompt without tool schemas for providers that don't support tools.
     // This reduces context size and avoids confusing the LLM with unusable instructions.
@@ -5904,6 +6312,7 @@ async fn run_streaming(
     provider_name: &str,
     history_raw: &[Value],
     session_key: &str,
+    agent_id: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
     user_message_index: usize,
@@ -5913,7 +6322,7 @@ async fn run_streaming(
     client_seq: Option<u64>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
-    let persona = load_prompt_persona();
+    let persona = load_prompt_persona_for_agent(agent_id);
 
     let system_prompt = build_system_prompt_minimal_runtime(
         project_context,
@@ -9552,6 +9961,39 @@ mod tests {
             });
 
         assert!(extracted.is_none());
+    }
+
+    #[test]
+    fn resolve_agent_memory_target_path_maps_to_agent_workspace() {
+        let workspace = moltis_config::agent_workspace_dir("ops");
+        assert_eq!(
+            resolve_agent_memory_target_path("ops", "MEMORY.md").unwrap(),
+            workspace.join("MEMORY.md")
+        );
+        assert_eq!(
+            resolve_agent_memory_target_path("ops", "memory/daily.md").unwrap(),
+            workspace.join("memory").join("daily.md")
+        );
+    }
+
+    #[test]
+    fn resolve_agent_memory_target_path_rejects_invalid_paths() {
+        assert!(resolve_agent_memory_target_path("ops", "").is_err());
+        assert!(resolve_agent_memory_target_path("ops", "foo.md").is_err());
+        assert!(resolve_agent_memory_target_path("ops", "memory/a/b.md").is_err());
+        assert!(resolve_agent_memory_target_path("ops", "memory/.hidden.md").is_err());
+    }
+
+    #[test]
+    fn path_in_agent_memory_scope_is_isolated_per_agent() {
+        let ops_workspace = moltis_config::agent_workspace_dir("ops");
+        let ops_memory = ops_workspace.join("memory").join("daily.md");
+        assert!(is_path_in_agent_memory_scope(&ops_memory, "ops"));
+        assert!(!is_path_in_agent_memory_scope(&ops_memory, "research"));
+
+        let root_memory = moltis_config::data_dir().join("memory").join("root.md");
+        assert!(is_path_in_agent_memory_scope(&root_memory, "main"));
+        assert!(!is_path_in_agent_memory_scope(&root_memory, "ops"));
     }
 
     // ── active_session_keys tests ───────────────────────────────────────

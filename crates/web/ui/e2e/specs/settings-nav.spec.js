@@ -306,6 +306,7 @@ test.describe("Settings navigation", () => {
 		const navItems = (await page.locator(".settings-nav-item").allTextContents()).map((text) => text.trim());
 		const expectedPrefix = [
 			"Identity",
+			"Agents",
 			"Environment",
 			"Memory",
 			"Notifications",
