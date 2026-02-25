@@ -27,11 +27,13 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.moltis.app
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_EMIT_LOC_STRINGS: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridging-Header.h
         OTHER_LDFLAGS:
           - "-lmoltis_bridge"
