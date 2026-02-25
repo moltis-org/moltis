@@ -20,8 +20,12 @@ use {
 
 use crate::{
     detect::{OpenClawDetection, resolve_agent_sessions_dir},
+    identity::normalize_display_name,
     report::{CategoryReport, ImportCategory, ImportStatus},
-    types::{OpenClawContent, OpenClawRole, OpenClawSessionRecord, OpenClawTimestamp},
+    types::{
+        OpenClawContent, OpenClawRole, OpenClawSessionIndexEntry, OpenClawSessionOrigin,
+        OpenClawSessionRecord, OpenClawTimestamp,
+    },
 };
 
 /// Minimal session metadata for the Moltis `metadata.json` index.
@@ -132,6 +136,9 @@ pub fn import_sessions(
         return CategoryReport::skipped(ImportCategory::Sessions);
     };
 
+    // Load session index for rich labels
+    let session_label_map = load_session_label_map(&sessions_dir);
+
     let Ok(dir_entries) = std::fs::read_dir(&sessions_dir) else {
         return CategoryReport::failed(
             ImportCategory::Sessions,
@@ -182,7 +189,13 @@ pub fn import_sessions(
 
         match convert_session(&path, &dest_file) {
             Ok(stats) => {
-                let label = format!("OpenClaw: {stem}");
+                let label = session_label_map
+                    .get(stem)
+                    .map(|(logical_key, origin)| build_session_label(logical_key, origin.as_ref()))
+                    .unwrap_or_else(|| {
+                        let prefix_len = 8.min(stem.len());
+                        format!("OpenClaw: {}", &stem[..prefix_len])
+                    });
 
                 if is_update {
                     debug!(
@@ -276,6 +289,85 @@ pub fn import_sessions(
         warnings,
         errors,
     }
+}
+
+/// Load the `sessions.json` index and build a reverse map from session-ID
+/// (UUID filename stem) to the logical key and origin metadata.
+fn load_session_label_map(
+    sessions_dir: &Path,
+) -> HashMap<String, (String, Option<OpenClawSessionOrigin>)> {
+    let index_path = sessions_dir.join("sessions.json");
+    let Ok(content) = std::fs::read_to_string(&index_path) else {
+        return HashMap::new();
+    };
+    let Ok(entries): Result<HashMap<String, OpenClawSessionIndexEntry>, _> =
+        serde_json::from_str(&content)
+    else {
+        return HashMap::new();
+    };
+
+    let mut map = HashMap::new();
+    for (logical_key, entry) in entries {
+        if let Some(ref sid) = entry.session_id {
+            map.insert(sid.clone(), (logical_key, entry.origin));
+        }
+    }
+    map
+}
+
+/// Build a human-readable session label from the logical key and origin.
+///
+/// Key patterns:
+/// - `agent:*:main`             → "Main"
+/// - `agent:*:telegram:dm:*`    → "Telegram: {cleaned label}"
+/// - `agent:*:signal:dm:*`      → "Signal: {cleaned label}"
+/// - `agent:*:cron:*`           → "Cron"
+/// - Other with origin label    → "OpenClaw: {cleaned label}"
+/// - Fallback (no index entry)  → "OpenClaw: {uuid prefix}"
+fn build_session_label(logical_key: &str, origin: Option<&OpenClawSessionOrigin>) -> String {
+    let parts: Vec<&str> = logical_key.split(':').collect();
+
+    // agent:<name>:main → "Main"
+    if parts.len() == 3 && parts[0] == "agent" && parts[2] == "main" {
+        return "Main".to_string();
+    }
+
+    // agent:<name>:telegram:dm:<id> → "Telegram: {label}"
+    if parts.len() >= 4 && parts[0] == "agent" && parts[2] == "telegram" {
+        if let Some(cleaned) = origin
+            .and_then(|o| o.label.as_deref())
+            .and_then(normalize_display_name)
+        {
+            return format!("Telegram: {cleaned}");
+        }
+        return "Telegram".to_string();
+    }
+
+    // agent:<name>:signal:dm:<id> → "Signal: {label}"
+    if parts.len() >= 4 && parts[0] == "agent" && parts[2] == "signal" {
+        if let Some(cleaned) = origin
+            .and_then(|o| o.label.as_deref())
+            .and_then(normalize_display_name)
+        {
+            return format!("Signal: {cleaned}");
+        }
+        return "Signal".to_string();
+    }
+
+    // agent:<name>:cron:* → "Cron"
+    if parts.len() >= 3 && parts[0] == "agent" && parts[2] == "cron" {
+        return "Cron".to_string();
+    }
+
+    // Fallback: use cleaned origin label if available
+    if let Some(cleaned) = origin
+        .and_then(|o| o.label.as_deref())
+        .and_then(normalize_display_name)
+    {
+        return format!("OpenClaw: {cleaned}");
+    }
+
+    format!("OpenClaw: {logical_key}")
 }
 
 struct ConvertStats {
@@ -1062,6 +1154,260 @@ mod tests {
                 .preview
                 .as_deref()
                 .is_some_and(|p| p.contains("hello from old openclaw"))
+        );
+    }
+
+    fn write_sessions_json(home: &Path, agent: &str, content: &str) {
+        let dir = home
+            .join("agents")
+            .join(agent)
+            .join("agent")
+            .join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sessions.json"), content).unwrap();
+    }
+
+    #[test]
+    fn session_labels_from_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let dest = tmp.path().join("sessions");
+        let mem = tmp.path().join("memory").join("sessions");
+
+        let session_uuid = "d8da3601-1234-4abc-9def-aabbccddeeff";
+
+        // Create sessions.json index with rich metadata
+        write_sessions_json(
+            home,
+            "main",
+            &serde_json::json!({
+                "agent:main:main": {
+                    "sessionId": session_uuid,
+                    "updatedAt": 1770000000000_u64,
+                    "origin": {
+                        "label": "Fabien (@fabienpenso) id:377114917",
+                        "chatType": "direct"
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        // Create matching JSONL file named by UUID
+        setup_session(home, "main", session_uuid, &[
+            r#"{"type":"message","message":{"role":"user","content":"Hello"}}"#,
+            r#"{"type":"message","message":{"role":"assistant","content":"Hi!"}}"#,
+        ]);
+
+        let detection = make_detection(home);
+        let report = import_sessions(&detection, &dest, &mem);
+        assert_eq!(report.status, ImportStatus::Success);
+        assert_eq!(report.items_imported, 1);
+
+        // Verify label is "Main" (from agent:main:main key pattern)
+        let metadata: HashMap<String, ImportedSessionEntry> =
+            serde_json::from_str(&std::fs::read_to_string(dest.join("metadata.json")).unwrap())
+                .unwrap();
+        let key = format!("oc:main:{session_uuid}");
+        let entry = metadata.get(&key).unwrap();
+        assert_eq!(entry.label.as_deref(), Some("Main"));
+    }
+
+    #[test]
+    fn session_label_telegram_from_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let dest = tmp.path().join("sessions");
+        let mem = tmp.path().join("memory").join("sessions");
+
+        let session_uuid = "aabb1122-3344-4556-8899-001122334455";
+
+        write_sessions_json(
+            home,
+            "main",
+            &serde_json::json!({
+                "agent:main:telegram:dm:377114917": {
+                    "sessionId": session_uuid,
+                    "updatedAt": 1770000000000_u64,
+                    "origin": {
+                        "label": "Fabien (@fabienpenso) id:377114917",
+                        "provider": "telegram",
+                        "chatType": "direct"
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        setup_session(home, "main", session_uuid, &[
+            r#"{"type":"message","message":{"role":"user","content":"Hi via Telegram"}}"#,
+        ]);
+
+        let detection = make_detection(home);
+        let report = import_sessions(&detection, &dest, &mem);
+        assert_eq!(report.status, ImportStatus::Success);
+
+        let metadata: HashMap<String, ImportedSessionEntry> =
+            serde_json::from_str(&std::fs::read_to_string(dest.join("metadata.json")).unwrap())
+                .unwrap();
+        let key = format!("oc:main:{session_uuid}");
+        let entry = metadata.get(&key).unwrap();
+        assert_eq!(entry.label.as_deref(), Some("Telegram: Fabien"));
+    }
+
+    #[test]
+    fn session_label_cron_from_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let dest = tmp.path().join("sessions");
+        let mem = tmp.path().join("memory").join("sessions");
+
+        let session_uuid = "cron1234-5678-4abc-9def-000000000001";
+
+        write_sessions_json(
+            home,
+            "main",
+            &serde_json::json!({
+                "agent:main:cron:daily-summary": {
+                    "sessionId": session_uuid,
+                    "updatedAt": 1770000000000_u64
+                }
+            })
+            .to_string(),
+        );
+
+        setup_session(home, "main", session_uuid, &[
+            r#"{"type":"message","message":{"role":"assistant","content":"Daily summary done"}}"#,
+        ]);
+
+        let detection = make_detection(home);
+        let report = import_sessions(&detection, &dest, &mem);
+        assert_eq!(report.status, ImportStatus::Success);
+
+        let metadata: HashMap<String, ImportedSessionEntry> =
+            serde_json::from_str(&std::fs::read_to_string(dest.join("metadata.json")).unwrap())
+                .unwrap();
+        let key = format!("oc:main:{session_uuid}");
+        let entry = metadata.get(&key).unwrap();
+        assert_eq!(entry.label.as_deref(), Some("Cron"));
+    }
+
+    #[test]
+    fn session_label_fallback_without_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let dest = tmp.path().join("sessions");
+        let mem = tmp.path().join("memory").join("sessions");
+
+        // No sessions.json — just a JSONL file with a UUID-like name
+        setup_session(home, "main", "abcd1234-dead-beef-cafe-112233445566", &[
+            r#"{"type":"message","message":{"role":"user","content":"test"}}"#,
+        ]);
+
+        let detection = make_detection(home);
+        let report = import_sessions(&detection, &dest, &mem);
+        assert_eq!(report.status, ImportStatus::Success);
+
+        let metadata: HashMap<String, ImportedSessionEntry> =
+            serde_json::from_str(&std::fs::read_to_string(dest.join("metadata.json")).unwrap())
+                .unwrap();
+        let entry = metadata
+            .get("oc:main:abcd1234-dead-beef-cafe-112233445566")
+            .unwrap();
+        // Fallback: first 8 chars of the stem
+        assert_eq!(entry.label.as_deref(), Some("OpenClaw: abcd1234"));
+    }
+
+    #[test]
+    fn build_session_label_unit_tests() {
+        // Main session
+        assert_eq!(build_session_label("agent:main:main", None), "Main");
+
+        // Telegram with label
+        let origin = OpenClawSessionOrigin {
+            label: Some("Alice (@alice) id:123".to_string()),
+            provider: Some("telegram".to_string()),
+            chat_type: Some("direct".to_string()),
+        };
+        assert_eq!(
+            build_session_label("agent:main:telegram:dm:123", Some(&origin)),
+            "Telegram: Alice"
+        );
+
+        // Telegram without label
+        assert_eq!(
+            build_session_label("agent:main:telegram:dm:123", None),
+            "Telegram"
+        );
+
+        // Signal with label
+        let signal_origin = OpenClawSessionOrigin {
+            label: Some("Bob".to_string()),
+            provider: Some("signal".to_string()),
+            chat_type: Some("direct".to_string()),
+        };
+        assert_eq!(
+            build_session_label("agent:main:signal:dm:+1234567890", Some(&signal_origin)),
+            "Signal: Bob"
+        );
+
+        // Cron
+        assert_eq!(build_session_label("agent:main:cron:daily", None), "Cron");
+
+        // Unknown key with origin label
+        let other_origin = OpenClawSessionOrigin {
+            label: Some("Charlie".to_string()),
+            provider: None,
+            chat_type: None,
+        };
+        assert_eq!(
+            build_session_label("agent:main:unknown:thing", Some(&other_origin)),
+            "OpenClaw: Charlie"
+        );
+
+        // Unknown key without origin
+        assert_eq!(
+            build_session_label("agent:main:unknown:thing", None),
+            "OpenClaw: agent:main:unknown:thing"
+        );
+    }
+
+    #[test]
+    fn load_session_label_map_parses_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        std::fs::write(
+            dir.join("sessions.json"),
+            serde_json::json!({
+                "agent:main:main": {
+                    "sessionId": "uuid-1",
+                    "updatedAt": 1000,
+                    "origin": { "label": "Test", "chatType": "direct" }
+                },
+                "agent:main:telegram:dm:99": {
+                    "sessionId": "uuid-2",
+                    "updatedAt": 2000,
+                    "origin": { "label": "User99", "provider": "telegram" }
+                },
+                "agent:main:no-session-id": {
+                    "updatedAt": 3000
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let map = load_session_label_map(dir);
+        assert_eq!(map.len(), 2); // no-session-id entry is excluded
+        assert!(map.contains_key("uuid-1"));
+        assert!(map.contains_key("uuid-2"));
+
+        let (key, origin) = &map["uuid-1"];
+        assert_eq!(key, "agent:main:main");
+        assert_eq!(
+            origin.as_ref().and_then(|o| o.label.as_deref()),
+            Some("Test")
         );
     }
 }

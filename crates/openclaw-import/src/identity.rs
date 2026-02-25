@@ -5,12 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use {serde::Deserialize, tracing::debug};
+use tracing::{debug, info};
 
 use crate::{
     detect::{OpenClawDetection, resolve_agent_sessions_dir},
     report::{CategoryReport, ImportCategory},
-    types::{OpenClawAssistantConfig, OpenClawConfig},
+    types::{OpenClawAssistantConfig, OpenClawConfig, OpenClawSessionIndexEntry},
 };
 
 /// Extracted identity from an OpenClaw installation.
@@ -79,6 +79,15 @@ pub fn import_identity(detection: &OpenClawDetection) -> (CategoryReport, Import
         items += 1;
     }
 
+    info!(
+        agent_name = ?identity.agent_name,
+        theme = ?identity.theme,
+        user_name = ?identity.user_name,
+        user_timezone = ?identity.user_timezone,
+        items,
+        "openclaw identity: extraction complete"
+    );
+
     let report = if items > 0 {
         CategoryReport::success(ImportCategory::Identity, items)
     } else {
@@ -92,15 +101,28 @@ fn load_config(home_dir: &Path) -> OpenClawConfig {
     for candidate in ["openclaw.json", "clawdbot.json"] {
         let path = home_dir.join(candidate);
         if !path.is_file() {
+            debug!(path = %path.display(), "openclaw identity: config file not found");
             continue;
         }
-        let Ok(content) = std::fs::read_to_string(path) else {
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            info!(path = %path.display(), "openclaw identity: config file unreadable");
             continue;
         };
-        if let Ok(config) = json5::from_str(&content) {
-            return config;
+        match json5::from_str::<OpenClawConfig>(&content) {
+            Ok(config) => {
+                info!(
+                    path = %path.display(),
+                    has_ui_assistant = config.ui.assistant.is_some(),
+                    "openclaw identity: loaded config"
+                );
+                return config;
+            },
+            Err(e) => {
+                info!(path = %path.display(), error = %e, "openclaw identity: config parse error");
+            },
         }
     }
+    info!("openclaw identity: no config found, using defaults");
     OpenClawConfig::default()
 }
 
@@ -125,9 +147,22 @@ fn infer_agent_name_from_workspace(
 
 fn infer_theme(config: &OpenClawConfig, detection: &OpenClawDetection) -> Option<String> {
     if let Some(theme) = extract_theme_from_assistant(config.ui.assistant.as_ref()) {
+        info!(theme = %theme, "openclaw identity: theme from ui.assistant");
         return Some(theme);
     }
-    infer_theme_from_workspace_identity(config, detection)
+    info!(
+        has_assistant = config.ui.assistant.is_some(),
+        theme = ?config.ui.assistant.as_ref().and_then(|a| a.theme.as_deref()),
+        creature = ?config.ui.assistant.as_ref().and_then(|a| a.creature.as_deref()),
+        vibe = ?config.ui.assistant.as_ref().and_then(|a| a.vibe.as_deref()),
+        "openclaw identity: no theme from ui.assistant, trying workspace IDENTITY.md"
+    );
+    let result = infer_theme_from_workspace_identity(config, detection);
+    match &result {
+        Some(theme) => info!(theme = %theme, "openclaw identity: theme from workspace IDENTITY.md"),
+        None => info!("openclaw identity: no theme found in any source"),
+    }
+    result
 }
 
 fn extract_theme_from_assistant(assistant: Option<&OpenClawAssistantConfig>) -> Option<String> {
@@ -146,11 +181,19 @@ fn infer_theme_from_workspace_identity(
     config: &OpenClawConfig,
     detection: &OpenClawDetection,
 ) -> Option<String> {
-    for workspace in candidate_workspace_dirs(config, detection) {
+    let candidates = candidate_workspace_dirs(config, detection);
+    debug!(
+        count = candidates.len(),
+        paths = ?candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        "openclaw identity: workspace candidates for IDENTITY.md"
+    );
+    for workspace in candidates {
         let identity_path = workspace.join("IDENTITY.md");
-        let Ok(content) = std::fs::read_to_string(identity_path) else {
+        let Ok(content) = std::fs::read_to_string(&identity_path) else {
+            debug!(path = %identity_path.display(), "openclaw identity: IDENTITY.md not found");
             continue;
         };
+        debug!(path = %identity_path.display(), "openclaw identity: reading IDENTITY.md");
         let identity = parse_workspace_identity(&content);
         if let Some(theme) = identity.theme {
             return Some(theme);
@@ -158,6 +201,7 @@ fn infer_theme_from_workspace_identity(
         if let Some(theme) = compose_theme(identity.creature, identity.vibe) {
             return Some(theme);
         }
+        debug!(path = %identity_path.display(), "openclaw identity: IDENTITY.md found but no theme/creature/vibe extracted");
     }
     None
 }
@@ -269,7 +313,11 @@ fn parse_workspace_identity(content: &str) -> WorkspaceIdentityFrontmatter {
             .trim()
             .trim_matches(|c| c == '*' || c == '`' || c == '_')
             .to_ascii_lowercase();
-        let value = unquote_yaml_scalar(raw_value.trim());
+        // Strip leading markdown bold/italic artifacts (e.g. `**Key:** **value`
+        // splits as key=`**Key`, value=`** value` — the `**` is the closing
+        // bold marker, not part of the value).
+        let value =
+            unquote_yaml_scalar(raw_value.trim().trim_start_matches(['*', '_']).trim_start());
         let Some(value) = normalize_identity_value(Some(value)) else {
             continue;
         };
@@ -323,6 +371,7 @@ fn candidate_workspace_dirs(
     detection: &OpenClawDetection,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
+    let user_home = dirs_next::home_dir();
 
     let mut push = |path: PathBuf| {
         if candidates.iter().any(|p| p == &path) {
@@ -331,8 +380,29 @@ fn candidate_workspace_dirs(
         candidates.push(path);
     };
 
+    // Push configured workspace paths, with fallbacks for absolute paths that
+    // may have been on a different machine (e.g. `/root/clawd` on a VM but
+    // `~/clawd` locally).
+    let mut push_workspace = |raw: &str| {
+        let resolved = resolve_workspace_path(raw, &detection.home_dir);
+        push(resolved.clone());
+
+        // Fallback: if the resolved path is absolute and doesn't exist, try
+        // the basename under the user's home directory and under the OpenClaw
+        // home directory.
+        if resolved.is_absolute()
+            && !resolved.exists()
+            && let Some(basename) = resolved.file_name()
+        {
+            if let Some(ref home) = user_home {
+                push(home.join(basename));
+            }
+            push(detection.home_dir.join(basename));
+        }
+    };
+
     if let Some(workspace) = config.agents.defaults.workspace.as_deref() {
-        push(resolve_workspace_path(workspace, &detection.home_dir));
+        push_workspace(workspace);
     }
 
     if let Some(workspace) = config
@@ -342,7 +412,7 @@ fn candidate_workspace_dirs(
         .find(|agent| agent.default)
         .and_then(|agent| agent.workspace.as_deref())
     {
-        push(resolve_workspace_path(workspace, &detection.home_dir));
+        push_workspace(workspace);
     }
 
     for workspace in config
@@ -351,7 +421,7 @@ fn candidate_workspace_dirs(
         .iter()
         .filter_map(|agent| agent.workspace.as_deref())
     {
-        push(resolve_workspace_path(workspace, &detection.home_dir));
+        push_workspace(workspace);
     }
 
     push(detection.workspace_dir.clone());
@@ -398,9 +468,10 @@ fn infer_user_name_from_sessions_index(detection: &OpenClawDetection) -> Option<
     let sessions_dir = resolve_agent_sessions_dir(&agent_dir)?;
     let sessions_index_path = sessions_dir.join("sessions.json");
     let content = std::fs::read_to_string(sessions_index_path).ok()?;
-    let entries: HashMap<String, SessionIndexEntry> = serde_json::from_str(&content).ok()?;
+    let entries: HashMap<String, OpenClawSessionIndexEntry> =
+        serde_json::from_str(&content).ok()?;
 
-    let mut rows: Vec<&SessionIndexEntry> = entries.values().collect();
+    let mut rows: Vec<&OpenClawSessionIndexEntry> = entries.values().collect();
     rows.sort_by_key(|e| std::cmp::Reverse(e.updated_at.unwrap_or(0)));
 
     for row in rows.iter().copied() {
@@ -435,7 +506,7 @@ fn preferred_agent_id(detection: &OpenClawDetection) -> Option<&str> {
         .map(String::as_str)
 }
 
-fn normalize_display_name(label: &str) -> Option<String> {
+pub(crate) fn normalize_display_name(label: &str) -> Option<String> {
     let mut value = label.trim();
     if let Some((left, _)) = value.split_once("(@") {
         value = left;
@@ -470,20 +541,6 @@ fn titleize_identifier(raw: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-#[derive(Debug, Deserialize)]
-struct SessionIndexEntry {
-    #[serde(rename = "updatedAt")]
-    updated_at: Option<u64>,
-    origin: Option<SessionOrigin>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SessionOrigin {
-    #[serde(rename = "chatType")]
-    chat_type: Option<String>,
-    label: Option<String>,
 }
 
 #[cfg(test)]
@@ -600,14 +657,44 @@ mod tests {
             "# IDENTITY.md\n\n- Creature: owl\n- Vibe: wise\n",
         )
         .unwrap();
+        // Use a unique basename that won't collide with real directories on the
+        // host (the fallback resolution also tries ~/basename).
         std::fs::write(
             tmp.path().join("openclaw.json"),
-            r#"{"agents":{"defaults":{"workspace":"/root/clawd"}}}"#,
+            r#"{"agents":{"defaults":{"workspace":"/nonexistent/oc-test-ws-12345"}}}"#,
         )
         .unwrap();
 
         let (_, identity) = import_identity(&make_detection(tmp.path()));
         assert_eq!(identity.theme.as_deref(), Some("wise owl"));
+    }
+
+    #[test]
+    fn import_theme_resolves_workspace_basename_under_openclaw_home() {
+        // Simulates: config says `/root/my-agent-ws` (server path), but the
+        // user copied the workspace under ~/.openclaw/ on their local machine.
+        // The fallback resolves the basename under home_dir.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+
+        // The workspace basename placed under the openclaw home dir
+        let local_ws = home.join("my-agent-ws");
+        std::fs::create_dir_all(&local_ws).unwrap();
+        std::fs::write(
+            local_ws.join("IDENTITY.md"),
+            "---\ncreature: parrot\nvibe: cheerful\n---\n",
+        )
+        .unwrap();
+
+        // Config points to an absolute path that doesn't exist locally
+        std::fs::write(
+            home.join("openclaw.json"),
+            r#"{"agents":{"defaults":{"workspace":"/root/my-agent-ws"}}}"#,
+        )
+        .unwrap();
+
+        let (_, identity) = import_identity(&make_detection(home));
+        assert_eq!(identity.theme.as_deref(), Some("cheerful parrot"));
     }
 
     #[test]

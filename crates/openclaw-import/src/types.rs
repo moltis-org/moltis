@@ -330,6 +330,30 @@ impl OpenClawContent {
     }
 }
 
+// ── Session index (sessions.json) ────────────────────────────────────────────
+
+/// A single entry in the `sessions.json` index file.
+///
+/// The index maps logical session keys (e.g. `agent:main:main`) to metadata
+/// including timestamps and origin information.
+#[derive(Debug, Deserialize)]
+pub struct OpenClawSessionIndexEntry {
+    #[serde(rename = "sessionId")]
+    pub session_id: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: Option<u64>,
+    pub origin: Option<OpenClawSessionOrigin>,
+}
+
+/// Origin metadata for a session in `sessions.json`.
+#[derive(Debug, Deserialize)]
+pub struct OpenClawSessionOrigin {
+    pub label: Option<String>,
+    pub provider: Option<String>,
+    #[serde(rename = "chatType")]
+    pub chat_type: Option<String>,
+}
+
 // ── MCP servers (OpenClaw format) ────────────────────────────────────────────
 
 /// A single MCP server entry in OpenClaw's config.
@@ -507,6 +531,45 @@ mod tests {
         assert!(config.channels.whatsapp.is_some());
         assert!(config.channels.discord.is_some());
         assert!(config.channels.telegram.is_none());
+    }
+
+    #[test]
+    fn parse_session_index_entry() {
+        let json = r#"{
+            "agent:main:main": {
+                "sessionId": "d8da3601-1234-4abc-9def-aabbccddeeff",
+                "updatedAt": 1770000000000,
+                "origin": {
+                    "label": "Fabien (@fabienpenso) id:377114917",
+                    "provider": "telegram",
+                    "chatType": "direct"
+                }
+            }
+        }"#;
+        let entries: HashMap<String, OpenClawSessionIndexEntry> =
+            serde_json::from_str(json).unwrap();
+        let entry = entries.get("agent:main:main").unwrap();
+        assert_eq!(
+            entry.session_id.as_deref(),
+            Some("d8da3601-1234-4abc-9def-aabbccddeeff")
+        );
+        assert_eq!(entry.updated_at, Some(1770000000000));
+        let origin = entry.origin.as_ref().unwrap();
+        assert_eq!(
+            origin.label.as_deref(),
+            Some("Fabien (@fabienpenso) id:377114917")
+        );
+        assert_eq!(origin.provider.as_deref(), Some("telegram"));
+        assert_eq!(origin.chat_type.as_deref(), Some("direct"));
+    }
+
+    #[test]
+    fn parse_session_index_entry_minimal() {
+        let json = r#"{"updatedAt": 1000}"#;
+        let entry: OpenClawSessionIndexEntry = serde_json::from_str(json).unwrap();
+        assert!(entry.session_id.is_none());
+        assert!(entry.origin.is_none());
+        assert_eq!(entry.updated_at, Some(1000));
     }
 
     #[test]
