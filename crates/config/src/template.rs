@@ -88,6 +88,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   base_url  - Override API endpoint
 #   models    - Preferred models shown first (optional)
 #   fetch_models - Discover models from provider API when available (default: true)
+#   stream_transport - Streaming transport: "sse", "websocket", or "auto" (default: "sse")
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
@@ -113,6 +114,7 @@ offered = ["local-llm", "github-copilot", "openai-codex", "openai", "anthropic",
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
 models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 # fetch_models = true
+# stream_transport = "sse"                     # "sse" | "websocket" | "auto"
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
 

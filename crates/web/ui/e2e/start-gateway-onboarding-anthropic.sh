@@ -12,6 +12,7 @@ RUNTIME_ROOT="${MOLTIS_E2E_ONBOARDING_ANTHROPIC_RUNTIME_DIR:-${REPO_ROOT}/target
 CONFIG_DIR="${RUNTIME_ROOT}/config"
 DATA_DIR="${RUNTIME_ROOT}/data"
 HOME_DIR="${RUNTIME_ROOT}/home"
+ORIGINAL_HOME="${HOME:-}"
 
 rm -rf "${RUNTIME_ROOT}"
 mkdir -p "${CONFIG_DIR}" "${DATA_DIR}" "${HOME_DIR}"
@@ -23,6 +24,14 @@ cd "${REPO_ROOT}"
 export MOLTIS_CONFIG_DIR="${CONFIG_DIR}"
 export MOLTIS_DATA_DIR="${DATA_DIR}"
 export MOLTIS_SERVER__PORT="${PORT}"
+# Keep rustup/cargo toolchains available after HOME isolation so
+# stale-binary fallback can still rebuild when needed.
+if [ -z "${RUSTUP_HOME:-}" ] && [ -n "${ORIGINAL_HOME}" ]; then
+	export RUSTUP_HOME="${ORIGINAL_HOME}/.rustup"
+fi
+if [ -z "${CARGO_HOME:-}" ] && [ -n "${ORIGINAL_HOME}" ]; then
+	export CARGO_HOME="${ORIGINAL_HOME}/.cargo"
+fi
 # Isolate HOME so auto-detection cannot read user-global OAuth/key stores.
 export HOME="${HOME_DIR}"
 
@@ -44,6 +53,24 @@ unset VENICE_API_KEY
 unset OLLAMA_API_KEY
 unset KIMI_API_KEY
 
+binary_is_stale() {
+	local binary="$1"
+	if [ ! -f "${binary}" ]; then
+		return 0
+	fi
+	if [ "${REPO_ROOT}/Cargo.toml" -nt "${binary}" ]; then
+		return 0
+	fi
+	if [ -f "${REPO_ROOT}/Cargo.lock" ] && [ "${REPO_ROOT}/Cargo.lock" -nt "${binary}" ]; then
+		return 0
+	fi
+	find "${REPO_ROOT}/crates" \
+		-type f \
+		\( -name "*.rs" -o -name "*.toml" -o -name "*.html" -o -name "*.js" -o -name "*.css" \) \
+		-newer "${binary}" \
+		-print -quit | grep -q .
+}
+
 # Prefer a pre-built binary to avoid recompiling every test run.
 BINARY="${MOLTIS_BINARY:-}"
 if [ -z "${BINARY}" ]; then
@@ -53,6 +80,11 @@ if [ -z "${BINARY}" ]; then
 			BINARY="${candidate}"
 		fi
 	done
+fi
+
+if [ -n "${BINARY}" ] && binary_is_stale "${BINARY}"; then
+	echo "Detected source changes newer than ${BINARY}; using cargo run for a fresh build." >&2
+	BINARY=""
 fi
 
 if [ -n "${BINARY}" ]; then
