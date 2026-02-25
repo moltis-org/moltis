@@ -122,10 +122,10 @@ pub trait ChatRuntime: Send + Sync {
         body: &str,
         url: Option<&str>,
         session_key: Option<&str>,
-    ) -> anyhow::Result<usize>;
+    ) -> crate::error::Result<usize>;
 
     // ── Local LLM ────────────────────────────────────────────────────────
 
     /// Ensure a local model is cached/downloaded. No-op if local-llm is disabled.
-    async fn ensure_local_model_cached(&self, model_id: &str) -> Result<bool, String>;
+    async fn ensure_local_model_cached(&self, model_id: &str) -> crate::error::Result<bool>;
 }

@@ -112,7 +112,7 @@ pub async fn api_mcp_handler(State(state): State<AppState>) -> impl IntoResponse
         Ok(val) => Json(val).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e })),
+            Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
     }
@@ -125,7 +125,10 @@ pub async fn api_hooks_handler(State(state): State<AppState>) -> impl IntoRespon
 
 // ── Skills ───────────────────────────────────────────────────────────────────
 
-fn enabled_from_manifest(path_result: anyhow::Result<PathBuf>) -> Vec<serde_json::Value> {
+fn enabled_from_manifest<E>(path_result: Result<PathBuf, E>) -> Vec<serde_json::Value>
+where
+    E: std::fmt::Display,
+{
     let Ok(path) = path_result else {
         return Vec::new();
     };

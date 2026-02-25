@@ -58,6 +58,7 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
             "nodejs",
             "npm",
             "ruby",
+            "golang-go",
         ],
     ),
     (

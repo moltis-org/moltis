@@ -86,6 +86,8 @@ try {
 gon.onChange("update", showUpdateBanner);
 onEvent("update.available", showUpdateBanner);
 initUpdateBannerDismiss();
+showVaultBanner(gon.get("vault_status"));
+gon.onChange("vault_status", showVaultBanner);
 onEvent("session", (payload) => {
 	fetchSessions();
 	if (payload && payload.kind === "patched" && payload.sessionKey === S.activeSessionKey) {
@@ -301,6 +303,12 @@ function initUpdateBannerDismiss() {
 		var el = document.getElementById("updateBanner");
 		if (el) el.style.display = "none";
 	});
+}
+
+function showVaultBanner(status) {
+	var el = document.getElementById("vaultBanner");
+	if (!el) return;
+	el.style.display = status === "sealed" ? "" : "none";
 }
 
 function showBranchBanner(branch) {

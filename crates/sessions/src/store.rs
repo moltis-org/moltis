@@ -5,7 +5,7 @@ use std::{
 };
 
 use {
-    anyhow::Result,
+    crate::{Error, Result},
     fd_lock::RwLock,
     serde::{Deserialize, Serialize},
 };
@@ -95,7 +95,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             writeln!(*guard, "{line}")?;
             Ok(())
         })
@@ -279,7 +279,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             for msg in &messages {
                 let line = serde_json::to_string(msg)?;
                 writeln!(*guard, "{line}")?;
@@ -375,7 +375,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             for msg in &values {
                 let line = serde_json::to_string(msg)?;
                 writeln!(*guard, "{line}")?;
@@ -408,7 +408,7 @@ impl SessionStore {
             let reader = BufReader::new(file);
             let count = reader
                 .lines()
-                .map_while(Result::ok)
+                .map_while(std::result::Result::ok)
                 .filter(|l| !l.trim().is_empty())
                 .count();
             Ok(count as u32)

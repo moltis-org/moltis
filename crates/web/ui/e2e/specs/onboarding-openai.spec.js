@@ -8,6 +8,11 @@ function isVisible(locator) {
 	return locator.isVisible().catch(() => false);
 }
 
+async function waitForOnboardingStepLoaded(page) {
+	await expect(page.locator(".onboarding-card")).toBeVisible();
+	await expect(page.getByText("Loading…")).toHaveCount(0, { timeout: 10_000 });
+}
+
 async function maybeSkipAuth(page) {
 	const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
 	if (!(await isVisible(authHeading))) return;
@@ -29,14 +34,32 @@ async function maybeCompleteIdentity(page) {
 	await page.getByRole("button", { name: "Continue", exact: true }).click();
 }
 
+async function maybeSkipOpenClawImport(page) {
+	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
+	if (!(await isVisible(importHeading))) return;
+
+	const skipBtn = page.getByRole("button", { name: /^Skip/ }).first();
+	if (await isVisible(skipBtn)) {
+		await skipBtn.click();
+	}
+}
+
 async function moveToLlmStep(page) {
+	await waitForOnboardingStepLoaded(page);
+
 	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
 	if (await isVisible(llmHeading)) return;
 
 	await maybeSkipAuth(page);
 	if (await isVisible(llmHeading)) return;
 
+	await maybeSkipOpenClawImport(page);
+	if (await isVisible(llmHeading)) return;
+
 	await maybeCompleteIdentity(page);
+	if (await isVisible(llmHeading)) return;
+
+	await maybeSkipOpenClawImport(page);
 	if (await isVisible(llmHeading)) return;
 
 	await expect(llmHeading).toBeVisible({ timeout: 15_000 });

@@ -3,6 +3,7 @@ mod config_dir;
 pub mod defaults;
 pub mod device_flow;
 pub mod discovery;
+pub mod error;
 pub mod flow;
 pub mod kimi;
 pub mod pkce;
@@ -24,3 +25,5 @@ pub use {
     storage::TokenStore,
     types::{OAuthConfig, OAuthTokens, PkceChallenge, serialize_option_secret, serialize_secret},
 };
+
+pub use error::{Error, Result};

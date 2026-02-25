@@ -10,6 +10,7 @@ import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
+import { initAgents, teardownAgents } from "./page-agents.js";
 // Moved page init/teardown imports
 import { initChannels, teardownChannels } from "./page-channels.js";
 import { initCrons, teardownCrons } from "./page-crons.js";
@@ -42,6 +43,7 @@ import {
 var identity = signal(null);
 var loading = signal(true);
 var activeSection = signal("identity");
+var activeSubPath = signal("");
 var mobileSidebarVisible = signal(true);
 var mounted = false;
 var containerRef = null;
@@ -63,9 +65,23 @@ function isSafariBrowser() {
 	return /Apple/i.test(vendor) || ua.includes("Safari/");
 }
 
+function isMissingMethodError(res) {
+	var message = res?.error?.message;
+	if (typeof message !== "string") return false;
+	var lower = message.toLowerCase();
+	return lower.includes("method") && (lower.includes("not found") || lower.includes("unknown"));
+}
+
+function fetchMainIdentity() {
+	return sendRpc("agents.identity.get", { agent_id: "main" }).then((res) => {
+		if (res?.ok || !isMissingMethodError(res)) return res;
+		return sendRpc("agent.identity.get", {});
+	});
+}
+
 function fetchIdentity() {
 	if (!mounted) return;
-	sendRpc("agent.identity.get", {}).then((res) => {
+	fetchMainIdentity().then((res) => {
 		if (res?.ok) {
 			identity.value = res.payload;
 			loading.value = false;
@@ -87,6 +103,12 @@ var sections = [
 		id: "identity",
 		label: "Identity",
 		icon: html`<span class="icon icon-person"></span>`,
+	},
+	{
+		id: "agents",
+		label: "Agents",
+		icon: html`<span class="icon icon-users"></span>`,
+		page: true,
 	},
 	{
 		id: "environment",
@@ -118,7 +140,12 @@ var sections = [
 	{ group: "Security" },
 	{
 		id: "security",
-		label: "Security",
+		label: "Authentication",
+		icon: html`<span class="icon icon-key"></span>`,
+	},
+	{
+		id: "vault",
+		label: "Encryption",
 		icon: html`<span class="icon icon-lock"></span>`,
 	},
 	{
@@ -156,6 +183,11 @@ var sections = [
 		label: "Skills",
 		icon: html`<span class="icon icon-sparkles"></span>`,
 		page: true,
+	},
+	{
+		id: "import",
+		label: "OpenClaw Import",
+		icon: html`<span class="icon icon-link"></span>`,
 	},
 	{
 		id: "voice",
@@ -200,7 +232,14 @@ var sections = [
 ];
 
 function getVisibleSections() {
-	return sections.filter((s) => !s.id || s.id !== "graphql" || gon.get("graphql_enabled"));
+	var vs = gon.get("vault_status");
+	return sections.filter((s) => {
+		if (!s.id) return true;
+		if (s.id === "graphql" && !gon.get("graphql_enabled")) return false;
+		if (s.id === "import" && !gon.get("openclaw_detected")) return false;
+		if (s.id === "vault" && (!vs || vs === "disabled")) return false;
+		return true;
+	});
 }
 
 /** Return only items with an id (no group headings). */
@@ -314,13 +353,16 @@ function IdentitySection() {
 		setSaving(true);
 		setSaved(false);
 
-		updateIdentity({
-			name: name.trim(),
-			emoji: emoji.trim() || "",
-			theme: theme.trim() || "",
-			soul: soul.trim() || null,
-			user_name: userName.trim(),
-		}).then((res) => {
+		updateIdentity(
+			{
+				name: name.trim(),
+				emoji: emoji.trim() || "",
+				theme: theme.trim() || "",
+				soul: soul.trim() || null,
+				user_name: userName.trim(),
+			},
+			{ agentId: "main" },
+		).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
 				identity.value = res.payload;
@@ -341,7 +383,7 @@ function IdentitySection() {
 		setError(null);
 		setSaved(false);
 		setEmojiSaving(true);
-		updateIdentity({ emoji: nextEmoji.trim() || "" }).then((res) => {
+		updateIdentity({ emoji: nextEmoji.trim() || "" }, { agentId: "main" }).then((res) => {
 			setEmojiSaving(false);
 			if (res?.ok) {
 				identity.value = res.payload;
@@ -379,7 +421,7 @@ function IdentitySection() {
 
 		var payload = {};
 		payload[field] = trimmed;
-		updateIdentity(payload).then((res) => {
+		updateIdentity(payload, { agentId: "main" }).then((res) => {
 			if (field === "name") {
 				setNameSaving(false);
 			} else {
@@ -607,11 +649,26 @@ function EnvironmentSection() {
 		});
 	}
 
+	var envVaultStatus = gon.get("vault_status");
+
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Environment Variables</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
 			Environment variables are injected into sandbox command execution. Values are write-only and never displayed.
 		</p>
+		${
+			envVaultStatus && envVaultStatus !== "disabled"
+				? html`<div class="text-xs" style="max-width:600px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+			${
+				envVaultStatus === "unsealed"
+					? html`<span style="color:var(--accent);">Vault unlocked.</span> Your keys are stored encrypted.`
+					: envVaultStatus === "sealed"
+						? html`<span style="color:var(--warning,var(--error));">Vault locked.</span> Encrypted keys can\u2019t be read \u2014 sandbox commands won\u2019t work. <a href="/settings/vault" style="color:inherit;text-decoration:underline;">Unlock in Encryption settings.</a>`
+						: html`<span class="text-[var(--muted)]">Vault not set up.</span> <a href="/settings/security" style="color:inherit;text-decoration:underline;">Set a password</a> to encrypt your stored keys.`
+			}
+		</div>`
+				: null
+		}
 
 		${
 			envLoading
@@ -631,6 +688,11 @@ function EnvironmentSection() {
 										onConfirmUpdate(v.key);
 									}}>
 									<code style="font-size:0.8rem;font-family:var(--font-mono);">${v.key}</code>
+									${
+										v.encrypted
+											? html`<span class="provider-item-badge configured">Encrypted</span>`
+											: html`<span class="provider-item-badge muted">Plaintext</span>`
+									}
 									<input type="password" class="provider-key-input"
 										name="env_update_value"
 										autocomplete="new-password"
@@ -644,7 +706,14 @@ function EnvironmentSection() {
 									<button type="button" class="provider-btn" onClick=${onCancelUpdate}>Cancel</button>
 								</form>`
 								: html`<div style="flex:1;min-width:0;">
-									<div class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">${v.key}</div>
+									<div class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">
+										${v.key}
+										${
+											v.encrypted
+												? html`<span class="provider-item-badge configured" style="margin-left:6px;">Encrypted</span>`
+												: html`<span class="provider-item-badge muted" style="margin-left:6px;">Plaintext</span>`
+										}
+									</div>
 									<div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;">
 										<span>\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022</span>
 										<time datetime=${v.updated_at}>${v.updated_at}</time>
@@ -716,6 +785,9 @@ function SecuritySection() {
 	var [pwMsg, setPwMsg] = useState(null);
 	var [pwErr, setPwErr] = useState(null);
 	var [pwSaving, setPwSaving] = useState(false);
+	var [pwAwaitingReauth, setPwAwaitingReauth] = useState(false);
+	var [pwRecoveryKey, setPwRecoveryKey] = useState(null);
+	var [pwRecoveryCopied, setPwRecoveryCopied] = useState(false);
 
 	var [passkeys, setPasskeys] = useState([]);
 	var [pkName, setPkName] = useState("");
@@ -741,19 +813,27 @@ function SecuritySection() {
 		window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
 	}
 
+	function deferNextPasswordChangedRedirect() {
+		window.__moltisSuppressNextPasswordChangedRedirect = true;
+	}
+
+	function clearPasswordChangedRedirectDeferral() {
+		window.__moltisSuppressNextPasswordChangedRedirect = false;
+	}
+
 	// A credential added while localhost-bypass is active can immediately make the
 	// current session unauthenticated (no session cookie). Reload so middleware
 	// can route to /login in that transition.
-	function reloadIfAuthNowRequiresLogin() {
+	function reloadIfAuthNowRequiresLogin({ reload = true } = {}) {
 		return fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
 			.then((d) => {
 				var mustLogin = !!(d && d.auth_disabled === false && d.setup_required === false && d.authenticated === false);
-				if (mustLogin) {
+				if (mustLogin && reload) {
 					window.location.reload();
 					return true;
 				}
-				return false;
+				return mustLogin;
 			})
 			.catch(() => false);
 	}
@@ -807,6 +887,9 @@ function SecuritySection() {
 			return;
 		}
 		setPwSaving(true);
+		setPwAwaitingReauth(false);
+		var settingFirstPassword = !hasPassword;
+		if (settingFirstPassword) deferNextPasswordChangedRedirect();
 		var payload = { new_password: newPw };
 		if (hasPassword) payload.current_password = curPw;
 		fetch("/api/auth/password/change", {
@@ -817,28 +900,48 @@ function SecuritySection() {
 			.then((r) => {
 				if (!r.ok) {
 					return r.text().then((t) => {
+						clearPasswordChangedRedirectDeferral();
 						setPwErr(t);
 						setPwSaving(false);
+						setPwAwaitingReauth(false);
 						rerender();
 					});
 				}
 
-				setPwMsg(hasPassword ? "Password changed." : "Password set.");
-				setCurPw("");
-				setNewPw("");
-				setConfirmPw("");
-				setHasPassword(true);
-				setSetupComplete(true);
-				setAuthDisabled(false);
-				return reloadIfAuthNowRequiresLogin().then((reloaded) => {
-					if (!reloaded) notifyAuthStatusChanged();
-					setPwSaving(false);
-					rerender();
+				return r.json().then((data) => {
+					var hasRecoveryKey = !!data.recovery_key;
+					setPwMsg(hasPassword ? "Password changed." : "Password set.");
+					setCurPw("");
+					setNewPw("");
+					setConfirmPw("");
+					setHasPassword(true);
+					setSetupComplete(true);
+					setAuthDisabled(false);
+					if (hasRecoveryKey) {
+						setPwRecoveryKey(data.recovery_key);
+						refreshGon();
+					}
+					return reloadIfAuthNowRequiresLogin({ reload: !hasRecoveryKey }).then((requiresLoginOrReloaded) => {
+						if (hasRecoveryKey && requiresLoginOrReloaded) {
+							setPwAwaitingReauth(true);
+							setPwMsg("Password set. Save the recovery key, then continue to sign in.");
+							setPwSaving(false);
+							rerender();
+							return;
+						}
+						clearPasswordChangedRedirectDeferral();
+						setPwAwaitingReauth(false);
+						if (!requiresLoginOrReloaded) notifyAuthStatusChanged();
+						setPwSaving(false);
+						rerender();
+					});
 				});
 			})
 			.catch((err) => {
+				clearPasswordChangedRedirectDeferral();
 				setPwErr(err.message);
 				setPwSaving(false);
+				setPwAwaitingReauth(false);
 				rerender();
 			});
 	}
@@ -1045,14 +1148,14 @@ function SecuritySection() {
 
 	if (authLoading) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Security</h2>
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
 			<div class="text-xs text-[var(--muted)]">Loading\u2026</div>
 		</div>`;
 	}
 
 	if (authDisabled && !localhostOnly) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Security</h2>
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
 			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--error);background:color-mix(in srgb, var(--error) 5%, transparent);">
 				<strong style="color:var(--error);">Authentication is disabled</strong>
 				<p class="text-xs text-[var(--muted)]" style="margin:8px 0 0;">
@@ -1067,7 +1170,7 @@ function SecuritySection() {
 	}
 
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Security</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
 
 		${
 			authDisabled && localhostOnly
@@ -1124,6 +1227,37 @@ function SecuritySection() {
 					${pwErr ? html`<span class="text-xs" style="color:var(--error);">${pwErr}</span>` : null}
 				</div>
 			</form>
+			${
+				pwRecoveryKey
+					? html`<div style="margin-top:12px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+				<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Vault initialized \u2014 save this recovery key</div>
+				<code class="select-all break-all" style="font-family:var(--font-mono);font-size:.8rem;color:var(--text-strong);display:block;line-height:1.5;">${pwRecoveryKey}</code>
+				<div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+					<button type="button" class="provider-btn provider-btn-secondary" onClick=${() => {
+						navigator.clipboard.writeText(pwRecoveryKey).then(() => {
+							setPwRecoveryCopied(true);
+							setTimeout(() => {
+								setPwRecoveryCopied(false);
+								rerender();
+							}, 2000);
+							rerender();
+						});
+					}}>${pwRecoveryCopied ? "Copied!" : "Copy"}</button>
+					${
+						pwAwaitingReauth
+							? html`<button type="button" class="provider-btn" onClick=${() => {
+									clearPasswordChangedRedirectDeferral();
+									window.location.assign("/login");
+								}}>Continue to sign in</button>`
+							: null
+					}
+				</div>
+				<div class="text-xs" style="color:var(--error);margin-top:8px;">
+					This key will not be shown again. You need it to unlock the vault if you forget your password.
+				</div>
+			</div>`
+					: null
+			}
 		</div>
 
 		<!-- Passkeys -->
@@ -1306,6 +1440,136 @@ function SecuritySection() {
 	</div>`;
 }
 
+// ── Vault (Encryption) section ──────────────────────────────
+
+function VaultSection() {
+	var [vaultStatus, setVaultStatus] = useState(gon.get("vault_status") || null);
+	var [unlockPw, setUnlockPw] = useState("");
+	var [recoveryKey, setRecoveryKey] = useState("");
+	var [msg, setMsg] = useState(null);
+	var [err, setErr] = useState(null);
+	var [unlockingPw, setUnlockingPw] = useState(false);
+	var [unlockingRk, setUnlockingRk] = useState(false);
+
+	useEffect(() => {
+		return gon.onChange("vault_status", (val) => {
+			setVaultStatus(val);
+			rerender();
+		});
+	}, []);
+
+	function onUnlockPw(e) {
+		e.preventDefault();
+		if (!unlockPw.trim()) return;
+		setErr(null);
+		setMsg(null);
+		setUnlockingPw(true);
+		rerender();
+		doUnlock("/api/auth/vault/unlock", { password: unlockPw }, () => setUnlockingPw(false));
+	}
+
+	function onUnlockRecovery(e) {
+		e.preventDefault();
+		if (!recoveryKey.trim()) return;
+		setErr(null);
+		setMsg(null);
+		setUnlockingRk(true);
+		rerender();
+		doUnlock("/api/auth/vault/recovery", { recovery_key: recoveryKey }, () => setUnlockingRk(false));
+	}
+
+	function doUnlock(url, body, done) {
+		fetch(url, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		})
+			.then((r) => {
+				if (r.ok) {
+					setMsg("Vault unlocked.");
+					setUnlockPw("");
+					setRecoveryKey("");
+					refreshGon();
+				} else {
+					return r.text().then((t) => setErr(t || "Unlock failed"));
+				}
+				done();
+				rerender();
+			})
+			.catch((error) => {
+				setErr(error.message);
+				done();
+				rerender();
+			});
+	}
+
+	if (!vaultStatus || vaultStatus === "disabled") {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Encryption</h2>
+			<p class="text-xs text-[var(--muted)]">Encryption at rest is not available in this build.</p>
+		</div>`;
+	}
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Encryption</h2>
+
+		<div style="max-width:600px;">
+			<p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0 0 12px;">
+				Your API keys and secrets are encrypted before being stored in the database. The vault locks automatically when the server restarts and unlocks when you log in.
+			</p>
+
+			<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+				<span class="provider-item-badge ${vaultStatus === "unsealed" ? "configured" : vaultStatus === "sealed" ? "warning" : "muted"}">
+					${vaultStatus === "unsealed" ? "Unlocked" : vaultStatus === "sealed" ? "Locked" : "Off"}
+				</span>
+				<span class="text-xs text-[var(--muted)]">${
+					vaultStatus === "unsealed"
+						? "Your API keys and secrets are encrypted in the database. Everything is working."
+						: vaultStatus === "sealed"
+							? "Log in or unlock below to access your encrypted keys."
+							: "Set a password in Authentication settings to start encrypting your stored keys."
+				}</span>
+			</div>
+
+			${
+				vaultStatus === "sealed"
+					? html`<div style="display:flex;flex-direction:column;gap:12px;">
+				<form onSubmit=${onUnlockPw} style="display:flex;flex-direction:column;gap:6px;">
+					<div class="text-xs text-[var(--muted)]">Unlock with password</div>
+					<div style="display:flex;gap:8px;align-items:center;">
+						<input type="password" class="provider-key-input" style="flex:1;" value=${unlockPw} onInput=${(e) => setUnlockPw(e.target.value)} placeholder="Your password" />
+						<button type="submit" class="provider-btn" disabled=${unlockingPw || !unlockPw.trim()}>${unlockingPw ? "Unlocking\u2026" : "Unlock"}</button>
+					</div>
+				</form>
+				<div style="display:flex;align-items:center;gap:8px;">
+					<div style="flex:1;border-top:1px solid var(--border);"></div>
+					<span class="text-xs text-[var(--muted)]">or</span>
+					<div style="flex:1;border-top:1px solid var(--border);"></div>
+				</div>
+				<form onSubmit=${onUnlockRecovery} style="display:flex;flex-direction:column;gap:6px;">
+					<div class="text-xs text-[var(--muted)]">Unlock with recovery key</div>
+					<div style="display:flex;gap:8px;align-items:center;">
+						<input type="password" class="provider-key-input" style="flex:1;font-family:var(--font-mono);font-size:.78rem;" value=${recoveryKey} onInput=${(e) => setRecoveryKey(e.target.value)} placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" />
+						<button type="submit" class="provider-btn" disabled=${unlockingRk || !recoveryKey.trim()}>${unlockingRk ? "Unlocking\u2026" : "Unlock"}</button>
+					</div>
+				</form>
+				${msg ? html`<div class="text-xs" style="color:var(--accent);">${msg}</div>` : null}
+				${err ? html`<div class="text-xs" style="color:var(--error);">${err}</div>` : null}
+			</div>`
+					: null
+			}
+
+			${
+				vaultStatus === "uninitialized"
+					? html`<div style="margin-top:4px;">
+				<a href="/settings/security" class="provider-btn provider-btn-secondary" style="font-size:.75rem;text-decoration:none;display:inline-block;">Set a password</a>
+			</div>`
+					: null
+			}
+		</div>
+	</div>`;
+}
+
 function b64ToBuf(b64) {
 	var str = b64.replace(/-/g, "+").replace(/_/g, "/");
 	while (str.length % 4) str += "=";
@@ -1320,6 +1584,172 @@ function bufToB64(buf) {
 	var str = "";
 	for (var b of bytes) str += String.fromCharCode(b);
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ── OpenClaw Import section ───────────────────────────────────
+
+function OpenClawImportSection() {
+	var [importLoading, setImportLoading] = useState(true);
+	var [scan, setScan] = useState(null);
+	var [importing, setImporting] = useState(false);
+	var [done, setDone] = useState(false);
+	var [result, setResult] = useState(null);
+	var [error, setError] = useState(null);
+	var [selection, setSelection] = useState({
+		identity: true,
+		providers: true,
+		skills: true,
+		memory: true,
+		channels: true,
+		sessions: true,
+	});
+
+	useEffect(() => {
+		var cancelled = false;
+		sendRpc("openclaw.scan", {}).then((res) => {
+			if (cancelled) return;
+			if (res?.ok) setScan(res.payload);
+			else setError("Failed to scan OpenClaw installation");
+			setImportLoading(false);
+			rerender();
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	function toggleCategory(key) {
+		setSelection((prev) => {
+			var next = Object.assign({}, prev);
+			next[key] = !prev[key];
+			return next;
+		});
+	}
+
+	function doImport() {
+		setImporting(true);
+		setError(null);
+		sendRpc("openclaw.import", selection).then((res) => {
+			setImporting(false);
+			if (res?.ok) {
+				setResult(res.payload);
+				setDone(true);
+			} else {
+				setError(res?.error?.message || "Import failed");
+			}
+			rerender();
+		});
+	}
+
+	if (importLoading) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+			<div class="text-xs text-[var(--muted)]">Scanning\u2026</div>
+		</div>`;
+	}
+
+	if (!scan?.detected) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+			<div class="text-xs text-[var(--muted)]">No OpenClaw installation detected.</div>
+		</div>`;
+	}
+
+	var categories = [
+		{ key: "identity", label: "Identity", available: scan.identity_available },
+		{ key: "providers", label: "Providers", available: scan.providers_available },
+		{ key: "skills", label: "Skills", available: scan.skills_count > 0, detail: `${scan.skills_count} skill(s)` },
+		{
+			key: "memory",
+			label: "Memory",
+			available: scan.memory_available,
+			detail: `${scan.memory_files_count} memory file(s)`,
+		},
+		{
+			key: "channels",
+			label: "Channels",
+			available: scan.channels_available,
+			detail: `${scan.telegram_accounts} Telegram account(s)`,
+		},
+		{
+			key: "sessions",
+			label: "Sessions",
+			available: scan.sessions_count > 0,
+			detail: `${scan.sessions_count} session(s)`,
+		},
+	];
+	var anySelected = categories.some((c) => c.available && selection[c.key]);
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
+			Import data from your OpenClaw installation at <code class="text-[var(--text)]">${scan.home_dir}</code>.
+		</p>
+		${
+			error
+				? html`<div role="alert" class="alert-error-text whitespace-pre-line" style="max-width:600px;">
+			<span class="text-[var(--error)] font-medium">Error:</span> ${error}
+		</div>`
+				: null
+		}
+			${
+				done && result
+					? html`<div class="flex flex-col gap-2" style="max-width:600px;">
+						<div class="text-sm font-medium text-[var(--ok)]">Import complete: ${(result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0)} item(s) imported.</div>
+						${
+							result.categories
+								? html`<div class="flex flex-col gap-1">
+								${result.categories.map(
+									(cat) => html`<div key=${cat.category} class="text-xs text-[var(--text)]">
+										<span class="font-mono">[${cat.status === "success" ? "\u2713" : cat.status === "partial" ? "~" : cat.status === "skipped" ? "-" : "!"}]</span>
+										${cat.category}: ${cat.items_imported} imported, ${cat.items_skipped} skipped
+									</div>`,
+								)}
+							</div>`
+								: null
+						}
+					<button class="provider-btn provider-btn-secondary mt-2" style="width:fit-content;" onClick=${() => {
+						setDone(false);
+						setResult(null);
+						rerender();
+					}}>
+						Import Again
+					</button>
+				</div>`
+					: html`<div class="flex flex-col gap-2" style="max-width:400px;">
+					${categories.map(
+						(cat) => html`<label
+							key=${cat.key}
+							class="flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}">
+							<input
+								type="checkbox"
+								checked=${selection[cat.key] && cat.available}
+								disabled=${!cat.available || importing}
+								onChange=${() => toggleCategory(cat.key)}
+							/>
+							<span>${cat.label}</span>
+							${cat.detail && cat.available ? html`<span class="text-xs text-[var(--muted)]">(${cat.detail})</span>` : null}
+							${cat.available ? null : html`<span class="text-xs text-[var(--muted)]">(not found)</span>`}
+						</label>`,
+					)}
+				</div>
+				${
+					scan.unsupported_channels?.length > 0
+						? html`<p class="text-xs text-[var(--muted)]" style="max-width:600px;">
+							Unsupported channels (coming soon): ${scan.unsupported_channels.join(", ")}
+						</p>`
+						: null
+				}
+				<button
+					class="provider-btn mt-2"
+					style="width:fit-content;"
+					onClick=${doImport}
+					disabled=${!anySelected || importing}
+				>
+					${importing ? "Importing\u2026" : "Import Selected"}
+				</button>`
+			}
+	</div>`;
 }
 
 // ── Configuration section ─────────────────────────────────────
@@ -3372,6 +3802,7 @@ var pageSectionHandlers = {
 	mcp: { init: initMcp, teardown: teardownMcp },
 	hooks: { init: initHooks, teardown: teardownHooks },
 	skills: { init: initSkills, teardown: teardownSkills },
+	agents: { init: initAgents, teardown: teardownAgents },
 	terminal: { init: initTerminal, teardown: teardownTerminal },
 	sandboxes: { init: initImages, teardown: teardownImages },
 	monitoring: {
@@ -3382,14 +3813,14 @@ var pageSectionHandlers = {
 };
 
 /** Wrapper that mounts a page init/teardown pair into a ref div. */
-function PageSection({ initFn, teardownFn }) {
+function PageSection({ initFn, teardownFn, subPath }) {
 	var ref = useRef(null);
 	useEffect(() => {
-		if (ref.current) initFn(ref.current);
+		if (ref.current) initFn(ref.current, subPath);
 		return () => {
 			if (teardownFn) teardownFn();
 		};
-	}, []);
+	}, [initFn, teardownFn, subPath]);
 	return html`<div
 		ref=${ref}
 		class="flex-1 flex flex-col min-w-0 overflow-hidden"
@@ -3404,6 +3835,7 @@ function SettingsPage() {
 	}, []);
 
 	var section = activeSection.value;
+	var subPath = activeSubPath.value;
 	var ps = pageSectionHandlers[section];
 	var mobile = isMobileViewport();
 	var showSidebar = !mobile || mobileSidebarVisible.value;
@@ -3440,11 +3872,16 @@ function SettingsPage() {
 							</div>`
 							: null
 					}
-					${ps ? html`<${PageSection} key=${section} initFn=${ps.init} teardownFn=${ps.teardown} />` : null}
+					${
+						ps
+							? html`<${PageSection} key=${`${section}:${subPath}`} initFn=${ps.init} teardownFn=${ps.teardown} subPath=${subPath} />`
+							: null
+					}
 					${section === "identity" ? html`<${IdentitySection} />` : null}
 					${section === "memory" ? html`<${MemorySection} />` : null}
 					${section === "environment" ? html`<${EnvironmentSection} />` : null}
 						${section === "security" ? html`<${SecuritySection} />` : null}
+						${section === "vault" ? html`<${VaultSection} />` : null}
 						${section === "tailscale" ? html`<${TailscaleSection} />` : null}
 						${
 							section === "voice"
@@ -3459,6 +3896,7 @@ function SettingsPage() {
 								: null
 						}
 						${section === "notifications" ? html`<${NotificationsSection} />` : null}
+						${section === "import" ? html`<${OpenClawImportSection} />` : null}
 						${section === "graphql" ? html`<${GraphqlSection} />` : null}
 						${section === "config" ? html`<${ConfigSection} />` : null}
 					</div>`
@@ -3475,9 +3913,13 @@ registerPrefix(
 		mounted = true;
 		containerRef = container;
 		container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
-		var isValidSection = param && getSectionItems().some((s) => s.id === param);
-		var section = isValidSection ? param : DEFAULT_SECTION;
+		var parts = (param || "").replace(/:/g, "/").split("/").filter(Boolean);
+		var requestedSection = parts[0] || "";
+		var subPath = parts.slice(1).join("/");
+		var isValidSection = requestedSection && getSectionItems().some((s) => s.id === requestedSection);
+		var section = isValidSection ? requestedSection : DEFAULT_SECTION;
 		activeSection.value = section;
+		activeSubPath.value = isValidSection ? subPath : "";
 		mobileSidebarVisible.value = !isMobileViewport();
 		if (!isValidSection) {
 			history.replaceState(null, "", settingsPath(section));
@@ -3492,6 +3934,7 @@ registerPrefix(
 		identity.value = null;
 		loading.value = true;
 		activeSection.value = DEFAULT_SECTION;
+		activeSubPath.value = "";
 		mobileSidebarVisible.value = true;
 	},
 );

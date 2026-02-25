@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::{Duration, Instant},
@@ -32,11 +32,12 @@ use {
             build_system_prompt_with_session_runtime,
         },
         runner::{RunnerEvent, run_agent_loop_streaming},
-        tool_registry::ToolRegistry,
+        tool_registry::{AgentTool, ToolRegistry},
     },
     moltis_providers::{ProviderRegistry, raw_model_id},
     moltis_sessions::{
-        ContentBlock, MessageContent, PersistedMessage, metadata::SqliteSessionMetadata,
+        ContentBlock, MessageContent, PersistedMessage,
+        metadata::{SessionEntry, SqliteSessionMetadata},
         store::SessionStore,
     },
     moltis_skills::discover::SkillDiscoverer,
@@ -44,12 +45,13 @@ use {
 };
 
 pub mod chat_error;
+pub mod error;
 pub mod runtime;
 
 pub use runtime::{ChatRuntime, TtsOverride};
 use {
     chat_error::parse_chat_error,
-    moltis_service_traits::{ChatService, ModelService, ServiceResult},
+    moltis_service_traits::{ChatService, ModelService, ServiceError, ServiceResult},
 };
 
 /// Extract preview text from a single message JSON value.
@@ -908,7 +910,7 @@ fn detect_runtime_shell() -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let name = std::path::Path::new(trimmed)
+    let name = Path::new(trimmed)
         .file_name()
         .and_then(OsStr::to_str)
         .unwrap_or(trimmed)
@@ -1009,14 +1011,40 @@ struct PromptPersona {
     memory_text: Option<String>,
 }
 
-/// Load identity, user profile, soul, and workspace text from config + data files.
+fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> String {
+    let Some(entry) = session_entry else {
+        return "main".to_string();
+    };
+    let Some(agent_id) = entry
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return "main".to_string();
+    };
+    if agent_id == "main" {
+        return "main".to_string();
+    }
+    if moltis_config::agent_workspace_dir(agent_id).exists() {
+        return agent_id.to_string();
+    }
+    warn!(
+        session = %entry.key,
+        agent_id,
+        "session references unknown agent workspace, falling back to main prompt persona"
+    );
+    "main".to_string()
+}
+
+/// Load identity, user profile, soul, and workspace text for one agent.
 ///
 /// Both `run_with_tools` and `run_streaming` need the same persona data;
 /// this function avoids duplicating the merge logic.
-fn load_prompt_persona() -> PromptPersona {
+fn load_prompt_persona_for_agent(agent_id: &str) -> PromptPersona {
     let config = moltis_config::discover_and_load();
     let mut identity = config.identity.clone();
-    if let Some(file_identity) = moltis_config::load_identity() {
+    if let Some(file_identity) = moltis_config::load_identity_for_agent(agent_id) {
         if file_identity.name.is_some() {
             identity.name = file_identity.name;
         }
@@ -1040,18 +1068,23 @@ fn load_prompt_persona() -> PromptPersona {
         config,
         identity,
         user,
-        soul_text: moltis_config::load_soul(),
-        agents_text: moltis_config::load_agents_md(),
-        tools_text: moltis_config::load_tools_md(),
-        memory_text: moltis_config::load_memory_md(),
+        soul_text: moltis_config::load_soul_for_agent(agent_id),
+        agents_text: moltis_config::load_agents_md_for_agent(agent_id),
+        tools_text: moltis_config::load_tools_md_for_agent(agent_id),
+        memory_text: moltis_config::load_memory_md_for_agent(agent_id),
     }
+}
+
+fn load_prompt_persona_for_session(session_entry: Option<&SessionEntry>) -> PromptPersona {
+    let agent_id = resolve_prompt_agent_id(session_entry);
+    load_prompt_persona_for_agent(&agent_id)
 }
 
 async fn build_prompt_runtime_context(
     state: &Arc<dyn ChatRuntime>,
     provider: &Arc<dyn moltis_agents::model::LlmProvider>,
     session_key: &str,
-    session_entry: Option<&moltis_sessions::metadata::SessionEntry>,
+    session_entry: Option<&SessionEntry>,
 ) -> PromptRuntimeContext {
     let data_dir = moltis_config::data_dir();
     let data_dir_display = data_dir.display().to_string();
@@ -1313,8 +1346,8 @@ impl DisabledModelsStore {
     }
 
     /// Save disabled models to config file.
-    pub fn save(&self) -> anyhow::Result<()> {
-        let path = Self::config_path().ok_or_else(|| anyhow::anyhow!("no config directory"))?;
+    pub fn save(&self) -> error::Result<()> {
+        let path = Self::config_path().ok_or(error::Error::NoConfigDirectory)?;
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
@@ -1735,7 +1768,7 @@ impl ModelService for LiveModelService {
             Arc::clone(&self.detect_gate)
                 .acquire_owned()
                 .await
-                .map_err(|_| "model probe gate closed".to_string())?
+                .map_err(|_| ServiceError::message("model probe gate closed"))?
         };
 
         let state = self.state.get().cloned();
@@ -2070,7 +2103,7 @@ impl ModelService for LiveModelService {
                 } else {
                     format!(". did you mean: {}", suggestions.join(", "))
                 };
-                return Err(format!("unknown model: {model_id}{suggestion_hint}"));
+                return Err(format!("unknown model: {model_id}{suggestion_hint}").into());
             }
         };
         let started = Instant::now();
@@ -2126,7 +2159,7 @@ impl ModelService for LiveModelService {
                     error = %detail,
                     "model probe failed"
                 );
-                Err(detail)
+                Err(detail.into())
             },
             Err(_) => {
                 warn!(
@@ -2135,7 +2168,7 @@ impl ModelService for LiveModelService {
                     elapsed_ms = started.elapsed().as_millis(),
                     "model probe timed out after 10s"
                 );
-                Err("Connection timed out after 10 seconds".to_string())
+                Err("Connection timed out after 10 seconds".into())
             },
         }
     }
@@ -2299,7 +2332,7 @@ impl LiveChatService {
         &self,
         session_key: &str,
         history: &[Value],
-    ) -> Result<Arc<dyn moltis_agents::model::LlmProvider>, String> {
+    ) -> error::Result<Arc<dyn moltis_agents::model::LlmProvider>> {
         let reg = self.providers.read().await;
         let session_model = self
             .session_metadata
@@ -2315,7 +2348,7 @@ impl LiveChatService {
         model_id
             .and_then(|id| reg.get(&id))
             .or_else(|| reg.first())
-            .ok_or_else(|| "no LLM providers configured".to_string())
+            .ok_or_else(|| error::Error::message("no LLM providers configured"))
     }
 
     /// Resolve the active session key for a connection.
@@ -2357,7 +2390,7 @@ impl LiveChatService {
             .await
             .ok()?;
         let dir = val.get("directory").and_then(|v| v.as_str())?;
-        let files = match moltis_projects::context::load_context_files(std::path::Path::new(dir)) {
+        let files = match moltis_projects::context::load_context_files(Path::new(dir)) {
             Ok(f) => f,
             Err(e) => {
                 warn!("failed to load project context: {e}");
@@ -2371,9 +2404,7 @@ impl LiveChatService {
             .await
             .and_then(|e| e.worktree_branch)
             .and_then(|_| {
-                let wt_path = std::path::Path::new(dir)
-                    .join(".moltis-worktrees")
-                    .join(session_key);
+                let wt_path = Path::new(dir).join(".moltis-worktrees").join(session_key);
                 if wt_path.exists() {
                     Some(wt_path)
                 } else {
@@ -2895,7 +2926,7 @@ impl ChatService for LiveChatService {
                 "checking local model cache"
             );
             if let Err(e) = self.state.ensure_local_model_cached(&model_to_check).await {
-                return Err(format!("Failed to prepare local model: {}", e));
+                return Err(format!("Failed to prepare local model: {}", e).into());
             }
         }
 
@@ -3028,6 +3059,7 @@ impl ChatService for LiveChatService {
         // Check if MCP tools are disabled for this session and capture
         // per-session sandbox override details for prompt runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
+        let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         let mcp_disabled = session_entry
             .as_ref()
             .and_then(|entry| entry.mcp_disabled)
@@ -3081,6 +3113,7 @@ impl ChatService for LiveChatService {
         let model_store = Arc::clone(&self.model_store);
         let session_store = Arc::clone(&self.session_store);
         let session_metadata = Arc::clone(&self.session_metadata);
+        let session_agent_id_clone = session_agent_id.clone();
         let session_key_clone = session_key.clone();
         let accept_language = params
             .get("_accept_language")
@@ -3277,6 +3310,7 @@ impl ChatService for LiveChatService {
                         &provider_name,
                         &history,
                         &session_key_clone,
+                        &session_agent_id_clone,
                         desired_reply_medium,
                         ctx_ref,
                         user_message_index,
@@ -3298,6 +3332,7 @@ impl ChatService for LiveChatService {
                         &provider_name,
                         &history,
                         &session_key_clone,
+                        &session_agent_id_clone,
                         desired_reply_medium,
                         ctx_ref,
                         Some(&runtime_context),
@@ -3526,6 +3561,7 @@ impl ChatService for LiveChatService {
         let _ = self.session_metadata.upsert(&session_key, None).await;
         self.session_metadata.touch(&session_key, 1).await;
         let session_entry = self.session_metadata.get(&session_key).await;
+        let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
@@ -3591,6 +3627,7 @@ impl ChatService for LiveChatService {
                 &provider_name,
                 &history,
                 &session_key,
+                &session_agent_id,
                 desired_reply_medium,
                 None,
                 user_message_index,
@@ -3612,6 +3649,7 @@ impl ChatService for LiveChatService {
                 &provider_name,
                 &history,
                 &session_key,
+                &session_agent_id,
                 desired_reply_medium,
                 None,
                 Some(&runtime_context),
@@ -3687,7 +3725,7 @@ impl ChatService for LiveChatService {
                     self.session_metadata.touch(&session_key, count).await;
                 }
 
-                Err(error_msg)
+                Err(error_msg.into())
             },
         }
     }
@@ -3696,7 +3734,7 @@ impl ChatService for LiveChatService {
         let run_id = params.get("runId").and_then(|v| v.as_str());
         let session_key = params.get("sessionKey").and_then(|v| v.as_str());
         if run_id.is_none() && session_key.is_none() {
-            return Err("missing 'runId' or 'sessionKey'".to_string());
+            return Err("missing 'runId' or 'sessionKey'".into());
         }
 
         let (resolved_run_id, aborted) = Self::abort_run_handle(
@@ -3756,7 +3794,7 @@ impl ChatService for LiveChatService {
             .session_store
             .read(&session_key)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         // Filter out empty assistant messages — they are kept in storage for LLM
         // history coherence but should not be shown in the UI.
         let visible: Vec<Value> = messages
@@ -3791,7 +3829,7 @@ impl ChatService for LiveChatService {
         self.session_store
             .clear(&session_key)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         // Reset client sequence tracking for this session. A cleared chat starts
         // a fresh sequence from the web UI.
@@ -3831,12 +3869,14 @@ impl ChatService for LiveChatService {
                 .map(String::from);
             self.session_key_for(conn_id.as_deref()).await
         };
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
 
         let history = self
             .session_store
             .read(&session_key)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         if history.is_empty() {
             return Err("nothing to compact".into());
@@ -3860,7 +3900,9 @@ impl ChatService for LiveChatService {
             && let Ok(provider) = self.resolve_provider(&session_key, &history).await
         {
             let chat_history_for_memory = values_to_chat_messages(&history);
-            let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> = Arc::clone(mm) as _;
+            let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> = Arc::new(
+                AgentScopedMemoryWriter::new(Arc::clone(mm), session_agent_id.clone()),
+            );
             match moltis_agents::silent_turn::run_silent_memory_turn(
                 provider,
                 &chat_history_for_memory,
@@ -3894,7 +3936,10 @@ impl ChatService for LiveChatService {
 
         // Use the session's model if available, otherwise fall back to the model
         // from the last assistant message, then to the first registered provider.
-        let provider = self.resolve_provider(&session_key, &history).await?;
+        let provider = self
+            .resolve_provider(&session_key, &history)
+            .await
+            .map_err(ServiceError::message)?;
 
         info!(session = %session_key, messages = history.len(), "chat.compact: summarizing");
 
@@ -3904,7 +3949,9 @@ impl ChatService for LiveChatService {
             match event {
                 StreamEvent::Delta(delta) => summary.push_str(&delta),
                 StreamEvent::Done(_) => break,
-                StreamEvent::Error(e) => return Err(format!("compact summarization failed: {e}")),
+                StreamEvent::Error(e) => {
+                    return Err(format!("compact summarization failed: {e}").into());
+                },
                 // Tool events not expected in summarization stream.
                 StreamEvent::ToolCallStart { .. }
                 | StreamEvent::ToolCallArgumentsDelta { .. }
@@ -3944,13 +3991,13 @@ impl ChatService for LiveChatService {
         self.session_store
             .replace_history(&session_key, compacted.clone())
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.session_metadata.touch(&session_key, 1).await;
 
         // Save compaction summary to memory file and trigger sync.
         if let Some(mm) = self.state.memory_manager() {
-            let memory_dir = moltis_config::data_dir().join("memory");
+            let memory_dir = moltis_config::agent_workspace_dir(&session_agent_id).join("memory");
             if let Err(e) = tokio::fs::create_dir_all(&memory_dir).await {
                 warn!(error = %e, "compact: failed to create memory dir");
             } else {
@@ -4054,8 +4101,7 @@ impl ChatService for LiveChatService {
                 Ok(val) => {
                     let dir = val.get("directory").and_then(|v| v.as_str());
                     let context_files = if let Some(d) = dir {
-                        match moltis_projects::context::load_context_files(std::path::Path::new(d))
-                        {
+                        match moltis_projects::context::load_context_files(Path::new(d)) {
                             Ok(files) => files
                                 .iter()
                                 .map(|f| {
@@ -4267,14 +4313,15 @@ impl ChatService for LiveChatService {
             .read(&session_key)
             .await
             .unwrap_or_default();
-        let provider = self.resolve_provider(&session_key, &history).await?;
+        let provider = self
+            .resolve_provider(&session_key, &history)
+            .await
+            .map_err(ServiceError::message)?;
         let native_tools = provider.supports_tools();
-
-        // Load persona data.
-        let persona = load_prompt_persona();
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
+        let persona = load_prompt_persona_for_session(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
@@ -4385,14 +4432,15 @@ impl ChatService for LiveChatService {
             .read(&session_key)
             .await
             .unwrap_or_default();
-        let provider = self.resolve_provider(&session_key, &history).await?;
+        let provider = self
+            .resolve_provider(&session_key, &history)
+            .await
+            .map_err(ServiceError::message)?;
         let native_tools = provider.supports_tools();
-
-        // Load persona data.
-        let persona = load_prompt_persona();
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
+        let persona = load_prompt_persona_for_session(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
@@ -4713,7 +4761,6 @@ impl ChannelStreamDispatcher {
             .peek_channel_replies(session_key)
             .await
             .into_iter()
-            .filter(|target| target.channel_type == moltis_channels::ChannelType::Telegram)
             .collect();
         if targets.is_empty() {
             return None;
@@ -4872,7 +4919,11 @@ async fn run_explicit_shell_command(
 
     let exec_result = match exec_tool {
         Some(tool) => tool.execute(exec_params).await,
-        None => Err(anyhow::anyhow!("exec tool is not registered")),
+        None => Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "exec tool is not registered",
+        )
+        .into()),
     };
 
     let has_channel_targets = !state.peek_channel_replies(session_key).await.is_empty();
@@ -5011,6 +5062,371 @@ async fn run_explicit_shell_command(
     }
 }
 
+const MAX_AGENT_MEMORY_WRITE_BYTES: usize = 50 * 1024;
+const MEMORY_SEARCH_FETCH_MULTIPLIER: usize = 8;
+const MEMORY_SEARCH_MIN_FETCH: usize = 25;
+
+fn is_valid_agent_memory_leaf_name(name: &str) -> bool {
+    if name.is_empty() || name.contains('/') || !name.ends_with(".md") {
+        return false;
+    }
+    if name.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let stem = &name[..name.len() - 3];
+    !(stem.is_empty() || stem.starts_with('.'))
+}
+
+fn resolve_agent_memory_target_path(agent_id: &str, file: &str) -> anyhow::Result<PathBuf> {
+    let trimmed = file.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("memory path cannot be empty");
+    }
+
+    let workspace = moltis_config::agent_workspace_dir(agent_id);
+    if trimmed == "MEMORY.md" || trimmed == "memory.md" {
+        return Ok(workspace.join("MEMORY.md"));
+    }
+
+    let Some(name) = trimmed.strip_prefix("memory/") else {
+        anyhow::bail!(
+            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
+        );
+    };
+    if !is_valid_agent_memory_leaf_name(name) {
+        anyhow::bail!(
+            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
+        );
+    }
+    Ok(workspace.join("memory").join(name))
+}
+
+fn is_path_in_agent_memory_scope(path: &Path, agent_id: &str) -> bool {
+    let workspace = moltis_config::agent_workspace_dir(agent_id);
+    let workspace_memory_dir = workspace.join("memory");
+    if path == workspace.join("MEMORY.md")
+        || path == workspace.join("memory.md")
+        || path.starts_with(&workspace_memory_dir)
+    {
+        return true;
+    }
+
+    if agent_id != "main" {
+        return false;
+    }
+
+    let data_dir = moltis_config::data_dir();
+    let root_memory_dir = data_dir.join("memory");
+    path == data_dir.join("MEMORY.md")
+        || path == data_dir.join("memory.md")
+        || path.starts_with(&root_memory_dir)
+}
+
+struct AgentScopedMemoryWriter {
+    manager: Arc<moltis_memory::manager::MemoryManager>,
+    agent_id: String,
+}
+
+impl AgentScopedMemoryWriter {
+    fn new(manager: Arc<moltis_memory::manager::MemoryManager>, agent_id: String) -> Self {
+        Self { manager, agent_id }
+    }
+}
+
+#[async_trait]
+impl moltis_agents::memory_writer::MemoryWriter for AgentScopedMemoryWriter {
+    async fn write_memory(
+        &self,
+        file: &str,
+        content: &str,
+        append: bool,
+    ) -> anyhow::Result<moltis_agents::memory_writer::MemoryWriteResult> {
+        if content.len() > MAX_AGENT_MEMORY_WRITE_BYTES {
+            anyhow::bail!(
+                "content exceeds maximum size of {} bytes ({} bytes provided)",
+                MAX_AGENT_MEMORY_WRITE_BYTES,
+                content.len()
+            );
+        }
+
+        let path = resolve_agent_memory_target_path(&self.agent_id, file)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let final_content = if append && tokio::fs::try_exists(&path).await? {
+            let existing = tokio::fs::read_to_string(&path).await?;
+            format!("{existing}\n\n{content}")
+        } else {
+            content.to_string()
+        };
+        let bytes_written = final_content.len();
+
+        tokio::fs::write(&path, &final_content).await?;
+        if let Err(error) = self.manager.sync_path(&path).await {
+            warn!(path = %path.display(), %error, "agent memory write re-index failed");
+        }
+
+        Ok(moltis_agents::memory_writer::MemoryWriteResult {
+            location: path.to_string_lossy().into_owned(),
+            bytes_written,
+        })
+    }
+}
+
+struct AgentScopedMemorySearchTool {
+    manager: Arc<moltis_memory::manager::MemoryManager>,
+    agent_id: String,
+}
+
+impl AgentScopedMemorySearchTool {
+    fn new(manager: Arc<moltis_memory::manager::MemoryManager>, agent_id: String) -> Self {
+        Self { manager, agent_id }
+    }
+}
+
+#[async_trait]
+impl AgentTool for AgentScopedMemorySearchTool {
+    fn name(&self) -> &str {
+        "memory_search"
+    }
+
+    fn description(&self) -> &str {
+        "Search agent memory using hybrid vector + keyword search. Returns relevant chunks from daily logs and long-term memory files."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return",
+                    "default": 5
+                }
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing 'query' parameter"))?;
+        let requested_limit = params.get("limit").and_then(Value::as_u64).unwrap_or(5) as usize;
+        let limit = requested_limit.clamp(1, 50);
+        let search_limit = limit
+            .saturating_mul(MEMORY_SEARCH_FETCH_MULTIPLIER)
+            .max(MEMORY_SEARCH_MIN_FETCH)
+            .max(limit);
+
+        let mut results: Vec<moltis_memory::search::SearchResult> = self
+            .manager
+            .search(query, search_limit)
+            .await?
+            .into_iter()
+            .filter(|result| is_path_in_agent_memory_scope(Path::new(&result.path), &self.agent_id))
+            .collect();
+        results.truncate(limit);
+
+        let include_citations = moltis_memory::search::SearchResult::should_include_citations(
+            &results,
+            self.manager.citation_mode(),
+        );
+        let items: Vec<Value> = results
+            .iter()
+            .map(|result| {
+                let text = if include_citations {
+                    result.text_with_citation()
+                } else {
+                    result.text.clone()
+                };
+                serde_json::json!({
+                    "chunk_id": result.chunk_id,
+                    "path": result.path,
+                    "source": result.source,
+                    "start_line": result.start_line,
+                    "end_line": result.end_line,
+                    "score": result.score,
+                    "text": text,
+                    "citation": format!("{}#{}", result.path, result.start_line),
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "results": items,
+            "citations_enabled": include_citations
+        }))
+    }
+}
+
+struct AgentScopedMemoryGetTool {
+    manager: Arc<moltis_memory::manager::MemoryManager>,
+    agent_id: String,
+}
+
+impl AgentScopedMemoryGetTool {
+    fn new(manager: Arc<moltis_memory::manager::MemoryManager>, agent_id: String) -> Self {
+        Self { manager, agent_id }
+    }
+}
+
+#[async_trait]
+impl AgentTool for AgentScopedMemoryGetTool {
+    fn name(&self) -> &str {
+        "memory_get"
+    }
+
+    fn description(&self) -> &str {
+        "Retrieve a specific memory chunk by its ID. Use this to get the full text of a chunk found via memory_search."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "chunk_id": {
+                    "type": "string",
+                    "description": "The chunk ID to retrieve"
+                }
+            },
+            "required": ["chunk_id"]
+        })
+    }
+
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let chunk_id = params
+            .get("chunk_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing 'chunk_id' parameter"))?;
+
+        match self.manager.get_chunk(chunk_id).await? {
+            Some(chunk)
+                if is_path_in_agent_memory_scope(Path::new(&chunk.path), &self.agent_id) =>
+            {
+                Ok(serde_json::json!({
+                    "chunk_id": chunk.id,
+                    "path": chunk.path,
+                    "source": chunk.source,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "text": chunk.text,
+                }))
+            },
+            _ => Ok(serde_json::json!({
+                "error": "chunk not found",
+                "chunk_id": chunk_id,
+            })),
+        }
+    }
+}
+
+struct AgentScopedMemorySaveTool {
+    writer: AgentScopedMemoryWriter,
+}
+
+impl AgentScopedMemorySaveTool {
+    fn new(manager: Arc<moltis_memory::manager::MemoryManager>, agent_id: String) -> Self {
+        Self {
+            writer: AgentScopedMemoryWriter::new(manager, agent_id),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for AgentScopedMemorySaveTool {
+    fn name(&self) -> &str {
+        "memory_save"
+    }
+
+    fn description(&self) -> &str {
+        "Save content to long-term memory. Writes to MEMORY.md or memory/<name>.md. Content persists across sessions and is searchable via memory_search."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The content to save to memory"
+                },
+                "file": {
+                    "type": "string",
+                    "description": "Target file: MEMORY.md, memory.md, or memory/<name>.md",
+                    "default": "MEMORY.md"
+                },
+                "append": {
+                    "type": "boolean",
+                    "description": "Append to existing file (true) or overwrite (false)",
+                    "default": true
+                }
+            },
+            "required": ["content"]
+        })
+    }
+
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let content = params
+            .get("content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing 'content' parameter"))?;
+        let file = params
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or("MEMORY.md");
+        let append = params
+            .get("append")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+
+        use moltis_agents::memory_writer::MemoryWriter;
+        let result = self.writer.write_memory(file, content, append).await?;
+
+        Ok(serde_json::json!({
+            "saved": true,
+            "path": file,
+            "bytes_written": result.bytes_written,
+        }))
+    }
+}
+
+fn install_agent_scoped_memory_tools(
+    registry: &mut ToolRegistry,
+    manager: &Arc<moltis_memory::manager::MemoryManager>,
+    agent_id: &str,
+) {
+    let had_search = registry.unregister("memory_search");
+    let had_get = registry.unregister("memory_get");
+    let had_save = registry.unregister("memory_save");
+
+    let agent_id_owned = agent_id.to_string();
+    if had_search {
+        registry.register(Box::new(AgentScopedMemorySearchTool::new(
+            Arc::clone(manager),
+            agent_id_owned.clone(),
+        )));
+    }
+    if had_get {
+        registry.register(Box::new(AgentScopedMemoryGetTool::new(
+            Arc::clone(manager),
+            agent_id_owned.clone(),
+        )));
+    }
+    if had_save {
+        registry.register(Box::new(AgentScopedMemorySaveTool::new(
+            Arc::clone(manager),
+            agent_id_owned,
+        )));
+    }
+}
+
 async fn run_with_tools(
     state: &Arc<dyn ChatRuntime>,
     model_store: &Arc<RwLock<DisabledModelsStore>>,
@@ -5022,6 +5438,7 @@ async fn run_with_tools(
     provider_name: &str,
     history_raw: &[Value],
     session_key: &str,
+    agent_id: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
@@ -5036,11 +5453,11 @@ async fn run_with_tools(
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
-    let persona = load_prompt_persona();
+    let persona = load_prompt_persona_for_agent(agent_id);
 
     let native_tools = provider.supports_tools();
 
-    let filtered_registry = {
+    let mut filtered_registry = {
         let registry_guard = tool_registry.read().await;
         if native_tools {
             apply_runtime_tool_filters(&registry_guard, &persona.config, skills, mcp_disabled)
@@ -5048,6 +5465,9 @@ async fn run_with_tools(
             registry_guard.clone_without(&[])
         }
     };
+    if native_tools && let Some(manager) = state.memory_manager() {
+        install_agent_scoped_memory_tools(&mut filtered_registry, manager, agent_id);
+    }
 
     // Use a minimal prompt without tool schemas for providers that don't support tools.
     // This reduces context size and avoids confusing the LLM with unusable instructions.
@@ -5639,6 +6059,7 @@ async fn run_with_tools(
                         }
                     },
                     Err(error) => {
+                        let error = error.to_string();
                         warn!(run_id, error = %error, "voice reply generation skipped");
                         audio_warning = Some(error);
                         None
@@ -5731,10 +6152,13 @@ async fn compact_session(
     store: &Arc<SessionStore>,
     session_key: &str,
     provider: &Arc<dyn moltis_agents::model::LlmProvider>,
-) -> Result<(), String> {
-    let history = store.read(session_key).await.map_err(|e| e.to_string())?;
+) -> error::Result<()> {
+    let history = store
+        .read(session_key)
+        .await
+        .map_err(|source| error::Error::external("failed to read session history", source))?;
     if history.is_empty() {
-        return Err("nothing to compact".into());
+        return Err(error::Error::message("nothing to compact"));
     }
 
     // Use structured ChatMessage objects so role boundaries are maintained via
@@ -5754,7 +6178,11 @@ async fn compact_session(
         match event {
             StreamEvent::Delta(delta) => summary.push_str(&delta),
             StreamEvent::Done(_) => break,
-            StreamEvent::Error(e) => return Err(format!("compact summarization failed: {e}")),
+            StreamEvent::Error(e) => {
+                return Err(error::Error::message(format!(
+                    "compact summarization failed: {e}"
+                )));
+            },
             // Tool events not expected in summarization stream.
             StreamEvent::ToolCallStart { .. }
             | StreamEvent::ToolCallArgumentsDelta { .. }
@@ -5768,7 +6196,7 @@ async fn compact_session(
     }
 
     if summary.is_empty() {
-        return Err("compact produced empty summary".into());
+        return Err(error::Error::message("compact produced empty summary"));
     }
 
     let compacted_msg = PersistedMessage::Assistant {
@@ -5793,7 +6221,7 @@ async fn compact_session(
     store
         .replace_history(session_key, compacted)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|source| error::Error::external("failed to replace compacted history", source))?;
 
     Ok(())
 }
@@ -5880,6 +6308,7 @@ async fn run_streaming(
     provider_name: &str,
     history_raw: &[Value],
     session_key: &str,
+    agent_id: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
     user_message_index: usize,
@@ -5889,7 +6318,7 @@ async fn run_streaming(
     client_seq: Option<u64>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
-    let persona = load_prompt_persona();
+    let persona = load_prompt_persona_for_agent(agent_id);
 
     let system_prompt = build_system_prompt_minimal_runtime(
         project_context,
@@ -6065,6 +6494,7 @@ async fn run_streaming(
                                 }
                             },
                             Err(error) => {
+                                let error = error.to_string();
                                 warn!(run_id, error = %error, "voice reply generation skipped");
                                 audio_warning = Some(error);
                                 None
@@ -6259,47 +6689,48 @@ async fn deliver_channel_replies(
             !streamed_target_keys.contains(&key)
         });
     }
-    let is_telegram_session = session_key.starts_with("telegram:");
+    let is_channel_session =
+        session_key.starts_with("telegram:") || session_key.starts_with("msteams:");
     if targets.is_empty() {
         let _ = state.drain_channel_status_log(session_key).await;
-        if is_telegram_session {
+        if is_channel_session {
             info!(
                 session_key,
                 text_len = text.len(),
                 streamed_count = streamed_target_keys.len(),
-                "telegram reply delivery skipped: no pending targets after stream dedupe"
+                "channel reply delivery skipped: no pending targets after stream dedupe"
             );
         }
         return;
     }
     if text.is_empty() {
         let _ = state.drain_channel_status_log(session_key).await;
-        if is_telegram_session {
+        if is_channel_session {
             info!(
                 session_key,
                 target_count = targets.len(),
-                "telegram reply delivery skipped: empty response text"
+                "channel reply delivery skipped: empty response text"
             );
         }
         return;
     }
-    if is_telegram_session {
+    if is_channel_session {
         info!(
             session_key,
             target_count = targets.len(),
             text_len = text.len(),
             reply_medium = ?desired_reply_medium,
-            "telegram reply delivery starting"
+            "channel reply delivery starting"
         );
     }
     let outbound = match state.channel_outbound() {
         Some(o) => o,
         None => {
-            if is_telegram_session {
+            if is_channel_session {
                 info!(
                     session_key,
                     target_count = targets.len(),
-                    "telegram reply delivery skipped: outbound unavailable"
+                    "channel reply delivery skipped: outbound unavailable"
                 );
             }
             return;
@@ -6622,6 +7053,40 @@ async fn deliver_channel_replies_to_targets(
                         }
                     },
                 },
+                moltis_channels::ChannelType::MsTeams => {
+                    let delivered_text = tts_payload
+                        .as_ref()
+                        .map(|payload| payload.text.as_str())
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or(&text);
+                    let result = if logbook_html.is_empty() {
+                        outbound
+                            .send_text(
+                                &target.account_id,
+                                &target.chat_id,
+                                delivered_text,
+                                reply_to,
+                            )
+                            .await
+                    } else {
+                        outbound
+                            .send_text_with_suffix(
+                                &target.account_id,
+                                &target.chat_id,
+                                delivered_text,
+                                &logbook_html,
+                                reply_to,
+                            )
+                            .await
+                    };
+                    if let Err(e) = result {
+                        warn!(
+                            account_id = target.account_id,
+                            chat_id = target.chat_id,
+                            "failed to send channel reply: {e}"
+                        );
+                    }
+                },
             }
         }));
     }
@@ -6667,25 +7132,25 @@ async fn generate_tts_audio(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
     text: &str,
-) -> Result<Vec<u8>, String> {
+) -> error::Result<Vec<u8>> {
     use base64::Engine;
 
     let tts_status = state
         .tts_service()
         .status()
         .await
-        .map_err(|e| e.to_string())?;
-    let status: TtsStatusResponse =
-        serde_json::from_value(tts_status).map_err(|_| "invalid tts.status response")?;
+        .map_err(error::Error::message)?;
+    let status: TtsStatusResponse = serde_json::from_value(tts_status)
+        .map_err(|_| error::Error::message("invalid tts.status response"))?;
     if !status.enabled {
-        return Err("TTS is disabled or not configured".to_string());
+        return Err(error::Error::message("TTS is disabled or not configured"));
     }
 
     // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
     let text = moltis_voice::tts::sanitize_text_for_tts(text);
     let text = text.trim();
     if text.is_empty() {
-        return Err("response has no speakable text".to_string());
+        return Err(error::Error::message("response has no speakable text"));
     }
 
     let (_, session_override) = state.tts_overrides(session_key, "").await;
@@ -6699,18 +7164,18 @@ async fn generate_tts_audio(
     };
 
     let request_value = serde_json::to_value(request)
-        .map_err(|_| "failed to build tts.convert request".to_string())?;
+        .map_err(|_| error::Error::message("failed to build tts.convert request"))?;
     let tts_result = state
         .tts_service()
         .convert(request_value)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(error::Error::message)?;
 
-    let response: TtsConvertResponse =
-        serde_json::from_value(tts_result).map_err(|_| "invalid tts.convert response")?;
+    let response: TtsConvertResponse = serde_json::from_value(tts_result)
+        .map_err(|_| error::Error::message("invalid tts.convert response"))?;
     base64::engine::general_purpose::STANDARD
         .decode(&response.audio)
-        .map_err(|_| "invalid base64 audio returned by TTS provider".to_string())
+        .map_err(|_| error::Error::message("invalid base64 audio returned by TTS provider"))
 }
 
 async fn build_tts_payload(
@@ -6938,7 +7403,7 @@ async fn send_screenshot_to_channels(
         let payload = payload.clone();
         tasks.push(tokio::spawn(async move {
             match target.channel_type {
-                moltis_channels::ChannelType::Telegram => {
+                moltis_channels::ChannelType::Telegram | moltis_channels::ChannelType::MsTeams => {
                     let reply_to = target.message_id.as_deref();
                     if let Err(e) = outbound
                         .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
@@ -6958,7 +7423,7 @@ async fn send_screenshot_to_channels(
                         debug!(
                             account_id = target.account_id,
                             chat_id = target.chat_id,
-                            "sent screenshot to telegram"
+                            "sent screenshot to channel"
                         );
                     }
                 },
@@ -7020,7 +7485,7 @@ async fn send_location_to_channels(
                 debug!(
                     account_id = target.account_id,
                     chat_id = target.chat_id,
-                    "sent location pin to telegram"
+                    "sent location pin to channel"
                 );
             }
         }));
@@ -7309,11 +7774,11 @@ mod tests {
             _body: &str,
             _url: Option<&str>,
             _session_key: Option<&str>,
-        ) -> Result<usize> {
+        ) -> error::Result<usize> {
             Ok(0)
         }
 
-        async fn ensure_local_model_cached(&self, _model_id: &str) -> Result<bool, String> {
+        async fn ensure_local_model_cached(&self, _model_id: &str) -> error::Result<bool> {
             Ok(false)
         }
     }
@@ -7554,7 +8019,7 @@ mod tests {
             _to: &str,
             _text: &str,
             _reply_to: Option<&str>,
-        ) -> Result<()> {
+        ) -> moltis_channels::Result<()> {
             tokio::time::sleep(self.delay).await;
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
@@ -7566,7 +8031,7 @@ mod tests {
             _to: &str,
             _payload: &ReplyPayload,
             _reply_to: Option<&str>,
-        ) -> Result<()> {
+        ) -> moltis_channels::Result<()> {
             Ok(())
         }
     }
@@ -7579,9 +8044,9 @@ mod tests {
             _to: &str,
             reply_to: Option<&str>,
             mut stream: moltis_channels::StreamReceiver,
-        ) -> Result<()> {
+        ) -> moltis_channels::Result<()> {
             if self.fail {
-                anyhow::bail!("stream failed");
+                return Err(moltis_channels::Error::unavailable("stream failed"));
             }
             self.reply_tos
                 .lock()
@@ -9201,7 +9666,12 @@ mod tests {
         );
         let result = service.test(serde_json::json!({})).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing 'modelId'"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing 'modelId'")
+        );
     }
 
     #[tokio::test]
@@ -9217,7 +9687,7 @@ mod tests {
             .test(serde_json::json!({"modelId": "nonexistent::model-xyz"}))
             .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("unknown model"));
+        assert!(result.unwrap_err().to_string().contains("unknown model"));
     }
 
     #[tokio::test]
@@ -9258,7 +9728,7 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        let error = result.unwrap_err();
+        let error = result.unwrap_err().to_string();
         assert!(error.contains("unknown model: openai::gpt-5.2"));
         assert!(error.contains("did you mean"));
         assert!(error.contains("openai::gpt-5.2-codex"));
@@ -9522,6 +9992,39 @@ mod tests {
             });
 
         assert!(extracted.is_none());
+    }
+
+    #[test]
+    fn resolve_agent_memory_target_path_maps_to_agent_workspace() {
+        let workspace = moltis_config::agent_workspace_dir("ops");
+        assert_eq!(
+            resolve_agent_memory_target_path("ops", "MEMORY.md").unwrap(),
+            workspace.join("MEMORY.md")
+        );
+        assert_eq!(
+            resolve_agent_memory_target_path("ops", "memory/daily.md").unwrap(),
+            workspace.join("memory").join("daily.md")
+        );
+    }
+
+    #[test]
+    fn resolve_agent_memory_target_path_rejects_invalid_paths() {
+        assert!(resolve_agent_memory_target_path("ops", "").is_err());
+        assert!(resolve_agent_memory_target_path("ops", "foo.md").is_err());
+        assert!(resolve_agent_memory_target_path("ops", "memory/a/b.md").is_err());
+        assert!(resolve_agent_memory_target_path("ops", "memory/.hidden.md").is_err());
+    }
+
+    #[test]
+    fn path_in_agent_memory_scope_is_isolated_per_agent() {
+        let ops_workspace = moltis_config::agent_workspace_dir("ops");
+        let ops_memory = ops_workspace.join("memory").join("daily.md");
+        assert!(is_path_in_agent_memory_scope(&ops_memory, "ops"));
+        assert!(!is_path_in_agent_memory_scope(&ops_memory, "research"));
+
+        let root_memory = moltis_config::data_dir().join("memory").join("root.md");
+        assert!(is_path_in_agent_memory_scope(&root_memory, "main"));
+        assert!(!is_path_in_agent_memory_scope(&root_memory, "ops"));
     }
 
     // ── active_session_keys tests ───────────────────────────────────────

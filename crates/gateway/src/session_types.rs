@@ -6,6 +6,8 @@
 
 use serde::Deserialize;
 
+use crate::services::ServiceError;
+
 /// Params for `session.patch`.
 ///
 /// All fields except `key` are optional — only provided fields are updated.
@@ -86,8 +88,8 @@ pub enum VoiceTarget {
 /// deserialization errors to the service error format.
 pub fn parse_params<T: serde::de::DeserializeOwned>(
     params: serde_json::Value,
-) -> Result<T, String> {
-    serde_json::from_value(params).map_err(|e| e.to_string())
+) -> Result<T, ServiceError> {
+    serde_json::from_value(params).map_err(ServiceError::message)
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -239,6 +241,6 @@ mod tests {
     fn parse_params_error() {
         let v = json!({"not_key": true});
         let err = parse_params::<PatchParams>(v).unwrap_err();
-        assert!(err.contains("key"));
+        assert!(err.to_string().contains("key"));
     }
 }

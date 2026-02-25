@@ -6,6 +6,7 @@
 pub mod access;
 pub mod bot;
 pub mod config;
+pub mod error;
 pub mod handlers;
 pub mod markdown;
 pub mod otp;
@@ -13,4 +14,8 @@ pub mod outbound;
 pub mod plugin;
 pub mod state;
 
-pub use {config::TelegramAccountConfig, plugin::TelegramPlugin};
+pub use {
+    config::TelegramAccountConfig,
+    error::{Error, Result},
+    plugin::TelegramPlugin,
+};

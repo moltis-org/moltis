@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use {
-    anyhow::{Context, Result, bail},
+    crate::{Error, Result},
     tokio::process::Command,
     tracing::{debug, warn},
 };
@@ -40,11 +40,11 @@ impl WorktreeManager {
             .current_dir(project_dir)
             .output()
             .await
-            .context("failed to run git worktree add")?;
+            .map_err(|source| Error::command_execution("git worktree add", source))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("git worktree add failed: {stderr}");
+            return Err(Error::command_failed("git worktree add", stderr));
         }
 
         debug!(worktree = %wt_dir.display(), branch = %branch, "created worktree");
@@ -71,11 +71,14 @@ impl WorktreeManager {
             .current_dir(project_dir)
             .output()
             .await
-            .context("failed to run git worktree add")?;
+            .map_err(|source| Error::command_execution("git worktree add", source))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("git worktree add from branch failed: {stderr}");
+            return Err(Error::command_failed(
+                "git worktree add from branch",
+                stderr,
+            ));
         }
 
         debug!(worktree = %wt_dir.display(), branch = %branch, "created worktree from branch");
@@ -96,7 +99,7 @@ impl WorktreeManager {
                 .current_dir(project_dir)
                 .output()
                 .await
-                .context("failed to run git worktree remove")?;
+                .map_err(|source| Error::command_execution("git worktree remove", source))?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -148,7 +151,7 @@ impl WorktreeManager {
             .current_dir(project_dir)
             .output()
             .await
-            .context("failed to run git worktree list")?;
+            .map_err(|source| Error::command_execution("git worktree list", source))?;
 
         if !output.status.success() {
             return Ok(Vec::new());
@@ -202,7 +205,7 @@ impl WorktreeManager {
             .env("MOLTIS_ROOT_PATH", project_dir.as_os_str())
             .output()
             .await
-            .context("failed to run setup command")?;
+            .map_err(|source| Error::command_execution("setup command", source))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -226,7 +229,7 @@ impl WorktreeManager {
             .env("MOLTIS_ROOT_PATH", project_dir.as_os_str())
             .output()
             .await
-            .context("failed to run teardown command")?;
+            .map_err(|source| Error::command_execution("teardown command", source))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -242,7 +245,7 @@ impl WorktreeManager {
             .current_dir(wt_dir)
             .output()
             .await
-            .context("failed to run git status")?;
+            .map_err(|source| Error::command_execution("git status", source))?;
         Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
     }
 
@@ -276,7 +279,7 @@ impl WorktreeManager {
                 return Ok(candidate.to_string());
             }
         }
-        bail!("no default branch found (tried main, master, develop, trunk)")
+        Err(Error::DefaultBranchNotFound)
     }
 
     /// Create a worktree from a specific base branch.
@@ -301,11 +304,14 @@ impl WorktreeManager {
             .current_dir(project_dir)
             .output()
             .await
-            .context("failed to run git worktree add")?;
+            .map_err(|source| Error::command_execution("git worktree add", source))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("git worktree add from base branch failed: {stderr}");
+            return Err(Error::command_failed(
+                "git worktree add from base branch",
+                stderr,
+            ));
         }
 
         debug!(worktree = %wt_dir.display(), branch = %branch, base = %base_branch, "created worktree from base");
@@ -314,7 +320,9 @@ impl WorktreeManager {
 
     async fn ensure_git_repo(dir: &Path) -> Result<()> {
         if !dir.join(".git").exists() {
-            bail!("{} is not a git repository", dir.display());
+            return Err(Error::NotGitRepository {
+                path: dir.to_path_buf(),
+            });
         }
         Ok(())
     }

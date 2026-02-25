@@ -23,11 +23,27 @@ export function validateIdentityFields(name, userName) {
 	return { valid: true };
 }
 
+function isMissingMethodError(res) {
+	var message = res?.error?.message;
+	if (typeof message !== "string") return false;
+	var lower = message.toLowerCase();
+	return lower.includes("method") && (lower.includes("not found") || lower.includes("unknown"));
+}
+
 /**
  * Update agent identity fields.
  * @param {object} fields - any subset of { name, emoji, theme, soul, user_name, user_timezone }
+ * @param {{ agentId?: string }} [options] - optional explicit agent target
  * @returns {Promise} RPC response
  */
-export function updateIdentity(fields) {
-	return sendRpc("agent.identity.update", fields);
+export function updateIdentity(fields, options = {}) {
+	var agentId = options.agentId;
+	if (!agentId) {
+		return sendRpc("agent.identity.update", fields);
+	}
+	var params = { ...fields, agent_id: agentId };
+	return sendRpc("agents.identity.update", params).then((res) => {
+		if (res?.ok || !isMissingMethodError(res)) return res;
+		return sendRpc("agent.identity.update", fields);
+	});
 }

@@ -6,12 +6,13 @@
 //! - RFC 7591: OAuth 2.0 Dynamic Client Registration
 
 use {
-    anyhow::{Context, Result, bail},
     reqwest::Client,
     serde::{Deserialize, Serialize},
     tracing::{debug, info},
     url::Url,
 };
+
+use crate::{Error, Result};
 
 // ── Protected Resource Metadata (RFC 9728) ─────────────────────────────────
 
@@ -48,18 +49,20 @@ pub async fn fetch_resource_metadata(
         .header("Accept", "application/json")
         .send()
         .await
-        .context("failed to fetch protected resource metadata")?;
+        .map_err(|source| Error::external("failed to fetch protected resource metadata", source))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        bail!("protected resource metadata returned HTTP {status}: {body}");
+        return Err(Error::message(format!(
+            "protected resource metadata returned HTTP {status}: {body}"
+        )));
     }
 
     let meta: ProtectedResourceMetadata = resp
         .json()
         .await
-        .context("failed to parse protected resource metadata")?;
+        .map_err(|source| Error::external("failed to parse protected resource metadata", source))?;
 
     info!(resource = %meta.resource, servers = meta.authorization_servers.len(), "fetched resource metadata");
 
@@ -108,18 +111,21 @@ pub async fn fetch_as_metadata(
         .header("Accept", "application/json")
         .send()
         .await
-        .context("failed to fetch authorization server metadata")?;
+        .map_err(|source| {
+            Error::external("failed to fetch authorization server metadata", source)
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        bail!("authorization server metadata returned HTTP {status}: {body}");
+        return Err(Error::message(format!(
+            "authorization server metadata returned HTTP {status}: {body}"
+        )));
     }
 
-    let meta: AuthorizationServerMetadata = resp
-        .json()
-        .await
-        .context("failed to parse authorization server metadata")?;
+    let meta: AuthorizationServerMetadata = resp.json().await.map_err(|source| {
+        Error::external("failed to parse authorization server metadata", source)
+    })?;
 
     info!(issuer = %meta.issuer, "fetched AS metadata");
 
@@ -178,18 +184,19 @@ pub async fn register_client(
         .json(&req)
         .send()
         .await
-        .context("failed to register OAuth client")?;
+        .map_err(|source| Error::external("failed to register OAuth client", source))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        bail!("dynamic client registration returned HTTP {status}: {body}");
+        return Err(Error::message(format!(
+            "dynamic client registration returned HTTP {status}: {body}"
+        )));
     }
 
-    let reg: ClientRegistrationResponse = resp
-        .json()
-        .await
-        .context("failed to parse client registration response")?;
+    let reg: ClientRegistrationResponse = resp.json().await.map_err(|source| {
+        Error::external("failed to parse client registration response", source)
+    })?;
 
     info!(client_id = %reg.client_id, "registered dynamic OAuth client");
 
@@ -234,7 +241,12 @@ fn build_well_known_url(base: &Url, suffix: &str) -> Result<Url> {
     }
     url = url
         .join(&format!(".well-known/{suffix}"))
-        .with_context(|| format!("failed to build .well-known/{suffix} URL from {base}"))?;
+        .map_err(|source| {
+            Error::external(
+                format!("failed to build .well-known/{suffix} URL from {base}"),
+                source,
+            )
+        })?;
     Ok(url)
 }
 

@@ -95,7 +95,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .pairing
                     .approve(pair_id)
-                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
+                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string()))?;
 
                 broadcast(
                     &ctx.state,
@@ -131,7 +131,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .pairing
                     .reject(pair_id)
-                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
+                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string()))?;
 
                 broadcast(
                     &ctx.state,
@@ -194,7 +194,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .pairing
                     .approve(pair_id)
-                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
+                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string()))?;
 
                 broadcast(
                     &ctx.state,
@@ -227,7 +227,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .pairing
                     .reject(pair_id)
-                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
+                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string()))?;
 
                 broadcast(
                     &ctx.state,
@@ -263,7 +263,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .pairing
                     .rotate_token(device_id)
-                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
+                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string()))?;
                 Ok(serde_json::json!({ "deviceToken": token.token, "scopes": token.scopes }))
             })
         }),
@@ -287,7 +287,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .pairing
                     .revoke_token(device_id)
-                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
+                    .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string()))?;
                 Ok(serde_json::json!({}))
             })
         }),

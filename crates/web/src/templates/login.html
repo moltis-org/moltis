@@ -26,6 +26,9 @@
 <link rel="stylesheet" href="{{ asset_prefix }}style.css">
 </head>
 <body>
+<div id="vaultBanner" class="info-banner" style="display:none">
+  <span>Your encryption vault is locked. Sign in to unlock it.</span>
+</div>
 <div id="loginRoot" class="auth-page"></div>
 <script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/login-app.js"></script>
 </body>

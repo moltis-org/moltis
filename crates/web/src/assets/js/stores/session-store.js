@@ -27,6 +27,7 @@ export class Session {
 		this.channelBinding = serverData.channelBinding || null;
 		this.parentSessionKey = serverData.parentSessionKey || "";
 		this.forkPoint = serverData.forkPoint != null ? serverData.forkPoint : null;
+		this.agent_id = serverData.agent_id || "main";
 		this.mcpDisabled = serverData.mcpDisabled;
 		this.archived = serverData.archived;
 		this.activeChannel = serverData.activeChannel;
@@ -81,6 +82,7 @@ export class Session {
 		this.channelBinding = serverData.channelBinding || null;
 		this.parentSessionKey = serverData.parentSessionKey || "";
 		this.forkPoint = serverData.forkPoint != null ? serverData.forkPoint : null;
+		this.agent_id = serverData.agent_id || "main";
 		this.mcpDisabled = serverData.mcpDisabled;
 		this.archived = serverData.archived;
 		this.activeChannel = serverData.activeChannel;

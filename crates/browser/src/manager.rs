@@ -19,7 +19,7 @@ use {
 };
 
 use crate::{
-    error::BrowserError,
+    error::Error,
     pool::BrowserPool,
     snapshot::{
         extract_snapshot, find_element_by_ref, focus_element_by_ref, scroll_element_into_view,
@@ -28,10 +28,10 @@ use crate::{
 };
 
 /// Extract session_id or return an error for actions that require an existing session.
-fn require_session(session_id: Option<&str>, action: &str) -> Result<String, BrowserError> {
+fn require_session(session_id: Option<&str>, action: &str) -> Result<String, Error> {
     session_id
         .map(String::from)
-        .ok_or_else(|| BrowserError::InvalidAction(format!("{action} requires a session_id")))
+        .ok_or_else(|| Error::InvalidAction(format!("{action} requires a session_id")))
 }
 
 /// Manage Chrome/Chromium instances with CDP.
@@ -164,13 +164,13 @@ impl BrowserManager {
 
     /// Clean up a session whose CDP connection has died and return an
     /// actionable error the agent can act on.
-    async fn cleanup_stale_session(&self, session_id: &str, action: &str) -> BrowserError {
+    async fn cleanup_stale_session(&self, session_id: &str, action: &str) -> Error {
         warn!(
             session_id,
             action, "browser connection dead, closing stale session"
         );
         let _ = self.pool.close_session(session_id).await;
-        BrowserError::ConnectionClosed(format!(
+        Error::ConnectionClosed(format!(
             "Browser session {session_id} lost its connection during {action}. \
              Please navigate to the page again to get a fresh session."
         ))
@@ -183,7 +183,7 @@ impl BrowserManager {
         action: BrowserAction,
         sandbox: bool,
         browser: Option<BrowserPreference>,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         // Navigate has its own retry-with-fresh-session logic, so handle it
         // separately to avoid double-cleanup.
         if let BrowserAction::Navigate { ref url } = action {
@@ -243,13 +243,13 @@ impl BrowserManager {
         url: &str,
         sandbox: bool,
         browser: Option<BrowserPreference>,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         // Validate URL before navigation
         validate_url(url)?;
 
         // Check if the domain is allowed
         if !crate::types::is_domain_allowed(url, &self.config.allowed_domains) {
-            return Err(BrowserError::NavigationFailed(format!(
+            return Err(Error::NavigationFailed(format!(
                 "domain not in allowed list. Allowed domains: {:?}",
                 self.config.allowed_domains
             )));
@@ -266,7 +266,7 @@ impl BrowserManager {
 
         // Try navigation, retry with fresh session if connection is dead
         if let Err(e) = page.goto(url).await {
-            let nav_err = BrowserError::NavigationFailed(e.to_string());
+            let nav_err = Error::NavigationFailed(e.to_string());
             if nav_err.is_connection_error() {
                 warn!(
                     session_id = sid,
@@ -279,7 +279,7 @@ impl BrowserManager {
                 new_page
                     .goto(url)
                     .await
-                    .map_err(|e| BrowserError::NavigationFailed(e.to_string()))?;
+                    .map_err(|e| Error::NavigationFailed(e.to_string()))?;
                 // Continue with the new session
                 let _ = new_page.wait_for_navigation().await;
                 let current_url = new_page.url().await.ok().flatten().unwrap_or_default();
@@ -323,7 +323,7 @@ impl BrowserManager {
         highlight_ref: Option<u32>,
         sandbox: bool,
         browser: Option<BrowserPreference>,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = self
             .pool
             .get_or_create(session_id, sandbox, browser)
@@ -343,7 +343,7 @@ impl BrowserManager {
                     .build(),
             )
             .await
-            .map_err(|e| BrowserError::ScreenshotFailed(e.to_string()))?;
+            .map_err(|e| Error::ScreenshotFailed(e.to_string()))?;
 
         // Remove highlight after screenshot
         if highlight_ref.is_some() {
@@ -400,7 +400,7 @@ impl BrowserManager {
         session_id: Option<&str>,
         sandbox: bool,
         browser: Option<BrowserPreference>,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = self
             .pool
             .get_or_create(session_id, sandbox, browser)
@@ -427,7 +427,7 @@ impl BrowserManager {
         session_id: Option<&str>,
         ref_: u32,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "click")?;
 
         let page = self.pool.get_page(&sid).await?;
@@ -449,10 +449,10 @@ impl BrowserManager {
             .button(MouseButton::Left)
             .click_count(1)
             .build()
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+            .map_err(|e| Error::Cdp(e.to_string()))?;
         page.execute(press_cmd)
             .await
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+            .map_err(|e| Error::Cdp(e.to_string()))?;
 
         let release_cmd = DispatchMouseEventParams::builder()
             .r#type(DispatchMouseEventType::MouseReleased)
@@ -461,10 +461,10 @@ impl BrowserManager {
             .button(MouseButton::Left)
             .click_count(1)
             .build()
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+            .map_err(|e| Error::Cdp(e.to_string()))?;
         page.execute(release_cmd)
             .await
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+            .map_err(|e| Error::Cdp(e.to_string()))?;
 
         debug!(
             session_id = sid,
@@ -484,7 +484,7 @@ impl BrowserManager {
         ref_: u32,
         text: &str,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "type")?;
 
         let page = self.pool.get_page(&sid).await?;
@@ -498,19 +498,19 @@ impl BrowserManager {
                 .r#type(DispatchKeyEventType::KeyDown)
                 .text(c.to_string())
                 .build()
-                .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+                .map_err(|e| Error::Cdp(e.to_string()))?;
             page.execute(key_down)
                 .await
-                .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+                .map_err(|e| Error::Cdp(e.to_string()))?;
 
             let key_up = DispatchKeyEventParams::builder()
                 .r#type(DispatchKeyEventType::KeyUp)
                 .text(c.to_string())
                 .build()
-                .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+                .map_err(|e| Error::Cdp(e.to_string()))?;
             page.execute(key_up)
                 .await
-                .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+                .map_err(|e| Error::Cdp(e.to_string()))?;
         }
 
         debug!(
@@ -531,7 +531,7 @@ impl BrowserManager {
         x: i32,
         y: i32,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "scroll")?;
 
         let page = self.pool.get_page(&sid).await?;
@@ -550,7 +550,7 @@ impl BrowserManager {
 
         page.evaluate(js.as_str())
             .await
-            .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?;
+            .map_err(|e| Error::JsEvalFailed(e.to_string()))?;
 
         debug!(session_id = sid, ref_ = ?ref_, x = x, y = y, "scrolled");
 
@@ -563,7 +563,7 @@ impl BrowserManager {
         session_id: Option<&str>,
         code: &str,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "evaluate")?;
 
         let page = self.pool.get_page(&sid).await?;
@@ -571,9 +571,9 @@ impl BrowserManager {
         let result: serde_json::Value = page
             .evaluate(code)
             .await
-            .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?
+            .map_err(|e| Error::JsEvalFailed(e.to_string()))?
             .into_value()
-            .map_err(|e| BrowserError::JsEvalFailed(format!("{e:?}")))?;
+            .map_err(|e| Error::JsEvalFailed(format!("{e:?}")))?;
 
         debug!(session_id = sid, "evaluated JavaScript");
 
@@ -591,7 +591,7 @@ impl BrowserManager {
         ref_: Option<u32>,
         timeout_ms: u64,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "wait")?;
 
         let page = self.pool.get_page(&sid).await?;
@@ -599,14 +599,12 @@ impl BrowserManager {
         let check_js = if let Some(ref selector) = selector {
             format!(
                 r#"document.querySelector({}) !== null"#,
-                serde_json::to_string(selector).map_err(|e| BrowserError::Cdp(e.to_string()))?
+                serde_json::to_string(selector).map_err(|e| Error::Cdp(e.to_string()))?
             )
         } else if let Some(ref_) = ref_ {
             format!(r#"document.querySelector('[data-moltis-ref="{ref_}"]') !== null"#)
         } else {
-            return Err(BrowserError::InvalidAction(
-                "wait requires selector or ref".into(),
-            ));
+            return Err(Error::InvalidAction("wait requires selector or ref".into()));
         };
 
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
@@ -616,7 +614,7 @@ impl BrowserManager {
             let found: bool = page
                 .evaluate(check_js.as_str())
                 .await
-                .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?
+                .map_err(|e| Error::JsEvalFailed(e.to_string()))?
                 .into_value()
                 .unwrap_or(false);
 
@@ -628,7 +626,7 @@ impl BrowserManager {
             tokio::time::sleep(interval).await;
         }
 
-        Err(BrowserError::Timeout(format!(
+        Err(Error::Timeout(format!(
             "element not found after {}ms",
             timeout_ms
         )))
@@ -639,7 +637,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "get_url")?;
 
         let page = self.pool.get_page(&sid).await?;
@@ -656,7 +654,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "get_title")?;
 
         let page = self.pool.get_page(&sid).await?;
@@ -673,14 +671,14 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "back")?;
 
         let page = self.pool.get_page(&sid).await?;
 
         page.evaluate("history.back()")
             .await
-            .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?;
+            .map_err(|e| Error::JsEvalFailed(e.to_string()))?;
 
         // Wait for navigation
         let _ = page.wait_for_navigation().await;
@@ -698,14 +696,14 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "forward")?;
 
         let page = self.pool.get_page(&sid).await?;
 
         page.evaluate("history.forward()")
             .await
-            .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?;
+            .map_err(|e| Error::JsEvalFailed(e.to_string()))?;
 
         // Wait for navigation
         let _ = page.wait_for_navigation().await;
@@ -723,14 +721,12 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "refresh")?;
 
         let page = self.pool.get_page(&sid).await?;
 
-        page.reload()
-            .await
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+        page.reload().await.map_err(|e| Error::Cdp(e.to_string()))?;
 
         // Wait for navigation
         let _ = page.wait_for_navigation().await;
@@ -748,7 +744,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
-    ) -> Result<(String, BrowserResponse), BrowserError> {
+    ) -> Result<(String, BrowserResponse), Error> {
         let sid = require_session(session_id, "close")?;
 
         self.pool.close_session(&sid).await?;
@@ -759,7 +755,7 @@ impl BrowserManager {
     }
 
     /// Highlight an element (for screenshots).
-    async fn highlight_element(&self, page: &Page, ref_: u32) -> Result<(), BrowserError> {
+    async fn highlight_element(&self, page: &Page, ref_: u32) -> Result<(), Error> {
         let js = format!(
             r#"(() => {{
                 const el = document.querySelector(`[data-moltis-ref="{ref_}"]`);
@@ -772,13 +768,13 @@ impl BrowserManager {
 
         page.evaluate(js.as_str())
             .await
-            .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?;
+            .map_err(|e| Error::JsEvalFailed(e.to_string()))?;
 
         Ok(())
     }
 
     /// Remove all element highlights.
-    async fn remove_highlights(&self, page: &Page) -> Result<(), BrowserError> {
+    async fn remove_highlights(&self, page: &Page) -> Result<(), Error> {
         let js = r#"
             document.querySelectorAll('[data-moltis-ref]').forEach(el => {
                 el.style.outline = '';
@@ -788,7 +784,7 @@ impl BrowserManager {
 
         page.evaluate(js)
             .await
-            .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?;
+            .map_err(|e| Error::JsEvalFailed(e.to_string()))?;
 
         Ok(())
     }
@@ -822,24 +818,21 @@ impl BrowserManager {
 /// - Valid URL structure (can be parsed)
 /// - Allowed schemes (http, https)
 /// - Not obviously malformed (LLM garbage in path)
-fn validate_url(url: &str) -> Result<(), BrowserError> {
+fn validate_url(url: &str) -> Result<(), Error> {
     // Check if URL is empty
     if url.is_empty() {
-        return Err(BrowserError::InvalidAction(
-            "URL cannot be empty".to_string(),
-        ));
+        return Err(Error::InvalidAction("URL cannot be empty".to_string()));
     }
 
     // Parse the URL
-    let parsed = url::Url::parse(url).map_err(|e| {
-        BrowserError::InvalidAction(format!("invalid URL '{}': {}", truncate_url(url), e))
-    })?;
+    let parsed = url::Url::parse(url)
+        .map_err(|e| Error::InvalidAction(format!("invalid URL '{}': {}", truncate_url(url), e)))?;
 
     // Check scheme
     match parsed.scheme() {
         "http" | "https" => {},
         scheme => {
-            return Err(BrowserError::InvalidAction(format!(
+            return Err(Error::InvalidAction(format!(
                 "unsupported URL scheme '{}', only http/https allowed",
                 scheme
             )));
@@ -863,7 +856,7 @@ fn validate_url(url: &str) -> Result<(), BrowserError> {
                 pattern = pattern,
                 "rejecting URL with suspicious pattern (likely LLM garbage)"
             );
-            return Err(BrowserError::InvalidAction(format!(
+            return Err(Error::InvalidAction(format!(
                 "URL contains invalid characters or LLM garbage: '{}'",
                 truncate_url(url)
             )));

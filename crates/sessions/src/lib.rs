@@ -5,6 +5,7 @@
 //! with file locking for concurrent access.
 
 pub mod compaction;
+pub mod error;
 pub mod key;
 pub mod message;
 pub mod metadata;
@@ -12,6 +13,7 @@ pub mod state_store;
 pub mod store;
 
 pub use {
+    error::{Error, Result},
     key::SessionKey,
     message::{ContentBlock, MessageContent, PersistedMessage},
     store::SearchResult,
@@ -22,7 +24,7 @@ pub use {
 /// This creates the `sessions` and `channel_sessions` tables. Should be called
 /// at application startup after [`moltis_projects::run_migrations`] (sessions
 /// has a foreign key to projects).
-pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+pub async fn run_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations")
         .set_ignore_missing(true)
         .run(pool)

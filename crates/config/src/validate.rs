@@ -114,6 +114,7 @@ fn build_schema_map() -> KnownKeys {
             ("base_url", Leaf),
             ("models", Leaf),
             ("fetch_models", Leaf),
+            ("stream_transport", Leaf),
             ("alias", Leaf),
         ]))
     };
@@ -131,6 +132,7 @@ fn build_schema_map() -> KnownKeys {
             ("mode", Leaf),
             ("scope", Leaf),
             ("workspace_mount", Leaf),
+            ("home_persistence", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
@@ -328,7 +330,11 @@ fn build_schema_map() -> KnownKeys {
         ),
         (
             "channels",
-            Struct(HashMap::from([("telegram", Map(Box::new(Leaf)))])),
+            Struct(HashMap::from([
+                ("offered", Array(Box::new(Leaf))),
+                ("telegram", Map(Box::new(Leaf))),
+                ("msteams", Map(Box::new(Leaf))),
+            ])),
         ),
         (
             "tls",
@@ -418,6 +424,23 @@ fn build_schema_map() -> KnownKeys {
             ])),
         ),
         ("env", Map(Box::new(Leaf))),
+        (
+            "caldav",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("default_account", Leaf),
+                (
+                    "accounts",
+                    Map(Box::new(Struct(HashMap::from([
+                        ("url", Leaf),
+                        ("username", Leaf),
+                        ("password", Leaf),
+                        ("provider", Leaf),
+                        ("timeout_seconds", Leaf),
+                    ])))),
+                ),
+            ])),
+        ),
         (
             "voice",
             Struct(HashMap::from([
@@ -888,6 +911,22 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         });
     }
 
+    // Unknown channel types in channels.offered
+    let valid_channel_types = ["telegram", "msteams"];
+    for (idx, entry) in config.channels.offered.iter().enumerate() {
+        if !valid_channel_types.contains(&entry.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("channels.offered[{idx}]"),
+                message: format!(
+                    "unknown channel type \"{entry}\"; expected one of: {}",
+                    valid_channel_types.join(", ")
+                ),
+            });
+        }
+    }
+
     // Unknown tailscale mode
     let valid_ts_modes = ["off", "serve", "funnel"];
     if !valid_ts_modes.contains(&config.tailscale.mode.as_str()) {
@@ -945,6 +984,24 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 message: format!(
                     "unknown memory provider \"{provider}\"; expected one of: {}",
                     valid_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown CalDAV provider
+    let valid_caldav_providers = ["fastmail", "icloud", "generic"];
+    for (name, account) in &config.caldav.accounts {
+        if let Some(ref provider) = account.provider
+            && !valid_caldav_providers.contains(&provider.as_str())
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("caldav.accounts.{name}.provider"),
+                message: format!(
+                    "unknown CalDAV provider \"{provider}\"; expected one of: {}",
+                    valid_caldav_providers.join(", ")
                 ),
             });
         }
@@ -1857,6 +1914,42 @@ agent_max_iterations = 0
         assert!(
             invalid.is_some(),
             "expected tools.agent_max_iterations invalid-value error, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_accepted_without_warning() {
+        let toml = r#"
+[channels]
+offered = ["telegram"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered"));
+        assert!(
+            warning.is_none(),
+            "valid channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_unknown_type_warned() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "slack"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "channels.offered[1]" && d.category == "unknown-field");
+        assert!(
+            warning.is_some(),
+            "unknown channel type should produce warning, got: {:?}",
             result.diagnostics
         );
     }

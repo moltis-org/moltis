@@ -302,6 +302,8 @@ pub struct GatewayInner {
     pub channel_status_log: HashMap<String, Vec<String>>,
     /// Sessions currently in channel command mode (/sh passthrough).
     pub channel_command_mode_sessions: HashSet<String>,
+    /// Which channel types are offered in the web UI (from config).
+    pub channels_offered: Vec<String>,
 }
 
 impl GatewayInner {
@@ -333,6 +335,7 @@ impl GatewayInner {
             cached_location: moltis_config::load_user().and_then(|u| u.location),
             channel_status_log: HashMap::new(),
             channel_command_mode_sessions: HashSet::new(),
+            channels_offered: vec!["telegram".into()],
         }
     }
 
@@ -405,6 +408,9 @@ pub struct GatewayState {
     /// Persistent metrics store (SQLite or other backend).
     #[cfg(feature = "metrics")]
     pub metrics_store: Option<Arc<dyn MetricsStore>>,
+    /// Encryption-at-rest vault for environment variables.
+    #[cfg(feature = "vault")]
+    pub vault: Option<Arc<moltis_vault::Vault>>,
 
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     /// Monotonically increasing sequence counter for broadcast events.
@@ -436,6 +442,8 @@ impl GatewayState {
             None,
             #[cfg(feature = "metrics")]
             None,
+            #[cfg(feature = "vault")]
+            None,
         )
     }
 
@@ -455,6 +463,7 @@ impl GatewayState {
         deploy_platform: Option<String>,
         #[cfg(feature = "metrics")] metrics_handle: Option<MetricsHandle>,
         #[cfg(feature = "metrics")] metrics_store: Option<Arc<dyn MetricsStore>>,
+        #[cfg(feature = "vault")] vault: Option<Arc<moltis_vault::Vault>>,
     ) -> Arc<Self> {
         let hostname = hostname::get()
             .ok()
@@ -482,6 +491,8 @@ impl GatewayState {
             metrics_handle,
             #[cfg(feature = "metrics")]
             metrics_store,
+            #[cfg(feature = "vault")]
+            vault,
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
             #[cfg(feature = "graphql")]

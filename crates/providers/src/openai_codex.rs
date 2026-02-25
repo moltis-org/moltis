@@ -4,6 +4,7 @@ use {
     async_trait::async_trait,
     base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD},
     futures::StreamExt,
+    moltis_config::schema::ProviderStreamTransport,
     moltis_oauth::{OAuthFlow, TokenStore, load_oauth_config},
     secrecy::{ExposeSecret, Secret},
     tokio_stream::Stream,
@@ -21,6 +22,7 @@ pub struct OpenAiCodexProvider {
     base_url: String,
     client: &'static reqwest::Client,
     token_store: TokenStore,
+    stream_transport: ProviderStreamTransport,
 }
 
 const CODEX_MODELS_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/models";
@@ -36,11 +38,31 @@ const DEFAULT_CODEX_MODELS: &[(&str, &str)] = &[
 
 impl OpenAiCodexProvider {
     pub fn new(model: String) -> Self {
+        Self::new_with_transport(model, ProviderStreamTransport::Sse)
+    }
+
+    pub fn new_with_transport(model: String, stream_transport: ProviderStreamTransport) -> Self {
         Self {
             model,
             base_url: "https://chatgpt.com/backend-api".to_string(),
             client: crate::shared_http_client(),
             token_store: TokenStore::new(),
+            stream_transport,
+        }
+    }
+
+    fn ensure_supported_stream_transport(&self) -> anyhow::Result<()> {
+        match self.stream_transport {
+            ProviderStreamTransport::Sse => Ok(()),
+            ProviderStreamTransport::Auto => {
+                debug!(
+                    "openai-codex stream_transport=auto requested; WebSocket mode is not supported yet on Codex backend, using SSE"
+                );
+                Ok(())
+            },
+            ProviderStreamTransport::Websocket => anyhow::bail!(
+                "openai-codex stream_transport=websocket is not supported yet; use stream_transport=\"sse\" or \"auto\""
+            ),
         }
     }
 
@@ -169,21 +191,9 @@ impl OpenAiCodexProvider {
                                 vec![serde_json::json!({"type": "input_text", "text": t})]
                             },
                             UserContent::Multimodal(parts) => {
-                                let text_count = parts
-                                    .iter()
-                                    .filter(|p| {
-                                        matches!(p, moltis_agents::model::ContentPart::Text(_))
-                                    })
-                                    .count();
-                                let image_count = parts
-                                    .iter()
-                                    .filter(|p| {
-                                        matches!(p, moltis_agents::model::ContentPart::Image { .. })
-                                    })
-                                    .count();
                                 debug!(
-                                    text_count,
-                                    image_count, "codex convert_messages: multimodal user content"
+                                    parts = parts.len(),
+                                    "codex convert_messages: multimodal user content"
                                 );
                                 parts
                                     .iter()
@@ -598,6 +608,8 @@ impl LlmProvider for OpenAiCodexProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
+        self.ensure_supported_stream_transport()?;
+
         let tokens = self.get_valid_tokens().await?;
         let token = tokens.access_token.expose_secret().clone();
         let account_id = Self::resolve_account_id(&tokens)?;
@@ -765,6 +777,11 @@ impl LlmProvider for OpenAiCodexProvider {
             "stream_with_tools entry (before async_stream)"
         );
         Box::pin(async_stream::stream! {
+            if let Err(err) = self.ensure_supported_stream_transport() {
+                yield StreamEvent::Error(err.to_string());
+                return;
+            }
+
             let tokens = match self.get_valid_tokens().await {
                 Ok(t) => t,
                 Err(e) => {
@@ -949,7 +966,28 @@ impl LlmProvider for OpenAiCodexProvider {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+    use moltis_agents::model::UserContent;
+
     use super::*;
+
+    #[tokio::test]
+    async fn websocket_transport_returns_clear_error() {
+        let provider = OpenAiCodexProvider::new_with_transport(
+            "gpt-5.2-codex".to_string(),
+            ProviderStreamTransport::Websocket,
+        );
+        let mut stream = provider.stream_with_tools(vec![ChatMessage::user("hi")], vec![]);
+        let first = stream.next().await.expect("stream should emit an error");
+        match first {
+            StreamEvent::Error(msg) => {
+                assert!(
+                    msg.contains("not supported"),
+                    "unexpected websocket error message: {msg}"
+                );
+            },
+            other => panic!("expected websocket transport error, got {other:?}"),
+        }
+    }
 
     #[test]
     fn parse_codex_cli_tokens_full() {

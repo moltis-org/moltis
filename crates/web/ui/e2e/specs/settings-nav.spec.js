@@ -60,8 +60,7 @@ test.describe("Settings navigation", () => {
 	for (const section of settingsSections) {
 		test(`settings/${section.id} loads without errors`, async ({ page }) => {
 			const pageErrors = watchPageErrors(page);
-			await page.goto(`/settings/${section.id}`);
-			await expectPageContentMounted(page);
+			await navigateAndWait(page, `/settings/${section.id}`);
 
 			await expect(page).toHaveURL(new RegExp(`/settings/${section.id}$`));
 
@@ -183,7 +182,36 @@ test.describe("Settings navigation", () => {
 
 	test("security page renders", async ({ page }) => {
 		await navigateAndWait(page, "/settings/security");
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
+	});
+
+	test("encryption page shows vault status when vault is enabled", async ({ page }) => {
+		await navigateAndWait(page, "/settings/vault");
+		const heading = page.getByRole("heading", { name: "Encryption" });
+		const hasVault = await heading.isVisible().catch(() => false);
+		if (hasVault) {
+			await expect(heading).toBeVisible();
+			// Should show a status badge
+			const badges = page.locator(".provider-item-badge");
+			await expect(badges.first()).toBeVisible();
+		}
+	});
+
+	test("environment page shows encrypted badges on env vars", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/environment");
+		await expect(page.getByRole("heading", { name: "Environment" })).toBeVisible();
+		// If env vars exist, they should have either Encrypted or Plaintext badge
+		const items = page.locator(".provider-item");
+		const count = await items.count();
+		if (count > 0) {
+			const firstItem = items.first();
+			const hasBadge = await firstItem.locator(".provider-item-badge").count();
+			expect(hasBadge).toBeGreaterThan(0);
+			const badgeText = await firstItem.locator(".provider-item-badge").first().textContent();
+			expect(["Encrypted", "Plaintext"]).toContain(badgeText.trim());
+		}
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("provider page renders from settings", async ({ page }) => {
@@ -209,11 +237,11 @@ test.describe("Settings navigation", () => {
 		await navigateAndWait(page, "/settings/channels");
 		await waitForWsConnected(page);
 
-		const addButton = page.getByRole("button", { name: "+ Add Telegram Bot", exact: true });
+		const addButton = page.getByRole("button", { name: "Connect Telegram", exact: true });
 		await expect(addButton).toBeVisible();
 		await addButton.click();
 
-		await expect(page.getByRole("heading", { name: "Add Telegram Bot", exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Connect Telegram", exact: true })).toBeVisible();
 		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
 		await expect(tokenInput).toHaveAttribute("type", "password");
 		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");
@@ -277,21 +305,19 @@ test.describe("Settings navigation", () => {
 		const navItems = (await page.locator(".settings-nav-item").allTextContents()).map((text) => text.trim());
 		const expectedPrefix = [
 			"Identity",
+			"Agents",
 			"Environment",
 			"Memory",
 			"Notifications",
 			"Crons",
 			"Heartbeat",
-			"Security",
-			"Tailscale",
-			"Channels",
-			"Hooks",
-			"LLMs",
-			"MCP",
-			"Skills",
+			"Authentication",
 		];
+		if (navItems.includes("Encryption")) expectedPrefix.push("Encryption");
+		expectedPrefix.push("Tailscale", "Channels", "Hooks", "LLMs", "MCP", "Skills");
 		const expectedSystem = ["Terminal", "Sandboxes", "Monitoring", "Logs"];
 		const expected = [...expectedPrefix];
+		if (navItems.includes("OpenClaw Import")) expected.push("OpenClaw Import");
 		if (navItems.includes("Voice")) expected.push("Voice");
 		expected.push(...expectedSystem);
 		if (navItems.includes("GraphQL")) expected.push("GraphQL");

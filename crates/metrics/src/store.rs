@@ -4,7 +4,7 @@
 //! to enable historical charts that survive restarts.
 
 use {
-    anyhow::Result,
+    crate::Result,
     serde::{Deserialize, Serialize},
     sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
     std::{collections::HashMap, path::Path, str::FromStr},
