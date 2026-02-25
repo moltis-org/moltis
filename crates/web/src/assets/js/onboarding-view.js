@@ -50,6 +50,9 @@ function ensureWsConnected() {
 	connectWs({ backoff: { factor: 2, max: 10000 } });
 }
 
+var WS_RETRY_LIMIT = 75;
+var WS_RETRY_DELAY_MS = 200;
+
 // ── Step indicator ──────────────────────────────────────────
 
 function preferredChatPath() {
@@ -1082,9 +1085,12 @@ function ProviderStep({ onNext, onBack }) {
 					return;
 				}
 
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
 					attempts += 1;
-					window.setTimeout(loadProviders, 200);
+					window.setTimeout(loadProviders, WS_RETRY_DELAY_MS);
 					return;
 				}
 
@@ -1737,9 +1743,12 @@ function VoiceStep({ onNext, onBack }) {
 					setLoading(false);
 					return;
 				}
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
 					attempts += 1;
-					window.setTimeout(load, 200);
+					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;
 				}
 				// Voice not compiled → skip
