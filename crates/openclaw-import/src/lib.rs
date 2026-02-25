@@ -317,11 +317,9 @@ fn persist_identity(imported: &identity::ImportedIdentity, config_dir: &Path) ->
     info!(
         config_path = %config_path.display(),
         existing_name = ?config.identity.name,
-        existing_creature = ?config.identity.creature,
-        existing_vibe = ?config.identity.vibe,
+        existing_theme = ?config.identity.theme,
         imported_name = ?imported.agent_name,
-        imported_creature = ?imported.creature,
-        imported_vibe = ?imported.vibe,
+        imported_theme = ?imported.theme,
         imported_user_name = ?imported.user_name,
         "openclaw persist_identity: loaded existing config"
     );
@@ -331,18 +329,11 @@ fn persist_identity(imported: &identity::ImportedIdentity, config_dir: &Path) ->
         config.identity.name = Some(name.clone());
     }
 
-    if config.identity.creature.is_none()
-        && let Some(ref creature) = imported.creature
+    if config.identity.theme.is_none()
+        && let Some(ref theme) = imported.theme
     {
-        info!(creature, "openclaw persist_identity: writing creature");
-        config.identity.creature = Some(creature.clone());
-    }
-
-    if config.identity.vibe.is_none()
-        && let Some(ref vibe) = imported.vibe
-    {
-        info!(vibe, "openclaw persist_identity: writing vibe");
-        config.identity.vibe = Some(vibe.clone());
+        info!(theme, "openclaw persist_identity: writing theme");
+        config.identity.theme = Some(theme.clone());
     }
 
     if let Some(ref tz_str) = imported.user_timezone {
@@ -750,8 +741,7 @@ mod tests {
         let config: moltis_config::MoltisConfig = toml::from_str(&content).unwrap();
 
         assert_eq!(config.identity.name.as_deref(), Some("Claude"));
-        assert_eq!(config.identity.creature.as_deref(), Some("owl"));
-        assert_eq!(config.identity.vibe.as_deref(), Some("wise"));
+        assert_eq!(config.identity.theme.as_deref(), Some("wise owl"));
         assert_eq!(config.user.name.as_deref(), Some("Penso"));
         assert_eq!(
             config.user.timezone.as_ref().map(|t| t.name()),
@@ -822,11 +812,10 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::create_dir_all(&data_dir).unwrap();
 
-        // Pre-existing config with creature/vibe already set
+        // Pre-existing config with theme already set
         let existing = moltis_config::MoltisConfig {
             identity: moltis_config::AgentIdentity {
-                creature: Some("cat".to_string()),
-                vibe: Some("chill".to_string()),
+                theme: Some("chill cat".to_string()),
                 ..Default::default()
             },
             ..Default::default()
@@ -846,9 +835,8 @@ mod tests {
 
         // Imported name should be set
         assert_eq!(config.identity.name.as_deref(), Some("Claude"));
-        // Pre-existing creature/vibe should be preserved (not overwritten)
-        assert_eq!(config.identity.creature.as_deref(), Some("cat"));
-        assert_eq!(config.identity.vibe.as_deref(), Some("chill"));
+        // Pre-existing theme should be preserved (not overwritten)
+        assert_eq!(config.identity.theme.as_deref(), Some("chill cat"));
     }
 
     #[test]

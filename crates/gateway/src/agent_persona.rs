@@ -61,9 +61,7 @@ pub struct AgentPersona {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emoji: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub creature: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub created_at: i64,
@@ -78,9 +76,7 @@ pub struct CreateAgentParams {
     #[serde(default)]
     pub emoji: Option<String>,
     #[serde(default)]
-    pub creature: Option<String>,
-    #[serde(default)]
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -93,9 +89,7 @@ pub struct UpdateAgentParams {
     #[serde(default)]
     pub emoji: Option<String>,
     #[serde(default)]
-    pub creature: Option<String>,
-    #[serde(default)]
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -106,8 +100,7 @@ struct AgentRow {
     name: String,
     is_default: i64,
     emoji: Option<String>,
-    creature: Option<String>,
-    vibe: Option<String>,
+    theme: Option<String>,
     description: Option<String>,
     created_at: i64,
     updated_at: i64,
@@ -120,8 +113,7 @@ impl From<AgentRow> for AgentPersona {
             name: r.name,
             is_default: r.is_default != 0,
             emoji: r.emoji,
-            creature: r.creature,
-            vibe: r.vibe,
+            theme: r.theme,
             description: r.description,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -273,14 +265,13 @@ impl AgentPersonaStore {
 
         let now = now_ms();
         sqlx::query(
-            r#"INSERT INTO agents (id, name, is_default, emoji, creature, vibe, description, created_at, updated_at)
-               VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO agents (id, name, is_default, emoji, theme, description, created_at, updated_at)
+               VALUES (?, ?, 0, ?, ?, ?, ?, ?)"#,
         )
         .bind(&params.id)
         .bind(&params.name)
         .bind(&params.emoji)
-        .bind(&params.creature)
-        .bind(&params.vibe)
+        .bind(&params.theme)
         .bind(&params.description)
         .bind(now)
         .bind(now)
@@ -293,8 +284,7 @@ impl AgentPersonaStore {
         let identity = moltis_config::schema::AgentIdentity {
             name: Some(params.name.clone()),
             emoji: params.emoji.clone(),
-            creature: params.creature.clone(),
-            vibe: params.vibe.clone(),
+            theme: params.theme.clone(),
         };
         moltis_config::save_identity_for_agent(&params.id, &identity)?;
 
@@ -303,8 +293,7 @@ impl AgentPersonaStore {
             name: params.name,
             is_default: false,
             emoji: params.emoji,
-            creature: params.creature,
-            vibe: params.vibe,
+            theme: params.theme,
             description: params.description,
             created_at: now,
             updated_at: now,
@@ -326,18 +315,16 @@ impl AgentPersonaStore {
 
         let name = params.name.unwrap_or(existing.name);
         let emoji = params.emoji.or(existing.emoji);
-        let creature = params.creature.or(existing.creature);
-        let vibe = params.vibe.or(existing.vibe);
+        let theme = params.theme.or(existing.theme);
         let description = params.description.or(existing.description);
         let now = now_ms();
 
         sqlx::query(
-            "UPDATE agents SET name = ?, emoji = ?, creature = ?, vibe = ?, description = ?, updated_at = ? WHERE id = ?",
+            "UPDATE agents SET name = ?, emoji = ?, theme = ?, description = ?, updated_at = ? WHERE id = ?",
         )
         .bind(&name)
         .bind(&emoji)
-        .bind(&creature)
-        .bind(&vibe)
+        .bind(&theme)
         .bind(&description)
         .bind(now)
         .bind(id)
@@ -348,8 +335,7 @@ impl AgentPersonaStore {
         let identity = moltis_config::schema::AgentIdentity {
             name: Some(name.clone()),
             emoji: emoji.clone(),
-            creature: creature.clone(),
-            vibe: vibe.clone(),
+            theme: theme.clone(),
         };
         moltis_config::save_identity_for_agent(id, &identity)?;
 
@@ -358,8 +344,7 @@ impl AgentPersonaStore {
             name,
             is_default: existing.is_default,
             emoji,
-            creature,
-            vibe,
+            theme,
             description,
             created_at: existing.created_at,
             updated_at: now,
@@ -425,8 +410,7 @@ fn synthesize_main_agent(is_default: bool) -> AgentPersona {
             .unwrap_or_else(|| "moltis".to_string()),
         is_default,
         emoji: identity.as_ref().and_then(|i| i.emoji.clone()),
-        creature: identity.as_ref().and_then(|i| i.creature.clone()),
-        vibe: identity.as_ref().and_then(|i| i.vibe.clone()),
+        theme: identity.as_ref().and_then(|i| i.theme.clone()),
         description: Some("Default agent".to_string()),
         created_at: 0,
         updated_at: 0,
@@ -477,8 +461,7 @@ mod tests {
                 name        TEXT NOT NULL,
                 is_default  INTEGER NOT NULL DEFAULT 0,
                 emoji       TEXT,
-                creature    TEXT,
-                vibe        TEXT,
+                theme       TEXT,
                 description TEXT,
                 created_at  INTEGER NOT NULL,
                 updated_at  INTEGER NOT NULL
@@ -510,8 +493,7 @@ mod tests {
                 id: "research".to_string(),
                 name: "Research Assistant".to_string(),
                 emoji: Some("🔬".to_string()),
-                creature: None,
-                vibe: Some("analytical".to_string()),
+                theme: Some("analytical".to_string()),
                 description: Some("Helps with research tasks".to_string()),
             })
             .await
@@ -535,8 +517,7 @@ mod tests {
                 id: "main".to_string(),
                 name: "Main".to_string(),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await;
@@ -552,8 +533,7 @@ mod tests {
                 id: "INVALID".to_string(),
                 name: "Test".to_string(),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await;
@@ -569,8 +549,7 @@ mod tests {
                 id: "writer".to_string(),
                 name: "Writer".to_string(),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await
@@ -580,8 +559,7 @@ mod tests {
             .update("writer", UpdateAgentParams {
                 name: Some("Creative Writer".to_string()),
                 emoji: Some("✍️".to_string()),
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await
@@ -599,8 +577,7 @@ mod tests {
             .update("main", UpdateAgentParams {
                 name: Some("Changed".to_string()),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await;
@@ -616,8 +593,7 @@ mod tests {
                 id: "temp".to_string(),
                 name: "Temporary".to_string(),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await
@@ -643,8 +619,7 @@ mod tests {
                 id: "ops".to_string(),
                 name: "Ops".to_string(),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await
@@ -665,8 +640,7 @@ mod tests {
                 id: "ops".to_string(),
                 name: "Ops".to_string(),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await
@@ -692,8 +666,7 @@ mod tests {
                 id: "beta".to_string(),
                 name: "Beta".to_string(),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await
@@ -704,8 +677,7 @@ mod tests {
                 id: "alpha".to_string(),
                 name: "Alpha".to_string(),
                 emoji: None,
-                creature: None,
-                vibe: None,
+                theme: None,
                 description: None,
             })
             .await

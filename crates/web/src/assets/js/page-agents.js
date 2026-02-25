@@ -36,8 +36,7 @@ function AgentForm({ agent, onSave, onCancel }) {
 	var [id, setId] = useState(agent?.id || "");
 	var [name, setName] = useState(agent?.name || "");
 	var [emoji, setEmoji] = useState(agent?.emoji || "");
-	var [creature, setCreature] = useState(agent?.creature || "");
-	var [vibe, setVibe] = useState(agent?.vibe || "");
+	var [theme, setTheme] = useState(agent?.theme || "");
 	var [soul, setSoul] = useState("");
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
@@ -65,8 +64,7 @@ function AgentForm({ agent, onSave, onCancel }) {
 		var base = {
 			name: name.trim(),
 			emoji: emoji.trim() || null,
-			creature: creature.trim() || null,
-			vibe: vibe.trim() || null,
+			theme: theme.trim() || null,
 		};
 		base.id = isEdit ? agent.id : id.trim();
 		return base;
@@ -151,24 +149,13 @@ function AgentForm({ agent, onSave, onCancel }) {
 			</div>
 
 			<label class="flex flex-col gap-1">
-				<span class="text-xs text-[var(--muted)]">Creature</span>
+				<span class="text-xs text-[var(--muted)]">Theme</span>
 				<input
 					type="text"
 					class="provider-key-input"
-					value=${creature}
-					onInput=${(e) => setCreature(e.target.value)}
-					placeholder="owl, fox, dragon\u2026"
-				/>
-			</label>
-
-			<label class="flex flex-col gap-1">
-				<span class="text-xs text-[var(--muted)]">Vibe</span>
-				<input
-					type="text"
-					class="provider-key-input"
-					value=${vibe}
-					onInput=${(e) => setVibe(e.target.value)}
-					placeholder="focused, creative, analytical\u2026"
+					value=${theme}
+					onInput=${(e) => setTheme(e.target.value)}
+					placeholder="wise owl, chill fox, witty robot\u2026"
 				/>
 			</label>
 
@@ -245,10 +232,10 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
 				</div>
 			</div>
 			${
-				(agent.creature || agent.vibe) &&
+				agent.theme &&
 				html`
 				<div class="text-xs text-[var(--muted)] mt-1">
-					${[agent.creature, agent.vibe].filter(Boolean).join(" \u00b7 ")}
+					${agent.theme}
 				</div>
 			`
 			}

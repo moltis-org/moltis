@@ -68,8 +68,7 @@ impl GatewayOnboardingService {
                 id: agent.moltis_id.clone(),
                 name,
                 emoji: None,
-                creature: agent.creature.clone(),
-                vibe: agent.vibe.clone(),
+                theme: agent.theme.clone(),
                 description: None,
             };
 
@@ -383,8 +382,7 @@ mod tests {
                 name        TEXT NOT NULL,
                 is_default  INTEGER NOT NULL DEFAULT 0,
                 emoji       TEXT,
-                creature    TEXT,
-                vibe        TEXT,
+                theme       TEXT,
                 description TEXT,
                 created_at  INTEGER NOT NULL,
                 updated_at  INTEGER NOT NULL

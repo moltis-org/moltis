@@ -1,7 +1,7 @@
 //! Multi-agent extraction from OpenClaw installations.
 //!
 //! Reads the `agents.list` array from `openclaw.json` and resolves each
-//! agent's workspace, identity metadata (creature/vibe/theme), and a
+//! agent's workspace, identity metadata (theme), and a
 //! sanitized Moltis agent ID.
 
 use std::{
@@ -24,9 +24,7 @@ pub struct ImportedAgent {
     pub moltis_id: String,
     pub is_default: bool,
     pub name: Option<String>,
-    pub creature: Option<String>,
-    pub vibe: Option<String>,
-    /// Composed theme from creature + vibe (or explicit theme).
+    /// Agent theme (composed from creature/vibe, or explicit theme).
     pub theme: Option<String>,
     /// Resolved source workspace directory for this agent.
     pub source_workspace: Option<PathBuf>,
@@ -100,7 +98,7 @@ pub fn sanitize_agent_id(raw: &str, existing_ids: &HashSet<String>) -> String {
 /// Extract agent metadata from an OpenClaw installation.
 ///
 /// Reads `openclaw.json` and resolves each agent's workspace, identity,
-/// creature/vibe/theme. The default agent gets `moltis_id = "main"`.
+/// theme. The default agent gets `moltis_id = "main"`.
 pub fn import_agents(detection: &OpenClawDetection) -> ImportedAgents {
     let config = identity::load_config(&detection.home_dir);
     let mut agents = Vec::new();
@@ -150,15 +148,13 @@ fn extract_from_config_list(
         let source_workspace =
             resolve_agent_workspace(entry.workspace.as_deref(), &entry.id, detection);
 
-        let (creature, vibe, theme) = extract_agent_identity(&source_workspace, config);
+        let theme = extract_agent_identity(&source_workspace, config);
 
         debug!(
             openclaw_id = %entry.id,
             moltis_id = %moltis_id,
             is_default,
             name = ?entry.name,
-            creature = ?creature,
-            vibe = ?vibe,
             theme = ?theme,
             workspace = ?source_workspace,
             "openclaw agents: extracted agent"
@@ -169,8 +165,6 @@ fn extract_from_config_list(
             moltis_id,
             is_default,
             name: entry.name.clone(),
-            creature,
-            vibe,
             theme,
             source_workspace,
         });
@@ -215,8 +209,6 @@ fn synthesize_from_detection(
             moltis_id,
             is_default,
             name: None,
-            creature: None,
-            vibe: None,
             theme: None,
             source_workspace,
         });
@@ -271,11 +263,8 @@ fn resolve_agent_dir_workspace(agent_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Extract creature/vibe/theme from an agent's workspace IDENTITY.md.
-fn extract_agent_identity(
-    workspace: &Option<PathBuf>,
-    config: &OpenClawConfig,
-) -> (Option<String>, Option<String>, Option<String>) {
+/// Extract theme from an agent's workspace IDENTITY.md or config.
+fn extract_agent_identity(workspace: &Option<PathBuf>, config: &OpenClawConfig) -> Option<String> {
     // Try IDENTITY.md in the workspace
     if let Some(ws) = workspace {
         let identity_path = ws.join("IDENTITY.md");
@@ -283,26 +272,22 @@ fn extract_agent_identity(
             let parsed = identity::parse_workspace_identity(&content);
             let theme = parsed
                 .theme
-                .clone()
-                .or_else(|| identity::compose_theme(parsed.creature.clone(), parsed.vibe.clone()));
-            if parsed.creature.is_some() || parsed.vibe.is_some() || theme.is_some() {
-                return (parsed.creature, parsed.vibe, theme);
+                .or_else(|| identity::compose_theme(parsed.creature, parsed.vibe));
+            if theme.is_some() {
+                return theme;
             }
         }
     }
 
     // Fall back to ui.assistant from config
     if let Some(assistant) = config.ui.assistant.as_ref() {
-        let creature = assistant.creature.clone();
-        let vibe = assistant.vibe.clone();
-        let theme = assistant
-            .theme
-            .clone()
-            .or_else(|| identity::compose_theme(creature.clone(), vibe.clone()));
-        return (creature, vibe, theme);
+        let theme = assistant.theme.clone().or_else(|| {
+            identity::compose_theme(assistant.creature.clone(), assistant.vibe.clone())
+        });
+        return theme;
     }
 
-    (None, None, None)
+    None
 }
 
 #[cfg(test)]
@@ -474,8 +459,6 @@ mod tests {
 
         let result = import_agents(&detection);
         let research = &result.agents[1];
-        assert_eq!(research.creature.as_deref(), Some("fox"));
-        assert_eq!(research.vibe.as_deref(), Some("curious"));
         assert_eq!(research.theme.as_deref(), Some("curious fox"));
     }
 
