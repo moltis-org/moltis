@@ -1,4 +1,6 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+#[cfg(feature = "qmd")]
+use std::collections::HashMap;
+use std::{sync::Arc, time::Duration};
 
 use tracing::warn;
 
