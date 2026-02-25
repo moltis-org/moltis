@@ -4,7 +4,7 @@ name              = "moltis-whatsapp"
 version.workspace = true
 
 [dependencies]
-anyhow          = { workspace = true }
+thiserror       = { workspace = true }
 async-trait     = { workspace = true }
 dashmap         = { workspace = true }
 moltis-channels = { workspace = true }

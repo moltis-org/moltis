@@ -77,9 +77,15 @@ impl AccountState {
         &self,
         to: wacore_binary::jid::Jid,
         mut msg: waproto::whatsapp::Message,
-    ) -> Result<(), anyhow::Error> {
+    ) -> crate::Result<()> {
         watermark_message(&mut msg);
-        let msg_id = self.client.send_message(to, msg).await?;
+        let msg_id =
+            self.client
+                .send_message(to, msg)
+                .await
+                .map_err(|e| crate::Error::Whatsapp {
+                    message: e.to_string(),
+                })?;
         self.record_sent_id(&msg_id);
         Ok(())
     }

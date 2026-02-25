@@ -6,6 +6,7 @@
 pub mod access;
 pub mod config;
 pub mod connection;
+pub mod error;
 pub mod handlers;
 pub mod memory_store;
 pub mod otp;
@@ -14,4 +15,8 @@ pub mod plugin;
 pub mod sled_store;
 pub mod state;
 
-pub use {config::WhatsAppAccountConfig, plugin::WhatsAppPlugin};
+pub use {
+    config::WhatsAppAccountConfig,
+    error::{Error, Result},
+    plugin::WhatsAppPlugin,
+};

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use {
-    anyhow::Result,
     tokio_util::sync::CancellationToken,
     tracing::{info, warn},
 };
@@ -26,7 +25,7 @@ pub async fn start_connection(
     data_dir: std::path::PathBuf,
     message_log: Option<Arc<dyn MessageLog>>,
     event_sink: Option<Arc<dyn ChannelEventSink>>,
-) -> Result<()> {
+) -> crate::Result<()> {
     // Use persistent sled store at <data_dir>/whatsapp/<account_id>/.
     let store_path = config
         .store_path
@@ -36,8 +35,8 @@ pub async fn start_connection(
     info!(account_id = %account_id, path = %store_path.display(), "opening sled WhatsApp store");
 
     let backend = Arc::new(
-        crate::sled_store::SledStore::open(&store_path).map_err(|e| {
-            anyhow::anyhow!("failed to open sled store at {}: {e}", store_path.display())
+        crate::sled_store::SledStore::open(&store_path).map_err(|e| crate::Error::Store {
+            message: format!("failed to open sled store at {}: {e}", store_path.display()),
         })?,
     );
 
@@ -72,7 +71,10 @@ pub async fn start_connection(
             }
         })
         .build()
-        .await?;
+        .await
+        .map_err(|e| crate::Error::Whatsapp {
+            message: e.to_string(),
+        })?;
 
     let client = bot.client();
 

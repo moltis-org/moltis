@@ -5837,7 +5837,6 @@ dependencies = [
 name = "moltis-whatsapp"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "dashmap",
  "moltis-channels",
@@ -5850,6 +5849,7 @@ dependencies = [
  "serde_json",
  "sled",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
