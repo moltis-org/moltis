@@ -111,6 +111,8 @@ const READ_METHODS: &[&str] = &[
     "memory.config.get",
     "memory.qmd.status",
     "hooks.list",
+    "openclaw.detect",
+    "openclaw.scan",
 ];
 
 const WRITE_METHODS: &[&str] = &[
@@ -217,6 +219,7 @@ const WRITE_METHODS: &[&str] = &[
     "hooks.save",
     "hooks.reload",
     "location.result",
+    "openclaw.import",
 ];
 
 const APPROVAL_METHODS: &[&str] = &["exec.approval.request", "exec.approval.resolve"];

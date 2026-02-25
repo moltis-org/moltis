@@ -7,14 +7,13 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-/// Agent identity (name, emoji, creature, vibe).
+/// Agent identity (name, emoji, theme).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
     pub name: Option<String>,
     pub emoji: Option<String>,
-    pub creature: Option<String>,
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
 }
 
 /// IANA timezone (e.g. `"Europe/Paris"`).
@@ -153,8 +152,7 @@ pub struct UserProfile {
 pub struct ResolvedIdentity {
     pub name: String,
     pub emoji: Option<String>,
-    pub creature: Option<String>,
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
     pub soul: Option<String>,
     pub user_name: Option<String>,
 }
@@ -164,8 +162,7 @@ impl ResolvedIdentity {
         Self {
             name: cfg.identity.name.clone().unwrap_or_else(|| "moltis".into()),
             emoji: cfg.identity.emoji.clone(),
-            creature: cfg.identity.creature.clone(),
-            vibe: cfg.identity.vibe.clone(),
+            theme: cfg.identity.theme.clone(),
             soul: None,
             user_name: cfg.user.name.clone(),
         }
@@ -177,8 +174,7 @@ impl Default for ResolvedIdentity {
         Self {
             name: "moltis".into(),
             emoji: None,
-            creature: None,
-            vibe: None,
+            theme: None,
             soul: None,
             user_name: None,
         }

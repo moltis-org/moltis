@@ -22,6 +22,7 @@ members = [
   "crates/msteams",
   "crates/oauth",
   "crates/onboarding",
+  "crates/openclaw-import",
   "crates/plugins",
   "crates/projects",
   "crates/protocol",
@@ -164,6 +165,7 @@ cron                  = "0.13"
 dirs-next             = "2"
 flate2                = "1"
 include_dir           = "0.7"
+json5                 = "0.4"
 notify-debouncer-full = "0.7"
 portable-pty          = "0.9"
 rstest                = "0.25"
@@ -179,44 +181,45 @@ tower-service = "0.3"
 zeroize       = { features = ["derive"], version = "1" }
 
 # Workspace crates
-moltis                = { path = "crates/cli" }
-moltis-agents         = { path = "crates/agents" }
-moltis-auth           = { path = "crates/auth" }
-moltis-auto-reply     = { path = "crates/auto-reply" }
-moltis-browser        = { path = "crates/browser" }
-moltis-caldav         = { path = "crates/caldav" }
-moltis-canvas         = { path = "crates/canvas" }
-moltis-channels       = { path = "crates/channels" }
-moltis-chat           = { path = "crates/chat" }
-moltis-common         = { path = "crates/common" }
-moltis-config         = { path = "crates/config" }
-moltis-cron           = { path = "crates/cron" }
-moltis-gateway        = { default-features = false, path = "crates/gateway" }
-moltis-graphql        = { path = "crates/graphql" }
-moltis-mcp            = { path = "crates/mcp" }
-moltis-media          = { path = "crates/media" }
-moltis-memory         = { path = "crates/memory" }
-moltis-metrics        = { path = "crates/metrics" }
-moltis-msteams        = { path = "crates/msteams" }
-moltis-oauth          = { path = "crates/oauth" }
-moltis-onboarding     = { path = "crates/onboarding" }
-moltis-plugins        = { path = "crates/plugins" }
-moltis-projects       = { path = "crates/projects" }
-moltis-protocol       = { path = "crates/protocol" }
-moltis-provider-setup = { path = "crates/provider-setup" }
-moltis-providers      = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
-moltis-qmd            = { path = "crates/qmd" }
-moltis-routing        = { path = "crates/routing" }
-moltis-service-traits = { path = "crates/service-traits" }
-moltis-sessions       = { path = "crates/sessions" }
-moltis-skills         = { path = "crates/skills" }
-moltis-tailscale      = { path = "crates/tailscale" }
-moltis-telegram       = { path = "crates/telegram" }
-moltis-tls            = { path = "crates/tls" }
-moltis-tools          = { path = "crates/tools" }
-moltis-vault          = { path = "crates/vault" }
-moltis-voice          = { path = "crates/voice" }
-moltis-web            = { default-features = false, path = "crates/web" }
+moltis                 = { path = "crates/cli" }
+moltis-agents          = { path = "crates/agents" }
+moltis-auth            = { path = "crates/auth" }
+moltis-auto-reply      = { path = "crates/auto-reply" }
+moltis-browser         = { path = "crates/browser" }
+moltis-caldav          = { path = "crates/caldav" }
+moltis-canvas          = { path = "crates/canvas" }
+moltis-channels        = { path = "crates/channels" }
+moltis-chat            = { path = "crates/chat" }
+moltis-common          = { path = "crates/common" }
+moltis-config          = { path = "crates/config" }
+moltis-cron            = { path = "crates/cron" }
+moltis-gateway         = { default-features = false, path = "crates/gateway" }
+moltis-graphql         = { path = "crates/graphql" }
+moltis-mcp             = { path = "crates/mcp" }
+moltis-media           = { path = "crates/media" }
+moltis-memory          = { path = "crates/memory" }
+moltis-metrics         = { path = "crates/metrics" }
+moltis-msteams         = { path = "crates/msteams" }
+moltis-oauth           = { path = "crates/oauth" }
+moltis-onboarding      = { path = "crates/onboarding" }
+moltis-openclaw-import = { path = "crates/openclaw-import" }
+moltis-plugins         = { path = "crates/plugins" }
+moltis-projects        = { path = "crates/projects" }
+moltis-protocol        = { path = "crates/protocol" }
+moltis-provider-setup  = { path = "crates/provider-setup" }
+moltis-providers       = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
+moltis-qmd             = { path = "crates/qmd" }
+moltis-routing         = { path = "crates/routing" }
+moltis-service-traits  = { path = "crates/service-traits" }
+moltis-sessions        = { path = "crates/sessions" }
+moltis-skills          = { path = "crates/skills" }
+moltis-tailscale       = { path = "crates/tailscale" }
+moltis-telegram        = { path = "crates/telegram" }
+moltis-tls             = { path = "crates/tls" }
+moltis-tools           = { path = "crates/tools" }
+moltis-vault           = { path = "crates/vault" }
+moltis-voice           = { path = "crates/voice" }
+moltis-web             = { default-features = false, path = "crates/web" }
 
 [profile.release]
 codegen-units = 1

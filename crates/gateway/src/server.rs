@@ -958,6 +958,53 @@ fn log_directory_write_probe(dir: &FsPath) {
     }
 }
 
+#[cfg(feature = "openclaw-import")]
+fn log_startup_openclaw_detection() -> String {
+    match moltis_openclaw_import::detect() {
+        Some(detection) => {
+            info!(
+                openclaw_home = %detection.home_dir.display(),
+                openclaw_workspace = %detection.workspace_dir.display(),
+                has_config = detection.has_config,
+                has_credentials = detection.has_credentials,
+                has_memory = detection.has_memory,
+                has_skills = detection.has_skills,
+                has_mcp_servers = detection.has_mcp_servers,
+                sessions = detection.session_count,
+                agents = detection.agent_ids.len(),
+                agent_ids = ?detection.agent_ids,
+                unsupported_channels = ?detection.unsupported_channels,
+                "startup OpenClaw installation detected"
+            );
+            format!("detected ({})", detection.home_dir.display())
+        },
+        None => {
+            info!(
+                openclaw_home_env = %env_var_or_unset("OPENCLAW_HOME"),
+                openclaw_profile_env = %env_var_or_unset("OPENCLAW_PROFILE"),
+                "startup OpenClaw installation not detected (checked OPENCLAW_HOME and ~/.openclaw)"
+            );
+            "not detected".to_string()
+        },
+    }
+}
+
+#[cfg(not(feature = "openclaw-import"))]
+fn log_startup_openclaw_detection() -> String {
+    info!("startup OpenClaw import feature disabled; detection skipped");
+    "feature disabled".to_string()
+}
+
+#[cfg(feature = "openclaw-import")]
+pub fn openclaw_detected_for_ui() -> bool {
+    moltis_openclaw_import::detect().is_some()
+}
+
+#[cfg(not(feature = "openclaw-import"))]
+pub fn openclaw_detected_for_ui() -> bool {
+    false
+}
+
 fn log_startup_config_storage_diagnostics() {
     let config_dir = moltis_config::config_dir().unwrap_or_else(|| PathBuf::from(".moltis"));
     let discovered_config = moltis_config::loader::find_config_file();
@@ -1221,9 +1268,6 @@ pub async fn start_gateway(
     let onboarding_config_path = moltis_config::find_or_default_config_path();
     let live_onboarding =
         moltis_onboarding::service::LiveOnboardingService::new(onboarding_config_path);
-    services = services.with_onboarding(Arc::new(
-        crate::onboarding::GatewayOnboardingService::new(live_onboarding),
-    ));
     // Wire live local-llm service when the feature is enabled.
     #[cfg(feature = "local-llm")]
     let local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>> = {
@@ -1346,6 +1390,8 @@ pub async fn start_gateway(
         )
     });
     log_startup_config_storage_diagnostics();
+
+    let openclaw_startup_status = log_startup_openclaw_detection();
 
     // Enable log persistence so entries survive restarts.
     if let Some(ref buf) = log_buffer {
@@ -1580,6 +1626,21 @@ pub async fn start_gateway(
     let session_state_store = Arc::new(moltis_sessions::state_store::SessionStateStore::new(
         db_pool.clone(),
     ));
+
+    // Wire agent persona store for multi-agent support (created early so onboarding can use it).
+    let agent_persona_store = Arc::new(crate::agent_persona::AgentPersonaStore::new(
+        db_pool.clone(),
+    ));
+    if let Err(e) = agent_persona_store.ensure_main_workspace_seeded() {
+        tracing::warn!(error = %e, "failed to seed main agent workspace");
+    }
+
+    services =
+        services.with_onboarding(Arc::new(crate::onboarding::GatewayOnboardingService::new(
+            live_onboarding,
+            Arc::clone(&session_metadata),
+            Arc::clone(&agent_persona_store),
+        )));
 
     // Session service wired below after sandbox_router is created.
 
@@ -2259,13 +2320,6 @@ pub async fn start_gateway(
     services = services.with_session_store(Arc::clone(&session_store));
     services = services.with_session_share_store(Arc::clone(&session_share_store));
 
-    // Wire agent persona store for multi-agent support.
-    let agent_persona_store = Arc::new(crate::agent_persona::AgentPersonaStore::new(
-        db_pool.clone(),
-    ));
-    if let Err(e) = agent_persona_store.ensure_main_workspace_seeded() {
-        tracing::warn!(error = %e, "failed to seed main agent workspace");
-    }
     services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
@@ -3009,6 +3063,77 @@ pub async fn start_gateway(
         }
     }
 
+    // Spawn OpenClaw session watcher for automatic background syncing.
+    #[cfg(all(feature = "file-watcher", feature = "openclaw-import"))]
+    {
+        if let Some(detection) = moltis_openclaw_import::detect() {
+            let import_agent = if detection.agent_ids.contains(&"main".to_string()) {
+                "main"
+            } else {
+                detection
+                    .agent_ids
+                    .first()
+                    .map(|s| s.as_str())
+                    .unwrap_or("main")
+            };
+            let sessions_dir = detection
+                .home_dir
+                .join("agents")
+                .join(import_agent)
+                .join("agent")
+                .join("sessions");
+            if sessions_dir.is_dir() {
+                match moltis_openclaw_import::watcher::ImportWatcher::start(sessions_dir) {
+                    Ok((_watcher, mut rx)) => {
+                        info!("openclaw: session watcher started");
+                        let watcher_data_dir = data_dir.clone();
+                        tokio::spawn(async move {
+                            let _watcher = _watcher; // keep alive
+                            let mut interval =
+                                tokio::time::interval(std::time::Duration::from_secs(60));
+                            interval.tick().await; // skip first immediate tick
+                            loop {
+                                tokio::select! {
+                                    Some(_event) = rx.recv() => {
+                                        debug!("openclaw: session change detected, running incremental import");
+                                        let report = moltis_openclaw_import::import_sessions_only(
+                                            &detection, &watcher_data_dir,
+                                        );
+                                        if report.items_imported > 0 || report.items_updated > 0 {
+                                            info!(
+                                                imported = report.items_imported,
+                                                updated = report.items_updated,
+                                                skipped = report.items_skipped,
+                                                "openclaw: incremental session sync complete"
+                                            );
+                                        }
+                                    }
+                                    _ = interval.tick() => {
+                                        debug!("openclaw: periodic session sync");
+                                        let report = moltis_openclaw_import::import_sessions_only(
+                                            &detection, &watcher_data_dir,
+                                        );
+                                        if report.items_imported > 0 || report.items_updated > 0 {
+                                            info!(
+                                                imported = report.items_imported,
+                                                updated = report.items_updated,
+                                                skipped = report.items_skipped,
+                                                "openclaw: periodic session sync complete"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    },
+                    Err(e) => {
+                        warn!("openclaw: failed to start session watcher: {e}");
+                    },
+                }
+            }
+        }
+    }
+
     // Spawn MCP health polling + auto-restart background task.
     {
         let health_state = Arc::clone(&state);
@@ -3248,6 +3373,7 @@ pub async fn start_gateway(
             moltis_config::find_or_default_config_path().display()
         ),
         format!("data: {}", data_dir.display()),
+        format!("openclaw: {openclaw_startup_status}"),
     ];
     lines.extend(startup_passkey_origin_lines(&passkey_origins));
     // Hint about Apple Container on macOS when using Docker.

@@ -576,6 +576,18 @@ impl moltis_service_traits::OnboardingService for MockOnboarding {
         self.0
             .call("agent.identity.update_soul", json!({ "soul": soul }))
     }
+
+    async fn openclaw_detect(&self) -> ServiceResult {
+        self.0.call("openclaw.detect", json!({}))
+    }
+
+    async fn openclaw_scan(&self) -> ServiceResult {
+        self.0.call("openclaw.scan", json!({}))
+    }
+
+    async fn openclaw_import(&self, p: Value) -> ServiceResult {
+        self.0.call("openclaw.import", p)
+    }
 }
 
 #[async_trait::async_trait]

@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `graphql` feature flag (default on) in gateway and CLI crates for compile-time opt-out
 - Settings > GraphQL page embedding GraphiQL playground at `/settings/graphql`
 - Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
+- New `moltis-openclaw-import` crate for detecting OpenClaw installations and selectively importing identity, providers, skills, memory files, Telegram channels, sessions, and MCP servers
+- New onboarding RPC methods: `openclaw.detect`, `openclaw.scan`, and `openclaw.import`
+- New `moltis import` CLI commands (`detect`, `all`, `select`) with `--dry-run` and `--json` output options
+- Onboarding now includes a conditional OpenClaw Import step with category selection, import execution, and detailed per-category results/TODO reporting
+- Settings now includes an OpenClaw Import section (shown only when OpenClaw is detected) for scan-and-import workflows after onboarding
 - Microsoft Teams channel integration via new `moltis-msteams` plugin crate with webhook ingress and OAuth client-credentials outbound messaging
 - Teams channel management in the web UI (add/edit/remove accounts, sender review, session/channel badges)
 - Guided Teams bootstrap tooling via `moltis channels teams bootstrap` plus an in-UI endpoint generator in Settings → Channels
@@ -35,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GraphQL gateway now builds its schema once at startup and reuses it for HTTP and WebSocket requests
 - GraphQL resolvers now share common RPC helper macros and use typed response objects for `node.describe`, `voice.config`, `voice.voxtral_requirements`, `skills.security_status`, `skills.security_scan`, and `memory.config`
 - GraphQL `logs.ack` mutation now matches backend behavior and no longer takes an `ids` argument
+- Gateway startup diagnostics now report OpenClaw detection status and pass detection state to web gon data for conditional UI rendering
+- Gateway and CLI now enable the `openclaw-import` feature in default builds
 - Providers now support `stream_transport = "sse" | "websocket" | "auto"` in config. OpenAI can stream via Responses API WebSocket mode, and `auto` falls back to SSE when WebSocket setup is unavailable.
 - Agent Identity emoji picker now includes 🐰 🐹 🦀 🦞 🦝 🦭 🧠 🧭 options
 - Channel persistence and message-log queries are now channel-type scoped (`channel_type + account_id`) so Telegram and Teams accounts can share the same account IDs safely

@@ -51,9 +51,6 @@ function ensureWsConnected() {
 
 // ── Step indicator ──────────────────────────────────────────
 
-var BASE_STEP_LABELS = ["Security", "LLM", "Channel", "Identity", "Summary"];
-var VOICE_STEP_LABELS = ["Security", "LLM", "Voice", "Channel", "Identity", "Summary"];
-
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
 	return `/chats/${key.replace(/:/g, "/")}`;
@@ -546,6 +543,21 @@ function IdentityStep({ onNext, onBack }) {
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
 
+	useEffect(() => {
+		var cancelled = false;
+		refreshGon().then(() => {
+			if (cancelled) return;
+			var refreshed = getGon("identity") || {};
+			if (refreshed.user_name) setUserName((prev) => prev || refreshed.user_name);
+			if (refreshed.name) setName((prev) => (prev && prev !== "Moltis" ? prev : refreshed.name));
+			if (refreshed.emoji) setEmoji((prev) => (prev && prev !== "\u{1f916}" ? prev : refreshed.emoji));
+			if (refreshed.theme) setTheme((prev) => prev || refreshed.theme);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
 	function onSubmit(e) {
 		e.preventDefault();
 		var v = validateIdentityFields(name, userName);
@@ -602,7 +614,7 @@ function IdentityStep({ onNext, onBack }) {
 					<div class="text-xs text-[var(--muted)] mb-1">Theme</div>
 					<input type="text" class="provider-key-input w-full"
 						value=${theme} onInput=${(e) => setTheme(e.target.value)}
-						placeholder="e.g. wise owl, chill fox" />
+						placeholder="wise owl, chill fox, witty robot\u2026" />
 				</div>
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
@@ -2385,6 +2397,214 @@ function SummaryRow({ icon, label, children }) {
 	</div>`;
 }
 
+// ── OpenClaw import step (conditional) ───────────────────────
+
+function OpenClawImportStep({ onNext, onBack }) {
+	var [loading, setLoading] = useState(true);
+	var [scan, setScan] = useState(null);
+	var [importing, setImporting] = useState(false);
+	var [done, setDone] = useState(false);
+	var [result, setResult] = useState(null);
+	var [error, setError] = useState(null);
+	var [selection, setSelection] = useState({
+		identity: true,
+		providers: true,
+		skills: true,
+		memory: true,
+		channels: true,
+		sessions: true,
+	});
+
+	useEffect(() => {
+		var cancelled = false;
+		sendRpc("openclaw.scan", {}).then((res) => {
+			if (cancelled) return;
+			if (res?.ok) {
+				setScan(res.payload);
+			} else {
+				setError("Failed to scan OpenClaw installation");
+			}
+			setLoading(false);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	function toggleCategory(key) {
+		setSelection((prev) => {
+			var next = Object.assign({}, prev);
+			next[key] = !prev[key];
+			return next;
+		});
+	}
+
+	async function doImport() {
+		setImporting(true);
+		setError(null);
+		var res = await sendRpc("openclaw.import", selection);
+		setImporting(false);
+		if (res?.ok) {
+			setResult(res.payload);
+			await refreshGon();
+			setDone(true);
+		} else {
+			setError(res?.error?.message || "Import failed");
+		}
+	}
+
+	if (loading) {
+		return html`<div class="flex flex-col items-center justify-center gap-3 min-h-[200px]">
+			<div class="inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin"></div>
+			<div class="text-sm text-[var(--muted)]">Scanning OpenClaw installation\u2026</div>
+		</div>`;
+	}
+
+	if (done && result) {
+		var total = (result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0);
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Import Complete</h2>
+			<p class="text-xs text-[var(--muted)] leading-relaxed">${total} item(s) imported from OpenClaw.</p>
+			${
+				result.categories
+					? html`<div class="flex flex-col gap-1">
+						${result.categories.map(
+							(cat) => html`<div key=${cat.category} class="text-xs text-[var(--text)]">
+								<span class="font-mono">[${cat.status === "success" ? "\u2713" : cat.status === "partial" ? "~" : cat.status === "skipped" ? "-" : "!"}]</span>
+								${cat.category}: ${cat.items_imported} imported, ${cat.items_skipped} skipped
+								${(cat.warnings || []).map((w) => html`<div class="text-[var(--warn)] ml-6">${w}</div>`)}
+							</div>`,
+						)}
+					</div>`
+					: null
+			}
+			${
+				result.todos?.length > 0
+					? html`<div class="text-xs text-[var(--muted)]">
+						<div class="font-medium">Not yet supported in Moltis:</div>
+						${result.todos.map((t) => html`<div key=${t.feature}>\u2022 ${t.feature}: ${t.description}</div>`)}
+					</div>`
+					: null
+			}
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				<button class="provider-btn" onClick=${onNext}>Continue</button>
+			</div>
+		</div>`;
+	}
+
+	if (!scan?.detected) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Import from OpenClaw</h2>
+			<p class="text-xs text-[var(--muted)]">Could not scan OpenClaw installation.</p>
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				${onBack ? html`<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>` : null}
+				<button class="provider-btn" onClick=${onNext}>Skip</button>
+			</div>
+		</div>`;
+	}
+
+	var categories = [
+		{
+			key: "identity",
+			label: "Identity",
+			available: scan.identity_available,
+			detail: [scan.identity_agent_name, scan.identity_theme].filter(Boolean).join(", ") || null,
+		},
+		{ key: "providers", label: "Providers", available: scan.providers_available },
+		{ key: "skills", label: "Skills", available: scan.skills_count > 0, detail: `${scan.skills_count} skill(s)` },
+		{
+			key: "memory",
+			label: "Memory",
+			available: scan.memory_available,
+			detail: `${scan.memory_files_count} memory file(s)`,
+		},
+		{
+			key: "channels",
+			label: "Channels",
+			available: scan.channels_available,
+			detail: `${scan.telegram_accounts} Telegram account(s)`,
+		},
+		{
+			key: "sessions",
+			label: "Sessions",
+			available: scan.sessions_count > 0,
+			detail: `${scan.sessions_count} session(s)`,
+		},
+	];
+	var anySelected = categories.some((c) => c.available && selection[c.key]);
+
+	var workspaceMissing = !scan.memory_available && scan.skills_count === 0 && !scan.identity_theme;
+
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Import from OpenClaw</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">
+			We detected an OpenClaw installation at <code class="text-[var(--text)]">${scan.home_dir}</code>.
+			Select the data you'd like to import.
+		</p>
+		${
+			workspaceMissing
+				? html`<p class="text-xs text-[var(--muted)] leading-relaxed">
+			If OpenClaw ran on another machine, copy its workspace directory
+			(e.g. <code>clawd/</code>) into <code>${scan.home_dir}/</code> or <code>~/</code>
+			for a full import including identity, memory, and skills.
+		</p>`
+				: null
+		}
+		${error ? html`<${ErrorPanel} message=${error} />` : null}
+		<div class="flex flex-col gap-2" style="max-width:400px;">
+			${categories.map(
+				(cat) => html`<label
+					key=${cat.key}
+					class="flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}">
+					<input
+						type="checkbox"
+						checked=${selection[cat.key] && cat.available}
+						disabled=${!cat.available || importing}
+						onChange=${() => toggleCategory(cat.key)}
+					/>
+					<span>${cat.label}</span>
+					${cat.detail && cat.available ? html`<span class="text-xs text-[var(--muted)]">(${cat.detail})</span>` : null}
+					${cat.available ? null : html`<span class="text-xs text-[var(--muted)]">(not found)</span>`}
+				</label>`,
+			)}
+		</div>
+		${
+			scan.agents?.length > 1
+				? html`<div class="text-xs text-[var(--muted)] leading-relaxed border border-[var(--border)] rounded p-2" style="max-width:400px;">
+					<span class="font-medium text-[var(--text)]">${scan.agents.length} agents detected</span>
+					<span class="ml-1">\u2014 non-default agents will be created as separate personas:</span>
+					<ul class="mt-1 ml-4 list-disc">
+						${scan.agents.map(
+							(a) =>
+								html`<li key=${a.openclaw_id}>
+									<span class="text-[var(--text)]">${a.name || a.openclaw_id}</span>${a.is_default ? html`<span class="ml-1 text-[var(--muted)]">(default)</span>` : null}${a.theme ? html`<span class="ml-1 text-[var(--muted)]">\u2014 ${a.theme}</span>` : null}
+								</li>`,
+						)}
+					</ul>
+				</div>`
+				: null
+		}
+		${
+			scan.unsupported_channels?.length > 0
+				? html`<p class="text-xs text-[var(--muted)]">
+					Unsupported channels (coming soon): ${scan.unsupported_channels.join(", ")}
+				</p>`
+				: null
+		}
+		<div class="flex flex-wrap items-center gap-3 mt-1">
+			${onBack ? html`<button class="provider-btn provider-btn-secondary" onClick=${onBack} disabled=${importing}>Back</button>` : null}
+			<button class="provider-btn" onClick=${doImport} disabled=${!anySelected || importing}>
+				${importing ? "Importing\u2026" : "Import Selected"}
+			</button>
+			<button
+				class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline"
+				onClick=${onNext}
+				disabled=${importing}
+			>Skip for now</button>
+		</div>
+	</div>`;
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: summary step fetches multiple data sources and renders conditional sections
 function SummaryStep({ onBack, onFinish }) {
 	var [loading, setLoading] = useState(true);
@@ -2657,11 +2877,26 @@ function OnboardingPage() {
 		</div>`;
 	}
 
-	// Build step list dynamically based on auth + voice availability
-	var allLabels = voiceAvailable ? VOICE_STEP_LABELS : BASE_STEP_LABELS;
+	// Build step list dynamically based on auth + voice + openclaw availability
+	var openclawDetected = getGon("openclaw_detected") === true;
+	var allLabels = ["Security"];
+	if (openclawDetected) allLabels.push("Import");
+	allLabels.push("LLM");
+	if (voiceAvailable) allLabels.push("Voice");
+	allLabels.push("Channel", "Identity", "Summary");
+
 	var steps = authNeeded ? allLabels : allLabels.slice(1);
 	var stepIndex = authNeeded ? step : step - 1;
-	var lastStep = voiceAvailable ? 5 : 4;
+
+	// Compute dynamic step indices: Auth(0) → Import? → LLM → Voice? → Channel → Identity → Summary
+	var nextIdx = 1;
+	var importStep = openclawDetected ? nextIdx++ : -1;
+	var llmStep = nextIdx++;
+	var voiceStep = voiceAvailable ? nextIdx++ : -1;
+	var channelStep = nextIdx++;
+	var identityStep = nextIdx++;
+	var summaryStep = nextIdx;
+	var lastStep = summaryStep;
 
 	function goNext() {
 		if (step === lastStep) {
@@ -2683,20 +2918,14 @@ function OnboardingPage() {
 		}
 	}
 
-	// Determine which component to show for each step
-	// Order: Auth(0) → LLM(1) → Voice(2)? → Channel → Identity → Summary
-	var voiceStep = voiceAvailable ? 2 : -1;
-	var channelStep = voiceAvailable ? 3 : 2;
-	var identityStep = voiceAvailable ? 4 : 3;
-	var summaryStep = voiceAvailable ? 5 : 4;
-
 	var startedAt = getGon("started_at");
 
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
 		<div class="mt-6">
 			${step === 0 && html`<${AuthStep} onNext=${goNext} skippable=${authSkippable} />`}
-			${step === 1 && html`<${ProviderStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
+			${step === importStep && html`<${OpenClawImportStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
+			${step === llmStep && html`<${ProviderStep} onNext=${goNext} onBack=${authNeeded || openclawDetected ? goBack : null} />`}
 			${step === voiceStep && html`<${VoiceStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === channelStep && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === identityStep && html`<${IdentityStep} onNext=${goNext} onBack=${goBack} />`}

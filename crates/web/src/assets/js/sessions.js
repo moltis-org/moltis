@@ -731,7 +731,7 @@ function renderWelcomeAgentPicker(card, activeAgentId, onActiveAgentResolved) {
 		hatchBtn.className = "provider-btn provider-btn-secondary";
 		hatchBtn.style.fontSize = "0.7rem";
 		hatchBtn.style.padding = "3px 8px";
-		hatchBtn.textContent = "Hatch a new agent";
+		hatchBtn.textContent = "\u{1F95A} Hatch a new agent";
 		hatchBtn.addEventListener("click", () => {
 			navigate(settingsPath("agents/new"));
 		});

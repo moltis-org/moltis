@@ -318,6 +318,7 @@ test.describe("Settings navigation", () => {
 		expectedPrefix.push("Tailscale", "Channels", "Hooks", "LLMs", "MCP", "Skills");
 		const expectedSystem = ["Terminal", "Sandboxes", "Monitoring", "Logs"];
 		const expected = [...expectedPrefix];
+		if (navItems.includes("OpenClaw Import")) expected.push("OpenClaw Import");
 		if (navItems.includes("Voice")) expected.push("Voice");
 		expected.push(...expectedSystem);
 		if (navItems.includes("GraphQL")) expected.push("GraphQL");

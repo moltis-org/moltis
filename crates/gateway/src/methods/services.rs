@@ -130,11 +130,8 @@ fn read_identity_payload_for_agent(agent_id: &str) -> serde_json::Value {
         if file_identity.emoji.is_some() {
             identity.emoji = file_identity.emoji;
         }
-        if file_identity.creature.is_some() {
-            identity.creature = file_identity.creature;
-        }
-        if file_identity.vibe.is_some() {
-            identity.vibe = file_identity.vibe;
+        if file_identity.theme.is_some() {
+            identity.theme = file_identity.theme;
         }
     }
     let mut user = config.user;
@@ -166,23 +163,20 @@ fn read_identity_payload_for_agent(agent_id: &str) -> serde_json::Value {
     let soul = moltis_config::load_soul_for_agent(agent_id);
     let identity_name = identity.name.clone();
     let identity_emoji = identity.emoji.clone();
-    let identity_creature = identity.creature.clone();
-    let identity_vibe = identity.vibe.clone();
+    let identity_theme = identity.theme.clone();
     let user_name = user.name.clone();
     let user_timezone = user.timezone.as_ref().map(|tz| tz.name().to_string());
     serde_json::json!({
         "name": resolved_name,
         "emoji": identity_emoji.clone(),
-        "creature": identity_creature.clone(),
-        "vibe": identity_vibe.clone(),
+        "theme": identity_theme.clone(),
         "user_name": user_name,
         "user_timezone": user_timezone,
         "identity": identity_text,
         "identity_fields": {
             "name": identity_name,
             "emoji": identity_emoji,
-            "creature": identity_creature,
-            "vibe": identity_vibe,
+            "theme": identity_theme,
         },
         "soul": soul,
     })
@@ -346,14 +340,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .get("emoji")
                         .and_then(|v| v.as_str())
                         .map(String::from),
-                    creature: ctx
+                    theme: ctx
                         .params
-                        .get("creature")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    vibe: ctx
-                        .params
-                        .get("vibe")
+                        .get("theme")
                         .and_then(|v| v.as_str())
                         .map(String::from),
                 };
@@ -656,14 +645,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             .get("emoji")
                             .and_then(|v| v.as_str())
                             .map(String::from),
-                        creature: ctx
+                        theme: ctx
                             .params
-                            .get("creature")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        vibe: ctx
-                            .params
-                            .get("vibe")
+                            .get("theme")
                             .and_then(|v| v.as_str())
                             .map(String::from),
                     };
@@ -4109,6 +4093,48 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::pin(async move {
                 reload_hooks(&ctx.state).await;
                 Ok(serde_json::json!({ "ok": true }))
+            })
+        }),
+    );
+
+    // ── OpenClaw import ─────────────────────────────────────────────────
+
+    reg.register(
+        "openclaw.detect",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .openclaw_detect()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "openclaw.scan",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .openclaw_scan()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "openclaw.import",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .openclaw_import(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
             })
         }),
     );

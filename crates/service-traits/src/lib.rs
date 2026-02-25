@@ -771,6 +771,9 @@ pub trait OnboardingService: Send + Sync {
     async fn identity_get(&self) -> ServiceResult;
     async fn identity_update(&self, params: Value) -> ServiceResult;
     async fn identity_update_soul(&self, soul: Option<String>) -> ServiceResult;
+    async fn openclaw_detect(&self) -> ServiceResult;
+    async fn openclaw_scan(&self) -> ServiceResult;
+    async fn openclaw_import(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopOnboardingService;
@@ -803,6 +806,18 @@ impl OnboardingService for NoopOnboardingService {
 
     async fn identity_update_soul(&self, _soul: Option<String>) -> ServiceResult {
         Ok(serde_json::json!({}))
+    }
+
+    async fn openclaw_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    async fn openclaw_scan(&self) -> ServiceResult {
+        Err("onboarding service not configured".into())
+    }
+
+    async fn openclaw_import(&self, _params: Value) -> ServiceResult {
+        Err("onboarding service not configured".into())
     }
 }
 

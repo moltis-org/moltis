@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     fs,
     path::PathBuf,
@@ -59,6 +60,17 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn compare_sidebar_order(lhs: &SessionEntry, rhs: &SessionEntry) -> Ordering {
+    let lhs_main = lhs.key == "main";
+    let rhs_main = rhs.key == "main";
+
+    rhs_main
+        .cmp(&lhs_main)
+        .then_with(|| rhs.updated_at.cmp(&lhs.updated_at))
+        .then_with(|| rhs.created_at.cmp(&lhs.created_at))
+        .then_with(|| lhs.key.cmp(&rhs.key))
 }
 
 impl SessionMetadata {
@@ -240,10 +252,11 @@ impl SessionMetadata {
         self.entries.remove(key)
     }
 
-    /// List all entries sorted by updated_at descending.
+    /// List all entries for sidebar rendering.
+    /// `main` is pinned first, then sessions are sorted by recency.
     pub fn list(&self) -> Vec<SessionEntry> {
         let mut entries: Vec<_> = self.entries.values().cloned().collect();
-        entries.sort_by_key(|a| a.created_at);
+        entries.sort_by(compare_sidebar_order);
         entries
     }
 }
@@ -430,6 +443,28 @@ impl SqliteSessionMetadata {
             .ok();
     }
 
+    /// Set imported timestamps and message counters without replacing them with "now".
+    pub async fn set_timestamps_and_counts(
+        &self,
+        key: &str,
+        created_at: u64,
+        updated_at: u64,
+        message_count: u32,
+        last_seen_message_count: u32,
+    ) {
+        sqlx::query(
+            "UPDATE sessions SET created_at = ?, updated_at = ?, message_count = ?, last_seen_message_count = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(created_at as i64)
+        .bind(updated_at as i64)
+        .bind(message_count as i32)
+        .bind(last_seen_message_count as i32)
+        .bind(key)
+        .execute(&self.pool)
+        .await
+        .ok();
+    }
+
     /// Store a short preview of the first user message for sidebar display.
     pub async fn set_preview(&self, key: &str, preview: Option<&str>) {
         sqlx::query("UPDATE sessions SET preview = ?, version = version + 1 WHERE key = ?")
@@ -607,7 +642,9 @@ impl SqliteSessionMetadata {
     }
 
     pub async fn list(&self) -> Vec<SessionEntry> {
-        sqlx::query_as::<_, SessionRow>("SELECT * FROM sessions ORDER BY created_at ASC")
+        sqlx::query_as::<_, SessionRow>(
+            "SELECT * FROM sessions ORDER BY CASE WHEN key = 'main' THEN 0 ELSE 1 END ASC, updated_at DESC, created_at DESC, key ASC",
+        )
             .fetch_all(&self.pool)
             .await
             .unwrap_or_default()
@@ -750,6 +787,33 @@ mod tests {
     }
 
     #[test]
+    fn test_list_pins_main_then_sorts_by_recency() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path).unwrap();
+
+        meta.upsert("main", None);
+        meta.upsert("session:older", None);
+        meta.upsert("session:newer", None);
+
+        if let Some(entry) = meta.entries.get_mut("main") {
+            entry.created_at = 1;
+            entry.updated_at = 1;
+        }
+        if let Some(entry) = meta.entries.get_mut("session:older") {
+            entry.created_at = 100;
+            entry.updated_at = 100;
+        }
+        if let Some(entry) = meta.entries.get_mut("session:newer") {
+            entry.created_at = 200;
+            entry.updated_at = 200;
+        }
+
+        let keys: Vec<String> = meta.list().into_iter().map(|entry| entry.key).collect();
+        assert_eq!(keys, vec!["main", "session:newer", "session:older"]);
+    }
+
+    #[test]
     fn test_save_and_reload() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meta.json");
@@ -805,6 +869,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sqlite_list_pins_main_then_sorts_by_recency() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        meta.upsert("session:older", None).await.unwrap();
+        meta.upsert("session:newer", None).await.unwrap();
+
+        meta.set_timestamps_and_counts("main", 1, 1, 0, 0).await;
+        meta.set_timestamps_and_counts("session:older", 100, 100, 0, 0)
+            .await;
+        meta.set_timestamps_and_counts("session:newer", 200, 200, 0, 0)
+            .await;
+
+        let keys: Vec<String> = meta
+            .list()
+            .await
+            .into_iter()
+            .map(|entry| entry.key)
+            .collect();
+        assert_eq!(keys, vec!["main", "session:newer", "session:older"]);
+    }
+
+    #[tokio::test]
     async fn test_sqlite_remove() {
         let pool = sqlite_pool().await;
         let meta = SqliteSessionMetadata::new(pool);
@@ -823,6 +911,21 @@ mod tests {
         meta.upsert("main", None).await.unwrap();
         meta.touch("main", 5).await;
         assert_eq!(meta.get("main").await.unwrap().message_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_set_timestamps_and_counts() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        meta.set_timestamps_and_counts("main", 100, 200, 5, 3).await;
+
+        let entry = meta.get("main").await.unwrap();
+        assert_eq!(entry.created_at, 100);
+        assert_eq!(entry.updated_at, 200);
+        assert_eq!(entry.message_count, 5);
+        assert_eq!(entry.last_seen_message_count, 3);
     }
 
     #[tokio::test]

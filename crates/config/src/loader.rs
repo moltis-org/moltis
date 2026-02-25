@@ -298,11 +298,7 @@ pub fn load_identity() -> Option<AgentIdentity> {
     let content = std::fs::read_to_string(path).ok()?;
     let frontmatter = extract_yaml_frontmatter(&content)?;
     let identity = parse_identity_frontmatter(frontmatter);
-    if identity.name.is_none()
-        && identity.emoji.is_none()
-        && identity.creature.is_none()
-        && identity.vibe.is_none()
-    {
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
         None
     } else {
         Some(identity)
@@ -516,10 +512,8 @@ pub fn save_soul(soul: Option<&str>) -> crate::Result<PathBuf> {
 /// Persist identity values to `IDENTITY.md` using YAML frontmatter.
 pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     let path = identity_path();
-    let has_values = identity.name.is_some()
-        || identity.emoji.is_some()
-        || identity.creature.is_some()
-        || identity.vibe.is_some();
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
 
     if !has_values {
         if path.exists() {
@@ -539,11 +533,8 @@ pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     if let Some(emoji) = identity.emoji.as_deref() {
         yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
     }
-    if let Some(creature) = identity.creature.as_deref() {
-        yaml_lines.push(format!("creature: {}", yaml_scalar(creature)));
-    }
-    if let Some(vibe) = identity.vibe.as_deref() {
-        yaml_lines.push(format!("vibe: {}", yaml_scalar(vibe)));
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
     }
     let yaml = yaml_lines.join("\n");
     let content = format!(
@@ -560,10 +551,8 @@ pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crat
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("IDENTITY.md");
 
-    let has_values = identity.name.is_some()
-        || identity.emoji.is_some()
-        || identity.creature.is_some()
-        || identity.vibe.is_some();
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
 
     if !has_values {
         if path.exists() {
@@ -579,11 +568,8 @@ pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crat
     if let Some(emoji) = identity.emoji.as_deref() {
         yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
     }
-    if let Some(creature) = identity.creature.as_deref() {
-        yaml_lines.push(format!("creature: {}", yaml_scalar(creature)));
-    }
-    if let Some(vibe) = identity.vibe.as_deref() {
-        yaml_lines.push(format!("vibe: {}", yaml_scalar(vibe)));
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
     }
 
     let content = format!("---\n{}\n---\n", yaml_lines.join("\n"));
@@ -646,6 +632,10 @@ pub fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
 
 fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
     let mut identity = AgentIdentity::default();
+    // Legacy fields for backward compat with old IDENTITY.md files.
+    let mut creature: Option<String> = None;
+    let mut vibe: Option<String> = None;
+
     for raw in frontmatter.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -662,12 +652,25 @@ fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
         match key {
             "name" => identity.name = Some(value.to_string()),
             "emoji" => identity.emoji = Some(value.to_string()),
-            // Accept "theme" as backward-compat alias for "creature".
-            "creature" | "theme" => identity.creature = Some(value.to_string()),
-            "vibe" => identity.vibe = Some(value.to_string()),
+            "theme" => identity.theme = Some(value.to_string()),
+            // Backward compat: compose legacy creature/vibe into theme.
+            "creature" => creature = Some(value.to_string()),
+            "vibe" => vibe = Some(value.to_string()),
             _ => {},
         }
     }
+
+    // If no explicit `theme` was set, compose from legacy creature/vibe.
+    if identity.theme.is_none() {
+        let composed = match (vibe, creature) {
+            (Some(v), Some(c)) => Some(format!("{v} {c}")),
+            (Some(v), None) => Some(v),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        };
+        identity.theme = composed;
+    }
+
     identity
 }
 
@@ -756,11 +759,7 @@ fn load_identity_from_path(path: &Path) -> Option<AgentIdentity> {
     let content = std::fs::read_to_string(path).ok()?;
     let frontmatter = extract_yaml_frontmatter(&content)?;
     let identity = parse_identity_frontmatter(frontmatter);
-    if identity.name.is_none()
-        && identity.emoji.is_none()
-        && identity.creature.is_none()
-        && identity.vibe.is_none()
-    {
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
         None
     } else {
         Some(identity)
@@ -1400,8 +1399,7 @@ name = "Rex"
         let identity = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: Some("🐶".to_string()),
-            creature: Some("golden retriever".to_string()),
-            vibe: Some("chill dog".to_string()),
+            theme: Some("chill dog golden retriever".to_string()),
         };
 
         let path = save_identity(&identity).expect("save identity");
@@ -1411,8 +1409,7 @@ name = "Rex"
         let loaded = load_identity().expect("load identity");
         assert_eq!(loaded.name.as_deref(), Some("Rex"));
         assert_eq!(loaded.emoji.as_deref(), Some("🐶"), "raw file:\n{raw}");
-        assert_eq!(loaded.creature.as_deref(), Some("golden retriever"));
-        assert_eq!(loaded.vibe.as_deref(), Some("chill dog"));
+        assert_eq!(loaded.theme.as_deref(), Some("chill dog golden retriever"));
 
         clear_data_dir();
     }
@@ -1426,8 +1423,7 @@ name = "Rex"
         let seeded = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: None,
-            creature: None,
-            vibe: None,
+            theme: None,
         };
         let path = save_identity(&seeded).expect("seed identity");
         assert!(path.exists());

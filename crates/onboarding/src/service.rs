@@ -2,7 +2,10 @@
 
 use std::{path::PathBuf, sync::Mutex};
 
-use serde_json::{Value, json};
+use {
+    serde_json::{Value, json},
+    tracing::info,
+};
 
 use moltis_config::{AgentIdentity, MoltisConfig, UserProfile};
 
@@ -115,8 +118,7 @@ impl LiveOnboardingService {
                 "identity": {
                     "name": config.identity.name,
                     "emoji": config.identity.emoji,
-                    "creature": config.identity.creature,
-                    "vibe": config.identity.vibe,
+                    "theme": config.identity.theme,
                 },
                 "user": {
                     "name": config.user.name,
@@ -199,11 +201,20 @@ impl LiveOnboardingService {
         if let Some(v) = str_field(&params, "emoji") {
             identity.emoji = v;
         }
-        if let Some(v) = str_field(&params, "creature") {
-            identity.creature = v;
+        if let Some(v) = str_field(&params, "theme") {
+            identity.theme = v;
         }
-        if let Some(v) = str_field(&params, "vibe") {
-            identity.vibe = v;
+        // Backward compat: accept creature/vibe and compose into theme.
+        if let Some(creature) = str_field(&params, "creature") {
+            let vibe = str_field(&params, "vibe").flatten();
+            identity.theme = match (vibe, creature) {
+                (Some(v), Some(c)) => Some(format!("{v} {c}")),
+                (Some(v), None) => Some(v),
+                (None, Some(c)) => Some(c),
+                (None, None) => None,
+            };
+        } else if let Some(vibe) = str_field(&params, "vibe") {
+            identity.theme = vibe;
         }
         if let Some(v) = params.get("soul") {
             let soul = if v.is_null() {
@@ -237,8 +248,7 @@ impl LiveOnboardingService {
         Ok(json!({
             "name": identity.name,
             "emoji": identity.emoji,
-            "creature": identity.creature,
-            "vibe": identity.vibe,
+            "theme": identity.theme,
             "soul": moltis_config::load_soul(),
             "user_name": user.name,
             "user_timezone": user.timezone.as_ref().map(|tz| tz.name()),
@@ -256,19 +266,27 @@ impl LiveOnboardingService {
         if self.config_path.exists()
             && let Ok(cfg) = moltis_config::loader::load_config(&self.config_path)
         {
+            info!(
+                config_path = %self.config_path.display(),
+                config_name = ?cfg.identity.name,
+                config_theme = ?cfg.identity.theme,
+                "identity_get: loaded config"
+            );
             let mut id = moltis_config::ResolvedIdentity::from_config(&cfg);
             if let Some(file_identity) = moltis_config::load_identity() {
+                info!(
+                    file_name = ?file_identity.name,
+                    file_theme = ?file_identity.theme,
+                    "identity_get: loaded IDENTITY.md overlay"
+                );
                 if let Some(name) = file_identity.name {
                     id.name = name;
                 }
                 if let Some(emoji) = file_identity.emoji {
                     id.emoji = Some(emoji);
                 }
-                if let Some(creature) = file_identity.creature {
-                    id.creature = Some(creature);
-                }
-                if let Some(vibe) = file_identity.vibe {
-                    id.vibe = Some(vibe);
+                if let Some(theme) = file_identity.theme {
+                    id.theme = Some(theme);
                 }
             }
             if let Some(file_user) = moltis_config::load_user()
@@ -277,21 +295,35 @@ impl LiveOnboardingService {
                 id.user_name = Some(name);
             }
             id.soul = moltis_config::load_soul();
+            info!(
+                resolved_name = %id.name,
+                resolved_theme = ?id.theme,
+                resolved_user_name = ?id.user_name,
+                "identity_get: final resolved identity"
+            );
             return id;
         }
+        info!(
+            config_path = %self.config_path.display(),
+            "identity_get: config not found, using defaults"
+        );
         let mut id = moltis_config::ResolvedIdentity::default();
         if let Some(file_identity) = moltis_config::load_identity() {
             if let Some(name) = file_identity.name {
                 id.name = name;
             }
             id.emoji = file_identity.emoji;
-            id.creature = file_identity.creature;
-            id.vibe = file_identity.vibe;
+            id.theme = file_identity.theme;
         }
         if let Some(file_user) = moltis_config::load_user() {
             id.user_name = file_user.name;
         }
         id.soul = moltis_config::load_soul();
+        info!(
+            resolved_name = %id.name,
+            resolved_theme = ?id.theme,
+            "identity_get: final resolved identity (from defaults)"
+        );
         id
     }
 }
@@ -308,11 +340,8 @@ fn merge_identity(dst: &mut AgentIdentity, src: &AgentIdentity) {
     if src.emoji.is_some() {
         dst.emoji = src.emoji.clone();
     }
-    if src.creature.is_some() {
-        dst.creature = src.creature.clone();
-    }
-    if src.vibe.is_some() {
-        dst.vibe = src.vibe.clone();
+    if src.theme.is_some() {
+        dst.theme = src.theme.clone();
     }
 }
 
@@ -345,7 +374,7 @@ fn current_value(ws: &WizardState) -> Option<&str> {
         UserName => ws.user.name.as_deref(),
         AgentName => ws.identity.name.as_deref(),
         AgentEmoji => ws.identity.emoji.as_deref(),
-        AgentVibe => ws.identity.vibe.as_deref(),
+        AgentTheme => ws.identity.theme.as_deref(),
         _ => None,
     }
 }
@@ -458,7 +487,7 @@ mod tests {
             .identity_update(json!({
                 "name": "Rex",
                 "emoji": "\u{1f436}",
-                "vibe": "chill dog",
+                "theme": "chill dog",
                 "user_name": "Alice",
                 "user_timezone": "America/New_York",
             }))
@@ -467,18 +496,18 @@ mod tests {
         assert_eq!(res["user_name"], "Alice");
         assert_eq!(res["user_timezone"], "America/New_York");
 
-        // Partial update: only change vibe
+        // Partial update: only change theme
         let res = svc
-            .identity_update(json!({ "vibe": "playful pup" }))
+            .identity_update(json!({ "theme": "playful pup" }))
             .unwrap();
         assert_eq!(res["name"], "Rex");
-        assert_eq!(res["vibe"], "playful pup");
+        assert_eq!(res["theme"], "playful pup");
         assert_eq!(res["emoji"], "\u{1f436}");
 
         // Verify identity_get reflects updates
         let id = svc.identity_get();
         assert_eq!(id.name, "Rex");
-        assert_eq!(id.vibe.as_deref(), Some("playful pup"));
+        assert_eq!(id.theme.as_deref(), Some("playful pup"));
         assert_eq!(id.user_name.as_deref(), Some("Alice"));
         let user = moltis_config::load_user().expect("load user");
         assert_eq!(

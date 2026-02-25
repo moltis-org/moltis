@@ -107,7 +107,7 @@ var sections = [
 	{
 		id: "agents",
 		label: "Agents",
-		icon: html`<span class="icon icon-sparkles"></span>`,
+		icon: html`<span class="icon icon-users"></span>`,
 		page: true,
 	},
 	{
@@ -185,6 +185,11 @@ var sections = [
 		page: true,
 	},
 	{
+		id: "import",
+		label: "OpenClaw Import",
+		icon: html`<span class="icon icon-link"></span>`,
+	},
+	{
 		id: "voice",
 		label: "Voice",
 		icon: html`<span class="icon icon-microphone"></span>`,
@@ -231,6 +236,7 @@ function getVisibleSections() {
 	return sections.filter((s) => {
 		if (!s.id) return true;
 		if (s.id === "graphql" && !gon.get("graphql_enabled")) return false;
+		if (s.id === "import" && !gon.get("openclaw_detected")) return false;
 		if (s.id === "vault" && (!vs || vs === "disabled")) return false;
 		return true;
 	});
@@ -1578,6 +1584,172 @@ function bufToB64(buf) {
 	var str = "";
 	for (var b of bytes) str += String.fromCharCode(b);
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ── OpenClaw Import section ───────────────────────────────────
+
+function OpenClawImportSection() {
+	var [importLoading, setImportLoading] = useState(true);
+	var [scan, setScan] = useState(null);
+	var [importing, setImporting] = useState(false);
+	var [done, setDone] = useState(false);
+	var [result, setResult] = useState(null);
+	var [error, setError] = useState(null);
+	var [selection, setSelection] = useState({
+		identity: true,
+		providers: true,
+		skills: true,
+		memory: true,
+		channels: true,
+		sessions: true,
+	});
+
+	useEffect(() => {
+		var cancelled = false;
+		sendRpc("openclaw.scan", {}).then((res) => {
+			if (cancelled) return;
+			if (res?.ok) setScan(res.payload);
+			else setError("Failed to scan OpenClaw installation");
+			setImportLoading(false);
+			rerender();
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	function toggleCategory(key) {
+		setSelection((prev) => {
+			var next = Object.assign({}, prev);
+			next[key] = !prev[key];
+			return next;
+		});
+	}
+
+	function doImport() {
+		setImporting(true);
+		setError(null);
+		sendRpc("openclaw.import", selection).then((res) => {
+			setImporting(false);
+			if (res?.ok) {
+				setResult(res.payload);
+				setDone(true);
+			} else {
+				setError(res?.error?.message || "Import failed");
+			}
+			rerender();
+		});
+	}
+
+	if (importLoading) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+			<div class="text-xs text-[var(--muted)]">Scanning\u2026</div>
+		</div>`;
+	}
+
+	if (!scan?.detected) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+			<div class="text-xs text-[var(--muted)]">No OpenClaw installation detected.</div>
+		</div>`;
+	}
+
+	var categories = [
+		{ key: "identity", label: "Identity", available: scan.identity_available },
+		{ key: "providers", label: "Providers", available: scan.providers_available },
+		{ key: "skills", label: "Skills", available: scan.skills_count > 0, detail: `${scan.skills_count} skill(s)` },
+		{
+			key: "memory",
+			label: "Memory",
+			available: scan.memory_available,
+			detail: `${scan.memory_files_count} memory file(s)`,
+		},
+		{
+			key: "channels",
+			label: "Channels",
+			available: scan.channels_available,
+			detail: `${scan.telegram_accounts} Telegram account(s)`,
+		},
+		{
+			key: "sessions",
+			label: "Sessions",
+			available: scan.sessions_count > 0,
+			detail: `${scan.sessions_count} session(s)`,
+		},
+	];
+	var anySelected = categories.some((c) => c.available && selection[c.key]);
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
+			Import data from your OpenClaw installation at <code class="text-[var(--text)]">${scan.home_dir}</code>.
+		</p>
+		${
+			error
+				? html`<div role="alert" class="alert-error-text whitespace-pre-line" style="max-width:600px;">
+			<span class="text-[var(--error)] font-medium">Error:</span> ${error}
+		</div>`
+				: null
+		}
+			${
+				done && result
+					? html`<div class="flex flex-col gap-2" style="max-width:600px;">
+						<div class="text-sm font-medium text-[var(--ok)]">Import complete: ${(result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0)} item(s) imported.</div>
+						${
+							result.categories
+								? html`<div class="flex flex-col gap-1">
+								${result.categories.map(
+									(cat) => html`<div key=${cat.category} class="text-xs text-[var(--text)]">
+										<span class="font-mono">[${cat.status === "success" ? "\u2713" : cat.status === "partial" ? "~" : cat.status === "skipped" ? "-" : "!"}]</span>
+										${cat.category}: ${cat.items_imported} imported, ${cat.items_skipped} skipped
+									</div>`,
+								)}
+							</div>`
+								: null
+						}
+					<button class="provider-btn provider-btn-secondary mt-2" style="width:fit-content;" onClick=${() => {
+						setDone(false);
+						setResult(null);
+						rerender();
+					}}>
+						Import Again
+					</button>
+				</div>`
+					: html`<div class="flex flex-col gap-2" style="max-width:400px;">
+					${categories.map(
+						(cat) => html`<label
+							key=${cat.key}
+							class="flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}">
+							<input
+								type="checkbox"
+								checked=${selection[cat.key] && cat.available}
+								disabled=${!cat.available || importing}
+								onChange=${() => toggleCategory(cat.key)}
+							/>
+							<span>${cat.label}</span>
+							${cat.detail && cat.available ? html`<span class="text-xs text-[var(--muted)]">(${cat.detail})</span>` : null}
+							${cat.available ? null : html`<span class="text-xs text-[var(--muted)]">(not found)</span>`}
+						</label>`,
+					)}
+				</div>
+				${
+					scan.unsupported_channels?.length > 0
+						? html`<p class="text-xs text-[var(--muted)]" style="max-width:600px;">
+							Unsupported channels (coming soon): ${scan.unsupported_channels.join(", ")}
+						</p>`
+						: null
+				}
+				<button
+					class="provider-btn mt-2"
+					style="width:fit-content;"
+					onClick=${doImport}
+					disabled=${!anySelected || importing}
+				>
+					${importing ? "Importing\u2026" : "Import Selected"}
+				</button>`
+			}
+	</div>`;
 }
 
 // ── Configuration section ─────────────────────────────────────
@@ -3724,6 +3896,7 @@ function SettingsPage() {
 								: null
 						}
 						${section === "notifications" ? html`<${NotificationsSection} />` : null}
+						${section === "import" ? html`<${OpenClawImportSection} />` : null}
 						${section === "graphql" ? html`<${GraphqlSection} />` : null}
 						${section === "config" ? html`<${ConfigSection} />` : null}
 					</div>`
