@@ -2390,6 +2390,22 @@ function OpenClawImportStep({ onNext, onBack }) {
 			)}
 		</div>
 		${
+			scan.agents?.length > 1
+				? html`<div class="text-xs text-[var(--muted)] leading-relaxed border border-[var(--border)] rounded p-2" style="max-width:400px;">
+					<span class="font-medium text-[var(--text)]">${scan.agents.length} agents detected</span>
+					<span class="ml-1">\u2014 non-default agents will be created as separate personas:</span>
+					<ul class="mt-1 ml-4 list-disc">
+						${scan.agents.map(
+							(a) =>
+								html`<li key=${a.openclaw_id}>
+									<span class="text-[var(--text)]">${a.name || a.openclaw_id}</span>${a.is_default ? html`<span class="ml-1 text-[var(--muted)]">(default)</span>` : null}${a.theme ? html`<span class="ml-1 text-[var(--muted)]">\u2014 ${a.theme}</span>` : null}
+								</li>`,
+						)}
+					</ul>
+				</div>`
+				: null
+		}
+		${
 			scan.unsupported_channels?.length > 0
 				? html`<p class="text-xs text-[var(--muted)]">
 					Unsupported channels (coming soon): ${scan.unsupported_channels.join(", ")}
