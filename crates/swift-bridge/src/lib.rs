@@ -1112,7 +1112,7 @@ pub extern "C" fn moltis_httpd_status() -> *mut c_char {
 
 // ── Session FFI exports ─────────────────────────────────────────────────
 
-/// Returns JSON array of all session entries (sorted by updated_at desc).
+/// Returns JSON array of all session entries (sorted by created_at ASC, matching web UI).
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_list_sessions() -> *mut c_char {
     record_call("moltis_list_sessions");
@@ -1120,8 +1120,7 @@ pub extern "C" fn moltis_list_sessions() -> *mut c_char {
 
     with_ffi_boundary(|| {
         let all = BRIDGE.runtime.block_on(BRIDGE.session_metadata.list());
-        let mut entries: Vec<BridgeSessionEntry> = all.iter().map(BridgeSessionEntry::from).collect();
-        entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        let entries: Vec<BridgeSessionEntry> = all.iter().map(BridgeSessionEntry::from).collect();
         emit_log("DEBUG", "bridge.sessions", &format!("Listed {} sessions", entries.len()));
         encode_json(&entries)
     })
