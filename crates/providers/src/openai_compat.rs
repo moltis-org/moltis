@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use {serde::Serialize, tracing::trace};
 
-use moltis_agents::model::{StreamEvent, ToolCall, Usage};
+use moltis_agents::model::{ChatMessage, StreamEvent, ToolCall, Usage, UserContent};
 
 // ============================================================================
 // OpenAI Tool Schema Types
@@ -210,6 +210,98 @@ pub fn to_responses_api_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Va
         "to_responses_api_tools complete"
     );
     result
+}
+
+/// Convert typed chat messages to Responses API input items.
+///
+/// Responses API accepts a heterogeneous input array (messages, tool calls, and
+/// tool outputs). This keeps one canonical conversion for providers that use
+/// Responses transport (SSE or WebSocket).
+#[must_use]
+pub fn to_responses_input(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .flat_map(|msg| match msg {
+            ChatMessage::System { .. } => {
+                // System messages are extracted into `instructions`.
+                vec![]
+            },
+            ChatMessage::User { content } => {
+                let content_blocks = match content {
+                    UserContent::Text(t) => {
+                        vec![serde_json::json!({"type": "input_text", "text": t})]
+                    },
+                    UserContent::Multimodal(parts) => parts
+                        .iter()
+                        .map(|p| match p {
+                            moltis_agents::model::ContentPart::Text(t) => {
+                                serde_json::json!({"type": "input_text", "text": t})
+                            },
+                            moltis_agents::model::ContentPart::Image { media_type, data } => {
+                                let data_uri = format!("data:{media_type};base64,{data}");
+                                serde_json::json!({
+                                    "type": "input_image",
+                                    "image_url": data_uri,
+                                })
+                            },
+                        })
+                        .collect(),
+                };
+                vec![serde_json::json!({
+                    "role": "user",
+                    "content": content_blocks,
+                })]
+            },
+            ChatMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                if !tool_calls.is_empty() {
+                    let mut items: Vec<serde_json::Value> = tool_calls
+                        .iter()
+                        .map(|tc| {
+                            serde_json::json!({
+                                "type": "function_call",
+                                "call_id": tc.id,
+                                "name": tc.name,
+                                "arguments": tc.arguments.to_string(),
+                            })
+                        })
+                        .collect();
+                    if let Some(text) = content
+                        && !text.is_empty()
+                    {
+                        items.insert(
+                            0,
+                            serde_json::json!({
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": text}]
+                            }),
+                        );
+                    }
+                    items
+                } else {
+                    let text = content.as_deref().unwrap_or("");
+                    vec![serde_json::json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}]
+                    })]
+                }
+            },
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
+                vec![serde_json::json!({
+                    "type": "function_call_output",
+                    "call_id": tool_call_id,
+                    "output": content,
+                })]
+            },
+        })
+        .collect()
 }
 
 /// Parse tool_calls from an OpenAI response message (non-streaming).

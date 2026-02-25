@@ -1653,6 +1653,19 @@ pub struct ProvidersConfig {
     pub local_models: Vec<String>,
 }
 
+/// Streaming transport for provider response streams.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderStreamTransport {
+    /// Use HTTP + SSE streaming (current default).
+    #[default]
+    Sse,
+    /// Use WebSocket mode when supported by the provider API.
+    Websocket,
+    /// Try WebSocket first, then fall back to SSE on transport/setup failure.
+    Auto,
+}
+
 /// Configuration for a single LLM provider.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1680,6 +1693,12 @@ pub struct ProviderEntry {
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub fetch_models: bool,
 
+    /// Streaming transport for this provider (`sse`, `websocket`, `auto`).
+    ///
+    /// Defaults to `sse` for compatibility.
+    #[serde(default, skip_serializing_if = "is_default_provider_stream_transport")]
+    pub stream_transport: ProviderStreamTransport,
+
     /// Optional alias for this provider instance.
     ///
     /// When set, this alias is used in metrics labels instead of the provider name.
@@ -1697,6 +1716,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("base_url", &self.base_url)
             .field("models", &self.models)
             .field("fetch_models", &self.fetch_models)
+            .field("stream_transport", &self.stream_transport)
             .field("alias", &self.alias)
             .finish()
     }
@@ -1710,6 +1730,7 @@ impl Default for ProviderEntry {
             base_url: None,
             models: Vec::new(),
             fetch_models: true,
+            stream_transport: ProviderStreamTransport::Sse,
             alias: None,
         }
     }
@@ -1737,6 +1758,10 @@ where
 
 const fn is_true(value: &bool) -> bool {
     *value
+}
+
+const fn is_default_provider_stream_transport(value: &ProviderStreamTransport) -> bool {
+    matches!(value, ProviderStreamTransport::Sse)
 }
 
 impl ProvidersConfig {

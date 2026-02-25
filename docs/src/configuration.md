@@ -37,6 +37,7 @@ offered = ["openai", "anthropic", "local-llm"]
 [providers.openai]
 enabled = true
 models = ["gpt-5.3", "gpt-5.2"]
+stream_transport = "sse"        # "sse", "websocket", or "auto"
 
 [providers.anthropic]
 enabled = true
