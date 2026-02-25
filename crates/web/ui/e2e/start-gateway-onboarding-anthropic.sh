@@ -12,6 +12,7 @@ RUNTIME_ROOT="${MOLTIS_E2E_ONBOARDING_ANTHROPIC_RUNTIME_DIR:-${REPO_ROOT}/target
 CONFIG_DIR="${RUNTIME_ROOT}/config"
 DATA_DIR="${RUNTIME_ROOT}/data"
 HOME_DIR="${RUNTIME_ROOT}/home"
+ORIGINAL_HOME="${HOME:-}"
 
 rm -rf "${RUNTIME_ROOT}"
 mkdir -p "${CONFIG_DIR}" "${DATA_DIR}" "${HOME_DIR}"
@@ -23,6 +24,14 @@ cd "${REPO_ROOT}"
 export MOLTIS_CONFIG_DIR="${CONFIG_DIR}"
 export MOLTIS_DATA_DIR="${DATA_DIR}"
 export MOLTIS_SERVER__PORT="${PORT}"
+# Keep rustup/cargo toolchains available after HOME isolation so
+# stale-binary fallback can still rebuild when needed.
+if [ -z "${RUSTUP_HOME:-}" ] && [ -n "${ORIGINAL_HOME}" ]; then
+	export RUSTUP_HOME="${ORIGINAL_HOME}/.rustup"
+fi
+if [ -z "${CARGO_HOME:-}" ] && [ -n "${ORIGINAL_HOME}" ]; then
+	export CARGO_HOME="${ORIGINAL_HOME}/.cargo"
+fi
 # Isolate HOME so auto-detection cannot read user-global OAuth/key stores.
 export HOME="${HOME_DIR}"
 
