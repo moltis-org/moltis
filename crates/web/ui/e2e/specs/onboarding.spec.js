@@ -56,6 +56,18 @@ async function maybeCompleteIdentity(page) {
 	return true;
 }
 
+async function maybeSkipOpenClawImport(page) {
+	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
+	if (!(await isVisible(importHeading))) return false;
+
+	// The import step has "Skip for now" (when detected) or "Skip" (when not detected)
+	const skipBtn = page.getByRole("button", { name: /^Skip/ }).first();
+	if (await isVisible(skipBtn)) {
+		await skipBtn.click();
+	}
+	return true;
+}
+
 async function moveToLlmStep(page) {
 	await waitForOnboardingStepLoaded(page);
 
@@ -66,6 +78,9 @@ async function moveToLlmStep(page) {
 	if (await isVisible(llmHeading)) return true;
 
 	await maybeCompleteIdentity(page);
+	if (await isVisible(llmHeading)) return true;
+
+	await maybeSkipOpenClawImport(page);
 	if (await isVisible(llmHeading)) return true;
 
 	const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
@@ -226,7 +241,11 @@ test.describe("Onboarding wizard", () => {
 		const isAuthStepVisible = await authHeading.isVisible().catch(() => false);
 
 		if (!isAuthStepVisible) {
-			await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
+			// When auth is not needed, the wizard may show identity, OpenClaw import, or LLM step
+			const anyStepHeading = page.getByRole("heading", {
+				name: /^(Add LLMs|Add providers|Set up your identity|Import from OpenClaw)$/,
+			});
+			await expect(anyStepHeading).toBeVisible();
 			return;
 		}
 
