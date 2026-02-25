@@ -14,7 +14,7 @@ use {
     moltis_agents::model::{
         ChatMessage as AgentChatMessage, LlmProvider, StreamEvent, Usage, UserContent,
     },
-    moltis_config::{schema::ProvidersConfig, validate::Severity},
+    moltis_config::validate::Severity,
     moltis_provider_setup::{
         KeyStore, config_with_saved_keys, detect_auto_provider_sources_with_overrides,
         known_providers,
@@ -87,10 +87,11 @@ impl BridgeState {
 }
 
 fn build_registry() -> ProviderRegistry {
-    let base = ProvidersConfig::default();
+    let config = moltis_config::discover_and_load();
+    let env_overrides = config.env.clone();
     let key_store = KeyStore::new();
-    let config = config_with_saved_keys(&base, &key_store, &[]);
-    ProviderRegistry::from_env_with_config(&config)
+    let effective = config_with_saved_keys(&config.providers, &key_store, &[]);
+    ProviderRegistry::from_env_with_config_and_overrides(&effective, &env_overrides)
 }
 
 static BRIDGE: LazyLock<BridgeState> = LazyLock::new(BridgeState::new);
@@ -811,9 +812,10 @@ pub extern "C" fn moltis_detect_providers() -> *mut c_char {
 
     with_ffi_boundary(|| {
         emit_log("DEBUG", "bridge", "Detecting provider sources");
-        let config = ProvidersConfig::default();
-        let env_overrides = HashMap::new();
-        let sources = detect_auto_provider_sources_with_overrides(&config, None, &env_overrides);
+        let config = moltis_config::discover_and_load();
+        let sources = detect_auto_provider_sources_with_overrides(
+            &config.providers, None, &config.env,
+        );
         let bridge_sources: Vec<BridgeDetectedSource> = sources
             .into_iter()
             .map(|s| BridgeDetectedSource {
