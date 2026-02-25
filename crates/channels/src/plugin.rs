@@ -9,6 +9,8 @@ use crate::{Error, Result};
 #[serde(rename_all = "lowercase")]
 pub enum ChannelType {
     Telegram,
+    #[serde(rename = "msteams")]
+    MsTeams,
     // Future: Discord, Slack, WhatsApp, etc.
 }
 
@@ -17,6 +19,7 @@ impl ChannelType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Telegram => "telegram",
+            Self::MsTeams => "msteams",
         }
     }
 }
@@ -33,6 +36,7 @@ impl std::str::FromStr for ChannelType {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "telegram" => Ok(Self::Telegram),
+            "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),

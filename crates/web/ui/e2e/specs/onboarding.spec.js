@@ -248,7 +248,7 @@ test.describe("Onboarding wizard", () => {
 			const currentHeading = page.locator(".onboarding-card h2").first();
 			await expect(currentHeading).toBeVisible();
 			const headingText = (await currentHeading.textContent())?.trim() || "";
-			expect(["Add LLMs", "Voice (optional)", "Connect Telegram"]).toContain(headingText);
+			expect(["Add LLMs", "Voice (optional)", "Connect a Channel"]).toContain(headingText);
 			const canSkip = await clickFirstVisibleButton(page, { name: /skip/i });
 			const canContinue = await clickFirstVisibleButton(page, { name: /continue/i });
 			expect(canSkip || canContinue).toBeTruthy();
@@ -316,7 +316,7 @@ test.describe("Onboarding wizard", () => {
 		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
 		await page.getByRole("button", { name: "Skip for now", exact: true }).click();
 
-		const channelHeading = page.getByRole("heading", { name: "Connect Telegram", exact: true });
+		const channelHeading = page.getByRole("heading", { name: "Connect a Channel", exact: true });
 		for (let i = 0; i < 3; i++) {
 			if (await channelHeading.isVisible().catch(() => false)) {
 				break;

@@ -51,11 +51,12 @@ impl SqliteChannelStore {
     pub async fn init(pool: &SqlitePool) -> ChannelResult<()> {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS channels (
-                account_id   TEXT    PRIMARY KEY,
                 channel_type TEXT    NOT NULL DEFAULT 'telegram',
+                account_id   TEXT    NOT NULL,
                 config       TEXT    NOT NULL,
                 created_at   INTEGER NOT NULL,
-                updated_at   INTEGER NOT NULL
+                updated_at   INTEGER NOT NULL,
+                PRIMARY KEY (channel_type, account_id)
             )"#,
         )
         .execute(pool)
@@ -76,12 +77,19 @@ impl ChannelStore for SqliteChannelStore {
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
-    async fn get(&self, account_id: &str) -> ChannelResult<Option<StoredChannel>> {
-        let row = sqlx::query_as::<_, ChannelRow>("SELECT * FROM channels WHERE account_id = ?")
-            .bind(account_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| channel_db_error("get channel", e))?;
+    async fn get(
+        &self,
+        channel_type: &str,
+        account_id: &str,
+    ) -> ChannelResult<Option<StoredChannel>> {
+        let row = sqlx::query_as::<_, ChannelRow>(
+            "SELECT * FROM channels WHERE channel_type = ? AND account_id = ?",
+        )
+        .bind(channel_type)
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| channel_db_error("get channel", e))?;
         row.map(TryInto::try_into).transpose()
     }
 
@@ -90,7 +98,7 @@ impl ChannelStore for SqliteChannelStore {
         sqlx::query(
             r#"INSERT INTO channels (account_id, channel_type, config, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(account_id) DO UPDATE SET
+               ON CONFLICT(channel_type, account_id) DO UPDATE SET
                  channel_type = excluded.channel_type,
                  config = excluded.config,
                  updated_at = excluded.updated_at"#,
@@ -106,8 +114,9 @@ impl ChannelStore for SqliteChannelStore {
         Ok(())
     }
 
-    async fn delete(&self, account_id: &str) -> ChannelResult<()> {
-        sqlx::query("DELETE FROM channels WHERE account_id = ?")
+    async fn delete(&self, channel_type: &str, account_id: &str) -> ChannelResult<()> {
+        sqlx::query("DELETE FROM channels WHERE channel_type = ? AND account_id = ?")
+            .bind(channel_type)
             .bind(account_id)
             .execute(&self.pool)
             .await
@@ -148,7 +157,7 @@ mod tests {
         };
         store.upsert(ch).await.unwrap();
 
-        let got = store.get("bot1").await.unwrap().unwrap();
+        let got = store.get("telegram", "bot1").await.unwrap().unwrap();
         assert_eq!(got.account_id, "bot1");
         assert_eq!(got.config["token"], "abc");
     }
@@ -181,7 +190,7 @@ mod tests {
             .await
             .unwrap();
 
-        let got = store.get("bot1").await.unwrap().unwrap();
+        let got = store.get("telegram", "bot1").await.unwrap().unwrap();
         assert_eq!(got.config["token"], "new");
 
         let all = store.list().await.unwrap();
@@ -204,8 +213,8 @@ mod tests {
             .await
             .unwrap();
 
-        store.delete("bot1").await.unwrap();
-        assert!(store.get("bot1").await.unwrap().is_none());
+        store.delete("telegram", "bot1").await.unwrap();
+        assert!(store.get("telegram", "bot1").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -245,6 +254,6 @@ mod tests {
     async fn test_get_nonexistent() {
         let pool = test_pool().await;
         let store = SqliteChannelStore::new(pool);
-        assert!(store.get("nope").await.unwrap().is_none());
+        assert!(store.get("telegram", "nope").await.unwrap().is_none());
     }
 }

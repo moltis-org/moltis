@@ -4764,7 +4764,6 @@ impl ChannelStreamDispatcher {
             .peek_channel_replies(session_key)
             .await
             .into_iter()
-            .filter(|target| target.channel_type == moltis_channels::ChannelType::Telegram)
             .collect();
         if targets.is_empty() {
             return None;
@@ -6693,47 +6692,48 @@ async fn deliver_channel_replies(
             !streamed_target_keys.contains(&key)
         });
     }
-    let is_telegram_session = session_key.starts_with("telegram:");
+    let is_channel_session =
+        session_key.starts_with("telegram:") || session_key.starts_with("msteams:");
     if targets.is_empty() {
         let _ = state.drain_channel_status_log(session_key).await;
-        if is_telegram_session {
+        if is_channel_session {
             info!(
                 session_key,
                 text_len = text.len(),
                 streamed_count = streamed_target_keys.len(),
-                "telegram reply delivery skipped: no pending targets after stream dedupe"
+                "channel reply delivery skipped: no pending targets after stream dedupe"
             );
         }
         return;
     }
     if text.is_empty() {
         let _ = state.drain_channel_status_log(session_key).await;
-        if is_telegram_session {
+        if is_channel_session {
             info!(
                 session_key,
                 target_count = targets.len(),
-                "telegram reply delivery skipped: empty response text"
+                "channel reply delivery skipped: empty response text"
             );
         }
         return;
     }
-    if is_telegram_session {
+    if is_channel_session {
         info!(
             session_key,
             target_count = targets.len(),
             text_len = text.len(),
             reply_medium = ?desired_reply_medium,
-            "telegram reply delivery starting"
+            "channel reply delivery starting"
         );
     }
     let outbound = match state.channel_outbound() {
         Some(o) => o,
         None => {
-            if is_telegram_session {
+            if is_channel_session {
                 info!(
                     session_key,
                     target_count = targets.len(),
-                    "telegram reply delivery skipped: outbound unavailable"
+                    "channel reply delivery skipped: outbound unavailable"
                 );
             }
             return;
@@ -7056,6 +7056,40 @@ async fn deliver_channel_replies_to_targets(
                         }
                     },
                 },
+                moltis_channels::ChannelType::MsTeams => {
+                    let delivered_text = tts_payload
+                        .as_ref()
+                        .map(|payload| payload.text.as_str())
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or(&text);
+                    let result = if logbook_html.is_empty() {
+                        outbound
+                            .send_text(
+                                &target.account_id,
+                                &target.chat_id,
+                                delivered_text,
+                                reply_to,
+                            )
+                            .await
+                    } else {
+                        outbound
+                            .send_text_with_suffix(
+                                &target.account_id,
+                                &target.chat_id,
+                                delivered_text,
+                                &logbook_html,
+                                reply_to,
+                            )
+                            .await
+                    };
+                    if let Err(e) = result {
+                        warn!(
+                            account_id = target.account_id,
+                            chat_id = target.chat_id,
+                            "failed to send channel reply: {e}"
+                        );
+                    }
+                },
             }
         }));
     }
@@ -7372,7 +7406,7 @@ async fn send_screenshot_to_channels(
         let payload = payload.clone();
         tasks.push(tokio::spawn(async move {
             match target.channel_type {
-                moltis_channels::ChannelType::Telegram => {
+                moltis_channels::ChannelType::Telegram | moltis_channels::ChannelType::MsTeams => {
                     let reply_to = target.message_id.as_deref();
                     if let Err(e) = outbound
                         .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
@@ -7392,7 +7426,7 @@ async fn send_screenshot_to_channels(
                         debug!(
                             account_id = target.account_id,
                             chat_id = target.chat_id,
-                            "sent screenshot to telegram"
+                            "sent screenshot to channel"
                         );
                     }
                 },
@@ -7454,7 +7488,7 @@ async fn send_location_to_channels(
                 debug!(
                     account_id = target.account_id,
                     chat_id = target.chat_id,
-                    "sent location pin to telegram"
+                    "sent location pin to channel"
                 );
             }
         }));

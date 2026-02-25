@@ -327,7 +327,11 @@ fn build_schema_map() -> KnownKeys {
         ),
         (
             "channels",
-            Struct(HashMap::from([("telegram", Map(Box::new(Leaf)))])),
+            Struct(HashMap::from([
+                ("offered", Array(Box::new(Leaf))),
+                ("telegram", Map(Box::new(Leaf))),
+                ("msteams", Map(Box::new(Leaf))),
+            ])),
         ),
         (
             "tls",
@@ -903,6 +907,22 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
             path: "tools.web.fetch.ssrf_allowlist".into(),
             message: "ssrf_allowlist is set — SSRF protection is relaxed for the listed ranges. Ensure these are trusted networks.".into(),
         });
+    }
+
+    // Unknown channel types in channels.offered
+    let valid_channel_types = ["telegram", "msteams"];
+    for (idx, entry) in config.channels.offered.iter().enumerate() {
+        if !valid_channel_types.contains(&entry.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("channels.offered[{idx}]"),
+                message: format!(
+                    "unknown channel type \"{entry}\"; expected one of: {}",
+                    valid_channel_types.join(", ")
+                ),
+            });
+        }
     }
 
     // Unknown tailscale mode
@@ -1892,6 +1912,42 @@ agent_max_iterations = 0
         assert!(
             invalid.is_some(),
             "expected tools.agent_max_iterations invalid-value error, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_accepted_without_warning() {
+        let toml = r#"
+[channels]
+offered = ["telegram"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered"));
+        assert!(
+            warning.is_none(),
+            "valid channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_unknown_type_warned() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "slack"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "channels.offered[1]" && d.category == "unknown-field");
+        assert!(
+            warning.is_some(),
+            "unknown channel type should produce warning, got: {:?}",
             result.diagnostics
         );
     }

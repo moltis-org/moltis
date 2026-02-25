@@ -1085,12 +1085,36 @@ pub struct McpOAuthOverrideEntry {
 }
 
 /// Channel configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChannelsConfig {
+    /// Which channel types are offered in the web UI (onboarding + channels page).
+    /// Defaults to `["telegram"]`. Set to `["telegram", "msteams"]` to opt in to Teams.
+    #[serde(
+        default = "default_channels_offered",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub offered: Vec<String>,
     /// Telegram bot accounts, keyed by account ID.
     #[serde(default)]
     pub telegram: HashMap<String, serde_json::Value>,
+    /// Microsoft Teams bot accounts, keyed by account ID.
+    #[serde(default)]
+    pub msteams: HashMap<String, serde_json::Value>,
+}
+
+fn default_channels_offered() -> Vec<String> {
+    vec!["telegram".into()]
+}
+
+impl Default for ChannelsConfig {
+    fn default() -> Self {
+        Self {
+            offered: default_channels_offered(),
+            telegram: HashMap::new(),
+            msteams: HashMap::new(),
+        }
+    }
 }
 
 /// TLS configuration for the gateway HTTPS server.
@@ -2041,6 +2065,28 @@ OPENROUTER_API_KEY = "sk-or-test"
         let entry = ProviderEntry::default();
         assert!(entry.fetch_models);
         assert!(entry.models.is_empty());
+    }
+
+    #[test]
+    fn channels_config_defaults_to_telegram_offered() {
+        let config = ChannelsConfig::default();
+        assert_eq!(config.offered, vec!["telegram".to_string()]);
+    }
+
+    #[test]
+    fn channels_config_empty_toml_defaults_offered() {
+        let config: ChannelsConfig = toml::from_str("").unwrap();
+        assert_eq!(config.offered, vec!["telegram".to_string()]);
+    }
+
+    #[test]
+    fn channels_config_explicit_offered() {
+        let config: ChannelsConfig =
+            toml::from_str(r#"offered = ["telegram", "msteams"]"#).unwrap();
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "msteams".to_string()
+        ]);
     }
 
     #[test]

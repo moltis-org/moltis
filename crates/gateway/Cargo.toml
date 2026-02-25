@@ -38,6 +38,7 @@ moltis-mcp            = { workspace = true }
 moltis-media          = { workspace = true }
 moltis-memory         = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
+moltis-msteams        = { workspace = true }
 moltis-oauth          = { workspace = true }
 moltis-onboarding     = { workspace = true }
 moltis-plugins        = { workspace = true }

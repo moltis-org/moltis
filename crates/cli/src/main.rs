@@ -8,6 +8,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 mod auth_commands;
 mod browser_commands;
+mod channel_commands;
 mod config_commands;
 mod db_commands;
 mod doctor_commands;
@@ -80,7 +81,7 @@ enum Commands {
     /// Channel management.
     Channels {
         #[command(subcommand)]
-        action: ChannelAction,
+        action: channel_commands::ChannelAction,
     },
     /// Send a message.
     Send {
@@ -149,13 +150,6 @@ enum Commands {
     /// Install the Moltis CA certificate into the system trust store.
     #[cfg(feature = "tls")]
     TrustCa,
-}
-
-#[derive(Subcommand)]
-enum ChannelAction {
-    Status,
-    Login,
-    Logout,
 }
 
 #[derive(Subcommand)]
@@ -404,6 +398,7 @@ async fn main() -> anyhow::Result<()> {
             moltis_onboarding::wizard::run_onboarding().await?;
             Ok(())
         },
+        Some(Commands::Channels { action }) => channel_commands::handle_channels(action).await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),

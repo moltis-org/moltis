@@ -47,6 +47,7 @@ moltis-skills      = { workspace = true }
 moltis-tools       = { workspace = true }
 moltis-web         = { optional = true, workspace = true }
 open               = { workspace = true }
+rand               = { workspace = true }
 reqwest            = { workspace = true }
 secrecy            = { workspace = true }
 serde_json         = { workspace = true }

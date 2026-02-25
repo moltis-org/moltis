@@ -80,6 +80,11 @@ impl TelegramPlugin {
         accounts.keys().cloned().collect()
     }
 
+    pub fn has_account(&self, account_id: &str) -> bool {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.contains_key(account_id)
+    }
+
     /// Get the config for a specific account (serialized to JSON).
     pub fn account_config(&self, account_id: &str) -> Option<serde_json::Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());

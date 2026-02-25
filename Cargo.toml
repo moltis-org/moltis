@@ -19,6 +19,7 @@ members = [
   "crates/media",
   "crates/memory",
   "crates/metrics",
+  "crates/msteams",
   "crates/oauth",
   "crates/onboarding",
   "crates/plugins",
@@ -196,6 +197,7 @@ moltis-mcp            = { path = "crates/mcp" }
 moltis-media          = { path = "crates/media" }
 moltis-memory         = { path = "crates/memory" }
 moltis-metrics        = { path = "crates/metrics" }
+moltis-msteams        = { path = "crates/msteams" }
 moltis-oauth          = { path = "crates/oauth" }
 moltis-onboarding     = { path = "crates/onboarding" }
 moltis-plugins        = { path = "crates/plugins" }

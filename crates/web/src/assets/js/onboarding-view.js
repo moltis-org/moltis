@@ -7,7 +7,14 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { addChannel, fetchChannelStatus, validateChannelFields } from "./channel-utils.js";
+import {
+	addChannel,
+	buildTeamsEndpoint,
+	defaultTeamsBaseUrl,
+	fetchChannelStatus,
+	generateWebhookSecretHex,
+	validateChannelFields,
+} from "./channel-utils.js";
 import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
@@ -2058,19 +2065,35 @@ function VoiceStep({ onNext, onBack }) {
 
 // ── Channel step ────────────────────────────────────────────
 
-function ChannelStep({ onNext, onBack }) {
+function ChannelTypeSelector({ onSelect, offered }) {
+	return html`<div class="flex gap-3">
+		${
+			offered.has("telegram") &&
+			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("telegram")}>
+			<span class="icon icon-xl icon-telegram"></span>
+			<span class="text-sm font-medium text-[var(--text-strong)]">Telegram</span>
+		</button>`
+		}
+		${
+			offered.has("msteams") &&
+			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("msteams")}>
+			<span class="icon icon-xl icon-msteams"></span>
+			<span class="text-sm font-medium text-[var(--text-strong)]">Microsoft Teams</span>
+		</button>`
+		}
+	</div>`;
+}
+
+function TelegramForm({ onConnected, error, setError }) {
 	var [accountId, setAccountId] = useState("");
 	var [token, setToken] = useState("");
 	var [dmPolicy, setDmPolicy] = useState("allowlist");
 	var [allowlist, setAllowlist] = useState("");
 	var [saving, setSaving] = useState(false);
-	var [connected, setConnected] = useState(false);
-	var [connectedName, setConnectedName] = useState("");
-	var [error, setError] = useState(null);
 
 	function onSubmit(e) {
 		e.preventDefault();
-		var v = validateChannelFields(accountId, token);
+		var v = validateChannelFields("telegram", accountId, token);
 		if (!v.valid) {
 			setError(v.error);
 			return;
@@ -2090,81 +2113,237 @@ function ChannelStep({ onNext, onBack }) {
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
-				setConnected(true);
-				setConnectedName(accountId.trim());
+				onConnected(accountId.trim(), "telegram");
 			} else {
 				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect bot.");
 			}
 		});
 	}
 
-	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Connect Telegram</h2>
-		<p class="text-xs text-[var(--muted)] leading-relaxed">Connect a Telegram bot so you can chat from your phone. You can set this up later in Channels.</p>
-		${
-			connected
-				? html`<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
-				<span class="icon icon-lg icon-check-circle shrink-0" style="color:var(--ok)"></span>
-				<div>
-					<div class="text-sm font-medium text-[var(--text-strong)]">Bot connected</div>
-					<div class="text-xs text-[var(--muted)] mt-0.5">@${connectedName} is now linked to your agent.</div>
-				</div>
-			</div>`
-				: html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
-				<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
-					<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
-					<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
-					<span>2. Send /newbot and follow the prompts</span>
-					<span>3. Copy the bot token and paste it below</span>
-				</div>
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Bot username</label>
-					<input type="text" class="provider-key-input w-full"
-						value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
-						placeholder="e.g. my_assistant_bot"
-						autocomplete="off"
-						autocapitalize="none"
-						autocorrect="off"
-						spellcheck="false"
-						name="telegram_bot_username"
-						autofocus />
-				</div>
-					<div>
-						<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
-						<input type="password" class="provider-key-input w-full"
-							value=${token} onInput=${(e) => setToken(e.target.value)}
-							placeholder="123456:ABC-DEF..."
-							autocomplete="new-password"
-							autocapitalize="none"
-							autocorrect="off"
-							spellcheck="false"
-							name="telegram_bot_token" />
-				</div>
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
-					<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
-						<option value="allowlist">Allowlist only (recommended)</option>
-						<option value="open">Open (anyone)</option>
-						<option value="disabled">Disabled</option>
-					</select>
-				</div>
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
-					<textarea class="provider-key-input w-full" rows="2"
-						value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
-						placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
-					<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
-				</div>
-				${error && html`<${ErrorPanel} message=${error} />`}
-			</form>`
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
+			<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
+			<span>2. Send /newbot and follow the prompts</span>
+			<span>3. Copy the bot token and paste it below</span>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Bot username</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
+				placeholder="e.g. my_assistant_bot"
+				autocomplete="off"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="telegram_bot_username"
+				autofocus />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
+			<input type="password" class="provider-key-input w-full"
+				value=${token} onInput=${(e) => setToken(e.target.value)}
+				placeholder="123456:ABC-DEF..."
+				autocomplete="new-password"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="telegram_bot_token" />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+				<option value="allowlist">Allowlist only (recommended)</option>
+				<option value="open">Open (anyone)</option>
+				<option value="disabled">Disabled</option>
+			</select>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
+			<textarea class="provider-key-input w-full" rows="2"
+				value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+				placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
+			<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
+		</div>
+		${error && html`<${ErrorPanel} message=${error} />`}
+		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
+	</form>`;
+}
+
+function TeamsForm({ onConnected, error, setError }) {
+	var [appId, setAppId] = useState("");
+	var [appPassword, setAppPassword] = useState("");
+	var [webhookSecret, setWebhookSecret] = useState("");
+	var [baseUrl, setBaseUrl] = useState(defaultTeamsBaseUrl());
+	var [bootstrapEndpoint, setBootstrapEndpoint] = useState("");
+	var [saving, setSaving] = useState(false);
+
+	function onBootstrap() {
+		var id = appId.trim();
+		if (!id) {
+			setError("Enter App ID first.");
+			return;
 		}
-		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			${
-				connected
-					? html`<button type="button" class="provider-btn" onClick=${onNext}>Continue</button>`
-					: html`<button type="button" class="provider-btn" disabled=${saving} onClick=${onSubmit}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>`
+		var secret = webhookSecret.trim();
+		if (!secret) {
+			secret = generateWebhookSecretHex();
+			setWebhookSecret(secret);
+		}
+		var endpoint = buildTeamsEndpoint(baseUrl, id, secret);
+		if (!endpoint) {
+			setError("Enter a valid public base URL (e.g. https://bot.example.com).");
+			return;
+		}
+		setBootstrapEndpoint(endpoint);
+		setError(null);
+	}
+
+	function onCopyEndpoint() {
+		if (!bootstrapEndpoint) return;
+		if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+			navigator.clipboard.writeText(bootstrapEndpoint);
+		}
+	}
+
+	function onSubmit(e) {
+		e.preventDefault();
+		var v = validateChannelFields("msteams", appId, appPassword);
+		if (!v.valid) {
+			setError(v.error);
+			return;
+		}
+		setError(null);
+		setSaving(true);
+		var config = {
+			app_id: appId.trim(),
+			app_password: appPassword.trim(),
+			dm_policy: "allowlist",
+			mention_mode: "mention",
+			allowlist: [],
+		};
+		if (webhookSecret.trim()) config.webhook_secret = webhookSecret.trim();
+		addChannel("msteams", appId.trim(), config).then((res) => {
+			setSaving(false);
+			if (res?.ok) {
+				onConnected(appId.trim(), "msteams");
+			} else {
+				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.");
 			}
+		});
+	}
+
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">Microsoft Teams setup</span>
+			<span>1. <a href="https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration" target="_blank" class="text-[var(--accent)] underline">Create an Azure Bot registration</a> and copy the App ID + App Password.</span>
+			<span>2. Generate the messaging endpoint below and paste it into your Azure Bot configuration.</span>
+			<span>3. Optional CLI shortcut: <code class="text-xs">moltis channels teams bootstrap</code>.</span>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">App ID / Account ID</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${appId} onInput=${(e) => setAppId(e.target.value)}
+				placeholder="Azure App ID or alias"
+				autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+				name="teams_app_id" autofocus />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">App Password (client secret)</label>
+			<input type="password" class="provider-key-input w-full"
+				value=${appPassword} onInput=${(e) => setAppPassword(e.target.value)}
+				placeholder="Azure client secret"
+				autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
+				name="teams_app_password" />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Webhook Secret (optional)</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${webhookSecret} onInput=${(e) => setWebhookSecret(e.target.value)}
+				placeholder="shared secret for ?secret=..." />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Public Base URL</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}
+				placeholder="https://bot.example.com" />
+		</div>
+		<div class="flex gap-2">
+			<button type="button" class="provider-btn provider-btn-sm provider-btn-secondary" onClick=${onBootstrap}>Generate Endpoint</button>
+			${bootstrapEndpoint && html`<button type="button" class="provider-btn provider-btn-sm provider-btn-secondary" onClick=${onCopyEndpoint}>Copy</button>`}
+		</div>
+		${
+			bootstrapEndpoint &&
+			html`<div>
+			<div class="text-xs text-[var(--muted)]">Messaging endpoint</div>
+			<code class="text-xs block break-all">${bootstrapEndpoint}</code>
+		</div>`
+		}
+		${error && html`<${ErrorPanel} message=${error} />`}
+		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Teams"}</button>
+	</form>`;
+}
+
+function ChannelSuccess({ channelName, channelType: type, onAnother }) {
+	var label = type === "msteams" ? "Microsoft Teams" : "Telegram";
+	return html`<div class="flex flex-col gap-3">
+		<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
+			<span class="icon icon-lg icon-check-circle shrink-0" style="color:var(--ok)"></span>
+			<div>
+				<div class="text-sm font-medium text-[var(--text-strong)]">Channel connected</div>
+				<div class="text-xs text-[var(--muted)] mt-0.5">${channelName} (${label}) is now linked to your agent.</div>
+			</div>
+		</div>
+		<button type="button" class="text-xs text-[var(--accent)] cursor-pointer bg-transparent border-none underline self-start" onClick=${onAnother}>Connect another channel</button>
+	</div>`;
+}
+
+function ChannelStep({ onNext, onBack }) {
+	var offeredList = getGon("channels_offered") || ["telegram"];
+	var offered = new Set(offeredList);
+	var singleType = offeredList.length === 1 ? offeredList[0] : null;
+
+	var [phase, setPhase] = useState(singleType ? "form" : "select");
+	var [selectedType, setSelectedType] = useState(singleType);
+	var [connectedName, setConnectedName] = useState("");
+	var [connectedType, setConnectedType] = useState(null);
+	var [error, setError] = useState(null);
+
+	function onSelectType(type) {
+		setSelectedType(type);
+		setPhase("form");
+		setError(null);
+	}
+
+	function onConnected(name, type) {
+		setConnectedName(name);
+		setConnectedType(type);
+		setPhase("success");
+		setError(null);
+	}
+
+	function onAnother() {
+		if (singleType) {
+			setPhase("form");
+			setError(null);
+		} else {
+			setPhase("select");
+			setSelectedType(null);
+			setError(null);
+		}
+	}
+
+	var showBackSelector = phase === "form" && !singleType;
+
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Connect a Channel</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">Connect a messaging channel so you can chat from your phone or team workspace. You can set this up later in Channels.</p>
+		${phase === "select" && html`<${ChannelTypeSelector} onSelect=${onSelectType} offered=${offered} />`}
+		${phase === "form" && selectedType === "telegram" && html`<${TelegramForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
+		${phase === "form" && selectedType === "msteams" && html`<${TeamsForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
+		${phase === "success" && html`<${ChannelSuccess} channelName=${connectedName} channelType=${connectedType} onAnother=${onAnother} />`}
+		<div class="flex flex-wrap items-center gap-3 mt-1">
+			<button type="button" class="provider-btn provider-btn-secondary" onClick=${showBackSelector ? () => setPhase("select") : onBack}>Back</button>
+			${phase === "success" && html`<button type="button" class="provider-btn" onClick=${onNext}>Continue</button>`}
 			<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
 		</div>
 	</div>`;

@@ -47,8 +47,8 @@ impl SqliteMessageLog {
         .map_err(|e| channel_db_error("init message_log table", e))?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_message_log_account_created
-             ON message_log (account_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_message_log_channel_account_created
+             ON message_log (channel_type, account_id, created_at DESC)",
         )
         .execute(pool)
         .await
@@ -85,6 +85,7 @@ impl MessageLog for SqliteMessageLog {
 
     async fn list_by_account(
         &self,
+        channel_type: &str,
         account_id: &str,
         limit: u32,
     ) -> ChannelResult<Vec<MessageLogEntry>> {
@@ -107,10 +108,11 @@ impl MessageLog for SqliteMessageLog {
             "SELECT id, account_id, channel_type, peer_id, username, sender_name,
                     chat_id, chat_type, body, access_granted, created_at
              FROM message_log
-             WHERE account_id = ?
+             WHERE channel_type = ? AND account_id = ?
              ORDER BY created_at DESC
              LIMIT ?",
         )
+        .bind(channel_type)
         .bind(account_id)
         .bind(limit)
         .fetch_all(&self.pool)
@@ -135,17 +137,22 @@ impl MessageLog for SqliteMessageLog {
             .collect())
     }
 
-    async fn unique_senders(&self, account_id: &str) -> ChannelResult<Vec<SenderSummary>> {
+    async fn unique_senders(
+        &self,
+        channel_type: &str,
+        account_id: &str,
+    ) -> ChannelResult<Vec<SenderSummary>> {
         let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, i64, i64, bool)>(
             "SELECT peer_id, username, sender_name,
                     COUNT(*) as message_count,
                     MAX(created_at) as last_seen,
                     MAX(CASE WHEN access_granted THEN 1 ELSE 0 END) as last_access_granted
              FROM message_log
-             WHERE account_id = ?
+             WHERE channel_type = ? AND account_id = ?
              GROUP BY peer_id
              ORDER BY last_seen DESC",
         )
+        .bind(channel_type)
         .bind(account_id)
         .fetch_all(&self.pool)
         .await
@@ -210,10 +217,10 @@ mod tests {
             .await
             .unwrap();
 
-        let entries = store.list_by_account("bot1", 10).await.unwrap();
+        let entries = store.list_by_account("telegram", "bot1", 10).await.unwrap();
         assert_eq!(entries.len(), 2);
 
-        let entries = store.list_by_account("bot2", 10).await.unwrap();
+        let entries = store.list_by_account("telegram", "bot2", 10).await.unwrap();
         assert_eq!(entries.len(), 1);
     }
 
@@ -228,7 +235,7 @@ mod tests {
             store.log(e).await.unwrap();
         }
 
-        let entries = store.list_by_account("bot1", 3).await.unwrap();
+        let entries = store.list_by_account("telegram", "bot1", 3).await.unwrap();
         assert_eq!(entries.len(), 3);
         // Most recent first
         assert!(entries[0].created_at > entries[1].created_at);
@@ -252,7 +259,7 @@ mod tests {
             .await
             .unwrap();
 
-        let senders = store.unique_senders("bot1").await.unwrap();
+        let senders = store.unique_senders("telegram", "bot1").await.unwrap();
         assert_eq!(senders.len(), 2);
         let user1 = senders.iter().find(|s| s.peer_id == "user1").unwrap();
         assert_eq!(user1.message_count, 2);

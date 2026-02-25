@@ -66,6 +66,7 @@ pub(crate) struct GonData {
     mem: MemSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
     deploy_platform: Option<String>,
+    channels_offered: Vec<String>,
     update: moltis_gateway::update_check::UpdateAvailability,
     sandbox: SandboxGonInfo,
     routes: SpaRoutes,
@@ -269,7 +270,13 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let heartbeat_config = gw.inner.read().await.heartbeat_config.clone();
+    let (heartbeat_config, channels_offered) = {
+        let inner = gw.inner.read().await;
+        (
+            inner.heartbeat_config.clone(),
+            inner.channels_offered.clone(),
+        )
+    };
 
     let heartbeat_runs: Vec<moltis_cron::types::CronRunRecord> = gw
         .services
@@ -327,6 +334,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
         deploy_platform: gw.deploy_platform.clone(),
+        channels_offered,
         update: gw.inner.read().await.update.clone(),
         sandbox,
         routes: SPA_ROUTES.clone(),
