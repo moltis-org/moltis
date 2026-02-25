@@ -7,11 +7,6 @@ name              = "moltis"
 repository        = "https://github.com/moltis-org/moltis"
 version.workspace = true
 
-[package.metadata.binstall]
-bin-dir = "{ bin }{ binary-ext }"
-pkg-fmt = "tgz"
-pkg-url = "{ repo }/releases/download/v{ version }/moltis-{ version }-{ target }.tar.gz"
-
 [package.metadata.deb]
 assets     = [["target/release/moltis", "usr/bin/", "755"]]
 copyright  = "2025, Moltis Contributors"
@@ -72,21 +67,21 @@ tempfile = { workspace = true }
 agent = ["moltis-gateway/agent", "moltis-web?/agent"]
 caldav = ["moltis-gateway/caldav"]
 default = [
-  "agent",
-  "caldav",
-  "file-watcher",
-  "graphql",
-  "jemalloc",
-  "local-llm",
-  "metrics",
-  "prometheus",
-  "push-notifications",
-  "qmd",
-  "tailscale",
-  "tls",
-  "vault",
-  "voice",
-  "web-ui",
+	"agent",
+	"caldav",
+	"file-watcher",
+	"graphql",
+	"jemalloc",
+	"local-llm",
+	"metrics",
+	"prometheus",
+	"push-notifications",
+	"qmd",
+	"tailscale",
+	"tls",
+	"vault",
+	"voice",
+	"web-ui",
 ]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
