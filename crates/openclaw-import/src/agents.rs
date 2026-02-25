@@ -239,18 +239,18 @@ fn resolve_agent_workspace(
 
         // 1b. Remap: basename under ~/ (cross-machine, e.g. /root/clawd → ~/clawd)
         let abs_path = PathBuf::from(ws);
-        if let Some(basename) = abs_path.file_name() {
-            if let Some(user_home) = dirs_next::home_dir() {
-                let remapped = user_home.join(basename);
-                if remapped.is_dir() {
-                    debug!(
-                        configured = ws,
-                        remapped = %remapped.display(),
-                        agent_id,
-                        "openclaw agents: workspace remapped from config basename"
-                    );
-                    return Some(remapped);
-                }
+        if let Some(basename) = abs_path.file_name()
+            && let Some(user_home) = dirs_next::home_dir()
+        {
+            let remapped = user_home.join(basename);
+            if remapped.is_dir() {
+                debug!(
+                    configured = ws,
+                    remapped = %remapped.display(),
+                    agent_id,
+                    "openclaw agents: workspace remapped from config basename"
+                );
+                return Some(remapped);
             }
         }
     }

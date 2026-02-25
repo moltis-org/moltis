@@ -151,17 +151,17 @@ fn resolve_workspace_dir(home: &Path) -> PathBuf {
         }
 
         // 3. Remap basename under user home (cross-machine: /root/clawd → ~/clawd)
-        if let Some(basename) = configured_path.file_name() {
-            if let Some(user_home) = dirs_next::home_dir() {
-                let remapped = user_home.join(basename);
-                if remapped.is_dir() {
-                    info!(
-                        configured = %configured_path.display(),
-                        remapped = %remapped.display(),
-                        "openclaw detect: workspace remapped from config basename"
-                    );
-                    return remapped;
-                }
+        if let Some(basename) = configured_path.file_name()
+            && let Some(user_home) = dirs_next::home_dir()
+        {
+            let remapped = user_home.join(basename);
+            if remapped.is_dir() {
+                info!(
+                    configured = %configured_path.display(),
+                    remapped = %remapped.display(),
+                    "openclaw detect: workspace remapped from config basename"
+                );
+                return remapped;
             }
         }
 
@@ -180,13 +180,11 @@ fn resolve_workspace_dir(home: &Path) -> PathBuf {
     // 5. Well-known ~/clawd directory (only when a config exists,
     //    indicating a real OpenClaw installation)
     let has_config = home.join("openclaw.json").is_file();
-    if has_config {
-        if let Some(user_home) = dirs_next::home_dir() {
-            let clawd = user_home.join("clawd");
-            if clawd.is_dir() {
-                info!(path = %clawd.display(), "openclaw detect: workspace found at ~/clawd");
-                return clawd;
-            }
+    if has_config && let Some(user_home) = dirs_next::home_dir() {
+        let clawd = user_home.join("clawd");
+        if clawd.is_dir() {
+            info!(path = %clawd.display(), "openclaw detect: workspace found at ~/clawd");
+            return clawd;
         }
     }
 
