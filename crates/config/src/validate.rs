@@ -419,6 +419,23 @@ fn build_schema_map() -> KnownKeys {
         ),
         ("env", Map(Box::new(Leaf))),
         (
+            "caldav",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("default_account", Leaf),
+                (
+                    "accounts",
+                    Map(Box::new(Struct(HashMap::from([
+                        ("url", Leaf),
+                        ("username", Leaf),
+                        ("password", Leaf),
+                        ("provider", Leaf),
+                        ("timeout_seconds", Leaf),
+                    ])))),
+                ),
+            ])),
+        ),
+        (
             "voice",
             Struct(HashMap::from([
                 (
@@ -945,6 +962,24 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 message: format!(
                     "unknown memory provider \"{provider}\"; expected one of: {}",
                     valid_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown CalDAV provider
+    let valid_caldav_providers = ["fastmail", "icloud", "generic"];
+    for (name, account) in &config.caldav.accounts {
+        if let Some(ref provider) = account.provider
+            && !valid_caldav_providers.contains(&provider.as_str())
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("caldav.accounts.{name}.provider"),
+                message: format!(
+                    "unknown CalDAV provider \"{provider}\"; expected one of: {}",
+                    valid_caldav_providers.join(", ")
                 ),
             });
         }

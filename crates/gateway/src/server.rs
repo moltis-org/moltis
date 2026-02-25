@@ -2771,6 +2771,13 @@ pub async fn start_gateway(
             tool_registry.register(Box::new(t));
         }
 
+        #[cfg(feature = "caldav")]
+        {
+            if let Some(t) = moltis_caldav::tool::CalDavTool::from_config(&config.caldav) {
+                tool_registry.register(Box::new(t));
+            }
+        }
+
         // Register memory tools if the memory system is available.
         if let Some(ref mm) = memory_manager {
             tool_registry.register(Box::new(moltis_memory::tools::MemorySearchTool::new(

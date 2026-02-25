@@ -69,8 +69,11 @@ tikv-jemallocator = { optional = true, workspace = true }
 tempfile = { workspace = true }
 
 [features]
+agent = ["moltis-gateway/agent", "moltis-web?/agent"]
+caldav = ["moltis-gateway/caldav"]
 default = [
   "agent",
+  "caldav",
   "file-watcher",
   "graphql",
   "jemalloc",
@@ -85,7 +88,6 @@ default = [
   "voice",
   "web-ui",
 ]
-agent              = ["moltis-gateway/agent", "moltis-web?/agent"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
 file-watcher = ["moltis-gateway/file-watcher"]

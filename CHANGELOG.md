@@ -1058,6 +1058,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CalDAV integration**: New `moltis-caldav` crate providing calendar CRUD
+  operations (list calendars, list/create/update/delete events) via the CalDAV
+  protocol. Supports Fastmail, iCloud, and generic CalDAV servers with
+  multi-account configuration under `[caldav.accounts.<name>]`. Enabled by
+  default via the `caldav` feature flag.
 - **`BeforeLLMCall` / `AfterLLMCall` hooks**: New modifying hook events that fire
   before sending prompts to the LLM provider and after receiving responses
   (before tool execution). Enables prompt injection filtering, PII redaction,

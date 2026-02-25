@@ -209,6 +209,7 @@ pub struct MoltisConfig {
     pub heartbeat: HeartbeatConfig,
     pub voice: VoiceConfig,
     pub cron: CronConfig,
+    pub caldav: CalDavConfig,
     /// Environment variables injected into the Moltis process at startup.
     /// Useful for API keys in Docker where you can't easily set env vars.
     /// Process env vars take precedence (existing vars are not overwritten).
@@ -773,6 +774,70 @@ impl Default for CronConfig {
             rate_limit_window_secs: 60,
         }
     }
+}
+
+/// CalDAV integration configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalDavConfig {
+    /// Whether CalDAV integration is enabled.
+    pub enabled: bool,
+    /// Default account name to use when none is specified.
+    pub default_account: Option<String>,
+    /// Named CalDAV accounts.
+    #[serde(default)]
+    pub accounts: HashMap<String, CalDavAccountConfig>,
+}
+
+/// Configuration for a single CalDAV account.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalDavAccountConfig {
+    /// CalDAV server URL (e.g. "https://caldav.fastmail.com/dav/calendars").
+    pub url: Option<String>,
+    /// Username for authentication.
+    pub username: Option<String>,
+    /// Password or app-specific password.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub password: Option<Secret<String>>,
+    /// Provider hint: "fastmail", "icloud", or "generic".
+    pub provider: Option<String>,
+    /// HTTP request timeout in seconds.
+    #[serde(default = "default_caldav_timeout")]
+    pub timeout_seconds: u64,
+}
+
+impl Default for CalDavAccountConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            username: None,
+            password: None,
+            provider: None,
+            timeout_seconds: default_caldav_timeout(),
+        }
+    }
+}
+
+impl std::fmt::Debug for CalDavAccountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CalDavAccountConfig")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("provider", &self.provider)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
+}
+
+fn default_caldav_timeout() -> u64 {
+    30
 }
 
 /// Tailscale Serve/Funnel configuration.

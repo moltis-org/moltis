@@ -5,6 +5,7 @@ members = [
   "crates/auto-reply",
   "crates/benchmarks",
   "crates/browser",
+  "crates/caldav",
   "crates/canvas",
   "crates/channels",
   "crates/chat",
@@ -138,8 +139,8 @@ webauthn-rs-proto = "0.5"
 dashmap     = "6"
 hostname    = "0.4"
 http        = "1"
-hyper       = { features = ["http1", "http2", "server"], version = "1" }
-hyper-util  = { features = ["http1", "http2", "server-auto", "service", "tokio"], version = "0.1" }
+hyper       = { features = ["client", "http1", "http2", "server"], version = "1" }
+hyper-util  = { features = ["client-legacy", "http1", "http2", "server-auto", "service", "tokio"], version = "0.1" }
 tower       = "0.5"
 tower-http  = "0.6"
 url         = "2"
@@ -169,7 +170,12 @@ tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
 which                 = "8"
-zeroize               = { features = ["derive"], version = "1" }
+# CalDAV / iCalendar
+hyper-rustls  = { features = ["http1", "native-tokio", "ring", "tls12"], version = "0.27" }
+icalendar     = "0.17"
+libdav        = "0.10"
+tower-service = "0.3"
+zeroize       = { features = ["derive"], version = "1" }
 
 # Workspace crates
 moltis                = { path = "crates/cli" }
@@ -177,6 +183,7 @@ moltis-agents         = { path = "crates/agents" }
 moltis-auth           = { path = "crates/auth" }
 moltis-auto-reply     = { path = "crates/auto-reply" }
 moltis-browser        = { path = "crates/browser" }
+moltis-caldav         = { path = "crates/caldav" }
 moltis-canvas         = { path = "crates/canvas" }
 moltis-channels       = { path = "crates/channels" }
 moltis-chat           = { path = "crates/chat" }

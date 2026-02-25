@@ -27,9 +27,10 @@ pub use {
         user_global_config_dir_if_different, user_path,
     },
     schema::{
-        AgentIdentity, AuthConfig, ChatConfig, GeoLocation, MessageQueueMode, MoltisConfig,
-        ResolvedIdentity, Timezone, UserProfile, VoiceConfig, VoiceElevenLabsConfig,
-        VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceWhisperConfig,
+        AgentIdentity, AuthConfig, CalDavAccountConfig, CalDavConfig, ChatConfig, GeoLocation,
+        MessageQueueMode, MoltisConfig, ResolvedIdentity, Timezone, UserProfile, VoiceConfig,
+        VoiceElevenLabsConfig, VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig,
+        VoiceWhisperConfig,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };
