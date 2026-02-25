@@ -17,9 +17,11 @@ export default {
 
 	// ── Empty states ───────────────────────────────────────
 	noActivityTitle: "No activity yet",
-	noActivityDescription: "Metrics will appear here once you start using moltis. Try sending a message or running a tool to see data.",
+	noActivityDescription:
+		"Metrics will appear here once you start using moltis. Try sending a message or running a tool to see data.",
 	collectingTitle: "Collecting data\u2026",
-	collectingDescription: "Historical charts will appear here after a few data points are collected. This typically takes about 20\u201330 seconds.",
+	collectingDescription:
+		"Historical charts will appear here after a few data points are collected. This typically takes about 20\u201330 seconds.",
 
 	// ── Time range selector ────────────────────────────────
 	timeRange: {

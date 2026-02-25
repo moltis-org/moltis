@@ -13,8 +13,7 @@ export default {
 	detectAllModels: "Detect All Models",
 	detectingModels: "Detecting Models\u2026",
 	probingModels: "Probing models: {{checked}}/{{total}} ({{pct}}%)",
-	detectSummary:
-		"Detected {{supported}} supported, {{unsupported}} unsupported out of {{total}} models.",
+	detectSummary: "Detected {{supported}} supported, {{unsupported}} unsupported out of {{total}} models.",
 	noProvidersConfigured: "No LLM providers configured yet.",
 	noActiveModels: "No active models.",
 	removeProviderConfirm: "Remove {{name}} and all its credentials?",
@@ -99,7 +98,8 @@ export default {
 		backend: "Backend:",
 		minRamBadge: "{{gb}}GB",
 		insufficientRam: "Insufficient RAM",
-		insufficientRamWarning: "You do not have enough RAM for this model ({{detected}}GB detected, {{required}}GB required).",
+		insufficientRamWarning:
+			"You do not have enough RAM for this model ({{detected}}GB detected, {{required}}GB required).",
 		contextTokens: "Context: {{tokens}}k tokens",
 		downloading: "Downloading {{model}}...",
 		downloadedSuccessfully: "{{model}} downloaded successfully!",

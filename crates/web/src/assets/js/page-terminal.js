@@ -175,7 +175,7 @@ function normalizeWindowPayload(payloadWindow) {
 }
 
 function windowLabel(windowInfo) {
-	var title = windowInfo.name && windowInfo.name.trim() ? windowInfo.name.trim() : "shell";
+	var title = windowInfo.name?.trim() ? windowInfo.name.trim() : "shell";
 	return `${windowInfo.index}: ${title}`;
 }
 
@@ -406,7 +406,7 @@ function applyTheme() {
 }
 
 function registerOscStabilityGuards() {
-	if (!(xterm && xterm.parser && typeof xterm.parser.registerOscHandler === "function")) {
+	if (!(xterm?.parser && typeof xterm.parser.registerOscHandler === "function")) {
 		return;
 	}
 	var swallow = () => true;

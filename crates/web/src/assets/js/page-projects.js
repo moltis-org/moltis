@@ -243,13 +243,10 @@ function ProjectsPage() {
 
 	function onClearAll() {
 		if (clearing.value) return;
-		requestConfirm(
-			t("projects:confirmClearAll"),
-			{
-				confirmLabel: t("projects:confirmClearAllButton"),
-				danger: true,
-			},
-		).then((yes) => {
+		requestConfirm(t("projects:confirmClearAll"), {
+			confirmLabel: t("projects:confirmClearAllButton"),
+			danger: true,
+		}).then((yes) => {
 			if (!yes) return;
 			var ids = projectsSig.value.map((p) => p.id);
 			if (ids.length === 0) return;

@@ -1,7 +1,7 @@
 // PWA Install Banner - handles "Add to Homescreen" prompts
 
-import { canPromptInstall, isAndroid, isIOS, isStandalone, promptInstall, setupInstallPrompt } from "./pwa.js";
 import { t } from "./i18n.js";
+import { canPromptInstall, isAndroid, isIOS, isStandalone, promptInstall, setupInstallPrompt } from "./pwa.js";
 
 var DISMISS_KEY = "pwa-install-dismissed";
 var DISMISS_DAYS = 7;

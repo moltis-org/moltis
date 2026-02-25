@@ -202,7 +202,7 @@ export function localizedApiErrorMessage(payload, fallbackMessage) {
 	if (payload && typeof payload.error === "object") {
 		return localizedRpcErrorMessage(payload.error);
 	}
-	if (payload && payload.code) {
+	if (payload?.code) {
 		var key = `errors:codes.${payload.code}`;
 		var translated = t(key);
 		if (translated && translated !== key) {

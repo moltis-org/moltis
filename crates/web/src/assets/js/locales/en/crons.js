@@ -16,7 +16,8 @@ export default {
 		description: "Periodic AI check-in that monitors your environment and reports status.",
 		inactiveLabel: "Heartbeat inactive:",
 		blockedDisabled: "Heartbeat is disabled. Enable it to allow manual runs.",
-		blockedNoPrompt: "Heartbeat is inactive because no prompt is configured. Add a custom prompt or write actionable content in HEARTBEAT.md.",
+		blockedNoPrompt:
+			"Heartbeat is inactive because no prompt is configured. Add a custom prompt or write actionable content in HEARTBEAT.md.",
 		blockedNoJob: "Heartbeat has no active cron job yet. Save the heartbeat settings to recreate it.",
 		lastLabel: "Last:",
 		nextLabel: "Next:",
@@ -30,7 +31,8 @@ export default {
 		promptTitle: "Prompt",
 		customPromptLabel: "Custom Prompt (optional)",
 		customPromptPlaceholder: "Leave blank to use default heartbeat prompt",
-		customPromptHint: "Leave this empty to use HEARTBEAT.md in your workspace root. If that file exists but is empty/comments-only, heartbeat LLM runs are skipped to save tokens.",
+		customPromptHint:
+			"Leave this empty to use HEARTBEAT.md in your workspace root. If that file exists but is empty/comments-only, heartbeat LLM runs are skipped to save tokens.",
 		promptSourceLabel: "Effective prompt source:",
 		promptSourceConfig: "config custom prompt",
 		promptSourceMd: "HEARTBEAT.md",

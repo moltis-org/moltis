@@ -55,10 +55,10 @@ export default {
 	viewSourceOnGitHub: "View source on GitHub \u2197",
 
 	// ── Toasts ──────────────────────────────────────────────
-	hookEnabled: "Hook \"{{name}}\" enabled",
-	hookDisabled: "Hook \"{{name}}\" disabled",
+	hookEnabled: 'Hook "{{name}}" enabled',
+	hookDisabled: 'Hook "{{name}}" disabled',
 	failedAction: "Failed: {{error}}",
-	savedHook: "Saved \"{{name}}\"",
+	savedHook: 'Saved "{{name}}"',
 	failedToSave: "Failed to save: {{error}}",
 	pathCopied: "Path copied",
 	hooksReloaded: "Hooks reloaded",

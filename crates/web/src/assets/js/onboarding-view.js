@@ -52,7 +52,6 @@ function ensureWsConnected() {
 
 // ── Step indicator ──────────────────────────────────────────
 
-
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
 	return `/chats/${key.replace(/:/g, "/")}`;
