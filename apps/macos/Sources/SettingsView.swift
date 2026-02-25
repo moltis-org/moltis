@@ -74,7 +74,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .monitoring: "chart.bar",
         .logs: "doc.plaintext",
         .graphql: "dot.squareshape.split.2x2",
-        .configuration: "slider.horizontal.3",
+        .configuration: "slider.horizontal.3"
     ]
 
     private static let groupMap: [SettingsSection: SettingsGroup] = [
@@ -97,7 +97,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .monitoring: .systems,
         .logs: .systems,
         .graphql: .systems,
-        .configuration: .systems,
+        .configuration: .systems
     ]
 }
 

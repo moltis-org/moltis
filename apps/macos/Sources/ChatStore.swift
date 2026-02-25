@@ -107,36 +107,40 @@ final class ChatStore: ObservableObject {
             }
 
             DispatchQueue.main.async {
-                switch result {
-                case let .success(payload):
-                    self.settings.environmentConfigDir = payload.configDir
-                    self.settings.identitySoul = payload.defaultSoul
-
-                    if let model = payload.model, let provider = payload.provider {
-                        self.settings.llmModel = model
-                        self.settings.llmProvider = provider
-                    }
-
-                    self.appendMessage(
-                        role: .assistant,
-                        text: payload.reply,
-                        provider: payload.provider,
-                        model: payload.model,
-                        inputTokens: payload.inputTokens,
-                        outputTokens: payload.outputTokens,
-                        durationMs: payload.durationMs
-                    )
-                    self.appendValidationSummary(payload.validation)
-                    self.statusText = "Received response via \(payload.provider ?? "unknown")."
-
-                case let .failure(error):
-                    let text = error.localizedDescription
-                    self.statusText = text
-                    self.appendMessage(role: .error, text: text)
-                }
-                self.isSending = false
+                self.handleChatResult(result)
             }
         }
+    }
+
+    private func handleChatResult(_ result: Result<BridgeChatPayload, Error>) {
+        switch result {
+        case let .success(payload):
+            settings.environmentConfigDir = payload.configDir
+            settings.identitySoul = payload.defaultSoul
+
+            if let model = payload.model, let provider = payload.provider {
+                settings.llmModel = model
+                settings.llmProvider = provider
+            }
+
+            appendMessage(
+                role: .assistant,
+                text: payload.reply,
+                provider: payload.provider,
+                model: payload.model,
+                inputTokens: payload.inputTokens,
+                outputTokens: payload.outputTokens,
+                durationMs: payload.durationMs
+            )
+            appendValidationSummary(payload.validation)
+            statusText = "Received response via \(payload.provider ?? "unknown")."
+
+        case let .failure(error):
+            let text = error.localizedDescription
+            statusText = text
+            appendMessage(role: .error, text: text)
+        }
+        isSending = false
     }
 
     private func appendValidationSummary(_ validation: BridgeValidationPayload?) {

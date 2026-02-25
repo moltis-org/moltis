@@ -15,7 +15,7 @@ struct VoiceProvider: Identifiable {
         VoiceProvider(name: "elevenlabs", displayName: "ElevenLabs", requiresApiKey: true),
         VoiceProvider(name: "google", displayName: "Google Cloud TTS", requiresApiKey: true),
         VoiceProvider(name: "piper", displayName: "Piper (Local)", requiresApiKey: false),
-        VoiceProvider(name: "coqui", displayName: "Coqui (Local)", requiresApiKey: false),
+        VoiceProvider(name: "coqui", displayName: "Coqui (Local)", requiresApiKey: false)
     ]
 }
 

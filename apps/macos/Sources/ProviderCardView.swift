@@ -1,5 +1,28 @@
 import SwiftUI
 
+// MARK: - Shared card styling
+
+private struct SelectableCardStyle: ViewModifier {
+    let isSelected: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        isSelected ? Color.accentColor : .secondary.opacity(0.2),
+                        lineWidth: isSelected ? 2 : 1
+                    )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - Provider card
+
 struct ProviderCardView: View {
     let provider: BridgeKnownProvider
     let isConfigured: Bool
@@ -36,18 +59,13 @@ struct ProviderCardView: View {
                     }
                 }
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor : .secondary.opacity(0.2), lineWidth: isSelected ? 2 : 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .modifier(SelectableCardStyle(isSelected: isSelected))
         }
         .buttonStyle(.plain)
     }
 }
+
+// MARK: - Voice provider card
 
 struct VoiceProviderCardView: View {
     let provider: VoiceProvider
@@ -78,14 +96,7 @@ struct VoiceProviderCardView: View {
                         .clipShape(Capsule())
                 }
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor : .secondary.opacity(0.2), lineWidth: isSelected ? 2 : 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .modifier(SelectableCardStyle(isSelected: isSelected))
         }
         .buttonStyle(.plain)
     }

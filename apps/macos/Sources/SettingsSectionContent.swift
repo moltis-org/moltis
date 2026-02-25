@@ -226,7 +226,7 @@ struct VoiceProviderGridPane: View {
     @ObservedObject var settings: AppSettings
 
     private let columns = [
-        GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 10),
+        GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 10)
     ]
 
     var body: some View {
@@ -281,7 +281,7 @@ struct ProviderGridPane: View {
     @ObservedObject var providerStore: ProviderStore
 
     private let columns = [
-        GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 10),
+        GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 10)
     ]
 
     var body: some View {
