@@ -10,6 +10,7 @@ use {
 };
 
 use crate::broadcast::{BroadcastOpts, broadcast};
+use crate::session_events::SessionEvent;
 
 use super::MethodRegistry;
 
@@ -173,12 +174,41 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.resolve",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                let result = ctx
+                    .state
                     .services
                     .session
                     .resolve(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                // Newly created sessions have an empty history array.
+                let is_new = result
+                    .get("history")
+                    .and_then(|h| h.as_array())
+                    .is_some_and(|a| a.is_empty());
+                if is_new {
+                    if let Some(key) = result
+                        .get("entry")
+                        .and_then(|e| e.get("key"))
+                        .and_then(|k| k.as_str())
+                    {
+                        ctx.state.session_event_bus.publish(SessionEvent::Created {
+                            session_key: key.to_string(),
+                        });
+                        broadcast(
+                            &ctx.state,
+                            "session",
+                            serde_json::json!({
+                                "kind": "created",
+                                "sessionKey": key,
+                            }),
+                            BroadcastOpts { drop_if_slow: true, ..Default::default() },
+                        )
+                        .await;
+                    }
+                }
+                Ok(result)
             })
         }),
     );
@@ -201,6 +231,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
                 let version = result.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
+                ctx.state.session_event_bus.publish(SessionEvent::Patched {
+                    session_key: key.clone(),
+                });
                 broadcast(
                     &ctx.state,
                     "session",
@@ -269,12 +302,35 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.delete",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                let key = ctx
+                    .params
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let result = ctx
+                    .state
                     .services
                     .session
                     .delete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                if !key.is_empty() {
+                    ctx.state.session_event_bus.publish(SessionEvent::Deleted {
+                        session_key: key.clone(),
+                    });
+                    broadcast(
+                        &ctx.state,
+                        "session",
+                        serde_json::json!({
+                            "kind": "deleted",
+                            "sessionKey": key,
+                        }),
+                        BroadcastOpts { drop_if_slow: true, ..Default::default() },
+                    )
+                    .await;
+                }
+                Ok(result)
             })
         }),
     );
@@ -309,12 +365,29 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.fork",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                let result = ctx
+                    .state
                     .services
                     .session
                     .fork(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                if let Some(key) = result.get("key").and_then(|k| k.as_str()) {
+                    ctx.state.session_event_bus.publish(SessionEvent::Created {
+                        session_key: key.to_string(),
+                    });
+                    broadcast(
+                        &ctx.state,
+                        "session",
+                        serde_json::json!({
+                            "kind": "created",
+                            "sessionKey": key,
+                        }),
+                        BroadcastOpts { drop_if_slow: true, ..Default::default() },
+                    )
+                    .await;
+                }
+                Ok(result)
             })
         }),
     );

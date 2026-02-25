@@ -49,6 +49,7 @@ pub mod request_throttle;
 pub mod server;
 pub mod services;
 pub mod session;
+pub mod session_events;
 pub mod session_types;
 pub mod share_store;
 pub mod state;

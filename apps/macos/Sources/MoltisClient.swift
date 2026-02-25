@@ -46,6 +46,34 @@ private func rustLogCallbackHandler(logJson: UnsafePointer<CChar>?) {
     }
 }
 
+// MARK: - Rust Bridge Session Event Forwarding
+
+/// Decoded payload from Rust session events.
+struct BridgeSessionEventPayload: Decodable {
+    let kind: String
+    let sessionKey: String
+}
+
+/// Global reference to the `ChatStore` used by the Rust session event callback.
+/// Set once during app startup via `MoltisClient.installSessionEventCallback`.
+private var globalChatStore: ChatStore?
+private let sessionEventDecoder = JSONDecoder()
+
+/// C-callable callback that receives Rust session events as JSON strings.
+private func rustSessionEventCallbackHandler(eventJson: UnsafePointer<CChar>?) {
+    guard let eventJson else { return }
+    let jsonString = String(cString: eventJson)
+    let data = Data(jsonString.utf8)
+
+    guard let payload = try? sessionEventDecoder.decode(
+        BridgeSessionEventPayload.self, from: data
+    ) else { return }
+
+    DispatchQueue.main.async {
+        globalChatStore?.handleSessionEvent(payload)
+    }
+}
+
 // MARK: - Client Errors
 
 enum MoltisClientError: Error, LocalizedError {
@@ -339,6 +367,12 @@ struct MoltisClient {
     static func installLogCallback(logStore: LogStore) {
         globalLogStore = logStore
         moltis_set_log_callback(rustLogCallbackHandler)
+    }
+
+    /// Install the Rust→Swift session event bridge. Call once at app startup.
+    static func installSessionEventCallback(chatStore: ChatStore) {
+        globalChatStore = chatStore
+        moltis_set_session_event_callback(rustSessionEventCallbackHandler)
     }
 
     private let decoder: JSONDecoder = {

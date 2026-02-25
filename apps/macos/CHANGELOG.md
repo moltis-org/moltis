@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Real-time session sync with web UI — sessions created, deleted, or patched in
+  the web UI now instantly appear in the macOS sidebar (and vice versa) via the
+  new `SessionEventBus` and `moltis_set_session_event_callback` FFI
 - Full Moltis gateway in the HTTP Server pane — starts the complete gateway
   (web UI, REST API, WebSocket endpoints, DB migrations, background services)
   instead of a minimal health-check-only server

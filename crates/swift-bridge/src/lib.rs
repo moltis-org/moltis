@@ -15,6 +15,7 @@ use {
         ChatMessage as AgentChatMessage, LlmProvider, StreamEvent, Usage, UserContent,
     },
     moltis_config::validate::Severity,
+    moltis_gateway::session_events::{SessionEvent, SessionEventBus},
     moltis_provider_setup::{
         KeyStore, config_with_saved_keys, detect_auto_provider_sources_with_overrides,
         known_providers,
@@ -36,6 +37,7 @@ struct BridgeState {
     registry: RwLock<ProviderRegistry>,
     session_store: SessionStore,
     session_metadata: SqliteSessionMetadata,
+    session_event_bus: SessionEventBus,
 }
 
 impl BridgeState {
@@ -82,6 +84,7 @@ impl BridgeState {
             registry: RwLock::new(registry),
             session_store,
             session_metadata,
+            session_event_bus: SessionEventBus::new(),
         }
     }
 }
@@ -172,6 +175,43 @@ fn emit_log_with_fields(
             fields,
         };
         if let Ok(json) = serde_json::to_string(&event) {
+            if let Ok(c_str) = CString::new(json) {
+                // SAFETY: c_str is valid NUL-terminated, callback copies
+                // before returning, and we drop c_str afterwards.
+                unsafe {
+                    callback(c_str.as_ptr());
+                }
+            }
+        }
+    }
+}
+
+// ── Session event callback for Swift ─────────────────────────────────────
+
+/// Callback type for forwarding session events to Swift.
+/// Rust owns the `event_json` pointer — the callback must copy the data
+/// before returning.
+type SessionEventCallback = unsafe extern "C" fn(event_json: *const c_char);
+
+static SESSION_EVENT_CALLBACK: OnceLock<SessionEventCallback> = OnceLock::new();
+
+/// JSON payload sent to Swift for each session event.
+#[derive(Debug, Serialize)]
+struct BridgeSessionEvent {
+    kind: &'static str,
+    #[serde(rename = "sessionKey")]
+    session_key: String,
+}
+
+fn emit_session_event(event: &SessionEvent) {
+    if let Some(callback) = SESSION_EVENT_CALLBACK.get() {
+        let (kind, session_key) = match event {
+            SessionEvent::Created { session_key } => ("created", session_key.clone()),
+            SessionEvent::Deleted { session_key } => ("deleted", session_key.clone()),
+            SessionEvent::Patched { session_key } => ("patched", session_key.clone()),
+        };
+        let payload = BridgeSessionEvent { kind, session_key };
+        if let Ok(json) = serde_json::to_string(&payload) {
             if let Ok(c_str) = CString::new(json) {
                 // SAFETY: c_str is valid NUL-terminated, callback copies
                 // before returning, and we drop c_str afterwards.
@@ -954,6 +994,38 @@ pub unsafe extern "C" fn moltis_set_log_callback(callback: LogCallback) {
     emit_log("INFO", "bridge", "Log callback registered");
 }
 
+/// Register a callback for session events (created, deleted, patched).
+///
+/// The callback receives a JSON string: `{"kind":"created","sessionKey":"..."}`.
+/// Rust owns the pointer — the callback must copy the data before returning.
+///
+/// # Safety
+///
+/// `callback` must be a valid function pointer that remains valid for
+/// the lifetime of the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn moltis_set_session_event_callback(callback: SessionEventCallback) {
+    if SESSION_EVENT_CALLBACK.set(callback).is_ok() {
+        // Spawn a background task that subscribes to session events and
+        // invokes the callback for each one.
+        let mut rx = BRIDGE.session_event_bus.subscribe();
+        BRIDGE.runtime.spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => emit_session_event(&event),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        emit_log("WARN", "bridge.session_events", &format!(
+                            "Session event subscriber lagged, skipped {n} events"
+                        ));
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+        emit_log("INFO", "bridge", "Session event callback registered");
+    }
+}
+
 /// Starts the embedded HTTP server with the full Moltis gateway.
 /// Returns JSON with `{"running": true, "addr": "..."}`.
 /// If already running, returns the current status without restarting.
@@ -1008,6 +1080,7 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
                 request.config_dir.map(std::path::PathBuf::from),
                 request.data_dir.map(std::path::PathBuf::from),
                 Some(moltis_web::web_routes), // full web UI
+                Some(BRIDGE.session_event_bus.clone()), // share bus with gateway
             ),
         ) {
             Ok(p) => p,
@@ -1202,6 +1275,9 @@ pub extern "C" fn moltis_create_session(request_json: *const c_char) -> *mut c_c
         ) {
             Ok(entry) => {
                 emit_log("INFO", "bridge.sessions", &format!("Created session '{}'", key));
+                BRIDGE.session_event_bus.publish(SessionEvent::Created {
+                    session_key: key.clone(),
+                });
                 encode_json(&BridgeSessionEntry::from(&entry))
             },
             Err(e) => encode_error("create_failed", &format!("Failed to create session: {e}")),

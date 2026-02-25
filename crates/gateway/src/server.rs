@@ -1056,6 +1056,7 @@ pub async fn prepare_gateway(
     data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
+    session_event_bus: Option<crate::session_events::SessionEventBus>,
 ) -> anyhow::Result<PreparedGateway> {
     // Apply directory overrides before loading config.
     if let Some(dir) = config_dir {
@@ -2590,6 +2591,7 @@ pub async fn prepare_gateway(
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),
+        session_event_bus,
         #[cfg(feature = "metrics")]
         metrics_handle,
         #[cfg(feature = "metrics")]
@@ -3438,6 +3440,7 @@ pub async fn start_gateway(
         #[cfg(feature = "tailscale")]
         tailscale_opts,
         extra_routes,
+        None, // session_event_bus — CLI creates its own
     )
     .await?;
 

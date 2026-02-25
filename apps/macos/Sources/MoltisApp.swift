@@ -30,10 +30,15 @@ struct MoltisApp: App {
         MoltisClient.installLogCallback(logStore: logStore)
 
         let providerStore = ProviderStore(logStore: logStore)
-        _settings = StateObject(wrappedValue: settings)
-        _chatStore = StateObject(wrappedValue: ChatStore(
+        let chatStore = ChatStore(
             settings: settings, providerStore: providerStore, logStore: logStore
-        ))
+        )
+
+        // Install Rust→Swift session event bridge (shares bus with gateway)
+        MoltisClient.installSessionEventCallback(chatStore: chatStore)
+
+        _settings = StateObject(wrappedValue: settings)
+        _chatStore = StateObject(wrappedValue: chatStore)
         _onboardingState = StateObject(wrappedValue: onboardingState)
         _providerStore = StateObject(wrappedValue: providerStore)
         _logStore = StateObject(wrappedValue: logStore)

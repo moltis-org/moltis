@@ -147,6 +147,34 @@ final class ChatStore: ObservableObject {
         )
     }
 
+    // MARK: - Session event handling (cross-UI sync)
+
+    /// Called from the Rust session event callback when the gateway or another
+    /// UI creates, deletes, or patches a session.
+    func handleSessionEvent(_ event: BridgeSessionEventPayload) {
+        switch event.kind {
+        case "created", "patched":
+            // Reload the full session list so the sidebar stays in sync.
+            loadSessions()
+
+        case "deleted":
+            sessions.removeAll { $0.key == event.sessionKey }
+            // If the deleted session was selected, switch to the first available.
+            if selectedSessionKey == event.sessionKey {
+                selectedSessionKey = sessions.first?.key
+                if let key = selectedSessionKey {
+                    loadSessionHistory(key: key)
+                }
+            }
+
+        default:
+            logStore?.log(
+                .debug, target: "ChatStore",
+                message: "Unknown session event kind: \(event.kind)"
+            )
+        }
+    }
+
     // MARK: - Version
 
     func loadVersion() {
