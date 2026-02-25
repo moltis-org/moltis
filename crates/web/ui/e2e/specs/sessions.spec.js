@@ -447,6 +447,10 @@ test.describe("Session management", () => {
 		const searchInput = page.locator("#sessionSearch");
 		// searchInput may be hidden until focused or may always be visible
 		if (await searchInput.isVisible()) {
+			// Wait for session list to populate before capturing baseline count
+			await expect(page.locator("#sessionList .session-item").first()).toBeVisible({
+				timeout: 5_000,
+			});
 			const countBefore = await page.locator("#sessionList .session-item").count();
 
 			// Type a string that won't match any session
