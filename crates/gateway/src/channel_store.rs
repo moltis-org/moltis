@@ -77,7 +77,11 @@ impl ChannelStore for SqliteChannelStore {
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
-    async fn get(&self, channel_type: &str, account_id: &str) -> ChannelResult<Option<StoredChannel>> {
+    async fn get(
+        &self,
+        channel_type: &str,
+        account_id: &str,
+    ) -> ChannelResult<Option<StoredChannel>> {
         let row = sqlx::query_as::<_, ChannelRow>(
             "SELECT * FROM channels WHERE channel_type = ? AND account_id = ?",
         )

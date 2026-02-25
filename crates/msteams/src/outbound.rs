@@ -81,10 +81,7 @@ impl MsTeamsOutbound {
             let body = resp.text().await.unwrap_or_default();
             return Err(ChannelError::external(
                 "Teams send failed",
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{status}: {body}"),
-                ),
+                std::io::Error::new(std::io::ErrorKind::Other, format!("{status}: {body}")),
             ));
         }
         Ok(())

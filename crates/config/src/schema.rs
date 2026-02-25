@@ -2002,7 +2002,6 @@ OPENROUTER_API_KEY = "sk-or-test"
         assert!(entry.models.is_empty());
     }
 
-
     #[test]
     fn channels_config_defaults_to_telegram_offered() {
         let config = ChannelsConfig::default();
