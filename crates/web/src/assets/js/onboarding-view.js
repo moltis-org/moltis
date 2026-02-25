@@ -2313,23 +2313,20 @@ function TeamsForm({ onConnected, error, setError }) {
 
 function WhatsAppForm({ onConnected, error, setError }) {
 	var [accountId, setAccountId] = useState("");
-	var [dmPolicy, setDmPolicy] = useState("open");
+	var [dmPolicy, setDmPolicy] = useState("allowlist");
 	var [allowlist, setAllowlist] = useState("");
 	var [saving, setSaving] = useState(false);
 	var [pairingStarted, setPairingStarted] = useState(false);
 	var [qrData, setQrData] = useState(null);
 	var [pairingError, setPairingError] = useState(null);
+	var unsubRef = useRef(null);
 
+	// Clean up event subscription on unmount.
 	useEffect(() => {
-		if (!pairingStarted) return;
-		var unsub = onEvent("channel", (p) => {
-			if (p.account_id !== accountId.trim()) return;
-			if (p.kind === "pairing_qr_code") setQrData(p.qr_data);
-			if (p.kind === "pairing_complete") onConnected(accountId.trim(), "whatsapp");
-			if (p.kind === "pairing_failed") setPairingError(p.reason || "Pairing failed");
-		});
-		return unsub;
-	}, [pairingStarted, accountId]);
+		return () => {
+			if (unsubRef.current) unsubRef.current();
+		};
+	}, []);
 
 	function onStartPairing(e) {
 		e.preventDefault();
@@ -2342,6 +2339,17 @@ function WhatsAppForm({ onConnected, error, setError }) {
 		setSaving(true);
 		setQrData(null);
 		setPairingError(null);
+
+		// Subscribe to channel events BEFORE the API call so we don't
+		// miss the QR code event that fires while the request is in flight.
+		if (unsubRef.current) unsubRef.current();
+		unsubRef.current = onEvent("channel", (p) => {
+			if (p.account_id !== id) return;
+			if (p.kind === "pairing_qr_code") setQrData(p.qr_data);
+			if (p.kind === "pairing_complete") onConnected(id, "whatsapp");
+			if (p.kind === "pairing_failed") setPairingError(p.reason || "Pairing failed");
+		});
+
 		var allowlistEntries = allowlist
 			.trim()
 			.split(/\n/)
@@ -2355,6 +2363,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 			if (res?.ok) {
 				setPairingStarted(true);
 			} else {
+				if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
 				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to start pairing.");
 			}
 		});
