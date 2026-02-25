@@ -199,11 +199,7 @@ fn read_config_workspace(home: &Path) -> Option<String> {
     let config_path = home.join("openclaw.json");
     let content = std::fs::read_to_string(&config_path).ok()?;
     let config: crate::types::OpenClawConfig = json5::from_str(&content).ok()?;
-    config
-        .agents
-        .defaults
-        .workspace
-        .filter(|w| !w.is_empty())
+    config.agents.defaults.workspace.filter(|w| !w.is_empty())
 }
 
 /// Resolve the sessions directory for one agent, supporting both historical
@@ -511,16 +507,27 @@ mod tests {
         // real home dir), but we verify it doesn't crash and falls back.
         let ws = resolve_workspace_dir(&home);
         // Without ~/clawd existing, it should fall back to default
-        assert!(ws.to_string_lossy().contains("workspace") || ws.to_string_lossy().contains("clawd"));
+        assert!(
+            ws.to_string_lossy().contains("workspace") || ws.to_string_lossy().contains("clawd")
+        );
     }
 
     #[test]
     fn detect_resolves_workspace_from_config() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join(".openclaw");
-        std::fs::create_dir_all(home.join("agents").join("main").join("agent").join("sessions")).unwrap();
+        std::fs::create_dir_all(
+            home.join("agents")
+                .join("main")
+                .join("agent")
+                .join("sessions"),
+        )
+        .unwrap();
         std::fs::write(
-            home.join("agents").join("main").join("agent").join("auth-profiles.json"),
+            home.join("agents")
+                .join("main")
+                .join("agent")
+                .join("auth-profiles.json"),
             r#"{"version":1,"profiles":{}}"#,
         )
         .unwrap();
