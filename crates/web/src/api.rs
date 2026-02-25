@@ -140,7 +140,11 @@ pub async fn api_mcp_handler(State(state): State<AppState>) -> impl IntoResponse
     let servers = state.gateway.services.mcp.list().await;
     match servers {
         Ok(val) => Json(val).into_response(),
-        Err(e) => api_error_response(StatusCode::INTERNAL_SERVER_ERROR, MCP_LIST_FAILED, e.to_string()),
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            MCP_LIST_FAILED,
+            e.to_string(),
+        ),
     }
 }
 

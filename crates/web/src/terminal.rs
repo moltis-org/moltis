@@ -855,7 +855,10 @@ pub async fn api_terminal_windows_handler() -> impl IntoResponse {
     if let Err(err) = host_terminal_ensure_tmux_session() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(terminal_error(TERMINAL_SESSION_INIT_FAILED, err.to_string())),
+            Json(terminal_error(
+                TERMINAL_SESSION_INIT_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response();
     }
@@ -868,7 +871,10 @@ pub async fn api_terminal_windows_handler() -> impl IntoResponse {
         .into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(terminal_error(TERMINAL_WINDOWS_LIST_FAILED, err.to_string())),
+            Json(terminal_error(
+                TERMINAL_WINDOWS_LIST_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response(),
     }
@@ -897,7 +903,10 @@ pub async fn api_terminal_windows_create_handler(
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(terminal_error(TERMINAL_WINDOW_NAME_INVALID, err.to_string())),
+                Json(terminal_error(
+                    TERMINAL_WINDOW_NAME_INVALID,
+                    err.to_string(),
+                )),
             )
                 .into_response();
         },
@@ -905,7 +914,10 @@ pub async fn api_terminal_windows_create_handler(
     if let Err(err) = host_terminal_ensure_tmux_session() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(terminal_error(TERMINAL_SESSION_INIT_FAILED, err.to_string())),
+            Json(terminal_error(
+                TERMINAL_SESSION_INIT_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response();
     }
@@ -927,13 +939,19 @@ pub async fn api_terminal_windows_create_handler(
             },
             Err(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(terminal_error(TERMINAL_WINDOWS_LIST_FAILED, err.to_string())),
+                Json(terminal_error(
+                    TERMINAL_WINDOWS_LIST_FAILED,
+                    err.to_string(),
+                )),
             )
                 .into_response(),
         },
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(terminal_error(TERMINAL_WINDOW_CREATE_FAILED, err.to_string())),
+            Json(terminal_error(
+                TERMINAL_WINDOW_CREATE_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response(),
     }

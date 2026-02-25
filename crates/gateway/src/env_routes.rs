@@ -176,8 +176,7 @@ pub async fn env_delete(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::body::to_bytes;
+    use {super::*, axum::body::to_bytes};
 
     async fn response_json(response: Response) -> serde_json::Value {
         let body = match to_bytes(response.into_body(), usize::MAX).await {

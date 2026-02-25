@@ -52,22 +52,6 @@ function ensureWsConnected() {
 
 // ── Step indicator ──────────────────────────────────────────
 
-var BASE_STEP_LABELS = () => [
-	t("onboarding:steps.security"),
-	t("onboarding:steps.llm"),
-	t("onboarding:steps.channel"),
-	t("onboarding:steps.identity"),
-	t("onboarding:steps.summary"),
-];
-var VOICE_STEP_LABELS = () => [
-	t("onboarding:steps.security"),
-	t("onboarding:steps.llm"),
-	t("onboarding:steps.voice"),
-	t("onboarding:steps.channel"),
-	t("onboarding:steps.identity"),
-	t("onboarding:steps.summary"),
-];
-
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
