@@ -13,7 +13,9 @@ use {
 use moltis_channels::{
     ChannelEventSink, Result as ChannelResult,
     message_log::MessageLog,
-    plugin::{ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus},
+    plugin::{
+        ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus, ChannelStreamOutbound,
+    },
 };
 
 use crate::{
@@ -66,10 +68,23 @@ impl WhatsAppPlugin {
         })
     }
 
+    /// Get a shared reference to the streaming outbound sender.
+    pub fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
+        Arc::new(WhatsAppOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
+    }
+
     /// List all active account IDs.
     pub fn account_ids(&self) -> Vec<String> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts.keys().cloned().collect()
+    }
+
+    /// Check whether the given account ID is registered.
+    pub fn has_account(&self, account_id: &str) -> bool {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.contains_key(account_id)
     }
 
     /// Get the config for a specific account (serialized to JSON).
@@ -94,14 +109,14 @@ impl WhatsAppPlugin {
         &self,
         account_id: &str,
         config: serde_json::Value,
-    ) -> Result<(), anyhow::Error> {
+    ) -> ChannelResult<()> {
         let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
             state.config = wa_config;
             Ok(())
         } else {
-            Err(anyhow::anyhow!("account not found: {account_id}"))
+            Err(moltis_channels::Error::unknown_account(account_id))
         }
     }
 

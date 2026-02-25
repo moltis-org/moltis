@@ -3,7 +3,10 @@ use {async_trait::async_trait, tracing::debug};
 use {wacore_binary::jid::Jid, waproto::whatsapp as wa, whatsapp_rust::ChatStateType};
 
 use {
-    moltis_channels::{Result as ChannelResult, plugin::ChannelOutbound},
+    moltis_channels::{
+        Result as ChannelResult,
+        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver},
+    },
     moltis_common::types::ReplyPayload,
 };
 
@@ -95,5 +98,41 @@ impl ChannelOutbound for WhatsAppOutbound {
             .await
             .map_err(|e| moltis_channels::Error::unavailable(format!("whatsapp chatstate: {e}")))?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ChannelStreamOutbound for WhatsAppOutbound {
+    async fn send_stream(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        mut stream: StreamReceiver,
+    ) -> ChannelResult<()> {
+        // WhatsApp doesn't support message editing, so collect all deltas
+        // and send the final text as a single message.
+        let mut text = String::new();
+        while let Some(event) = stream.recv().await {
+            match event {
+                StreamEvent::Delta(delta) => text.push_str(&delta),
+                StreamEvent::Done => break,
+                StreamEvent::Error(err) => {
+                    debug!(account_id, chat_id = to, "WhatsApp stream error: {err}");
+                    if text.is_empty() {
+                        text = err;
+                    }
+                    break;
+                },
+            }
+        }
+        if text.is_empty() {
+            return Ok(());
+        }
+        self.send_text(account_id, to, &text, reply_to).await
+    }
+
+    async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+        false
     }
 }
