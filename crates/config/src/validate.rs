@@ -114,6 +114,7 @@ fn build_schema_map() -> KnownKeys {
             ("base_url", Leaf),
             ("models", Leaf),
             ("fetch_models", Leaf),
+            ("stream_transport", Leaf),
             ("alias", Leaf),
         ]))
     };
