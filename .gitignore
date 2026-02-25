@@ -12,4 +12,4 @@ features/
 docs/book/
 apps/macos/Generated/
 apps/macos/Moltis.xcodeproj/
-apps/macos/.derivedData/
+apps/macos/.derivedData*/
