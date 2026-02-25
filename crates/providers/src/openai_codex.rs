@@ -12,10 +12,10 @@ use {
 };
 
 use moltis_agents::model::{
-    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage,
+    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
 };
 
-use crate::openai_compat::{to_responses_api_tools, to_responses_input};
+use crate::openai_compat::to_responses_api_tools;
 
 pub struct OpenAiCodexProvider {
     model: String,
@@ -177,7 +177,105 @@ impl OpenAiCodexProvider {
     }
 
     fn convert_messages(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
-        to_responses_input(messages)
+        messages
+            .iter()
+            .flat_map(|msg| {
+                match msg {
+                    ChatMessage::System { .. } => {
+                        // System messages are extracted as instructions; skip here
+                        vec![]
+                    },
+                    ChatMessage::User { content } => {
+                        let content_blocks = match content {
+                            UserContent::Text(t) => {
+                                vec![serde_json::json!({"type": "input_text", "text": t})]
+                            },
+                            UserContent::Multimodal(parts) => {
+                                debug!(
+                                    parts = parts.len(),
+                                    "codex convert_messages: multimodal user content"
+                                );
+                                parts
+                                    .iter()
+                                    .map(|p| match p {
+                                        moltis_agents::model::ContentPart::Text(t) => {
+                                            serde_json::json!({"type": "input_text", "text": t})
+                                        },
+                                        moltis_agents::model::ContentPart::Image {
+                                            media_type,
+                                            data,
+                                        } => {
+                                            let data_uri =
+                                                format!("data:{media_type};base64,{data}");
+                                            debug!(
+                                                media_type,
+                                                data_len = data.len(),
+                                                "codex convert_messages: including input_image"
+                                            );
+                                            serde_json::json!({
+                                                "type": "input_image",
+                                                "image_url": data_uri,
+                                            })
+                                        },
+                                    })
+                                    .collect()
+                            },
+                        };
+                        vec![serde_json::json!({
+                            "role": "user",
+                            "content": content_blocks,
+                        })]
+                    },
+                    ChatMessage::Assistant {
+                        content,
+                        tool_calls,
+                    } => {
+                        if !tool_calls.is_empty() {
+                            let mut items: Vec<serde_json::Value> = vec![];
+                            for tc in tool_calls {
+                                items.push(serde_json::json!({
+                                    "type": "function_call",
+                                    "call_id": tc.id,
+                                    "name": tc.name,
+                                    "arguments": tc.arguments.to_string(),
+                                }));
+                            }
+                            // Also include text content if present
+                            if let Some(text) = content
+                                && !text.is_empty()
+                            {
+                                items.insert(
+                                    0,
+                                    serde_json::json!({
+                                        "type": "message",
+                                        "role": "assistant",
+                                        "content": [{"type": "output_text", "text": text}]
+                                    }),
+                                );
+                            }
+                            items
+                        } else {
+                            let text = content.as_deref().unwrap_or("");
+                            vec![serde_json::json!({
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": text}]
+                            })]
+                        }
+                    },
+                    ChatMessage::Tool {
+                        tool_call_id,
+                        content,
+                    } => {
+                        vec![serde_json::json!({
+                            "type": "function_call_output",
+                            "call_id": tool_call_id,
+                            "output": content,
+                        })]
+                    },
+                }
+            })
+            .collect()
     }
 
     async fn post_responses_request(

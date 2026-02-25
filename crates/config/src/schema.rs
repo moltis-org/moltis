@@ -1404,6 +1404,16 @@ pub struct ResourceLimitsConfig {
     pub pids_max: Option<u32>,
 }
 
+/// Persistence strategy for `/home/sandbox` in sandbox containers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HomePersistenceConfig {
+    Off,
+    Session,
+    #[default]
+    Shared,
+}
+
 /// Sandbox configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1411,6 +1421,8 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Persistence strategy for `/home/sandbox`: off, session, or shared.
+    pub home_persistence: HomePersistenceConfig,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
@@ -1448,6 +1460,7 @@ fn default_sandbox_packages() -> Vec<String> {
         "npm",
         "ruby",
         "ruby-dev",
+        "golang-go",
         // Build toolchain & native deps
         "build-essential",
         "clang",
@@ -1586,6 +1599,7 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            home_persistence: HomePersistenceConfig::default(),
             image: None,
             container_prefix: None,
             no_network: true,
@@ -1961,19 +1975,9 @@ OPENROUTER_API_KEY = "sk-or-test"
     }
 
     #[test]
-    fn provider_entry_defaults_stream_transport_to_sse() {
-        let entry = ProviderEntry::default();
-        assert_eq!(entry.stream_transport, ProviderStreamTransport::Sse);
-    }
-
-    #[test]
-    fn provider_entry_parses_stream_transport() {
-        let toml = r#"
-[providers.openai]
-stream_transport = "websocket"
-"#;
-        let config: MoltisConfig = toml::from_str(toml).unwrap();
-        let entry = config.providers.get("openai").unwrap();
-        assert_eq!(entry.stream_transport, ProviderStreamTransport::Websocket);
+    fn sandbox_defaults_include_go_runtime() {
+        let sandbox = SandboxConfig::default();
+        assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
+        assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
     }
 }

@@ -230,6 +230,10 @@ workspace_mount = "ro"            # How to mount workspace in sandbox:
                                   #   "ro"   - Read-only (safe)
                                   #   "rw"   - Read-write (can modify files)
                                   #   "none" - No mount
+home_persistence = "shared"       # Persist /home/sandbox across container recreation:
+                                  #   "off"     - Ephemeral home
+                                  #   "session" - Per-session persisted home
+                                  #   "shared"  - One shared persisted home (default)
 backend = "auto"                  # Container backend:
                                   #   "auto"            - Auto-detect (prefers Apple Container on macOS)
                                   #   "docker"          - Use Docker
@@ -260,6 +264,7 @@ packages = [
     "npm",
     "ruby",
     "ruby-dev",
+    "golang-go",
     # Build toolchain & native deps
     "build-essential",
     "clang",

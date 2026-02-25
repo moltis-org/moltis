@@ -132,6 +132,7 @@ fn build_schema_map() -> KnownKeys {
             ("mode", Leaf),
             ("scope", Leaf),
             ("workspace_mount", Leaf),
+            ("home_persistence", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
