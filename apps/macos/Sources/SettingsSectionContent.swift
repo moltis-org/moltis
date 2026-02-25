@@ -289,11 +289,7 @@ private extension SettingsSectionContent {
     }
 
     var configurationPane: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            editorRow("moltis.toml", text: $settings.configurationToml, minHeight: 280)
-            Button("Validate") {}
-                .disabled(true)
-        }
+        ConfigurationPane(settings: settings)
     }
 }
 

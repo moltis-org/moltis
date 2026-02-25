@@ -196,6 +196,9 @@ struct SettingsView: View {
                 if section == .logs {
                     LogsPane(logStore: logStore)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if section == .configuration {
+                    ConfigurationPane(settings: settings)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     Form {
                         SettingsSectionContent(
