@@ -1350,6 +1350,11 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
         BRIDGE.session_metadata.touch(&session_key, msg_count).await;
     });
 
+    // Notify other UIs that a user message was added.
+    BRIDGE.session_event_bus.publish(SessionEvent::Patched {
+        session_key: session_key.clone(),
+    });
+
     let model_id = provider.id().to_string();
     let provider_name = provider.name().to_string();
     let messages = vec![AgentChatMessage::User {
@@ -1419,6 +1424,11 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
             .unwrap_or(0);
         BRIDGE.session_metadata.touch(&session_key, msg_count).await;
         BRIDGE.session_metadata.set_model(&session_key, Some(model_id.clone())).await;
+
+        // Notify other UIs (web) that this session was updated.
+        BRIDGE.session_event_bus.publish(SessionEvent::Patched {
+            session_key: session_key.clone(),
+        });
 
         ctx.send(&BridgeStreamEvent::Done {
             input_tokens: usage.input_tokens,

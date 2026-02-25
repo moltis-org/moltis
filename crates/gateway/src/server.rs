@@ -2998,6 +2998,42 @@ pub async fn prepare_gateway(
         }
     });
 
+    // Spawn session event → WebSocket forwarder.
+    // Events published by the swift-bridge (or any other bus producer) are
+    // relayed to all connected WebSocket clients as `"session"` events.
+    {
+        let ws_state = Arc::clone(&state);
+        let mut rx = state.session_event_bus.subscribe();
+        tokio::spawn(async move {
+            use crate::session_events::SessionEvent;
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let (kind, session_key) = match &event {
+                            SessionEvent::Created { session_key } => ("created", session_key.as_str()),
+                            SessionEvent::Deleted { session_key } => ("deleted", session_key.as_str()),
+                            SessionEvent::Patched { session_key } => ("patched", session_key.as_str()),
+                        };
+                        broadcast(
+                            &ws_state,
+                            "session",
+                            serde_json::json!({
+                                "kind": kind,
+                                "sessionKey": session_key,
+                            }),
+                            BroadcastOpts { drop_if_slow: true, ..Default::default() },
+                        )
+                        .await;
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("session event WS forwarder lagged, skipped {n} events");
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
     // Spawn periodic update check against latest GitHub release.
     let update_state = Arc::clone(&state);
     let update_repository_url =
