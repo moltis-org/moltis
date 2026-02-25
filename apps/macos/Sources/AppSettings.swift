@@ -14,7 +14,7 @@ final class AppSettings: ObservableObject {
     @Published var notificationsEnabled = true
     @Published var notificationsSoundEnabled = false
 
-    @Published var cronJobs = ""
+    @Published var cronJobs: [CronJobItem] = []
     @Published var heartbeatEnabled = true
     @Published var heartbeatIntervalMinutes = 5
 
@@ -23,15 +23,15 @@ final class AppSettings: ObservableObject {
     @Published var tailscaleEnabled = false
     @Published var tailscaleHostname = ""
 
-    @Published var channelRules = ""
-    @Published var hooksConfig = ""
+    @Published var channels: [ChannelItem] = []
+    @Published var hooks: [HookItem] = []
 
     @Published var llmProvider = "openai"
     @Published var llmModel = "gpt-4.1"
     @Published var llmApiKey = ""
 
-    @Published var mcpServers = ""
-    @Published var skills = ""
+    @Published var mcpServers: [McpServerItem] = []
+    @Published var skillPacks: [SkillPackItem] = []
 
     @Published var voiceEnabled = false
     @Published var voiceProvider = "none"
@@ -57,7 +57,7 @@ final class AppSettings: ObservableObject {
     @Published var graphqlEnabled = false
     @Published var graphqlPath = "/graphql"
 
-    @Published var configurationToml = "[server]\nport = \"invalid\""
+    @Published var configurationToml = ""
 
     let memoryModes = ["workspace", "global", "off"]
     let sandboxBackends = ["auto", "docker", "apple-container"]

@@ -69,7 +69,28 @@ private extension SettingsSectionContent {
     }
 
     var cronsPane: some View {
-        editorRow("Cron definitions", text: $settings.cronJobs)
+        VStack(alignment: .leading, spacing: 12) {
+            if settings.cronJobs.isEmpty {
+                SettingsEmptyState(
+                    icon: "clock.arrow.circlepath",
+                    title: "No Cron Jobs",
+                    subtitle: "Add scheduled tasks to run automatically"
+                )
+            } else {
+                ForEach($settings.cronJobs) { $item in
+                    DisclosureGroup {
+                        cronJobFields(item: $item)
+                    } label: {
+                        cronJobLabel(item: $item)
+                    }
+                }
+            }
+            Button {
+                settings.cronJobs.append(CronJobItem())
+            } label: {
+                Label("Add Cron Job", systemImage: "plus")
+            }
+        }
     }
 
     var heartbeatPane: some View {
@@ -106,11 +127,53 @@ private extension SettingsSectionContent {
 
 private extension SettingsSectionContent {
     var channelsPane: some View {
-        editorRow("Channel rules", text: $settings.channelRules)
+        VStack(alignment: .leading, spacing: 12) {
+            if settings.channels.isEmpty {
+                SettingsEmptyState(
+                    icon: "point.3.connected.trianglepath.dotted",
+                    title: "No Channels",
+                    subtitle: "Connect messaging platforms like Telegram or Slack"
+                )
+            } else {
+                ForEach($settings.channels) { $item in
+                    DisclosureGroup {
+                        channelFields(item: $item)
+                    } label: {
+                        channelLabel(item: $item)
+                    }
+                }
+            }
+            Button {
+                settings.channels.append(ChannelItem())
+            } label: {
+                Label("Add Channel", systemImage: "plus")
+            }
+        }
     }
 
     var hooksPane: some View {
-        editorRow("Hooks config", text: $settings.hooksConfig)
+        VStack(alignment: .leading, spacing: 12) {
+            if settings.hooks.isEmpty {
+                SettingsEmptyState(
+                    icon: "wrench.and.screwdriver",
+                    title: "No Hooks",
+                    subtitle: "Run commands in response to events"
+                )
+            } else {
+                ForEach($settings.hooks) { $item in
+                    DisclosureGroup {
+                        hookFields(item: $item)
+                    } label: {
+                        hookLabel(item: $item)
+                    }
+                }
+            }
+            Button {
+                settings.hooks.append(HookItem())
+            } label: {
+                Label("Add Hook", systemImage: "plus")
+            }
+        }
     }
 
     @ViewBuilder
@@ -127,11 +190,53 @@ private extension SettingsSectionContent {
     }
 
     var mcpPane: some View {
-        editorRow("MCP servers", text: $settings.mcpServers)
+        VStack(alignment: .leading, spacing: 12) {
+            if settings.mcpServers.isEmpty {
+                SettingsEmptyState(
+                    icon: "link",
+                    title: "No MCP Servers",
+                    subtitle: "Connect external tools via Model Context Protocol"
+                )
+            } else {
+                ForEach($settings.mcpServers) { $item in
+                    DisclosureGroup {
+                        mcpFields(item: $item)
+                    } label: {
+                        mcpLabel(item: $item)
+                    }
+                }
+            }
+            Button {
+                settings.mcpServers.append(McpServerItem())
+            } label: {
+                Label("Add MCP Server", systemImage: "plus")
+            }
+        }
     }
 
     var skillsPane: some View {
-        editorRow("Skill packs", text: $settings.skills)
+        VStack(alignment: .leading, spacing: 12) {
+            if settings.skillPacks.isEmpty {
+                SettingsEmptyState(
+                    icon: "sparkles",
+                    title: "No Skill Packs",
+                    subtitle: "Install skill packs to extend capabilities"
+                )
+            } else {
+                ForEach($settings.skillPacks) { $item in
+                    DisclosureGroup {
+                        skillFields(item: $item)
+                    } label: {
+                        skillLabel(item: $item)
+                    }
+                }
+            }
+            Button {
+                settings.skillPacks.append(SkillPackItem())
+            } label: {
+                Label("Add Skill Pack", systemImage: "plus")
+            }
+        }
     }
 
     @ViewBuilder
@@ -198,13 +303,17 @@ private extension SettingsSectionContent {
     }
 
     var configurationPane: some View {
-        editorRow("moltis.toml", text: $settings.configurationToml, minHeight: 280)
+        VStack(alignment: .leading, spacing: 12) {
+            editorRow("moltis.toml", text: $settings.configurationToml, minHeight: 280)
+            Button("Validate") {}
+                .disabled(true)
+        }
     }
 }
 
 // MARK: - Helpers
 
-private extension SettingsSectionContent {
+extension SettingsSectionContent {
     /// Full-width editor row with label above.
     func editorRow(
         _ title: String,
@@ -217,101 +326,12 @@ private extension SettingsSectionContent {
             MoltisEditorField(text: text, minHeight: minHeight)
         }
     }
-}
 
-// MARK: - Voice provider grid pane
-
-struct VoiceProviderGridPane: View {
-    @ObservedObject var providerStore: ProviderStore
-    @ObservedObject var settings: AppSettings
-
-    private let columns = [
-        GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 10)
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Toggle("Enable voice", isOn: $settings.voiceEnabled)
-
-            if settings.voiceEnabled {
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(VoiceProvider.all) { voiceProvider in
-                        VoiceProviderCardView(
-                            provider: voiceProvider,
-                            isSelected: providerStore.selectedVoiceProviderName == voiceProvider.name,
-                            onSelect: {
-                                providerStore.selectedVoiceProviderName = voiceProvider.name
-                                providerStore.voiceApiKeyDraft = ""
-                                settings.voiceProvider = voiceProvider.name
-                            }
-                        )
-                    }
-                }
-
-                if let selected = VoiceProvider.all.first(where: {
-                    $0.name == providerStore.selectedVoiceProviderName
-                }), selected.requiresApiKey {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(selected.displayName)
-                            .font(.title3.weight(.semibold))
-
-                        SecureField("API Key", text: $providerStore.voiceApiKeyDraft)
-                            .textFieldStyle(.roundedBorder)
-
-                        Button("Save") {
-                            settings.voiceApiKey = providerStore.voiceApiKeyDraft
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(
-                            providerStore.voiceApiKeyDraft
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
-                                .isEmpty
-                        )
-                    }
-                    .padding()
-                }
-            }
+    func deleteButton(action: @escaping () -> Void) -> some View {
+        Button(role: .destructive, action: action) {
+            Image(systemName: "trash")
+                .foregroundStyle(.red)
         }
-    }
-}
-
-// MARK: - Provider grid pane (used in LLMs section)
-
-struct ProviderGridPane: View {
-    @ObservedObject var providerStore: ProviderStore
-
-    private let columns = [
-        GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 10)
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(providerStore.knownProviders) { provider in
-                    ProviderCardView(
-                        provider: provider,
-                        isConfigured: providerStore.isConfigured(provider.name),
-                        isSelected: providerStore.selectedProviderName == provider.name,
-                        onSelect: {
-                            selectProvider(provider)
-                        }
-                    )
-                }
-            }
-
-            ProviderConfigForm(providerStore: providerStore)
-        }
-        .onAppear {
-            if providerStore.knownProviders.isEmpty {
-                providerStore.loadAll()
-            }
-        }
-    }
-
-    private func selectProvider(_ provider: BridgeKnownProvider) {
-        providerStore.selectedProviderName = provider.name
-        providerStore.apiKeyDraft = ""
-        providerStore.baseUrlDraft = provider.defaultBaseUrl ?? ""
-        providerStore.selectedModelID = nil
+        .buttonStyle(.borderless)
     }
 }

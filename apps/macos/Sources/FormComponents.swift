@@ -107,6 +107,30 @@ struct ChatInputField: NSViewRepresentable {
     }
 }
 
+// MARK: - SettingsEmptyState
+
+struct SettingsEmptyState: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 28))
+                .foregroundStyle(.tertiary)
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.tertiary)
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.quaternary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+}
+
 // MARK: - MoltisEditorField (for multi-line text editing in forms)
 
 struct MoltisEditorField: View {
