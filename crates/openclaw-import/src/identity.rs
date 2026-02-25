@@ -1,6 +1,9 @@
 //! Import user/agent identity from OpenClaw config.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use {serde::Deserialize, tracing::debug};
 
@@ -25,8 +28,7 @@ pub struct ImportedIdentity {
 
 /// Import identity data from OpenClaw.
 pub fn import_identity(detection: &OpenClawDetection) -> (CategoryReport, ImportedIdentity) {
-    let config_path = detection.home_dir.join("openclaw.json");
-    let config = load_config(&config_path);
+    let config = load_config(&detection.home_dir);
 
     let mut identity = ImportedIdentity::default();
     let mut items = 0;
@@ -86,32 +88,39 @@ pub fn import_identity(detection: &OpenClawDetection) -> (CategoryReport, Import
     (report, identity)
 }
 
-fn load_config(path: &Path) -> OpenClawConfig {
-    if !path.is_file() {
-        return OpenClawConfig::default();
+fn load_config(home_dir: &Path) -> OpenClawConfig {
+    for candidate in ["openclaw.json", "clawdbot.json"] {
+        let path = home_dir.join(candidate);
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if let Ok(config) = json5::from_str(&content) {
+            return config;
+        }
     }
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return OpenClawConfig::default();
-    };
-    json5::from_str(&content).unwrap_or_default()
+    OpenClawConfig::default()
 }
 
 fn infer_agent_name_from_workspace(
     config: &OpenClawConfig,
     detection: &OpenClawDetection,
 ) -> Option<String> {
-    let workspace = config
-        .agents
-        .defaults
-        .workspace
-        .as_deref()
-        .map(Path::new)
-        .unwrap_or(detection.workspace_dir.as_path());
-    let raw = workspace.file_name()?.to_str()?.trim();
-    if raw.is_empty() || raw.eq_ignore_ascii_case("workspace") {
-        return None;
+    let mut fallback = None;
+    for workspace in candidate_workspace_dirs(config, detection) {
+        let Some(name) = workspace_basename(&workspace) else {
+            continue;
+        };
+        if workspace.is_dir() {
+            return Some(name);
+        }
+        if fallback.is_none() {
+            fallback = Some(name);
+        }
     }
-    Some(titleize_identifier(raw))
+    fallback
 }
 
 fn infer_theme(config: &OpenClawConfig, detection: &OpenClawDetection) -> Option<String> {
@@ -137,22 +146,20 @@ fn infer_theme_from_workspace_identity(
     config: &OpenClawConfig,
     detection: &OpenClawDetection,
 ) -> Option<String> {
-    let workspace = config
-        .agents
-        .defaults
-        .workspace
-        .as_deref()
-        .map(Path::new)
-        .unwrap_or(detection.workspace_dir.as_path());
-    let identity_path = workspace.join("IDENTITY.md");
-    let content = std::fs::read_to_string(identity_path).ok()?;
-    let frontmatter = extract_yaml_frontmatter(&content)?;
-    let identity = parse_identity_frontmatter(frontmatter);
-
-    if let Some(theme) = identity.theme {
-        return Some(theme);
+    for workspace in candidate_workspace_dirs(config, detection) {
+        let identity_path = workspace.join("IDENTITY.md");
+        let Ok(content) = std::fs::read_to_string(identity_path) else {
+            continue;
+        };
+        let identity = parse_workspace_identity(&content);
+        if let Some(theme) = identity.theme {
+            return Some(theme);
+        }
+        if let Some(theme) = compose_theme(identity.creature, identity.vibe) {
+            return Some(theme);
+        }
     }
-    compose_theme(identity.creature, identity.vibe)
+    None
 }
 
 fn compose_theme(creature: Option<String>, vibe: Option<String>) -> Option<String> {
@@ -166,15 +173,31 @@ fn compose_theme(creature: Option<String>, vibe: Option<String>) -> Option<Strin
 }
 
 fn normalize_identity_value(value: Option<&str>) -> Option<String> {
-    let value = value?.trim();
-    if value.is_empty() {
+    let value = value?;
+    let mut value = value.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    if value.starts_with("**") && value.ends_with("**") && value.len() > 4 {
+        value = value.trim_start_matches("**").trim_end_matches("**").trim();
+    } else if value.starts_with('*') && value.ends_with('*') && value.len() > 2 {
+        value = value.trim_matches('*').trim();
+    } else if value.starts_with('`') && value.ends_with('`') && value.len() > 2 {
+        value = value.trim_matches('`').trim();
+    }
+    if value.is_empty() || is_placeholder_value(value) {
         return None;
     }
     Some(value.to_string())
 }
 
+fn is_placeholder_value(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    (value.starts_with('(') && value.ends_with(')'))
+        || lower.contains("e.g.")
+        || lower.starts_with("example")
+        || lower.contains("pick something")
+}
+
 fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
-    let trimmed = content.trim_start();
+    let trimmed = strip_leading_html_comments(content);
     if !trimmed.starts_with("---") {
         return None;
     }
@@ -208,7 +231,7 @@ fn parse_identity_frontmatter(frontmatter: &str) -> WorkspaceIdentityFrontmatter
             continue;
         };
 
-        match key {
+        match key.to_ascii_lowercase().as_str() {
             "theme" => identity.theme = Some(value),
             "creature" => identity.creature = Some(value),
             "vibe" => identity.vibe = Some(value),
@@ -227,6 +250,146 @@ fn unquote_yaml_scalar(value: &str) -> &str {
     } else {
         value
     }
+}
+
+fn parse_workspace_identity(content: &str) -> WorkspaceIdentityFrontmatter {
+    let mut identity = WorkspaceIdentityFrontmatter::default();
+
+    if let Some(frontmatter) = extract_yaml_frontmatter(content) {
+        identity = parse_identity_frontmatter(frontmatter);
+    }
+
+    for raw_line in strip_leading_html_comments(content).lines() {
+        let line = normalize_markdown_key_value_line(raw_line);
+        let Some((raw_key, raw_value)) = line.split_once(':') else {
+            continue;
+        };
+
+        let key = raw_key
+            .trim()
+            .trim_matches(|c| c == '*' || c == '`' || c == '_')
+            .to_ascii_lowercase();
+        let value = unquote_yaml_scalar(raw_value.trim());
+        let Some(value) = normalize_identity_value(Some(value)) else {
+            continue;
+        };
+
+        match key.as_str() {
+            "theme" => {
+                if identity.theme.is_none() {
+                    identity.theme = Some(value);
+                }
+            },
+            "creature" => {
+                if identity.creature.is_none() {
+                    identity.creature = Some(value);
+                }
+            },
+            "vibe" => {
+                if identity.vibe.is_none() {
+                    identity.vibe = Some(value);
+                }
+            },
+            _ => {},
+        }
+    }
+
+    identity
+}
+
+fn normalize_markdown_key_value_line(raw_line: &str) -> &str {
+    raw_line
+        .trim()
+        .trim_start_matches(['-', '*', '>'])
+        .trim_start()
+}
+
+fn strip_leading_html_comments(content: &str) -> &str {
+    let mut rest = content;
+    loop {
+        let trimmed = rest.trim_start();
+        if !trimmed.starts_with("<!--") {
+            return trimmed;
+        }
+        let Some(end) = trimmed.find("-->") else {
+            return "";
+        };
+        rest = &trimmed[end + 3..];
+    }
+}
+
+fn candidate_workspace_dirs(
+    config: &OpenClawConfig,
+    detection: &OpenClawDetection,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    let mut push = |path: PathBuf| {
+        if candidates.iter().any(|p| p == &path) {
+            return;
+        }
+        candidates.push(path);
+    };
+
+    if let Some(workspace) = config.agents.defaults.workspace.as_deref() {
+        push(resolve_workspace_path(workspace, &detection.home_dir));
+    }
+
+    if let Some(workspace) = config
+        .agents
+        .list
+        .iter()
+        .find(|agent| agent.default)
+        .and_then(|agent| agent.workspace.as_deref())
+    {
+        push(resolve_workspace_path(workspace, &detection.home_dir));
+    }
+
+    for workspace in config
+        .agents
+        .list
+        .iter()
+        .filter_map(|agent| agent.workspace.as_deref())
+    {
+        push(resolve_workspace_path(workspace, &detection.home_dir));
+    }
+
+    push(detection.workspace_dir.clone());
+    push(detection.home_dir.join("workspace"));
+
+    if let Ok(entries) = std::fs::read_dir(&detection.home_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if name.starts_with("workspace-") {
+                push(path);
+            }
+        }
+    }
+
+    candidates
+}
+
+fn resolve_workspace_path(raw: &str, home_dir: &Path) -> PathBuf {
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        path
+    } else {
+        home_dir.join(path)
+    }
+}
+
+fn workspace_basename(workspace: &Path) -> Option<String> {
+    let raw = workspace.file_name()?.to_str()?.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("workspace") {
+        return None;
+    }
+    Some(titleize_identifier(raw))
 }
 
 fn infer_user_name_from_sessions_index(detection: &OpenClawDetection) -> Option<String> {
@@ -410,6 +573,41 @@ mod tests {
 
         let (_, identity) = import_identity(&make_detection(tmp.path()));
         assert_eq!(identity.theme.as_deref(), Some("calm fox"));
+    }
+
+    #[test]
+    fn import_theme_from_workspace_identity_markdown_template() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace_dir = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_dir).unwrap();
+        std::fs::write(
+            workspace_dir.join("IDENTITY.md"),
+            "# IDENTITY.md\n\n- Name: Clawd\n- Creature: fox\n- Vibe: calm\n- Emoji: 🦊\n",
+        )
+        .unwrap();
+
+        let (_, identity) = import_identity(&make_detection(tmp.path()));
+        assert_eq!(identity.theme.as_deref(), Some("calm fox"));
+    }
+
+    #[test]
+    fn import_theme_falls_back_to_detected_workspace_when_config_workspace_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace_dir = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_dir).unwrap();
+        std::fs::write(
+            workspace_dir.join("IDENTITY.md"),
+            "# IDENTITY.md\n\n- Creature: owl\n- Vibe: wise\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("openclaw.json"),
+            r#"{"agents":{"defaults":{"workspace":"/root/clawd"}}}"#,
+        )
+        .unwrap();
+
+        let (_, identity) = import_identity(&make_detection(tmp.path()));
+        assert_eq!(identity.theme.as_deref(), Some("wise owl"));
     }
 
     #[test]
