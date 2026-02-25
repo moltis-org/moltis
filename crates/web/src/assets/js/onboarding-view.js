@@ -2325,7 +2325,12 @@ function OpenClawImportStep({ onNext, onBack }) {
 	}
 
 	var categories = [
-		{ key: "identity", label: "Identity", available: scan.identity_available, detail: [scan.identity_agent_name, scan.identity_theme].filter(Boolean).join(", ") || null },
+		{
+			key: "identity",
+			label: "Identity",
+			available: scan.identity_available,
+			detail: [scan.identity_agent_name, scan.identity_theme].filter(Boolean).join(", ") || null,
+		},
 		{ key: "providers", label: "Providers", available: scan.providers_available },
 		{ key: "skills", label: "Skills", available: scan.skills_count > 0, detail: `${scan.skills_count} skill(s)` },
 		{
@@ -2357,11 +2362,15 @@ function OpenClawImportStep({ onNext, onBack }) {
 			We detected an OpenClaw installation at <code class="text-[var(--text)]">${scan.home_dir}</code>.
 			Select the data you'd like to import.
 		</p>
-		${workspaceMissing ? html`<p class="text-xs text-[var(--muted)] leading-relaxed">
+		${
+			workspaceMissing
+				? html`<p class="text-xs text-[var(--muted)] leading-relaxed">
 			If OpenClaw ran on another machine, copy its workspace directory
 			(e.g. <code>clawd/</code>) into <code>${scan.home_dir}/</code> or <code>~/</code>
 			for a full import including identity, memory, and skills.
-		</p>` : null}
+		</p>`
+				: null
+		}
 		${error ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex flex-col gap-2" style="max-width:400px;">
 			${categories.map(
