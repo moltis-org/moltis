@@ -288,7 +288,12 @@ function updateClearAllVisibility() {
 	if (!clearAllBtn) return;
 	var allSessions = sessionStore.sessions.value;
 	var hasClearable = allSessions.some(
-		(s) => s.key !== "main" && !s.key.startsWith("cron:") && !s.key.startsWith("telegram:") && !s.channelBinding,
+		(s) =>
+			s.key !== "main" &&
+			!s.key.startsWith("cron:") &&
+			!s.key.startsWith("telegram:") &&
+			!s.key.startsWith("msteams:") &&
+			!s.channelBinding,
 	);
 	clearAllBtn.classList.toggle("hidden", !hasClearable);
 }
@@ -297,11 +302,16 @@ if (clearAllBtn) {
 	clearAllBtn.addEventListener("click", () => {
 		var allSessions = sessionStore.sessions.value;
 		var count = allSessions.filter(
-			(s) => s.key !== "main" && !s.key.startsWith("cron:") && !s.key.startsWith("telegram:") && !s.channelBinding,
+			(s) =>
+				s.key !== "main" &&
+				!s.key.startsWith("cron:") &&
+				!s.key.startsWith("telegram:") &&
+				!s.key.startsWith("msteams:") &&
+				!s.channelBinding,
 		).length;
 		if (count === 0) return;
 		confirmDialog(
-			`Delete ${count} session${count !== 1 ? "s" : ""}? Main, Telegram and cron sessions will be kept.`,
+			`Delete ${count} session${count !== 1 ? "s" : ""}? Main, channel-bound, and cron sessions will be kept.`,
 		).then((yes) => {
 			if (!yes) return;
 			clearAllBtn.disabled = true;
@@ -318,6 +328,7 @@ if (clearAllBtn) {
 						active.key === "main" ||
 						active.key.startsWith("cron:") ||
 						active.key.startsWith("telegram:") ||
+						active.key.startsWith("msteams:") ||
 						active.channelBinding;
 					if (!wasKept) {
 						switchSession("main");

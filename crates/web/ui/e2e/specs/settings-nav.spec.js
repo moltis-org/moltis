@@ -238,11 +238,11 @@ test.describe("Settings navigation", () => {
 		await navigateAndWait(page, "/settings/channels");
 		await waitForWsConnected(page);
 
-		const addButton = page.getByRole("button", { name: "+ Add Telegram Bot", exact: true });
+		const addButton = page.getByRole("button", { name: "Connect Telegram", exact: true });
 		await expect(addButton).toBeVisible();
 		await addButton.click();
 
-		await expect(page.getByRole("heading", { name: "Add Telegram Bot", exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Connect Telegram", exact: true })).toBeVisible();
 		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
 		await expect(tokenInput).toHaveAttribute("type", "password");
 		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");

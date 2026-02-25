@@ -555,6 +555,13 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # token = "..."                   # Bot token from @BotFather
 # allowed_users = []              # Telegram user IDs allowed to chat (empty = all)
 
+# Microsoft Teams bots
+# [channels.msteams.my-bot]
+# app_id = "..."                  # Azure Bot App ID
+# app_password = "..."            # Azure Bot App Password (client secret)
+# webhook_secret = "..."          # Optional query secret for webhook URL (?secret=...)
+# allowlist = []                  # User IDs allowed to DM (empty = all unless dm_policy=allowlist)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS
 # ══════════════════════════════════════════════════════════════════════════════

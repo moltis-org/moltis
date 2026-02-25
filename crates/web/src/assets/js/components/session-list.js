@@ -5,7 +5,14 @@
 
 import { html } from "htm/preact";
 import { useEffect, useRef } from "preact/hooks";
-import { makeBranchIcon, makeChatIcon, makeCronIcon, makeProjectIcon, makeTelegramIcon } from "../icons.js";
+import {
+	makeBranchIcon,
+	makeChatIcon,
+	makeCronIcon,
+	makeProjectIcon,
+	makeTeamsIcon,
+	makeTelegramIcon,
+} from "../icons.js";
 import { currentPrefix, navigate, sessionPath } from "../router.js";
 import { switchSession } from "../sessions.js";
 import { projectStore } from "../stores/project-store.js";
@@ -27,15 +34,16 @@ var spinnerFrames = [
 
 // ── Helpers ──────────────────────────────────────────────────
 
-function isTelegramSession(s) {
+function channelSessionType(s) {
 	var key = s.key || "";
-	if (key.startsWith("telegram:")) return true;
+	if (key.startsWith("telegram:")) return "telegram";
+	if (key.startsWith("msteams:")) return "msteams";
 	var binding = s.channelBinding || null;
-	if (!binding) return false;
+	if (!binding) return null;
 	try {
-		return JSON.parse(binding).channel_type === "telegram";
+		return JSON.parse(binding).channel_type || null;
 	} catch (_e) {
-		return false;
+		return null;
 	}
 }
 
@@ -51,22 +59,30 @@ function SessionIcon({ session, isBranch }) {
 		iconRef.current.textContent = "";
 		var key = session.key || "";
 		var icon;
+		var channelType = channelSessionType(session);
 		if (isBranch) icon = makeBranchIcon();
 		else if (key.startsWith("cron:")) icon = makeCronIcon();
-		else if (isTelegramSession(session)) icon = makeTelegramIcon();
+		else if (channelType === "telegram") icon = makeTelegramIcon();
+		else if (channelType === "msteams") icon = makeTeamsIcon();
 		else icon = makeChatIcon();
 		iconRef.current.appendChild(icon);
 	}, [session.key, isBranch]);
 
-	var telegram = isTelegramSession(session);
+	var channelType = channelSessionType(session);
+	var channelBound = Boolean(channelType);
 	var iconStyle = {};
-	if (telegram) {
+	if (channelBound) {
 		iconStyle.color = session.activeChannel ? "var(--accent)" : "var(--muted)";
 		iconStyle.opacity = session.activeChannel ? "1" : "0.5";
 	} else {
 		iconStyle.color = "var(--muted)";
 	}
-	var title = telegram ? (session.activeChannel ? "Active Telegram session" : "Telegram session (inactive)") : "";
+	var channelLabel = channelType === "msteams" ? "Microsoft Teams" : "Telegram";
+	var title = channelBound
+		? session.activeChannel
+			? `Active ${channelLabel} session`
+			: `${channelLabel} session (inactive)`
+		: "";
 
 	// Read the reactive signal — auto-subscribes for badge updates.
 	var count = session.badgeCount.value;

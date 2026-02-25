@@ -89,7 +89,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 | Web UI | `moltis-web` | 4.3K |
 | Voice | `moltis-voice` | 4.7K |
 | Memory | `moltis-memory`, `moltis-qmd` | 5.8K |
-| Channels | `moltis-telegram`, `moltis-channels` | 6.4K |
+| Channels | `moltis-telegram`, `moltis-msteams`, `moltis-channels` | 6.4K |
 | Browser | `moltis-browser` | 4.8K |
 | Scheduling | `moltis-cron` | 3.8K |
 | Extensibility | `moltis-mcp`, `moltis-skills` | 7.4K |
@@ -114,7 +114,7 @@ See [Security Architecture](https://docs.moltis.org/security.html) for details.
 ## Features
 
 - **AI Gateway** — Multi-provider LLM support (OpenAI Codex, GitHub Copilot, Local), streaming responses, agent loop with sub-agent delegation, parallel tool execution
-- **Communication** — Web UI, Telegram, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
+- **Communication** — Web UI, Telegram, Microsoft Teams, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
 - **Memory & Context** — Per-agent memory workspaces, embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, project context
 - **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system, 15 lifecycle hook events with circuit breaker, destructive command guard
 - **Security** — Encryption-at-rest vault (XChaCha20-Poly1305 + Argon2id), password + passkey + API key auth, sandbox isolation, SSRF/CSWSH protection

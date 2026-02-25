@@ -4764,6 +4764,7 @@ dependencies = [
  "moltis-tools",
  "moltis-web",
  "open",
+ "rand 0.9.2",
  "reqwest 0.12.28",
  "secrecy 0.8.0",
  "serde_json",
@@ -5052,6 +5053,7 @@ dependencies = [
  "moltis-media",
  "moltis-memory",
  "moltis-metrics",
+ "moltis-msteams",
  "moltis-oauth",
  "moltis-onboarding",
  "moltis-openclaw-import",
@@ -5201,6 +5203,25 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "moltis-msteams"
+version = "0.9.10"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "moltis-channels",
+ "moltis-common",
+ "reqwest 0.12.28",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "urlencoding",
 ]
 
 [[package]]

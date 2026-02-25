@@ -299,6 +299,8 @@ pub struct GatewayInner {
     pub channel_status_log: HashMap<String, Vec<String>>,
     /// Sessions currently in channel command mode (/sh passthrough).
     pub channel_command_mode_sessions: HashSet<String>,
+    /// Which channel types are offered in the web UI (from config).
+    pub channels_offered: Vec<String>,
 }
 
 impl GatewayInner {
@@ -330,6 +332,7 @@ impl GatewayInner {
             cached_location: moltis_config::load_user().and_then(|u| u.location),
             channel_status_log: HashMap::new(),
             channel_command_mode_sessions: HashSet::new(),
+            channels_offered: vec!["telegram".into()],
         }
     }
 

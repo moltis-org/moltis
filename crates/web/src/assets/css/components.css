@@ -676,6 +676,27 @@
   gap: 4px;
 }
 
+.channel-input {
+  font-family: var(--font-body);
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+
+.channel-select {
+  font-family: var(--font-body);
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
 .channel-error {
   display: none;
   padding: 4px 0;
