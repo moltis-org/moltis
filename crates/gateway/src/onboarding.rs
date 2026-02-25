@@ -10,17 +10,86 @@ use crate::services::{OnboardingService, ServiceError, ServiceResult};
 pub struct GatewayOnboardingService {
     inner: moltis_onboarding::service::LiveOnboardingService,
     session_metadata: Arc<moltis_sessions::metadata::SqliteSessionMetadata>,
+    agent_persona_store: Arc<crate::agent_persona::AgentPersonaStore>,
 }
 
 impl GatewayOnboardingService {
     pub fn new(
         inner: moltis_onboarding::service::LiveOnboardingService,
         session_metadata: Arc<moltis_sessions::metadata::SqliteSessionMetadata>,
+        agent_persona_store: Arc<crate::agent_persona::AgentPersonaStore>,
     ) -> Self {
         Self {
             inner,
             session_metadata,
+            agent_persona_store,
         }
+    }
+
+    /// Create imported agents as Moltis agent personas.
+    ///
+    /// Skips agents that already exist or are the default ("main") agent.
+    #[cfg(feature = "openclaw-import")]
+    async fn create_imported_agents(
+        &self,
+        agents: &moltis_openclaw_import::agents::ImportedAgents,
+    ) -> Result<(), String> {
+        for agent in &agents.agents {
+            if agent.is_default {
+                continue;
+            }
+
+            // Skip if already exists
+            match self.agent_persona_store.get(&agent.moltis_id).await {
+                Ok(Some(_)) => {
+                    tracing::debug!(
+                        id = %agent.moltis_id,
+                        "openclaw import: agent already exists, skipping"
+                    );
+                    continue;
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        id = %agent.moltis_id,
+                        error = %e,
+                        "openclaw import: failed to check agent existence"
+                    );
+                    continue;
+                },
+                Ok(None) => {},
+            }
+
+            let name = agent
+                .name
+                .clone()
+                .unwrap_or_else(|| agent.moltis_id.clone());
+
+            let params = crate::agent_persona::CreateAgentParams {
+                id: agent.moltis_id.clone(),
+                name,
+                emoji: None,
+                creature: agent.creature.clone(),
+                vibe: agent.vibe.clone(),
+                description: None,
+            };
+
+            match self.agent_persona_store.create(params).await {
+                Ok(_) => {
+                    tracing::info!(
+                        id = %agent.moltis_id,
+                        "openclaw import: created agent persona"
+                    );
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        id = %agent.moltis_id,
+                        error = %e,
+                        "openclaw import: failed to create agent persona"
+                    );
+                },
+            }
+        }
+        Ok(())
     }
 
     #[cfg(feature = "openclaw-import")]
@@ -67,6 +136,17 @@ impl GatewayOnboardingService {
             self.session_metadata
                 .set_mcp_disabled(&entry.key, entry.mcp_disabled)
                 .await;
+            if let Err(e) = self
+                .session_metadata
+                .set_agent_id(&entry.key, entry.agent_id.as_deref())
+                .await
+            {
+                tracing::warn!(
+                    key = %entry.key,
+                    error = %e,
+                    "openclaw import: failed to set agent_id on session"
+                );
+            }
             self.session_metadata
                 .set_preview(&entry.key, entry.preview.as_deref())
                 .await;
@@ -131,10 +211,26 @@ impl OnboardingService for GatewayOnboardingService {
         match detection {
             Some(d) => {
                 let scan = moltis_openclaw_import::scan(&d);
+                tracing::info!(
+                    home_dir = %d.home_dir.display(),
+                    identity = scan.identity_available,
+                    identity_agent_name = ?scan.identity_agent_name,
+                    identity_theme = ?scan.identity_theme,
+                    identity_user_name = ?scan.identity_user_name,
+                    providers = scan.providers_available,
+                    skills = scan.skills_count,
+                    memory = scan.memory_available,
+                    channels = scan.channels_available,
+                    sessions = scan.sessions_count,
+                    "openclaw.scan: installation detected"
+                );
                 Ok(serde_json::json!({
                     "detected": true,
                     "home_dir": d.home_dir.display().to_string(),
                     "identity_available": scan.identity_available,
+                    "identity_agent_name": scan.identity_agent_name,
+                    "identity_theme": scan.identity_theme,
+                    "identity_user_name": scan.identity_user_name,
                     "providers_available": scan.providers_available,
                     "skills_count": scan.skills_count,
                     "memory_available": scan.memory_available,
@@ -144,9 +240,13 @@ impl OnboardingService for GatewayOnboardingService {
                     "sessions_count": scan.sessions_count,
                     "unsupported_channels": scan.unsupported_channels,
                     "agent_ids": scan.agent_ids,
+                    "agents": scan.agents,
                 }))
             },
-            None => Ok(serde_json::json!({ "detected": false })),
+            None => {
+                tracing::info!("openclaw.scan: no installation detected (detect returned None)");
+                Ok(serde_json::json!({ "detected": false }))
+            },
         }
     }
 
@@ -203,10 +303,29 @@ impl OnboardingService for GatewayOnboardingService {
 
         let report = moltis_openclaw_import::import(&detection, &selection, &config_dir, &data_dir);
 
+        // Create imported agent personas (non-default agents)
+        if let Some(ref agents) = report.imported_agents
+            && let Err(e) = self.create_imported_agents(agents).await
+        {
+            tracing::warn!(error = %e, "openclaw import: failed to create imported agents");
+        }
+
         if selection.sessions
             && let Err(e) = self.sync_imported_sessions_to_sqlite(&data_dir).await
         {
             tracing::warn!(error = %e, "openclaw import: failed to sync sessions to sqlite metadata");
+        }
+
+        // Ensure the default "main" session exists so it appears in the session
+        // list alongside imported sessions. Without this, the main session only
+        // gets created when the user sends their first message.
+        if self.session_metadata.get("main").await.is_none()
+            && let Err(e) = self
+                .session_metadata
+                .upsert("main", Some("Main".to_string()))
+                .await
+        {
+            tracing::warn!(error = %e, "openclaw import: failed to ensure main session exists");
         }
 
         Ok(serde_json::to_value(&report)?)
@@ -258,10 +377,29 @@ mod tests {
         moltis_sessions::metadata::SqliteSessionMetadata::init(&pool)
             .await
             .unwrap();
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agents (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                is_default  INTEGER NOT NULL DEFAULT 0,
+                emoji       TEXT,
+                creature    TEXT,
+                vibe        TEXT,
+                description TEXT,
+                created_at  INTEGER NOT NULL,
+                updated_at  INTEGER NOT NULL
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let service = GatewayOnboardingService::new(
             moltis_onboarding::service::LiveOnboardingService::new(dir.path().join("moltis.toml")),
-            Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool)),
+            Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(
+                pool.clone(),
+            )),
+            Arc::new(crate::agent_persona::AgentPersonaStore::new(pool)),
         );
 
         service

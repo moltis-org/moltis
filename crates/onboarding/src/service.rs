@@ -2,7 +2,10 @@
 
 use std::{path::PathBuf, sync::Mutex};
 
-use serde_json::{Value, json};
+use {
+    serde_json::{Value, json},
+    tracing::info,
+};
 
 use moltis_config::{AgentIdentity, MoltisConfig, UserProfile};
 
@@ -256,8 +259,21 @@ impl LiveOnboardingService {
         if self.config_path.exists()
             && let Ok(cfg) = moltis_config::loader::load_config(&self.config_path)
         {
+            info!(
+                config_path = %self.config_path.display(),
+                config_name = ?cfg.identity.name,
+                config_creature = ?cfg.identity.creature,
+                config_vibe = ?cfg.identity.vibe,
+                "identity_get: loaded config"
+            );
             let mut id = moltis_config::ResolvedIdentity::from_config(&cfg);
             if let Some(file_identity) = moltis_config::load_identity() {
+                info!(
+                    file_name = ?file_identity.name,
+                    file_creature = ?file_identity.creature,
+                    file_vibe = ?file_identity.vibe,
+                    "identity_get: loaded IDENTITY.md overlay"
+                );
                 if let Some(name) = file_identity.name {
                     id.name = name;
                 }
@@ -277,8 +293,19 @@ impl LiveOnboardingService {
                 id.user_name = Some(name);
             }
             id.soul = moltis_config::load_soul();
+            info!(
+                resolved_name = %id.name,
+                resolved_creature = ?id.creature,
+                resolved_vibe = ?id.vibe,
+                resolved_user_name = ?id.user_name,
+                "identity_get: final resolved identity"
+            );
             return id;
         }
+        info!(
+            config_path = %self.config_path.display(),
+            "identity_get: config not found, using defaults"
+        );
         let mut id = moltis_config::ResolvedIdentity::default();
         if let Some(file_identity) = moltis_config::load_identity() {
             if let Some(name) = file_identity.name {
@@ -292,6 +319,12 @@ impl LiveOnboardingService {
             id.user_name = file_user.name;
         }
         id.soul = moltis_config::load_soul();
+        info!(
+            resolved_name = %id.name,
+            resolved_creature = ?id.creature,
+                resolved_vibe = ?id.vibe,
+            "identity_get: final resolved identity (from defaults)"
+        );
         id
     }
 }

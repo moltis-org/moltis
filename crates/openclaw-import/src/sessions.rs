@@ -45,6 +45,8 @@ pub struct ImportedSessionEntry {
     pub last_seen_message_count: u32,
     #[serde(default)]
     pub source_line_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(default)]
     pub archived: bool,
     #[serde(default)]
@@ -87,10 +89,14 @@ enum MoltisMessage {
 /// In addition to converting JSONL files, this also generates markdown
 /// transcripts in `memory_sessions_dir` (typically `<data>/memory/sessions/`)
 /// so that imported conversations are searchable by the Moltis memory system.
+///
+/// `agent_id_mapping` maps OpenClaw agent IDs to Moltis agent IDs. If empty,
+/// agent IDs are used as-is (backward compatible for single-agent installs).
 pub fn import_sessions(
     detection: &OpenClawDetection,
     dest_sessions_dir: &Path,
     memory_sessions_dir: &Path,
+    agent_id_mapping: &HashMap<String, String>,
 ) -> CategoryReport {
     if detection.agent_ids.is_empty() {
         return CategoryReport::skipped(ImportCategory::Sessions);
@@ -100,51 +106,8 @@ pub fn import_sessions(
     let mut updated = 0;
     let mut skipped = 0;
     let mut errors = Vec::new();
-    let mut warnings = Vec::new();
+    let warnings = Vec::new();
     let mut entries = Vec::new();
-
-    // Only import the default or first agent. Add TODO for others.
-    let (import_agent, other_agents) = if detection.agent_ids.len() > 1 {
-        let default_idx = detection
-            .agent_ids
-            .iter()
-            .position(|id| id == "main")
-            .unwrap_or(0);
-        let import = &detection.agent_ids[default_idx];
-        let others: Vec<&str> = detection
-            .agent_ids
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != default_idx)
-            .map(|(_, id)| id.as_str())
-            .collect();
-        (import.as_str(), others)
-    } else {
-        (detection.agent_ids[0].as_str(), Vec::new())
-    };
-
-    if !other_agents.is_empty() {
-        warnings.push(format!(
-            "only importing sessions from agent '{}'; skipping agents: {}",
-            import_agent,
-            other_agents.join(", ")
-        ));
-    }
-
-    let agent_dir = detection.home_dir.join("agents").join(import_agent);
-    let Some(sessions_dir) = resolve_agent_sessions_dir(&agent_dir) else {
-        return CategoryReport::skipped(ImportCategory::Sessions);
-    };
-
-    // Load session index for rich labels
-    let session_label_map = load_session_label_map(&sessions_dir);
-
-    let Ok(dir_entries) = std::fs::read_dir(&sessions_dir) else {
-        return CategoryReport::failed(
-            ImportCategory::Sessions,
-            "failed to read sessions directory".to_string(),
-        );
-    };
 
     if let Err(e) = std::fs::create_dir_all(dest_sessions_dir) {
         return CategoryReport::failed(
@@ -153,112 +116,131 @@ pub fn import_sessions(
         );
     }
 
-    // Load existing metadata to detect incremental changes
+    // Load existing metadata once to detect incremental changes
     let metadata_path = dest_sessions_dir.join("metadata.json");
     let existing_metadata = load_session_metadata(&metadata_path);
 
-    for entry in dir_entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() || path.extension().is_some_and(|e| e != "jsonl") {
+    for openclaw_agent_id in &detection.agent_ids {
+        let moltis_agent_id = agent_id_mapping
+            .get(openclaw_agent_id.as_str())
+            .cloned()
+            .unwrap_or_else(|| openclaw_agent_id.clone());
+
+        let agent_dir = detection.home_dir.join("agents").join(openclaw_agent_id);
+        let Some(sessions_dir) = resolve_agent_sessions_dir(&agent_dir) else {
+            debug!(agent = %openclaw_agent_id, "no sessions directory found, skipping");
             continue;
-        }
-
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-        let dest_key = format!("oc:{import_agent}:{stem}");
-        let dest_file =
-            dest_sessions_dir.join(format!("{}.jsonl", sanitize_session_key(&dest_key)));
-
-        let source_lines = count_lines(&path);
-
-        // Check if we already have this session and whether it has grown
-        let existing_entry = existing_metadata.get(&dest_key);
-        let is_update = if let Some(prev) = existing_entry {
-            // source_line_count == 0 means legacy metadata (pre-incremental), always re-import
-            if prev.source_line_count > 0 && source_lines <= prev.source_line_count {
-                debug!(key = %dest_key, "session unchanged, skipping");
-                skipped += 1;
-                continue;
-            }
-            true
-        } else {
-            false
         };
 
-        match convert_session(&path, &dest_file) {
-            Ok(stats) => {
-                let label = session_label_map
-                    .get(stem)
-                    .map(|(logical_key, origin)| build_session_label(logical_key, origin.as_ref()))
-                    .unwrap_or_else(|| {
-                        let prefix_len = 8.min(stem.len());
-                        format!("OpenClaw: {}", &stem[..prefix_len])
+        let Ok(dir_entries) = std::fs::read_dir(&sessions_dir) else {
+            debug!(agent = %openclaw_agent_id, "failed to read sessions directory, skipping");
+            continue;
+        };
+
+        let session_label_map = load_session_label_map(&sessions_dir);
+
+        for entry in dir_entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().is_some_and(|e| e != "jsonl") {
+                continue;
+            }
+
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
+            let dest_key = format!("oc:{moltis_agent_id}:{stem}");
+            let dest_file =
+                dest_sessions_dir.join(format!("{}.jsonl", sanitize_session_key(&dest_key)));
+
+            let source_lines = count_lines(&path);
+
+            // Check if we already have this session and whether it has grown
+            let existing_entry = existing_metadata.get(&dest_key);
+            let is_update = if let Some(prev) = existing_entry {
+                if prev.source_line_count > 0 && source_lines <= prev.source_line_count {
+                    debug!(key = %dest_key, "session unchanged, skipping");
+                    skipped += 1;
+                    continue;
+                }
+                true
+            } else {
+                false
+            };
+
+            match convert_session(&path, &dest_file) {
+                Ok(stats) => {
+                    let label = session_label_map
+                        .get(stem)
+                        .map(|(logical_key, origin)| {
+                            build_session_label(logical_key, origin.as_ref())
+                        })
+                        .unwrap_or_else(|| {
+                            let prefix_len = 8.min(stem.len());
+                            format!("OpenClaw: {}", &stem[..prefix_len])
+                        });
+
+                    if is_update {
+                        debug!(key = %dest_key, messages = stats.message_count, "updated session (incremental)");
+                    } else {
+                        debug!(key = %dest_key, messages = stats.message_count, "imported session");
+                    }
+
+                    if !stats.transcript.is_empty()
+                        && let Err(e) = write_transcript(
+                            memory_sessions_dir,
+                            &dest_key,
+                            &label,
+                            stats.last_model.as_deref(),
+                            &stats,
+                        )
+                    {
+                        warn!(key = %dest_key, error = %e, "failed to write session transcript");
+                    }
+
+                    let (id, created_at, version) = if let Some(prev) = existing_entry {
+                        (
+                            prev.id.clone(),
+                            prev.created_at,
+                            prev.version.saturating_add(1),
+                        )
+                    } else {
+                        (uuid_v4(), stats.first_timestamp.unwrap_or_else(now_ms), 0)
+                    };
+
+                    // Set agent_id for non-default agents
+                    let agent_id = if moltis_agent_id == "main" {
+                        None
+                    } else {
+                        Some(moltis_agent_id.clone())
+                    };
+
+                    entries.push(ImportedSessionEntry {
+                        id,
+                        key: dest_key,
+                        label: Some(label),
+                        model: stats.last_model,
+                        preview: stats.preview,
+                        created_at,
+                        updated_at: stats.last_timestamp.unwrap_or_else(now_ms),
+                        message_count: stats.message_count,
+                        last_seen_message_count: stats.message_count,
+                        source_line_count: source_lines,
+                        agent_id,
+                        archived: false,
+                        version,
                     });
-
-                if is_update {
-                    debug!(
-                        key = %dest_key,
-                        messages = stats.message_count,
-                        "updated session (incremental)"
-                    );
-                } else {
-                    debug!(
-                        key = %dest_key,
-                        messages = stats.message_count,
-                        "imported session"
-                    );
-                }
-
-                // Write/overwrite markdown transcript for memory search indexing
-                if !stats.transcript.is_empty()
-                    && let Err(e) = write_transcript(
-                        memory_sessions_dir,
-                        &dest_key,
-                        &label,
-                        stats.last_model.as_deref(),
-                        &stats,
-                    )
-                {
-                    warn!(key = %dest_key, error = %e, "failed to write session transcript");
-                }
-
-                // Preserve original id/created_at on update, bump version
-                let (id, created_at, version) = if let Some(prev) = existing_entry {
-                    (
-                        prev.id.clone(),
-                        prev.created_at,
-                        prev.version.saturating_add(1),
-                    )
-                } else {
-                    (uuid_v4(), stats.first_timestamp.unwrap_or_else(now_ms), 0)
-                };
-
-                entries.push(ImportedSessionEntry {
-                    id,
-                    key: dest_key,
-                    label: Some(label),
-                    model: stats.last_model,
-                    preview: stats.preview,
-                    created_at,
-                    updated_at: stats.last_timestamp.unwrap_or_else(now_ms),
-                    message_count: stats.message_count,
-                    last_seen_message_count: stats.message_count,
-                    source_line_count: source_lines,
-                    archived: false,
-                    version,
-                });
-                if is_update {
-                    updated += 1;
-                } else {
-                    imported += 1;
-                }
-            },
-            Err(e) => {
-                warn!(source = %path.display(), error = %e, "failed to convert session");
-                errors.push(format!("failed to convert {}: {e}", path.display()));
-            },
+                    if is_update {
+                        updated += 1;
+                    } else {
+                        imported += 1;
+                    }
+                },
+                Err(e) => {
+                    warn!(source = %path.display(), error = %e, "failed to convert session");
+                    errors.push(format!("failed to convert {}: {e}", path.display()));
+                },
+            }
         }
     }
 
@@ -661,6 +643,12 @@ mod tests {
         }
     }
 
+    fn default_mapping() -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        m.insert("main".to_string(), "main".to_string());
+        m
+    }
+
     fn setup_session(home: &Path, agent: &str, key: &str, lines: &[&str]) {
         let dir = home
             .join("agents")
@@ -694,7 +682,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
 
         assert_eq!(report.status, ImportStatus::Success);
         assert_eq!(report.items_imported, 1);
@@ -730,7 +718,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
 
         assert_eq!(report.status, ImportStatus::Success);
         assert_eq!(report.items_imported, 1);
@@ -750,7 +738,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
 
         assert_eq!(report.items_imported, 1);
 
@@ -776,11 +764,11 @@ mod tests {
 
         // First import
         let detection = make_detection(home);
-        let report1 = import_sessions(&detection, &dest, &mem);
+        let report1 = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report1.items_imported, 1);
 
         // Second import — should skip
-        let report2 = import_sessions(&detection, &dest, &mem);
+        let report2 = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report2.items_imported, 0);
         assert_eq!(report2.items_skipped, 1);
     }
@@ -802,34 +790,47 @@ mod tests {
             unsupported_channels: Vec::new(),
         };
 
-        let report = import_sessions(&detection, &tmp.path().join("dest"), &mem);
+        let report = import_sessions(&detection, &tmp.path().join("dest"), &mem, &HashMap::new());
         assert_eq!(report.status, ImportStatus::Skipped);
     }
 
     #[test]
-    fn multi_agent_warns() {
+    fn multi_agent_imports_all() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let dest = tmp.path().join("sessions");
         let mem = tmp.path().join("memory").join("sessions");
 
         setup_session(home, "main", "s1", &[
-            r#"{"type":"message","message":{"role":"user","content":"hi"}}"#,
+            r#"{"type":"message","message":{"role":"user","content":"hi from main"}}"#,
         ]);
-        // Create second agent dir (empty sessions)
-        std::fs::create_dir_all(
-            home.join("agents")
-                .join("secondary")
-                .join("agent")
-                .join("sessions"),
-        )
-        .unwrap();
+        setup_session(home, "secondary", "s2", &[
+            r#"{"type":"message","message":{"role":"user","content":"hi from secondary"}}"#,
+        ]);
 
         let mut detection = make_detection(home);
         detection.agent_ids = vec!["main".to_string(), "secondary".to_string()];
 
-        let report = import_sessions(&detection, &dest, &mem);
-        assert!(report.warnings.iter().any(|w| w.contains("secondary")));
+        let mut mapping = HashMap::new();
+        mapping.insert("main".to_string(), "main".to_string());
+        mapping.insert("secondary".to_string(), "research".to_string());
+
+        let report = import_sessions(&detection, &dest, &mem, &mapping);
+        assert_eq!(report.status, ImportStatus::Success);
+        assert_eq!(report.items_imported, 2);
+
+        // Verify both sessions were imported with correct keys
+        assert!(dest.join("oc_main_s1.jsonl").is_file());
+        assert!(dest.join("oc_research_s2.jsonl").is_file());
+
+        // Verify metadata has correct agent_id
+        let metadata: HashMap<String, ImportedSessionEntry> =
+            serde_json::from_str(&std::fs::read_to_string(dest.join("metadata.json")).unwrap())
+                .unwrap();
+        let main_entry = metadata.get("oc:main:s1").unwrap();
+        assert!(main_entry.agent_id.is_none()); // default agent has no agent_id
+        let research_entry = metadata.get("oc:research:s2").unwrap();
+        assert_eq!(research_entry.agent_id.as_deref(), Some("research"));
     }
 
     #[test]
@@ -844,7 +845,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        import_sessions(&detection, &dest, &mem);
+        import_sessions(&detection, &dest, &mem, &default_mapping());
 
         let metadata_path = dest.join("metadata.json");
         assert!(metadata_path.is_file());
@@ -868,7 +869,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
 
         assert_eq!(report.items_imported, 1);
         let content = std::fs::read_to_string(dest.join("oc_main_messy.jsonl")).unwrap();
@@ -890,7 +891,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
 
         assert_eq!(report.items_imported, 1);
 
@@ -919,7 +920,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        import_sessions(&detection, &dest, &mem);
+        import_sessions(&detection, &dest, &mem, &default_mapping());
 
         let metadata_path = dest.join("metadata.json");
         let content = std::fs::read_to_string(&metadata_path).unwrap();
@@ -941,7 +942,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report1 = import_sessions(&detection, &dest, &mem);
+        let report1 = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report1.items_imported, 1);
         assert_eq!(report1.items_updated, 0);
 
@@ -955,7 +956,7 @@ mod tests {
         ]);
 
         // Re-import should detect growth and update
-        let report2 = import_sessions(&detection, &dest, &mem);
+        let report2 = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report2.items_imported, 0);
         assert_eq!(report2.items_updated, 1);
         assert_eq!(report2.items_skipped, 0);
@@ -977,11 +978,11 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report1 = import_sessions(&detection, &dest, &mem);
+        let report1 = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report1.items_imported, 1);
 
         // Re-import without changes — should skip
-        let report2 = import_sessions(&detection, &dest, &mem);
+        let report2 = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report2.items_imported, 0);
         assert_eq!(report2.items_updated, 0);
         assert_eq!(report2.items_skipped, 1);
@@ -999,7 +1000,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        import_sessions(&detection, &dest, &mem);
+        import_sessions(&detection, &dest, &mem, &default_mapping());
 
         // Read original metadata
         let metadata_path = dest.join("metadata.json");
@@ -1017,7 +1018,7 @@ mod tests {
             r#"{"type":"message","message":{"role":"assistant","content":"second"}}"#,
         ]);
 
-        import_sessions(&detection, &dest, &mem);
+        import_sessions(&detection, &dest, &mem, &default_mapping());
 
         let content2 = std::fs::read_to_string(&metadata_path).unwrap();
         let metadata2: HashMap<String, ImportedSessionEntry> =
@@ -1042,7 +1043,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        import_sessions(&detection, &dest, &mem);
+        import_sessions(&detection, &dest, &mem, &default_mapping());
 
         let transcript_path = mem.join("oc-main-transcript.md");
         let content1 = std::fs::read_to_string(&transcript_path).unwrap();
@@ -1055,7 +1056,7 @@ mod tests {
             r#"{"type":"message","message":{"role":"assistant","content":"A systems programming language."}}"#,
         ]);
 
-        import_sessions(&detection, &dest, &mem);
+        import_sessions(&detection, &dest, &mem, &default_mapping());
 
         let content2 = std::fs::read_to_string(&transcript_path).unwrap();
         assert!(content2.contains("**User:** What is Rust?"));
@@ -1104,7 +1105,7 @@ mod tests {
 
         // Re-import should detect legacy (source_line_count == 0) and re-import
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report.items_updated, 1);
         assert_eq!(report.items_imported, 0);
 
@@ -1132,7 +1133,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report.status, ImportStatus::Success);
         assert_eq!(report.items_imported, 1);
 
@@ -1200,7 +1201,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report.status, ImportStatus::Success);
         assert_eq!(report.items_imported, 1);
 
@@ -1244,7 +1245,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report.status, ImportStatus::Success);
 
         let metadata: HashMap<String, ImportedSessionEntry> =
@@ -1281,7 +1282,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report.status, ImportStatus::Success);
 
         let metadata: HashMap<String, ImportedSessionEntry> =
@@ -1305,7 +1306,7 @@ mod tests {
         ]);
 
         let detection = make_detection(home);
-        let report = import_sessions(&detection, &dest, &mem);
+        let report = import_sessions(&detection, &dest, &mem, &default_mapping());
         assert_eq!(report.status, ImportStatus::Success);
 
         let metadata: HashMap<String, ImportedSessionEntry> =

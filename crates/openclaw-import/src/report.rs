@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{channels::ImportedChannels, identity::ImportedIdentity};
+use crate::{agents::ImportedAgents, channels::ImportedChannels, identity::ImportedIdentity};
 
 /// A single import category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -113,6 +113,9 @@ pub struct ImportReport {
     /// Channel data extracted during import (if selected).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported_channels: Option<ImportedChannels>,
+    /// Agent data extracted during import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_agents: Option<ImportedAgents>,
 }
 
 impl ImportReport {
@@ -123,6 +126,7 @@ impl ImportReport {
             todos: Vec::new(),
             imported_identity: None,
             imported_channels: None,
+            imported_agents: None,
         }
     }
 

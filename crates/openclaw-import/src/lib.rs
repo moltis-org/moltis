@@ -8,6 +8,7 @@
 //! - Telegram channel configuration
 //! - Chat sessions (JSONL format)
 
+pub mod agents;
 pub mod channels;
 pub mod detect;
 pub mod error;
@@ -26,7 +27,7 @@ use std::path::Path;
 use {
     report::{CategoryReport, ImportCategory, ImportReport, ImportStatus},
     serde::{Deserialize, Serialize},
-    tracing::{debug, warn},
+    tracing::{debug, info, warn},
 };
 
 pub use detect::{OpenClawDetection, detect};
@@ -60,6 +61,12 @@ impl ImportSelection {
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportScan {
     pub identity_available: bool,
+    /// Previewed agent name (non-destructive extraction, not yet imported).
+    pub identity_agent_name: Option<String>,
+    /// Previewed theme (non-destructive extraction, not yet imported).
+    pub identity_theme: Option<String>,
+    /// Previewed user name (non-destructive extraction, not yet imported).
+    pub identity_user_name: Option<String>,
     pub providers_available: bool,
     pub skills_count: usize,
     pub memory_available: bool,
@@ -69,10 +76,18 @@ pub struct ImportScan {
     pub sessions_count: usize,
     pub unsupported_channels: Vec<String>,
     pub agent_ids: Vec<String>,
+    pub agents: Vec<agents::ImportedAgent>,
 }
 
 /// Scan an OpenClaw installation without importing anything.
 pub fn scan(detection: &OpenClawDetection) -> ImportScan {
+    // Extract identity preview (non-destructive, just reads files)
+    let (_, previewed_identity) = identity::import_identity(detection);
+    let identity_available = previewed_identity.agent_name.is_some()
+        || previewed_identity.theme.is_some()
+        || previewed_identity.user_name.is_some()
+        || previewed_identity.user_timezone.is_some();
+
     let skills = skills::discover_skills(detection);
     let memory_files_count = count_memory_files(&detection.workspace_dir);
 
@@ -83,8 +98,13 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
     let (providers_report, _) = providers::import_providers(detection);
     let providers_available = providers_report.items_imported > 0;
 
+    let imported_agents = agents::import_agents(detection);
+
     ImportScan {
-        identity_available: detection.has_config,
+        identity_available,
+        identity_agent_name: previewed_identity.agent_name,
+        identity_theme: previewed_identity.theme,
+        identity_user_name: previewed_identity.user_name,
         providers_available,
         skills_count: skills.len(),
         memory_available: detection.has_memory,
@@ -94,6 +114,7 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
         sessions_count: detection.session_count,
         unsupported_channels: detection.unsupported_channels.clone(),
         agent_ids: detection.agent_ids.clone(),
+        agents: imported_agents.agents,
     }
 }
 
@@ -108,6 +129,15 @@ pub fn import(
     data_dir: &Path,
 ) -> ImportReport {
     let mut report = ImportReport::new();
+
+    // Extract agents (always, needed for session mapping and per-agent memory)
+    let imported_agents = agents::import_agents(detection);
+    let agent_id_mapping: std::collections::HashMap<String, String> = imported_agents
+        .agents
+        .iter()
+        .map(|a| (a.openclaw_id.clone(), a.moltis_id.clone()))
+        .collect();
+    report.imported_agents = Some(imported_agents.clone());
 
     // Identity
     if selection.identity {
@@ -163,9 +193,27 @@ pub fn import(
         report.add_category(skills::import_skills(detection, &skills_dir));
     }
 
-    // Memory
+    // Memory (default agent)
     if selection.memory {
         report.add_category(memory::import_memory(detection, data_dir));
+
+        // Per-agent memory for non-default agents
+        for agent in imported_agents.agents.iter().filter(|a| !a.is_default) {
+            if let Some(ref source_ws) = agent.source_workspace
+                && (source_ws.join("MEMORY.md").is_file() || source_ws.join("memory").is_dir())
+            {
+                let agent_data_dir = data_dir.join("agents").join(&agent.moltis_id);
+                let agent_report = memory::import_agent_memory(source_ws, &agent_data_dir);
+                if agent_report.items_imported > 0 {
+                    debug!(
+                        agent = %agent.moltis_id,
+                        imported = agent_report.items_imported,
+                        "imported per-agent memory"
+                    );
+                }
+                report.add_category(agent_report);
+            }
+        }
     }
 
     // Channels
@@ -180,7 +228,7 @@ pub fn import(
         report.add_category(cat_report);
     }
 
-    // Sessions
+    // Sessions (all agents)
     if selection.sessions {
         let sessions_dir = data_dir.join("sessions");
         let memory_sessions_dir = data_dir.join("memory").join("sessions");
@@ -188,6 +236,7 @@ pub fn import(
             detection,
             &sessions_dir,
             &memory_sessions_dir,
+            &agent_id_mapping,
         ));
     }
 
@@ -208,7 +257,19 @@ pub fn import(
 pub fn import_sessions_only(detection: &OpenClawDetection, data_dir: &Path) -> CategoryReport {
     let sessions_dir = data_dir.join("sessions");
     let memory_sessions_dir = data_dir.join("memory").join("sessions");
-    sessions::import_sessions(detection, &sessions_dir, &memory_sessions_dir)
+    // Build agent mapping for session key namespacing
+    let imported_agents = agents::import_agents(detection);
+    let agent_id_mapping: std::collections::HashMap<String, String> = imported_agents
+        .agents
+        .iter()
+        .map(|a| (a.openclaw_id.clone(), a.moltis_id.clone()))
+        .collect();
+    sessions::import_sessions(
+        detection,
+        &sessions_dir,
+        &memory_sessions_dir,
+        &agent_id_mapping,
+    )
 }
 
 /// Persistent import state for idempotency tracking.
@@ -253,16 +314,35 @@ fn persist_identity(imported: &identity::ImportedIdentity, config_dir: &Path) ->
     let config_path = config_dir.join("moltis.toml");
     let mut config = load_or_default_config(&config_path);
 
+    info!(
+        config_path = %config_path.display(),
+        existing_name = ?config.identity.name,
+        existing_creature = ?config.identity.creature,
+        existing_vibe = ?config.identity.vibe,
+        imported_name = ?imported.agent_name,
+        imported_creature = ?imported.creature,
+        imported_vibe = ?imported.vibe,
+        imported_user_name = ?imported.user_name,
+        "openclaw persist_identity: loaded existing config"
+    );
+
     if let Some(ref name) = imported.agent_name {
-        debug!(name, "persisting agent name to moltis.toml");
+        info!(name, "openclaw persist_identity: writing agent name");
         config.identity.name = Some(name.clone());
     }
 
-    if config.identity.theme.is_none()
-        && let Some(ref theme) = imported.theme
+    if config.identity.creature.is_none()
+        && let Some(ref creature) = imported.creature
     {
-        debug!(theme, "persisting agent theme to moltis.toml");
-        config.identity.theme = Some(theme.clone());
+        info!(creature, "openclaw persist_identity: writing creature");
+        config.identity.creature = Some(creature.clone());
+    }
+
+    if config.identity.vibe.is_none()
+        && let Some(ref vibe) = imported.vibe
+    {
+        info!(vibe, "openclaw persist_identity: writing vibe");
+        config.identity.vibe = Some(vibe.clone());
     }
 
     if let Some(ref tz_str) = imported.user_timezone {
@@ -337,13 +417,6 @@ fn save_config_to_path(path: &Path, config: &moltis_config::MoltisConfig) -> err
 }
 
 fn add_todos(report: &mut ImportReport, detection: &OpenClawDetection) {
-    if detection.agent_ids.len() > 1 {
-        report.add_todo(
-            "Multi-agent",
-            "OpenClaw supports multiple agents; Moltis currently has a single agent identity.",
-        );
-    }
-
     report.add_todo(
         "Sub-agents",
         "OpenClaw's agent delegation/sub-agent spawning is not yet supported in Moltis.",
@@ -677,7 +750,8 @@ mod tests {
         let config: moltis_config::MoltisConfig = toml::from_str(&content).unwrap();
 
         assert_eq!(config.identity.name.as_deref(), Some("Claude"));
-        assert_eq!(config.identity.theme.as_deref(), Some("wise owl"));
+        assert_eq!(config.identity.creature.as_deref(), Some("owl"));
+        assert_eq!(config.identity.vibe.as_deref(), Some("wise"));
         assert_eq!(config.user.name.as_deref(), Some("Penso"));
         assert_eq!(
             config.user.timezone.as_ref().map(|t| t.name()),
@@ -748,10 +822,11 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::create_dir_all(&data_dir).unwrap();
 
-        // Pre-existing config with a theme set
+        // Pre-existing config with creature/vibe already set
         let existing = moltis_config::MoltisConfig {
             identity: moltis_config::AgentIdentity {
-                theme: Some("chill".to_string()),
+                creature: Some("cat".to_string()),
+                vibe: Some("chill".to_string()),
                 ..Default::default()
             },
             ..Default::default()
@@ -771,8 +846,9 @@ mod tests {
 
         // Imported name should be set
         assert_eq!(config.identity.name.as_deref(), Some("Claude"));
-        // Pre-existing theme should be preserved
-        assert_eq!(config.identity.theme.as_deref(), Some("chill"));
+        // Pre-existing creature/vibe should be preserved (not overwritten)
+        assert_eq!(config.identity.creature.as_deref(), Some("cat"));
+        assert_eq!(config.identity.vibe.as_deref(), Some("chill"));
     }
 
     #[test]

@@ -18,13 +18,21 @@ use crate::{
 ///
 /// Does NOT import the SQLite vector database (not portable across embedding models).
 pub fn import_memory(detection: &OpenClawDetection, dest_data_dir: &Path) -> CategoryReport {
+    import_agent_memory(&detection.workspace_dir, dest_data_dir)
+}
+
+/// Import memory for a specific agent from a source workspace to a destination directory.
+///
+/// This is the core memory import logic, usable for both the default agent
+/// (via `import_memory`) and non-default agents with per-agent workspaces.
+pub fn import_agent_memory(source_workspace: &Path, dest_data_dir: &Path) -> CategoryReport {
     let mut imported = 0;
     let mut skipped = 0;
     let warnings = Vec::new();
     let mut errors = Vec::new();
 
     // 1. Import MEMORY.md
-    let src_memory = detection.workspace_dir.join("MEMORY.md");
+    let src_memory = source_workspace.join("MEMORY.md");
     let dest_memory = dest_data_dir.join("MEMORY.md");
 
     if src_memory.is_file() {
@@ -49,7 +57,7 @@ pub fn import_memory(detection: &OpenClawDetection, dest_data_dir: &Path) -> Cat
     }
 
     // 2. Import all markdown files from memory/ directory
-    let src_memory_dir = detection.workspace_dir.join("memory");
+    let src_memory_dir = source_workspace.join("memory");
     let dest_memory_dir = dest_data_dir.join("memory");
 
     if src_memory_dir.is_dir() {

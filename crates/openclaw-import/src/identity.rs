@@ -18,8 +18,12 @@ use crate::{
 pub struct ImportedIdentity {
     /// Agent display name (from `ui.assistant.name` or first agent's name).
     pub agent_name: Option<String>,
-    /// Agent theme (from `ui.assistant.theme` or creature/vibe fields).
+    /// Agent theme (composed from creature/vibe, or explicit `theme` field).
     pub theme: Option<String>,
+    /// Creature identity (e.g. "owl", "fox").
+    pub creature: Option<String>,
+    /// Vibe/personality (e.g. "wise", "curious").
+    pub vibe: Option<String>,
     /// User display name (from `agents.defaults.userName`).
     pub user_name: Option<String>,
     /// User timezone (from `agents.defaults.userTimezone`).
@@ -55,6 +59,12 @@ pub fn import_identity(detection: &OpenClawDetection) -> (CategoryReport, Import
         items += 1;
     }
 
+    // Extract creature/vibe individually and compose theme
+    let (creature, vibe) = infer_creature_vibe(&config, detection);
+    if creature.is_some() || vibe.is_some() {
+        identity.creature = creature;
+        identity.vibe = vibe;
+    }
     if let Some(theme) = infer_theme(&config, detection) {
         debug!(theme = %theme, "importing agent theme");
         identity.theme = Some(theme);
@@ -97,7 +107,7 @@ pub fn import_identity(detection: &OpenClawDetection) -> (CategoryReport, Import
     (report, identity)
 }
 
-fn load_config(home_dir: &Path) -> OpenClawConfig {
+pub(crate) fn load_config(home_dir: &Path) -> OpenClawConfig {
     for candidate in ["openclaw.json", "clawdbot.json"] {
         let path = home_dir.join(candidate);
         if !path.is_file() {
@@ -143,6 +153,33 @@ fn infer_agent_name_from_workspace(
         }
     }
     fallback
+}
+
+/// Extract creature and vibe individually from config or workspace IDENTITY.md.
+fn infer_creature_vibe(
+    config: &OpenClawConfig,
+    detection: &OpenClawDetection,
+) -> (Option<String>, Option<String>) {
+    // Try config first
+    if let Some(assistant) = config.ui.assistant.as_ref() {
+        let creature = normalize_identity_value(assistant.creature.as_deref());
+        let vibe = normalize_identity_value(assistant.vibe.as_deref());
+        if creature.is_some() || vibe.is_some() {
+            return (creature, vibe);
+        }
+    }
+    // Fall back to workspace IDENTITY.md
+    for workspace in candidate_workspace_dirs(config, detection) {
+        let identity_path = workspace.join("IDENTITY.md");
+        let Ok(content) = std::fs::read_to_string(&identity_path) else {
+            continue;
+        };
+        let parsed = parse_workspace_identity(&content);
+        if parsed.creature.is_some() || parsed.vibe.is_some() {
+            return (parsed.creature, parsed.vibe);
+        }
+    }
+    (None, None)
 }
 
 fn infer_theme(config: &OpenClawConfig, detection: &OpenClawDetection) -> Option<String> {
@@ -206,7 +243,7 @@ fn infer_theme_from_workspace_identity(
     None
 }
 
-fn compose_theme(creature: Option<String>, vibe: Option<String>) -> Option<String> {
+pub(crate) fn compose_theme(creature: Option<String>, vibe: Option<String>) -> Option<String> {
     match (vibe, creature) {
         (Some(vibe), Some(creature)) if vibe.eq_ignore_ascii_case(&creature) => Some(vibe),
         (Some(vibe), Some(creature)) => Some(format!("{vibe} {creature}")),
@@ -252,10 +289,10 @@ fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
 }
 
 #[derive(Default)]
-struct WorkspaceIdentityFrontmatter {
-    theme: Option<String>,
-    creature: Option<String>,
-    vibe: Option<String>,
+pub(crate) struct WorkspaceIdentityFrontmatter {
+    pub(crate) theme: Option<String>,
+    pub(crate) creature: Option<String>,
+    pub(crate) vibe: Option<String>,
 }
 
 fn parse_identity_frontmatter(frontmatter: &str) -> WorkspaceIdentityFrontmatter {
@@ -296,7 +333,7 @@ fn unquote_yaml_scalar(value: &str) -> &str {
     }
 }
 
-fn parse_workspace_identity(content: &str) -> WorkspaceIdentityFrontmatter {
+pub(crate) fn parse_workspace_identity(content: &str) -> WorkspaceIdentityFrontmatter {
     let mut identity = WorkspaceIdentityFrontmatter::default();
 
     if let Some(frontmatter) = extract_yaml_frontmatter(content) {

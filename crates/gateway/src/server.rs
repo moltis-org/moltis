@@ -1627,10 +1627,19 @@ pub async fn start_gateway(
         db_pool.clone(),
     ));
 
+    // Wire agent persona store for multi-agent support (created early so onboarding can use it).
+    let agent_persona_store = Arc::new(crate::agent_persona::AgentPersonaStore::new(
+        db_pool.clone(),
+    ));
+    if let Err(e) = agent_persona_store.ensure_main_workspace_seeded() {
+        tracing::warn!(error = %e, "failed to seed main agent workspace");
+    }
+
     services =
         services.with_onboarding(Arc::new(crate::onboarding::GatewayOnboardingService::new(
             live_onboarding,
             Arc::clone(&session_metadata),
+            Arc::clone(&agent_persona_store),
         )));
 
     // Session service wired below after sandbox_router is created.
@@ -2256,13 +2265,6 @@ pub async fn start_gateway(
     services = services.with_session_store(Arc::clone(&session_store));
     services = services.with_session_share_store(Arc::clone(&session_share_store));
 
-    // Wire agent persona store for multi-agent support.
-    let agent_persona_store = Arc::new(crate::agent_persona::AgentPersonaStore::new(
-        db_pool.clone(),
-    ));
-    if let Err(e) = agent_persona_store.ensure_main_workspace_seeded() {
-        tracing::warn!(error = %e, "failed to seed main agent workspace");
-    }
     services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────

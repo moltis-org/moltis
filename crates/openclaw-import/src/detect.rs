@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tracing::debug;
+use tracing::{debug, info};
 
 /// Result of scanning for an OpenClaw installation.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -34,22 +34,30 @@ pub struct OpenClawDetection {
 /// Checks `OPENCLAW_HOME` env var first, then `~/.openclaw/`.
 /// Returns `None` if the directory does not exist.
 pub fn detect() -> Option<OpenClawDetection> {
-    detect_at(resolve_home_dir()?)
+    let home = resolve_home_dir();
+    match &home {
+        Some(path) => info!(path = %path.display(), "openclaw detect: resolved home directory"),
+        None => info!(
+            "openclaw detect: could not resolve home directory (dirs_next::home_dir returned None)"
+        ),
+    }
+    detect_at(home?)
 }
 
 /// Detect OpenClaw at a specific directory (for testing).
 pub fn detect_at(home_dir: PathBuf) -> Option<OpenClawDetection> {
     if !home_dir.is_dir() {
-        debug!(?home_dir, "OpenClaw home directory not found");
+        info!(path = %home_dir.display(), "openclaw detect: home directory does not exist or is not a directory");
         return None;
     }
 
-    debug!(?home_dir, "OpenClaw installation detected");
+    info!(path = %home_dir.display(), "openclaw detect: home directory found");
 
     let has_config = home_dir.join("openclaw.json").is_file();
     let has_mcp_servers = home_dir.join("mcp-servers.json").is_file();
 
     let workspace_dir = resolve_workspace_dir(&home_dir);
+    let workspace_exists = workspace_dir.is_dir();
     let has_memory =
         workspace_dir.join("MEMORY.md").is_file() || workspace_dir.join("memory").is_dir();
 
@@ -62,6 +70,20 @@ pub fn detect_at(home_dir: PathBuf) -> Option<OpenClawDetection> {
     } else {
         Vec::new()
     };
+
+    info!(
+        path = %home_dir.display(),
+        workspace = %workspace_dir.display(),
+        workspace_exists,
+        has_config,
+        has_credentials,
+        has_mcp_servers,
+        has_memory,
+        has_skills,
+        agent_count = agent_ids.len(),
+        session_count,
+        "openclaw detect: scan complete"
+    );
 
     Some(OpenClawDetection {
         home_dir,
@@ -82,11 +104,20 @@ fn resolve_home_dir() -> Option<PathBuf> {
     if let Ok(home) = std::env::var("OPENCLAW_HOME") {
         let path = PathBuf::from(home);
         if path.is_dir() {
+            debug!(path = %path.display(), "openclaw detect: using OPENCLAW_HOME env var");
             return Some(path);
         }
+        info!(path = %path.display(), "openclaw detect: OPENCLAW_HOME set but directory does not exist");
     }
 
-    dirs_next::home_dir().map(|home| home.join(".openclaw"))
+    let home = dirs_next::home_dir();
+    match &home {
+        Some(h) => debug!(home = %h.display(), "openclaw detect: resolved user home directory"),
+        None => info!(
+            "openclaw detect: dirs_next::home_dir() returned None — cannot determine home directory"
+        ),
+    }
+    home.map(|h| h.join(".openclaw"))
 }
 
 /// Resolve the workspace directory, respecting `OPENCLAW_PROFILE`.
