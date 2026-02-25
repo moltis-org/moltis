@@ -309,6 +309,7 @@ async fn handle_message(
         username: Some(username),
         message_kind: Some(message_kind),
         model: state.config.model.clone(),
+        audio_filename: None,
     };
 
     // Dispatch based on message kind.

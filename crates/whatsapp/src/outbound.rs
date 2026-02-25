@@ -1,8 +1,11 @@
-use {anyhow::Result, async_trait::async_trait, tracing::debug};
+use {async_trait::async_trait, tracing::debug};
 
 use {wacore_binary::jid::Jid, waproto::whatsapp as wa, whatsapp_rust::ChatStateType};
 
-use {moltis_channels::plugin::ChannelOutbound, moltis_common::types::ReplyPayload};
+use {
+    moltis_channels::{Result as ChannelResult, plugin::ChannelOutbound},
+    moltis_common::types::ReplyPayload,
+};
 
 use crate::state::{AccountStateMap, BOT_WATERMARK};
 
@@ -15,12 +18,12 @@ impl WhatsAppOutbound {
     fn get_client(
         &self,
         account_id: &str,
-    ) -> Result<std::sync::Arc<whatsapp_rust::client::Client>> {
+    ) -> ChannelResult<std::sync::Arc<whatsapp_rust::client::Client>> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .map(|s| std::sync::Arc::clone(&s.client))
-            .ok_or_else(|| anyhow::anyhow!("unknown WhatsApp account: {account_id}"))
+            .ok_or_else(|| moltis_channels::Error::unknown_account(account_id))
     }
 
     /// Record a sent message ID for self-chat loop detection.
@@ -40,11 +43,11 @@ impl ChannelOutbound for WhatsAppOutbound {
         to: &str,
         text: &str,
         _reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let client = self.get_client(account_id)?;
         let jid: Jid = to
             .parse()
-            .map_err(|e| anyhow::anyhow!("invalid JID: {e:?}"))?;
+            .map_err(|e| moltis_channels::Error::invalid_input(format!("invalid JID: {e:?}")))?;
 
         debug!(
             account_id,
@@ -59,7 +62,10 @@ impl ChannelOutbound for WhatsAppOutbound {
             conversation: Some(watermarked),
             ..Default::default()
         };
-        let msg_id = client.send_message(jid, msg).await?;
+        let msg_id = client
+            .send_message(jid, msg)
+            .await
+            .map_err(|e| moltis_channels::Error::external("whatsapp send_text", e))?;
         self.record_sent_id(account_id, &msg_id);
         Ok(())
     }
@@ -70,7 +76,7 @@ impl ChannelOutbound for WhatsAppOutbound {
         to: &str,
         payload: &ReplyPayload,
         _reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         // For now, send text only. Media upload support to be added.
         if !payload.text.is_empty() {
             self.send_text(account_id, to, &payload.text, None).await?;
@@ -78,16 +84,16 @@ impl ChannelOutbound for WhatsAppOutbound {
         Ok(())
     }
 
-    async fn send_typing(&self, account_id: &str, to: &str) -> Result<()> {
+    async fn send_typing(&self, account_id: &str, to: &str) -> ChannelResult<()> {
         let client = self.get_client(account_id)?;
         let jid: Jid = to
             .parse()
-            .map_err(|e| anyhow::anyhow!("invalid JID: {e:?}"))?;
+            .map_err(|e| moltis_channels::Error::invalid_input(format!("invalid JID: {e:?}")))?;
         client
             .chatstate()
             .send(&jid, ChatStateType::Composing)
             .await
-            .map_err(|e| anyhow::anyhow!("chatstate error: {e}"))?;
+            .map_err(|e| moltis_channels::Error::external("whatsapp chatstate", e))?;
         Ok(())
     }
 }

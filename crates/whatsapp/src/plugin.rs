@@ -6,13 +6,12 @@ use std::{
 };
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     tracing::{info, warn},
 };
 
 use moltis_channels::{
-    ChannelEventSink,
+    ChannelEventSink, Result as ChannelResult,
     message_log::MessageLog,
     plugin::{ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus},
 };
@@ -95,7 +94,7 @@ impl WhatsAppPlugin {
         &self,
         account_id: &str,
         config: serde_json::Value,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), anyhow::Error> {
         let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
@@ -129,7 +128,11 @@ impl ChannelPlugin for WhatsAppPlugin {
         "WhatsApp"
     }
 
-    async fn start_account(&mut self, account_id: &str, config: serde_json::Value) -> Result<()> {
+    async fn start_account(
+        &mut self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
         let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
 
         info!(account_id, "starting WhatsApp account");
@@ -142,12 +145,13 @@ impl ChannelPlugin for WhatsAppPlugin {
             self.message_log.clone(),
             self.event_sink.clone(),
         )
-        .await?;
+        .await
+        .map_err(|e| moltis_channels::Error::external("whatsapp start", e))?;
 
         Ok(())
     }
 
-    async fn stop_account(&mut self, account_id: &str) -> Result<()> {
+    async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
         let cancel = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts.get(account_id).map(|s| s.cancel.clone())
@@ -176,7 +180,7 @@ impl ChannelPlugin for WhatsAppPlugin {
 
 #[async_trait]
 impl ChannelStatus for WhatsAppPlugin {
-    async fn probe(&self, account_id: &str) -> Result<ChannelHealthSnapshot> {
+    async fn probe(&self, account_id: &str) -> ChannelResult<ChannelHealthSnapshot> {
         // Return cached result if fresh enough.
         if let Ok(cache) = self.probe_cache.read()
             && let Some((snap, ts)) = cache.get(account_id)
