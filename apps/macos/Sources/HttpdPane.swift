@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct HttpdPane: View {
@@ -49,9 +50,17 @@ struct HttpdPane: View {
 
                 if let addr = serverAddr {
                     LabeledContent("Listening on") {
-                        Text(addr)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
+                        HStack(spacing: 8) {
+                            Text(addr)
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                            Button("Open in Browser") {
+                                if let url = URL(string: "http://\(addr)") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .controlSize(.small)
+                        }
                     }
                 }
 

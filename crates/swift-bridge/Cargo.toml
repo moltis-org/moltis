@@ -21,9 +21,11 @@ metrics = { workspace = true, optional = true }
 moltis-agents = { workspace = true }
 moltis-config = { workspace = true }
 moltis-gateway = { workspace = true, features = ["web-ui", "metrics", "file-watcher", "voice"] }
+moltis-projects = { workspace = true }
 moltis-provider-setup = { workspace = true }
 moltis-providers = { workspace = true }
 moltis-sessions = { workspace = true }
+sqlx = { workspace = true }
 moltis-web = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

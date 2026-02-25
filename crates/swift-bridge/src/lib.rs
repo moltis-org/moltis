@@ -22,7 +22,7 @@ use {
     moltis_providers::ProviderRegistry,
     moltis_sessions::{
         message::PersistedMessage,
-        metadata::{SessionEntry, SessionMetadata},
+        metadata::{SessionEntry, SqliteSessionMetadata},
         store::SessionStore,
     },
     serde::{Deserialize, Serialize},
@@ -35,7 +35,7 @@ struct BridgeState {
     runtime: tokio::runtime::Runtime,
     registry: RwLock<ProviderRegistry>,
     session_store: SessionStore,
-    session_metadata: RwLock<SessionMetadata>,
+    session_metadata: SqliteSessionMetadata,
 }
 
 impl BridgeState {
@@ -49,7 +49,7 @@ impl BridgeState {
 
         let registry = build_registry();
 
-        // Initialize persistent session storage.
+        // Initialize persistent session storage (JSONL message files).
         let data_dir = moltis_config::data_dir();
         let sessions_dir = data_dir.join("sessions");
         if let Err(e) = std::fs::create_dir_all(&sessions_dir) {
@@ -57,22 +57,31 @@ impl BridgeState {
         }
         let session_store = SessionStore::new(sessions_dir);
 
-        let metadata_path = data_dir.join("session_metadata.json");
-        let session_metadata = match SessionMetadata::load(metadata_path) {
-            Ok(m) => m,
-            Err(e) => {
-                emit_log("WARN", "bridge", &format!("Failed to load session metadata: {e}"));
-                SessionMetadata::load(data_dir.join("session_metadata.json"))
-                    .unwrap_or_else(|_| panic!("cannot create session metadata"))
-            },
-        };
+        // Open the shared SQLite database (same moltis.db used by the gateway).
+        let db_path = data_dir.join("moltis.db");
+        let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
+        let db_pool = runtime.block_on(async {
+            let pool = sqlx::SqlitePool::connect(&db_url)
+                .await
+                .unwrap_or_else(|e| panic!("failed to open moltis.db: {e}"));
+            // Run migrations so the sessions table exists even if the gateway
+            // hasn't been started yet. Order: projects first (FK dependency).
+            if let Err(e) = moltis_projects::run_migrations(&pool).await {
+                emit_log("WARN", "bridge", &format!("projects migration: {e}"));
+            }
+            if let Err(e) = moltis_sessions::run_migrations(&pool).await {
+                emit_log("WARN", "bridge", &format!("sessions migration: {e}"));
+            }
+            pool
+        });
+        let session_metadata = SqliteSessionMetadata::new(db_pool);
 
         emit_log("INFO", "bridge", "Bridge initialized successfully");
         Self {
             runtime,
             registry: RwLock::new(registry),
             session_store,
-            session_metadata: RwLock::new(session_metadata),
+            session_metadata,
         }
     }
 }
@@ -1108,8 +1117,8 @@ pub extern "C" fn moltis_list_sessions() -> *mut c_char {
     trace_call("moltis_list_sessions");
 
     with_ffi_boundary(|| {
-        let metadata = BRIDGE.session_metadata.read().unwrap_or_else(|e| e.into_inner());
-        let mut entries: Vec<BridgeSessionEntry> = metadata.list().iter().map(BridgeSessionEntry::from).collect();
+        let all = BRIDGE.runtime.block_on(BRIDGE.session_metadata.list());
+        let mut entries: Vec<BridgeSessionEntry> = all.iter().map(BridgeSessionEntry::from).collect();
         entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         emit_log("DEBUG", "bridge.sessions", &format!("Listed {} sessions", entries.len()));
         encode_json(&entries)
@@ -1135,12 +1144,10 @@ pub extern "C" fn moltis_switch_session(request_json: *const c_char) -> *mut c_c
         };
 
         // Ensure metadata entry exists.
-        {
-            let mut metadata = BRIDGE.session_metadata.write().unwrap_or_else(|e| e.into_inner());
-            metadata.upsert(&request.key, None);
-            if let Err(e) = metadata.save() {
-                emit_log("WARN", "bridge.sessions", &format!("Failed to save metadata: {e}"));
-            }
+        if let Err(e) = BRIDGE.runtime.block_on(
+            BRIDGE.session_metadata.upsert(&request.key, None)
+        ) {
+            emit_log("WARN", "bridge.sessions", &format!("Failed to upsert metadata: {e}"));
         }
 
         // Read message history from JSONL.
@@ -1152,8 +1159,8 @@ pub extern "C" fn moltis_switch_session(request_json: *const c_char) -> *mut c_c
             },
         };
 
-        let metadata = BRIDGE.session_metadata.read().unwrap_or_else(|e| e.into_inner());
-        let entry = metadata.get(&request.key).map(BridgeSessionEntry::from);
+        let entry = BRIDGE.runtime.block_on(BRIDGE.session_metadata.get(&request.key))
+            .map(|e| BridgeSessionEntry::from(&e));
 
         match entry {
             Some(entry) => {
@@ -1189,19 +1196,14 @@ pub extern "C" fn moltis_create_session(request_json: *const c_char) -> *mut c_c
         let key = format!("session:{}", uuid::Uuid::new_v4());
         let label = request.label.unwrap_or_else(|| "New Session".to_owned());
 
-        let mut metadata = BRIDGE.session_metadata.write().unwrap_or_else(|e| e.into_inner());
-        metadata.upsert(&key, Some(label));
-        if let Err(e) = metadata.save() {
-            emit_log("WARN", "bridge.sessions", &format!("Failed to save metadata: {e}"));
-        }
-
-        let entry = metadata.get(&key).map(BridgeSessionEntry::from);
-        match entry {
-            Some(entry) => {
+        match BRIDGE.runtime.block_on(
+            BRIDGE.session_metadata.upsert(&key, Some(label))
+        ) {
+            Ok(entry) => {
                 emit_log("INFO", "bridge.sessions", &format!("Created session '{}'", key));
-                encode_json(&entry)
+                encode_json(&BridgeSessionEntry::from(&entry))
             },
-            None => encode_error("create_failed", "Failed to create session"),
+            Err(e) => encode_error("create_failed", &format!("Failed to create session: {e}")),
         }
     })
 }
@@ -1263,15 +1265,13 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
     }
 
     // Update metadata.
-    {
-        let mut metadata = BRIDGE.session_metadata.write().unwrap_or_else(|e| e.into_inner());
-        metadata.upsert(&session_key, None);
-        let msg_count = BRIDGE.runtime.block_on(BRIDGE.session_store.read(&session_key))
+    BRIDGE.runtime.block_on(async {
+        let _ = BRIDGE.session_metadata.upsert(&session_key, None).await;
+        let msg_count = BRIDGE.session_store.read(&session_key).await
             .map(|m| m.len() as u32)
             .unwrap_or(0);
-        metadata.touch(&session_key, msg_count);
-        let _ = metadata.save();
-    }
+        BRIDGE.session_metadata.touch(&session_key, msg_count).await;
+    });
 
     let model_id = provider.id().to_string();
     let provider_name = provider.name().to_string();
@@ -1336,16 +1336,12 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
             emit_log("WARN", "bridge.session_chat", &format!("Failed to persist assistant message: {e}"));
         }
 
-        // Update metadata — read message count before acquiring lock.
+        // Update metadata in SQLite.
         let msg_count = BRIDGE.session_store.read(&session_key).await
             .map(|m| m.len() as u32)
             .unwrap_or(0);
-        {
-            let mut metadata = BRIDGE.session_metadata.write().unwrap_or_else(|e| e.into_inner());
-            metadata.touch(&session_key, msg_count);
-            metadata.set_model(&session_key, Some(model_id.clone()));
-            let _ = metadata.save();
-        }
+        BRIDGE.session_metadata.touch(&session_key, msg_count).await;
+        BRIDGE.session_metadata.set_model(&session_key, Some(model_id.clone())).await;
 
         ctx.send(&BridgeStreamEvent::Done {
             input_tokens: usage.input_tokens,

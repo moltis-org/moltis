@@ -23,8 +23,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `moltis_create_session`, `moltis_session_chat_stream`
 - Session sidebar now loads from disk and shows message counts
 - Chat messages are persisted to `~/.moltis/data/sessions/<key>.jsonl`
+- "Open in Browser" button in HTTP Server pane when the gateway is running
 
 ### Changed
+
+- Session metadata now stored in SQLite (`moltis.db`) instead of JSON file,
+  so the macOS app and web UI share the same session list
 
 - HTTP Server description updated to reflect full gateway capability
 - Server start/stop controls disabled while startup is in progress
