@@ -849,12 +849,40 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.resolve",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                let result = ctx
+                    .state
                     .services
                     .session
                     .resolve(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)
+                    .map_err(ErrorShape::from)?;
+
+                // Newly created sessions have an empty history array.
+                let is_new = result
+                    .get("history")
+                    .and_then(|h| h.as_array())
+                    .is_some_and(|a| a.is_empty());
+                if is_new
+                    && let Some(key) = result
+                        .get("entry")
+                        .and_then(|e| e.get("key"))
+                        .and_then(|k| k.as_str())
+                {
+                    broadcast(
+                        &ctx.state,
+                        "session",
+                        serde_json::json!({
+                            "kind": "created",
+                            "sessionKey": key,
+                        }),
+                        BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                }
+                Ok(result)
             })
         }),
     );
@@ -945,12 +973,35 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.delete",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                let key = ctx
+                    .params
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let result = ctx
+                    .state
                     .services
                     .session
                     .delete(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)
+                    .map_err(ErrorShape::from)?;
+                if !key.is_empty() {
+                    broadcast(
+                        &ctx.state,
+                        "session",
+                        serde_json::json!({
+                            "kind": "deleted",
+                            "sessionKey": key,
+                        }),
+                        BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                }
+                Ok(result)
             })
         }),
     );
@@ -985,12 +1036,29 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.fork",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                let result = ctx
+                    .state
                     .services
                     .session
                     .fork(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)
+                    .map_err(ErrorShape::from)?;
+                if let Some(key) = result.get("key").and_then(|k| k.as_str()) {
+                    broadcast(
+                        &ctx.state,
+                        "session",
+                        serde_json::json!({
+                            "kind": "created",
+                            "sessionKey": key,
+                        }),
+                        BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                }
+                Ok(result)
             })
         }),
     );
@@ -1989,8 +2057,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             .and_then(|v| v.as_str())
                             .unwrap_or("settings");
 
-                        let config = moltis_config::discover_and_load();
-                        let identity = moltis_config::ResolvedIdentity::from_config(&config);
+                        let identity = moltis_config::resolve_identity();
                         let user = identity
                             .user_name
                             .unwrap_or_else(|| "friend".into());

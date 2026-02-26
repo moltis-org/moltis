@@ -16,7 +16,11 @@ remove_active_pid() {
       kept+=("$pid")
     fi
   done
-  ACTIVE_PIDS=("${kept[@]}")
+  if [[ "${#kept[@]}" -gt 0 ]]; then
+    ACTIVE_PIDS=("${kept[@]}")
+  else
+    ACTIVE_PIDS=()
+  fi
 }
 
 handle_interrupt() {
@@ -175,6 +179,7 @@ lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unsta
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
+macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate build}"
 
 strip_all_features_flag() {
   local cmd="$1"
@@ -451,6 +456,19 @@ run_check "local/lockfile" "cargo fetch --locked"
 # These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"
 run_check "local/test" "$test_cmd"
+
+# Native macOS app validation (macOS hosts only).
+if [[ "${LOCAL_VALIDATE_SKIP_MACOS_APP:-0}" != "1" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    run_check "local/macos-app" "$macos_app_cmd"
+  else
+    echo "Skipping macOS app checks (requires macOS host)."
+    set_status success "local/macos-app" "Skipped on non-macOS host"
+  fi
+else
+  echo "Skipping macOS app checks (LOCAL_VALIDATE_SKIP_MACOS_APP=1)."
+  set_status success "local/macos-app" "Skipped via LOCAL_VALIDATE_SKIP_MACOS_APP"
+fi
 
 # Gateway web UI e2e tests.
 if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" != "1" ]]; then

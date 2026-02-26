@@ -5667,6 +5667,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-swift-bridge"
+version = "0.9.10"
+dependencies = [
+ "anyhow",
+ "axum",
+ "metrics 0.24.3",
+ "moltis-agents",
+ "moltis-config",
+ "moltis-gateway",
+ "moltis-projects",
+ "moltis-provider-setup",
+ "moltis-providers",
+ "moltis-sessions",
+ "moltis-web",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "moltis-tailscale"
 version = "0.9.10"
 dependencies = [

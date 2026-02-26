@@ -2,10 +2,13 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Instant,
 };
+
+#[cfg(feature = "graphql")]
+use std::sync::atomic::AtomicBool;
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::MetricsHandle;
@@ -76,7 +79,7 @@ use moltis_protocol::{ConnectParams, EventFrame};
 
 use moltis_tools::sandbox::SandboxRouter;
 
-use moltis_channels::ChannelReplyTarget;
+use {moltis_channels::ChannelReplyTarget, moltis_sessions::session_events::SessionEventBus};
 
 use crate::{
     auth::{CredentialStore, ResolvedAuth},
@@ -392,6 +395,8 @@ pub struct GatewayState {
     /// Broadcast channel for GraphQL subscriptions. Events are `(event_name, payload)`.
     #[cfg(feature = "graphql")]
     pub graphql_broadcast: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
+    /// Session event bus for cross-UI synchronisation (macOS ↔ web).
+    pub session_event_bus: SessionEventBus,
     /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
     /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
     pub deploy_platform: Option<String>,
@@ -435,6 +440,7 @@ impl GatewayState {
             18789,
             false,
             None,
+            None,
             #[cfg(feature = "metrics")]
             None,
             #[cfg(feature = "metrics")]
@@ -458,6 +464,7 @@ impl GatewayState {
         port: u16,
         ws_request_logs: bool,
         deploy_platform: Option<String>,
+        session_event_bus: Option<SessionEventBus>,
         #[cfg(feature = "metrics")] metrics_handle: Option<MetricsHandle>,
         #[cfg(feature = "metrics")] metrics_store: Option<Arc<dyn MetricsStore>>,
         #[cfg(feature = "vault")] vault: Option<Arc<moltis_vault::Vault>>,
@@ -479,6 +486,7 @@ impl GatewayState {
             behind_proxy,
             tls_active,
             ws_request_logs,
+            session_event_bus: session_event_bus.unwrap_or_default(),
             deploy_platform,
             port,
             started_at: Instant::now(),

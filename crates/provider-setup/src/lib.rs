@@ -245,7 +245,7 @@ impl KeyStore {
         HashMap::new()
     }
 
-    fn load_all_configs(&self) -> HashMap<String, ProviderConfig> {
+    pub fn load_all_configs(&self) -> HashMap<String, ProviderConfig> {
         let guard = self.lock();
         Self::load_all_configs_from_path(&guard.path)
     }
@@ -321,7 +321,7 @@ impl KeyStore {
     }
 
     /// Load a provider's full config.
-    fn load_config(&self, provider: &str) -> Option<ProviderConfig> {
+    pub fn load_config(&self, provider: &str) -> Option<ProviderConfig> {
         self.load_all_configs().get(provider).cloned()
     }
 
@@ -345,7 +345,7 @@ impl KeyStore {
     }
 
     /// Save a provider's full configuration.
-    fn save_config(
+    pub fn save_config(
         &self,
         provider: &str,
         api_key: Option<String>,
@@ -696,14 +696,14 @@ fn ollama_models_payload(models: &[String]) -> Vec<Value> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuthType {
+pub enum AuthType {
     ApiKey,
     Oauth,
     Local,
 }
 
 impl AuthType {
-    const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::ApiKey => "api-key",
             Self::Oauth => "oauth",
@@ -719,21 +719,21 @@ impl std::fmt::Display for AuthType {
 }
 
 /// Known provider definitions used to populate the "available providers" list.
-struct KnownProvider {
-    name: &'static str,
-    display_name: &'static str,
-    auth_type: AuthType,
-    env_key: Option<&'static str>,
+pub struct KnownProvider {
+    pub name: &'static str,
+    pub display_name: &'static str,
+    pub auth_type: AuthType,
+    pub env_key: Option<&'static str>,
     /// Default base URL for this provider (for OpenAI-compatible providers).
-    default_base_url: Option<&'static str>,
+    pub default_base_url: Option<&'static str>,
     /// Whether this provider requires a model to be specified.
-    requires_model: bool,
+    pub requires_model: bool,
     /// Whether the API key is optional (e.g. Ollama runs locally without auth).
-    key_optional: bool,
+    pub key_optional: bool,
 }
 
 /// Build the known providers list at runtime, including local-llm if enabled.
-fn known_providers() -> Vec<KnownProvider> {
+pub fn known_providers() -> Vec<KnownProvider> {
     let providers = vec![
         KnownProvider {
             name: "anthropic",

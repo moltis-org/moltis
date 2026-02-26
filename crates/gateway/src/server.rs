@@ -42,6 +42,7 @@ use {
     moltis_projects::ProjectStore,
     moltis_sessions::{
         metadata::{SessionMetadata, SqliteSessionMetadata},
+        session_events::{SessionEvent, SessionEventBus},
         store::SessionStore,
     },
 };
@@ -1078,12 +1079,50 @@ fn log_startup_config_storage_diagnostics() {
     }
 }
 
-/// Start the gateway HTTP + WebSocket server.
+/// A fully wired gateway (app router + shared state), ready to be served.
+///
+/// Created by [`prepare_gateway`]. Callers bind their own TCP listener and
+/// feed `app` to `axum::serve` (or an equivalent). Background tasks (metrics,
+/// MCP health, cron, etc.) are already spawned on the current tokio runtime.
+pub struct PreparedGateway {
+    /// The composed application router.
+    pub app: Router,
+    /// Shared gateway state (sessions, services, config, etc.).
+    pub state: Arc<GatewayState>,
+    /// The port the gateway was configured for.
+    pub port: u16,
+    /// Metadata collected during setup, used by [`start_gateway`] for the
+    /// startup banner. Not relevant for bridge callers.
+    pub(crate) banner: BannerMeta,
+}
+
+/// Internal metadata for the startup banner printed by [`start_gateway`].
+pub(crate) struct BannerMeta {
+    pub provider_summary: String,
+    pub mcp_configured_count: usize,
+    pub method_count: usize,
+    pub sandbox_backend_name: String,
+    pub data_dir: PathBuf,
+    pub setup_code_display: Option<String>,
+    pub webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
+    pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
+    pub config: moltis_config::schema::MoltisConfig,
+    #[cfg(feature = "tailscale")]
+    pub tailscale_mode: TailscaleMode,
+    #[cfg(feature = "tailscale")]
+    pub tailscale_reset_on_exit: bool,
+}
+
+/// Prepare the full gateway: load config, run migrations, wire services,
+/// spawn background tasks, and return the composed axum application.
+///
+/// This is the core setup extracted from [`start_gateway`]. The swift-bridge
+/// calls this directly and manages its own TCP listener + graceful shutdown.
 ///
 /// `extra_routes` is an optional callback that returns additional routes
 /// (e.g. the web-UI) to merge before finalization.
 #[allow(clippy::expect_used)] // Startup fail-fast: DB, migrations, credential store must succeed.
-pub async fn start_gateway(
+pub async fn prepare_gateway(
     bind: &str,
     port: u16,
     no_tls: bool,
@@ -1092,7 +1131,10 @@ pub async fn start_gateway(
     data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
-) -> anyhow::Result<()> {
+    session_event_bus: Option<SessionEventBus>,
+) -> anyhow::Result<PreparedGateway> {
+    let session_event_bus = session_event_bus.unwrap_or_default();
+
     // Apply directory overrides before loading config.
     if let Some(dir) = config_dir {
         moltis_config::set_config_dir(dir);
@@ -1621,7 +1663,11 @@ pub async fn start_gateway(
     let project_store: Arc<dyn ProjectStore> =
         Arc::new(moltis_projects::SqliteProjectStore::new(db_pool.clone()));
     let session_store = Arc::new(SessionStore::new(sessions_dir));
-    let session_metadata = Arc::new(SqliteSessionMetadata::new(db_pool.clone()));
+    let event_bus_for_metadata = session_event_bus.clone();
+    let session_metadata = Arc::new(SqliteSessionMetadata::with_event_bus(
+        db_pool.clone(),
+        event_bus_for_metadata,
+    ));
     let session_share_store = Arc::new(crate::share_store::ShareStore::new(db_pool.clone()));
     let session_state_store = Arc::new(moltis_sessions::state_store::SessionStateStore::new(
         db_pool.clone(),
@@ -2793,6 +2839,7 @@ pub async fn start_gateway(
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),
+        Some(session_event_bus),
         #[cfg(feature = "metrics")]
         metrics_handle,
         #[cfg(feature = "metrics")]
@@ -3236,7 +3283,6 @@ pub async fn start_gateway(
         router
     };
 
-    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     let mut app = finalize_gateway_app(router, app_state, config.server.http_request_logs);
 
     app = app.route(
@@ -3287,12 +3333,9 @@ pub async fn start_gateway(
     #[cfg(feature = "tls")]
     let mut ca_cert_path: Option<PathBuf> = None;
     #[cfg(feature = "tls")]
-    let mut rustls_config: Option<rustls::ServerConfig> = None;
-
-    #[cfg(feature = "tls")]
     if tls_active {
         let tls_config = &config.tls;
-        let (ca_path, cert_path, key_path) = if let (Some(cert_str), Some(key_str)) =
+        let (ca_path, _cert_path, _key_path) = if let (Some(cert_str), Some(key_str)) =
             (&tls_config.cert_path, &tls_config.key_path)
         {
             // User-provided certs.
@@ -3312,9 +3355,6 @@ pub async fn start_gateway(
         };
 
         ca_cert_path = ca_path.clone();
-
-        let mgr = crate::tls::FsCertManager::new()?;
-        rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
 
         // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
         if let Some(ref ca) = ca_path {
@@ -3522,55 +3562,6 @@ pub async fn start_gateway(
         });
     }
 
-    // Spawn shutdown handler:
-    // - reset tailscale state on exit (when configured)
-    // - give browser pool 5s to shut down gracefully
-    // - force process exit to avoid hanging after ctrl-c
-    {
-        let browser_for_shutdown = Arc::clone(&browser_for_lifecycle);
-        #[cfg(feature = "tailscale")]
-        let reset_tailscale_on_exit =
-            tailscale_mode != TailscaleMode::Off && tailscale_reset_on_exit;
-        #[cfg(feature = "tailscale")]
-        let ts_mode = tailscale_mode;
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_err() {
-                return;
-            }
-
-            #[cfg(feature = "tailscale")]
-            if reset_tailscale_on_exit {
-                info!("shutting down tailscale {ts_mode}");
-                let manager = CliTailscaleManager::new();
-                if let Err(e) = manager.disable().await {
-                    warn!("failed to reset tailscale on exit: {e}");
-                }
-            }
-
-            let shutdown_grace = std::time::Duration::from_secs(5);
-            info!(
-                grace_secs = shutdown_grace.as_secs(),
-                "shutting down browser pool"
-            );
-            if browser_for_shutdown
-                .shutdown_with_grace(shutdown_grace)
-                .await
-            {
-                info!(
-                    grace_secs = shutdown_grace.as_secs(),
-                    "browser pool shut down"
-                );
-            } else {
-                warn!(
-                    grace_secs = shutdown_grace.as_secs(),
-                    "browser pool shutdown exceeded grace period, forcing process exit"
-                );
-            }
-
-            std::process::exit(0);
-        });
-    }
-
     // Spawn tick timer.
     let tick_state = Arc::clone(&state);
     tokio::spawn(async move {
@@ -3600,6 +3591,50 @@ pub async fn start_gateway(
             broadcast_tick(&tick_state, process_mem, available, total).await;
         }
     });
+
+    // Spawn session event → WebSocket forwarder.
+    // Events published by the swift-bridge (or any other bus producer) are
+    // relayed to all connected WebSocket clients as `"session"` events.
+    {
+        let ws_state = Arc::clone(&state);
+        let mut rx = state.session_event_bus.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let (kind, session_key) = match &event {
+                            SessionEvent::Created { session_key } => {
+                                ("created", session_key.as_str())
+                            },
+                            SessionEvent::Deleted { session_key } => {
+                                ("deleted", session_key.as_str())
+                            },
+                            SessionEvent::Patched { session_key } => {
+                                ("patched", session_key.as_str())
+                            },
+                        };
+                        broadcast(
+                            &ws_state,
+                            "session",
+                            serde_json::json!({
+                                "kind": kind,
+                                "sessionKey": session_key,
+                            }),
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("session event WS forwarder lagged, skipped {n} events");
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
 
     // Spawn periodic update check against latest GitHub release.
     let update_state = Arc::clone(&state);
@@ -4035,6 +4070,377 @@ pub async fn start_gateway(
         } else if hb.enabled && !has_prompt {
             tracing::info!("heartbeat skipped: no prompt in config and HEARTBEAT.md is empty");
         }
+    }
+
+    Ok(PreparedGateway {
+        app,
+        state: Arc::clone(&state),
+        port,
+        banner: BannerMeta {
+            provider_summary,
+            mcp_configured_count,
+            method_count: methods.method_names().len(),
+            sandbox_backend_name: sandbox_router.backend_name().to_owned(),
+            data_dir,
+            setup_code_display,
+            webauthn_registry,
+            browser_for_lifecycle,
+            config,
+            #[cfg(feature = "tailscale")]
+            tailscale_mode,
+            #[cfg(feature = "tailscale")]
+            tailscale_reset_on_exit,
+        },
+    })
+}
+
+/// Prepare the full gateway for embedded callers (for example swift-bridge)
+/// using a feature-stable argument list.
+///
+/// This wrapper intentionally hides `tailscale_opts`, which only exists when
+/// the `tailscale` feature is enabled on `moltis-gateway`.
+#[allow(clippy::expect_used)]
+pub async fn prepare_gateway_embedded(
+    bind: &str,
+    port: u16,
+    no_tls: bool,
+    log_buffer: Option<crate::logs::LogBuffer>,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    extra_routes: Option<RouteEnhancer>,
+    session_event_bus: Option<SessionEventBus>,
+) -> anyhow::Result<PreparedGateway> {
+    prepare_gateway(
+        bind,
+        port,
+        no_tls,
+        log_buffer,
+        config_dir,
+        data_dir,
+        #[cfg(feature = "tailscale")]
+        None,
+        extra_routes,
+        session_event_bus,
+    )
+    .await
+}
+
+/// Start the gateway HTTP + WebSocket server.
+///
+/// Thin wrapper around [`prepare_gateway`] that adds the startup banner,
+/// ctrl-c handler, TLS termination, and blocks on `axum::serve`.
+#[allow(clippy::expect_used)]
+pub async fn start_gateway(
+    bind: &str,
+    port: u16,
+    no_tls: bool,
+    log_buffer: Option<crate::logs::LogBuffer>,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
+    extra_routes: Option<RouteEnhancer>,
+) -> anyhow::Result<()> {
+    let prepared = prepare_gateway(
+        bind,
+        port,
+        no_tls,
+        log_buffer,
+        config_dir,
+        data_dir,
+        #[cfg(feature = "tailscale")]
+        tailscale_opts,
+        extra_routes,
+        None, // session_event_bus — CLI creates its own
+    )
+    .await?;
+
+    let state = &prepared.state;
+    let banner = &prepared.banner;
+    #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
+    let config = &banner.config;
+
+    let addr: SocketAddr = format!("{bind}:{port}").parse()?;
+
+    #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
+    let is_localhost =
+        matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
+
+    // Resolve TLS configuration (only when compiled with the `tls` feature).
+    #[cfg(feature = "tls")]
+    let tls_active = config.tls.enabled;
+    #[cfg(not(feature = "tls"))]
+    let tls_active = false;
+
+    #[cfg(feature = "tls")]
+    let mut ca_cert_path: Option<PathBuf> = None;
+    #[cfg(feature = "tls")]
+    let mut rustls_config: Option<rustls::ServerConfig> = None;
+
+    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
+    let mut app = prepared.app;
+
+    #[cfg(feature = "tls")]
+    if tls_active {
+        let tls_config = &config.tls;
+        let (ca_path, cert_path, key_path) = if let (Some(cert_str), Some(key_str)) =
+            (&tls_config.cert_path, &tls_config.key_path)
+        {
+            // User-provided certs.
+            let cert = PathBuf::from(cert_str);
+            let key = PathBuf::from(key_str);
+            let ca = tls_config.ca_cert_path.as_ref().map(PathBuf::from);
+            (ca, cert, key)
+        } else if tls_config.auto_generate {
+            // Auto-generate certificates.
+            let mgr = crate::tls::FsCertManager::new()?;
+            let (ca, cert, key) = mgr.ensure_certs()?;
+            (Some(ca), cert, key)
+        } else {
+            anyhow::bail!(
+                "TLS is enabled but no certificates configured and auto_generate is false"
+            );
+        };
+
+        ca_cert_path = ca_path.clone();
+
+        let mgr = crate::tls::FsCertManager::new()?;
+        rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
+
+        // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
+        if let Some(ref ca) = ca_path {
+            let ca_bytes = Arc::new(std::fs::read(ca)?);
+            let ca_clone = Arc::clone(&ca_bytes);
+            app = app.route(
+                "/certs/ca.pem",
+                get(move || {
+                    let data = Arc::clone(&ca_clone);
+                    async move {
+                        (
+                            [
+                                ("content-type", "application/x-pem-file"),
+                                (
+                                    "content-disposition",
+                                    "attachment; filename=\"moltis-ca.pem\"",
+                                ),
+                            ],
+                            data.as_ref().clone(),
+                        )
+                    }
+                }),
+            );
+        }
+    }
+
+    // Count enabled skills and repos for startup banner.
+    let (skill_count, repo_count) = {
+        use moltis_skills::discover::{FsSkillDiscoverer, SkillDiscoverer};
+        let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
+        let sc = discoverer.discover().await.map(|s| s.len()).unwrap_or(0);
+        let rc = moltis_skills::manifest::ManifestStore::default_path()
+            .ok()
+            .map(|p| {
+                let store = moltis_skills::manifest::ManifestStore::new(p);
+                store.load().map(|m| m.repos.len()).unwrap_or(0)
+            })
+            .unwrap_or(0);
+        (sc, rc)
+    };
+
+    // Startup banner.
+    let scheme = if tls_active {
+        "https"
+    } else {
+        "http"
+    };
+    // When bound to an unspecified address (0.0.0.0 / ::), resolve the
+    // machine's outbound IP so the printed URL is clickable.
+    let display_ip = if addr.ip().is_unspecified() {
+        resolve_outbound_ip(addr.ip().is_ipv6())
+            .map(|ip| SocketAddr::new(ip, port))
+            .unwrap_or(addr)
+    } else {
+        addr
+    };
+    // Use plain localhost for display URLs when bound to loopback with TLS.
+    #[cfg(feature = "tls")]
+    let display_host = if is_localhost && tls_active {
+        format!("localhost:{port}")
+    } else {
+        display_ip.to_string()
+    };
+    #[cfg(not(feature = "tls"))]
+    let display_host = display_ip.to_string();
+    let passkey_origins = banner
+        .webauthn_registry
+        .as_ref()
+        .map(|registry| registry.get_all_origins())
+        .unwrap_or_default();
+    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
+    let mut lines = vec![
+        format!("moltis gateway v{}", state.version),
+        format!(
+            "protocol v{}, listening on {}://{} ({})",
+            moltis_protocol::PROTOCOL_VERSION,
+            scheme,
+            display_host,
+            if tls_active {
+                "HTTP/2 + HTTP/1.1"
+            } else {
+                "HTTP/1.1"
+            },
+        ),
+        startup_bind_line(addr),
+        format!("{} methods registered", banner.method_count),
+        format!("llm: {}", banner.provider_summary),
+        format!(
+            "skills: {} enabled, {} repo{}",
+            skill_count,
+            repo_count,
+            if repo_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ),
+        format!(
+            "mcp: {} configured{}",
+            banner.mcp_configured_count,
+            if banner.mcp_configured_count > 0 {
+                " (starting in background)"
+            } else {
+                ""
+            }
+        ),
+        format!("sandbox: {} backend", banner.sandbox_backend_name),
+        format!(
+            "config: {}",
+            moltis_config::find_or_default_config_path().display()
+        ),
+        format!("data: {}", banner.data_dir.display()),
+    ];
+    lines.extend(startup_passkey_origin_lines(&passkey_origins));
+    // Hint about Apple Container on macOS when using Docker.
+    #[cfg(target_os = "macos")]
+    if banner.sandbox_backend_name == "docker" {
+        lines.push(
+            "hint: install Apple Container for VM-isolated sandboxing (see docs/sandbox.md)".into(),
+        );
+    }
+    // Warn when no sandbox backend is available.
+    if banner.sandbox_backend_name == "none" {
+        lines.push("⚠ no container runtime found; commands run on host".into());
+    }
+    // Display setup code if one was generated.
+    if let Some(ref code) = banner.setup_code_display {
+        lines.extend(startup_setup_code_lines(code));
+    }
+    #[cfg(feature = "tls")]
+    if tls_active {
+        if let Some(ref ca) = ca_cert_path {
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
+            let ca_host = if is_localhost {
+                "localhost"
+            } else {
+                bind
+            };
+            lines.push(format!(
+                "CA cert: http://{}:{}/certs/ca.pem",
+                ca_host, http_port
+            ));
+            lines.push(format!("  or: {}", ca.display()));
+        }
+        lines.push("run `moltis trust-ca` to remove browser warnings".into());
+    }
+    // Tailscale: enable serve/funnel and show in banner.
+    #[cfg(feature = "tailscale")]
+    {
+        let tailscale_mode = banner.tailscale_mode;
+        if tailscale_mode != TailscaleMode::Off {
+            let manager = CliTailscaleManager::new();
+            let ts_result = match tailscale_mode {
+                TailscaleMode::Serve => manager.enable_serve(port, tls_active).await,
+                TailscaleMode::Funnel => manager.enable_funnel(port, tls_active).await,
+                TailscaleMode::Off => unreachable!(),
+            };
+            match ts_result {
+                Ok(()) => {
+                    if let Ok(Some(hostname)) = manager.hostname().await {
+                        lines.push(format!("tailscale {tailscale_mode}: https://{hostname}"));
+                    } else {
+                        lines.push(format!("tailscale {tailscale_mode}: enabled"));
+                    }
+                },
+                Err(e) => {
+                    warn!("failed to enable tailscale {tailscale_mode}: {e}");
+                    lines.push(format!("tailscale {tailscale_mode}: FAILED ({e})"));
+                },
+            }
+        }
+    }
+    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0) + 4;
+    info!("┌{}┐", "─".repeat(width));
+    for line in &lines {
+        info!("│  {:<w$}│", line, w = width - 2);
+    }
+    info!("└{}┘", "─".repeat(width));
+
+    // Dispatch GatewayStart hook.
+    if let Some(ref hooks) = state.inner.read().await.hook_registry {
+        let payload = moltis_common::hooks::HookPayload::GatewayStart {
+            address: addr.to_string(),
+        };
+        if let Err(e) = hooks.dispatch(&payload).await {
+            tracing::warn!("GatewayStart hook dispatch failed: {e}");
+        }
+    }
+
+    // Spawn shutdown handler:
+    // - reset tailscale state on exit (when configured)
+    // - give browser pool 5s to shut down gracefully
+    // - force process exit to avoid hanging after ctrl-c
+    {
+        let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
+        #[cfg(feature = "tailscale")]
+        let reset_tailscale_on_exit =
+            banner.tailscale_mode != TailscaleMode::Off && banner.tailscale_reset_on_exit;
+        #[cfg(feature = "tailscale")]
+        let ts_mode = banner.tailscale_mode;
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_err() {
+                return;
+            }
+
+            #[cfg(feature = "tailscale")]
+            if reset_tailscale_on_exit {
+                info!("shutting down tailscale {ts_mode}");
+                let manager = CliTailscaleManager::new();
+                if let Err(e) = manager.disable().await {
+                    warn!("failed to reset tailscale on exit: {e}");
+                }
+            }
+
+            let shutdown_grace = std::time::Duration::from_secs(5);
+            info!(
+                grace_secs = shutdown_grace.as_secs(),
+                "shutting down browser pool"
+            );
+            if browser_for_shutdown
+                .shutdown_with_grace(shutdown_grace)
+                .await
+            {
+                info!(
+                    grace_secs = shutdown_grace.as_secs(),
+                    "browser pool shut down"
+                );
+            } else {
+                warn!(
+                    grace_secs = shutdown_grace.as_secs(),
+                    "browser pool shutdown exceeded grace period, forcing process exit"
+                );
+            }
+
+            std::process::exit(0);
+        });
     }
 
     #[cfg(feature = "tls")]

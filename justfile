@@ -222,3 +222,31 @@ ui-e2e-headed:
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
 packages-all: deb-all rpm-all arch-pkg-all
+
+# Build Rust static library and generated C header for the macOS app.
+swift-build-rust:
+    ./scripts/build-swift-bridge.sh
+
+# Generate Xcode project from YAML spec in apps/macos.
+swift-generate:
+    ./scripts/generate-swift-project.sh
+
+# Lint macOS app sources with SwiftLint.
+swift-lint:
+    ./scripts/lint-swift.sh
+
+# Build Swift macOS app.
+swift-build: swift-build-rust swift-generate
+    ./scripts/build-swift.sh
+
+# Run Swift app unit tests.
+swift-test: swift-build-rust swift-generate
+    ./scripts/test-swift.sh
+
+# Build and launch the Swift macOS app locally.
+swift-run: swift-build-rust swift-generate
+    ./scripts/run-swift.sh
+
+# Open generated project in Xcode.
+swift-open: swift-build-rust swift-generate
+    open apps/macos/Moltis.xcodeproj

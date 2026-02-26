@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Real-time session sync between macOS app and web UI via `SessionEventBus` (`tokio::sync::broadcast`). Sessions created, deleted, or patched in one UI instantly appear in the other. New FFI callback `moltis_set_session_event_callback` and WebSocket `"session"` events for create/delete/fork operations.
+- Swift bridge: persistent session storage via FFI — `moltis_list_sessions`, `moltis_switch_session`, `moltis_create_session`, `moltis_session_chat_stream` functions backed by JSONL files and shared SQLite metadata (`moltis.db`) across all UIs (macOS app, web, TUI)
 - **Internationalization (i18n)**: web UI now supports runtime language switching via `i18next` with English and French locales. Error codes use structured constants with locale-aware error messages across API handlers, terminal, chat, and environment routes. Onboarding step labels, navigation buttons, and page strings use translation keys (`t()` calls)
 - **Vault UI**: recovery key display during onboarding password setup, vault status/unlock controls in Settings > Security, encrypted/plaintext badges on environment variables
 - **Encryption-at-rest vault** (`vault` feature, default on) — environment variables are encrypted with XChaCha20-Poly1305 AEAD using Argon2id-derived keys. Vault is initialized on first password setup and auto-unsealed on login. Recovery key provided at initialization for emergency access. API: `/api/auth/vault/status`, `/api/auth/vault/unlock`, `/api/auth/vault/recovery`
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `graphql` feature flag (default on) in gateway and CLI crates for compile-time opt-out
 - Settings > GraphQL page embedding GraphiQL playground at `/settings/graphql`
 - Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
+- Swift embedding POC scaffold with a new `moltis-swift-bridge` static library crate, XcodeGen YAML project (`apps/macos/project.yml`), and SwiftLint wiring for SwiftUI frontend code quality
 - New `moltis-openclaw-import` crate for detecting OpenClaw installations and selectively importing identity, providers, skills, memory files, Telegram channels, sessions, and MCP servers
 - New onboarding RPC methods: `openclaw.detect`, `openclaw.scan`, and `openclaw.import`
 - New `moltis import` CLI commands (`detect`, `all`, `select`) with `--dry-run` and `--json` output options
@@ -45,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gateway and CLI now enable the `openclaw-import` feature in default builds
 - Providers now support `stream_transport = "sse" | "websocket" | "auto"` in config. OpenAI can stream via Responses API WebSocket mode, and `auto` falls back to SSE when WebSocket setup is unavailable.
 - Agent Identity emoji picker now includes 🐰 🐹 🦀 🦞 🦝 🦭 🧠 🧭 options
+- Added architecture docs for a native Swift UI app embedding Moltis Rust core through a C FFI bridge (`docs/src/native-swift-embedding.md`)
 - Channel persistence and message-log queries are now channel-type scoped (`channel_type + account_id`) so Telegram and Teams accounts can share the same account IDs safely
 - Chat/system prompt resolution is now agent-aware, loading `IDENTITY.md`, `SOUL.md`, `MEMORY.md`, `AGENTS.md`, and `TOOLS.md` from the active session agent workspace with backward-compatible fallbacks
 - Memory tool operations and compaction memory writes are now agent-scoped, preventing cross-agent memory leakage during search/read/write flows
