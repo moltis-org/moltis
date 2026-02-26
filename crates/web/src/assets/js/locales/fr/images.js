@@ -58,8 +58,7 @@ export default {
 			"Aucun runtime de conteneur détecté. Installez Apple Container (macOS 26+) pour une isolation par VM, ou installez Docker comme alternative.",
 		noRuntimeLinux:
 			"Aucun runtime de conteneur détecté. Installez Docker pour l'exécution en sandbox, ou assurez-vous que systemd est disponible pour l'isolation cgroup.",
-		noRuntimeGeneric:
-			"Aucun runtime de conteneur détecté. Installez Docker pour l'exécution en sandbox.",
+		noRuntimeGeneric: "Aucun runtime de conteneur détecté. Installez Docker pour l'exécution en sandbox.",
 		macosDockerTip:
 			"Apple Container offre une isolation VM plus forte sur macOS 26+. Installez-le pour une utilisation automatique (moltis le préfère à Docker). Exécutez : brew install container",
 		linuxDockerTip:
