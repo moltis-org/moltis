@@ -174,7 +174,7 @@ zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --m
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
-coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo llvm-cov --workspace --all-features --html}"
+coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
 
 strip_all_features_flag() {
   local cmd="$1"
@@ -193,7 +193,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
     test_cmd="cargo nextest run"
   fi
   if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
-    coverage_cmd="cargo +nightly llvm-cov --workspace --html"
+    coverage_cmd="cargo +${nightly_toolchain} llvm-cov --workspace --html"
   fi
   lint_cmd="$(strip_all_features_flag "$lint_cmd")"
   test_cmd="$(strip_all_features_flag "$test_cmd")"
