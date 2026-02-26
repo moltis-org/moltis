@@ -80,8 +80,7 @@ function SessionIcon({ session, isBranch }) {
 	} else {
 		iconStyle.color = "var(--muted)";
 	}
-	var channelLabel =
-		channelType === "msteams" ? "Microsoft Teams" : channelType === "discord" ? "Discord" : "Telegram";
+	var channelLabel = channelType === "msteams" ? "Microsoft Teams" : channelType === "discord" ? "Discord" : "Telegram";
 	var title = channelBound
 		? session.activeChannel
 			? `Active ${channelLabel} session`

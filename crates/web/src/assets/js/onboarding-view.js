@@ -2411,11 +2411,14 @@ function DiscordForm({ onConnected, error, setError }) {
 				spellcheck="false"
 				name="discord_bot_token" />
 		</div>
-		${inviteUrl && html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2.5 text-xs flex flex-col gap-1">
+		${
+			inviteUrl &&
+			html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2.5 text-xs flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">Invite bot to a server</span>
 			<span class="text-[var(--muted)]">Open this link to add the bot (Send Messages, Attach Files, Read Message History):</span>
 			<a href=${inviteUrl} target="_blank" class="text-[var(--accent)] underline break-all">${inviteUrl}</a>
-		</div>`}
+		</div>`
+		}
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
 			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
@@ -2446,12 +2449,15 @@ function ChannelSuccess({ channelName, channelType: type, onAnother }) {
 				<div class="text-xs text-[var(--muted)] mt-0.5">${channelName} (${label}) is now linked to your agent.</div>
 			</div>
 		</div>
-		${type === "discord" && html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1.5">
+		${
+			type === "discord" &&
+			html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1.5">
 			<span class="font-medium text-[var(--text-strong)]">Next steps</span>
 			<span>\u2022 <strong>Invite to a server:</strong> the invite link was shown on the previous screen. You can also generate one in the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Developer Portal</a> \u2192 OAuth2 \u2192 URL Generator (scope: bot, permissions: Send Messages, Attach Files, Read Message History).</span>
 			<span>\u2022 <strong>DM the bot:</strong> search for the bot\u2019s username in Discord and click Message. Make sure your username is in the DM allowlist.</span>
 			<span>\u2022 <strong>In a server:</strong> @mention the bot to get a response.</span>
-		</div>`}
+		</div>`
+		}
 		<button type="button" class="text-xs text-[var(--accent)] cursor-pointer bg-transparent border-none underline self-start" onClick=${onAnother}>Connect another channel</button>
 	</div>`;
 }

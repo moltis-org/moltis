@@ -681,11 +681,14 @@ function AddDiscordModal() {
 					}}
 	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
 	        name="discord_bot_token" />
-	      ${inviteUrl && html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2.5 flex flex-col gap-1">
+	      ${
+					inviteUrl &&
+					html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2.5 flex flex-col gap-1">
 	        <span class="text-xs font-medium text-[var(--text-strong)]">Invite bot to a server</span>
 	        <span class="text-xs text-[var(--muted)]">Open this link to add the bot (Send Messages, Attach Files, Read Message History):</span>
 	        <a href=${inviteUrl} target="_blank" class="text-xs text-[var(--accent)] underline break-all">${inviteUrl}</a>
-	      </div>`}
+	      </div>`
+				}
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
