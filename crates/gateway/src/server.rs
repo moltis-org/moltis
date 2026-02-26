@@ -3544,9 +3544,15 @@ pub async fn prepare_gateway(
                 match rx.recv().await {
                     Ok(event) => {
                         let (kind, session_key) = match &event {
-                            SessionEvent::Created { session_key } => ("created", session_key.as_str()),
-                            SessionEvent::Deleted { session_key } => ("deleted", session_key.as_str()),
-                            SessionEvent::Patched { session_key } => ("patched", session_key.as_str()),
+                            SessionEvent::Created { session_key } => {
+                                ("created", session_key.as_str())
+                            },
+                            SessionEvent::Deleted { session_key } => {
+                                ("deleted", session_key.as_str())
+                            },
+                            SessionEvent::Patched { session_key } => {
+                                ("patched", session_key.as_str())
+                            },
                         };
                         broadcast(
                             &ws_state,
@@ -3555,7 +3561,10 @@ pub async fn prepare_gateway(
                                 "kind": kind,
                                 "sessionKey": session_key,
                             }),
-                            BroadcastOpts { drop_if_slow: true, ..Default::default() },
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
                         )
                         .await;
                     },
@@ -4107,7 +4116,11 @@ pub async fn start_gateway(
     };
 
     // Startup banner.
-    let scheme = if tls_active { "https" } else { "http" };
+    let scheme = if tls_active {
+        "https"
+    } else {
+        "http"
+    };
     // When bound to an unspecified address (0.0.0.0 / ::), resolve the
     // machine's outbound IP so the printed URL is clickable.
     let display_ip = if addr.ip().is_unspecified() {
@@ -4152,7 +4165,11 @@ pub async fn start_gateway(
             "skills: {} enabled, {} repo{}",
             skill_count,
             repo_count,
-            if repo_count == 1 { "" } else { "s" }
+            if repo_count == 1 {
+                ""
+            } else {
+                "s"
+            }
         ),
         format!(
             "mcp: {} configured{}",
@@ -4190,7 +4207,11 @@ pub async fn start_gateway(
     if tls_active {
         if let Some(ref ca) = ca_cert_path {
             let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
-            let ca_host = if is_localhost { "localhost" } else { bind };
+            let ca_host = if is_localhost {
+                "localhost"
+            } else {
+                bind
+            };
             lines.push(format!(
                 "CA cert: http://{}:{}/certs/ca.pem",
                 ca_host, http_port

@@ -863,26 +863,28 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .get("history")
                     .and_then(|h| h.as_array())
                     .is_some_and(|a| a.is_empty());
-                if is_new {
-                    if let Some(key) = result
+                if is_new
+                    && let Some(key) = result
                         .get("entry")
                         .and_then(|e| e.get("key"))
                         .and_then(|k| k.as_str())
-                    {
-                        ctx.state.session_event_bus.publish(SessionEvent::Created {
-                            session_key: key.to_string(),
-                        });
-                        broadcast(
-                            &ctx.state,
-                            "session",
-                            serde_json::json!({
-                                "kind": "created",
-                                "sessionKey": key,
-                            }),
-                            BroadcastOpts { drop_if_slow: true, ..Default::default() },
-                        )
-                        .await;
-                    }
+                {
+                    ctx.state.session_event_bus.publish(SessionEvent::Created {
+                        session_key: key.to_string(),
+                    });
+                    broadcast(
+                        &ctx.state,
+                        "session",
+                        serde_json::json!({
+                            "kind": "created",
+                            "sessionKey": key,
+                        }),
+                        BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 }
                 Ok(result)
             })

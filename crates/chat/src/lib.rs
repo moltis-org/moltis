@@ -38,6 +38,7 @@ use {
     moltis_sessions::{
         ContentBlock, MessageContent, PersistedMessage,
         metadata::{SessionEntry, SqliteSessionMetadata},
+        session_events::SessionEvent,
         store::SessionStore,
     },
     moltis_skills::discover::SkillDiscoverer,
@@ -110,6 +111,12 @@ async fn broadcast(
     _opts: BroadcastOpts,
 ) {
     state.broadcast(event, payload).await;
+}
+
+fn publish_session_patched(state: &Arc<dyn ChatRuntime>, session_key: &str) {
+    state.publish_session_event(SessionEvent::Patched {
+        session_key: session_key.to_string(),
+    });
 }
 
 #[cfg(feature = "metrics")]
@@ -2713,6 +2720,7 @@ impl ChatService for LiveChatService {
                         .await;
                 }
             }
+            publish_session_patched(&self.state, &session_key);
 
             let state = Arc::clone(&self.state);
             let active_runs = Arc::clone(&self.active_runs);
@@ -2781,6 +2789,7 @@ impl ChatService for LiveChatService {
                 if let Ok(count) = session_store.count(&session_key_clone).await {
                     session_metadata.touch(&session_key_clone, count).await;
                 }
+                publish_session_patched(&state, &session_key_clone);
 
                 active_runs.write().await.remove(&run_id_clone);
                 let mut runs_by_session = active_runs_by_session.write().await;
@@ -3266,6 +3275,7 @@ impl ChatService for LiveChatService {
                     .await;
             }
         }
+        publish_session_patched(&self.state, &session_key);
 
         let agent_timeout_secs = moltis_config::discover_and_load().tools.agent_timeout_secs;
 
@@ -3416,6 +3426,7 @@ impl ChatService for LiveChatService {
                 if let Ok(count) = session_store.count(&session_key_clone).await {
                     session_metadata.touch(&session_key_clone, count).await;
                 }
+                publish_session_patched(&state, &session_key_clone);
             }
 
             active_runs.write().await.remove(&run_id_clone);
@@ -3560,6 +3571,7 @@ impl ChatService for LiveChatService {
         // Ensure this session appears in the sessions list.
         let _ = self.session_metadata.upsert(&session_key, None).await;
         self.session_metadata.touch(&session_key, 1).await;
+        publish_session_patched(&self.state, &session_key);
         let session_entry = self.session_metadata.get(&session_key).await;
         let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
@@ -3696,6 +3708,7 @@ impl ChatService for LiveChatService {
             if let Ok(count) = self.session_store.count(&session_key).await {
                 self.session_metadata.touch(&session_key, count).await;
             }
+            publish_session_patched(&self.state, &session_key);
         }
 
         match result {
@@ -3724,6 +3737,7 @@ impl ChatService for LiveChatService {
                 if let Ok(count) = self.session_store.count(&session_key).await {
                     self.session_metadata.touch(&session_key, count).await;
                 }
+                publish_session_patched(&self.state, &session_key);
 
                 Err(error_msg.into())
             },
@@ -3841,6 +3855,7 @@ impl ChatService for LiveChatService {
         // Reset metadata message count and preview.
         self.session_metadata.touch(&session_key, 0).await;
         self.session_metadata.set_preview(&session_key, None).await;
+        publish_session_patched(&self.state, &session_key);
 
         // Notify all WebSocket clients so the web UI clears the session
         // even when /clear is issued from a channel (e.g. Telegram).
@@ -3994,6 +4009,7 @@ impl ChatService for LiveChatService {
             .map_err(ServiceError::message)?;
 
         self.session_metadata.touch(&session_key, 1).await;
+        publish_session_patched(&self.state, &session_key);
 
         // Save compaction summary to memory file and trigger sync.
         if let Some(mm) = self.state.memory_manager() {
@@ -5764,13 +5780,16 @@ async fn run_with_tools(
                         );
                         let store_clone = Arc::clone(store);
                         let sk_persist = sk.clone();
+                        let state_for_persist = Arc::clone(&state);
                         tokio::spawn(async move {
                             if let Err(e) = store_clone
                                 .append(&sk_persist, &tool_result_msg.to_value())
                                 .await
                             {
                                 warn!("failed to persist tool result: {e}");
+                                return;
                             }
+                            publish_session_patched(&state_for_persist, &sk_persist);
                         });
                     }
 
@@ -5926,7 +5945,7 @@ async fn run_with_tools(
             .await;
 
             // Inline compaction: summarize history, replace in store.
-            match compact_session(store, session_key, &provider_ref).await {
+            match compact_session(state, store, session_key, &provider_ref).await {
                 Ok(()) => {
                     broadcast(
                         state,
@@ -6149,6 +6168,7 @@ async fn run_with_tools(
 /// This is a standalone helper so `run_with_tools` can call it without
 /// requiring `&self` on `LiveChatService`.
 async fn compact_session(
+    state: &Arc<dyn ChatRuntime>,
     store: &Arc<SessionStore>,
     session_key: &str,
     provider: &Arc<dyn moltis_agents::model::LlmProvider>,
@@ -6222,6 +6242,7 @@ async fn compact_session(
         .replace_history(session_key, compacted)
         .await
         .map_err(|source| error::Error::external("failed to replace compacted history", source))?;
+    publish_session_patched(state, session_key);
 
     Ok(())
 }
@@ -7622,6 +7643,7 @@ mod tests {
 
     struct MockChatRuntime {
         channel_replies: Mutex<HashMap<String, Vec<moltis_channels::ChannelReplyTarget>>>,
+        session_events: std::sync::Mutex<Vec<SessionEvent>>,
         channel_outbound: Option<Arc<dyn moltis_channels::ChannelOutbound>>,
         channel_stream_outbound: Option<Arc<dyn moltis_channels::ChannelStreamOutbound>>,
         tts: moltis_service_traits::NoopTtsService,
@@ -7633,12 +7655,20 @@ mod tests {
         fn new() -> Self {
             Self {
                 channel_replies: Mutex::new(HashMap::new()),
+                session_events: std::sync::Mutex::new(Vec::new()),
                 channel_outbound: None,
                 channel_stream_outbound: None,
                 tts: moltis_service_traits::NoopTtsService,
                 project: moltis_service_traits::NoopProjectService,
                 mcp: moltis_service_traits::NoopMcpService,
             }
+        }
+
+        fn session_events(&self) -> Vec<SessionEvent> {
+            self.session_events
+                .lock()
+                .expect("mock session events mutex poisoned")
+                .clone()
         }
 
         fn with_channel_outbound(
@@ -7661,6 +7691,14 @@ mod tests {
     #[async_trait]
     impl ChatRuntime for MockChatRuntime {
         async fn broadcast(&self, _topic: &str, _payload: Value) {}
+
+        fn publish_session_event(&self, event: SessionEvent) {
+            let mut events = self
+                .session_events
+                .lock()
+                .expect("mock session events mutex poisoned");
+            events.push(event);
+        }
 
         async fn push_channel_reply(
             &self,
@@ -8321,7 +8359,8 @@ mod tests {
         let pool = sqlite_pool().await;
         let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
-        let state = mock_runtime();
+        let runtime = Arc::new(MockChatRuntime::new());
+        let state: Arc<dyn ChatRuntime> = runtime.clone();
 
         let providers = Arc::new(RwLock::new(ProviderRegistry::empty()));
         let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
@@ -8377,6 +8416,13 @@ mod tests {
                 .iter()
                 .any(|msg| msg.get("role").and_then(Value::as_str) == Some("assistant")),
             "explicit /sh should persist an assistant turn for history coherence"
+        );
+        let events = runtime.session_events();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::Patched { session_key } if session_key == "main")),
+            "session mutations should emit patched events for cross-UI sync"
         );
     }
 

@@ -42,7 +42,11 @@ struct BridgeState {
 
 impl BridgeState {
     fn new() -> Self {
-        emit_log("INFO", "bridge", "Initializing Rust bridge (tokio runtime + registry)");
+        emit_log(
+            "INFO",
+            "bridge",
+            "Initializing Rust bridge (tokio runtime + registry)",
+        );
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -55,7 +59,11 @@ impl BridgeState {
         let data_dir = moltis_config::data_dir();
         let sessions_dir = data_dir.join("sessions");
         if let Err(e) = std::fs::create_dir_all(&sessions_dir) {
-            emit_log("ERROR", "bridge", &format!("Failed to create sessions dir: {e}"));
+            emit_log(
+                "ERROR",
+                "bridge",
+                &format!("Failed to create sessions dir: {e}"),
+            );
         }
         let session_store = SessionStore::new(sessions_dir);
 
@@ -174,13 +182,13 @@ fn emit_log_with_fields(
             message,
             fields,
         };
-        if let Ok(json) = serde_json::to_string(&event) {
-            if let Ok(c_str) = CString::new(json) {
-                // SAFETY: c_str is valid NUL-terminated, callback copies
-                // before returning, and we drop c_str afterwards.
-                unsafe {
-                    callback(c_str.as_ptr());
-                }
+        if let Ok(json) = serde_json::to_string(&event)
+            && let Ok(c_str) = CString::new(json)
+        {
+            // SAFETY: c_str is valid NUL-terminated, callback copies
+            // before returning, and we drop c_str afterwards.
+            unsafe {
+                callback(c_str.as_ptr());
             }
         }
     }
@@ -211,13 +219,13 @@ fn emit_session_event(event: &SessionEvent) {
             SessionEvent::Patched { session_key } => ("patched", session_key.clone()),
         };
         let payload = BridgeSessionEvent { kind, session_key };
-        if let Ok(json) = serde_json::to_string(&payload) {
-            if let Ok(c_str) = CString::new(json) {
-                // SAFETY: c_str is valid NUL-terminated, callback copies
-                // before returning, and we drop c_str afterwards.
-                unsafe {
-                    callback(c_str.as_ptr());
-                }
+        if let Ok(json) = serde_json::to_string(&payload)
+            && let Ok(c_str) = CString::new(json)
+        {
+            // SAFETY: c_str is valid NUL-terminated, callback copies
+            // before returning, and we drop c_str afterwards.
+            unsafe {
+                callback(c_str.as_ptr());
             }
         }
     }
@@ -458,20 +466,26 @@ fn resolve_provider_for_model(model: Option<&str>) -> Option<std::sync::Arc<dyn 
     if let Some(model_id) = model
         && let Some(provider) = registry.get(model_id)
     {
-        emit_log("DEBUG", "bridge", &format!(
-            "Resolved provider for model={}: {}",
-            model_id, provider.name()
-        ));
+        emit_log(
+            "DEBUG",
+            "bridge",
+            &format!(
+                "Resolved provider for model={}: {}",
+                model_id,
+                provider.name()
+            ),
+        );
         return Some(provider);
     }
 
     // Fall back to first available provider
     let result = registry.first();
     if let Some(ref p) = result {
-        emit_log("DEBUG", "bridge", &format!(
-            "Using first available provider: {} ({})",
-            p.name(), p.id()
-        ));
+        emit_log(
+            "DEBUG",
+            "bridge",
+            &format!("Using first available provider: {} ({})", p.name(), p.id()),
+        );
     } else {
         emit_log("WARN", "bridge", "No provider available in registry");
     }
@@ -479,10 +493,15 @@ fn resolve_provider_for_model(model: Option<&str>) -> Option<std::sync::Arc<dyn 
 }
 
 fn build_chat_response(request: ChatRequest) -> String {
-    emit_log("INFO", "bridge.chat", &format!(
-        "Chat request: model={:?} msg_len={}",
-        request.model, request.message.len()
-    ));
+    emit_log(
+        "INFO",
+        "bridge.chat",
+        &format!(
+            "Chat request: model={:?} msg_len={}",
+            request.model,
+            request.message.len()
+        ),
+    );
     let validation = build_validation_summary(request.config_toml.as_deref());
 
     let (reply, model, provider_name, input_tokens, output_tokens, duration_ms) =
@@ -494,9 +513,11 @@ fn build_chat_response(request: ChatRequest) -> String {
                     content: UserContent::text(&request.message),
                 }];
 
-                emit_log("DEBUG", "bridge.chat", &format!(
-                    "Calling {}/{}", provider_name, model_id
-                ));
+                emit_log(
+                    "DEBUG",
+                    "bridge.chat",
+                    &format!("Calling {}/{}", provider_name, model_id),
+                );
                 let start = std::time::Instant::now();
                 match BRIDGE.runtime.block_on(provider.complete(&messages, &[])) {
                     Ok(response) => {
@@ -506,10 +527,14 @@ fn build_chat_response(request: ChatRequest) -> String {
                             .unwrap_or_else(|| "(empty response)".to_owned());
                         let in_tok = response.usage.input_tokens;
                         let out_tok = response.usage.output_tokens;
-                        emit_log("INFO", "bridge.chat", &format!(
-                            "Response: {}ms in={} out={} provider={}",
-                            elapsed, in_tok, out_tok, provider_name
-                        ));
+                        emit_log(
+                            "INFO",
+                            "bridge.chat",
+                            &format!(
+                                "Response: {}ms in={} out={} provider={}",
+                                elapsed, in_tok, out_tok, provider_name
+                            ),
+                        );
                         (
                             text,
                             Some(model_id),
@@ -531,7 +556,11 @@ fn build_chat_response(request: ChatRequest) -> String {
                 emit_log("WARN", "bridge.chat", &msg);
                 (
                     format!("{msg}. Rust bridge received: {}", request.message),
-                    None, None, None, None, None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                 )
             },
         };
@@ -677,9 +706,11 @@ pub unsafe extern "C" fn moltis_chat_stream(
         user_data,
     };
 
-    emit_log("INFO", "bridge.stream", &format!(
-        "Starting stream: {}/{}", provider_name, model_id
-    ));
+    emit_log(
+        "INFO",
+        "bridge.stream",
+        &format!("Starting stream: {}/{}", provider_name, model_id),
+    );
 
     BRIDGE.runtime.spawn(async move {
         let start = std::time::Instant::now();
@@ -711,9 +742,11 @@ pub unsafe extern "C" fn moltis_chat_stream(
                     break;
                 },
                 StreamEvent::Error(message) => {
-                    emit_log("ERROR", "bridge.stream", &format!(
-                        "Stream error: {message}"
-                    ));
+                    emit_log(
+                        "ERROR",
+                        "bridge.stream",
+                        &format!("Stream error: {message}"),
+                    );
                     ctx.send(&BridgeStreamEvent::Error { message });
                     return;
                 },
@@ -723,11 +756,14 @@ pub unsafe extern "C" fn moltis_chat_stream(
         }
 
         let elapsed = start.elapsed().as_millis() as u64;
-        emit_log("INFO", "bridge.stream", &format!(
-            "Stream done: {}ms deltas={} in={} out={} provider={}",
-            elapsed, delta_count, usage.input_tokens,
-            usage.output_tokens, provider_name
-        ));
+        emit_log(
+            "INFO",
+            "bridge.stream",
+            &format!(
+                "Stream done: {}ms deltas={} in={} out={} provider={}",
+                elapsed, delta_count, usage.input_tokens, usage.output_tokens, provider_name
+            ),
+        );
         ctx.send(&BridgeStreamEvent::Done {
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
@@ -783,10 +819,14 @@ pub extern "C" fn moltis_version() -> *mut c_char {
             moltis_version: env!("CARGO_PKG_VERSION"),
             config_dir: config_dir_string(),
         };
-        emit_log("INFO", "bridge", &format!(
-            "version: bridge={} config_dir={}",
-            response.bridge_version, response.config_dir
-        ));
+        emit_log(
+            "INFO",
+            "bridge",
+            &format!(
+                "version: bridge={} config_dir={}",
+                response.bridge_version, response.config_dir
+            ),
+        );
         encode_json(&response)
     })
 }
@@ -837,9 +877,11 @@ pub extern "C" fn moltis_known_providers() -> *mut c_char {
                 key_optional: p.key_optional,
             })
             .collect();
-        emit_log("INFO", "bridge", &format!(
-            "Known providers: {}", providers.len()
-        ));
+        emit_log(
+            "INFO",
+            "bridge",
+            &format!("Known providers: {}", providers.len()),
+        );
         encode_json(&providers)
     })
 }
@@ -853,9 +895,8 @@ pub extern "C" fn moltis_detect_providers() -> *mut c_char {
     with_ffi_boundary(|| {
         emit_log("DEBUG", "bridge", "Detecting provider sources");
         let config = moltis_config::discover_and_load();
-        let sources = detect_auto_provider_sources_with_overrides(
-            &config.providers, None, &config.env,
-        );
+        let sources =
+            detect_auto_provider_sources_with_overrides(&config.providers, None, &config.env);
         let bridge_sources: Vec<BridgeDetectedSource> = sources
             .into_iter()
             .map(|s| BridgeDetectedSource {
@@ -864,9 +905,11 @@ pub extern "C" fn moltis_detect_providers() -> *mut c_char {
             })
             .collect();
         let names: Vec<&str> = bridge_sources.iter().map(|s| s.provider.as_str()).collect();
-        emit_log("INFO", "bridge", &format!(
-            "Detected {} sources: {:?}", bridge_sources.len(), names
-        ));
+        emit_log(
+            "INFO",
+            "bridge",
+            &format!("Detected {} sources: {:?}", bridge_sources.len(), names),
+        );
         encode_json(&bridge_sources)
     })
 }
@@ -897,9 +940,11 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
             },
         };
 
-        emit_log("INFO", "bridge.config", &format!(
-            "Saving config for provider={}", request.provider
-        ));
+        emit_log(
+            "INFO",
+            "bridge.config",
+            &format!("Saving config for provider={}", request.provider),
+        );
 
         let key_store = KeyStore::new();
         match key_store.save_config(
@@ -941,9 +986,7 @@ pub extern "C" fn moltis_list_models() -> *mut c_char {
                 created_at: m.created_at,
             })
             .collect();
-        emit_log("INFO", "bridge", &format!(
-            "Listed {} models", models.len()
-        ));
+        emit_log("INFO", "bridge", &format!("Listed {} models", models.len()));
         encode_json(&models)
     })
 }
@@ -1014,9 +1057,11 @@ pub unsafe extern "C" fn moltis_set_session_event_callback(callback: SessionEven
                 match rx.recv().await {
                     Ok(event) => emit_session_event(&event),
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        emit_log("WARN", "bridge.session_events", &format!(
-                            "Session event subscriber lagged, skipped {n} events"
-                        ));
+                        emit_log(
+                            "WARN",
+                            "bridge.session_events",
+                            &format!("Session event subscriber lagged, skipped {n} events"),
+                        );
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -1056,9 +1101,11 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
 
         // Already running — return current status.
         if let Some(handle) = guard.as_ref() {
-            emit_log("INFO", "bridge.httpd", &format!(
-                "Server already running on {}", handle.addr
-            ));
+            emit_log(
+                "INFO",
+                "bridge.httpd",
+                &format!("Server already running on {}", handle.addr),
+            );
             return encode_json(&HttpdStatusResponse {
                 running: true,
                 addr: Some(handle.addr.to_string()),
@@ -1066,13 +1113,18 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
         }
 
         let bind_addr = format!("{}:{}", request.host, request.port);
-        emit_log("INFO", "bridge.httpd", &format!("Starting full gateway on {bind_addr}"));
+        emit_log(
+            "INFO",
+            "bridge.httpd",
+            &format!("Starting full gateway on {bind_addr}"),
+        );
 
         // Prepare the full gateway (config, DB migrations, service wiring,
         // background tasks). This runs on the bridge runtime via block_on —
         // valid because this is an extern "C" fn, not async.
-        let prepared = match BRIDGE.runtime.block_on(
-            moltis_gateway::server::prepare_gateway(
+        let prepared = match BRIDGE
+            .runtime
+            .block_on(moltis_gateway::server::prepare_gateway(
                 &request.host,
                 request.port,
                 true, // no_tls — the macOS app manages its own TLS if needed
@@ -1082,11 +1134,14 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
                 None, // tailscale_opts
                 Some(moltis_web::web_routes), // full web UI
                 Some(BRIDGE.session_event_bus.clone()), // share bus with gateway
-            ),
-        ) {
+            )) {
             Ok(p) => p,
             Err(e) => {
-                emit_log("ERROR", "bridge.httpd", &format!("Gateway init failed: {e}"));
+                emit_log(
+                    "ERROR",
+                    "bridge.httpd",
+                    &format!("Gateway init failed: {e}"),
+                );
                 return encode_error("gateway_init_failed", &e.to_string());
             },
         };
@@ -1094,9 +1149,10 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
         let gateway_state = prepared.state;
 
         // Bind the TCP listener synchronously so we can report errors immediately.
-        let listener = match BRIDGE.runtime.block_on(
-            tokio::net::TcpListener::bind(&bind_addr),
-        ) {
+        let listener = match BRIDGE
+            .runtime
+            .block_on(tokio::net::TcpListener::bind(&bind_addr))
+        {
             Ok(l) => l,
             Err(e) => {
                 emit_log("ERROR", "bridge.httpd", &format!("Bind failed: {e}"));
@@ -1126,7 +1182,11 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
             emit_log("INFO", "bridge.httpd", "Server stopped");
         });
 
-        emit_log("INFO", "bridge.httpd", &format!("Gateway listening on {addr}"));
+        emit_log(
+            "INFO",
+            "bridge.httpd",
+            &format!("Gateway listening on {addr}"),
+        );
         *guard = Some(HttpdHandle {
             shutdown_tx,
             addr,
@@ -1149,12 +1209,18 @@ pub extern "C" fn moltis_stop_httpd() -> *mut c_char {
     with_ffi_boundary(|| {
         let mut guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(handle) = guard.take() {
-            emit_log("INFO", "bridge.httpd", &format!(
-                "Stopping httpd on {}", handle.addr
-            ));
+            emit_log(
+                "INFO",
+                "bridge.httpd",
+                &format!("Stopping httpd on {}", handle.addr),
+            );
             let _ = handle.shutdown_tx.send(());
         } else {
-            emit_log("DEBUG", "bridge.httpd", "Stop called but server not running");
+            emit_log(
+                "DEBUG",
+                "bridge.httpd",
+                "Stop called but server not running",
+            );
         }
         encode_json(&HttpdStatusResponse {
             running: false,
@@ -1195,7 +1261,11 @@ pub extern "C" fn moltis_list_sessions() -> *mut c_char {
     with_ffi_boundary(|| {
         let all = BRIDGE.runtime.block_on(BRIDGE.session_metadata.list());
         let entries: Vec<BridgeSessionEntry> = all.iter().map(BridgeSessionEntry::from).collect();
-        emit_log("DEBUG", "bridge.sessions", &format!("Listed {} sessions", entries.len()));
+        emit_log(
+            "DEBUG",
+            "bridge.sessions",
+            &format!("Listed {} sessions", entries.len()),
+        );
         encode_json(&entries)
     })
 }
@@ -1219,32 +1289,55 @@ pub extern "C" fn moltis_switch_session(request_json: *const c_char) -> *mut c_c
         };
 
         // Ensure metadata entry exists.
-        if let Err(e) = BRIDGE.runtime.block_on(
-            BRIDGE.session_metadata.upsert(&request.key, None)
-        ) {
-            emit_log("WARN", "bridge.sessions", &format!("Failed to upsert metadata: {e}"));
+        if let Err(e) = BRIDGE
+            .runtime
+            .block_on(BRIDGE.session_metadata.upsert(&request.key, None))
+        {
+            emit_log(
+                "WARN",
+                "bridge.sessions",
+                &format!("Failed to upsert metadata: {e}"),
+            );
         }
 
         // Read message history from JSONL.
-        let messages = match BRIDGE.runtime.block_on(BRIDGE.session_store.read(&request.key)) {
+        let messages = match BRIDGE
+            .runtime
+            .block_on(BRIDGE.session_store.read(&request.key))
+        {
             Ok(msgs) => msgs,
             Err(e) => {
-                emit_log("WARN", "bridge.sessions", &format!("Failed to read session: {e}"));
+                emit_log(
+                    "WARN",
+                    "bridge.sessions",
+                    &format!("Failed to read session: {e}"),
+                );
                 vec![]
             },
         };
 
-        let entry = BRIDGE.runtime.block_on(BRIDGE.session_metadata.get(&request.key))
+        let entry = BRIDGE
+            .runtime
+            .block_on(BRIDGE.session_metadata.get(&request.key))
             .map(|e| BridgeSessionEntry::from(&e));
 
         match entry {
             Some(entry) => {
-                emit_log("INFO", "bridge.sessions", &format!(
-                    "Switched to session '{}' ({} messages)", request.key, messages.len()
-                ));
+                emit_log(
+                    "INFO",
+                    "bridge.sessions",
+                    &format!(
+                        "Switched to session '{}' ({} messages)",
+                        request.key,
+                        messages.len()
+                    ),
+                );
                 encode_json(&BridgeSessionHistory { entry, messages })
             },
-            None => encode_error("session_not_found", &format!("Session '{}' not found", request.key)),
+            None => encode_error(
+                "session_not_found",
+                &format!("Session '{}' not found", request.key),
+            ),
         }
     })
 }
@@ -1271,11 +1364,16 @@ pub extern "C" fn moltis_create_session(request_json: *const c_char) -> *mut c_c
         let key = format!("session:{}", uuid::Uuid::new_v4());
         let label = request.label.unwrap_or_else(|| "New Session".to_owned());
 
-        match BRIDGE.runtime.block_on(
-            BRIDGE.session_metadata.upsert(&key, Some(label))
-        ) {
+        match BRIDGE
+            .runtime
+            .block_on(BRIDGE.session_metadata.upsert(&key, Some(label)))
+        {
             Ok(entry) => {
-                emit_log("INFO", "bridge.sessions", &format!("Created session '{}'", key));
+                emit_log(
+                    "INFO",
+                    "bridge.sessions",
+                    &format!("Created session '{}'", key),
+                );
                 BRIDGE.session_event_bus.publish(SessionEvent::Created {
                     session_key: key.clone(),
                 });
@@ -1305,7 +1403,9 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
         let event = BridgeStreamEvent::Error { message: msg };
         let json = encode_json(&event);
         if let Ok(c_str) = CString::new(json) {
-            unsafe { callback(c_str.as_ptr(), user_data); }
+            unsafe {
+                callback(c_str.as_ptr(), user_data);
+            }
         }
     };
 
@@ -1338,14 +1438,24 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
     // Persist user message.
     let user_msg = PersistedMessage::user(&request.message);
     let user_value = user_msg.to_value();
-    if let Err(e) = BRIDGE.runtime.block_on(BRIDGE.session_store.append(&session_key, &user_value)) {
-        emit_log("WARN", "bridge.session_chat", &format!("Failed to persist user message: {e}"));
+    if let Err(e) = BRIDGE
+        .runtime
+        .block_on(BRIDGE.session_store.append(&session_key, &user_value))
+    {
+        emit_log(
+            "WARN",
+            "bridge.session_chat",
+            &format!("Failed to persist user message: {e}"),
+        );
     }
 
     // Update metadata.
     BRIDGE.runtime.block_on(async {
         let _ = BRIDGE.session_metadata.upsert(&session_key, None).await;
-        let msg_count = BRIDGE.session_store.read(&session_key).await
+        let msg_count = BRIDGE
+            .session_store
+            .read(&session_key)
+            .await
             .map(|m| m.len() as u32)
             .unwrap_or(0);
         BRIDGE.session_metadata.touch(&session_key, msg_count).await;
@@ -1362,11 +1472,19 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
         content: UserContent::text(&request.message),
     }];
 
-    let ctx = StreamCallbackCtx { callback, user_data };
+    let ctx = StreamCallbackCtx {
+        callback,
+        user_data,
+    };
 
-    emit_log("INFO", "bridge.session_chat", &format!(
-        "Starting session stream: session={} provider={}/{}", session_key, provider_name, model_id
-    ));
+    emit_log(
+        "INFO",
+        "bridge.session_chat",
+        &format!(
+            "Starting session stream: session={} provider={}/{}",
+            session_key, provider_name, model_id
+        ),
+    );
 
     BRIDGE.runtime.spawn(async move {
         let start = std::time::Instant::now();
@@ -1415,16 +1533,30 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
             None, // audio
         );
         let assistant_value = assistant_msg.to_value();
-        if let Err(e) = BRIDGE.session_store.append(&session_key, &assistant_value).await {
-            emit_log("WARN", "bridge.session_chat", &format!("Failed to persist assistant message: {e}"));
+        if let Err(e) = BRIDGE
+            .session_store
+            .append(&session_key, &assistant_value)
+            .await
+        {
+            emit_log(
+                "WARN",
+                "bridge.session_chat",
+                &format!("Failed to persist assistant message: {e}"),
+            );
         }
 
         // Update metadata in SQLite.
-        let msg_count = BRIDGE.session_store.read(&session_key).await
+        let msg_count = BRIDGE
+            .session_store
+            .read(&session_key)
+            .await
             .map(|m| m.len() as u32)
             .unwrap_or(0);
         BRIDGE.session_metadata.touch(&session_key, msg_count).await;
-        BRIDGE.session_metadata.set_model(&session_key, Some(model_id.clone())).await;
+        BRIDGE
+            .session_metadata
+            .set_model(&session_key, Some(model_id.clone()))
+            .await;
 
         // Notify other UIs (web) that this session was updated.
         BRIDGE.session_event_bus.publish(SessionEvent::Patched {
@@ -1604,19 +1736,13 @@ mod tests {
         // Leak the Arc into user_data so the callback can access it.
         let user_data = Arc::into_raw(events_clone) as *mut c_void;
 
-        unsafe extern "C" fn test_callback(
-            event_json: *const c_char,
-            user_data: *mut c_void,
-        ) {
+        unsafe extern "C" fn test_callback(event_json: *const c_char, user_data: *mut c_void) {
             // SAFETY: event_json is a valid NUL-terminated C string from
             // send_stream_event; user_data is our Arc<Mutex<Vec<String>>>.
             unsafe {
                 let json = CStr::from_ptr(event_json).to_string_lossy().to_string();
                 let events = &*(user_data as *const Mutex<Vec<String>>);
-                events
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push(json);
+                events.lock().unwrap_or_else(|e| e.into_inner()).push(json);
             }
         }
 
@@ -1658,34 +1784,22 @@ mod tests {
 
         // Status should confirm running.
         let status = json_from_ptr(moltis_httpd_status());
-        assert_eq!(
-            status.get("running").and_then(Value::as_bool),
-            Some(true),
-        );
+        assert_eq!(status.get("running").and_then(Value::as_bool), Some(true),);
 
         // Stop.
         let stopped = json_from_ptr(moltis_stop_httpd());
-        assert_eq!(
-            stopped.get("running").and_then(Value::as_bool),
-            Some(false),
-        );
+        assert_eq!(stopped.get("running").and_then(Value::as_bool), Some(false),);
 
         // Status after stop.
         let status2 = json_from_ptr(moltis_httpd_status());
-        assert_eq!(
-            status2.get("running").and_then(Value::as_bool),
-            Some(false),
-        );
+        assert_eq!(status2.get("running").and_then(Value::as_bool), Some(false),);
     }
 
     #[test]
     fn httpd_stop_when_not_running() {
         // Stop without start should still return running: false.
         let payload = json_from_ptr(moltis_stop_httpd());
-        assert_eq!(
-            payload.get("running").and_then(Value::as_bool),
-            Some(false),
-        );
+        assert_eq!(payload.get("running").and_then(Value::as_bool), Some(false),);
     }
 
     #[test]
@@ -1696,19 +1810,13 @@ mod tests {
         let events_clone = Arc::clone(&events);
         let user_data = Arc::into_raw(events_clone) as *mut c_void;
 
-        unsafe extern "C" fn test_callback(
-            event_json: *const c_char,
-            user_data: *mut c_void,
-        ) {
+        unsafe extern "C" fn test_callback(event_json: *const c_char, user_data: *mut c_void) {
             // SAFETY: event_json is a valid NUL-terminated C string from
             // send_stream_event; user_data is our Arc<Mutex<Vec<String>>>.
             unsafe {
                 let json = CStr::from_ptr(event_json).to_string_lossy().to_string();
                 let events = &*(user_data as *const Mutex<Vec<String>>);
-                events
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push(json);
+                events.lock().unwrap_or_else(|e| e.into_inner()).push(json);
             }
         }
 
@@ -1751,7 +1859,10 @@ mod tests {
         let c_request = CString::new(request).unwrap_or_else(|e| panic!("{e}"));
         let payload = json_from_ptr(moltis_create_session(c_request.as_ptr()));
 
-        let key = payload.get("key").and_then(Value::as_str).unwrap_or_default();
+        let key = payload
+            .get("key")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         assert!(
             key.starts_with("session:"),
             "created session key should start with 'session:'"
@@ -1766,10 +1877,7 @@ mod tests {
         let c_switch = CString::new(switch_request).unwrap_or_else(|e| panic!("{e}"));
         let history = json_from_ptr(moltis_switch_session(c_switch.as_ptr()));
 
-        assert!(
-            history.get("entry").is_some(),
-            "switch should return entry"
-        );
+        assert!(history.get("entry").is_some(), "switch should return entry");
         assert!(
             history.get("messages").and_then(Value::as_array).is_some(),
             "switch should return messages array"
@@ -1780,7 +1888,10 @@ mod tests {
     fn create_session_with_null_uses_defaults() {
         let payload = json_from_ptr(moltis_create_session(std::ptr::null()));
 
-        let key = payload.get("key").and_then(Value::as_str).unwrap_or_default();
+        let key = payload
+            .get("key")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         assert!(
             key.starts_with("session:"),
             "session key should start with 'session:'"
