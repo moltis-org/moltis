@@ -129,6 +129,7 @@ struct SettingsView: View {
     @ObservedObject var logStore: LogStore
     @State private var selectedSection: SettingsSection? = .identity
     @State private var searchText = ""
+    @FocusState private var focusedField: String?
 
     private var filteredGroups: [(group: SettingsGroup, sections: [SettingsSection])] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -209,6 +210,7 @@ struct SettingsView: View {
                         )
                     }
                     .formStyle(.grouped)
+                    .focused($focusedField, equals: "none")
                 }
             } else {
                 VStack(spacing: 8) {

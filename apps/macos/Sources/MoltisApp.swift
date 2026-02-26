@@ -66,7 +66,7 @@ struct MoltisApp: App {
         }
         .windowResizability(.contentSize)
 
-        WindowGroup("Moltis Settings", id: "settings") {
+        WindowGroup("Settings", id: "settings") {
             SettingsView(settings: settings, providerStore: providerStore, logStore: logStore)
         }
         .defaultSize(width: 960, height: 780)
