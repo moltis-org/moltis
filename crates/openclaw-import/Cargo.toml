@@ -17,7 +17,7 @@ serde                 = { workspace = true }
 serde_json            = { workspace = true }
 serde_yaml            = { workspace = true }
 thiserror             = { workspace = true }
-time                  = { workspace = true, features = ["parsing"] }
+time                  = { features = ["parsing"], workspace = true }
 tokio                 = { workspace = true }
 toml                  = { workspace = true }
 tracing               = { workspace = true }

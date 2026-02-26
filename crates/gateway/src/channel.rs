@@ -19,6 +19,9 @@ use {
     moltis_telegram::TelegramPlugin,
 };
 
+#[cfg(feature = "whatsapp")]
+use moltis_whatsapp::WhatsAppPlugin;
+
 use crate::services::{ChannelService, ServiceError, ServiceResult};
 
 fn unix_now() -> i64 {
@@ -28,10 +31,12 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
-/// Live channel service backed by Telegram and Microsoft Teams plugins.
+/// Live channel service backed by Telegram, Microsoft Teams, and WhatsApp plugins.
 pub struct LiveChannelService {
     telegram: Arc<RwLock<TelegramPlugin>>,
     msteams: Arc<RwLock<MsTeamsPlugin>>,
+    #[cfg(feature = "whatsapp")]
+    whatsapp: Arc<RwLock<WhatsAppPlugin>>,
     store: Arc<dyn ChannelStore>,
     message_log: Arc<dyn MessageLog>,
     session_metadata: Arc<SqliteSessionMetadata>,
@@ -41,6 +46,7 @@ impl LiveChannelService {
     pub fn new(
         telegram: Arc<RwLock<TelegramPlugin>>,
         msteams: Arc<RwLock<MsTeamsPlugin>>,
+        #[cfg(feature = "whatsapp")] whatsapp: Arc<RwLock<WhatsAppPlugin>>,
         store: Arc<dyn ChannelStore>,
         message_log: Arc<dyn MessageLog>,
         session_metadata: Arc<SqliteSessionMetadata>,
@@ -48,6 +54,8 @@ impl LiveChannelService {
         Self {
             telegram,
             msteams,
+            #[cfg(feature = "whatsapp")]
+            whatsapp,
             store,
             message_log,
             session_metadata,
@@ -64,40 +72,60 @@ impl LiveChannelService {
             return type_str.parse::<ChannelType>().map_err(|e| e.to_string());
         }
 
-        let (tg_has, ms_has) = {
+        // Check which plugins currently hold this account.
+        let mut matches = Vec::new();
+        {
             let tg = self.telegram.read().await;
+            if tg.has_account(account_id) {
+                matches.push(ChannelType::Telegram);
+            }
+        }
+        {
             let ms = self.msteams.read().await;
-            (tg.has_account(account_id), ms.has_account(account_id))
-        };
+            if ms.has_account(account_id) {
+                matches.push(ChannelType::MsTeams);
+            }
+        }
+        #[cfg(feature = "whatsapp")]
+        {
+            let wa = self.whatsapp.read().await;
+            if wa.has_account(account_id) {
+                matches.push(ChannelType::Whatsapp);
+            }
+        }
 
-        match (tg_has, ms_has) {
-            (true, false) => Ok(ChannelType::Telegram),
-            (false, true) => Ok(ChannelType::MsTeams),
-            (true, true) => Err(format!(
-                "account_id '{account_id}' exists in multiple channel types; pass explicit 'type'"
-            )),
-            (false, false) => {
-                let tg_store = self
-                    .store
-                    .get(ChannelType::Telegram.as_str(), account_id)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .is_some();
-                let ms_store = self
-                    .store
-                    .get(ChannelType::MsTeams.as_str(), account_id)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .is_some();
-                match (tg_store, ms_store) {
-                    (true, false) => Ok(ChannelType::Telegram),
-                    (false, true) => Ok(ChannelType::MsTeams),
-                    (true, true) => Err(format!(
-                        "account_id '{account_id}' exists in multiple stored channel types; pass explicit 'type'"
-                    )),
-                    (false, false) => Ok(default_when_unknown),
-                }
+        match matches.len() {
+            1 => return Ok(matches[0]),
+            n if n > 1 => {
+                return Err(format!(
+                    "account_id '{account_id}' exists in multiple channel types; pass explicit 'type'"
+                ));
             },
+            _ => {},
+        }
+
+        // Fall back to store lookup.
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::MsTeams,
+            ChannelType::Whatsapp,
+        ] {
+            if self
+                .store
+                .get(ct.as_str(), account_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                matches.push(ct);
+            }
+        }
+        match matches.len() {
+            1 => Ok(matches[0]),
+            n if n > 1 => Err(format!(
+                "account_id '{account_id}' exists in multiple stored channel types; pass explicit 'type'"
+            )),
+            _ => Ok(default_when_unknown),
         }
     }
 
@@ -164,6 +192,15 @@ impl LiveChannelService {
                 let mut ms = self.msteams.write().await;
                 ms.start_account(account_id, config).await
             },
+            #[cfg(feature = "whatsapp")]
+            ChannelType::Whatsapp => {
+                let mut wa = self.whatsapp.write().await;
+                wa.start_account(account_id, config).await
+            },
+            #[cfg(not(feature = "whatsapp"))]
+            ChannelType::Whatsapp => {
+                return Err("WhatsApp support is not enabled".to_string());
+            },
         }
         .map_err(|e| {
             error!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to start account");
@@ -186,6 +223,15 @@ impl LiveChannelService {
                 let mut ms = self.msteams.write().await;
                 ms.stop_account(account_id).await
             },
+            #[cfg(feature = "whatsapp")]
+            ChannelType::Whatsapp => {
+                let mut wa = self.whatsapp.write().await;
+                wa.stop_account(account_id).await
+            },
+            #[cfg(not(feature = "whatsapp"))]
+            ChannelType::Whatsapp => {
+                return Err("WhatsApp support is not enabled".to_string());
+            },
         }
         .map_err(|e| {
             error!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to stop account");
@@ -204,6 +250,13 @@ impl LiveChannelService {
                 let ms = self.msteams.read().await;
                 ms.update_account_config(account_id, config)
             },
+            #[cfg(feature = "whatsapp")]
+            ChannelType::Whatsapp => {
+                let wa = self.whatsapp.read().await;
+                wa.update_account_config(account_id, config)
+            },
+            #[cfg(not(feature = "whatsapp"))]
+            ChannelType::Whatsapp => return,
         };
         if let Err(e) = result {
             warn!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to hot-update config");
@@ -221,6 +274,13 @@ impl LiveChannelService {
                 let ms = self.msteams.read().await;
                 ms.account_config(account_id)
             },
+            #[cfg(feature = "whatsapp")]
+            ChannelType::Whatsapp => {
+                let wa = self.whatsapp.read().await;
+                wa.account_config(account_id)
+            },
+            #[cfg(not(feature = "whatsapp"))]
+            ChannelType::Whatsapp => None,
         };
         cfg.and_then(|c| c.get("allowlist").cloned())
             .and_then(|v| serde_json::from_value(v).ok())
@@ -284,6 +344,37 @@ impl ChannelService for LiveChannelService {
                         Err(e) => channels.push(serde_json::json!({
                             "type": "msteams",
                             "name": format!("Microsoft Teams ({aid})"),
+                            "account_id": aid,
+                            "status": "error",
+                            "details": e.to_string(),
+                        })),
+                    }
+                }
+            }
+        }
+
+        #[cfg(feature = "whatsapp")]
+        {
+            let wa = self.whatsapp.read().await;
+            let account_ids = wa.account_ids();
+            if let Some(status) = wa.status() {
+                for aid in &account_ids {
+                    match status.probe(aid).await {
+                        Ok(snap) => {
+                            let entry = self
+                                .channel_status_entry(
+                                    ChannelType::Whatsapp,
+                                    "WhatsApp",
+                                    aid,
+                                    snap,
+                                    wa.account_config(aid),
+                                )
+                                .await;
+                            channels.push(entry);
+                        },
+                        Err(e) => channels.push(serde_json::json!({
+                            "type": "whatsapp",
+                            "name": format!("WhatsApp ({aid})"),
                             "account_id": aid,
                             "status": "error",
                             "details": e.to_string(),

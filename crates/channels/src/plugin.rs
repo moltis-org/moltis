@@ -9,9 +9,9 @@ use crate::{Error, Result};
 #[serde(rename_all = "lowercase")]
 pub enum ChannelType {
     Telegram,
+    Whatsapp,
     #[serde(rename = "msteams")]
     MsTeams,
-    // Future: Discord, Slack, WhatsApp, etc.
 }
 
 impl ChannelType {
@@ -19,7 +19,17 @@ impl ChannelType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Telegram => "telegram",
+            Self::Whatsapp => "whatsapp",
             Self::MsTeams => "msteams",
+        }
+    }
+
+    /// Human-readable display name for UI labels.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Telegram => "Telegram",
+            Self::Whatsapp => "WhatsApp",
+            Self::MsTeams => "Microsoft Teams",
         }
     }
 }
@@ -36,6 +46,7 @@ impl std::str::FromStr for ChannelType {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "telegram" => Ok(Self::Telegram),
+            "whatsapp" => Ok(Self::Whatsapp),
             "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
@@ -82,6 +93,26 @@ pub enum ChannelEvent {
         peer_id: String,
         username: Option<String>,
         resolution: String,
+    },
+    /// A QR code was generated for device pairing (e.g. WhatsApp Linked Devices).
+    PairingQrCode {
+        channel_type: ChannelType,
+        account_id: String,
+        /// Raw QR data string to be rendered as a QR code image.
+        qr_data: String,
+    },
+    /// Device pairing completed successfully.
+    PairingComplete {
+        channel_type: ChannelType,
+        account_id: String,
+        /// Display name of the paired device/account.
+        display_name: Option<String>,
+    },
+    /// Device pairing failed.
+    PairingFailed {
+        channel_type: ChannelType,
+        account_id: String,
+        reason: String,
     },
 }
 
@@ -390,6 +421,7 @@ pub trait ChannelStreamOutbound: Send + Sync {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -440,6 +472,70 @@ mod tests {
             message_id: None,
         };
         assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
+    }
+
+    #[test]
+    fn channel_type_whatsapp_roundtrip() {
+        let ct = ChannelType::Whatsapp;
+        assert_eq!(ct.as_str(), "whatsapp");
+        assert_eq!(ct.to_string(), "whatsapp");
+        assert_eq!("whatsapp".parse::<ChannelType>().unwrap(), ct);
+    }
+
+    #[test]
+    fn channel_type_serde_roundtrip() {
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::Whatsapp,
+            ChannelType::MsTeams,
+        ] {
+            let json = serde_json::to_string(&ct).unwrap();
+            let parsed: ChannelType = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, ct);
+        }
+    }
+
+    #[test]
+    fn channel_type_from_str_unknown_errors() {
+        assert!("discord".parse::<ChannelType>().is_err());
+    }
+
+    #[test]
+    fn pairing_qr_code_event_serialization() {
+        let event = ChannelEvent::PairingQrCode {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            qr_data: "2@abc123".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_qr_code");
+        assert_eq!(json["channel_type"], "whatsapp");
+        assert_eq!(json["account_id"], "wa1");
+        assert_eq!(json["qr_data"], "2@abc123");
+    }
+
+    #[test]
+    fn pairing_complete_event_serialization() {
+        let event = ChannelEvent::PairingComplete {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            display_name: Some("My Phone".into()),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_complete");
+        assert_eq!(json["display_name"], "My Phone");
+    }
+
+    #[test]
+    fn pairing_failed_event_serialization() {
+        let event = ChannelEvent::PairingFailed {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            reason: "timeout".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_failed");
+        assert_eq!(json["reason"], "timeout");
     }
 
     struct DummyOutbound;

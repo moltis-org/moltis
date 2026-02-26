@@ -1094,6 +1094,9 @@ pub struct ChannelsConfig {
     /// Telegram bot accounts, keyed by account ID.
     #[serde(default)]
     pub telegram: HashMap<String, serde_json::Value>,
+    /// WhatsApp linked-device accounts, keyed by account ID.
+    #[serde(default)]
+    pub whatsapp: HashMap<String, serde_json::Value>,
     /// Microsoft Teams bot accounts, keyed by account ID.
     #[serde(default)]
     pub msteams: HashMap<String, serde_json::Value>,
@@ -1108,6 +1111,7 @@ impl Default for ChannelsConfig {
         Self {
             offered: default_channels_offered(),
             telegram: HashMap::new(),
+            whatsapp: HashMap::new(),
             msteams: HashMap::new(),
         }
     }

@@ -154,6 +154,12 @@ var sections = [
 		label: "Tailscale",
 		icon: html`<span class="icon icon-globe"></span>`,
 	},
+	{
+		id: "sandboxes",
+		label: "Sandboxes",
+		icon: html`<span class="icon icon-cube"></span>`,
+		page: true,
+	},
 	{ group: "Integrations" },
 	{
 		id: "channels",
@@ -200,12 +206,6 @@ var sections = [
 		id: "terminal",
 		label: "Terminal",
 		icon: html`<span class="icon icon-terminal"></span>`,
-		page: true,
-	},
-	{
-		id: "sandboxes",
-		label: "Sandboxes",
-		icon: html`<span class="icon icon-cube"></span>`,
 		page: true,
 	},
 	{

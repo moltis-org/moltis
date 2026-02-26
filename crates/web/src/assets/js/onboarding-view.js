@@ -16,6 +16,7 @@ import {
 	validateChannelFields,
 } from "./channel-utils.js";
 import { EmojiPicker } from "./emoji-picker.js";
+import { eventListeners, onEvent } from "./events.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { t } from "./i18n.js";
@@ -47,7 +48,16 @@ var wsStarted = false;
 function ensureWsConnected() {
 	if (wsStarted) return;
 	wsStarted = true;
-	connectWs({ backoff: { factor: 2, max: 10000 } });
+	connectWs({
+		backoff: { factor: 2, max: 10000 },
+		onFrame: (frame) => {
+			if (frame.type !== "event") return;
+			var listeners = eventListeners[frame.event] || [];
+			listeners.forEach((h) => {
+				h(frame.payload || {});
+			});
+		},
+	});
 }
 
 var WS_RETRY_LIMIT = 75;
@@ -2103,6 +2113,14 @@ function VoiceStep({ onNext, onBack }) {
 
 // ── Channel step ────────────────────────────────────────────
 
+function WhatsAppIconLg() {
+	return html`<svg width="28" height="28" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 21l1.65-3.8a9 9 0 113.4 2.9L3 21" />
+    <path d="M9 10a.5.5 0 001 0V9a.5.5 0 00-1 0v1zm5 3a.5.5 0 001 0v-1a.5.5 0 00-1 0v1z" />
+  </svg>`;
+}
+
 function ChannelTypeSelector({ onSelect, offered }) {
 	return html`<div class="flex gap-3">
 		${
@@ -2110,6 +2128,13 @@ function ChannelTypeSelector({ onSelect, offered }) {
 			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("telegram")}>
 			<span class="icon icon-xl icon-telegram"></span>
 			<span class="text-sm font-medium text-[var(--text-strong)]">Telegram</span>
+		</button>`
+		}
+		${
+			offered.has("whatsapp") &&
+			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("whatsapp")}>
+			<${WhatsAppIconLg} />
+			<span class="text-sm font-medium text-[var(--text-strong)]">WhatsApp</span>
 		</button>`
 		}
 		${
@@ -2321,8 +2346,141 @@ function TeamsForm({ onConnected, error, setError }) {
 	</form>`;
 }
 
+function WhatsAppForm({ onConnected, error, setError }) {
+	var [accountId, setAccountId] = useState("");
+	var [dmPolicy, setDmPolicy] = useState("allowlist");
+	var [allowlist, setAllowlist] = useState("");
+	var [saving, setSaving] = useState(false);
+	var [pairingStarted, setPairingStarted] = useState(false);
+	var [qrData, setQrData] = useState(null);
+	var [qrSvg, setQrSvg] = useState(null);
+	var [pairingError, setPairingError] = useState(null);
+	var unsubRef = useRef(null);
+
+	// Clean up event subscription on unmount.
+	useEffect(() => {
+		return () => {
+			if (unsubRef.current) unsubRef.current();
+		};
+	}, []);
+
+	function onStartPairing(e) {
+		e.preventDefault();
+		var id = accountId.trim();
+		if (!id) {
+			setError("Account ID is required.");
+			return;
+		}
+		setError(null);
+		setSaving(true);
+		setQrData(null);
+		setQrSvg(null);
+		setPairingError(null);
+
+		// Subscribe to channel events BEFORE the API call so we don't
+		// miss the QR code event that fires while the request is in flight.
+		if (unsubRef.current) unsubRef.current();
+		unsubRef.current = onEvent("channel", (p) => {
+			if (p.account_id !== id) return;
+			if (p.kind === "pairing_qr_code") {
+				setQrData(p.qr_data);
+				setQrSvg(p.qr_svg || null);
+			}
+			if (p.kind === "pairing_complete") onConnected(id, "whatsapp");
+			if (p.kind === "pairing_failed") setPairingError(p.reason || "Pairing failed");
+		});
+
+		var allowlistEntries = allowlist
+			.trim()
+			.split(/\n/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		addChannel("whatsapp", id, {
+			dm_policy: dmPolicy,
+			allowlist: allowlistEntries,
+		}).then((res) => {
+			setSaving(false);
+			if (res?.ok) {
+				setPairingStarted(true);
+			} else {
+				if (unsubRef.current) {
+					unsubRef.current();
+					unsubRef.current = null;
+				}
+				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to start pairing.");
+			}
+		});
+	}
+
+	var qrSvgUrl = qrSvg ? `data:image/svg+xml;utf8,${encodeURIComponent(qrSvg)}` : null;
+
+	if (pairingStarted) {
+		return html`<div class="flex flex-col gap-4 items-center">
+			${
+				pairingError
+					? html`<${ErrorPanel} message=${pairingError} />`
+					: qrData
+						? html`<div class="rounded-lg bg-white p-3" style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;">
+							${
+								qrSvgUrl
+									? html`<img src=${qrSvgUrl} alt="WhatsApp pairing QR code" style="width:100%;height:100%;display:block;" />`
+									: html`<div class="text-center text-xs text-gray-600">
+								<div style="font-family:monospace;font-size:9px;word-break:break-all;max-height:180px;overflow:hidden;">${qrData.substring(0, 200)}</div>
+							</div>`
+							}
+						</div>`
+						: html`<div class="text-sm text-[var(--muted)]">Waiting for QR code...</div>`
+			}
+			<div class="text-xs text-[var(--muted)] text-center">
+				Scan the QR code from your terminal, or open WhatsApp > Settings > Linked Devices > Link a Device.
+			</div>
+		</div>`;
+	}
+
+	return html`<form onSubmit=${onStartPairing} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">Link your WhatsApp</span>
+			<span>1. Choose an account ID below (any name you like)</span>
+			<span>2. Click "Start Pairing" to generate a QR code</span>
+			<span>3. Open WhatsApp > Settings > Linked Devices > Link a Device</span>
+			<span>4. Scan the QR code to connect</span>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Account ID</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
+				placeholder="e.g. my-whatsapp"
+				autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+				name="whatsapp_account_id" autofocus />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+				<option value="open">Open (anyone)</option>
+				<option value="allowlist">Allowlist only</option>
+				<option value="disabled">Disabled</option>
+			</select>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Allowlist (optional)</label>
+			<textarea class="provider-key-input w-full" rows="2"
+				value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+				placeholder="phone number or identifier" style="resize:vertical;font-family:var(--font-body);" />
+			<div class="text-xs text-[var(--muted)] mt-1">One per line. Only needed if DM policy is "Allowlist only".</div>
+		</div>
+		${error && html`<${ErrorPanel} message=${error} />`}
+		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Starting\u2026" : "Start Pairing"}</button>
+	</form>`;
+}
+
+function channelDisplayLabel(type) {
+	if (type === "msteams") return "Microsoft Teams";
+	if (type === "whatsapp") return "WhatsApp";
+	return "Telegram";
+}
+
 function ChannelSuccess({ channelName, channelType: type, onAnother }) {
-	var label = type === "msteams" ? "Microsoft Teams" : "Telegram";
+	var label = channelDisplayLabel(type);
 	return html`<div class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
 			<span class="icon icon-lg icon-check-circle shrink-0" style="color:var(--ok)"></span>
@@ -2377,6 +2535,7 @@ function ChannelStep({ onNext, onBack }) {
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Connect a messaging channel so you can chat from your phone or team workspace. You can set this up later in Channels.</p>
 		${phase === "select" && html`<${ChannelTypeSelector} onSelect=${onSelectType} offered=${offered} />`}
 		${phase === "form" && selectedType === "telegram" && html`<${TelegramForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
+		${phase === "form" && selectedType === "whatsapp" && html`<${WhatsAppForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "msteams" && html`<${TeamsForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "success" && html`<${ChannelSuccess} channelName=${connectedName} channelType=${connectedType} onAnother=${onAnother} />`}
 		<div class="flex flex-wrap items-center gap-3 mt-1">

@@ -435,7 +435,35 @@ impl AgentTool for ExecTool {
                 let image = router.resolve_image(sk, None).await;
                 let backend = router.backend();
                 info!(session = sk, sandbox_id = %id, backend = backend.backend_name(), image, "sandbox ensure_ready");
-                backend.ensure_ready(&id, Some(&image)).await?;
+                let announce_prepare = router.mark_preparing_once(sk).await;
+                if announce_prepare {
+                    router.emit_event(crate::sandbox::SandboxEvent::Preparing {
+                        session_key: sk.to_string(),
+                        backend: backend.backend_name().to_string(),
+                        image: image.clone(),
+                    });
+                }
+
+                if let Err(error) = backend.ensure_ready(&id, Some(&image)).await {
+                    if announce_prepare {
+                        router.clear_prepared_session(sk).await;
+                        router.emit_event(crate::sandbox::SandboxEvent::PrepareFailed {
+                            session_key: sk.to_string(),
+                            backend: backend.backend_name().to_string(),
+                            image: image.clone(),
+                            error: error.to_string(),
+                        });
+                    }
+                    return Err(error);
+                }
+
+                if announce_prepare {
+                    router.emit_event(crate::sandbox::SandboxEvent::Prepared {
+                        session_key: sk.to_string(),
+                        backend: backend.backend_name().to_string(),
+                        image: image.clone(),
+                    });
+                }
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
                 let mut sandbox_result = backend.exec(&id, command, &opts).await?;
                 for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {

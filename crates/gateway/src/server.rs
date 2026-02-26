@@ -2246,9 +2246,24 @@ pub async fn prepare_gateway(
         let msteams_plugin = Arc::new(tokio::sync::RwLock::new(
             moltis_msteams::MsTeamsPlugin::new()
                 .with_message_log(Arc::clone(&message_log))
-                .with_event_sink(channel_sink),
+                .with_event_sink(Arc::clone(&channel_sink)),
         ));
         msteams_webhook_plugin = Arc::clone(&msteams_plugin);
+
+        #[cfg(feature = "whatsapp")]
+        let whatsapp_plugin = {
+            let wa_data_dir = data_dir.join("whatsapp");
+            if let Err(e) = std::fs::create_dir_all(&wa_data_dir) {
+                tracing::warn!("failed to create whatsapp data dir: {e}");
+            }
+            Arc::new(tokio::sync::RwLock::new(
+                moltis_whatsapp::WhatsAppPlugin::new(wa_data_dir)
+                    .with_message_log(Arc::clone(&message_log))
+                    .with_event_sink(channel_sink),
+            ))
+        };
+        #[cfg(not(feature = "whatsapp"))]
+        let _ = channel_sink; // consume unused channel_sink
 
         // Start channels from config file (these take precedence over DB rows).
         let mut started: HashSet<(String, String)> = HashSet::new();
@@ -2271,6 +2286,18 @@ pub async fn prepare_gateway(
                     tracing::warn!(account_id, "failed to start microsoft teams account: {e}");
                 } else {
                     started.insert(("msteams".into(), account_id.clone()));
+                }
+            }
+        }
+
+        #[cfg(feature = "whatsapp")]
+        {
+            let mut wa = whatsapp_plugin.write().await;
+            for (account_id, account_config) in &config.channels.whatsapp {
+                if let Err(e) = wa.start_account(account_id, account_config.clone()).await {
+                    tracing::warn!(account_id, "failed to start whatsapp account: {e}");
+                } else {
+                    started.insert(("whatsapp".into(), account_id.clone()));
                 }
             }
         }
@@ -2305,6 +2332,19 @@ pub async fn prepare_gateway(
                             let mut ms = msteams_plugin.write().await;
                             ms.start_account(&ch.account_id, ch.config).await
                         },
+                        #[cfg(feature = "whatsapp")]
+                        Ok(moltis_channels::ChannelType::Whatsapp) => {
+                            let mut wa = whatsapp_plugin.write().await;
+                            wa.start_account(&ch.account_id, ch.config).await
+                        },
+                        #[cfg(not(feature = "whatsapp"))]
+                        Ok(moltis_channels::ChannelType::Whatsapp) => {
+                            tracing::warn!(
+                                account_id = ch.account_id,
+                                "whatsapp feature not enabled, skipping stored account"
+                            );
+                            continue;
+                        },
                         Err(e) => Err(moltis_channels::Error::invalid_input(e)),
                     };
 
@@ -2334,14 +2374,25 @@ pub async fn prepare_gateway(
             let ms = msteams_plugin.read().await;
             (ms.shared_outbound(), ms.shared_stream_outbound())
         };
+        #[cfg(feature = "whatsapp")]
+        let (wa_outbound, wa_stream_outbound) = {
+            let wa = whatsapp_plugin.read().await;
+            (wa.shared_outbound(), wa.shared_stream_outbound())
+        };
 
         let multi_router = Arc::new(crate::channel_outbound::MultiChannelOutbound::new(
             Arc::clone(&tg_plugin),
             Arc::clone(&msteams_plugin),
+            #[cfg(feature = "whatsapp")]
+            Arc::clone(&whatsapp_plugin),
             tg_outbound,
             ms_outbound,
+            #[cfg(feature = "whatsapp")]
+            wa_outbound,
             tg_stream_outbound,
             ms_stream_outbound,
+            #[cfg(feature = "whatsapp")]
+            wa_stream_outbound,
         ));
 
         services = services.with_channel_outbound(
@@ -2354,6 +2405,8 @@ pub async fn prepare_gateway(
         services.channel = Arc::new(crate::channel::LiveChannelService::new(
             tg_plugin,
             msteams_plugin,
+            #[cfg(feature = "whatsapp")]
+            whatsapp_plugin,
             channel_store,
             Arc::clone(&message_log),
             Arc::clone(&session_metadata),
@@ -3784,7 +3837,7 @@ pub async fn prepare_gateway(
         });
     }
 
-    // Spawn sandbox event broadcast task: forwards provision events to WS clients.
+    // Spawn sandbox event broadcast task: forwards sandbox lifecycle events to WS clients.
     {
         let event_state = Arc::clone(&state);
         let mut event_rx = sandbox_router.subscribe_events();
@@ -3793,6 +3846,47 @@ pub async fn prepare_gateway(
                 match event_rx.recv().await {
                     Ok(event) => {
                         let (event_name, payload) = match event {
+                            moltis_tools::sandbox::SandboxEvent::Preparing {
+                                session_key,
+                                backend,
+                                image,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "start",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                }),
+                            ),
+                            moltis_tools::sandbox::SandboxEvent::Prepared {
+                                session_key,
+                                backend,
+                                image,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "done",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                }),
+                            ),
+                            moltis_tools::sandbox::SandboxEvent::PrepareFailed {
+                                session_key,
+                                backend,
+                                image,
+                                error,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "error",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                    "error": error,
+                                }),
+                            ),
                             moltis_tools::sandbox::SandboxEvent::Provisioning {
                                 container,
                                 packages,

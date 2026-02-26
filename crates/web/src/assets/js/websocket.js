@@ -858,6 +858,33 @@ function updateSandboxBuildingFlag(building) {
 	if (info) S.setSandboxInfo({ ...info, image_building: building });
 }
 
+var sandboxPrepareIndicatorEl = null;
+function handleSandboxPrepare(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+
+	if (payload.phase === "start") {
+		if (sandboxPrepareIndicatorEl) {
+			sandboxPrepareIndicatorEl.remove();
+			sandboxPrepareIndicatorEl = null;
+		}
+		sandboxPrepareIndicatorEl = chatAddMsg(
+			"system",
+			"Preparing sandbox environment (first run may take a minute)\u2026",
+		);
+		return;
+	}
+
+	if (sandboxPrepareIndicatorEl) {
+		sandboxPrepareIndicatorEl.remove();
+		sandboxPrepareIndicatorEl = null;
+	}
+
+	if (payload.phase === "error") {
+		chatAddMsg("error", `Sandbox setup failed: ${payload.error || "unknown"}`);
+	}
+}
+
 function handleSandboxImageBuild(payload) {
 	var phase = payload.phase;
 	// Update the sandboxInfo signal so all pages (chat, settings) reflect the build state.
@@ -1087,6 +1114,7 @@ var eventHandlers = {
 	"auth.credentials_changed": handleAuthCredentialsChanged,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
+	"sandbox.prepare": handleSandboxPrepare,
 	"sandbox.image.build": handleSandboxImageBuild,
 	"sandbox.image.provision": handleSandboxImageProvision,
 	"sandbox.host.provision": handleSandboxHostProvision,
