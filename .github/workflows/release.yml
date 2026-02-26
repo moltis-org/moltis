@@ -854,7 +854,18 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          docker run --rm "ghcr.io/${{ github.repository }}@${DIGEST}" --help > /dev/null
+          set -euo pipefail
+          IMAGE="ghcr.io/${{ github.repository }}@${DIGEST}"
+
+          docker run --rm "${IMAGE}" --help > /dev/null
+
+          DOCKER_CLI_VERSION="$(docker run --rm --entrypoint docker "${IMAGE}" --version | awk '{print $3}' | tr -d ',')"
+          DOCKER_CLI_MAJOR="${DOCKER_CLI_VERSION%%.*}"
+
+          if [[ -z "${DOCKER_CLI_MAJOR}" || "${DOCKER_CLI_MAJOR}" -lt 25 ]]; then
+            echo "Docker CLI in image is too old: ${DOCKER_CLI_VERSION} (require >= 25.x; API >= 1.44)" >&2
+            exit 1
+          fi
 
       - name: Export digest
         env:
