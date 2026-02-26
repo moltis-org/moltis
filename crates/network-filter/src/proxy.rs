@@ -1,10 +1,14 @@
+//! HTTP CONNECT proxy server with domain filtering.
+//!
+//! Handles both `CONNECT host:port` (HTTPS) and plain HTTP forward requests.
+//! Connections from non-private IPs are rejected for security.
+
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
 };
 
 use {
-    anyhow::{Result, bail},
     tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
         net::{TcpListener, TcpStream},
@@ -16,14 +20,12 @@ use {
 use moltis_metrics::{counter, gauge, histogram};
 
 use crate::{
-    domain_approval::{DomainApprovalManager, DomainDecision, FilterAction},
-    network_audit::{
-        ApprovalSource, AuditSender, FilterOutcome, NetworkAuditEntry, NetworkProtocol,
-    },
+    ApprovalSource, AuditSender, DomainDecision, FilterAction, FilterOutcome, NetworkAuditEntry,
+    NetworkProtocol, Result, domain_approval::DomainApprovalManager,
 };
 
-/// The default port the proxy listens on inside the trusted network.
-pub const DEFAULT_PROXY_PORT: u16 = 18791;
+// Re-export for convenience; canonical definition is in `types.rs`.
+pub use crate::DEFAULT_PROXY_PORT;
 
 /// HTTP CONNECT proxy server that filters outbound connections by domain.
 ///
@@ -170,12 +172,14 @@ async fn handle_client_inner(
     let request_line = request_line.trim_end();
 
     if request_line.is_empty() {
-        bail!("empty request");
+        return Err(crate::Error::message("empty request"));
     }
 
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
-        bail!("malformed request line: {request_line}");
+        return Err(crate::Error::message(format!(
+            "malformed request line: {request_line}"
+        )));
     }
 
     let method = parts[0];
@@ -207,7 +211,7 @@ async fn handle_connect(
     let start = std::time::Instant::now();
 
     // Parse host:port from CONNECT target.
-    let (domain, port) = parse_host_port(target)?;
+    let (domain, port) = parse_host_port(target);
 
     // Consume remaining request headers.
     loop {
@@ -640,12 +644,12 @@ async fn handle_http_forward(
 }
 
 /// Parse `host:port` from a CONNECT target. Defaults port to 443 if not specified.
-fn parse_host_port(target: &str) -> Result<(String, u16)> {
+fn parse_host_port(target: &str) -> (String, u16) {
     if let Some((host, port_str)) = target.rsplit_once(':') {
         let port: u16 = port_str.parse().unwrap_or(443);
-        Ok((host.to_string(), port))
+        (host.to_string(), port)
     } else {
-        Ok((target.to_string(), 443))
+        (target.to_string(), 443)
     }
 }
 
@@ -711,15 +715,15 @@ mod tests {
 
     #[test]
     fn test_parse_host_port() {
-        let (host, port) = parse_host_port("github.com:443").unwrap();
+        let (host, port) = parse_host_port("github.com:443");
         assert_eq!(host, "github.com");
         assert_eq!(port, 443);
 
-        let (host, port) = parse_host_port("example.com").unwrap();
+        let (host, port) = parse_host_port("example.com");
         assert_eq!(host, "example.com");
         assert_eq!(port, 443);
 
-        let (host, port) = parse_host_port("api.example.com:8080").unwrap();
+        let (host, port) = parse_host_port("api.example.com:8080");
         assert_eq!(host, "api.example.com");
         assert_eq!(port, 8080);
     }

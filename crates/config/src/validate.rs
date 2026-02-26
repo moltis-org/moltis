@@ -960,7 +960,7 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
 
     // Unknown sandbox network policy
     if !config.tools.exec.sandbox.network.is_empty() {
-        let valid_network_policies = ["blocked", "trusted", "open"];
+        let valid_network_policies = ["blocked", "trusted", "bypass"];
         if !valid_network_policies.contains(&config.tools.exec.sandbox.network.as_str()) {
             diagnostics.push(Diagnostic {
                 severity: Severity::Warning,

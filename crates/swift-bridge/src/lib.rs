@@ -230,6 +230,58 @@ fn emit_session_event(event: &SessionEvent) {
     }
 }
 
+// ── Network audit callback for Swift ─────────────────────────────────────
+
+/// Callback type for forwarding network audit events to Swift.
+/// Rust owns the `event_json` pointer — the callback must copy the data
+/// before returning.
+type NetworkAuditCallback = unsafe extern "C" fn(event_json: *const c_char);
+
+static NETWORK_AUDIT_CALLBACK: OnceLock<NetworkAuditCallback> = OnceLock::new();
+
+/// JSON-serializable network audit event sent to Swift.
+#[derive(Debug, Serialize)]
+struct BridgeNetworkAuditEvent {
+    domain: String,
+    port: u16,
+    protocol: String,
+    action: String,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+}
+
+fn emit_network_audit(entry: &moltis_network_filter::NetworkAuditEntry) {
+    if let Some(callback) = NETWORK_AUDIT_CALLBACK.get() {
+        let source = match &entry.approval_source {
+            Some(moltis_network_filter::ApprovalSource::Config) => "config",
+            Some(moltis_network_filter::ApprovalSource::Session) => "session",
+            Some(moltis_network_filter::ApprovalSource::UserPrompt) => "user",
+            None => "unknown",
+        };
+        let payload = BridgeNetworkAuditEvent {
+            domain: entry.domain.clone(),
+            port: entry.port,
+            protocol: entry.protocol.to_string(),
+            action: entry.action.to_string(),
+            source: source.to_owned(),
+            method: entry.method.clone(),
+            url: entry.url.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&payload)
+            && let Ok(c_str) = CString::new(json)
+        {
+            // SAFETY: c_str is valid NUL-terminated, callback copies
+            // before returning, and we drop c_str afterwards.
+            unsafe {
+                callback(c_str.as_ptr());
+            }
+        }
+    }
+}
+
 // ── Request / Response types ───────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -1082,6 +1134,22 @@ pub unsafe extern "C" fn moltis_set_session_event_callback(callback: SessionEven
         });
         emit_log("INFO", "bridge", "Session event callback registered");
     }
+}
+
+/// Register a callback for network audit events (domain filter decisions).
+///
+/// The callback receives a JSON string with fields: `domain`, `port`,
+/// `protocol`, `action`, `source`, and optionally `method` and `path`.
+/// Rust owns the pointer — the callback must copy the data before returning.
+///
+/// # Safety
+///
+/// `callback` must be a valid function pointer that remains valid for
+/// the lifetime of the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn moltis_set_network_audit_callback(callback: NetworkAuditCallback) {
+    let _ = NETWORK_AUDIT_CALLBACK.set(callback);
+    emit_log("INFO", "bridge", "Network audit callback registered");
 }
 
 /// Starts the embedded HTTP server with the full Moltis gateway.

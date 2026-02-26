@@ -1,3 +1,8 @@
+//! Domain approval manager for trusted-network mode.
+//!
+//! Manages per-session domain allow/deny decisions with a config-based
+//! allowlist, session-approved domains, and an interactive approval flow.
+
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -13,64 +18,7 @@ use {
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram};
 
-/// Action returned by the domain filter.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FilterAction {
-    Allow,
-    Deny,
-    NeedsApproval,
-}
-
-/// Trait for checking whether a domain should be allowed through the proxy.
-#[async_trait]
-pub trait DomainFilter: Send + Sync {
-    async fn check(&self, session: &str, domain: &str) -> FilterAction;
-}
-
-/// A pattern for matching domain names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DomainPattern {
-    /// Match exactly this domain (e.g. `github.com`).
-    Exact(String),
-    /// Match any subdomain (e.g. `*.github.com` matches `api.github.com` but not `github.com`).
-    WildcardSubdomain(String),
-    /// Match everything (`*`).
-    Wildcard,
-}
-
-impl DomainPattern {
-    /// Parse a pattern string into a `DomainPattern`.
-    pub fn parse(s: &str) -> Self {
-        let s = s.trim().to_lowercase();
-        if s == "*" {
-            return Self::Wildcard;
-        }
-        if let Some(suffix) = s.strip_prefix("*.") {
-            return Self::WildcardSubdomain(suffix.to_string());
-        }
-        Self::Exact(s)
-    }
-
-    /// Check whether a domain matches this pattern.
-    pub fn matches(&self, domain: &str) -> bool {
-        let domain = domain.to_lowercase();
-        match self {
-            Self::Wildcard => true,
-            Self::Exact(d) => domain == *d,
-            Self::WildcardSubdomain(suffix) => {
-                domain == *suffix || domain.ends_with(&format!(".{suffix}"))
-            },
-        }
-    }
-}
-
-/// Outcome of a domain approval request.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DomainDecision {
-    Approved,
-    Denied,
-    Timeout,
-}
+use crate::{ApprovalSource, DomainDecision, DomainFilter, DomainPattern, FilterAction};
 
 struct PendingDomainRequest {
     tx: oneshot::Sender<DomainDecision>,
@@ -115,8 +63,14 @@ impl DomainApprovalManager {
         &self,
         session: &str,
         domain: &str,
-    ) -> (FilterAction, Option<crate::network_audit::ApprovalSource>) {
-        use crate::network_audit::ApprovalSource;
+    ) -> (FilterAction, Option<ApprovalSource>) {
+        // Empty config allowlist means allow-all (audit-only mode).
+        if self.config_allowlist.is_empty() {
+            #[cfg(feature = "metrics")]
+            counter!("domain_checks_total", "result" => "allowed", "source" => "config")
+                .increment(1);
+            return (FilterAction::Allow, Some(ApprovalSource::Config));
+        }
 
         // Config allowlist.
         for pattern in &self.config_allowlist {
@@ -291,38 +245,6 @@ impl DomainFilter for Arc<DomainApprovalManager> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_domain_pattern_exact() {
-        let p = DomainPattern::parse("github.com");
-        assert!(p.matches("github.com"));
-        assert!(p.matches("GitHub.com"));
-        assert!(!p.matches("api.github.com"));
-        assert!(!p.matches("notgithub.com"));
-    }
-
-    #[test]
-    fn test_domain_pattern_wildcard_subdomain() {
-        let p = DomainPattern::parse("*.github.com");
-        assert!(p.matches("api.github.com"));
-        assert!(p.matches("raw.github.com"));
-        assert!(p.matches("github.com"));
-        assert!(!p.matches("notgithub.com"));
-    }
-
-    #[test]
-    fn test_domain_pattern_wildcard() {
-        let p = DomainPattern::parse("*");
-        assert!(p.matches("anything.com"));
-        assert!(p.matches("evil.org"));
-    }
-
-    #[test]
-    fn test_domain_pattern_case_insensitive() {
-        let p = DomainPattern::parse("GitHub.COM");
-        assert!(p.matches("github.com"));
-        assert!(p.matches("GITHUB.COM"));
-    }
-
     #[tokio::test]
     async fn test_check_domain_config_allowlist() {
         let mgr = DomainApprovalManager::new(&["github.com".into()], Duration::from_secs(60));
@@ -337,14 +259,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_domain_session_allowlist() {
+    async fn test_empty_allowlist_allows_all_domains() {
+        // Empty config allowlist = audit-only mode: all domains allowed.
         let mgr = DomainApprovalManager::new(&[], Duration::from_secs(60));
+        assert_eq!(
+            mgr.check_domain("sess1", "anything.com").await,
+            FilterAction::Allow
+        );
+        assert_eq!(
+            mgr.check_domain("sess1", "evil.org").await,
+            FilterAction::Allow
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_domain_session_allowlist() {
+        // Use a non-empty config allowlist so empty-allowlist-allows-all doesn't kick in.
+        let mgr = DomainApprovalManager::new(&["github.com".into()], Duration::from_secs(60));
         mgr.add_trusted_domain("sess1", "example.com").await;
         assert_eq!(
             mgr.check_domain("sess1", "example.com").await,
             FilterAction::Allow
         );
-        // Different session should not have access.
+        // Different session should not have access to session-approved domains.
         assert_eq!(
             mgr.check_domain("sess2", "example.com").await,
             FilterAction::NeedsApproval
@@ -370,7 +307,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_and_resolve_denied() {
-        let mgr = DomainApprovalManager::new(&[], Duration::from_secs(60));
+        // Use a non-empty config allowlist so empty-allowlist-allows-all doesn't kick in.
+        let mgr = DomainApprovalManager::new(&["github.com".into()], Duration::from_secs(60));
         let (id, rx) = mgr.create_request("sess1", "evil.com").await;
 
         mgr.resolve(&id, DomainDecision::Denied).await;
@@ -410,7 +348,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_trusted_domain() {
-        let mgr = DomainApprovalManager::new(&[], Duration::from_secs(60));
+        // Use a non-empty config allowlist so empty-allowlist-allows-all doesn't kick in.
+        let mgr = DomainApprovalManager::new(&["github.com".into()], Duration::from_secs(60));
         mgr.add_trusted_domain("sess1", "example.com").await;
         assert_eq!(
             mgr.check_domain("sess1", "example.com").await,

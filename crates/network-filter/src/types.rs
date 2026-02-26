@@ -1,12 +1,33 @@
-//! Core types for network audit logging.
+//! Core types for trusted-network domain filtering and audit logging.
 //!
-//! These types are shared between the `tools` crate (proxy emits entries) and
-//! the `gateway` crate (buffer, persistence, UI streaming).
+//! These types are shared between the proxy (emits entries), the gateway
+//! (buffer, persistence, UI streaming), and the macOS Swift bridge.
 
 use {
+    async_trait::async_trait,
     serde::{Deserialize, Serialize},
     time::OffsetDateTime,
 };
+
+/// The default port the proxy listens on inside the trusted network.
+pub const DEFAULT_PROXY_PORT: u16 = 18791;
+
+// ── Network policy ──────────────────────────────────────────────────────────
+
+/// Network policy for sandboxed containers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkPolicy {
+    /// No network access (`--network=none`).
+    Blocked,
+    /// Isolated network with HTTP CONNECT proxy filtering by domain allowlist.
+    #[default]
+    Trusted,
+    /// Unrestricted network, bypasses proxy entirely (no audit logging).
+    Bypass,
+}
+
+// ── Audit entry ─────────────────────────────────────────────────────────────
 
 /// A single audited network request or connection through the proxy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,10 +129,75 @@ impl std::fmt::Display for FilterOutcome {
     }
 }
 
+// ── Domain filtering ────────────────────────────────────────────────────────
+
+/// Action returned by the domain filter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilterAction {
+    Allow,
+    Deny,
+    NeedsApproval,
+}
+
+/// Trait for checking whether a domain should be allowed through the proxy.
+#[async_trait]
+pub trait DomainFilter: Send + Sync {
+    async fn check(&self, session: &str, domain: &str) -> FilterAction;
+}
+
+/// A pattern for matching domain names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DomainPattern {
+    /// Match exactly this domain (e.g. `github.com`).
+    Exact(String),
+    /// Match any subdomain (e.g. `*.github.com` matches `api.github.com` but not `github.com`).
+    WildcardSubdomain(String),
+    /// Match everything (`*`).
+    Wildcard,
+}
+
+impl DomainPattern {
+    /// Parse a pattern string into a `DomainPattern`.
+    pub fn parse(s: &str) -> Self {
+        let s = s.trim().to_lowercase();
+        if s == "*" {
+            return Self::Wildcard;
+        }
+        if let Some(suffix) = s.strip_prefix("*.") {
+            return Self::WildcardSubdomain(suffix.to_string());
+        }
+        Self::Exact(s)
+    }
+
+    /// Check whether a domain matches this pattern.
+    pub fn matches(&self, domain: &str) -> bool {
+        let domain = domain.to_lowercase();
+        match self {
+            Self::Wildcard => true,
+            Self::Exact(d) => domain == *d,
+            Self::WildcardSubdomain(suffix) => {
+                domain == *suffix || domain.ends_with(&format!(".{suffix}"))
+            },
+        }
+    }
+}
+
+/// Outcome of a domain approval request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DomainDecision {
+    Approved,
+    Denied,
+    Timeout,
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    // -- NetworkAuditEntry serde ---
 
     #[test]
     fn serde_round_trip() {
@@ -212,5 +298,54 @@ mod tests {
         assert_eq!(json, r#""approved_by_user""#);
         let json = serde_json::to_string(&ApprovalSource::UserPrompt).unwrap();
         assert_eq!(json, r#""user_prompt""#);
+    }
+
+    // -- DomainPattern ---
+
+    #[test]
+    fn domain_pattern_exact() {
+        let p = DomainPattern::parse("github.com");
+        assert!(p.matches("github.com"));
+        assert!(p.matches("GitHub.com"));
+        assert!(!p.matches("api.github.com"));
+        assert!(!p.matches("notgithub.com"));
+    }
+
+    #[test]
+    fn domain_pattern_wildcard_subdomain() {
+        let p = DomainPattern::parse("*.github.com");
+        assert!(p.matches("api.github.com"));
+        assert!(p.matches("raw.github.com"));
+        assert!(p.matches("github.com"));
+        assert!(!p.matches("notgithub.com"));
+    }
+
+    #[test]
+    fn domain_pattern_wildcard() {
+        let p = DomainPattern::parse("*");
+        assert!(p.matches("anything.com"));
+        assert!(p.matches("evil.org"));
+    }
+
+    #[test]
+    fn domain_pattern_case_insensitive() {
+        let p = DomainPattern::parse("GitHub.COM");
+        assert!(p.matches("github.com"));
+        assert!(p.matches("GITHUB.COM"));
+    }
+
+    // -- NetworkPolicy ---
+
+    #[test]
+    fn network_policy_default_is_trusted() {
+        assert_eq!(NetworkPolicy::default(), NetworkPolicy::Trusted);
+    }
+
+    #[test]
+    fn network_policy_serde() {
+        let json = serde_json::to_string(&NetworkPolicy::Trusted).unwrap();
+        assert_eq!(json, r#""trusted""#);
+        let back: NetworkPolicy = serde_json::from_str(r#""blocked""#).unwrap();
+        assert_eq!(back, NetworkPolicy::Blocked);
     }
 }

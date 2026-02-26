@@ -437,18 +437,7 @@ pub struct ResourceLimits {
     pub pids_max: Option<u32>,
 }
 
-/// Network policy for sandboxed containers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum NetworkPolicy {
-    /// No network access (`--network=none`).
-    #[default]
-    Blocked,
-    /// Isolated network with HTTP CONNECT proxy filtering by domain allowlist.
-    Trusted,
-    /// Unrestricted network (default bridge).
-    Open,
-}
+pub use moltis_network_filter::NetworkPolicy;
 
 /// Configuration for sandbox behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -531,12 +520,12 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             no_network: cfg.no_network,
             network: match cfg.network.as_str() {
                 "trusted" => NetworkPolicy::Trusted,
-                "open" => NetworkPolicy::Open,
+                "bypass" => NetworkPolicy::Bypass,
                 // Explicit "blocked" always means Blocked.
                 "blocked" => NetworkPolicy::Blocked,
                 // Empty/unset: fall back to legacy `no_network` flag.
                 _ if cfg.no_network => NetworkPolicy::Blocked,
-                _ => NetworkPolicy::Blocked,
+                _ => NetworkPolicy::Trusted,
             },
             trusted_domains: cfg.trusted_domains.clone(),
             backend: cfg.backend.clone(),
@@ -1502,7 +1491,7 @@ impl DockerSandbox {
                 // resolves host.docker.internal automatically).
                 vec!["--add-host=host.docker.internal:host-gateway".to_string()]
             },
-            NetworkPolicy::Open => Vec::new(),
+            NetworkPolicy::Bypass => Vec::new(),
         }
     }
 
@@ -1512,7 +1501,7 @@ impl DockerSandbox {
         }
         let proxy_url = format!(
             "http://host.docker.internal:{}",
-            crate::network_proxy::DEFAULT_PROXY_PORT
+            moltis_network_filter::DEFAULT_PROXY_PORT
         );
         let mut args = Vec::new();
         for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
@@ -3035,7 +3024,7 @@ impl Sandbox for AppleContainerSandbox {
             let proxy_url = format!(
                 "http://{}:{}",
                 gateway,
-                crate::network_proxy::DEFAULT_PROXY_PORT
+                moltis_network_filter::DEFAULT_PROXY_PORT
             );
             let escaped_proxy = proxy_url.replace('\'', "'\\''");
             for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
@@ -4852,25 +4841,25 @@ mod tests {
     }
 
     #[test]
-    fn test_from_config_network_open_overrides_no_network() {
+    fn test_from_config_network_bypass_overrides_no_network() {
         let cfg = moltis_config::schema::SandboxConfig {
             no_network: true,
-            network: "open".into(),
+            network: "bypass".into(),
             ..Default::default()
         };
         let sc = SandboxConfig::from(&cfg);
-        assert_eq!(sc.network, NetworkPolicy::Open);
+        assert_eq!(sc.network, NetworkPolicy::Bypass);
     }
 
     #[test]
-    fn test_from_config_empty_network_defaults_to_blocked() {
+    fn test_from_config_empty_network_defaults_to_trusted() {
         let cfg = moltis_config::schema::SandboxConfig {
             no_network: false,
             network: String::new(),
             ..Default::default()
         };
         let sc = SandboxConfig::from(&cfg);
-        assert_eq!(sc.network, NetworkPolicy::Blocked);
+        assert_eq!(sc.network, NetworkPolicy::Trusted);
     }
 
     #[test]
@@ -4906,9 +4895,9 @@ mod tests {
     }
 
     #[test]
-    fn test_docker_network_run_args_open() {
+    fn test_docker_network_run_args_bypass() {
         let config = SandboxConfig {
-            network: NetworkPolicy::Open,
+            network: NetworkPolicy::Bypass,
             ..Default::default()
         };
         let docker = DockerSandbox::new(config);
@@ -4925,7 +4914,7 @@ mod tests {
         let args = docker.proxy_exec_env_args();
         let expected_url = format!(
             "http://host.docker.internal:{}",
-            crate::network_proxy::DEFAULT_PROXY_PORT
+            moltis_network_filter::DEFAULT_PROXY_PORT
         );
         // Should contain -e pairs for HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy,
         // NO_PROXY, no_proxy (6 keys × 2 args each = 12 args).
@@ -4947,9 +4936,9 @@ mod tests {
     }
 
     #[test]
-    fn test_docker_proxy_exec_env_args_open() {
+    fn test_docker_proxy_exec_env_args_bypass() {
         let config = SandboxConfig {
-            network: NetworkPolicy::Open,
+            network: NetworkPolicy::Bypass,
             ..Default::default()
         };
         let docker = DockerSandbox::new(config);
@@ -4965,7 +4954,7 @@ mod tests {
         let proxy_url = format!(
             "http://{}:{}",
             gateway,
-            crate::network_proxy::DEFAULT_PROXY_PORT
+            moltis_network_filter::DEFAULT_PROXY_PORT
         );
         let mut prefix = String::new();
         let escaped_proxy = proxy_url.replace('\'', "'\\''");
@@ -4978,7 +4967,7 @@ mod tests {
 
         assert!(prefix.contains("export HTTP_PROXY="));
         assert!(prefix.contains("export https_proxy="));
-        assert!(prefix.contains(&format!(":{}", crate::network_proxy::DEFAULT_PROXY_PORT)));
+        assert!(prefix.contains(&format!(":{}", moltis_network_filter::DEFAULT_PROXY_PORT)));
         assert!(prefix.contains("export NO_PROXY='localhost,127.0.0.1,::1'"));
     }
 

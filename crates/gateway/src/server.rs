@@ -1948,44 +1948,46 @@ pub async fn prepare_gateway(
     ));
 
     // ── Trusted-network proxy + audit ────────────────────────────────────
-    let (audit_tx, audit_rx) =
-        tokio::sync::mpsc::channel::<moltis_tools::network_audit::NetworkAuditEntry>(1024);
+    #[cfg(feature = "trusted-network")]
+    let audit_buffer_for_broadcast: Option<crate::network_audit::NetworkAuditBuffer>;
+    #[cfg(feature = "trusted-network")]
+    {
+        let (audit_tx, audit_rx) =
+            tokio::sync::mpsc::channel::<moltis_network_filter::NetworkAuditEntry>(1024);
 
-    if sandbox_config.network == moltis_tools::sandbox::NetworkPolicy::Trusted {
-        let domain_mgr = Arc::new(moltis_tools::domain_approval::DomainApprovalManager::new(
-            &sandbox_config.trusted_domains,
-            std::time::Duration::from_secs(30),
-        ));
-        let proxy_addr: SocketAddr = (
-            [0, 0, 0, 0],
-            moltis_tools::network_proxy::DEFAULT_PROXY_PORT,
-        )
-            .into();
-        let proxy = moltis_tools::network_proxy::NetworkProxyServer::new(
-            proxy_addr,
-            Arc::clone(&domain_mgr),
-            Some(audit_tx.clone()),
-        );
-        let (_proxy_shutdown_tx, proxy_shutdown_rx) = tokio::sync::watch::channel(false);
-        tokio::spawn(async move {
-            if let Err(e) = proxy.run(proxy_shutdown_rx).await {
-                tracing::warn!("network proxy exited: {e}");
-            }
-        });
-        info!(
-            "trusted-network proxy started on port {}",
-            moltis_tools::network_proxy::DEFAULT_PROXY_PORT
-        );
+        if sandbox_config.network == moltis_network_filter::NetworkPolicy::Trusted {
+            let domain_mgr = Arc::new(
+                moltis_network_filter::domain_approval::DomainApprovalManager::new(
+                    &sandbox_config.trusted_domains,
+                    std::time::Duration::from_secs(30),
+                ),
+            );
+            let proxy_addr: SocketAddr =
+                ([0, 0, 0, 0], moltis_network_filter::DEFAULT_PROXY_PORT).into();
+            let proxy = moltis_network_filter::proxy::NetworkProxyServer::new(
+                proxy_addr,
+                Arc::clone(&domain_mgr),
+                Some(audit_tx.clone()),
+            );
+            let (_proxy_shutdown_tx, proxy_shutdown_rx) = tokio::sync::watch::channel(false);
+            tokio::spawn(async move {
+                if let Err(e) = proxy.run(proxy_shutdown_rx).await {
+                    tracing::warn!("network proxy exited: {e}");
+                }
+            });
+            info!(
+                "trusted-network proxy started on port {}",
+                moltis_network_filter::DEFAULT_PROXY_PORT
+            );
+        }
+
+        // Create the live network audit service from the receiver channel.
+        let audit_log_path = data_dir.join("network-audit.jsonl");
+        let audit_service =
+            crate::network_audit::LiveNetworkAuditService::new(audit_rx, audit_log_path, 2048);
+        audit_buffer_for_broadcast = Some(audit_service.buffer().clone());
+        services = services.with_network_audit(Arc::new(audit_service));
     }
-
-    // Create the live network audit service from the receiver channel.
-    let audit_log_path = data_dir.join("network-audit.jsonl");
-    let audit_service = Arc::new(crate::network_audit::LiveNetworkAuditService::new(
-        audit_rx,
-        audit_log_path,
-        2048,
-    ));
-    services = services.with_network_audit(audit_service.clone());
 
     // Spawn background image pre-build. This bakes configured packages into a
     // container image so container creation is instant. Backends that don't
@@ -3806,9 +3808,10 @@ pub async fn prepare_gateway(
     }
 
     // Spawn network audit broadcast task: forwards audit entries to WS clients.
-    {
+    #[cfg(feature = "trusted-network")]
+    if let Some(ref audit_buf) = audit_buffer_for_broadcast {
         let audit_state = Arc::clone(&state);
-        let mut audit_rx = audit_service.buffer().subscribe();
+        let mut audit_rx = audit_buf.subscribe();
         tokio::spawn(async move {
             loop {
                 match audit_rx.recv().await {

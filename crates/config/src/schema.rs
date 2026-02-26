@@ -1522,7 +1522,7 @@ pub struct SandboxConfig {
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
-    /// Network policy: "blocked" (no network), "trusted" (proxy-filtered), "open" (unrestricted).
+    /// Network policy: "blocked" (no network), "trusted" (proxy-filtered), "bypass" (unrestricted, no audit).
     #[serde(default)]
     pub network: String,
     /// Domains allowed through the proxy in `trusted` mode.
@@ -1705,8 +1705,8 @@ impl Default for SandboxConfig {
             shared_home_dir: None,
             image: None,
             container_prefix: None,
-            no_network: true,
-            network: String::new(),
+            no_network: false,
+            network: "trusted".into(),
             trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimitsConfig::default(),

@@ -5252,6 +5252,7 @@ dependencies = [
  "moltis-memory",
  "moltis-metrics",
  "moltis-msteams",
+ "moltis-network-filter",
  "moltis-oauth",
  "moltis-onboarding",
  "moltis-openclaw-import",
@@ -5422,6 +5423,22 @@ dependencies = [
  "tracing",
  "url",
  "urlencoding",
+]
+
+[[package]]
+name = "moltis-network-filter"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "moltis-metrics",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5676,6 +5693,7 @@ dependencies = [
  "moltis-agents",
  "moltis-config",
  "moltis-gateway",
+ "moltis-network-filter",
  "moltis-projects",
  "moltis-provider-setup",
  "moltis-providers",
@@ -5764,6 +5782,7 @@ dependencies = [
  "moltis-config",
  "moltis-cron",
  "moltis-metrics",
+ "moltis-network-filter",
  "moltis-providers",
  "moltis-sessions",
  "moltis-skills",
