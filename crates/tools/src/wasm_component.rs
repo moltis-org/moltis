@@ -1,5 +1,5 @@
 #[cfg(feature = "wasm")]
-use std::{collections::HashSet, io::Read, time::Duration};
+use std::{collections::HashSet, io::Read, thread, time::Duration};
 
 #[cfg(feature = "wasm")]
 use anyhow::Context;
@@ -59,6 +59,14 @@ impl HttpHostImpl {
         ssrf_allowlist: Vec<ipnet::IpNet>,
         domain_allowlist: Option<Vec<String>>,
     ) -> anyhow::Result<Self> {
+        fn build_blocking_client(timeout: Duration) -> anyhow::Result<reqwest::blocking::Client> {
+            reqwest::blocking::Client::builder()
+                .timeout(timeout)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .context("failed to build blocking HTTP client for wasm host")
+        }
+
         let max_response_bytes = u64::try_from(max_response_bytes)
             .context("max_response_bytes does not fit into u64")?;
         let domain_allowlist = domain_allowlist.map(|domains| {
@@ -68,11 +76,16 @@ impl HttpHostImpl {
                 .filter(|domain| !domain.is_empty())
                 .collect::<HashSet<_>>()
         });
-        let client = reqwest::blocking::Client::builder()
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .context("failed to build blocking HTTP client for wasm host")?;
+        let client = if tokio::runtime::Handle::try_current().is_ok() {
+            thread::Builder::new()
+                .name("moltis-wasm-http-client-init".to_string())
+                .spawn(move || build_blocking_client(timeout))
+                .context("failed to spawn blocking HTTP client init thread")?
+                .join()
+                .map_err(|_| anyhow::anyhow!("blocking HTTP client init thread panicked"))??
+        } else {
+            build_blocking_client(timeout)?
+        };
         Ok(Self {
             client,
             ssrf_allowlist,
@@ -335,5 +348,11 @@ mod tests {
         let result = host.handle_request(request);
         assert!(matches!(result, Err(HttpError::Timeout(_))));
         handle.join().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn http_host_new_inside_tokio_runtime() {
+        let host = HttpHostImpl::new(Duration::from_secs(2), 64 * 1024, Vec::new(), None);
+        assert!(host.is_ok());
     }
 }
