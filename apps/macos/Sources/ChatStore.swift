@@ -183,6 +183,23 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: - Identity
+
+    func loadIdentity() {
+        logStore?.log(.info, target: "ChatStore", message: "Loading identity from config")
+        do {
+            let identity = try client.getIdentity()
+            settings.identityName = identity.name
+            settings.identityEmoji = identity.emoji ?? ""
+            settings.identityTheme = identity.theme ?? ""
+            settings.identityUserName = identity.userName ?? ""
+            settings.identitySoul = identity.soul ?? ""
+            logStore?.log(.info, target: "ChatStore", message: "Identity loaded: \(identity.name)")
+        } catch {
+            logStore?.log(.error, target: "ChatStore", message: "Failed to load identity: \(error)")
+        }
+    }
+
     // MARK: - Version
 
     func loadVersion() {

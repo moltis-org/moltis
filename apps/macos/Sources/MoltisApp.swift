@@ -51,12 +51,14 @@ struct MoltisApp: App {
                     ContentView(chatStore: chatStore, settings: settings, providerStore: providerStore)
                         .onAppear {
                             chatStore.loadVersion()
+                            chatStore.loadIdentity()
                             chatStore.loadSessions()
                         }
                 } else {
                     OnboardingView(settings: settings, providerStore: providerStore) {
                         onboardingState.complete()
                         chatStore.loadVersion()
+                        chatStore.loadIdentity()
                         chatStore.loadSessions()
                     }
                 }

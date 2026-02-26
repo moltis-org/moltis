@@ -831,6 +831,20 @@ pub extern "C" fn moltis_version() -> *mut c_char {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn moltis_get_identity() -> *mut c_char {
+    record_call("moltis_get_identity");
+    trace_call("moltis_get_identity");
+
+    with_ffi_boundary(|| {
+        let config = moltis_config::discover_and_load();
+        let mut identity = moltis_config::schema::ResolvedIdentity::from_config(&config);
+        identity.soul = moltis_config::load_soul();
+        emit_log("DEBUG", "bridge", "moltis_get_identity called");
+        encode_json(&identity)
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn moltis_chat_json(request_json: *const c_char) -> *mut c_char {
     record_call("moltis_chat_json");
     trace_call("moltis_chat_json");

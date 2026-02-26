@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Async server startup dispatched off the main thread to keep the UI responsive
 - Model picker labels now show context size and tier badges
 - Provider model list sorting by context window size
+- Identity loaded from `moltis.toml` + `SOUL.md` at startup via new
+  `moltis_get_identity` FFI — Settings→Identity now shows agent name, emoji,
+  theme, user name, and soul
 - Version loaded on app launch via `chatStore.loadVersion()`
 - Persistent session storage via FFI — sessions backed by JSONL files shared
   with the web UI and TUI (no longer ephemeral in-memory arrays)

@@ -101,6 +101,16 @@ struct BridgeVersionPayload: Decodable {
     let configDir: String
 }
 
+// MARK: - Identity
+
+struct BridgeIdentityPayload: Decodable {
+    let name: String
+    let emoji: String?
+    let theme: String?
+    let soul: String?
+    let userName: String?
+}
+
 // MARK: - Validation
 
 struct BridgeValidationPayload: Decodable {
@@ -390,6 +400,11 @@ struct MoltisClient {
     func version() throws -> BridgeVersionPayload {
         let payload = try consumeCStringPointer(moltis_version())
         return try decode(payload, as: BridgeVersionPayload.self)
+    }
+
+    func getIdentity() throws -> BridgeIdentityPayload {
+        let payload = try consumeCStringPointer(moltis_get_identity())
+        return try decode(payload, as: BridgeIdentityPayload.self)
     }
 
     func chat(
