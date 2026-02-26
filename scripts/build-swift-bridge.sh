@@ -7,6 +7,7 @@ BRIDGE_CRATE_DIR="${REPO_ROOT}/crates/swift-bridge"
 MACOS_APP_DIR="${REPO_ROOT}/apps/macos"
 OUTPUT_DIR="${MACOS_APP_DIR}/Generated"
 UNIVERSAL_DIR="${REPO_ROOT}/target/universal-macos/release"
+MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-14.0}"
 
 if ! command -v cbindgen >/dev/null 2>&1; then
   echo "error: cbindgen is required (install with: cargo install cbindgen)" >&2
@@ -19,6 +20,16 @@ if ! command -v lipo >/dev/null 2>&1; then
 fi
 
 rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+# Keep Rust and C/C++ deps aligned with Xcode app link settings to avoid min-version mismatch.
+export MACOSX_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET}"
+export CMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET}"
+export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="${CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS:-} -C link-arg=-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
+export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="${CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS:-} -C link-arg=-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
+export CFLAGS_x86_64_apple_darwin="${CFLAGS_x86_64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
+export CFLAGS_aarch64_apple_darwin="${CFLAGS_aarch64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
+export CXXFLAGS_x86_64_apple_darwin="${CXXFLAGS_x86_64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
+export CXXFLAGS_aarch64_apple_darwin="${CXXFLAGS_aarch64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
 
 cargo build -p moltis-swift-bridge --release --target x86_64-apple-darwin
 cargo build -p moltis-swift-bridge --release --target aarch64-apple-darwin
