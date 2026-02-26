@@ -25,6 +25,7 @@
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)
 - [Voice](voice.md)
+- [Discord](discord.md)
 - [Browser Automation](browser-automation.md)
 - [CalDAV (Calendars)](caldav.md)
 - [GraphQL API](graphql.md)
