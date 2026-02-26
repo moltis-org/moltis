@@ -1501,7 +1501,7 @@ impl DockerSandbox {
                 // platforms (Linux needs --add-host; macOS Docker Desktop
                 // resolves host.docker.internal automatically).
                 vec!["--add-host=host.docker.internal:host-gateway".to_string()]
-            }
+            },
             NetworkPolicy::Open => Vec::new(),
         }
     }
@@ -1519,10 +1519,7 @@ impl DockerSandbox {
             args.extend(["-e".to_string(), format!("{key}={proxy_url}")]);
         }
         for key in ["NO_PROXY", "no_proxy"] {
-            args.extend([
-                "-e".to_string(),
-                format!("{key}=localhost,127.0.0.1,::1"),
-            ]);
+            args.extend(["-e".to_string(), format!("{key}=localhost,127.0.0.1,::1")]);
         }
         args
     }
@@ -1959,7 +1956,7 @@ impl AppleContainerSandbox {
                 } else {
                     stdout
                 }
-            }
+            },
             _ => FALLBACK_GATEWAY.to_string(),
         };
 

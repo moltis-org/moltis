@@ -105,12 +105,12 @@ fn is_private_or_loopback(ip: &IpAddr) -> bool {
             v4.is_loopback()            // 127.0.0.0/8
                 || v4.is_private()       // 10/8, 172.16/12, 192.168/16
                 || v4.is_link_local()    // 169.254/16
-                || is_cgnat(*v4)         // 100.64/10 (Tailscale, CGNAT)
-        }
+                || is_cgnat(*v4) // 100.64/10 (Tailscale, CGNAT)
+        },
         IpAddr::V6(v6) => {
             v6.is_loopback()             // ::1
-                || is_ula(*v6)           // fc00::/7
-        }
+                || is_ula(*v6) // fc00::/7
+        },
     }
 }
 
@@ -781,8 +781,6 @@ mod tests {
         // Public IPs must be rejected
         assert!(!is_private_or_loopback(&"8.8.8.8".parse().unwrap()));
         assert!(!is_private_or_loopback(&"1.1.1.1".parse().unwrap()));
-        assert!(!is_private_or_loopback(
-            &"2001:db8::1".parse().unwrap()
-        ));
+        assert!(!is_private_or_loopback(&"2001:db8::1".parse().unwrap()));
     }
 }
