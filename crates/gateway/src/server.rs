@@ -3994,6 +3994,37 @@ pub async fn prepare_gateway(
     })
 }
 
+/// Prepare the full gateway for embedded callers (for example swift-bridge)
+/// using a feature-stable argument list.
+///
+/// This wrapper intentionally hides `tailscale_opts`, which only exists when
+/// the `tailscale` feature is enabled on `moltis-gateway`.
+#[allow(clippy::expect_used)]
+pub async fn prepare_gateway_embedded(
+    bind: &str,
+    port: u16,
+    no_tls: bool,
+    log_buffer: Option<crate::logs::LogBuffer>,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    extra_routes: Option<RouteEnhancer>,
+    session_event_bus: Option<SessionEventBus>,
+) -> anyhow::Result<PreparedGateway> {
+    prepare_gateway(
+        bind,
+        port,
+        no_tls,
+        log_buffer,
+        config_dir,
+        data_dir,
+        #[cfg(feature = "tailscale")]
+        None,
+        extra_routes,
+        session_event_bus,
+    )
+    .await
+}
+
 /// Start the gateway HTTP + WebSocket server.
 ///
 /// Thin wrapper around [`prepare_gateway`] that adds the startup banner,
