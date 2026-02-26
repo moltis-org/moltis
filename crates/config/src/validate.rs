@@ -330,6 +330,7 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("offered", Array(Box::new(Leaf))),
                 ("telegram", Map(Box::new(Leaf))),
+                ("whatsapp", Map(Box::new(Leaf))),
                 ("msteams", Map(Box::new(Leaf))),
             ])),
         ),

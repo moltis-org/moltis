@@ -7053,38 +7053,44 @@ async fn deliver_channel_replies_to_targets(
                         }
                     },
                 },
-                moltis_channels::ChannelType::MsTeams => {
-                    let delivered_text = tts_payload
-                        .as_ref()
-                        .map(|payload| payload.text.as_str())
-                        .filter(|t| !t.is_empty())
-                        .unwrap_or(&text);
-                    let result = if logbook_html.is_empty() {
-                        outbound
-                            .send_text(
-                                &target.account_id,
-                                &target.chat_id,
-                                delivered_text,
-                                reply_to,
-                            )
-                            .await
-                    } else {
-                        outbound
-                            .send_text_with_suffix(
-                                &target.account_id,
-                                &target.chat_id,
-                                delivered_text,
-                                &logbook_html,
-                                reply_to,
-                            )
-                            .await
-                    };
-                    if let Err(e) = result {
-                        warn!(
-                            account_id = target.account_id,
-                            chat_id = target.chat_id,
-                            "failed to send channel reply: {e}"
-                        );
+                moltis_channels::ChannelType::MsTeams | moltis_channels::ChannelType::Whatsapp => {
+                    match tts_payload {
+                        Some(payload) => {
+                            if let Err(e) = outbound
+                                .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
+                                .await
+                            {
+                                warn!(
+                                    account_id = target.account_id,
+                                    chat_id = target.chat_id,
+                                    "failed to send channel voice reply: {e}"
+                                );
+                            }
+                        },
+                        None => {
+                            let result = if logbook_html.is_empty() {
+                                outbound
+                                    .send_text(&target.account_id, &target.chat_id, &text, reply_to)
+                                    .await
+                            } else {
+                                outbound
+                                    .send_text_with_suffix(
+                                        &target.account_id,
+                                        &target.chat_id,
+                                        &text,
+                                        &logbook_html,
+                                        reply_to,
+                                    )
+                                    .await
+                            };
+                            if let Err(e) = result {
+                                warn!(
+                                    account_id = target.account_id,
+                                    chat_id = target.chat_id,
+                                    "failed to send channel reply: {e}"
+                                );
+                            }
+                        },
                     }
                 },
             }
@@ -7403,7 +7409,9 @@ async fn send_screenshot_to_channels(
         let payload = payload.clone();
         tasks.push(tokio::spawn(async move {
             match target.channel_type {
-                moltis_channels::ChannelType::Telegram | moltis_channels::ChannelType::MsTeams => {
+                moltis_channels::ChannelType::Telegram
+                | moltis_channels::ChannelType::MsTeams
+                | moltis_channels::ChannelType::Whatsapp => {
                     let reply_to = target.message_id.as_deref();
                     if let Err(e) = outbound
                         .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
