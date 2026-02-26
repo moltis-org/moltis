@@ -1,10 +1,10 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use {
-    moltis_channels::{ChannelEventSink, message_log::MessageLog},
+    moltis_channels::{ChannelEventSink, message_log::MessageLog, otp::OtpState},
     serenity::all::UserId,
     tokio_util::sync::CancellationToken,
 };
@@ -23,4 +23,8 @@ pub struct AccountState {
     pub cancel: CancellationToken,
     pub bot_user_id: Option<UserId>,
     pub http: Option<Arc<serenity::http::Http>>,
+    /// In-memory OTP challenges for self-approval (std::sync::Mutex because
+    /// all OTP operations are synchronous HashMap lookups, never held across
+    /// `.await` points).
+    pub otp: Mutex<OtpState>,
 }

@@ -93,6 +93,7 @@ async function navigateAndWait(page, path) {
  * Waits for URL to change and content to mount.
  */
 async function createSession(page) {
+	const sessionCreateTimeoutMs = 45_000;
 	const previousActiveKey = await page.evaluate(() => {
 		return window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "";
 	});
@@ -104,7 +105,7 @@ async function createSession(page) {
 				page.evaluate(() => {
 					return window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "";
 				}),
-			{ timeout: 20_000 },
+			{ timeout: sessionCreateTimeoutMs },
 		)
 		.not.toBe(previousActiveKey);
 
@@ -116,7 +117,7 @@ async function createSession(page) {
 					if (!key) return false;
 					return window.location.pathname === `/chats/${key.replace(/:/g, "/")}`;
 				}),
-			{ timeout: 20_000 },
+			{ timeout: sessionCreateTimeoutMs },
 		)
 		.toBe(true);
 
@@ -133,7 +134,7 @@ async function createSession(page) {
 					const activeSession = store.getByKey ? store.getByKey(activeKey) : store.activeSession?.value;
 					return Boolean(activeSession && activeSession.key === activeKey);
 				}),
-			{ timeout: 20_000 },
+			{ timeout: sessionCreateTimeoutMs },
 		)
 		.toBe(true);
 }

@@ -8,14 +8,18 @@ RUN_CHECK_ASYNC_PID=""
 
 remove_active_pid() {
   local target="$1"
-  local kept=()
+  local -a kept=()
   local pid
   for pid in "${ACTIVE_PIDS[@]}"; do
     if [[ "$pid" != "$target" ]]; then
       kept+=("$pid")
     fi
   done
-  ACTIVE_PIDS=("${kept[@]}")
+  if ((${#kept[@]} > 0)); then
+    ACTIVE_PIDS=("${kept[@]}")
+  else
+    ACTIVE_PIDS=()
+  fi
 }
 
 handle_interrupt() {

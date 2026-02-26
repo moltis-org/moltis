@@ -1,16 +1,26 @@
 use {
     serenity::{
-        all::{Context, EventHandler, GatewayIntents, Message, Ready},
+        all::{
+            Context, CreateMessage, EventHandler, GatewayIntents, Interaction, Message, MessageId,
+            ReactionType, Ready,
+        },
         async_trait,
+        gateway::ActivityData,
+        model::user::OnlineStatus as SerenityOnlineStatus,
     },
     tracing::{debug, info, warn},
+};
+
+use crate::config::{
+    ActivityType as CfgActivityType, DiscordAccountConfig, OnlineStatus as CfgOnlineStatus,
 };
 
 use moltis_channels::{
     ChannelEvent, ChannelType,
     gating::{DmPolicy, GroupPolicy, MentionMode, is_allowed},
     message_log::MessageLogEntry,
-    plugin::{ChannelMessageKind, ChannelMessageMeta, ChannelReplyTarget},
+    otp::{OtpInitResult, OtpVerifyResult},
+    plugin::{ChannelEventSink, ChannelMessageKind, ChannelMessageMeta, ChannelReplyTarget},
 };
 
 use crate::state::AccountStateMap;
@@ -21,6 +31,8 @@ pub fn required_intents() -> GatewayIntents {
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT
         | GatewayIntents::GUILDS
+        | GatewayIntents::GUILD_MESSAGE_REACTIONS
+        | GatewayIntents::DIRECT_MESSAGE_REACTIONS
 }
 
 /// Serenity event handler for a Discord bot account.
@@ -48,9 +60,42 @@ pub fn strip_bot_mention(text: &str, bot_id: u64) -> String {
     stripped.trim().to_string()
 }
 
+/// Set the bot's presence (activity + online status) from config.
+fn set_bot_presence(ctx: &Context, account_id: &str, config: &DiscordAccountConfig) {
+    let activity = config.activity.as_deref().map(|text| {
+        let activity_type = config.activity_type.unwrap_or_default();
+        match activity_type {
+            CfgActivityType::Playing => ActivityData::playing(text),
+            CfgActivityType::Listening => ActivityData::listening(text),
+            CfgActivityType::Watching => ActivityData::watching(text),
+            CfgActivityType::Competing => ActivityData::competing(text),
+            CfgActivityType::Custom => ActivityData::custom(text),
+        }
+    });
+
+    let online_status = match config.status {
+        Some(CfgOnlineStatus::Online) | None => SerenityOnlineStatus::Online,
+        Some(CfgOnlineStatus::Idle) => SerenityOnlineStatus::Idle,
+        Some(CfgOnlineStatus::Dnd) => SerenityOnlineStatus::DoNotDisturb,
+        Some(CfgOnlineStatus::Invisible) => SerenityOnlineStatus::Invisible,
+    };
+
+    // Only set presence if there's something to configure.
+    if activity.is_some() || config.status.is_some() {
+        ctx.set_presence(activity, online_status);
+        info!(
+            account_id,
+            activity_text = ?config.activity,
+            activity_type = ?config.activity_type,
+            status = ?config.status,
+            "Discord bot presence set"
+        );
+    }
+}
+
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, _ctx: Context, msg: Message) {
+    async fn message(&self, ctx: Context, msg: Message) {
         // Ignore messages from bots (including ourselves).
         if msg.author.bot {
             return;
@@ -73,19 +118,12 @@ impl EventHandler for Handler {
         let is_guild = msg.guild_id.is_some();
         let peer_id = msg.author.id.to_string();
         let username = Some(msg.author.name.clone());
-        let sender_name = msg
-            .author
-            .global_name
-            .clone()
-            .or_else(|| Some(msg.author.name.clone()));
+        let sender_name = msg.author.global_name.clone().or_else(|| username.clone());
         let chat_id = msg.channel_id.to_string();
 
         // Check if the bot is mentioned in a guild message.
-        let bot_mentioned = if let Some(bot_id) = bot_user_id {
-            msg.mentions.iter().any(|u| u.id == bot_id)
-        } else {
-            false
-        };
+        let bot_mentioned =
+            bot_user_id.is_some_and(|bot_id| msg.mentions.iter().any(|u| u.id == bot_id));
 
         // Extract and clean message text.
         let text = if let Some(bot_id) = bot_user_id
@@ -189,7 +227,38 @@ impl EventHandler for Handler {
         }
 
         if !access_granted {
+            // OTP self-approval for non-allowlisted DM users.
+            if !is_guild
+                && !policy_allowed
+                && config.otp_self_approval
+                && config.dm_policy == DmPolicy::Allowlist
+            {
+                handle_otp_flow(
+                    &self.accounts,
+                    &self.account_id,
+                    &peer_id,
+                    username.as_deref(),
+                    sender_name.as_deref(),
+                    &text,
+                    msg.channel_id,
+                    event_sink.as_deref(),
+                    &ctx,
+                )
+                .await;
+            }
             return;
+        }
+
+        // Add ack reaction to indicate the bot is processing.
+        if let Some(ref emoji) = config.ack_reaction {
+            let reaction = ReactionType::Unicode(emoji.clone());
+            if let Err(e) = msg.react(&ctx, reaction).await {
+                debug!(
+                    account_id = %self.account_id,
+                    emoji,
+                    "failed to add ack reaction: {e}"
+                );
+            }
         }
 
         let reply_to = ChannelReplyTarget {
@@ -209,42 +278,25 @@ impl EventHandler for Handler {
 
         // Handle slash commands.
         if let Some(command) = text.strip_prefix('/') {
-            match sink
+            let response_text = match sink
                 .dispatch_command(command.trim(), reply_to.clone())
                 .await
             {
-                Ok(response) => {
-                    // Read the http handle from state to send the response.
-                    let http = {
-                        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-                        accounts.get(&self.account_id).and_then(|s| s.http.clone())
-                    };
-                    if let Some(http) = http
-                        && let Err(e) = send_discord_text(&http, msg.channel_id, &response).await
-                    {
-                        warn!(
-                            account_id = %self.account_id,
-                            chat_id, "failed to send Discord command response: {e}"
-                        );
-                    }
-                },
-                Err(e) => {
-                    let error_msg = format!("Command failed: {e}");
-                    let http = {
-                        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-                        accounts.get(&self.account_id).and_then(|s| s.http.clone())
-                    };
-                    if let Some(http) = http
-                        && let Err(send_err) =
-                            send_discord_text(&http, msg.channel_id, &error_msg).await
-                    {
-                        warn!(
-                            account_id = %self.account_id,
-                            chat_id,
-                            "failed to send Discord command error: {send_err}"
-                        );
-                    }
-                },
+                Ok(response) => response,
+                Err(e) => format!("Command failed: {e}"),
+            };
+            let http = {
+                let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+                accounts.get(&self.account_id).and_then(|s| s.http.clone())
+            };
+            if let Some(http) = http
+                && let Err(e) = send_discord_text(&http, msg.channel_id, &response_text).await
+            {
+                warn!(
+                    account_id = %self.account_id,
+                    chat_id,
+                    "failed to send Discord command response: {e}"
+                );
             }
             return;
         }
@@ -268,18 +320,223 @@ impl EventHandler for Handler {
         .await;
     }
 
-    async fn ready(&self, _ctx: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         info!(
             account_id = %self.account_id,
             bot_user = %ready.user.name,
             "Discord bot connected as {}",
             ready.user.name,
         );
-        let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = accounts.get_mut(&self.account_id) {
-            state.bot_user_id = Some(ready.user.id);
+
+        let config = {
+            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(state) = accounts.get_mut(&self.account_id) {
+                state.bot_user_id = Some(ready.user.id);
+            }
+            accounts
+                .get(&self.account_id)
+                .map(|s| s.config.clone())
+        };
+
+        // Set bot presence/activity if configured.
+        if let Some(config) = config {
+            set_bot_presence(&ctx, &self.account_id, &config);
+        }
+
+        // Register slash commands.
+        crate::commands::register_global_commands(&ctx, &self.account_id).await;
+    }
+
+    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        crate::commands::handle_interaction(&ctx, &interaction, &self.account_id, &self.accounts)
+            .await;
+    }
+}
+
+/// OTP challenge message sent to non-allowlisted DM users.
+///
+/// SECURITY: This message must NEVER contain the OTP code. The code is only
+/// visible to the admin in the web UI under Channels → Senders.
+const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification code.\n\nAsk the bot owner for the code \u{2014} it is visible in the web UI under **Channels \u{2192} Senders**.\n\nThe code expires in 5 minutes.";
+
+/// Check if a message body looks like a 6-digit OTP code.
+fn looks_like_otp_code(text: &str) -> bool {
+    text.len() == 6 && text.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Handle OTP challenge/verification flow for a non-allowlisted DM user.
+///
+/// Called when `dm_policy = Allowlist`, the peer is not on the allowlist, and
+/// `otp_self_approval` is enabled. Manages the full lifecycle:
+/// - First message: issue a 6-digit OTP challenge
+/// - Code reply: verify and auto-approve on match
+/// - Non-code messages while pending: silently ignored (flood protection)
+#[allow(clippy::too_many_arguments)]
+async fn handle_otp_flow(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    peer_id: &str,
+    username: Option<&str>,
+    sender_name: Option<&str>,
+    body: &str,
+    channel_id: serenity::all::ChannelId,
+    event_sink: Option<&dyn ChannelEventSink>,
+    ctx: &Context,
+) {
+    let has_pending = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts
+            .get(account_id)
+            .map(|s| {
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.has_pending(peer_id)
+            })
+            .unwrap_or(false)
+    };
+
+    if has_pending {
+        // Only process messages that look like OTP codes (6 digits).
+        let trimmed = body.trim();
+        if !looks_like_otp_code(trimmed) {
+            return; // Silently ignore non-code messages while pending.
+        }
+
+        // Verify the code.
+        let result = {
+            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+            match accts.get(account_id) {
+                Some(s) => {
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                    otp.verify(peer_id, trimmed)
+                },
+                None => return,
+            }
+        };
+
+        match result {
+            OtpVerifyResult::Approved => {
+                // Auto-approve: add to allowlist via the event sink.
+                let identifier = username.unwrap_or(peer_id);
+                if let Some(sink) = event_sink {
+                    sink.request_sender_approval("discord", account_id, identifier)
+                        .await;
+
+                    sink.emit(ChannelEvent::OtpResolved {
+                        channel_type: ChannelType::Discord,
+                        account_id: account_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        username: username.map(String::from),
+                        resolution: "approved".into(),
+                    })
+                    .await;
+                }
+
+                let _ = send_discord_text_simple(ctx, channel_id, "Approved! You can now use this bot.").await;
+            },
+            OtpVerifyResult::WrongCode { attempts_left } => {
+                let msg = format!(
+                    "Incorrect code. {attempts_left} attempt{} remaining.",
+                    if attempts_left == 1 { "" } else { "s" }
+                );
+                let _ = send_discord_text_simple(ctx, channel_id, &msg).await;
+            },
+            OtpVerifyResult::LockedOut => {
+                let _ = send_discord_text_simple(
+                    ctx,
+                    channel_id,
+                    "Too many failed attempts. Please try again later.",
+                )
+                .await;
+
+                if let Some(sink) = event_sink {
+                    sink.emit(ChannelEvent::OtpResolved {
+                        channel_type: ChannelType::Discord,
+                        account_id: account_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        username: username.map(String::from),
+                        resolution: "locked_out".into(),
+                    })
+                    .await;
+                }
+            },
+            OtpVerifyResult::Expired => {
+                let _ = send_discord_text_simple(
+                    ctx,
+                    channel_id,
+                    "Your code has expired. Send any message to get a new one.",
+                )
+                .await;
+
+                if let Some(sink) = event_sink {
+                    sink.emit(ChannelEvent::OtpResolved {
+                        channel_type: ChannelType::Discord,
+                        account_id: account_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        username: username.map(String::from),
+                        resolution: "expired".into(),
+                    })
+                    .await;
+                }
+            },
+            OtpVerifyResult::NoPending => {
+                // Shouldn't happen since we checked has_pending, but handle gracefully.
+            },
+        }
+    } else {
+        // No pending challenge — initiate one.
+        let init_result = {
+            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+            match accts.get(account_id) {
+                Some(s) => {
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                    otp.initiate(
+                        peer_id,
+                        username.map(String::from),
+                        sender_name.map(String::from),
+                    )
+                },
+                None => return,
+            }
+        };
+
+        match init_result {
+            OtpInitResult::Created(code) => {
+                let _ = send_discord_text_simple(ctx, channel_id, OTP_CHALLENGE_MSG).await;
+
+                if let Some(sink) = event_sink {
+                    let expires_at = unix_now() + 300; // 5 minutes
+                    sink.emit(ChannelEvent::OtpChallenge {
+                        channel_type: ChannelType::Discord,
+                        account_id: account_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        username: username.map(String::from),
+                        sender_name: sender_name.map(String::from),
+                        code,
+                        expires_at,
+                    })
+                    .await;
+                }
+            },
+            OtpInitResult::AlreadyPending | OtpInitResult::LockedOut => {
+                // Silent ignore.
+            },
         }
     }
+}
+
+/// Simple send using the Context's http — used for OTP messages where we don't
+/// have the full Http handle from state.
+async fn send_discord_text_simple(
+    ctx: &Context,
+    channel_id: serenity::all::ChannelId,
+    text: &str,
+) -> Result<(), String> {
+    let msg = CreateMessage::new().content(text);
+    channel_id
+        .send_message(&ctx, msg)
+        .await
+        .map_err(|e| format!("Discord send: {e}"))?;
+    Ok(())
 }
 
 /// Send a text message to a Discord channel, chunking at the 2000-character limit.
@@ -288,16 +545,20 @@ pub async fn send_discord_text(
     channel_id: serenity::all::ChannelId,
     text: &str,
 ) -> Result<(), String> {
-    send_discord_message(http, channel_id, text).await?;
+    send_discord_message(http, channel_id, text, None).await?;
     Ok(())
 }
 
 /// Send a text message and return the last sent `Message` (needed for
 /// edit-in-place streaming).
+///
+/// When `reference` is `Some`, the first chunk is sent as a Discord reply
+/// to that message (using `reference_message`).
 pub async fn send_discord_message(
     http: &serenity::http::Http,
     channel_id: serenity::all::ChannelId,
     text: &str,
+    reference: Option<MessageId>,
 ) -> Result<Message, String> {
     if text.is_empty() {
         return Err("empty message".into());
@@ -305,10 +566,17 @@ pub async fn send_discord_message(
 
     let chunks = chunk_message(text, 2000);
     let mut last_msg = None;
-    for chunk in &chunks {
+    for (i, chunk) in chunks.iter().enumerate() {
+        let mut create = CreateMessage::new().content(*chunk);
+        // Only the first chunk gets the reply reference.
+        if i == 0
+            && let Some(ref_id) = reference
+        {
+            create = create.reference_message((channel_id, ref_id));
+        }
         last_msg = Some(
             channel_id
-                .say(http, *chunk)
+                .send_message(http, create)
                 .await
                 .map_err(|e| format!("Discord send: {e}"))?,
         );
@@ -453,6 +721,25 @@ mod tests {
         }
     }
 
+    /// Security: the OTP challenge message sent to the Discord user must
+    /// NEVER contain the verification code. The code should only be visible
+    /// to the admin in the web UI. If this test fails, unauthenticated users
+    /// can self-approve without admin involvement.
+    #[test]
+    fn security_otp_challenge_message_does_not_contain_code() {
+        let msg = OTP_CHALLENGE_MSG;
+
+        // Must not contain any 6-digit numeric sequences (OTP codes are 6 digits).
+        let has_six_digits = msg
+            .as_bytes()
+            .windows(6)
+            .any(|w| w.iter().all(|b| b.is_ascii_digit()));
+        assert!(
+            !has_six_digits,
+            "SECURITY: OTP_CHALLENGE_MSG must not contain numeric codes"
+        );
+    }
+
     #[test]
     fn chunk_code_fence_too_large_falls_back() {
         // When the code fence itself exceeds max_len, we must still split
@@ -464,5 +751,122 @@ mod tests {
         assert!(chunks.len() >= 2, "should split oversized code fence");
         let reassembled: String = chunks.iter().copied().collect();
         assert_eq!(reassembled, text);
+    }
+
+    // ── OTP code detection tests ─────────────────────────────────────
+
+    #[test]
+    fn looks_like_otp_code_valid() {
+        assert!(looks_like_otp_code("123456"));
+        assert!(looks_like_otp_code("000000"));
+        assert!(looks_like_otp_code("999999"));
+    }
+
+    #[test]
+    fn looks_like_otp_code_rejects_non_codes() {
+        assert!(!looks_like_otp_code("hello"));
+        assert!(!looks_like_otp_code("12345"));    // too short
+        assert!(!looks_like_otp_code("1234567"));  // too long
+        assert!(!looks_like_otp_code("12345a"));   // not all digits
+        assert!(!looks_like_otp_code(""));          // empty
+        assert!(!looks_like_otp_code("abcdef"));   // no digits
+        assert!(!looks_like_otp_code("12 345"));   // space
+    }
+
+    #[test]
+    fn looks_like_otp_code_rejects_unicode_digits() {
+        // Arabic-Indic digits (U+0660..U+0669) should not be accepted.
+        assert!(!looks_like_otp_code("\u{0660}\u{0661}\u{0662}\u{0663}\u{0664}\u{0665}"));
+    }
+
+    // ── OTP message security tests ───────────────────────────────────
+
+    #[test]
+    fn security_otp_message_has_no_format_placeholders() {
+        let msg = OTP_CHALLENGE_MSG;
+        assert!(
+            !msg.contains("{code}") && !msg.contains("{0}") && !msg.contains("%s"),
+            "OTP challenge message must not contain format placeholders"
+        );
+    }
+
+    #[test]
+    fn security_otp_message_points_to_web_ui() {
+        let msg = OTP_CHALLENGE_MSG;
+        assert!(
+            msg.contains("Channels") && msg.contains("Senders"),
+            "OTP message must tell user where to find the code"
+        );
+    }
+
+    #[test]
+    fn otp_message_uses_discord_markdown_not_html() {
+        let msg = OTP_CHALLENGE_MSG;
+        // Discord uses ** for bold, not <b>.
+        assert!(
+            !msg.contains("<b>") && !msg.contains("<i>"),
+            "OTP message should use Discord markdown, not HTML tags"
+        );
+        // Should use ** or nothing, but never HTML.
+        assert!(!msg.contains("</"), "OTP message contains HTML closing tags");
+    }
+
+    #[test]
+    fn otp_message_mentions_expiry() {
+        let msg = OTP_CHALLENGE_MSG;
+        assert!(
+            msg.contains("5 minutes") || msg.contains("expires"),
+            "OTP message should mention the expiry time"
+        );
+    }
+
+    // ── Presence config mapping tests ────────────────────────────────
+
+    #[test]
+    fn required_intents_includes_reactions() {
+        let intents = required_intents();
+        assert!(
+            intents.contains(GatewayIntents::GUILD_MESSAGE_REACTIONS),
+            "must include GUILD_MESSAGE_REACTIONS"
+        );
+        assert!(
+            intents.contains(GatewayIntents::DIRECT_MESSAGE_REACTIONS),
+            "must include DIRECT_MESSAGE_REACTIONS"
+        );
+    }
+
+    #[test]
+    fn required_intents_includes_message_content() {
+        let intents = required_intents();
+        assert!(
+            intents.contains(GatewayIntents::MESSAGE_CONTENT),
+            "must include MESSAGE_CONTENT for reading message text"
+        );
+        assert!(
+            intents.contains(GatewayIntents::GUILD_MESSAGES),
+            "must include GUILD_MESSAGES"
+        );
+        assert!(
+            intents.contains(GatewayIntents::DIRECT_MESSAGES),
+            "must include DIRECT_MESSAGES"
+        );
+        assert!(
+            intents.contains(GatewayIntents::GUILDS),
+            "must include GUILDS"
+        );
+    }
+
+    #[test]
+    fn strip_mention_with_leading_whitespace() {
+        assert_eq!(
+            strip_bot_mention("  <@123> hello", 123),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn strip_mention_only_mention() {
+        // When the message is just the mention, result should be empty after trim.
+        assert_eq!(strip_bot_mention("<@123>", 123), "");
     }
 }

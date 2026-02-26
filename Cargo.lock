@@ -5011,6 +5011,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
+ "rand 0.9.2",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

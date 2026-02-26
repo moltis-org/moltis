@@ -14,6 +14,7 @@ use {
     moltis_common::types::ReplyPayload,
     serenity::all::{
         ChannelId, CreateAttachment, CreateEmbed, CreateMessage, EditMessage, MessageId,
+        ReactionType,
     },
 };
 
@@ -165,6 +166,98 @@ impl DiscordOutbound {
             .map(ChannelId::new)
             .map_err(|_| ChannelError::invalid_input(format!("invalid Discord channel ID: {to}")))
     }
+
+    /// Parse the `reply_to` message ID into a `MessageId` when `reply_to_message`
+    /// is enabled for the account.
+    fn resolve_reference(&self, account_id: &str, reply_to: Option<&str>) -> Option<MessageId> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        let enabled = accounts
+            .get(account_id)
+            .is_some_and(|s| s.config.reply_to_message);
+        if enabled {
+            reply_to
+                .and_then(|id| id.parse::<u64>().ok())
+                .map(MessageId::new)
+        } else {
+            None
+        }
+    }
+
+    /// Remove the ack reaction from the original message after the bot's
+    /// response is complete.
+    ///
+    /// Accepts the already-resolved `http` handle to avoid re-acquiring the
+    /// account state lock.
+    async fn remove_ack_reaction(
+        &self,
+        account_id: &str,
+        http: &serenity::http::Http,
+        channel_id: ChannelId,
+        reply_to: Option<&str>,
+    ) {
+        let emoji = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let Some(state) = accounts.get(account_id) else {
+                return;
+            };
+            let Some(ref emoji) = state.config.ack_reaction else {
+                return;
+            };
+            emoji.clone()
+        };
+        let Some(msg_id) = reply_to.and_then(|id| id.parse::<u64>().ok()) else {
+            return;
+        };
+        let reaction = ReactionType::Unicode(emoji);
+        if let Err(e) = http
+            .delete_reaction_me(channel_id, MessageId::new(msg_id), &reaction)
+            .await
+        {
+            debug!(account_id, "failed to remove ack reaction: {e}");
+        }
+    }
+
+    /// Inner implementation for `send_text_with_suffix` that does not handle
+    /// ack reaction removal -- the caller is responsible for that.
+    async fn send_text_with_suffix_inner(
+        &self,
+        account_id: &str,
+        http: &serenity::http::Http,
+        channel_id: ChannelId,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        // Send main response text.
+        let reference = self.resolve_reference(account_id, reply_to);
+        send_discord_message(http, channel_id, text, reference)
+            .await
+            .map_err(|e| ChannelError::external("Discord send", std::io::Error::other(e)))?;
+
+        // Send the activity log as a separate embed message.
+        if !suffix_html.is_empty() {
+            let converted = html_suffix_to_discord(suffix_html);
+            let log_text = converted.trim();
+            if !log_text.is_empty() {
+                let color: u32 = if log_text.contains('\u{274C}') {
+                    0xD32F2F // red for errors
+                } else {
+                    0x4CAF50 // green for success
+                };
+                let embed = CreateEmbed::new().description(log_text).color(color);
+                let msg = CreateMessage::new().embed(embed);
+
+                channel_id.send_message(http, msg).await.map_err(|e| {
+                    ChannelError::external(
+                        "Discord send embed",
+                        std::io::Error::other(e.to_string()),
+                    )
+                })?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -174,19 +267,22 @@ impl ChannelOutbound for DiscordOutbound {
         account_id: &str,
         to: &str,
         text: &str,
-        _reply_to: Option<&str>,
+        reply_to: Option<&str>,
     ) -> ChannelResult<()> {
         let http = self.resolve_http(account_id)?;
         let channel_id = Self::parse_channel_id(to)?;
+        let reference = self.resolve_reference(account_id, reply_to);
         info!(
             account_id,
             chat_id = to,
             text_len = text.len(),
+            reply_ref = reference.is_some(),
             "discord outbound text send"
         );
-        send_discord_text(&http, channel_id, text)
+        send_discord_message(&http, channel_id, text, reference)
             .await
-            .map_err(|e| ChannelError::external("Discord send", std::io::Error::other(e)))
+            .map_err(|e| ChannelError::external("Discord send", std::io::Error::other(e)))?;
+        Ok(())
     }
 
     async fn send_media(
@@ -226,10 +322,14 @@ impl ChannelOutbound for DiscordOutbound {
 
             let http = self.resolve_http(account_id)?;
             let channel_id = Self::parse_channel_id(to)?;
+            let reference = self.resolve_reference(account_id, reply_to);
             let attachment = CreateAttachment::bytes(bytes, filename);
             let mut msg = CreateMessage::new().add_file(attachment);
             if !payload.text.is_empty() {
                 msg = msg.content(&payload.text);
+            }
+            if let Some(ref_id) = reference {
+                msg = msg.reference_message((channel_id, ref_id));
             }
             channel_id.send_message(&http, msg).await.map_err(|e| {
                 ChannelError::external("Discord send media", std::io::Error::other(e.to_string()))
@@ -269,6 +369,9 @@ impl ChannelOutbound for DiscordOutbound {
         suffix_html: &str,
         reply_to: Option<&str>,
     ) -> ChannelResult<()> {
+        let http = self.resolve_http(account_id)?;
+        let channel_id = Self::parse_channel_id(to)?;
+
         info!(
             account_id,
             chat_id = to,
@@ -277,35 +380,15 @@ impl ChannelOutbound for DiscordOutbound {
             "discord outbound text+suffix send"
         );
 
-        // Send main response text.
-        self.send_text(account_id, to, text, reply_to).await?;
+        let result = self
+            .send_text_with_suffix_inner(account_id, &http, channel_id, text, suffix_html, reply_to)
+            .await;
 
-        // Send the activity log as a separate embed message.
-        if !suffix_html.is_empty() {
-            let converted = html_suffix_to_discord(suffix_html);
-            let log_text = converted.trim();
-            if !log_text.is_empty() {
-                let has_errors = log_text.contains('\u{274C}'); // ❌
-                let color: u32 = if has_errors {
-                    0xD32F2F
-                } else {
-                    0x4CAF50
-                };
-                let embed = CreateEmbed::new().description(log_text).color(color);
-                let msg = CreateMessage::new().embed(embed);
+        // Always remove the ack reaction, even if sending failed.
+        self.remove_ack_reaction(account_id, &http, channel_id, reply_to)
+            .await;
 
-                let http = self.resolve_http(account_id)?;
-                let channel_id = Self::parse_channel_id(to)?;
-                channel_id.send_message(&http, msg).await.map_err(|e| {
-                    ChannelError::external(
-                        "Discord send embed",
-                        std::io::Error::other(e.to_string()),
-                    )
-                })?;
-            }
-        }
-
-        Ok(())
+        result
     }
 
     async fn send_location(
@@ -356,11 +439,12 @@ impl ChannelStreamOutbound for DiscordOutbound {
         &self,
         account_id: &str,
         to: &str,
-        _reply_to: Option<&str>,
+        reply_to: Option<&str>,
         mut stream: StreamReceiver,
     ) -> ChannelResult<()> {
         let http = self.resolve_http(account_id)?;
         let channel_id = Self::parse_channel_id(to)?;
+        let reference = self.resolve_reference(account_id, reply_to);
 
         // Send typing indicator.
         let _ = channel_id.broadcast_typing(&http).await;
@@ -381,7 +465,8 @@ impl ChannelStreamOutbound for DiscordOutbound {
                         if accumulated.chars().count() >= STREAM_MIN_INITIAL_CHARS {
                             let display =
                                 truncate_at_char_boundary(&accumulated, DISCORD_MAX_MESSAGE_LEN);
-                            match send_discord_message(&http, channel_id, display).await {
+                            match send_discord_message(&http, channel_id, display, reference).await
+                            {
                                 Ok(msg) => {
                                     sent_message_id = Some(msg.id);
                                     last_edit = tokio::time::Instant::now();
@@ -429,45 +514,54 @@ impl ChannelStreamOutbound for DiscordOutbound {
         }
 
         // Phase 3: final update with the complete text.
-        if accumulated.is_empty() {
-            return Ok(());
-        }
-
-        if accumulated.len() <= DISCORD_MAX_MESSAGE_LEN {
-            // Content fits in one message — edit or send.
-            if let Some(msg_id) = sent_message_id {
-                let edit = EditMessage::new().content(&accumulated);
-                if let Err(e) = channel_id.edit_message(&http, msg_id, edit).await {
-                    warn!(
-                        account_id,
-                        chat_id = to,
-                        error = %e,
-                        "discord stream final edit failed"
-                    );
+        if !accumulated.is_empty() {
+            if accumulated.len() <= DISCORD_MAX_MESSAGE_LEN {
+                // Content fits in one message -- edit or send.
+                if let Some(msg_id) = sent_message_id {
+                    let edit = EditMessage::new().content(&accumulated);
+                    if let Err(e) = channel_id.edit_message(&http, msg_id, edit).await {
+                        warn!(
+                            account_id,
+                            chat_id = to,
+                            error = %e,
+                            "discord stream final edit failed"
+                        );
+                    }
+                } else {
+                    send_discord_message(&http, channel_id, &accumulated, None)
+                        .await
+                        .map_err(|e| {
+                            ChannelError::external("Discord send", std::io::Error::other(e))
+                        })?;
                 }
             } else {
-                self.send_text(account_id, to, &accumulated, None).await?;
-            }
-        } else {
-            // Content overflows — edit the first message with the first 2000 chars,
-            // then send the rest as new messages.
-            let first = truncate_at_char_boundary(&accumulated, DISCORD_MAX_MESSAGE_LEN);
-            if let Some(msg_id) = sent_message_id {
-                let edit = EditMessage::new().content(first);
-                let _ = channel_id.edit_message(&http, msg_id, edit).await;
-            } else {
-                let _ = send_discord_text(&http, channel_id, first).await;
-            }
+                // Content overflows -- edit the first message with the first 2000 chars,
+                // then send the rest as new messages.
+                let first = truncate_at_char_boundary(&accumulated, DISCORD_MAX_MESSAGE_LEN);
+                if let Some(msg_id) = sent_message_id {
+                    let edit = EditMessage::new().content(first);
+                    let _ = channel_id.edit_message(&http, msg_id, edit).await;
+                } else {
+                    let _ = send_discord_text(&http, channel_id, first).await;
+                }
 
-            let rest = &accumulated[first.len()..];
-            if !rest.is_empty() {
-                send_discord_text(&http, channel_id, rest)
-                    .await
-                    .map_err(|e| {
-                        ChannelError::external("Discord stream overflow", std::io::Error::other(e))
-                    })?;
+                let rest = &accumulated[first.len()..];
+                if !rest.is_empty() {
+                    send_discord_text(&http, channel_id, rest)
+                        .await
+                        .map_err(|e| {
+                            ChannelError::external(
+                                "Discord stream overflow",
+                                std::io::Error::other(e),
+                            )
+                        })?;
+                }
             }
         }
+
+        // Always remove ack reaction, even if the stream produced no content.
+        self.remove_ack_reaction(account_id, &http, channel_id, reply_to)
+            .await;
 
         info!(
             account_id,

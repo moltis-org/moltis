@@ -39,9 +39,8 @@ async function maybeSkipOpenClawImport(page) {
 	if (!(await isVisible(importHeading))) return;
 
 	const skipBtn = page.getByRole("button", { name: /^Skip/ }).first();
-	if (await isVisible(skipBtn)) {
-		await skipBtn.click();
-	}
+	await expect(skipBtn).toBeVisible({ timeout: 20_000 });
+	await skipBtn.click();
 }
 
 async function moveToLlmStep(page) {
@@ -56,13 +55,20 @@ async function moveToLlmStep(page) {
 	await maybeSkipOpenClawImport(page);
 	if (await isVisible(llmHeading)) return;
 
+	const scanLoading = page.getByText("Scanning OpenClaw installation…");
+	if (await isVisible(scanLoading)) {
+		await expect(scanLoading).toBeHidden({ timeout: 20_000 });
+		await maybeSkipOpenClawImport(page);
+		if (await isVisible(llmHeading)) return;
+	}
+
 	await maybeCompleteIdentity(page);
 	if (await isVisible(llmHeading)) return;
 
 	await maybeSkipOpenClawImport(page);
 	if (await isVisible(llmHeading)) return;
 
-	await expect(llmHeading).toBeVisible({ timeout: 15_000 });
+	await expect(llmHeading).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe("Onboarding OpenAI provider", () => {

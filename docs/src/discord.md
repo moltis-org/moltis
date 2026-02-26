@@ -45,7 +45,7 @@ Before configuring Moltis, create a Discord bot:
 5. Under **Privileged Gateway Intents**, enable **Message Content Intent**
 6. Navigate to **OAuth2 → URL Generator**
    - Scopes: `bot`
-   - Bot Permissions: `Send Messages`, `Attach Files`, `Read Message History`
+   - Bot Permissions: `Send Messages`, `Attach Files`, `Read Message History`, `Add Reactions`
 7. Copy the generated URL and open it to invite the bot to your server
 
 ```admonish warning
@@ -84,6 +84,13 @@ offered = ["telegram", "discord"]
 | `guild_allowlist` | no | `[]` | Guild (server) IDs allowed to interact with the bot |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
+| `reply_to_message` | no | `false` | Send bot responses as Discord replies to the user's message |
+| `ack_reaction` | no | — | Emoji reaction added while processing (e.g. `"👀"`); omit to disable |
+| `activity` | no | — | Bot activity status text (e.g. `"with AI"`) |
+| `activity_type` | no | `"custom"` | Activity type: `"playing"`, `"listening"`, `"watching"`, `"competing"`, or `"custom"` |
+| `status` | no | `"online"` | Bot online status: `"online"`, `"idle"`, `"dnd"`, or `"invisible"` |
+| `otp_self_approval` | no | `true` | Enable OTP self-approval for non-allowlisted DM users |
+| `otp_cooldown_secs` | no | `300` | Cooldown in seconds after 3 failed OTP attempts |
 
 ### Full Example
 
@@ -98,8 +105,14 @@ group_policy = "open"
 mention_mode = "mention"
 allowlist = ["alice", "bob"]
 guild_allowlist = ["123456789012345678"]
+reply_to_message = true
+ack_reaction = "👀"
 model = "gpt-4o"
 model_provider = "openai"
+activity = "with AI"
+activity_type = "custom"
+status = "online"
+otp_self_approval = true
 ```
 
 ## Access Control
@@ -142,6 +155,67 @@ If `guild_allowlist` is non-empty, messages from guilds **not** in the list are
 silently dropped — regardless of `group_policy`. This provides a server-level
 filter on top of the channel-level policy.
 
+### OTP Self-Approval
+
+When `dm_policy = "allowlist"` and `otp_self_approval = true` (the default),
+unknown users who DM the bot receive a verification challenge. The flow:
+
+1. User sends a DM to the bot
+2. Bot responds with a challenge prompt (the 6-digit code is **not** shown to the user)
+3. The code appears in the Moltis web UI under **Channels → Senders**
+4. The bot owner shares the code with the user out-of-band
+5. User replies with the 6-digit code
+6. On success, the user is automatically added to the allowlist
+
+After 3 failed attempts, the user is locked out for `otp_cooldown_secs` seconds
+(default: 300). Codes expire after 5 minutes.
+
+```admonish tip
+This is the same OTP mechanism used by the Telegram integration. It provides a
+simple access control flow without requiring manual allowlist management.
+```
+
+## Bot Presence
+
+Configure the bot's Discord presence (the "Playing..." / "Listening to..." status)
+using the `activity`, `activity_type`, and `status` fields:
+
+```toml
+[channels.discord.my-bot]
+token = "..."
+activity = "with AI"
+activity_type = "custom"  # or "playing", "listening", "watching", "competing"
+status = "online"         # or "idle", "dnd", "invisible"
+```
+
+The presence is set when the bot connects to the Discord gateway. If no activity
+or status is configured, the bot uses Discord's default (online, no activity).
+
+## Slash Commands
+
+The bot automatically registers native Discord slash commands when it connects:
+
+| Command | Description |
+|---------|-------------|
+| `/new` | Start a new chat session |
+| `/clear` | Clear the current session history |
+| `/compact` | Summarize the current session |
+| `/context` | Show session info (model, tokens, plugins) |
+| `/model` | List or switch the AI model |
+| `/sessions` | List or switch chat sessions |
+| `/agent` | List or switch agents |
+| `/help` | Show available commands |
+
+Slash commands appear in Discord's command palette (type `/` in any channel where
+the bot is present). Responses are ephemeral — only visible to the user who
+invoked the command.
+
+```admonish note
+Text-based `/` commands (e.g. typing `/model` as a regular message) continue to
+work alongside native slash commands. The native commands provide autocomplete and
+a better Discord-native experience.
+```
+
 ## Web UI Setup
 
 You can also configure Discord through the web interface:
@@ -165,7 +239,7 @@ To use the bot in a Discord server you need to invite it first:
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
 2. Select your application → **OAuth2 → URL Generator**
 3. Scopes: check **bot**
-4. Bot Permissions: check **Send Messages** and **Read Message History**
+4. Bot Permissions: check **Send Messages**, **Read Message History**, and **Add Reactions**
 5. Copy the generated URL and open it in your browser
 6. Select the server you want to add the bot to and confirm
 
@@ -218,11 +292,26 @@ When a message arrives from Discord:
 
 Discord enforces a **2,000-character limit** per message. Moltis automatically
 splits long responses into multiple messages, preferring to break at newline
-boundaries when possible.
+boundaries and avoiding splits inside fenced code blocks.
 
-Streaming is currently **accumulate-then-send** (same as Microsoft Teams) —
-the full response is collected, then sent as one or more messages. Edit-in-place
-streaming is planned for a future release.
+Streaming uses **edit-in-place** — an initial message is sent after 30 characters
+and then updated every 500ms as tokens arrive. If the final text exceeds 2,000
+characters, the first message is edited to the limit and overflow is sent as
+follow-up messages.
+
+### Reply-to-Message
+
+Set `reply_to_message = true` to have the bot send responses as Discord replies
+(threaded to the user's original message). The first chunk of a multi-chunk or
+streamed response carries the reply reference; follow-up chunks are sent as
+regular messages.
+
+### Ack Reactions
+
+Set `ack_reaction = "👀"` (or any Unicode emoji) to have the bot react to the
+user's message when processing starts. The reaction is removed once the response
+is complete. This provides a visual indicator that the bot has seen the message
+and is working on a reply.
 
 ## Crate Structure
 
@@ -231,12 +320,13 @@ crates/discord/
 ├── Cargo.toml
 └── src/
     ├── lib.rs         # Public exports
-    ├── config.rs      # DiscordAccountConfig (token, policies, allowlists)
+    ├── commands.rs    # Native Discord slash command registration
+    ├── config.rs      # DiscordAccountConfig (token, policies, presence, OTP)
     ├── error.rs       # Error enum (Config, Gateway, Send, Channel)
-    ├── handler.rs     # serenity EventHandler (inbound message processing)
+    ├── handler.rs     # serenity EventHandler (inbound + OTP + interactions)
     ├── outbound.rs    # ChannelOutbound + ChannelStreamOutbound impls
     ├── plugin.rs      # ChannelPlugin + ChannelStatus impls
-    └── state.rs       # AccountState + AccountStateMap
+    └── state.rs       # AccountState + AccountStateMap (includes OtpState)
 ```
 
 The crate implements the same trait set as `moltis-telegram` and `moltis-msteams`:

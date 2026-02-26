@@ -18,6 +18,8 @@ use moltis_channels::{
     },
 };
 
+use moltis_channels::otp::OtpState;
+
 use crate::{
     config::DiscordAccountConfig,
     handler::{Handler, required_intents},
@@ -136,6 +138,7 @@ impl ChannelPlugin for DiscordPlugin {
         let token = cfg.token.expose_secret().clone();
 
         {
+            let otp_cooldown = cfg.otp_cooldown_secs;
             let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
             accounts.insert(account_id.to_string(), AccountState {
                 account_id: account_id.to_string(),
@@ -145,6 +148,7 @@ impl ChannelPlugin for DiscordPlugin {
                 cancel: cancel.clone(),
                 bot_user_id: None,
                 http: None,
+                otp: std::sync::Mutex::new(OtpState::new(otp_cooldown)),
             });
         }
 

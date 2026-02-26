@@ -286,9 +286,6 @@ fn scan_unsupported_channels(home: &Path) -> Vec<String> {
     if config.channels.whatsapp.is_some() {
         unsupported.push("whatsapp".to_string());
     }
-    if config.channels.discord.is_some() {
-        unsupported.push("discord".to_string());
-    }
     if config.channels.slack.is_some() {
         unsupported.push("slack".to_string());
     }
@@ -446,7 +443,7 @@ mod tests {
                 .contains(&"whatsapp".to_string())
         );
         assert!(
-            detection
+            !detection
                 .unsupported_channels
                 .contains(&"discord".to_string())
         );
