@@ -1094,6 +1094,10 @@ pub struct PreparedGateway {
     /// Metadata collected during setup, used by [`start_gateway`] for the
     /// startup banner. Not relevant for bridge callers.
     pub(crate) banner: BannerMeta,
+    /// Network audit buffer for real-time streaming (present when
+    /// the `trusted-network` feature is enabled and the proxy is active).
+    #[cfg(feature = "trusted-network")]
+    pub audit_buffer: Option<crate::network_audit::NetworkAuditBuffer>,
 }
 
 /// Internal metadata for the startup banner printed by [`start_gateway`].
@@ -3996,6 +4000,8 @@ pub async fn prepare_gateway(
             #[cfg(feature = "tailscale")]
             tailscale_reset_on_exit,
         },
+        #[cfg(feature = "trusted-network")]
+        audit_buffer: audit_buffer_for_broadcast,
     })
 }
 

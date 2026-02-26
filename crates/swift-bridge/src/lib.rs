@@ -1246,6 +1246,22 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
             Err(e) => return encode_error("addr_error", &e.to_string()),
         };
 
+        // Subscribe to the network audit broadcast (if the proxy is active)
+        // and forward entries to Swift via the registered callback.
+        if let Some(ref audit_buf) = prepared.audit_buffer {
+            let mut audit_rx = audit_buf.subscribe();
+            BRIDGE.runtime.spawn(async move {
+                loop {
+                    match audit_rx.recv().await {
+                        Ok(entry) => emit_network_audit(&entry),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    }
+                }
+            });
+            emit_log("INFO", "bridge.httpd", "Network audit bridge subscribed");
+        }
+
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let app = prepared.app;
 

@@ -124,13 +124,16 @@ impl DomainApprovalManager {
     #[instrument(skip(self), fields(id = %id, decision = ?decision))]
     pub async fn resolve(&self, id: &str, decision: DomainDecision) {
         if let Some(pending) = self.pending.write().await.remove(id) {
-            let decision_label = match decision {
-                DomainDecision::Approved => "approved",
-                DomainDecision::Denied => "denied",
-                DomainDecision::Timeout => "timeout",
-            };
             #[cfg(feature = "metrics")]
-            counter!("domain_approval_decisions_total", "decision" => decision_label).increment(1);
+            {
+                let decision_label = match decision {
+                    DomainDecision::Approved => "approved",
+                    DomainDecision::Denied => "denied",
+                    DomainDecision::Timeout => "timeout",
+                };
+                counter!("domain_approval_decisions_total", "decision" => decision_label)
+                    .increment(1);
+            }
 
             if decision == DomainDecision::Approved {
                 self.session_allowlist
