@@ -7,7 +7,7 @@ use {
         Json,
         extract::{Path, Query, State},
         http::StatusCode,
-        response::IntoResponse,
+        response::{IntoResponse, Response},
     },
     moltis_gateway::server::AppState,
     moltis_tools::image_cache::ImageBuilder,
@@ -15,6 +15,36 @@ use {
 };
 
 use crate::templates::{build_nav_counts, onboarding_completed};
+
+const MCP_LIST_FAILED: &str = "MCP_LIST_FAILED";
+const IMAGE_CACHE_DELETE_FAILED: &str = "IMAGE_CACHE_DELETE_FAILED";
+const IMAGE_CACHE_PRUNE_FAILED: &str = "IMAGE_CACHE_PRUNE_FAILED";
+const SANDBOX_CHECK_PACKAGES_FAILED: &str = "SANDBOX_CHECK_PACKAGES_FAILED";
+const SANDBOX_BACKEND_UNAVAILABLE: &str = "SANDBOX_BACKEND_UNAVAILABLE";
+const SANDBOX_IMAGE_NAME_REQUIRED: &str = "SANDBOX_IMAGE_NAME_REQUIRED";
+const SANDBOX_IMAGE_PACKAGES_REQUIRED: &str = "SANDBOX_IMAGE_PACKAGES_REQUIRED";
+const SANDBOX_IMAGE_NAME_INVALID: &str = "SANDBOX_IMAGE_NAME_INVALID";
+const SANDBOX_TMP_DIR_CREATE_FAILED: &str = "SANDBOX_TMP_DIR_CREATE_FAILED";
+const SANDBOX_DOCKERFILE_WRITE_FAILED: &str = "SANDBOX_DOCKERFILE_WRITE_FAILED";
+const SANDBOX_IMAGE_BUILD_FAILED: &str = "SANDBOX_IMAGE_BUILD_FAILED";
+const SANDBOX_CONTAINERS_LIST_FAILED: &str = "SANDBOX_CONTAINERS_LIST_FAILED";
+const SANDBOX_CONTAINER_PREFIX_MISMATCH: &str = "SANDBOX_CONTAINER_PREFIX_MISMATCH";
+const SANDBOX_CONTAINER_STOP_FAILED: &str = "SANDBOX_CONTAINER_STOP_FAILED";
+const SANDBOX_CONTAINER_REMOVE_FAILED: &str = "SANDBOX_CONTAINER_REMOVE_FAILED";
+const SANDBOX_CONTAINERS_CLEAN_FAILED: &str = "SANDBOX_CONTAINERS_CLEAN_FAILED";
+const SANDBOX_DISK_USAGE_FAILED: &str = "SANDBOX_DISK_USAGE_FAILED";
+const SANDBOX_DAEMON_RESTART_FAILED: &str = "SANDBOX_DAEMON_RESTART_FAILED";
+
+fn api_error(code: &str, error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
+        "error": error.into(),
+    })
+}
+
+fn api_error_response(status: StatusCode, code: &str, error: impl Into<String>) -> Response {
+    (status, Json(api_error(code, error))).into_response()
+}
 
 // ── Session media ────────────────────────────────────────────────────────────
 
@@ -110,11 +140,11 @@ pub async fn api_mcp_handler(State(state): State<AppState>) -> impl IntoResponse
     let servers = state.gateway.services.mcp.list().await;
     match servers {
         Ok(val) => Json(val).into_response(),
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            MCP_LIST_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
@@ -317,14 +347,11 @@ pub async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl In
     };
     match result {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Err(e) => {
-            let msg = e.to_string();
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": msg })),
-            )
-                .into_response()
-        },
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            IMAGE_CACHE_DELETE_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
@@ -343,11 +370,11 @@ pub async fn api_prune_cached_images_handler() -> impl IntoResponse {
     }
     if let (Err(e1), Err(e2)) = (&tool_result, &sandbox_result) {
         let msg = format!("tool images: {e1}; sandbox images: {e2}");
-        return (
+        return api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": msg })),
-        )
-            .into_response();
+            IMAGE_CACHE_PRUNE_FAILED,
+            msg,
+        );
     }
     Json(serde_json::json!({ "pruned": count })).into_response()
 }
@@ -402,11 +429,11 @@ pub async fn api_check_packages_handler(Json(body): Json<serde_json::Value>) -> 
             }
             Json(serde_json::json!({ "found": found })).into_response()
         },
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            SANDBOX_CHECK_PACKAGES_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
@@ -431,11 +458,11 @@ pub async fn api_set_default_image_handler(
         let effective = router.default_image().await;
         Json(serde_json::json!({ "image": effective })).into_response()
     } else {
-        (
+        api_error_response(
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "no sandbox backend available" })),
+            SANDBOX_BACKEND_UNAVAILABLE,
+            "no sandbox backend available",
         )
-            .into_response()
     }
 }
 
@@ -462,29 +489,29 @@ pub async fn api_build_image_handler(Json(body): Json<serde_json::Value>) -> imp
         .unwrap_or_default();
 
     if name.is_empty() {
-        return (
+        return api_error_response(
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "name is required" })),
-        )
-            .into_response();
+            SANDBOX_IMAGE_NAME_REQUIRED,
+            "name is required",
+        );
     }
     if packages.is_empty() {
-        return (
+        return api_error_response(
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "packages list is empty" })),
-        )
-            .into_response();
+            SANDBOX_IMAGE_PACKAGES_REQUIRED,
+            "packages list is empty",
+        );
     }
 
     if !name
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
-        return (
+        return api_error_response(
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "name must be alphanumeric, dash, or underscore" })),
-        )
-            .into_response();
+            SANDBOX_IMAGE_NAME_INVALID,
+            "name must be alphanumeric, dash, or underscore",
+        );
     }
 
     let pkg_list = packages.join(" ");
@@ -498,21 +525,21 @@ WORKDIR /home/sandbox\n"
 
     let tmp_dir = std::env::temp_dir().join(format!("moltis-build-{}", uuid::Uuid::new_v4()));
     if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
-        return (
+        return api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response();
+            SANDBOX_TMP_DIR_CREATE_FAILED,
+            e.to_string(),
+        );
     }
 
     let dockerfile_path = tmp_dir.join("Dockerfile");
     if let Err(e) = std::fs::write(&dockerfile_path, &dockerfile_contents) {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        return (
+        return api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response();
+            SANDBOX_DOCKERFILE_WRITE_FAILED,
+            e.to_string(),
+        );
     }
 
     let builder = moltis_tools::image_cache::DockerImageBuilder::new();
@@ -520,11 +547,11 @@ WORKDIR /home/sandbox\n"
     let _ = std::fs::remove_dir_all(&tmp_dir);
     match result {
         Ok(tag) => Json(serde_json::json!({ "tag": tag })).into_response(),
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            SANDBOX_IMAGE_BUILD_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
@@ -544,11 +571,11 @@ pub async fn api_list_containers_handler(State(state): State<AppState>) -> impl 
         .unwrap_or_else(|| "moltis-sandbox".to_string());
     match moltis_tools::sandbox::list_running_containers(&prefix).await {
         Ok(containers) => Json(serde_json::json!({ "containers": containers })).into_response(),
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            SANDBOX_CONTAINERS_LIST_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
@@ -568,19 +595,19 @@ pub async fn api_stop_container_handler(
         })
         .unwrap_or_else(|| "moltis-sandbox".to_string());
     if !name.starts_with(&prefix) {
-        return (
+        return api_error_response(
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "container name does not match expected prefix" })),
-        )
-            .into_response();
+            SANDBOX_CONTAINER_PREFIX_MISMATCH,
+            "container name does not match expected prefix",
+        );
     }
     match moltis_tools::sandbox::stop_container(&name).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            SANDBOX_CONTAINER_STOP_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
@@ -600,19 +627,19 @@ pub async fn api_remove_container_handler(
         })
         .unwrap_or_else(|| "moltis-sandbox".to_string());
     if !name.starts_with(&prefix) {
-        return (
+        return api_error_response(
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "container name does not match expected prefix" })),
-        )
-            .into_response();
+            SANDBOX_CONTAINER_PREFIX_MISMATCH,
+            "container name does not match expected prefix",
+        );
     }
     match moltis_tools::sandbox::remove_container(&name).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            SANDBOX_CONTAINER_REMOVE_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
@@ -630,32 +657,32 @@ pub async fn api_clean_all_containers_handler(State(state): State<AppState>) -> 
         .unwrap_or_else(|| "moltis-sandbox".to_string());
     match moltis_tools::sandbox::clean_all_containers(&prefix).await {
         Ok(removed) => Json(serde_json::json!({ "ok": true, "removed": removed })).into_response(),
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            SANDBOX_CONTAINERS_CLEAN_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
 pub async fn api_disk_usage_handler() -> impl IntoResponse {
     match moltis_tools::sandbox::container_disk_usage().await {
         Ok(usage) => Json(serde_json::json!({ "usage": usage })).into_response(),
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            SANDBOX_DISK_USAGE_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
 pub async fn api_restart_daemon_handler() -> impl IntoResponse {
     match moltis_tools::sandbox::restart_container_daemon().await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Err(e) => (
+        Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            SANDBOX_DAEMON_RESTART_FAILED,
+            e.to_string(),
+        ),
     }
 }

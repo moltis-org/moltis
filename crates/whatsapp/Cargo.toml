@@ -1,0 +1,39 @@
+[package]
+edition.workspace = true
+name              = "moltis-whatsapp"
+version.workspace = true
+
+[dependencies]
+thiserror       = { workspace = true }
+async-trait     = { workspace = true }
+dashmap         = { workspace = true }
+moltis-channels = { workspace = true }
+moltis-common   = { workspace = true }
+moltis-config   = { workspace = true }
+moltis-media    = { workspace = true }
+moltis-metrics  = { optional = true, workspace = true }
+rand            = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+sled            = { workspace = true }
+tokio           = { workspace = true }
+tokio-util      = { workspace = true }
+tracing         = { workspace = true }
+wacore          = { workspace = true }
+wacore-binary   = { workspace = true }
+waproto         = { workspace = true }
+
+whatsapp-rust                  = { workspace = true }
+whatsapp-rust-tokio-transport  = { workspace = true }
+whatsapp-rust-ureq-http-client = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio    = { workspace = true }
+
+[lints]
+workspace = true

@@ -4,6 +4,7 @@
 import { chatAddMsg } from "./chat-ui.js";
 import * as gon from "./gon.js";
 import { renderAudioPlayer, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
+import { t } from "./i18n.js";
 import { bumpSessionCount, seedSessionPreviewFromUserText, setSessionReplying } from "./sessions.js";
 import * as S from "./state.js";
 
@@ -44,11 +45,7 @@ function updateMicButton() {
 	micBtn.style.display = sttConfigured && isVoiceEnabled() ? "" : "none";
 	// Disable only when not connected (button is only visible when STT configured)
 	micBtn.disabled = !S.connected;
-	micBtn.title = isStarting
-		? "Starting microphone..."
-		: isRecording
-			? "Click to stop and send"
-			: "Click to start recording";
+	micBtn.title = isStarting ? t("chat:micStarting") : isRecording ? t("chat:micStopAndSend") : t("chat:micTooltip");
 }
 
 /** Pause all currently playing audio elements on the page. */
@@ -71,7 +68,7 @@ async function startRecording() {
 	isStarting = true;
 	micBtn.classList.add("starting");
 	micBtn.setAttribute("aria-busy", "true");
-	micBtn.title = "Starting microphone...";
+	micBtn.title = t("chat:micStarting");
 
 	try {
 		var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -86,7 +83,7 @@ async function startRecording() {
 			micBtn.removeAttribute("aria-busy");
 			micBtn.classList.add("recording");
 			micBtn.setAttribute("aria-pressed", "true");
-			micBtn.title = "Click to stop and send";
+			micBtn.title = t("chat:micStopAndSend");
 		}
 
 		// Use webm/opus if available, fall back to audio/webm
@@ -129,14 +126,14 @@ async function startRecording() {
 			micBtn.classList.remove("starting");
 			micBtn.removeAttribute("aria-busy");
 			micBtn.setAttribute("aria-pressed", "false");
-			micBtn.title = "Click to start recording";
+			micBtn.title = t("chat:micTooltip");
 		}
 		console.error("Failed to start recording:", err);
 		// Show user-friendly error
 		if (err.name === "NotAllowedError") {
-			alert("Microphone permission denied. Please allow microphone access in your browser settings.");
+			alert(t("settings:voice.micDenied"));
 		} else if (err.name === "NotFoundError") {
-			alert("No microphone found. Please connect a microphone and try again.");
+			alert(t("settings:voice.noMicFound"));
 		}
 	}
 }
@@ -152,7 +149,7 @@ function stopRecording() {
 	micBtn.classList.remove("recording");
 	micBtn.setAttribute("aria-pressed", "false");
 	micBtn.classList.add("transcribing");
-	micBtn.title = "Transcribing...";
+	micBtn.title = t("chat:voiceTranscribing");
 
 	// Stop the recorder, which triggers onstop -> transcribeAudio
 	mediaRecorder.stop();
@@ -172,7 +169,7 @@ function cancelRecording() {
 	micBtn.classList.remove("starting", "recording");
 	micBtn.removeAttribute("aria-busy");
 	micBtn.setAttribute("aria-pressed", "false");
-	micBtn.title = "Click to start recording";
+	micBtn.title = t("chat:micTooltip");
 
 	// Stop the recorder — onstop will see empty chunks and bail out.
 	mediaRecorder.stop();
@@ -224,7 +221,7 @@ function cleanupTranscribingState() {
 	micBtn.classList.remove("starting");
 	micBtn.removeAttribute("aria-busy");
 	micBtn.classList.remove("transcribing");
-	micBtn.title = "Click to start recording";
+	micBtn.title = t("chat:micTooltip");
 	if (transcribingEl) {
 		transcribingEl.remove();
 		transcribingEl = null;
@@ -283,7 +280,7 @@ async function transcribeAudio() {
 
 	// Show transcribing indicator in chat immediately
 	if (S.chatMsgBox) {
-		transcribingEl = createTranscribingIndicator("Transcribing voice...", false);
+		transcribingEl = createTranscribingIndicator(t("chat:voiceTranscribingMessage"), false);
 		S.chatMsgBox.appendChild(transcribingEl);
 		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	}
@@ -300,7 +297,7 @@ async function transcribeAudio() {
 		var res = await resp.json();
 
 		micBtn.classList.remove("transcribing");
-		micBtn.title = "Click to start recording";
+		micBtn.title = t("chat:micTooltip");
 
 		if (res.ok && res.transcription?.text) {
 			var text = res.transcription.text.trim();
@@ -321,7 +318,7 @@ async function transcribeAudio() {
 	} catch (err) {
 		console.error("Transcription error:", err);
 		micBtn.classList.remove("transcribing");
-		micBtn.title = "Click to start recording";
+		micBtn.title = t("chat:micTooltip");
 		showTemporaryMessage("Transcription error", true, 4000);
 	}
 }

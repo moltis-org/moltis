@@ -43,6 +43,7 @@ fn try_parse_known_error(raw: &str) -> Value {
                 &format!("Your {} plan limit has been reached.", plan_type),
                 resets_at,
                 None,
+                Some(serde_json::json!({ "planType": plan_type })),
             );
         }
 
@@ -56,6 +57,7 @@ fn try_parse_known_error(raw: &str) -> Value {
                 "\u{26A0}\u{FE0F}",
                 "Insufficient quota",
                 detail,
+                None,
                 None,
                 None,
             );
@@ -79,6 +81,7 @@ fn try_parse_known_error(raw: &str) -> Value {
                 detail,
                 resets_at,
                 retry_after_ms,
+                None,
             );
         }
 
@@ -93,12 +96,21 @@ fn try_parse_known_error(raw: &str) -> Value {
                 msg,
                 None,
                 None,
+                None,
             );
         }
 
         // Generic JSON error with a message field
         if let Some(msg) = err_obj.get("message").and_then(|v| v.as_str()) {
-            return build_error("api_error", "\u{26A0}\u{FE0F}", "Error", msg, None, None);
+            return build_error(
+                "api_error",
+                "\u{26A0}\u{FE0F}",
+                "Error",
+                msg,
+                None,
+                None,
+                None,
+            );
         }
     }
 
@@ -109,6 +121,7 @@ fn try_parse_known_error(raw: &str) -> Value {
             "\u{26A0}\u{FE0F}",
             "Insufficient quota",
             raw,
+            None,
             None,
             None,
         );
@@ -124,6 +137,7 @@ fn try_parse_known_error(raw: &str) -> Value {
                     "Your session may have expired or credentials are invalid.",
                     None,
                     None,
+                    None,
                 );
             },
             429 => {
@@ -135,6 +149,7 @@ fn try_parse_known_error(raw: &str) -> Value {
                     "Too many requests. Please wait a moment and try again.",
                     None,
                     retry_after_ms,
+                    None,
                 );
             },
             code if code >= 500 => {
@@ -143,6 +158,7 @@ fn try_parse_known_error(raw: &str) -> Value {
                     "\u{1F6A8}",
                     "Server error",
                     "The upstream provider returned an error. Please try again later.",
+                    None,
                     None,
                     None,
                 );
@@ -159,11 +175,20 @@ fn try_parse_known_error(raw: &str) -> Value {
             raw,
             None,
             None,
+            None,
         );
     }
 
     // Default: pass through raw message.
-    build_error("unknown", "\u{26A0}\u{FE0F}", "Error", raw, None, None)
+    build_error(
+        "unknown",
+        "\u{26A0}\u{FE0F}",
+        "Error",
+        raw,
+        None,
+        None,
+        None,
+    )
 }
 
 fn extract_message(obj: &Value) -> Option<&str> {
@@ -339,6 +364,7 @@ fn build_error(
     detail: &str,
     resets_at: Option<u64>,
     retry_after_ms: Option<u64>,
+    detail_params: Option<Value>,
 ) -> Value {
     let mut obj = serde_json::json!({
         "type": error_type,
@@ -346,18 +372,54 @@ fn build_error(
         "title": title,
         "detail": detail,
     });
-    if let Some(ts) = resets_at {
-        // Send as milliseconds for the frontend.
-        if let Some(map) = obj.as_object_mut() {
+    if let Some(map) = obj.as_object_mut() {
+        let (title_key, detail_key) = translation_keys_for(error_type);
+        if let Some(key) = title_key {
+            map.insert("title_key".into(), Value::String(key.to_string()));
+        }
+        if let Some(key) = detail_key {
+            map.insert("detail_key".into(), Value::String(key.to_string()));
+        }
+        if let Some(params) = detail_params {
+            map.insert("detail_params".into(), params);
+        }
+        if let Some(ts) = resets_at {
+            // Send as milliseconds for the frontend.
             map.insert("resetsAt".into(), Value::Number((ts * 1000).into()));
         }
-    }
-    if let Some(delay) = retry_after_ms
-        && let Some(map) = obj.as_object_mut()
-    {
-        map.insert("retryAfterMs".into(), Value::Number(delay.into()));
+        if let Some(delay) = retry_after_ms {
+            map.insert("retryAfterMs".into(), Value::Number(delay.into()));
+        }
     }
     obj
+}
+
+fn translation_keys_for(error_type: &str) -> (Option<&'static str>, Option<&'static str>) {
+    match error_type {
+        "usage_limit_reached" => (
+            Some("errors:chat.usageLimitReached.title"),
+            Some("errors:chat.usageLimitReached.detail"),
+        ),
+        "rate_limit_exceeded" => (
+            Some("errors:chat.rateLimited.title"),
+            Some("errors:chat.rateLimited.detail"),
+        ),
+        "auth_error" => (
+            Some("errors:chat.authError.title"),
+            Some("errors:chat.authError.detail"),
+        ),
+        "server_error" => (
+            Some("errors:chat.serverError.title"),
+            Some("errors:chat.serverError.detail"),
+        ),
+        "unsupported_model" => (Some("errors:chat.unsupportedModel.title"), None),
+        "billing_exhausted" => (
+            Some("errors:chat.billingExhausted.title"),
+            Some("errors:chat.billingExhausted.detail"),
+        ),
+        "api_error" | "unknown" => (Some("errors:generic.title"), None),
+        _ => (None, None),
+    }
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -372,6 +434,9 @@ mod tests {
         assert_eq!(result["type"], "usage_limit_reached");
         assert_eq!(result["title"], "Usage limit reached");
         assert!(result["detail"].as_str().unwrap().contains("plus"));
+        assert_eq!(result["title_key"], "errors:chat.usageLimitReached.title");
+        assert_eq!(result["detail_key"], "errors:chat.usageLimitReached.detail");
+        assert_eq!(result["detail_params"]["planType"], "plus");
         assert_eq!(result["resetsAt"], 1769972721000u64);
         assert_eq!(result["provider"], "openai-codex");
     }
@@ -382,6 +447,8 @@ mod tests {
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "rate_limit_exceeded");
         assert_eq!(result["title"], "Rate limited");
+        assert_eq!(result["title_key"], "errors:chat.rateLimited.title");
+        assert_eq!(result["detail_key"], "errors:chat.rateLimited.detail");
         assert_eq!(result["resetsAt"], 1700000000000u64);
         assert_eq!(result["retryAfterMs"], 30000u64);
     }
@@ -392,6 +459,8 @@ mod tests {
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "auth_error");
         assert_eq!(result["icon"], "\u{1F512}");
+        assert_eq!(result["title_key"], "errors:chat.authError.title");
+        assert_eq!(result["detail_key"], "errors:chat.authError.detail");
     }
 
     #[test]
@@ -414,6 +483,8 @@ mod tests {
         let raw = "Request failed with HTTP 502 Bad Gateway";
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "server_error");
+        assert_eq!(result["title_key"], "errors:chat.serverError.title");
+        assert_eq!(result["detail_key"], "errors:chat.serverError.detail");
     }
 
     #[test]
@@ -444,6 +515,8 @@ mod tests {
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "billing_exhausted");
         assert_eq!(result["title"], "Insufficient quota");
+        assert_eq!(result["title_key"], "errors:chat.billingExhausted.title");
+        assert_eq!(result["detail_key"], "errors:chat.billingExhausted.detail");
         assert!(result["detail"].as_str().unwrap().contains("current quota"));
     }
 

@@ -40,6 +40,7 @@ members = [
   "crates/vault",
   "crates/voice",
   "crates/web",
+  "crates/whatsapp",
 ]
 resolver = "2"
 
@@ -121,8 +122,19 @@ rand               = "0.9"
 regex              = "1"
 secrecy            = { features = ["serde"], version = "0.8" }
 sha2               = "0.10"
+sled               = "0.34"
 sysinfo            = "0.34"
 teloxide           = { features = ["macros"], version = "0.13" }
+# WhatsApp (sqlite-storage disabled to avoid libsqlite3-sys conflict with sqlx;
+# re-enable once sqlx 0.9 stabilises).
+wacore                         = "0.2"
+wacore-binary                  = "0.2"
+waproto                        = "0.2"
+whatsapp-rust                  = { default-features = false, features = ["tokio-native", "tokio-transport", "ureq-client"], version = "0.2" }
+whatsapp-rust-tokio-transport  = "0.2"
+whatsapp-rust-ureq-http-client = "0.2"
+# QR code rendering
+qrcode = "0.14"
 # TLS / certificate generation
 axum-server    = { features = ["tls-rustls"], version = "0.7" }
 rcgen          = "0.13"
@@ -220,6 +232,7 @@ moltis-tools           = { path = "crates/tools" }
 moltis-vault           = { path = "crates/vault" }
 moltis-voice           = { path = "crates/voice" }
 moltis-web             = { default-features = false, path = "crates/web" }
+moltis-whatsapp        = { path = "crates/whatsapp" }
 
 [profile.release]
 codegen-units = 1

@@ -104,7 +104,7 @@ export async function attachMessageVoiceControl(options) {
 		if (Number.isInteger(messageIndex) && messageIndex >= 0) {
 			params.messageIndex = messageIndex;
 		}
-		if (!params.runId && !Number.isInteger(params.messageIndex)) {
+		if (!(params.runId || Number.isInteger(params.messageIndex))) {
 			upsertVoiceWarning(messageEl, "Cannot generate voice for this message.");
 			return;
 		}

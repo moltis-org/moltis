@@ -58,9 +58,11 @@ moltis-tls             = { optional = true, workspace = true }
 moltis-tools           = { workspace = true }
 moltis-vault           = { optional = true, workspace = true }
 moltis-voice           = { optional = true, workspace = true }
+moltis-whatsapp        = { optional = true, workspace = true }
 p256                   = { features = ["ecdsa"], optional = true, workspace = true }
 portable-pty           = { optional = true, workspace = true }
 pulldown-cmark         = { features = ["html"], workspace = true }
+qrcode                 = { optional = true, workspace = true }
 rand                   = { workspace = true }
 rcgen                  = { optional = true, workspace = true }
 reqwest                = { workspace = true }
@@ -110,6 +112,7 @@ default = [
   "vault",
   "voice",
   "web-ui",
+  "whatsapp",
 ]
 file-watcher = [
   "moltis-memory/file-watcher",
@@ -146,6 +149,7 @@ tls = [
 vault = ["dep:moltis-vault", "moltis-auth/vault"]
 voice = ["dep:moltis-voice"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
+whatsapp = ["dep:moltis-whatsapp", "dep:qrcode"]
 
 [dev-dependencies]
 moltis-web        = { workspace = true }

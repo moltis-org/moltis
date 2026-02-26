@@ -11,6 +11,9 @@ use {
     moltis_telegram::TelegramPlugin,
 };
 
+#[cfg(feature = "whatsapp")]
+use moltis_whatsapp::WhatsAppPlugin;
+
 /// Routes outbound messages to the correct channel plugin based on account_id.
 ///
 /// Implements both [`ChannelOutbound`] and [`ChannelStreamOutbound`] by resolving
@@ -18,61 +21,91 @@ use {
 pub struct MultiChannelOutbound {
     telegram_plugin: Arc<RwLock<TelegramPlugin>>,
     msteams_plugin: Arc<RwLock<MsTeamsPlugin>>,
+    #[cfg(feature = "whatsapp")]
+    whatsapp_plugin: Arc<RwLock<WhatsAppPlugin>>,
     telegram_outbound: Arc<dyn ChannelOutbound>,
     msteams_outbound: Arc<dyn ChannelOutbound>,
+    #[cfg(feature = "whatsapp")]
+    whatsapp_outbound: Arc<dyn ChannelOutbound>,
     telegram_stream: Arc<dyn ChannelStreamOutbound>,
     msteams_stream: Arc<dyn ChannelStreamOutbound>,
+    #[cfg(feature = "whatsapp")]
+    whatsapp_stream: Arc<dyn ChannelStreamOutbound>,
 }
 
 impl MultiChannelOutbound {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         telegram_plugin: Arc<RwLock<TelegramPlugin>>,
         msteams_plugin: Arc<RwLock<MsTeamsPlugin>>,
+        #[cfg(feature = "whatsapp")] whatsapp_plugin: Arc<RwLock<WhatsAppPlugin>>,
         telegram_outbound: Arc<dyn ChannelOutbound>,
         msteams_outbound: Arc<dyn ChannelOutbound>,
+        #[cfg(feature = "whatsapp")] whatsapp_outbound: Arc<dyn ChannelOutbound>,
         telegram_stream: Arc<dyn ChannelStreamOutbound>,
         msteams_stream: Arc<dyn ChannelStreamOutbound>,
+        #[cfg(feature = "whatsapp")] whatsapp_stream: Arc<dyn ChannelStreamOutbound>,
     ) -> Self {
         Self {
             telegram_plugin,
             msteams_plugin,
+            #[cfg(feature = "whatsapp")]
+            whatsapp_plugin,
             telegram_outbound,
             msteams_outbound,
+            #[cfg(feature = "whatsapp")]
+            whatsapp_outbound,
             telegram_stream,
             msteams_stream,
+            #[cfg(feature = "whatsapp")]
+            whatsapp_stream,
         }
     }
 
     async fn resolve_outbound(&self, account_id: &str) -> ChannelResult<&dyn ChannelOutbound> {
-        let (tg_has, ms_has) = {
+        {
             let tg = self.telegram_plugin.read().await;
-            let ms = self.msteams_plugin.read().await;
-            (tg.has_account(account_id), ms.has_account(account_id))
-        };
-        match (tg_has, ms_has) {
-            (true, false) => Ok(self.telegram_outbound.as_ref()),
-            (false, true) => Ok(self.msteams_outbound.as_ref()),
-            (true, true) => Err(ChannelError::invalid_input(format!(
-                "account_id '{account_id}' exists in multiple channels; explicit routing required"
-            ))),
-            (false, false) => Err(ChannelError::unknown_account(account_id)),
+            if tg.has_account(account_id) {
+                return Ok(self.telegram_outbound.as_ref());
+            }
         }
+        {
+            let ms = self.msteams_plugin.read().await;
+            if ms.has_account(account_id) {
+                return Ok(self.msteams_outbound.as_ref());
+            }
+        }
+        #[cfg(feature = "whatsapp")]
+        {
+            let wa = self.whatsapp_plugin.read().await;
+            if wa.has_account(account_id) {
+                return Ok(self.whatsapp_outbound.as_ref());
+            }
+        }
+        Err(ChannelError::unknown_account(account_id))
     }
 
     async fn resolve_stream(&self, account_id: &str) -> ChannelResult<&dyn ChannelStreamOutbound> {
-        let (tg_has, ms_has) = {
+        {
             let tg = self.telegram_plugin.read().await;
-            let ms = self.msteams_plugin.read().await;
-            (tg.has_account(account_id), ms.has_account(account_id))
-        };
-        match (tg_has, ms_has) {
-            (true, false) => Ok(self.telegram_stream.as_ref()),
-            (false, true) => Ok(self.msteams_stream.as_ref()),
-            (true, true) => Err(ChannelError::invalid_input(format!(
-                "account_id '{account_id}' exists in multiple channels; explicit routing required"
-            ))),
-            (false, false) => Err(ChannelError::unknown_account(account_id)),
+            if tg.has_account(account_id) {
+                return Ok(self.telegram_stream.as_ref());
+            }
         }
+        {
+            let ms = self.msteams_plugin.read().await;
+            if ms.has_account(account_id) {
+                return Ok(self.msteams_stream.as_ref());
+            }
+        }
+        #[cfg(feature = "whatsapp")]
+        {
+            let wa = self.whatsapp_plugin.read().await;
+            if wa.has_account(account_id) {
+                return Ok(self.whatsapp_stream.as_ref());
+            }
+        }
+        Err(ChannelError::unknown_account(account_id))
     }
 }
 
