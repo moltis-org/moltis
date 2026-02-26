@@ -45,7 +45,7 @@ Before configuring Moltis, create a Discord bot:
 5. Under **Privileged Gateway Intents**, enable **Message Content Intent**
 6. Navigate to **OAuth2 → URL Generator**
    - Scopes: `bot`
-   - Bot Permissions: `Send Messages`, `Read Message History`
+   - Bot Permissions: `Send Messages`, `Attach Files`, `Read Message History`
 7. Copy the generated URL and open it to invite the bot to your server
 
 ```admonish warning
@@ -153,6 +153,52 @@ You can also configure Discord through the web interface:
 5. Click **Connect**
 
 The same form is available during onboarding when Discord is in `channels.offered`.
+
+## Talking to Your Bot
+
+Once the bot is connected there are several ways to interact with it.
+
+### In a Server
+
+To use the bot in a Discord server you need to invite it first:
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Select your application → **OAuth2 → URL Generator**
+3. Scopes: check **bot**
+4. Bot Permissions: check **Send Messages** and **Read Message History**
+5. Copy the generated URL and open it in your browser
+6. Select the server you want to add the bot to and confirm
+
+```admonish tip
+The Moltis web UI generates this invite link automatically when you paste your
+bot token. Look for the "Invite bot to a server" card in the Connect Discord
+dialog.
+```
+
+Once the bot is in your server, **@mention** it in any channel to get a
+response (assuming `mention_mode = "mention"`, the default). If you set
+`mention_mode = "always"` the bot responds to every message in allowed channels.
+
+### Via Direct Message
+
+You can DM the bot directly from Discord — no shared server required:
+
+1. Open Discord and go to **Direct Messages**
+2. Click the **New Message** icon (or **Find or start a conversation**)
+3. Search for the bot's username and select it
+4. Send a message
+
+```admonish note
+If `dm_policy` is set to `"allowlist"` (the default), make sure your Discord
+username is listed in the `allowlist` array — otherwise the bot will ignore your
+DMs. Set `dm_policy = "open"` to allow anyone to DM the bot.
+```
+
+### Without a Shared Server
+
+DMs work even if you and the bot don't share a server. Discord bots are
+reachable by username from any account. This makes DMs the simplest way to
+start chatting — just connect the bot in Moltis and message it directly.
 
 ## Message Handling
 

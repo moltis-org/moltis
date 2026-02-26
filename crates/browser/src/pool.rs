@@ -323,41 +323,48 @@ impl BrowserPool {
     async fn launch_sandboxed_browser(&self, session_id: &str) -> Result<BrowserInstance, Error> {
         use crate::container;
 
-        // Check container runtime availability (Docker or Apple Container)
-        if !container::is_container_available() {
-            return Err(Error::LaunchFailed(
-                "No container runtime available for sandboxed browser. \
-                 Please install Docker or Apple Container."
-                    .to_string(),
-            ));
-        }
-
-        // Ensure the container image is available
-        container::ensure_image(&self.config.sandbox_image)
-            .map_err(|e| Error::LaunchFailed(format!("failed to ensure browser image: {e}")))?;
-
-        // Resolve and create profile directory on host if needed
+        // All container operations (CLI checks, image pulls, container start +
+        // readiness polling) use synchronous `std::process::Command` and
+        // `std::thread::sleep`.  Run them on the blocking thread-pool so they
+        // don't stall the tokio event loop.
+        let image = self.config.sandbox_image.clone();
+        let prefix = self.config.container_prefix.clone();
+        let vw = self.config.viewport_width;
+        let vh = self.config.viewport_height;
+        let low_mem = self.config.low_memory_threshold_mb;
         let profile_dir = self.config.resolved_profile_dir();
-        if let Some(ref dir) = profile_dir
-            && let Err(e) = std::fs::create_dir_all(dir)
-        {
-            warn!(
-                path = %dir.display(),
-                error = %e,
-                "failed to create browser profile directory for container"
-            );
-        }
 
-        // Start the container
-        let container = BrowserContainer::start(
-            &self.config.sandbox_image,
-            &self.config.container_prefix,
-            self.config.viewport_width,
-            self.config.viewport_height,
-            self.config.low_memory_threshold_mb,
-            profile_dir.as_deref(),
-        )
-        .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))?;
+        let container = tokio::task::spawn_blocking(move || {
+            // Check container runtime availability (Docker or Apple Container)
+            if !container::is_container_available() {
+                return Err(Error::LaunchFailed(
+                    "No container runtime available for sandboxed browser. \
+                     Please install Docker or Apple Container."
+                        .to_string(),
+                ));
+            }
+
+            // Ensure the container image is available
+            container::ensure_image(&image)
+                .map_err(|e| Error::LaunchFailed(format!("failed to ensure browser image: {e}")))?;
+
+            // Create profile directory on host if needed
+            if let Some(ref dir) = profile_dir
+                && let Err(e) = std::fs::create_dir_all(dir)
+            {
+                warn!(
+                    path = %dir.display(),
+                    error = %e,
+                    "failed to create browser profile directory for container"
+                );
+            }
+
+            // Start the container (includes readiness polling)
+            BrowserContainer::start(&image, &prefix, vw, vh, low_mem, profile_dir.as_deref())
+                .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))
+        })
+        .await
+        .map_err(|e| Error::LaunchFailed(format!("container launch task panicked: {e}")))??;
 
         let ws_url = container.websocket_url();
         info!(

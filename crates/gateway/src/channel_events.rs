@@ -141,18 +141,18 @@ impl ChannelEventSink for GatewayChannelEventSink {
 
             // Broadcast a "chat" event so the web UI shows the user message
             // in real-time (like typing from the UI).
-            // Include messageIndex so the client can deduplicate against history.
-            let msg_index = if let Some(ref store) = state.services.session_store {
-                store.count(&session_key).await.unwrap_or(0)
-            } else {
-                0
-            };
+            //
+            // We intentionally omit `messageIndex` here: the broadcast fires
+            // *before* chat.send() persists the message, so store.count()
+            // would be stale.  Concurrent channel messages would get the same
+            // index, causing the client-side dedup to drop the second one.
+            // Without a messageIndex the client skips its dedup check and
+            // always renders the message.
             let payload = serde_json::json!({
                 "state": "channel_user",
                 "text": text,
                 "channel": &meta,
                 "sessionKey": &session_key,
-                "messageIndex": msg_index,
             });
             broadcast(state, "chat", payload, BroadcastOpts {
                 drop_if_slow: true,
@@ -179,7 +179,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
                         .await;
                     let n = existing.len() + 1;
                     let _ = session_meta
-                        .upsert(&session_key, Some(format!("Telegram {n}")))
+                        .upsert(
+                            &session_key,
+                            Some(format!("{} {n}", reply_to.channel_type.display_name())),
+                        )
                         .await;
                 }
                 session_meta
@@ -621,20 +624,13 @@ impl ChannelEventSink for GatewayChannelEventSink {
             "dispatching multimodal message to chat"
         );
 
-        // Broadcast a "chat" event so the web UI shows the user message
-        let msg_index = if let Some(ref store) = state.services.session_store {
-            store.count(&session_key).await.unwrap_or(0)
-        } else {
-            0
-        };
-
-        // For the broadcast, just show the text portion
+        // Broadcast a "chat" event so the web UI shows the user message.
+        // See the text-only dispatch above for why messageIndex is omitted.
         let payload = serde_json::json!({
             "state": "channel_user",
             "text": if text.is_empty() { "[Image]" } else { text },
             "channel": &meta,
             "sessionKey": &session_key,
-            "messageIndex": msg_index,
             "hasAttachments": true,
         });
         broadcast(state, "chat", payload, BroadcastOpts {
@@ -659,7 +655,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     .await;
                 let n = existing.len() + 1;
                 let _ = session_meta
-                    .upsert(&session_key, Some(format!("Telegram {n}")))
+                    .upsert(
+                        &session_key,
+                        Some(format!("{} {n}", reply_to.channel_type.display_name())),
+                    )
                     .await;
             }
             session_meta
@@ -843,7 +842,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
 
                 // Create the new session entry with channel binding.
                 session_metadata
-                    .upsert(&new_key, Some(format!("Telegram {n}")))
+                    .upsert(
+                        &new_key,
+                        Some(format!("{} {n}", reply_to.channel_type.display_name())),
+                    )
                     .await
                     .map_err(|e| ChannelError::external("create channel session", e))?;
                 session_metadata

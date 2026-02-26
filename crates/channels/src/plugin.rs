@@ -23,6 +23,15 @@ impl ChannelType {
             Self::Discord => "discord",
         }
     }
+
+    /// Returns a human-readable display name (e.g. "Telegram", "Teams", "Discord").
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Telegram => "Telegram",
+            Self::MsTeams => "Teams",
+            Self::Discord => "Discord",
+        }
+    }
 }
 
 impl std::fmt::Display for ChannelType {

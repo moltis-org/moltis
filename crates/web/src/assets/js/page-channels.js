@@ -588,6 +588,20 @@ function AddTeamsModal() {
 	  </${Modal}>`;
 }
 
+// ── Discord invite URL helper ─────────────────────────────────
+function discordInviteUrl(token) {
+	if (!token) return "";
+	var parts = token.split(".");
+	if (parts.length < 3) return "";
+	try {
+		var id = atob(parts[0]);
+		if (!/^\d+$/.test(id)) return "";
+		return `https://discord.com/oauth2/authorize?client_id=${id}&scope=bot&permissions=100352`;
+	} catch {
+		return "";
+	}
+}
+
 // ── Add Discord modal ─────────────────────────────────────────
 function AddDiscordModal() {
 	var error = useSignal("");
@@ -595,12 +609,13 @@ function AddDiscordModal() {
 	var addModel = useSignal("");
 	var allowlistItems = useSignal([]);
 	var accountDraft = useSignal("");
+	var tokenDraft = useSignal("");
 
 	function onSubmit(e) {
 		e.preventDefault();
 		var form = e.target.closest(".channel-form");
 		var accountId = accountDraft.value.trim();
-		var credential = form.querySelector("[data-field=credential]").value.trim();
+		var credential = tokenDraft.value.trim();
 		var v = validateChannelFields("discord", accountId, credential);
 		if (!v.valid) {
 			error.value = v.error;
@@ -626,12 +641,15 @@ function AddDiscordModal() {
 				addModel.value = "";
 				allowlistItems.value = [];
 				accountDraft.value = "";
+				tokenDraft.value = "";
 				loadChannels();
 			} else {
 				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.";
 			}
 		});
 	}
+
+	var inviteUrl = discordInviteUrl(tokenDraft.value);
 
 	return html`<${Modal} show=${showAddDiscord.value} onClose=${() => {
 		showAddDiscord.value = false;
@@ -640,12 +658,12 @@ function AddDiscordModal() {
 	    <div class="channel-form">
 	      <div class="channel-card">
 	        <div>
-	          <span class="text-xs font-medium text-[var(--text-strong)]">How to create a Discord bot</span>
+	          <span class="text-xs font-medium text-[var(--text-strong)]">How to set up a Discord bot</span>
 	          <div class="text-xs text-[var(--muted)] channel-help">1. Go to the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Discord Developer Portal</a></div>
-	          <div class="text-xs text-[var(--muted)]">2. Create a new Application, then go to the Bot section</div>
-	          <div class="text-xs text-[var(--muted)]">3. Copy the bot token and paste it below</div>
-	          <div class="text-xs text-[var(--muted)]">4. Enable "Message Content Intent" under Privileged Gateway Intents</div>
-	          <div class="text-xs text-[var(--muted)]">5. Invite the bot to your server using the OAuth2 URL Generator (bot scope + Send Messages permission)</div>
+	          <div class="text-xs text-[var(--muted)]">2. Create a new Application \u2192 Bot tab \u2192 copy the bot token</div>
+	          <div class="text-xs text-[var(--muted)]">3. Enable "Message Content Intent" under Privileged Gateway Intents</div>
+	          <div class="text-xs text-[var(--muted)]">4. Paste the token below \u2014 an invite link will be generated automatically</div>
+	          <div class="text-xs text-[var(--muted)]">5. You can also DM the bot directly without adding it to a server</div>
 	        </div>
 	      </div>
 	      <label class="text-xs text-[var(--muted)]">Account ID</label>
@@ -657,8 +675,17 @@ function AddDiscordModal() {
 	        class="channel-input" />
 	      <label class="text-xs text-[var(--muted)]">Bot Token</label>
 	      <input data-field="credential" type="password" placeholder="Discord bot token" class="channel-input"
+	        value=${tokenDraft.value}
+	        onInput=${(e) => {
+						tokenDraft.value = e.target.value;
+					}}
 	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
 	        name="discord_bot_token" />
+	      ${inviteUrl && html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2.5 flex flex-col gap-1">
+	        <span class="text-xs font-medium text-[var(--text-strong)]">Invite bot to a server</span>
+	        <span class="text-xs text-[var(--muted)]">Open this link to add the bot (Send Messages, Attach Files, Read Message History):</span>
+	        <a href=${inviteUrl} target="_blank" class="text-xs text-[var(--accent)] underline break-all">${inviteUrl}</a>
+	      </div>`}
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>

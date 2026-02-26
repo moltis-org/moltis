@@ -2328,6 +2328,19 @@ function TeamsForm({ onConnected, error, setError }) {
 	</form>`;
 }
 
+function discordInviteUrl(token) {
+	if (!token) return "";
+	var parts = token.split(".");
+	if (parts.length < 3) return "";
+	try {
+		var id = atob(parts[0]);
+		if (!/^\d+$/.test(id)) return "";
+		return `https://discord.com/oauth2/authorize?client_id=${id}&scope=bot&permissions=100352`;
+	} catch {
+		return "";
+	}
+}
+
 function DiscordForm({ onConnected, error, setError }) {
 	var [accountId, setAccountId] = useState("");
 	var [token, setToken] = useState("");
@@ -2364,14 +2377,16 @@ function DiscordForm({ onConnected, error, setError }) {
 		});
 	}
 
+	var inviteUrl = discordInviteUrl(token);
+
 	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
-			<span class="font-medium text-[var(--text-strong)]">How to create a Discord bot</span>
+			<span class="font-medium text-[var(--text-strong)]">How to set up a Discord bot</span>
 			<span>1. Go to the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Discord Developer Portal</a></span>
-			<span>2. Create a new application, then add a Bot under the Bot tab</span>
+			<span>2. Create a new Application \u2192 Bot tab \u2192 copy the bot token</span>
 			<span>3. Enable <strong>Message Content Intent</strong> under Privileged Gateway Intents</span>
-			<span>4. Copy the bot token and paste it below</span>
-			<span>5. Invite the bot to your server using the OAuth2 URL Generator (scopes: bot; permissions: Send Messages, Read Message History)</span>
+			<span>4. Paste the token below \u2014 an invite link will be generated automatically</span>
+			<span>5. You can also DM the bot directly without adding it to a server</span>
 		</div>
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">Account ID</label>
@@ -2396,6 +2411,11 @@ function DiscordForm({ onConnected, error, setError }) {
 				spellcheck="false"
 				name="discord_bot_token" />
 		</div>
+		${inviteUrl && html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2.5 text-xs flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">Invite bot to a server</span>
+			<span class="text-[var(--muted)]">Open this link to add the bot (Send Messages, Attach Files, Read Message History):</span>
+			<a href=${inviteUrl} target="_blank" class="text-[var(--accent)] underline break-all">${inviteUrl}</a>
+		</div>`}
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
 			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
@@ -2426,6 +2446,12 @@ function ChannelSuccess({ channelName, channelType: type, onAnother }) {
 				<div class="text-xs text-[var(--muted)] mt-0.5">${channelName} (${label}) is now linked to your agent.</div>
 			</div>
 		</div>
+		${type === "discord" && html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1.5">
+			<span class="font-medium text-[var(--text-strong)]">Next steps</span>
+			<span>\u2022 <strong>Invite to a server:</strong> the invite link was shown on the previous screen. You can also generate one in the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Developer Portal</a> \u2192 OAuth2 \u2192 URL Generator (scope: bot, permissions: Send Messages, Attach Files, Read Message History).</span>
+			<span>\u2022 <strong>DM the bot:</strong> search for the bot\u2019s username in Discord and click Message. Make sure your username is in the DM allowlist.</span>
+			<span>\u2022 <strong>In a server:</strong> @mention the bot to get a response.</span>
+		</div>`}
 		<button type="button" class="text-xs text-[var(--accent)] cursor-pointer bg-transparent border-none underline self-start" onClick=${onAnother}>Connect another channel</button>
 	</div>`;
 }

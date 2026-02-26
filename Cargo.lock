@@ -5118,6 +5118,7 @@ version = "0.9.10"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "moltis-channels",
  "moltis-common",
  "reqwest 0.12.28",

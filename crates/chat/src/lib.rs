@@ -5688,6 +5688,12 @@ async fn run_with_tools(
                         });
                     }
 
+                    // Buffer tool error result for the channel logbook.
+                    if !success {
+                        send_tool_result_to_channels(&state, &sk, &name, success, &error, &result)
+                            .await;
+                    }
+
                     // Persist tool result to the session JSONL file.
                     if let Some(ref store) = store {
                         let tracked_args = tool_args_map.remove(&id);
@@ -7248,6 +7254,82 @@ async fn send_tool_status_to_channels(
     // Buffer the status message for the logbook
     let message = format_tool_status_message(tool_name, arguments);
     state.push_channel_status_log(session_key, message).await;
+}
+
+/// Buffer a tool error result into the channel status log for a session.
+/// Called from `ToolCallEnd` for failed tool calls only — success is implicit
+/// and does not need a separate log entry.
+async fn send_tool_result_to_channels(
+    state: &Arc<dyn ChatRuntime>,
+    session_key: &str,
+    tool_name: &str,
+    success: bool,
+    error: &Option<String>,
+    result: &Option<Value>,
+) {
+    if success {
+        return;
+    }
+    let targets = state.peek_channel_replies(session_key).await;
+    if targets.is_empty() {
+        return;
+    }
+
+    let message = format_tool_result_message(tool_name, error, result);
+    state.push_channel_status_log(session_key, message).await;
+}
+
+/// Format a human-readable error summary for a failed tool call.
+fn format_tool_result_message(
+    tool_name: &str,
+    error: &Option<String>,
+    result: &Option<Value>,
+) -> String {
+    let detail = match tool_name {
+        "exec" => {
+            let exit_code = result
+                .as_ref()
+                .and_then(|r| r.get("exitCode"))
+                .and_then(|v| v.as_i64());
+            let stderr = result
+                .as_ref()
+                .and_then(|r| r.get("stderr"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let first_line = stderr.lines().next().unwrap_or_default();
+            let truncated = truncate_at_char_boundary(first_line, 120);
+            match exit_code {
+                Some(code) => {
+                    if truncated.is_empty() {
+                        format!("exit {code}")
+                    } else {
+                        format!("exit {code} — {truncated}")
+                    }
+                },
+                None => {
+                    if truncated.is_empty() {
+                        error
+                            .as_deref()
+                            .map(|e| truncate_at_char_boundary(e, 120).to_string())
+                            .unwrap_or_else(|| "failed".to_string())
+                    } else {
+                        truncated.to_string()
+                    }
+                },
+            }
+        },
+        _ => {
+            // Browser, web_fetch, web_search, and other tools: use error string.
+            error
+                .as_deref()
+                .map(|e| {
+                    let first_line = e.lines().next().unwrap_or_default();
+                    truncate_at_char_boundary(first_line, 120).to_string()
+                })
+                .unwrap_or_else(|| "failed".to_string())
+        },
+    };
+    format!("  ❌ {detail}")
 }
 
 /// Format a human-readable tool execution message.
@@ -9922,6 +10004,45 @@ mod tests {
         let html = format_logbook_html(&entries);
         assert!(!html.contains("<script>"));
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    // ── Tool result formatting tests ────────────────────────────────────
+
+    #[test]
+    fn format_tool_result_exec_with_exit_code_and_stderr() {
+        let result = Some(serde_json::json!({
+            "exitCode": 1,
+            "stderr": "error: file not found\nsecond line"
+        }));
+        let msg = format_tool_result_message("exec", &None, &result);
+        assert_eq!(msg, "  ❌ exit 1 — error: file not found");
+    }
+
+    #[test]
+    fn format_tool_result_exec_exit_code_no_stderr() {
+        let result = Some(serde_json::json!({ "exitCode": 127 }));
+        let msg = format_tool_result_message("exec", &None, &result);
+        assert_eq!(msg, "  ❌ exit 127");
+    }
+
+    #[test]
+    fn format_tool_result_exec_no_exit_code_uses_error() {
+        let error = Some("command timed out".to_string());
+        let msg = format_tool_result_message("exec", &error, &None);
+        assert_eq!(msg, "  ❌ command timed out");
+    }
+
+    #[test]
+    fn format_tool_result_browser_error() {
+        let error = Some("Navigation failed: net::ERR_NAME_NOT_RESOLVED".to_string());
+        let msg = format_tool_result_message("browser", &error, &None);
+        assert_eq!(msg, "  ❌ Navigation failed: net::ERR_NAME_NOT_RESOLVED");
+    }
+
+    #[test]
+    fn format_tool_result_no_error_fallback() {
+        let msg = format_tool_result_message("web_fetch", &None, &None);
+        assert_eq!(msg, "  ❌ failed");
     }
 
     #[test]
