@@ -2057,8 +2057,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             .and_then(|v| v.as_str())
                             .unwrap_or("settings");
 
-                        let config = moltis_config::discover_and_load();
-                        let identity = moltis_config::ResolvedIdentity::from_config(&config);
+                        let identity = moltis_config::resolve_identity();
                         let user = identity
                             .user_name
                             .unwrap_or_else(|| "friend".into());

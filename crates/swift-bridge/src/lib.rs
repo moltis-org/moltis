@@ -836,33 +836,7 @@ pub extern "C" fn moltis_get_identity() -> *mut c_char {
     trace_call("moltis_get_identity");
 
     with_ffi_boundary(|| {
-        let config = moltis_config::discover_and_load();
-        let mut agent = config.identity.clone();
-        // Merge IDENTITY.md frontmatter (emoji, theme overrides) on top of moltis.toml.
-        if let Some(file_id) = moltis_config::load_identity() {
-            if file_id.name.is_some() {
-                agent.name = file_id.name;
-            }
-            if file_id.emoji.is_some() {
-                agent.emoji = file_id.emoji;
-            }
-            if file_id.theme.is_some() {
-                agent.theme = file_id.theme;
-            }
-        }
-        let mut user = config.user.clone();
-        if let Some(file_user) = moltis_config::load_user() {
-            if file_user.name.is_some() {
-                user.name = file_user.name;
-            }
-        }
-        let resolved = moltis_config::schema::ResolvedIdentity {
-            name: agent.name.unwrap_or_else(|| "moltis".into()),
-            emoji: agent.emoji,
-            theme: agent.theme,
-            soul: moltis_config::load_soul(),
-            user_name: user.name,
-        };
+        let resolved = moltis_config::resolve_identity();
         emit_log("DEBUG", "bridge", "moltis_get_identity called");
         encode_json(&resolved)
     })
