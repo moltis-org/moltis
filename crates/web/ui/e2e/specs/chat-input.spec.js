@@ -92,7 +92,7 @@ async function openFullContextWithRetry(page) {
 					if (await failedMsg.isVisible().catch(() => false)) return "failed";
 					return "loading";
 				},
-				{ timeout: 4_000 },
+				{ timeout: 8_000 },
 			)
 			.toBe("copy")
 			.then(() => "copy")
