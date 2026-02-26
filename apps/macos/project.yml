@@ -38,6 +38,10 @@ targets:
         OTHER_LDFLAGS:
           - "-lmoltis_bridge"
           - "-lsqlite3"
+          - "-lz"
+          - "-lc++"
+          - "-framework"
+          - "Accelerate"
           - "-framework"
           - "SystemConfiguration"
           - "-framework"

@@ -150,8 +150,6 @@ private struct ChatDetailView: View {
         return !trimmed.isEmpty && !chatStore.isSending
     }
 
-    @State private var showContextPopover = false
-
     var body: some View {
         VStack(spacing: 0) {
             headerBar
@@ -207,83 +205,11 @@ private struct ChatDetailView: View {
     }
 
     private var sessionToolbar: some View {
-        HStack(spacing: 12) {
-            // Model picker
-            if !providerStore.models.isEmpty {
-                SearchablePopoverPicker(
-                    label: "",
-                    selection: $providerStore.selectedModelID,
-                    options: providerStore.models.map {
-                        (id: $0.id, display: $0.displayName, detail: $0.provider)
-                    }
-                )
-                .controlSize(.small)
-            }
-
-            Divider()
-                .frame(height: 16)
-
-            // Sandbox toggle
-            Toggle("Sandbox", isOn: $settings.sandboxEnabled)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-
-            if settings.sandboxEnabled {
-                TextField("Image", text: $settings.containerImage)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.small)
-                    .frame(maxWidth: 160)
-            }
-
-            Divider()
-                .frame(height: 16)
-
-            // Debug toggle
-            Toggle("Debug", isOn: $settings.debugEnabled)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-
-            // Context button
-            Button {
-                showContextPopover.toggle()
-            } label: {
-                Image(systemName: "doc.text.magnifyingglass")
-            }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-            .help("Session context")
-            .popover(isPresented: $showContextPopover) {
-                contextPopoverContent
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background { Color(nsColor: .windowBackgroundColor) }
-    }
-
-    private var contextPopoverContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Session Context")
-                .font(.headline)
-
-            LabeledContent(
-                "Config Dir",
-                value: settings.environmentConfigDir.isEmpty ? "—" : settings.environmentConfigDir
-            )
-            LabeledContent("Provider", value: settings.llmProvider)
-            LabeledContent("Model", value: providerStore.selectedModelID ?? "Default")
-
-            if let session = chatStore.selectedSession {
-                let totalIn = session.messages.compactMap(\.inputTokens).reduce(0, +)
-                let totalOut = session.messages.compactMap(\.outputTokens).reduce(0, +)
-                LabeledContent("Input Tokens", value: "\(totalIn)")
-                LabeledContent("Output Tokens", value: "\(totalOut)")
-            }
-        }
-        .padding()
-        .frame(minWidth: 280)
+        SessionToolbarView(
+            providerStore: providerStore,
+            settings: settings,
+            chatStore: chatStore
+        )
     }
 
     private var debugPanel: some View {
@@ -421,5 +347,113 @@ private struct ChatDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+}
+
+private struct SessionToolbarView: View {
+    @ObservedObject var providerStore: ProviderStore
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var chatStore: ChatStore
+    @State private var showContextPopover = false
+
+    private var modelOptions: [SearchableOption] {
+        providerStore.models.map {
+            SearchableOption(id: $0.id, display: $0.displayName, detail: $0.provider)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            modelPicker
+            Divider().frame(height: 16)
+            sandboxControls
+            Divider().frame(height: 16)
+            debugAndContext
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var modelPicker: some View {
+        Group {
+            if !modelOptions.isEmpty {
+                SearchablePopoverPicker(
+                    label: "",
+                    selection: $providerStore.selectedModelID,
+                    options: modelOptions
+                )
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private var sandboxControls: some View {
+        Group {
+            Toggle("Sandbox", isOn: $settings.sandboxEnabled)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+            if settings.sandboxEnabled {
+                TextField("Image", text: $settings.containerImage)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .frame(maxWidth: 160)
+            }
+        }
+    }
+
+    private var debugAndContext: some View {
+        Group {
+            Toggle("Debug", isOn: $settings.debugEnabled)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+            Button {
+                showContextPopover.toggle()
+            } label: {
+                Image(systemName: "doc.text.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .help("Session context")
+            .popover(isPresented: $showContextPopover) {
+                SessionContextPopover(
+                    settings: settings,
+                    providerStore: providerStore,
+                    session: chatStore.selectedSession
+                )
+            }
+        }
+    }
+}
+
+private struct SessionContextPopover: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var providerStore: ProviderStore
+    let session: ChatSession?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Session Context")
+                .font(.headline)
+
+            LabeledContent(
+                "Config Dir",
+                value: settings.environmentConfigDir.isEmpty ? "—" : settings.environmentConfigDir
+            )
+            LabeledContent("Provider", value: settings.llmProvider)
+            LabeledContent("Model", value: providerStore.selectedModelID ?? "Default")
+
+            if let session {
+                let totalIn = session.messages.compactMap(\.inputTokens).reduce(0, +)
+                let totalOut = session.messages.compactMap(\.outputTokens).reduce(0, +)
+                LabeledContent("Input Tokens", value: "\(totalIn)")
+                LabeledContent("Output Tokens", value: "\(totalOut)")
+            }
+        }
+        .padding()
+        .frame(minWidth: 280)
     }
 }
