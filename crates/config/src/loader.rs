@@ -346,10 +346,10 @@ pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
         }
     }
 
-    if let Some(file_user) = load_user() {
-        if let Some(name) = file_user.name {
-            id.user_name = Some(name);
-        }
+    if let Some(file_user) = load_user()
+        && let Some(name) = file_user.name
+    {
+        id.user_name = Some(name);
     }
 
     id.soul = load_soul();
