@@ -24,6 +24,7 @@
 - [Hooks](hooks.md)
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)
+  - [Trusted Network](trusted-network.md)
 - [Voice](voice.md)
 - [WhatsApp](whatsapp.md)
 - [Browser Automation](browser-automation.md)
