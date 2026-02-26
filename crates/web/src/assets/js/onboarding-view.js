@@ -2119,6 +2119,13 @@ function ChannelTypeSelector({ onSelect, offered }) {
 			<span class="text-sm font-medium text-[var(--text-strong)]">Microsoft Teams</span>
 		</button>`
 		}
+		${
+			offered.has("discord") &&
+			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("discord")}>
+			<span class="icon icon-xl icon-discord"></span>
+			<span class="text-sm font-medium text-[var(--text-strong)]">Discord</span>
+		</button>`
+		}
 	</div>`;
 }
 
@@ -2321,8 +2328,96 @@ function TeamsForm({ onConnected, error, setError }) {
 	</form>`;
 }
 
+function DiscordForm({ onConnected, error, setError }) {
+	var [accountId, setAccountId] = useState("");
+	var [token, setToken] = useState("");
+	var [dmPolicy, setDmPolicy] = useState("allowlist");
+	var [allowlist, setAllowlist] = useState("");
+	var [saving, setSaving] = useState(false);
+
+	function onSubmit(e) {
+		e.preventDefault();
+		var v = validateChannelFields("discord", accountId, token);
+		if (!v.valid) {
+			setError(v.error);
+			return;
+		}
+		setError(null);
+		setSaving(true);
+		var allowlistEntries = allowlist
+			.trim()
+			.split(/\n/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		addChannel("discord", accountId.trim(), {
+			token: token.trim(),
+			dm_policy: dmPolicy,
+			mention_mode: "mention",
+			allowlist: allowlistEntries,
+		}).then((res) => {
+			setSaving(false);
+			if (res?.ok) {
+				onConnected(accountId.trim(), "discord");
+			} else {
+				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect bot.");
+			}
+		});
+	}
+
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">How to create a Discord bot</span>
+			<span>1. Go to the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Discord Developer Portal</a></span>
+			<span>2. Create a new application, then add a Bot under the Bot tab</span>
+			<span>3. Enable <strong>Message Content Intent</strong> under Privileged Gateway Intents</span>
+			<span>4. Copy the bot token and paste it below</span>
+			<span>5. Invite the bot to your server using the OAuth2 URL Generator (scopes: bot; permissions: Send Messages, Read Message History)</span>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Account ID</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
+				placeholder="e.g. my_discord_bot"
+				autocomplete="off"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="discord_account_id"
+				autofocus />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Bot token</label>
+			<input type="password" class="provider-key-input w-full"
+				value=${token} onInput=${(e) => setToken(e.target.value)}
+				placeholder="Bot token from Developer Portal"
+				autocomplete="new-password"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="discord_bot_token" />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+				<option value="allowlist">Allowlist only (recommended)</option>
+				<option value="open">Open (anyone)</option>
+				<option value="disabled">Disabled</option>
+			</select>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Allowed Discord username(s)</label>
+			<textarea class="provider-key-input w-full" rows="2"
+				value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+				placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
+			<div class="text-xs text-[var(--muted)] mt-1">One username per line. These users can DM your bot.</div>
+		</div>
+		${error && html`<${ErrorPanel} message=${error} />`}
+		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
+	</form>`;
+}
+
 function ChannelSuccess({ channelName, channelType: type, onAnother }) {
-	var label = type === "msteams" ? "Microsoft Teams" : "Telegram";
+	var label = type === "msteams" ? "Microsoft Teams" : type === "discord" ? "Discord" : "Telegram";
 	return html`<div class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
 			<span class="icon icon-lg icon-check-circle shrink-0" style="color:var(--ok)"></span>
@@ -2378,6 +2473,7 @@ function ChannelStep({ onNext, onBack }) {
 		${phase === "select" && html`<${ChannelTypeSelector} onSelect=${onSelectType} offered=${offered} />`}
 		${phase === "form" && selectedType === "telegram" && html`<${TelegramForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "msteams" && html`<${TeamsForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
+		${phase === "form" && selectedType === "discord" && html`<${DiscordForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "success" && html`<${ChannelSuccess} channelName=${connectedName} channelType=${connectedType} onAnother=${onAnother} />`}
 		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button type="button" class="provider-btn provider-btn-secondary" onClick=${showBackSelector ? () => setPhase("select") : onBack}>${t("common:actions.back")}</button>

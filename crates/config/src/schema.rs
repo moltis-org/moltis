@@ -1097,6 +1097,9 @@ pub struct ChannelsConfig {
     /// Microsoft Teams bot accounts, keyed by account ID.
     #[serde(default)]
     pub msteams: HashMap<String, serde_json::Value>,
+    /// Discord bot accounts, keyed by account ID.
+    #[serde(default)]
+    pub discord: HashMap<String, serde_json::Value>,
 }
 
 fn default_channels_offered() -> Vec<String> {
@@ -1109,6 +1112,7 @@ impl Default for ChannelsConfig {
             offered: default_channels_offered(),
             telegram: HashMap::new(),
             msteams: HashMap::new(),
+            discord: HashMap::new(),
         }
     }
 }

@@ -562,6 +562,15 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # webhook_secret = "..."          # Optional query secret for webhook URL (?secret=...)
 # allowlist = []                  # User IDs allowed to DM (empty = all unless dm_policy=allowlist)
 
+# Discord bots
+# [channels.discord.my-bot]
+# token = "..."                   # Bot token from Discord Developer Portal
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Discord user IDs allowed to DM
+# guild_allowlist = []            # Discord guild/server IDs (empty = all)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS
 # ══════════════════════════════════════════════════════════════════════════════

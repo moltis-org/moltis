@@ -14,6 +14,7 @@ use {
         plugin::ChannelHealthSnapshot,
         store::{ChannelStore, StoredChannel},
     },
+    moltis_discord::DiscordPlugin,
     moltis_msteams::MsTeamsPlugin,
     moltis_sessions::metadata::SqliteSessionMetadata,
     moltis_telegram::TelegramPlugin,
@@ -28,10 +29,11 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
-/// Live channel service backed by Telegram and Microsoft Teams plugins.
+/// Live channel service backed by Telegram, Microsoft Teams, and Discord plugins.
 pub struct LiveChannelService {
     telegram: Arc<RwLock<TelegramPlugin>>,
     msteams: Arc<RwLock<MsTeamsPlugin>>,
+    discord: Arc<RwLock<DiscordPlugin>>,
     store: Arc<dyn ChannelStore>,
     message_log: Arc<dyn MessageLog>,
     session_metadata: Arc<SqliteSessionMetadata>,
@@ -41,6 +43,7 @@ impl LiveChannelService {
     pub fn new(
         telegram: Arc<RwLock<TelegramPlugin>>,
         msteams: Arc<RwLock<MsTeamsPlugin>>,
+        discord: Arc<RwLock<DiscordPlugin>>,
         store: Arc<dyn ChannelStore>,
         message_log: Arc<dyn MessageLog>,
         session_metadata: Arc<SqliteSessionMetadata>,
@@ -48,6 +51,7 @@ impl LiveChannelService {
         Self {
             telegram,
             msteams,
+            discord,
             store,
             message_log,
             session_metadata,
@@ -64,40 +68,66 @@ impl LiveChannelService {
             return type_str.parse::<ChannelType>().map_err(|e| e.to_string());
         }
 
-        let (tg_has, ms_has) = {
+        let (tg_has, ms_has, dc_has) = {
             let tg = self.telegram.read().await;
             let ms = self.msteams.read().await;
-            (tg.has_account(account_id), ms.has_account(account_id))
+            let dc = self.discord.read().await;
+            (
+                tg.has_account(account_id),
+                ms.has_account(account_id),
+                dc.has_account(account_id),
+            )
         };
 
-        match (tg_has, ms_has) {
-            (true, false) => Ok(ChannelType::Telegram),
-            (false, true) => Ok(ChannelType::MsTeams),
-            (true, true) => Err(format!(
+        let count = usize::from(tg_has) + usize::from(ms_has) + usize::from(dc_has);
+        if count > 1 {
+            return Err(format!(
                 "account_id '{account_id}' exists in multiple channel types; pass explicit 'type'"
-            )),
-            (false, false) => {
-                let tg_store = self
-                    .store
-                    .get(ChannelType::Telegram.as_str(), account_id)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .is_some();
-                let ms_store = self
-                    .store
-                    .get(ChannelType::MsTeams.as_str(), account_id)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .is_some();
-                match (tg_store, ms_store) {
-                    (true, false) => Ok(ChannelType::Telegram),
-                    (false, true) => Ok(ChannelType::MsTeams),
-                    (true, true) => Err(format!(
-                        "account_id '{account_id}' exists in multiple stored channel types; pass explicit 'type'"
-                    )),
-                    (false, false) => Ok(default_when_unknown),
-                }
-            },
+            ));
+        }
+        if tg_has {
+            return Ok(ChannelType::Telegram);
+        }
+        if ms_has {
+            return Ok(ChannelType::MsTeams);
+        }
+        if dc_has {
+            return Ok(ChannelType::Discord);
+        }
+
+        // Not found in live plugins — check stored channels.
+        let tg_store = self
+            .store
+            .get(ChannelType::Telegram.as_str(), account_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some();
+        let ms_store = self
+            .store
+            .get(ChannelType::MsTeams.as_str(), account_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some();
+        let dc_store = self
+            .store
+            .get(ChannelType::Discord.as_str(), account_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some();
+        let store_count = usize::from(tg_store) + usize::from(ms_store) + usize::from(dc_store);
+        if store_count > 1 {
+            return Err(format!(
+                "account_id '{account_id}' exists in multiple stored channel types; pass explicit 'type'"
+            ));
+        }
+        if tg_store {
+            Ok(ChannelType::Telegram)
+        } else if ms_store {
+            Ok(ChannelType::MsTeams)
+        } else if dc_store {
+            Ok(ChannelType::Discord)
+        } else {
+            Ok(default_when_unknown)
         }
     }
 
@@ -164,6 +194,10 @@ impl LiveChannelService {
                 let mut ms = self.msteams.write().await;
                 ms.start_account(account_id, config).await
             },
+            ChannelType::Discord => {
+                let mut dc = self.discord.write().await;
+                dc.start_account(account_id, config).await
+            },
         }
         .map_err(|e| {
             error!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to start account");
@@ -186,6 +220,10 @@ impl LiveChannelService {
                 let mut ms = self.msteams.write().await;
                 ms.stop_account(account_id).await
             },
+            ChannelType::Discord => {
+                let mut dc = self.discord.write().await;
+                dc.stop_account(account_id).await
+            },
         }
         .map_err(|e| {
             error!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to stop account");
@@ -204,6 +242,10 @@ impl LiveChannelService {
                 let ms = self.msteams.read().await;
                 ms.update_account_config(account_id, config)
             },
+            ChannelType::Discord => {
+                let dc = self.discord.read().await;
+                dc.update_account_config(account_id, config)
+            },
         };
         if let Err(e) = result {
             warn!(error = %e, account_id, channel_type = channel_type.as_str(), "failed to hot-update config");
@@ -220,6 +262,10 @@ impl LiveChannelService {
             ChannelType::MsTeams => {
                 let ms = self.msteams.read().await;
                 ms.account_config(account_id)
+            },
+            ChannelType::Discord => {
+                let dc = self.discord.read().await;
+                dc.account_config(account_id)
             },
         };
         cfg.and_then(|c| c.get("allowlist").cloned())
@@ -284,6 +330,36 @@ impl ChannelService for LiveChannelService {
                         Err(e) => channels.push(serde_json::json!({
                             "type": "msteams",
                             "name": format!("Microsoft Teams ({aid})"),
+                            "account_id": aid,
+                            "status": "error",
+                            "details": e.to_string(),
+                        })),
+                    }
+                }
+            }
+        }
+
+        {
+            let dc = self.discord.read().await;
+            let account_ids = dc.account_ids();
+            if let Some(status) = dc.status() {
+                for aid in &account_ids {
+                    match status.probe(aid).await {
+                        Ok(snap) => {
+                            let entry = self
+                                .channel_status_entry(
+                                    ChannelType::Discord,
+                                    "Discord",
+                                    aid,
+                                    snap,
+                                    dc.account_config(aid),
+                                )
+                                .await;
+                            channels.push(entry);
+                        },
+                        Err(e) => channels.push(serde_json::json!({
+                            "type": ChannelType::Discord.as_str(),
+                            "name": format!("Discord ({aid})"),
                             "account_id": aid,
                             "status": "error",
                             "details": e.to_string(),

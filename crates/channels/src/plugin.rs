@@ -11,7 +11,7 @@ pub enum ChannelType {
     Telegram,
     #[serde(rename = "msteams")]
     MsTeams,
-    // Future: Discord, Slack, WhatsApp, etc.
+    Discord,
 }
 
 impl ChannelType {
@@ -20,6 +20,7 @@ impl ChannelType {
         match self {
             Self::Telegram => "telegram",
             Self::MsTeams => "msteams",
+            Self::Discord => "discord",
         }
     }
 }
@@ -37,6 +38,7 @@ impl std::str::FromStr for ChannelType {
         match s {
             "telegram" => Ok(Self::Telegram),
             "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
+            "discord" => Ok(Self::Discord),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -474,5 +476,39 @@ mod tests {
             .send_location("acct", "42", 48.8566, 2.3522, Some("Eiffel Tower"), None)
             .await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn channel_type_round_trip() {
+        for (s, expected) in [
+            ("telegram", ChannelType::Telegram),
+            ("msteams", ChannelType::MsTeams),
+            ("discord", ChannelType::Discord),
+        ] {
+            let parsed: ChannelType = s.parse().unwrap_or_else(|e| panic!("parse {s}: {e}"));
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.as_str(), s);
+            assert_eq!(parsed.to_string(), s);
+        }
+    }
+
+    #[test]
+    fn channel_type_from_str_invalid() {
+        assert!("slack".parse::<ChannelType>().is_err());
+        assert!("".parse::<ChannelType>().is_err());
+    }
+
+    #[test]
+    fn channel_type_serde_round_trip() {
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::MsTeams,
+            ChannelType::Discord,
+        ] {
+            let json = serde_json::to_string(&ct).unwrap_or_else(|e| panic!("serialize: {e}"));
+            let back: ChannelType =
+                serde_json::from_str(&json).unwrap_or_else(|e| panic!("deserialize: {e}"));
+            assert_eq!(ct, back);
+        }
     }
 }

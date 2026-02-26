@@ -2202,9 +2202,14 @@ pub async fn start_gateway(
         let msteams_plugin = Arc::new(tokio::sync::RwLock::new(
             moltis_msteams::MsTeamsPlugin::new()
                 .with_message_log(Arc::clone(&message_log))
-                .with_event_sink(channel_sink),
+                .with_event_sink(Arc::clone(&channel_sink)),
         ));
         msteams_webhook_plugin = Arc::clone(&msteams_plugin);
+        let discord_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_discord::DiscordPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(channel_sink),
+        ));
 
         // Start channels from config file (these take precedence over DB rows).
         let mut started: HashSet<(String, String)> = HashSet::new();
@@ -2227,6 +2232,17 @@ pub async fn start_gateway(
                     tracing::warn!(account_id, "failed to start microsoft teams account: {e}");
                 } else {
                     started.insert(("msteams".into(), account_id.clone()));
+                }
+            }
+        }
+
+        {
+            let mut dc = discord_plugin.write().await;
+            for (account_id, account_config) in &config.channels.discord {
+                if let Err(e) = dc.start_account(account_id, account_config.clone()).await {
+                    tracing::warn!(account_id, "failed to start discord account: {e}");
+                } else {
+                    started.insert(("discord".into(), account_id.clone()));
                 }
             }
         }
@@ -2261,6 +2277,10 @@ pub async fn start_gateway(
                             let mut ms = msteams_plugin.write().await;
                             ms.start_account(&ch.account_id, ch.config).await
                         },
+                        Ok(moltis_channels::ChannelType::Discord) => {
+                            let mut dc = discord_plugin.write().await;
+                            dc.start_account(&ch.account_id, ch.config).await
+                        },
                         Err(e) => Err(moltis_channels::Error::invalid_input(e)),
                     };
 
@@ -2290,14 +2310,21 @@ pub async fn start_gateway(
             let ms = msteams_plugin.read().await;
             (ms.shared_outbound(), ms.shared_stream_outbound())
         };
+        let (dc_outbound, dc_stream_outbound) = {
+            let dc = discord_plugin.read().await;
+            (dc.shared_outbound(), dc.shared_stream_outbound())
+        };
 
         let multi_router = Arc::new(crate::channel_outbound::MultiChannelOutbound::new(
             Arc::clone(&tg_plugin),
             Arc::clone(&msteams_plugin),
+            Arc::clone(&discord_plugin),
             tg_outbound,
             ms_outbound,
+            dc_outbound,
             tg_stream_outbound,
             ms_stream_outbound,
+            dc_stream_outbound,
         ));
 
         services = services.with_channel_outbound(
@@ -2310,6 +2337,7 @@ pub async fn start_gateway(
         services.channel = Arc::new(crate::channel::LiveChannelService::new(
             tg_plugin,
             msteams_plugin,
+            discord_plugin,
             channel_store,
             Arc::clone(&message_log),
             Arc::clone(&session_metadata),

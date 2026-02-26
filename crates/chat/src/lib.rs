@@ -7053,7 +7053,7 @@ async fn deliver_channel_replies_to_targets(
                         }
                     },
                 },
-                moltis_channels::ChannelType::MsTeams => {
+                moltis_channels::ChannelType::MsTeams | moltis_channels::ChannelType::Discord => {
                     let delivered_text = tts_payload
                         .as_ref()
                         .map(|payload| payload.text.as_str())
@@ -7403,7 +7403,9 @@ async fn send_screenshot_to_channels(
         let payload = payload.clone();
         tasks.push(tokio::spawn(async move {
             match target.channel_type {
-                moltis_channels::ChannelType::Telegram | moltis_channels::ChannelType::MsTeams => {
+                moltis_channels::ChannelType::Telegram
+                | moltis_channels::ChannelType::MsTeams
+                | moltis_channels::ChannelType::Discord => {
                     let reply_to = target.message_id.as_deref();
                     if let Err(e) = outbound
                         .send_media(&target.account_id, &target.chat_id, &payload, reply_to)

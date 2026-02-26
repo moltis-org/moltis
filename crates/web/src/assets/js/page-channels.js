@@ -36,6 +36,7 @@ var senders = signal([]);
 var activeTab = signal("channels");
 var showAddTelegram = signal(false);
 var showAddTeams = signal(false);
+var showAddDiscord = signal(false);
 var editingChannel = signal(null);
 var sendersAccount = signal("");
 
@@ -44,7 +45,10 @@ function channelType(type) {
 }
 
 function channelLabel(type) {
-	return channelType(type) === "msteams" ? "Microsoft Teams" : "Telegram";
+	var t = channelType(type);
+	if (t === "msteams") return "Microsoft Teams";
+	if (t === "discord") return "Discord";
+	return "Telegram";
 }
 
 function senderSelectionKey(ch) {
@@ -85,9 +89,9 @@ function loadSenders() {
 
 // ── Channel icon ─────────────────────────────────────────────
 function ChannelIcon({ type }) {
-	if (channelType(type) === "msteams") {
-		return html`<span class="icon icon-msteams"></span>`;
-	}
+	var t = channelType(type);
+	if (t === "msteams") return html`<span class="icon icon-msteams"></span>`;
+	if (t === "discord") return html`<span class="icon icon-discord"></span>`;
 	return html`<span class="icon icon-telegram"></span>`;
 }
 
@@ -157,6 +161,15 @@ function ConnectButtons() {
 				if (connected.value) showAddTeams.value = true;
 			}}>
 			<span class="icon icon-msteams"></span> Connect Microsoft Teams
+		</button>`
+		}
+		${
+			offered.has("discord") &&
+			html`<button class="provider-btn provider-btn-secondary inline-flex items-center gap-1.5"
+			onClick=${() => {
+				if (connected.value) showAddDiscord.value = true;
+			}}>
+			<span class="icon icon-discord"></span> Connect Discord
 		</button>`
 		}
 	</div>`;
@@ -575,6 +588,86 @@ function AddTeamsModal() {
 	  </${Modal}>`;
 }
 
+// ── Add Discord modal ─────────────────────────────────────────
+function AddDiscordModal() {
+	var error = useSignal("");
+	var saving = useSignal(false);
+	var addModel = useSignal("");
+	var allowlistItems = useSignal([]);
+	var accountDraft = useSignal("");
+
+	function onSubmit(e) {
+		e.preventDefault();
+		var form = e.target.closest(".channel-form");
+		var accountId = accountDraft.value.trim();
+		var credential = form.querySelector("[data-field=credential]").value.trim();
+		var v = validateChannelFields("discord", accountId, credential);
+		if (!v.valid) {
+			error.value = v.error;
+			return;
+		}
+		error.value = "";
+		saving.value = true;
+		var addConfig = {
+			token: credential,
+			dm_policy: form.querySelector("[data-field=dmPolicy]").value,
+			mention_mode: form.querySelector("[data-field=mentionMode]").value,
+			allowlist: allowlistItems.value,
+		};
+		if (addModel.value) {
+			addConfig.model = addModel.value;
+			var found = modelsSig.value.find((x) => x.id === addModel.value);
+			if (found?.provider) addConfig.model_provider = found.provider;
+		}
+		addChannel("discord", accountId, addConfig).then((res) => {
+			saving.value = false;
+			if (res?.ok) {
+				showAddDiscord.value = false;
+				addModel.value = "";
+				allowlistItems.value = [];
+				accountDraft.value = "";
+				loadChannels();
+			} else {
+				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.";
+			}
+		});
+	}
+
+	return html`<${Modal} show=${showAddDiscord.value} onClose=${() => {
+		showAddDiscord.value = false;
+	}}
+	    title="Connect Discord">
+	    <div class="channel-form">
+	      <div class="channel-card">
+	        <div>
+	          <span class="text-xs font-medium text-[var(--text-strong)]">How to create a Discord bot</span>
+	          <div class="text-xs text-[var(--muted)] channel-help">1. Go to the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Discord Developer Portal</a></div>
+	          <div class="text-xs text-[var(--muted)]">2. Create a new Application, then go to the Bot section</div>
+	          <div class="text-xs text-[var(--muted)]">3. Copy the bot token and paste it below</div>
+	          <div class="text-xs text-[var(--muted)]">4. Enable "Message Content Intent" under Privileged Gateway Intents</div>
+	          <div class="text-xs text-[var(--muted)]">5. Invite the bot to your server using the OAuth2 URL Generator (bot scope + Send Messages permission)</div>
+	        </div>
+	      </div>
+	      <label class="text-xs text-[var(--muted)]">Account ID</label>
+	      <input data-field="accountId" type="text" placeholder="e.g. my-discord-bot"
+	        value=${accountDraft.value}
+	        onInput=${(e) => {
+						accountDraft.value = e.target.value;
+					}}
+	        class="channel-input" />
+	      <label class="text-xs text-[var(--muted)]">Bot Token</label>
+	      <input data-field="credential" type="password" placeholder="Discord bot token" class="channel-input"
+	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
+	        name="discord_bot_token" />
+	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
+	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
+	        ${saving.value ? "Connecting\u2026" : "Connect Discord"}
+	      </button>
+	    </div>
+	  </${Modal}>`;
+}
+
 // ── Edit channel modal ───────────────────────────────────────
 function EditChannelModal() {
 	var ch = editingChannel.value;
@@ -593,6 +686,7 @@ function EditChannelModal() {
 	if (!ch) return null;
 	var cfg = ch.config || {};
 	var isTeams = channelType(ch.type) === "msteams";
+	var isDiscord = channelType(ch.type) === "discord";
 
 	function onSave(e) {
 		e.preventDefault();
@@ -608,6 +702,8 @@ function EditChannelModal() {
 			updateConfig.app_id = cfg.app_id || ch.account_id;
 			updateConfig.app_password = editCredential.value || cfg.app_password || "";
 			if (editWebhookSecret.value.trim()) updateConfig.webhook_secret = editWebhookSecret.value.trim();
+		} else if (isDiscord) {
+			updateConfig.token = editCredential.value || cfg.token || "";
 		} else {
 			updateConfig.token = cfg.token || "";
 		}
@@ -658,6 +754,16 @@ function EditChannelModal() {
 				        <input type="text" class="channel-input" value=${editWebhookSecret.value}
 				          onInput=${(e) => {
 										editWebhookSecret.value = e.target.value;
+									}} />
+				      </div>`
+				}
+	      ${
+					isDiscord &&
+					html`<div>
+				        <label class="text-xs text-[var(--muted)]">Bot Token (optional: leave blank to keep existing)</label>
+				        <input type="password" class="channel-input" value=${editCredential.value}
+				          onInput=${(e) => {
+										editCredential.value = e.target.value;
 									}} />
 				      </div>`
 				}
@@ -741,6 +847,7 @@ function ChannelsPage() {
     </div>
     <${AddTelegramModal} />
     <${AddTeamsModal} />
+    <${AddDiscordModal} />
     <${EditChannelModal} />
     <${ConfirmDialog} />
   `;
@@ -754,6 +861,7 @@ export function initChannels(container) {
 	activeTab.value = "channels";
 	showAddTelegram.value = false;
 	showAddTeams.value = false;
+	showAddDiscord.value = false;
 	editingChannel.value = null;
 	sendersAccount.value = "";
 	senders.value = [];
