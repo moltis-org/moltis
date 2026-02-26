@@ -260,7 +260,7 @@ private struct ChatDetailView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
-        .background(Color(nsColor: NSColor.windowBackgroundColor))
+        .background(.background)
     }
 
     private var contextPopoverContent: some View {
