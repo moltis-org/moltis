@@ -127,6 +127,16 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let wasm_tool_limit_override = || Struct(HashMap::from([("fuel", Leaf), ("memory", Leaf)]));
+
+    let wasm_tool_limits = || {
+        Struct(HashMap::from([
+            ("default_memory", Leaf),
+            ("default_fuel", Leaf),
+            ("tool_overrides", Map(Box::new(wasm_tool_limit_override()))),
+        ]))
+    };
+
     let sandbox = || {
         Struct(HashMap::from([
             ("mode", Leaf),
@@ -142,6 +152,7 @@ fn build_schema_map() -> KnownKeys {
             ("packages", Leaf),
             ("wasm_fuel_limit", Leaf),
             ("wasm_epoch_interval_ms", Leaf),
+            ("wasm_tool_limits", wasm_tool_limits()),
         ]))
     };
 

@@ -13,7 +13,12 @@ use {
     tracing::{debug, info, warn},
 };
 
-use crate::exec::{ExecOpts, ExecResult};
+#[cfg(feature = "wasm")]
+use crate::wasm_engine::WasmComponentEngine;
+use crate::{
+    exec::{ExecOpts, ExecResult},
+    wasm_limits::WasmToolLimits,
+};
 
 fn truncate_output_for_display(output: &mut String, max_output_bytes: usize) {
     if output.len() <= max_output_bytes {
@@ -466,6 +471,8 @@ pub struct SandboxConfig {
     pub wasm_fuel_limit: Option<u64>,
     /// Epoch interruption interval in milliseconds for WASM sandbox (default: 100ms).
     pub wasm_epoch_interval_ms: Option<u64>,
+    /// Per-tool WASM limits (fuel/memory). Falls back to built-in defaults when absent.
+    pub wasm_tool_limits: Option<WasmToolLimits>,
 }
 
 impl Default for SandboxConfig {
@@ -485,6 +492,7 @@ impl Default for SandboxConfig {
             timezone: None,
             wasm_fuel_limit: None,
             wasm_epoch_interval_ms: None,
+            wasm_tool_limits: None,
         }
     }
 }
@@ -527,6 +535,7 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             timezone: None, // Set by gateway from user profile
             wasm_fuel_limit: cfg.wasm_fuel_limit,
             wasm_epoch_interval_ms: cfg.wasm_epoch_interval_ms,
+            wasm_tool_limits: cfg.wasm_tool_limits.as_ref().map(WasmToolLimits::from),
         }
     }
 }
@@ -2038,24 +2047,22 @@ pub fn is_wasm_sandbox_available() -> bool {
 #[cfg(feature = "wasm")]
 pub struct WasmSandbox {
     config: SandboxConfig,
-    engine: wasmtime::Engine,
+    wasm_engine: Arc<WasmComponentEngine>,
 }
 
 #[cfg(feature = "wasm")]
 impl WasmSandbox {
     pub fn new(config: SandboxConfig) -> Result<Self> {
-        let mut wasm_config = wasmtime::Config::new();
-        wasm_config.consume_fuel(true);
-        wasm_config.epoch_interruption(true);
-
-        if let Some(ref mem_str) = config.resource_limits.memory_limit
-            && let Some(bytes) = parse_memory_limit(mem_str)
-        {
-            wasm_config.memory_reservation(bytes);
-        }
-
-        let engine = wasmtime::Engine::new(&wasm_config)?;
-        Ok(Self { config, engine })
+        let memory_reservation = config
+            .resource_limits
+            .memory_limit
+            .as_deref()
+            .and_then(parse_memory_limit);
+        let wasm_engine = Arc::new(WasmComponentEngine::new(memory_reservation)?);
+        Ok(Self {
+            config,
+            wasm_engine,
+        })
     }
 
     /// Default fuel limit: 1 billion instructions.
@@ -2109,7 +2116,7 @@ impl WasmSandbox {
         id: &SandboxId,
         opts: &ExecOpts,
     ) -> Result<ExecResult> {
-        let engine = self.engine.clone();
+        let wasm_engine = Arc::clone(&self.wasm_engine);
         let fuel_limit = self.fuel_limit();
         let epoch_interval_ms = self.epoch_interval_ms();
         let home_dir = self.home_dir(id);
@@ -2123,6 +2130,7 @@ impl WasmSandbox {
         let result = tokio::task::spawn_blocking(move || -> Result<ExecResult> {
             use wasmtime_wasi::pipe::MemoryOutputPipe;
 
+            let engine = wasm_engine.engine().clone();
             let stdout_pipe = MemoryOutputPipe::new(max_output_bytes);
             let stderr_pipe = MemoryOutputPipe::new(max_output_bytes);
 
@@ -2175,7 +2183,7 @@ impl WasmSandbox {
                 }
             });
 
-            let module = wasmtime::Module::new(&engine, &wasm_bytes)?;
+            let module = wasm_engine.compile_module(&wasm_bytes)?;
             let mut linker = wasmtime::Linker::new(&engine);
             wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |ctx| ctx)?;
 

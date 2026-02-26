@@ -34,5 +34,10 @@ pub mod send_image;
 pub mod session_state;
 pub mod skill_tools;
 pub mod spawn_agent;
+#[cfg(feature = "wasm")]
+pub mod wasm_component;
+#[cfg(feature = "wasm")]
+pub mod wasm_engine;
+pub mod wasm_limits;
 pub mod web_fetch;
 pub mod web_search;
