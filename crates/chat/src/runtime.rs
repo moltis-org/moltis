@@ -7,10 +7,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use {
-    moltis_channels::ChannelReplyTarget, moltis_sessions::session_events::SessionEvent,
-    moltis_tools::sandbox::SandboxRouter,
-};
+use {moltis_channels::ChannelReplyTarget, moltis_tools::sandbox::SandboxRouter};
 
 /// TTS runtime override configuration (provider/voice/model).
 ///
@@ -33,9 +30,6 @@ pub trait ChatRuntime: Send + Sync {
 
     /// Broadcast a WebSocket event to all connected clients.
     async fn broadcast(&self, topic: &str, payload: Value);
-
-    /// Publish a session lifecycle event for cross-UI synchronization.
-    fn publish_session_event(&self, event: SessionEvent);
 
     // ── Channel reply queue ──────────────────────────────────────────────
 

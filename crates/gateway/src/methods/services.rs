@@ -7,11 +7,7 @@ use std::{
 
 use tracing::warn;
 
-use {
-    moltis_config::VoiceSttProvider,
-    moltis_protocol::{ErrorShape, error_codes},
-    moltis_sessions::session_events::SessionEvent,
-};
+use {moltis_config::VoiceSttProvider, moltis_protocol::{ErrorShape, error_codes}};
 
 use crate::broadcast::{BroadcastOpts, broadcast};
 
@@ -869,9 +865,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .and_then(|e| e.get("key"))
                         .and_then(|k| k.as_str())
                 {
-                    ctx.state.session_event_bus.publish(SessionEvent::Created {
-                        session_key: key.to_string(),
-                    });
                     broadcast(
                         &ctx.state,
                         "session",
@@ -909,9 +902,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .map_err(ErrorShape::from)?;
                 let version = result.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
-                ctx.state.session_event_bus.publish(SessionEvent::Patched {
-                    session_key: key.clone(),
-                });
                 broadcast(
                     &ctx.state,
                     "session",
@@ -994,9 +984,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .map_err(ErrorShape::from)?;
                 if !key.is_empty() {
-                    ctx.state.session_event_bus.publish(SessionEvent::Deleted {
-                        session_key: key.clone(),
-                    });
                     broadcast(
                         &ctx.state,
                         "session",
@@ -1054,9 +1041,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .map_err(ErrorShape::from)?;
                 if let Some(key) = result.get("key").and_then(|k| k.as_str()) {
-                    ctx.state.session_event_bus.publish(SessionEvent::Created {
-                        session_key: key.to_string(),
-                    });
                     broadcast(
                         &ctx.state,
                         "session",

@@ -37,7 +37,6 @@ struct BridgeState {
     registry: RwLock<ProviderRegistry>,
     session_store: SessionStore,
     session_metadata: SqliteSessionMetadata,
-    session_event_bus: SessionEventBus,
 }
 
 impl BridgeState {
@@ -84,7 +83,8 @@ impl BridgeState {
             }
             pool
         });
-        let session_metadata = SqliteSessionMetadata::new(db_pool);
+        let event_bus = SessionEventBus::new();
+        let session_metadata = SqliteSessionMetadata::with_event_bus(db_pool, event_bus);
 
         emit_log("INFO", "bridge", "Bridge initialized successfully");
         Self {
@@ -92,7 +92,6 @@ impl BridgeState {
             registry: RwLock::new(registry),
             session_store,
             session_metadata,
-            session_event_bus: SessionEventBus::new(),
         }
     }
 }
@@ -1049,7 +1048,11 @@ pub unsafe extern "C" fn moltis_set_session_event_callback(callback: SessionEven
     if SESSION_EVENT_CALLBACK.set(callback).is_ok() {
         // Spawn a background task that subscribes to session events and
         // invokes the callback for each one.
-        let mut rx = BRIDGE.session_event_bus.subscribe();
+        let bus = BRIDGE
+            .session_metadata
+            .event_bus()
+            .expect("bridge session_metadata must have an event bus");
+        let mut rx = bus.subscribe();
         BRIDGE.runtime.spawn(async move {
             loop {
                 match rx.recv().await {
@@ -1131,7 +1134,7 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
                     request.config_dir.map(std::path::PathBuf::from),
                     request.data_dir.map(std::path::PathBuf::from),
                     Some(moltis_web::web_routes), // full web UI
-                    Some(BRIDGE.session_event_bus.clone()), // share bus with gateway
+                    BRIDGE.session_metadata.event_bus().cloned(), // share bus with gateway
                 )) {
                 Ok(p) => p,
                 Err(e) => {
@@ -1372,9 +1375,6 @@ pub extern "C" fn moltis_create_session(request_json: *const c_char) -> *mut c_c
                     "bridge.sessions",
                     &format!("Created session '{}'", key),
                 );
-                BRIDGE.session_event_bus.publish(SessionEvent::Created {
-                    session_key: key.clone(),
-                });
                 encode_json(&BridgeSessionEntry::from(&entry))
             },
             Err(e) => encode_error("create_failed", &format!("Failed to create session: {e}")),
@@ -1457,11 +1457,6 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
             .map(|m| m.len() as u32)
             .unwrap_or(0);
         BRIDGE.session_metadata.touch(&session_key, msg_count).await;
-    });
-
-    // Notify other UIs that a user message was added.
-    BRIDGE.session_event_bus.publish(SessionEvent::Patched {
-        session_key: session_key.clone(),
     });
 
     let model_id = provider.id().to_string();
@@ -1555,11 +1550,6 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
             .session_metadata
             .set_model(&session_key, Some(model_id.clone()))
             .await;
-
-        // Notify other UIs (web) that this session was updated.
-        BRIDGE.session_event_bus.publish(SessionEvent::Patched {
-            session_key: session_key.clone(),
-        });
 
         ctx.send(&BridgeStreamEvent::Done {
             input_tokens: usage.input_tokens,

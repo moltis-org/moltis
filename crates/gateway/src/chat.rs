@@ -7,10 +7,7 @@ use std::sync::Arc;
 
 use {async_trait::async_trait, serde_json::Value};
 
-use {
-    moltis_channels::ChannelReplyTarget, moltis_sessions::session_events::SessionEvent,
-    moltis_tools::sandbox::SandboxRouter,
-};
+use {moltis_channels::ChannelReplyTarget, moltis_tools::sandbox::SandboxRouter};
 
 use crate::state::GatewayState;
 
@@ -40,10 +37,6 @@ impl ChatRuntime for GatewayChatRuntime {
             crate::broadcast::BroadcastOpts::default(),
         )
         .await;
-    }
-
-    fn publish_session_event(&self, event: SessionEvent) {
-        self.state.session_event_bus.publish(event);
     }
 
     // ── Channel reply queue ─────────────────────────────────────────────────
