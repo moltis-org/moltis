@@ -5,36 +5,26 @@ use {
 };
 
 /// Discord bot activity type for presence display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityType {
     Playing,
     Listening,
     Watching,
     Competing,
+    #[default]
     Custom,
 }
 
-impl Default for ActivityType {
-    fn default() -> Self {
-        Self::Custom
-    }
-}
-
 /// Bot online status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnlineStatus {
+    #[default]
     Online,
     Idle,
     Dnd,
     Invisible,
-}
-
-impl Default for OnlineStatus {
-    fn default() -> Self {
-        Self::Online
-    }
 }
 
 /// Configuration for a single Discord bot account.
