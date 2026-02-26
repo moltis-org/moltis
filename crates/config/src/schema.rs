@@ -1519,7 +1519,7 @@ fn default_wasm_tool_overrides() -> HashMap<String, ToolLimitOverrideConfig> {
     HashMap::from([
         ("calc".to_string(), ToolLimitOverrideConfig {
             fuel: Some(100_000),
-            memory: Some(mb),
+            memory: Some(2 * mb),
         }),
         ("web_fetch".to_string(), ToolLimitOverrideConfig {
             fuel: Some(10_000_000),

@@ -24,9 +24,35 @@ use crate::{
 };
 
 #[cfg(feature = "wasm")]
-#[derive(Debug)]
 struct WasmRunnerStoreState {
     limiter: WasmResourceLimiter,
+    table: wasmtime::component::ResourceTable,
+    wasi: wasmtime_wasi::WasiCtx,
+}
+
+#[cfg(feature = "wasm")]
+impl WasmRunnerStoreState {
+    fn new(memory_limit_bytes: usize) -> Self {
+        Self {
+            limiter: WasmResourceLimiter::new(memory_limit_bytes),
+            table: wasmtime::component::ResourceTable::new(),
+            wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+impl wasmtime_wasi::IoView for WasmRunnerStoreState {
+    fn table(&mut self) -> &mut wasmtime::component::ResourceTable {
+        &mut self.table
+    }
+}
+
+#[cfg(feature = "wasm")]
+impl wasmtime_wasi::WasiView for WasmRunnerStoreState {
+    fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
+        &mut self.wasi
+    }
 }
 
 #[cfg(feature = "wasm")]
@@ -120,7 +146,11 @@ impl WasmToolRunner {
         memory_limit_bytes: usize,
     ) -> Result<WasmToolMetadata> {
         let mut store = new_store(engine.engine(), memory_limit_bytes);
-        let linker = wasmtime::component::Linker::new(engine.engine());
+        store
+            .set_fuel(METADATA_FUEL_BUDGET)
+            .context("failed to set metadata fuel budget")?;
+        store.set_epoch_deadline(METADATA_EPOCH_DEADLINE_TICKS);
+        let linker = new_linker(engine.engine())?;
         let tool = pure_tool::PureTool::instantiate(&mut store, component, &linker)
             .context("failed to instantiate pure-tool component for metadata")?;
 
@@ -147,7 +177,7 @@ impl WasmToolRunner {
         store.set_epoch_deadline(1);
 
         let _ticker = EpochTicker::start(engine, self.timeout, self.epoch_interval_ms);
-        let linker = wasmtime::component::Linker::new(self.engine.engine());
+        let linker = new_linker(self.engine.engine())?;
         let tool = pure_tool::PureTool::instantiate(&mut store, &self.component, &linker)
             .context("failed to instantiate pure-tool component")?;
         let result = tool.call_execute(&mut store, &params_json)?;
@@ -206,14 +236,26 @@ struct WasmToolMetadata {
 }
 
 #[cfg(feature = "wasm")]
+const METADATA_FUEL_BUDGET: u64 = 50_000_000;
+const METADATA_EPOCH_DEADLINE_TICKS: u64 = 1_000_000;
+
+#[cfg(feature = "wasm")]
 fn new_store(
     engine: &wasmtime::Engine,
     memory_limit_bytes: usize,
 ) -> wasmtime::Store<WasmRunnerStoreState> {
-    let limiter = WasmResourceLimiter::new(memory_limit_bytes);
-    let mut store = wasmtime::Store::new(engine, WasmRunnerStoreState { limiter });
+    let mut store = wasmtime::Store::new(engine, WasmRunnerStoreState::new(memory_limit_bytes));
     store.limiter(|state| &mut state.limiter);
     store
+}
+
+#[cfg(feature = "wasm")]
+fn new_linker(
+    engine: &wasmtime::Engine,
+) -> Result<wasmtime::component::Linker<WasmRunnerStoreState>> {
+    let mut linker = wasmtime::component::Linker::new(engine);
+    wasmtime_wasi::add_to_linker_sync(&mut linker).context("failed to link wasi preview2")?;
+    Ok(linker)
 }
 
 #[cfg(feature = "wasm")]
@@ -245,9 +287,41 @@ fn tool_error(tool_name: &str, error: PureToolError) -> Result<Value> {
 #[cfg(all(test, feature = "wasm"))]
 mod tests {
     use {
-        super::decode_result,
-        crate::wasm_component::{PureToolError, PureToolResult, PureToolValue},
+        super::{WasmToolRunner, decode_result},
+        crate::{
+            calc::CalcTool,
+            wasm_component::{PureToolError, PureToolResult, PureToolValue},
+            wasm_engine::WasmComponentEngine,
+            wasm_limits::WasmToolLimits,
+        },
+        moltis_agents::tool_registry::AgentTool,
+        std::{sync::Arc, time::Duration},
     };
+
+    fn maybe_calc_runner(fuel_limit: u64) -> Option<WasmToolRunner> {
+        let calc_component_bytes = match crate::embedded_wasm::calc_component_bytes() {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                eprintln!("skipping calc wasm runner tests: {err}");
+                return None;
+            },
+        };
+        let engine = Arc::new(WasmComponentEngine::new(None).unwrap());
+        let wasm_limits = WasmToolLimits::default();
+        let (_, memory_limit_bytes) = wasm_limits.resolve_store_limits("calc");
+
+        Some(
+            WasmToolRunner::new(
+                engine,
+                calc_component_bytes.as_ref(),
+                fuel_limit,
+                memory_limit_bytes,
+                Duration::from_secs(2),
+                100,
+            )
+            .unwrap(),
+        )
+    }
 
     #[test]
     fn decode_result_maps_ok_value() {
@@ -269,5 +343,63 @@ mod tests {
             err.to_string()
                 .contains("wasm tool `calc` failed [bad_input]")
         );
+    }
+
+    #[tokio::test]
+    async fn calc_wasm_matches_native_for_expressions() {
+        let Some(calc_wasm_tool) = maybe_calc_runner(100_000) else {
+            return;
+        };
+
+        let native = CalcTool::new();
+        let expressions = [
+            "1+1",
+            "2+3*4",
+            "(10+2)/3",
+            "2^8",
+            "2^3^2",
+            "15%4",
+            "-5+3",
+            "-(2+3)*4",
+            "1/2+3%2",
+            "(3+4)*(5-2)",
+            "0.1+0.2",
+            "5--2",
+            "+7",
+            "2*(3+(4*5))",
+            "9/3/3",
+            "(2+3)^(1+1)",
+            "6%4+2*3",
+            "2.5*4",
+            "10-3-2",
+            "((1+2)+(3+4))*2",
+            "1e3+2",
+        ];
+
+        for expression in expressions {
+            let params = serde_json::json!({ "expression": expression });
+            let native_result = native.execute(params.clone()).await.unwrap();
+            let wasm_result = calc_wasm_tool.execute(params).await.unwrap();
+            assert_eq!(wasm_result, native_result, "expression `{expression}`");
+        }
+
+        assert_eq!(
+            calc_wasm_tool.parameters_schema(),
+            native.parameters_schema()
+        );
+    }
+
+    #[tokio::test]
+    async fn calc_wasm_low_fuel_fails() {
+        let Some(calc_wasm_tool) = maybe_calc_runner(1) else {
+            return;
+        };
+
+        let mut expression = "1+".repeat(200);
+        expression.push('1');
+        let result = calc_wasm_tool
+            .execute(serde_json::json!({ "expression": expression }))
+            .await;
+        assert!(result.is_err());
     }
 }

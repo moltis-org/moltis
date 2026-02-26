@@ -22,6 +22,8 @@ pub fn shared_http_client() -> &'static reqwest::Client {
 pub mod browser;
 pub mod calc;
 pub mod cron_tool;
+#[cfg(feature = "wasm")]
+pub mod embedded_wasm;
 pub mod exec;
 pub mod image_cache;
 pub mod location;

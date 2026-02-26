@@ -30,7 +30,7 @@ impl Default for WasmToolLimits {
         let mut overrides = HashMap::new();
         overrides.insert("calc".to_string(), ToolLimitOverride {
             fuel: Some(100_000),
-            memory: Some(MB),
+            memory: Some(2 * MB),
         });
         overrides.insert("web_fetch".to_string(), ToolLimitOverride {
             fuel: Some(10_000_000),
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn resolve_prefers_tool_override() {
         let limits = WasmToolLimits::default();
-        assert_eq!(limits.resolve("calc"), (100_000, 1_048_576));
+        assert_eq!(limits.resolve("calc"), (100_000, 2_097_152));
         assert_eq!(limits.resolve("unknown"), (1_000_000, 16_777_216));
     }
 

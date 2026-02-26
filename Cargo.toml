@@ -40,6 +40,7 @@ members = [
   "crates/tools",
   "crates/vault",
   "crates/voice",
+  "crates/wasm-tools/calc",
   "crates/web",
   "crates/whatsapp",
 ]
@@ -186,11 +187,11 @@ shell-words           = "1"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
-wasmtime              = { version = "30", features = ["component-model"] }
+wasmtime              = { features = ["component-model"], version = "30" }
 wasmtime-wasi         = "30"
 which                 = "8"
 wit-bindgen           = "0.41"
-wit-bindgen-rt        = { version = "0.41", features = ["bitflags"] }
+wit-bindgen-rt        = { features = ["bitflags"], version = "0.41" }
 # CalDAV / iCalendar
 hyper-rustls  = { features = ["http1", "native-tokio", "ring", "tls12"], version = "0.27" }
 icalendar     = "0.17"

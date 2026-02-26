@@ -2961,6 +2961,54 @@ pub async fn prepare_gateway(
 
         tool_registry.register(Box::new(exec_tool));
         tool_registry.register(Box::new(moltis_tools::calc::CalcTool::new()));
+        #[cfg(feature = "wasm")]
+        {
+            let wasm_limits = sandbox_router
+                .config()
+                .wasm_tool_limits
+                .clone()
+                .unwrap_or_default();
+            let (fuel_limit, memory_limit) = wasm_limits.resolve_store_limits("calc");
+            let epoch_interval_ms = sandbox_router
+                .config()
+                .wasm_epoch_interval_ms
+                .unwrap_or(100);
+
+            match moltis_tools::embedded_wasm::calc_component_bytes() {
+                Ok(calc_component_bytes) => {
+                    match moltis_tools::wasm_engine::WasmComponentEngine::new(None) {
+                        Ok(wasm_engine) => {
+                            match moltis_tools::wasm_tool_runner::WasmToolRunner::new(
+                                Arc::new(wasm_engine),
+                                calc_component_bytes.as_ref(),
+                                fuel_limit,
+                                memory_limit,
+                                std::time::Duration::from_secs(2),
+                                epoch_interval_ms,
+                            ) {
+                                Ok(calc_wasm_tool) => {
+                                    let component_hash = calc_wasm_tool.component_hash();
+                                    tool_registry
+                                        .register_wasm(Box::new(calc_wasm_tool), component_hash);
+                                },
+                                Err(e) => {
+                                    warn!(%e, "failed to initialize calc_wasm tool");
+                                },
+                            }
+                        },
+                        Err(e) => {
+                            warn!(%e, "failed to create wasm engine for calc_wasm tool");
+                        },
+                    }
+                },
+                Err(e) => {
+                    warn!(
+                        %e,
+                        "calc_wasm component unavailable; run `just wasm-tools` to build guest components"
+                    );
+                },
+            }
+        }
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
