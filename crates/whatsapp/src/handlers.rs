@@ -130,24 +130,22 @@ async fn handle_message(
         Some(info.push_name.clone())
     };
 
-    // Self-chat detection: when `is_from_me` is true, the message was sent from
-    // another device on our own WhatsApp account (phone, WhatsApp Web, etc.).
-    // We allow these through only for self-chat (user messaging themselves) and
-    // only if the message wasn't sent by the bot itself (loop prevention).
+    // Self-chat detection:
+    // - Primary path: `is_from_me` (message sent from another device on our own account).
+    // - Fallback path: sender/chat JIDs match the linked account owner.
     //
-    // Verified self-chat messages bypass access control (the account owner is
-    // always allowed), so this flag is used later to skip the access check.
+    // Some "Message Yourself" deliveries can arrive without `is_from_me = true`
+    // but still use owner JIDs. Those should still bypass access control.
+    //
+    // We still prevent loops by dropping known bot echoes (recent sent IDs
+    // and watermark).
     let mut is_owner_self_chat = false;
-    if info.source.is_from_me {
-        let own_pn = state.client.get_pn().await;
-        let own_lid = state.client.get_lid().await;
-        let is_self_chat = own_pn
-            .as_ref()
-            .is_some_and(|pn| pn.is_same_user_as(chat_jid))
-            || own_lid
-                .as_ref()
-                .is_some_and(|lid| lid.is_same_user_as(chat_jid));
+    let own_pn = state.client.get_pn().await;
+    let own_lid = state.client.get_lid().await;
+    let is_self_chat = is_owner_user(chat_jid, own_pn.as_ref(), own_lid.as_ref());
+    let sender_is_owner = is_owner_user(sender_jid, own_pn.as_ref(), own_lid.as_ref());
 
+    if info.source.is_from_me || (is_self_chat && sender_is_owner) {
         // Check text for bot watermark as secondary loop detection.
         let raw_text = msg
             .conversation
@@ -160,10 +158,21 @@ async fn handle_message(
             .unwrap_or("");
 
         if !is_self_chat || state.was_sent_by_us(&info.id) || has_bot_watermark(raw_text) {
-            debug!(account_id = %state.account_id, is_self_chat, "ignoring self-sent message");
+            debug!(
+                account_id = %state.account_id,
+                is_self_chat,
+                sender_is_owner,
+                is_from_me = info.source.is_from_me,
+                "ignoring self-sent message"
+            );
             return;
         }
-        debug!(account_id = %state.account_id, "processing self-chat message from another device");
+        debug!(
+            account_id = %state.account_id,
+            sender_is_owner,
+            is_from_me = info.source.is_from_me,
+            "processing self-chat message from another device"
+        );
         is_owner_self_chat = true;
     }
 
@@ -661,6 +670,11 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+fn is_owner_user(jid: &Jid, own_pn: Option<&Jid>, own_lid: Option<&Jid>) -> bool {
+    own_pn.is_some_and(|pn| pn.is_same_user_as(jid))
+        || own_lid.is_some_and(|lid| lid.is_same_user_as(jid))
+}
+
 /// Classify the inbound message kind based on its content.
 ///
 /// Media types take priority over text — an image with a caption is still `Photo`,
@@ -851,5 +865,46 @@ async fn handle_otp_flow(
             };
             let _ = state.send_message(chat_jid.clone(), reply).await;
         },
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owner_self_chat_detected_without_is_from_me_when_sender_and_chat_are_owner() {
+        let own_lid: Jid = "259557842534599@lid".parse().unwrap();
+        let chat_jid: Jid = "259557842534599@lid".parse().unwrap();
+        let sender_jid: Jid = "259557842534599@lid".parse().unwrap();
+
+        let is_self_chat = is_owner_user(&chat_jid, None, Some(&own_lid));
+        let sender_is_owner = is_owner_user(&sender_jid, None, Some(&own_lid));
+
+        assert!(is_self_chat);
+        assert!(sender_is_owner);
+    }
+
+    #[test]
+    fn non_self_chat_from_me_is_not_treated_as_owner_self_chat() {
+        let own_lid: Jid = "259557842534599@lid".parse().unwrap();
+        let group_chat_jid: Jid = "120363456789@g.us".parse().unwrap();
+
+        let is_self_chat = is_owner_user(&group_chat_jid, None, Some(&own_lid));
+        assert!(!is_self_chat);
+    }
+
+    #[test]
+    fn sender_must_match_owner_when_is_from_me_is_false() {
+        let own_lid: Jid = "259557842534599@lid".parse().unwrap();
+        let chat_jid: Jid = "259557842534599@lid".parse().unwrap();
+        let other_sender: Jid = "11111111111@s.whatsapp.net".parse().unwrap();
+
+        let is_self_chat = is_owner_user(&chat_jid, None, Some(&own_lid));
+        let sender_is_owner = is_owner_user(&other_sender, None, Some(&own_lid));
+
+        assert!(is_self_chat);
+        assert!(!sender_is_owner);
     }
 }

@@ -42,6 +42,7 @@ var sendersAccount = signal("");
 
 // Track WhatsApp pairing state (updated by WebSocket events).
 var waQrData = signal(null);
+var waQrSvg = signal(null);
 var waPairingAccountId = signal(null);
 var waPairingError = signal(null);
 
@@ -599,15 +600,26 @@ function AddTeamsModal() {
 }
 
 // ── QR code display (WhatsApp pairing) ───────────────────────
-function QrCodeDisplay({ data }) {
+function qrSvgDataUrl(svg) {
+	if (!svg) return null;
+	return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function QrCodeDisplay({ data, svg }) {
 	if (!data)
 		return html`<div class="flex items-center justify-center p-8 text-[var(--muted)] text-sm">Waiting for QR code...</div>`;
 
+	var svgUrl = qrSvgDataUrl(svg);
+
 	return html`<div class="flex flex-col items-center gap-3 p-4">
     <div class="rounded-lg bg-white p-3" style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;">
-      <div class="text-center text-xs text-gray-600">
+      ${
+				svgUrl
+					? html`<img src=${svgUrl} alt="WhatsApp pairing QR code" style="width:100%;height:100%;display:block;" />`
+					: html`<div class="text-center text-xs text-gray-600">
         <div style="font-family:monospace;font-size:9px;word-break:break-all;max-height:180px;overflow:hidden;">${data.substring(0, 200)}</div>
-      </div>
+      </div>`
+			}
     </div>
     <div class="text-xs text-[var(--muted)] text-center">
       Scan this QR code in your terminal output,<br/>or open WhatsApp > Settings > Linked Devices > Link a Device.
@@ -634,6 +646,7 @@ function AddWhatsAppModal() {
 		error.value = "";
 		saving.value = true;
 		waQrData.value = null;
+		waQrSvg.value = null;
 		waPairingError.value = null;
 		waPairingAccountId.value = accountId;
 
@@ -660,6 +673,7 @@ function AddWhatsAppModal() {
 		showAddWhatsApp.value = false;
 		pairingStarted.value = false;
 		waQrData.value = null;
+		waQrSvg.value = null;
 		waPairingError.value = null;
 		waPairingAccountId.value = null;
 		allowlistItems.value = [];
@@ -681,7 +695,7 @@ function AddWhatsAppModal() {
           ${
 						waPairingError.value
 							? html`<div class="text-sm text-[var(--error)]">${waPairingError.value}</div>`
-							: html`<${QrCodeDisplay} data=${waQrData.value} />`
+							: html`<${QrCodeDisplay} data=${waQrData.value} svg=${waQrSvg.value} />`
 					}
           <div class="text-xs text-[var(--muted)]">QR code refreshes automatically. Keep this window open.</div>
         </div>
@@ -870,12 +884,14 @@ function EditChannelModal() {
 function handleWhatsAppPairingEvent(p) {
 	if (p.kind === "pairing_qr_code" && p.account_id === waPairingAccountId.value) {
 		waQrData.value = p.qr_data;
+		waQrSvg.value = p.qr_svg || null;
 	}
 	if (p.kind === "pairing_complete" && p.account_id === waPairingAccountId.value) {
 		showToast("WhatsApp connected!");
 		showAddWhatsApp.value = false;
 		waPairingAccountId.value = null;
 		waQrData.value = null;
+		waQrSvg.value = null;
 		loadChannels();
 	}
 	if (p.kind === "pairing_failed" && p.account_id === waPairingAccountId.value) {

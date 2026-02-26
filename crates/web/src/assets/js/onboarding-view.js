@@ -52,7 +52,9 @@ function ensureWsConnected() {
 		onFrame: (frame) => {
 			if (frame.type !== "event") return;
 			var listeners = eventListeners[frame.event] || [];
-			listeners.forEach((h) => h(frame.payload || {}));
+			listeners.forEach((h) => {
+				h(frame.payload || {});
+			});
 		},
 	});
 }
@@ -2325,6 +2327,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 	var [saving, setSaving] = useState(false);
 	var [pairingStarted, setPairingStarted] = useState(false);
 	var [qrData, setQrData] = useState(null);
+	var [qrSvg, setQrSvg] = useState(null);
 	var [pairingError, setPairingError] = useState(null);
 	var unsubRef = useRef(null);
 
@@ -2345,6 +2348,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 		setError(null);
 		setSaving(true);
 		setQrData(null);
+		setQrSvg(null);
 		setPairingError(null);
 
 		// Subscribe to channel events BEFORE the API call so we don't
@@ -2352,7 +2356,10 @@ function WhatsAppForm({ onConnected, error, setError }) {
 		if (unsubRef.current) unsubRef.current();
 		unsubRef.current = onEvent("channel", (p) => {
 			if (p.account_id !== id) return;
-			if (p.kind === "pairing_qr_code") setQrData(p.qr_data);
+			if (p.kind === "pairing_qr_code") {
+				setQrData(p.qr_data);
+				setQrSvg(p.qr_svg || null);
+			}
 			if (p.kind === "pairing_complete") onConnected(id, "whatsapp");
 			if (p.kind === "pairing_failed") setPairingError(p.reason || "Pairing failed");
 		});
@@ -2370,11 +2377,16 @@ function WhatsAppForm({ onConnected, error, setError }) {
 			if (res?.ok) {
 				setPairingStarted(true);
 			} else {
-				if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
+				if (unsubRef.current) {
+					unsubRef.current();
+					unsubRef.current = null;
+				}
 				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to start pairing.");
 			}
 		});
 	}
+
+	var qrSvgUrl = qrSvg ? `data:image/svg+xml;utf8,${encodeURIComponent(qrSvg)}` : null;
 
 	if (pairingStarted) {
 		return html`<div class="flex flex-col gap-4 items-center">
@@ -2383,9 +2395,13 @@ function WhatsAppForm({ onConnected, error, setError }) {
 					? html`<${ErrorPanel} message=${pairingError} />`
 					: qrData
 						? html`<div class="rounded-lg bg-white p-3" style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;">
-							<div class="text-center text-xs text-gray-600">
+							${
+								qrSvgUrl
+									? html`<img src=${qrSvgUrl} alt="WhatsApp pairing QR code" style="width:100%;height:100%;display:block;" />`
+									: html`<div class="text-center text-xs text-gray-600">
 								<div style="font-family:monospace;font-size:9px;word-break:break-all;max-height:180px;overflow:hidden;">${qrData.substring(0, 200)}</div>
-							</div>
+							</div>`
+							}
 						</div>`
 						: html`<div class="text-sm text-[var(--muted)]">Waiting for QR code...</div>`
 			}

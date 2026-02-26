@@ -106,13 +106,29 @@ impl GatewayChannelEventSink {
 impl ChannelEventSink for GatewayChannelEventSink {
     async fn emit(&self, event: ChannelEvent) {
         if let Some(state) = self.state.get() {
-            let payload = match serde_json::to_value(&event) {
+            let mut payload = match serde_json::to_value(&event) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("failed to serialize channel event: {e}");
                     return;
                 },
             };
+
+            // Render QR data as an SVG so the frontend can display it directly.
+            #[cfg(feature = "whatsapp")]
+            if let ChannelEvent::PairingQrCode { ref qr_data, .. } = event {
+                if let Ok(code) = qrcode::QrCode::new(qr_data) {
+                    let svg = code
+                        .render::<qrcode::render::svg::Color>()
+                        .min_dimensions(200, 200)
+                        .quiet_zone(true)
+                        .build();
+                    if let serde_json::Value::Object(ref mut map) = payload {
+                        map.insert("qr_svg".into(), serde_json::Value::String(svg));
+                    }
+                }
+            }
+
             broadcast(state, "channel", payload, BroadcastOpts {
                 drop_if_slow: true,
                 ..Default::default()
