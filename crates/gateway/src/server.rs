@@ -1133,6 +1133,8 @@ pub async fn prepare_gateway(
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
 ) -> anyhow::Result<PreparedGateway> {
+    let session_event_bus = session_event_bus.unwrap_or_default();
+
     // Apply directory overrides before loading config.
     if let Some(dir) = config_dir {
         moltis_config::set_config_dir(dir);
@@ -1661,7 +1663,7 @@ pub async fn prepare_gateway(
     let project_store: Arc<dyn ProjectStore> =
         Arc::new(moltis_projects::SqliteProjectStore::new(db_pool.clone()));
     let session_store = Arc::new(SessionStore::new(sessions_dir));
-    let event_bus_for_metadata = session_event_bus.clone().unwrap_or_default();
+    let event_bus_for_metadata = session_event_bus.clone();
     let session_metadata = Arc::new(SqliteSessionMetadata::with_event_bus(
         db_pool.clone(),
         event_bus_for_metadata,
@@ -2837,7 +2839,7 @@ pub async fn prepare_gateway(
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),
-        session_event_bus,
+        Some(session_event_bus),
         #[cfg(feature = "metrics")]
         metrics_handle,
         #[cfg(feature = "metrics")]
