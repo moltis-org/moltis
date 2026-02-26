@@ -1,7 +1,8 @@
 #[cfg(feature = "wasm")]
 use std::{
+    collections::HashMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -18,7 +19,10 @@ use {
 
 #[cfg(feature = "wasm")]
 use crate::{
-    wasm_component::{PureToolError, PureToolResult, marshal_tool_result, pure_tool},
+    wasm_component::{
+        HttpHostImpl, HttpToolError, HttpToolResult, HttpToolValue, PureToolError, PureToolResult,
+        http_tool, marshal_tool_result, pure_tool,
+    },
     wasm_engine::WasmComponentEngine,
     wasm_limits::WasmResourceLimiter,
 };
@@ -50,6 +54,40 @@ impl wasmtime_wasi::IoView for WasmRunnerStoreState {
 
 #[cfg(feature = "wasm")]
 impl wasmtime_wasi::WasiView for WasmRunnerStoreState {
+    fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
+        &mut self.wasi
+    }
+}
+
+#[cfg(feature = "wasm")]
+struct WasmHttpRunnerStoreState {
+    limiter: WasmResourceLimiter,
+    table: wasmtime::component::ResourceTable,
+    wasi: wasmtime_wasi::WasiCtx,
+    http_host: HttpHostImpl,
+}
+
+#[cfg(feature = "wasm")]
+impl WasmHttpRunnerStoreState {
+    fn new(memory_limit_bytes: usize, http_host: HttpHostImpl) -> Self {
+        Self {
+            limiter: WasmResourceLimiter::new(memory_limit_bytes),
+            table: wasmtime::component::ResourceTable::new(),
+            wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
+            http_host,
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+impl wasmtime_wasi::IoView for WasmHttpRunnerStoreState {
+    fn table(&mut self) -> &mut wasmtime::component::ResourceTable {
+        &mut self.table
+    }
+}
+
+#[cfg(feature = "wasm")]
+impl wasmtime_wasi::WasiView for WasmHttpRunnerStoreState {
     fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
         &mut self.wasi
     }
@@ -104,6 +142,35 @@ pub struct WasmToolRunner {
     memory_limit_bytes: usize,
     timeout: Duration,
     epoch_interval_ms: u64,
+}
+
+#[cfg(feature = "wasm")]
+pub struct HttpWasmToolRunner {
+    engine: Arc<WasmComponentEngine>,
+    component: wasmtime::component::Component,
+    component_hash: [u8; 32],
+    name: String,
+    description: String,
+    parameters_schema: Value,
+    fuel_limit: u64,
+    memory_limit_bytes: usize,
+    timeout: Duration,
+    epoch_interval_ms: u64,
+    http_host: HttpHostImpl,
+}
+
+#[cfg(feature = "wasm")]
+struct CachedResult {
+    value: Value,
+    expires_at: Instant,
+}
+
+#[cfg(feature = "wasm")]
+pub struct CachingWasmToolRunner {
+    inner: Arc<dyn AgentTool>,
+    component_hash: [u8; 32],
+    cache_ttl: Duration,
+    cache: Mutex<HashMap<String, CachedResult>>,
 }
 
 #[cfg(feature = "wasm")]
@@ -229,6 +296,202 @@ impl WasmToolRunner {
 }
 
 #[cfg(feature = "wasm")]
+impl HttpWasmToolRunner {
+    pub fn new(
+        engine: Arc<WasmComponentEngine>,
+        wasm_bytes: &[u8],
+        fuel_limit: u64,
+        memory_limit_bytes: usize,
+        timeout: Duration,
+        epoch_interval_ms: u64,
+        http_host: HttpHostImpl,
+    ) -> Result<Self> {
+        let component = engine
+            .compile_component(wasm_bytes)
+            .context("failed to compile wasm component")?;
+        let component_hash = hash_component_bytes(wasm_bytes);
+        let metadata = Self::load_metadata(&engine, &component, memory_limit_bytes, &http_host)?;
+        Ok(Self {
+            engine,
+            component,
+            component_hash,
+            name: metadata.name,
+            description: metadata.description,
+            parameters_schema: metadata.parameters_schema,
+            fuel_limit,
+            memory_limit_bytes,
+            timeout,
+            epoch_interval_ms,
+            http_host,
+        })
+    }
+
+    #[must_use]
+    pub fn component_hash(&self) -> [u8; 32] {
+        self.component_hash
+    }
+
+    fn load_metadata(
+        engine: &WasmComponentEngine,
+        component: &wasmtime::component::Component,
+        memory_limit_bytes: usize,
+        http_host: &HttpHostImpl,
+    ) -> Result<WasmToolMetadata> {
+        let mut store = new_http_store(engine.engine(), memory_limit_bytes, http_host.clone());
+        store
+            .set_fuel(METADATA_FUEL_BUDGET)
+            .context("failed to set metadata fuel budget")?;
+        store.set_epoch_deadline(METADATA_EPOCH_DEADLINE_TICKS);
+        let linker = new_http_linker(engine, |state| &mut state.http_host)?;
+        let tool = http_tool::HttpTool::instantiate(&mut store, component, &linker)
+            .context("failed to instantiate http-tool component for metadata")?;
+
+        let name = tool.call_name(&mut store)?;
+        let description = tool.call_description(&mut store)?;
+        let parameters_schema_raw = tool.call_parameters_schema(&mut store)?;
+        let parameters_schema =
+            serde_json::from_str(&parameters_schema_raw).with_context(|| {
+                format!("component `{name}` returned invalid parameters-schema JSON")
+            })?;
+
+        Ok(WasmToolMetadata {
+            name,
+            description,
+            parameters_schema,
+        })
+    }
+
+    fn execute_blocking(&self, params: Value) -> Result<Value> {
+        let params_json = serde_json::to_string(&params)?;
+        let engine = self.engine.engine().clone();
+        let mut store = new_http_store(
+            self.engine.engine(),
+            self.memory_limit_bytes,
+            self.http_host.clone(),
+        );
+        store.set_fuel(self.fuel_limit)?;
+        store.set_epoch_deadline(1);
+
+        let _ticker = EpochTicker::start(engine, self.timeout, self.epoch_interval_ms);
+        let linker = new_http_linker(&self.engine, |state| &mut state.http_host)?;
+        let tool = http_tool::HttpTool::instantiate(&mut store, &self.component, &linker)
+            .context("failed to instantiate http-tool component")?;
+        let result = tool.call_execute(&mut store, &params_json)?;
+        decode_http_result(&self.name, result)
+    }
+
+    fn clone_for_blocking(&self) -> Self {
+        Self {
+            engine: Arc::clone(&self.engine),
+            component: self.component.clone(),
+            component_hash: self.component_hash,
+            name: self.name.clone(),
+            description: self.description.clone(),
+            parameters_schema: self.parameters_schema.clone(),
+            fuel_limit: self.fuel_limit,
+            memory_limit_bytes: self.memory_limit_bytes,
+            timeout: self.timeout,
+            epoch_interval_ms: self.epoch_interval_ms,
+            http_host: self.http_host.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+#[async_trait]
+impl AgentTool for HttpWasmToolRunner {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn parameters_schema(&self) -> Value {
+        self.parameters_schema.clone()
+    }
+
+    async fn execute(&self, params: Value) -> Result<Value> {
+        tokio::task::spawn_blocking({
+            let this = self.clone_for_blocking();
+            move || this.execute_blocking(params)
+        })
+        .await
+        .context("http wasm tool runner task join error")?
+    }
+}
+
+#[cfg(feature = "wasm")]
+impl CachingWasmToolRunner {
+    pub fn new(inner: Arc<dyn AgentTool>, component_hash: [u8; 32], cache_ttl: Duration) -> Self {
+        Self {
+            inner,
+            component_hash,
+            cache_ttl,
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[must_use]
+    pub fn component_hash(&self) -> [u8; 32] {
+        self.component_hash
+    }
+
+    fn cache_get(&self, key: &str) -> Option<Value> {
+        let cache = self.cache.lock().ok()?;
+        let entry = cache.get(key)?;
+        if Instant::now() < entry.expires_at {
+            Some(entry.value.clone())
+        } else {
+            None
+        }
+    }
+
+    fn cache_set(&self, key: String, value: Value) {
+        if self.cache_ttl.is_zero() {
+            return;
+        }
+        if let Ok(mut cache) = self.cache.lock() {
+            if cache.len() > 200 {
+                let now = Instant::now();
+                cache.retain(|_, entry| entry.expires_at > now);
+            }
+            cache.insert(key, CachedResult {
+                value,
+                expires_at: Instant::now() + self.cache_ttl,
+            });
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+#[async_trait]
+impl AgentTool for CachingWasmToolRunner {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(&self, params: Value) -> Result<Value> {
+        let cache_key = serde_json::to_string(&params)?;
+        if let Some(cached) = self.cache_get(&cache_key) {
+            return Ok(cached);
+        }
+        let result = self.inner.execute(params).await?;
+        self.cache_set(cache_key, result.clone());
+        Ok(result)
+    }
+}
+
+#[cfg(feature = "wasm")]
 struct WasmToolMetadata {
     name: String,
     description: String,
@@ -259,6 +522,34 @@ fn new_linker(
 }
 
 #[cfg(feature = "wasm")]
+fn new_http_store(
+    engine: &wasmtime::Engine,
+    memory_limit_bytes: usize,
+    http_host: HttpHostImpl,
+) -> wasmtime::Store<WasmHttpRunnerStoreState> {
+    let mut store = wasmtime::Store::new(
+        engine,
+        WasmHttpRunnerStoreState::new(memory_limit_bytes, http_host),
+    );
+    store.limiter(|state| &mut state.limiter);
+    store
+}
+
+#[cfg(feature = "wasm")]
+fn new_http_linker(
+    engine: &WasmComponentEngine,
+    host_getter: impl Fn(&mut WasmHttpRunnerStoreState) -> &mut HttpHostImpl
+    + Copy
+    + Send
+    + Sync
+    + 'static,
+) -> Result<wasmtime::component::Linker<WasmHttpRunnerStoreState>> {
+    engine
+        .create_http_linker(host_getter)
+        .context("failed to create http-tool linker")
+}
+
+#[cfg(feature = "wasm")]
 fn hash_component_bytes(wasm_bytes: &[u8]) -> [u8; 32] {
     let digest = Sha256::digest(wasm_bytes);
     let mut hash = [0_u8; 32];
@@ -276,18 +567,42 @@ fn decode_result(tool_name: &str, result: PureToolResult) -> Result<Value> {
 
 #[cfg(feature = "wasm")]
 fn tool_error(tool_name: &str, error: PureToolError) -> Result<Value> {
-    bail!(
-        "wasm tool `{tool_name}` failed [{}]: {}",
-        error.code,
-        error.message
-    )
+    tool_error_parts(tool_name, &error.code, &error.message)
+}
+
+#[cfg(feature = "wasm")]
+fn decode_http_result(tool_name: &str, result: HttpToolResult) -> Result<Value> {
+    match result {
+        HttpToolResult::Ok(value) => Ok(match value {
+            HttpToolValue::Text(text) => Value::String(text),
+            HttpToolValue::Number(number) => serde_json::Number::from_f64(number)
+                .map(Value::Number)
+                .unwrap_or(Value::Null),
+            HttpToolValue::Integer(integer) => Value::Number(integer.into()),
+            HttpToolValue::Boolean(boolean) => Value::Bool(boolean),
+            HttpToolValue::Json(json) => {
+                serde_json::from_str::<Value>(&json).unwrap_or(Value::String(json))
+            },
+        }),
+        HttpToolResult::Err(error) => http_tool_error(tool_name, error),
+    }
+}
+
+#[cfg(feature = "wasm")]
+fn http_tool_error(tool_name: &str, error: HttpToolError) -> Result<Value> {
+    tool_error_parts(tool_name, &error.code, &error.message)
+}
+
+#[cfg(feature = "wasm")]
+fn tool_error_parts(tool_name: &str, code: &str, message: &str) -> Result<Value> {
+    bail!("wasm tool `{tool_name}` failed [{}]: {}", code, message)
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(all(test, feature = "wasm"))]
 mod tests {
     use {
-        super::{WasmToolRunner, decode_result},
+        super::{CachingWasmToolRunner, WasmToolRunner, decode_result},
         crate::{
             calc::CalcTool,
             wasm_component::{PureToolError, PureToolResult, PureToolValue},
@@ -295,7 +610,13 @@ mod tests {
             wasm_limits::WasmToolLimits,
         },
         moltis_agents::tool_registry::AgentTool,
-        std::{sync::Arc, time::Duration},
+        std::{
+            sync::{
+                Arc,
+                atomic::{AtomicUsize, Ordering},
+            },
+            time::Duration,
+        },
     };
 
     fn maybe_calc_runner(fuel_limit: u64) -> Option<WasmToolRunner> {
@@ -401,5 +722,46 @@ mod tests {
             .execute(serde_json::json!({ "expression": expression }))
             .await;
         assert!(result.is_err());
+    }
+
+    struct EchoTool {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentTool for EchoTool {
+        fn name(&self) -> &str {
+            "echo"
+        }
+
+        fn description(&self) -> &str {
+            "echo"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+
+        async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(params)
+        }
+    }
+
+    #[tokio::test]
+    async fn caching_runner_returns_cached_value() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Arc<dyn AgentTool> = Arc::new(EchoTool {
+            calls: Arc::clone(&calls),
+        });
+        let cached = CachingWasmToolRunner::new(inner, [7_u8; 32], Duration::from_secs(60));
+        let params = serde_json::json!({"query":"rust"});
+
+        let first = cached.execute(params.clone()).await.unwrap();
+        let second = cached.execute(params).await.unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(cached.component_hash(), [7_u8; 32]);
     }
 }

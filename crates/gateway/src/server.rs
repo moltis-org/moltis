@@ -2973,13 +2973,14 @@ pub async fn prepare_gateway(
                 .config()
                 .wasm_epoch_interval_ms
                 .unwrap_or(100);
+            match moltis_tools::wasm_engine::WasmComponentEngine::new(None) {
+                Ok(wasm_engine) => {
+                    let wasm_engine = Arc::new(wasm_engine);
 
-            match moltis_tools::embedded_wasm::calc_component_bytes() {
-                Ok(calc_component_bytes) => {
-                    match moltis_tools::wasm_engine::WasmComponentEngine::new(None) {
-                        Ok(wasm_engine) => {
+                    match moltis_tools::embedded_wasm::calc_component_bytes() {
+                        Ok(calc_component_bytes) => {
                             match moltis_tools::wasm_tool_runner::WasmToolRunner::new(
-                                Arc::new(wasm_engine),
+                                Arc::clone(&wasm_engine),
                                 calc_component_bytes.as_ref(),
                                 fuel_limit,
                                 memory_limit,
@@ -2997,15 +2998,137 @@ pub async fn prepare_gateway(
                             }
                         },
                         Err(e) => {
-                            warn!(%e, "failed to create wasm engine for calc_wasm tool");
+                            warn!(
+                                %e,
+                                "calc_wasm component unavailable; run `just wasm-tools` to build guest components"
+                            );
+                        },
+                    }
+
+                    match moltis_tools::embedded_wasm::web_fetch_component_bytes() {
+                        Ok(web_fetch_component_bytes) => {
+                            let (fetch_fuel_limit, fetch_memory_limit) =
+                                wasm_limits.resolve_store_limits("web_fetch");
+                            match moltis_tools::wasm_component::HttpHostImpl::new(
+                                std::time::Duration::from_secs(
+                                    config.tools.web.fetch.timeout_seconds,
+                                ),
+                                2_000_000,
+                                Vec::new(),
+                                None,
+                            ) {
+                                Ok(http_host) => {
+                                    match moltis_tools::wasm_tool_runner::HttpWasmToolRunner::new(
+                                        Arc::clone(&wasm_engine),
+                                        web_fetch_component_bytes.as_ref(),
+                                        fetch_fuel_limit,
+                                        fetch_memory_limit,
+                                        std::time::Duration::from_secs(5),
+                                        epoch_interval_ms,
+                                        http_host,
+                                    ) {
+                                        Ok(web_fetch_wasm_tool) => {
+                                            let component_hash =
+                                                web_fetch_wasm_tool.component_hash();
+                                            let cache_ttl = std::time::Duration::from_secs(
+                                                config
+                                                    .tools
+                                                    .web
+                                                    .fetch
+                                                    .cache_ttl_minutes
+                                                    .saturating_mul(60),
+                                            );
+                                            let cached_tool = moltis_tools::wasm_tool_runner::CachingWasmToolRunner::new(
+                                                Arc::new(web_fetch_wasm_tool),
+                                                component_hash,
+                                                cache_ttl,
+                                            );
+                                            tool_registry.register_wasm(
+                                                Box::new(cached_tool),
+                                                component_hash,
+                                            );
+                                        },
+                                        Err(e) => {
+                                            warn!(%e, "failed to initialize web_fetch_wasm tool");
+                                        },
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!(%e, "failed to initialize HTTP host for web_fetch_wasm");
+                                },
+                            }
+                        },
+                        Err(e) => {
+                            warn!(
+                                %e,
+                                "web_fetch_wasm component unavailable; run `just wasm-tools` to build guest components"
+                            );
+                        },
+                    }
+
+                    match moltis_tools::embedded_wasm::web_search_component_bytes() {
+                        Ok(web_search_component_bytes) => {
+                            let (search_fuel_limit, search_memory_limit) =
+                                wasm_limits.resolve_store_limits("web_search");
+                            match moltis_tools::wasm_component::HttpHostImpl::new(
+                                std::time::Duration::from_secs(
+                                    config.tools.web.search.timeout_seconds,
+                                ),
+                                2_000_000,
+                                Vec::new(),
+                                None,
+                            ) {
+                                Ok(http_host) => {
+                                    match moltis_tools::wasm_tool_runner::HttpWasmToolRunner::new(
+                                        Arc::clone(&wasm_engine),
+                                        web_search_component_bytes.as_ref(),
+                                        search_fuel_limit,
+                                        search_memory_limit,
+                                        std::time::Duration::from_secs(5),
+                                        epoch_interval_ms,
+                                        http_host,
+                                    ) {
+                                        Ok(web_search_wasm_tool) => {
+                                            let component_hash =
+                                                web_search_wasm_tool.component_hash();
+                                            let cache_ttl = std::time::Duration::from_secs(
+                                                config
+                                                    .tools
+                                                    .web
+                                                    .search
+                                                    .cache_ttl_minutes
+                                                    .saturating_mul(60),
+                                            );
+                                            let cached_tool = moltis_tools::wasm_tool_runner::CachingWasmToolRunner::new(
+                                                Arc::new(web_search_wasm_tool),
+                                                component_hash,
+                                                cache_ttl,
+                                            );
+                                            tool_registry.register_wasm(
+                                                Box::new(cached_tool),
+                                                component_hash,
+                                            );
+                                        },
+                                        Err(e) => {
+                                            warn!(%e, "failed to initialize web_search_wasm tool");
+                                        },
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!(%e, "failed to initialize HTTP host for web_search_wasm");
+                                },
+                            }
+                        },
+                        Err(e) => {
+                            warn!(
+                                %e,
+                                "web_search_wasm component unavailable; run `just wasm-tools` to build guest components"
+                            );
                         },
                     }
                 },
                 Err(e) => {
-                    warn!(
-                        %e,
-                        "calc_wasm component unavailable; run `just wasm-tools` to build guest components"
-                    );
+                    warn!(%e, "failed to create wasm engine for wasm component tools");
                 },
             }
         }

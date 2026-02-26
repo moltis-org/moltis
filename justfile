@@ -31,7 +31,7 @@ build-release:
 
 # Build embedded WASM guest tools for component execution.
 wasm-tools:
-    cargo build --target wasm32-wasip2 -p moltis-wasm-calc --release
+    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
 # Run local dev server with workspace-local config/data dirs.
 dev-server:

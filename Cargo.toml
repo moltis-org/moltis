@@ -41,6 +41,8 @@ members = [
   "crates/vault",
   "crates/voice",
   "crates/wasm-tools/calc",
+  "crates/wasm-tools/web-fetch",
+  "crates/wasm-tools/web-search",
   "crates/web",
   "crates/whatsapp",
 ]

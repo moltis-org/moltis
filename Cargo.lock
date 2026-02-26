@@ -6305,6 +6305,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-wasm-web-fetch"
+version = "0.9.10"
+dependencies = [
+ "serde_json",
+ "url",
+ "wit-bindgen 0.41.0",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "moltis-wasm-web-search"
+version = "0.9.10"
+dependencies = [
+ "serde_json",
+ "url",
+ "wit-bindgen 0.41.0",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "moltis-web"
 version = "0.9.10"
 dependencies = [

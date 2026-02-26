@@ -35,6 +35,12 @@ pub type HttpRequest = http_tool::moltis::tool::outgoing_handler::HttpRequest;
 pub type HttpResponse = http_tool::moltis::tool::outgoing_handler::HttpResponse;
 #[cfg(feature = "wasm")]
 pub type HttpError = http_tool::moltis::tool::outgoing_handler::HttpError;
+#[cfg(feature = "wasm")]
+pub type HttpToolValue = http_tool::moltis::tool::types::ToolValue;
+#[cfg(feature = "wasm")]
+pub type HttpToolResult = http_tool::moltis::tool::types::ToolResult;
+#[cfg(feature = "wasm")]
+pub type HttpToolError = http_tool::moltis::tool::types::ToolError;
 
 #[cfg(feature = "wasm")]
 #[derive(Clone)]
@@ -151,9 +157,6 @@ impl HttpHostImpl {
 
         let mut response = req.send().map_err(Self::map_request_error)?;
         let status = response.status();
-        if !status.is_success() {
-            return Err(HttpError::Status(status.as_u16()));
-        }
 
         let content_type = response
             .headers()
