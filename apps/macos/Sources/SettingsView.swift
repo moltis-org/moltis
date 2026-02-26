@@ -28,7 +28,6 @@ enum SettingsSection: String, CaseIterable, Hashable {
     case mcp = "MCP"
     case skills = "Skills"
     case voice = "Voice"
-    case terminal = "Terminal"
     case sandboxes = "Sandboxes"
     case monitoring = "Monitoring"
     case logs = "Logs"
@@ -66,7 +65,6 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .mcp:           "link",
         .skills:        "sparkles",
         .voice:         "mic.fill",
-        .terminal:      "apple.terminal.fill",
         .sandboxes:     "shippingbox.fill",
         .monitoring:    "chart.bar.fill",
         .logs:          "doc.plaintext.fill",
@@ -90,7 +88,6 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .mcp:           .blue,
         .skills:        .yellow,
         .voice:         .mint,
-        .terminal:      .gray,
         .sandboxes:     .orange,
         .monitoring:    .green,
         .logs:          .secondary,
@@ -114,7 +111,6 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .mcp:           .integrations,
         .skills:        .integrations,
         .voice:         .integrations,
-        .terminal:      .systems,
         .sandboxes:     .systems,
         .monitoring:    .systems,
         .logs:          .systems,

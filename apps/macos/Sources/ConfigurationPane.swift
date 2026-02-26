@@ -228,6 +228,13 @@ private struct ConfigTextEditor: NSViewRepresentable {
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+        scrollView.wantsLayer = true
+        scrollView.layer?.cornerRadius = 6
+        scrollView.layer?.masksToBounds = true
+        scrollView.layer?.borderWidth = 1
+        scrollView.layer?.borderColor = NSColor.separatorColor.cgColor
 
         let textView = NSTextView()
         textView.delegate = context.coordinator
@@ -237,9 +244,7 @@ private struct ConfigTextEditor: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.font = .monospacedSystemFont(
-            ofSize: NSFont.systemFontSize, weight: .regular
-        )
+        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.textColor = .labelColor
         textView.backgroundColor = .textBackgroundColor
         textView.isVerticallyResizable = true
@@ -255,6 +260,12 @@ private struct ConfigTextEditor: NSViewRepresentable {
             width: CGFloat.greatestFiniteMagnitude,
             height: CGFloat.greatestFiniteMagnitude
         )
+
+        // 1.3x line height for comfortable reading (CotEditor default)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineHeightMultiple = 1.3
+        textView.defaultParagraphStyle = paragraphStyle
+        textView.typingAttributes[.paragraphStyle] = paragraphStyle
 
         scrollView.documentView = textView
         context.coordinator.textView = textView

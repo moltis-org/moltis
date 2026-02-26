@@ -24,7 +24,6 @@ struct SettingsSectionContent: View {
         case .mcp: mcpPane
         case .skills: skillsPane
         case .voice: voicePane
-        case .terminal: terminalPane
         case .sandboxes: sandboxesPane
         case .monitoring: monitoringPane
         case .logs: logsPane
@@ -40,8 +39,15 @@ struct SettingsSectionContent: View {
 private extension SettingsSectionContent {
     var identityPane: some View {
         Group {
-            TextField("Display name", text: $settings.identityName)
-            editorRow("Soul Prompt", text: $settings.identitySoul)
+            Section("Agent") {
+                TextField("Name", text: $settings.identityName, prompt: Text("e.g. Rex"))
+                TextField("Emoji", text: $settings.identityEmoji)
+                TextField("Theme", text: $settings.identityTheme, prompt: Text("e.g. wise owl, chill fox"))
+            }
+            Section("User") {
+                TextField("Your name", text: $settings.identityUserName, prompt: Text("e.g. Alice"))
+            }
+            editorRow("Soul", text: $settings.identitySoul)
         }
     }
 
@@ -243,13 +249,6 @@ private extension SettingsSectionContent {
 // MARK: - Systems
 
 private extension SettingsSectionContent {
-    var terminalPane: some View {
-        Group {
-            Toggle("Enable terminal tool", isOn: $settings.terminalEnabled)
-            TextField("Default shell", text: $settings.terminalShell)
-        }
-    }
-
     var sandboxesPane: some View {
         Group {
             Picker("Backend", selection: $settings.sandboxBackend) {

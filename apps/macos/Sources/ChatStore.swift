@@ -43,13 +43,21 @@ final class ChatStore: ObservableObject {
         logStore?.log(.info, target: "ChatStore", message: "Loading sessions from disk")
         do {
             let entries = try client.listSessions()
+            let existingByKey = Dictionary(
+                uniqueKeysWithValues: sessions.map { ($0.key, $0) }
+            )
             sessions = entries.map { entry in
-                ChatSession(
+                var session = ChatSession(
                     key: entry.key,
                     title: entry.label ?? entry.key,
                     updatedAt: Date(timeIntervalSince1970: Double(entry.updatedAt) / 1000),
                     messageCount: Int(entry.messageCount)
                 )
+                // Preserve already-loaded messages so they don't flash away.
+                if let existing = existingByKey[entry.key] {
+                    session.messages = existing.messages
+                }
+                return session
             }
             logStore?.log(.info, target: "ChatStore", message: "Loaded \(sessions.count) sessions")
 

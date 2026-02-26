@@ -81,12 +81,13 @@ private struct SessionsSidebarView: View {
                 .onChange(of: selectedKey) { _, newKey in
                     guard let newKey else { return }
                     chatStore.switchSession(key: newKey)
-                    withAnimation(.easeInOut(duration: 0.35)) {
-                        proxy.scrollTo(newKey, anchor: .top)
-                    }
                 }
                 .onChange(of: chatStore.selectedSessionKey) { _, newKey in
                     selectedKey = newKey
+                    // Only scroll for programmatic selection (e.g. new session)
+                    if let newKey {
+                        proxy.scrollTo(newKey, anchor: .center)
+                    }
                 }
                 .onAppear {
                     selectedKey = chatStore.selectedSessionKey

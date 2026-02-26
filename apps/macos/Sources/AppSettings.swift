@@ -3,6 +3,9 @@ import Foundation
 
 final class AppSettings: ObservableObject {
     @Published var identityName = "Moltis"
+    @Published var identityEmoji = ""
+    @Published var identityTheme = ""
+    @Published var identityUserName = ""
     @Published var identitySoul = ""
 
     @Published var environmentConfigDir = ""
