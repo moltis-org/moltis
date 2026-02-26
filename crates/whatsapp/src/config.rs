@@ -97,7 +97,7 @@ mod tests {
         assert!(cfg.store_path.is_none());
         assert!(cfg.display_name.is_none());
         assert!(cfg.model.is_none());
-        assert_eq!(cfg.dm_policy, DmPolicy::Open);
+        assert_eq!(cfg.dm_policy, DmPolicy::Allowlist);
         assert_eq!(cfg.group_policy, GroupPolicy::Open);
         assert!(cfg.allowlist.is_empty());
         assert!(cfg.group_allowlist.is_empty());
@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(cfg.display_name.as_deref(), Some("My Phone"));
         assert_eq!(cfg.phone_number.as_deref(), Some("+15551234567"));
         // Defaults for access control fields
-        assert_eq!(cfg.dm_policy, DmPolicy::Open);
+        assert_eq!(cfg.dm_policy, DmPolicy::Allowlist);
         assert!(cfg.allowlist.is_empty());
     }
 
