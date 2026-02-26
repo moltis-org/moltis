@@ -944,7 +944,13 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     }
 
     // Unknown sandbox backend
-    let valid_sandbox_backends = ["auto", "docker", "apple-container", "wasm"];
+    let valid_sandbox_backends = [
+        "auto",
+        "docker",
+        "apple-container",
+        "restricted-host",
+        "wasm",
+    ];
     if !valid_sandbox_backends.contains(&config.tools.exec.sandbox.backend.as_str()) {
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,

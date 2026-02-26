@@ -1522,9 +1522,11 @@ pub struct SandboxConfig {
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
-    /// Backend: "auto" (default), "docker", "apple-container", or "wasm".
-    /// "auto" prefers Apple Container on macOS when available, falls back to
-    /// Docker, then WASM, then direct host execution.
+    /// Backend: "auto" (default), "docker", "apple-container",
+    /// "restricted-host", or "wasm".
+    /// "auto" prefers Apple Container on macOS, then Docker, then
+    /// restricted-host. "wasm" uses Wasmtime + WASI for real sandboxed
+    /// execution.
     pub backend: String,
     pub resource_limits: ResourceLimitsConfig,
     /// Packages to install via `apt-get` in the sandbox image.

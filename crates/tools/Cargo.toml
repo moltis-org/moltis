@@ -6,12 +6,13 @@ version.workspace = true
 [features]
 default = ["metrics", "wasm"]
 metrics = ["dep:moltis-metrics"]
-wasm    = ["dep:wasmtime", "dep:wasmtime-wasi"]
+wasm    = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dependencies]
 anyhow           = { workspace = true }
 async-trait      = { workspace = true }
 base64           = { workspace = true }
+bytes            = { workspace = true }
 futures          = { workspace = true }
 image            = { workspace = true }
 ipnet            = { workspace = true }
@@ -30,6 +31,7 @@ secrecy          = { workspace = true }
 serde            = { workspace = true }
 serde_json       = { workspace = true }
 sha2             = { workspace = true }
+shell-words      = { optional = true, workspace = true }
 sqlx             = { workspace = true }
 tokio            = { workspace = true }
 tracing          = { workspace = true }

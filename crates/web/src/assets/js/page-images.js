@@ -460,6 +460,7 @@ var BACKEND_LABELS = {
 	"apple-container": "Apple Container (VM-isolated)",
 	docker: "Docker",
 	cgroup: "cgroup (systemd-run)",
+	"restricted-host": "Restricted Host (env + rlimits)",
 	wasm: "Wasmtime (WASM-isolated)",
 	none: "None (host execution)",
 };
@@ -503,10 +504,17 @@ function backendRecommendation(info) {
 		};
 	}
 
+	if (backend === "restricted-host") {
+		return {
+			level: "info",
+			text: "Using restricted host execution (env clearing, rlimits). For stronger isolation, install Docker or Apple Container.",
+		};
+	}
+
 	if (backend === "wasm") {
 		return {
 			level: "info",
-			text: "Using lightweight WASM isolation. For stronger container-level isolation, install Docker or Apple Container.",
+			text: "Using WASM sandbox with filesystem isolation. For container-level isolation, install Docker or Apple Container.",
 		};
 	}
 
@@ -527,7 +535,9 @@ function SandboxBanner() {
 				? "var(--accent)"
 				: info.backend === "wasm"
 					? "var(--success)"
-					: "var(--muted)";
+					: info.backend === "restricted-host"
+						? "var(--warning, var(--muted))"
+						: "var(--muted)";
 
 	return html`<div class="max-w-form">
     <div class="info-bar" style="margin-bottom:8px;">

@@ -292,14 +292,15 @@ impl AgentTool for ExecTool {
         };
 
         // Check whether the backend is a real container runtime.  When the
-        // backend is "none" (no Docker/container runtime available), commands
-        // run directly on the host even when the session mode says "sandboxed".
-        // Using /home/sandbox as the working directory would fail with ENOENT
-        // on the host, so we must fall back to the host data directory.
+        // backend is "none" or "restricted-host" (no container runtime),
+        // commands run directly on the host even when the session mode says
+        // "sandboxed".  Using /home/sandbox as the working directory would
+        // fail with ENOENT on the host, so we must fall back to the host
+        // data directory.
         let has_container_backend = if let Some(ref router) = self.sandbox_router {
-            router.backend_name() != "none"
+            !matches!(router.backend_name(), "none" | "restricted-host")
         } else {
-            self.sandbox.backend_name() != "none"
+            !matches!(self.sandbox.backend_name(), "none" | "restricted-host")
         };
 
         // Resolve working directory.  When sandboxed *with a real container

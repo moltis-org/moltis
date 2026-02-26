@@ -84,9 +84,14 @@ async fn build() -> Result<()> {
     sandbox_config.container_prefix = Some(instance_sandbox_prefix(&config));
 
     match sandbox_config.backend.as_str() {
+        "restricted-host" => {
+            println!("Restricted-host sandbox does not use container images — nothing to build.");
+            println!("This backend provides env clearing + rlimit isolation without containers.");
+            return Ok(());
+        },
         "wasm" | "wasmtime" => {
             println!("WASM sandbox does not use container images — nothing to build.");
-            println!("The WASM backend provides restricted host execution without containers.");
+            println!("The WASM backend uses Wasmtime + WASI for sandboxed execution.");
             return Ok(());
         },
         _ => {},

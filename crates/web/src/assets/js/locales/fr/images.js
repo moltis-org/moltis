@@ -47,6 +47,7 @@ export default {
 		appleContainer: "Apple Container (isolé par VM)",
 		docker: "Docker",
 		cgroup: "cgroup (systemd-run)",
+		restrictedHost: "Hôte restreint (env + rlimits)",
 		wasm: "Wasmtime (isolé par WASM)",
 		none: "Aucun (exécution sur l'hôte)",
 		containerBackendLabel: "Backend de conteneur :",
@@ -63,8 +64,10 @@ export default {
 			"Apple Container offre une isolation VM plus forte sur macOS 26+. Installez-le pour une utilisation automatique (moltis le préfère à Docker). Exécutez : brew install container",
 		linuxDockerTip:
 			"Docker est un bon choix sous Linux. Pour une isolation plus légère sans la surcharge de Docker, le sandboxing cgroup systemd est également supporté.",
+		restrictedHostTip:
+			"Exécution en hôte restreint (nettoyage d'environnement, rlimits). Pour une isolation plus forte, installez Docker ou Apple Container.",
 		wasmTip:
-			"Utilisation de l'isolation légère WASM. Pour une isolation conteneur plus forte, installez Docker ou Apple Container.",
+			"Utilisation du bac à sable WASM avec isolation du système de fichiers. Pour une isolation conteneur, installez Docker ou Apple Container.",
 	},
 
 	// ── Alert labels ───────────────────────────────────────
