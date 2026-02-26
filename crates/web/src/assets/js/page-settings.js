@@ -3570,15 +3570,15 @@ function MemorySection() {
 							</div>
 							<div class="text-xs text-[var(--muted)]" style="line-height:1.6;">
 								<strong style="color:var(--text);">Installation:</strong><br/>
-								<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">npm install -g @anthropic/qmd</code>
-								<span style="margin:0 4px;">or</span>
-								<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">bun install -g @anthropic/qmd</code>
+									<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">npm install -g @tobilu/qmd</code>
+									<span style="margin:0 4px;">or</span>
+									<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">bun install -g @tobilu/qmd</code>
 								<br/><br/>
 								Then start the QMD daemon:
 								<code style="display:block;margin-top:4px;font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">qmd daemon</code>
 								<br/>
-								<a href="https://github.com/anthropics/qmd" target="_blank" rel="noopener"
-									style="color:var(--accent);">View documentation \u2192</a>
+									<a href="https://github.com/tobi/qmd" target="_blank" rel="noopener"
+										style="color:var(--accent);">View documentation \u2192</a>
 							</div>
 						`
 						}
