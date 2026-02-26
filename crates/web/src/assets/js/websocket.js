@@ -1071,6 +1071,10 @@ function handleLocationRequest(payload) {
 	);
 }
 
+function handleNetworkAuditEntry(payload) {
+	if (S.networkAuditEventHandler) S.networkAuditEventHandler(payload);
+}
+
 function handleAuthCredentialsChanged(payload) {
 	if (payload?.reason === "password_changed" && window.__moltisSuppressNextPasswordChangedRedirect === true) {
 		window.__moltisSuppressNextPasswordChangedRedirect = false;
@@ -1094,6 +1098,7 @@ var eventHandlers = {
 	"local-llm.download": handleLocalLlmDownload,
 	"models.updated": handleModelsUpdated,
 	"location.request": handleLocationRequest,
+	"network.audit.entry": handleNetworkAuditEntry,
 };
 
 function dispatchFrame(frame) {

@@ -1519,6 +1519,12 @@ pub struct SandboxConfig {
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
+    /// Network policy: "blocked" (no network), "trusted" (proxy-filtered), "open" (unrestricted).
+    #[serde(default)]
+    pub network: String,
+    /// Domains allowed through the proxy in `trusted` mode.
+    #[serde(default)]
+    pub trusted_domains: Vec<String>,
     /// Backend: "auto" (default), "docker", or "apple-container".
     /// "auto" prefers Apple Container on macOS when available, falls back to Docker.
     pub backend: String,
@@ -1696,6 +1702,8 @@ impl Default for SandboxConfig {
             image: None,
             container_prefix: None,
             no_network: true,
+            network: String::new(),
+            trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimitsConfig::default(),
             packages: default_sandbox_packages(),

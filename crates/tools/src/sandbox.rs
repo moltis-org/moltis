@@ -433,6 +433,19 @@ pub struct ResourceLimits {
     pub pids_max: Option<u32>,
 }
 
+/// Network policy for sandboxed containers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkPolicy {
+    /// No network access (`--network=none`).
+    #[default]
+    Blocked,
+    /// Isolated network with HTTP CONNECT proxy filtering by domain allowlist.
+    Trusted,
+    /// Unrestricted network (default bridge).
+    Open,
+}
+
 /// Configuration for sandbox behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -445,6 +458,10 @@ pub struct SandboxConfig {
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
+    /// Network policy: `Blocked` (no network), `Trusted` (proxy-filtered), `Open` (unrestricted).
+    pub network: NetworkPolicy,
+    /// Domains allowed through the proxy in `Trusted` mode.
+    pub trusted_domains: Vec<String>,
     /// Backend: `"auto"` (default), `"docker"`, or `"apple-container"`.
     /// `"auto"` prefers Apple Container on macOS when available.
     pub backend: String,
@@ -466,6 +483,8 @@ impl Default for SandboxConfig {
             image: None,
             container_prefix: None,
             no_network: false,
+            network: NetworkPolicy::default(),
+            trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimits::default(),
             packages: Vec::new(),
@@ -496,6 +515,12 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             image: cfg.image.clone(),
             container_prefix: cfg.container_prefix.clone(),
             no_network: cfg.no_network,
+            network: match cfg.network.as_str() {
+                "trusted" => NetworkPolicy::Trusted,
+                "open" => NetworkPolicy::Open,
+                _ => NetworkPolicy::Blocked,
+            },
+            trusted_domains: cfg.trusted_domains.clone(),
             backend: cfg.backend.clone(),
             resource_limits: ResourceLimits {
                 memory_limit: cfg.resource_limits.memory_limit.clone(),

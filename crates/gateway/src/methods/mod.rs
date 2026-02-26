@@ -111,6 +111,9 @@ const READ_METHODS: &[&str] = &[
     "memory.config.get",
     "memory.qmd.status",
     "hooks.list",
+    "network.audit.list",
+    "network.audit.tail",
+    "network.audit.stats",
     "openclaw.detect",
     "openclaw.scan",
 ];

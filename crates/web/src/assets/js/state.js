@@ -88,6 +88,9 @@ export var sandboxInfo = null;
 
 // Logs
 export var logsEventHandler = null;
+
+// Network audit
+export var networkAuditEventHandler = null;
 export var unseenErrors = 0;
 export var unseenWarns = 0;
 
@@ -270,6 +273,9 @@ export function setChannelEventUnsub(v) {
 }
 export function setLogsEventHandler(v) {
 	logsEventHandler = v;
+}
+export function setNetworkAuditEventHandler(v) {
+	networkAuditEventHandler = v;
 }
 export function setUnseenErrors(v) {
 	unseenErrors = v;
