@@ -5771,7 +5771,6 @@ async fn run_with_tools(
                                 .await
                             {
                                 warn!("failed to persist tool result: {e}");
-                                return;
                             }
                         });
                     }
