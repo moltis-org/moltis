@@ -4,11 +4,13 @@
 //! bot connects, and dispatches interactions through the same `dispatch_command`
 //! path used by text-based `/` commands.
 
-use serenity::all::{
-    Command, CommandInteraction, Context, CreateCommand, CreateInteractionResponse,
-    CreateInteractionResponseMessage, Interaction,
+use {
+    serenity::all::{
+        Command, CommandInteraction, Context, CreateCommand, CreateInteractionResponse,
+        CreateInteractionResponseMessage, Interaction,
+    },
+    tracing::{debug, info, warn},
 };
-use tracing::{debug, info, warn};
 
 use crate::state::AccountStateMap;
 
@@ -39,10 +41,7 @@ pub async fn register_global_commands(ctx: &Context, account_id: &str) {
             );
         },
         Err(e) => {
-            warn!(
-                account_id,
-                "Failed to register Discord slash commands: {e}"
-            );
+            warn!(account_id, "Failed to register Discord slash commands: {e}");
         },
     }
 }
@@ -82,10 +81,7 @@ pub async fn handle_interaction(
         message_id: None,
     };
 
-    let response_text = match sink
-        .dispatch_command(&command.data.name, reply_to)
-        .await
-    {
+    let response_text = match sink.dispatch_command(&command.data.name, reply_to).await {
         Ok(response) => response,
         Err(e) => format!("Command failed: {e}"),
     };

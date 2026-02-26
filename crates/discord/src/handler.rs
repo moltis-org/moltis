@@ -333,9 +333,7 @@ impl EventHandler for Handler {
             if let Some(state) = accounts.get_mut(&self.account_id) {
                 state.bot_user_id = Some(ready.user.id);
             }
-            accounts
-                .get(&self.account_id)
-                .map(|s| s.config.clone())
+            accounts.get(&self.account_id).map(|s| s.config.clone())
         };
 
         // Set bot presence/activity if configured.
@@ -431,12 +429,21 @@ async fn handle_otp_flow(
                     .await;
                 }
 
-                let _ = send_discord_text_simple(ctx, channel_id, "Approved! You can now use this bot.").await;
+                let _ = send_discord_text_simple(
+                    ctx,
+                    channel_id,
+                    "Approved! You can now use this bot.",
+                )
+                .await;
             },
             OtpVerifyResult::WrongCode { attempts_left } => {
                 let msg = format!(
                     "Incorrect code. {attempts_left} attempt{} remaining.",
-                    if attempts_left == 1 { "" } else { "s" }
+                    if attempts_left == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
                 );
                 let _ = send_discord_text_simple(ctx, channel_id, &msg).await;
             },
@@ -765,18 +772,20 @@ mod tests {
     #[test]
     fn looks_like_otp_code_rejects_non_codes() {
         assert!(!looks_like_otp_code("hello"));
-        assert!(!looks_like_otp_code("12345"));    // too short
-        assert!(!looks_like_otp_code("1234567"));  // too long
-        assert!(!looks_like_otp_code("12345a"));   // not all digits
-        assert!(!looks_like_otp_code(""));          // empty
-        assert!(!looks_like_otp_code("abcdef"));   // no digits
-        assert!(!looks_like_otp_code("12 345"));   // space
+        assert!(!looks_like_otp_code("12345")); // too short
+        assert!(!looks_like_otp_code("1234567")); // too long
+        assert!(!looks_like_otp_code("12345a")); // not all digits
+        assert!(!looks_like_otp_code("")); // empty
+        assert!(!looks_like_otp_code("abcdef")); // no digits
+        assert!(!looks_like_otp_code("12 345")); // space
     }
 
     #[test]
     fn looks_like_otp_code_rejects_unicode_digits() {
         // Arabic-Indic digits (U+0660..U+0669) should not be accepted.
-        assert!(!looks_like_otp_code("\u{0660}\u{0661}\u{0662}\u{0663}\u{0664}\u{0665}"));
+        assert!(!looks_like_otp_code(
+            "\u{0660}\u{0661}\u{0662}\u{0663}\u{0664}\u{0665}"
+        ));
     }
 
     // ── OTP message security tests ───────────────────────────────────
@@ -808,7 +817,10 @@ mod tests {
             "OTP message should use Discord markdown, not HTML tags"
         );
         // Should use ** or nothing, but never HTML.
-        assert!(!msg.contains("</"), "OTP message contains HTML closing tags");
+        assert!(
+            !msg.contains("</"),
+            "OTP message contains HTML closing tags"
+        );
     }
 
     #[test]
@@ -858,10 +870,7 @@ mod tests {
 
     #[test]
     fn strip_mention_with_leading_whitespace() {
-        assert_eq!(
-            strip_bot_mention("  <@123> hello", 123),
-            "hello"
-        );
+        assert_eq!(strip_bot_mention("  <@123> hello", 123), "hello");
     }
 
     #[test]

@@ -305,8 +305,7 @@ mod tests {
         assert_eq!(cfg.otp_cooldown_secs, 600);
 
         // Round-trip: serialize and deserialize again.
-        let value =
-            serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
+        let value = serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
         let cfg2: DiscordAccountConfig =
             serde_json::from_value(value).unwrap_or_else(|e| panic!("re-parse failed: {e}"));
         assert_eq!(cfg2.activity.as_deref(), Some("with AI"));
@@ -323,8 +322,7 @@ mod tests {
             status: Some(OnlineStatus::Dnd),
             ..Default::default()
         };
-        let value =
-            serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
+        let value = serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
         assert_eq!(value["activity"], "testing");
         assert_eq!(value["activity_type"], "listening");
         assert_eq!(value["status"], "dnd");
@@ -333,8 +331,7 @@ mod tests {
     #[test]
     fn presence_fields_omitted_when_none() {
         let cfg = DiscordAccountConfig::default();
-        let value =
-            serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
+        let value = serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
         assert!(
             value.get("activity").is_none(),
             "activity should be omitted when None"
