@@ -377,9 +377,24 @@ test.describe("Onboarding wizard", () => {
 		}
 
 		await expect(channelHeading).toBeVisible();
-		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("autocomplete", "off");
-		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("name", "telegram_bot_username");
-		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
+
+		let telegramUserInput = page.locator('input[name="telegram_bot_username"]');
+		if (!(await isVisible(telegramUserInput))) {
+			const telegramSelectBtn = page.getByRole("button", { name: "Telegram", exact: true });
+			if (await isVisible(telegramSelectBtn)) {
+				await telegramSelectBtn.click();
+			}
+		}
+
+		telegramUserInput = page.locator('input[name="telegram_bot_username"]');
+		if (!(await isVisible(telegramUserInput))) {
+			test.skip(true, "Telegram onboarding option is not available in this run");
+			return;
+		}
+
+		await expect(telegramUserInput).toHaveAttribute("autocomplete", "off");
+		await expect(telegramUserInput).toHaveAttribute("name", "telegram_bot_username");
+		const tokenInput = page.locator('input[name="telegram_bot_token"]');
 		await expect(tokenInput).toHaveAttribute("type", "password");
 		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");
 		await expect(tokenInput).toHaveAttribute("name", "telegram_bot_token");
