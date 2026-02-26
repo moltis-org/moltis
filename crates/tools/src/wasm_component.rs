@@ -16,6 +16,10 @@ pub mod http_tool {
 
 #[cfg(feature = "wasm")]
 pub type PureToolValue = pure_tool::moltis::tool::types::ToolValue;
+#[cfg(feature = "wasm")]
+pub type PureToolResult = pure_tool::moltis::tool::types::ToolResult;
+#[cfg(feature = "wasm")]
+pub type PureToolError = pure_tool::moltis::tool::types::ToolError;
 
 #[cfg(feature = "wasm")]
 #[must_use]
