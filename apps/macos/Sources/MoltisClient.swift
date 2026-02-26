@@ -109,7 +109,9 @@ private func rustNetworkAuditCallbackHandler(eventJson: UnsafePointer<CChar>?) {
     ) else { return }
 
     DispatchQueue.main.async {
-        globalNetworkAuditStore?.push(
+        let entry = NetworkAuditEntry(
+            id: UUID(),
+            timestamp: Date(),
             domain: payload.domain,
             port: payload.port,
             networkProtocol: payload.networkProtocol,
@@ -118,6 +120,7 @@ private func rustNetworkAuditCallbackHandler(eventJson: UnsafePointer<CChar>?) {
             method: payload.method,
             url: payload.url
         )
+        globalNetworkAuditStore?.push(entry)
     }
 }
 

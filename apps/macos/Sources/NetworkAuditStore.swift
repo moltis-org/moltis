@@ -58,33 +58,11 @@ final class NetworkAuditStore: ObservableObject {
 
     // MARK: - Push
 
-    func push(
-        domain: String,
-        port: UInt16,
-        networkProtocol: String,
-        action: String,
-        source: String,
-        method: String?,
-        url: String?,
-        timestamp: Date = Date()
-    ) {
-        let entry = NetworkAuditEntry(
-            id: UUID(),
-            timestamp: timestamp,
-            domain: domain,
-            port: port,
-            networkProtocol: networkProtocol,
-            action: action,
-            source: source,
-            method: method,
-            url: url
-        )
-
+    func push(_ entry: NetworkAuditEntry) {
         if isPaused {
             pauseBuffer.append(entry)
             return
         }
-
         appendEntry(entry)
     }
 
