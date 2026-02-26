@@ -5,6 +5,7 @@ import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import * as S from "./state.js";
 import { ComboSelect } from "./ui.js";
 
@@ -74,11 +75,11 @@ function renderEntry(entry) {
 
 function levelFilterOptions() {
 	var options = [];
-	if (traceEnabled.value) options.push({ value: "trace", label: "TRACE" });
-	if (debugEnabled.value) options.push({ value: "debug", label: "DEBUG" });
-	options.push({ value: "info", label: "INFO" });
-	options.push({ value: "warn", label: "WARN" });
-	options.push({ value: "error", label: "ERROR" });
+	if (traceEnabled.value) options.push({ value: "trace", label: t("logs:levels.trace") });
+	if (debugEnabled.value) options.push({ value: "debug", label: t("logs:levels.debug") });
+	options.push({ value: "info", label: t("logs:levels.info") });
+	options.push({ value: "warn", label: t("logs:levels.warn") });
+	options.push({ value: "error", label: t("logs:levels.error") });
 	return options;
 }
 
@@ -104,16 +105,16 @@ function Toolbar() {
         onChange=${(value) => {
 					levelFilter.value = value;
 				}}
-        placeholder="All levels"
+        placeholder=${t("logs:toolbar.allLevels")}
         searchable=${false}
       />
     </div>
-    <input ref=${targetRef} type="text" placeholder="Filter target\u2026"
+    <input ref=${targetRef} type="text" placeholder=${t("logs:toolbar.filterTarget")}
       class="logs-input" style="width:140px;"
       onInput=${debouncedUpdate((v) => {
 				targetFilter.value = v;
 			}, targetRef)} />
-    <input ref=${searchRef} type="text" placeholder="Search\u2026"
+    <input ref=${searchRef} type="text" placeholder=${t("common:actions.search")}
       class="logs-input" style="width:160px;"
       onInput=${debouncedUpdate((v) => {
 				searchFilter.value = v;
@@ -122,16 +123,16 @@ function Toolbar() {
 			paused.value = !paused.value;
 		}}
       style=${paused.value ? "border-color:var(--warn);" : ""}>
-      ${paused.value ? "Resume" : "Pause"}
+      ${paused.value ? t("logs:toolbar.resume") : t("logs:toolbar.pause")}
     </button>
     <button class="logs-btn" onClick=${() => {
 			var area = document.getElementById("logsArea");
 			if (area) area.textContent = "";
 			entryCount.value = 0;
-		}}>Clear</button>
+		}}>${t("logs:toolbar.clear")}</button>
     <a href="/api/logs/download" class="logs-btn" download="moltis-logs.jsonl"
-      style="text-decoration:none;text-align:center;">Download</a>
-    <span class="logs-count">${entryCount.value} entries</span>
+      style="text-decoration:none;text-align:center;">${t("logs:toolbar.download")}</a>
+    <span class="logs-count">${entryCount.value} ${t("logs:toolbar.entries")}</span>
   </div>`;
 }
 

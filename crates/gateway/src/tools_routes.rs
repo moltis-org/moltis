@@ -8,6 +8,21 @@
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 
+const CONFIG_AUTH_REQUIRED: &str = "CONFIG_AUTH_REQUIRED";
+const CONFIG_READ_FAILED: &str = "CONFIG_READ_FAILED";
+const CONFIG_TOML_REQUIRED: &str = "CONFIG_TOML_REQUIRED";
+const CONFIG_INVALID_TOML: &str = "CONFIG_INVALID_TOML";
+const CONFIG_SAVE_FAILED: &str = "CONFIG_SAVE_FAILED";
+const CONFIG_RESTART_INVALID: &str = "CONFIG_RESTART_INVALID";
+const CONFIG_RESTART_READ_FAILED: &str = "CONFIG_RESTART_READ_FAILED";
+
+fn config_error(code: &str, error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
+        "error": error.into(),
+    })
+}
+
 /// Check if the request should be allowed for config operations.
 ///
 /// Config endpoints are ONLY allowed when:
@@ -56,9 +71,10 @@ async fn require_config_access(state: &crate::server::AppState) -> Result<(), im
             // but we should not expose config in this case
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(serde_json::json!({
-                    "error": "Config access requires authentication on non-localhost connections"
-                })),
+                Json(config_error(
+                    CONFIG_AUTH_REQUIRED,
+                    "Config access requires authentication on non-localhost connections",
+                )),
             ));
         }
     }
@@ -82,7 +98,10 @@ pub async fn config_get(State(state): State<crate::server::AppState>) -> impl In
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": format!("failed to read config: {e}") })),
+                    Json(config_error(
+                        CONFIG_READ_FAILED,
+                        format!("failed to read config: {e}"),
+                    )),
                 )
                     .into_response();
             },
@@ -113,7 +132,7 @@ pub async fn config_validate(
     let Some(toml_str) = body.get("toml").and_then(|v| v.as_str()) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "missing 'toml' field" })),
+            Json(config_error(CONFIG_TOML_REQUIRED, "missing 'toml' field")),
         )
             .into_response();
     };
@@ -134,6 +153,7 @@ pub async fn config_validate(
             // Parse error message to extract line/column if available
             let error_msg = e.to_string();
             Json(serde_json::json!({
+                "code": CONFIG_INVALID_TOML,
                 "valid": false,
                 "error": error_msg,
             }))
@@ -173,7 +193,7 @@ pub async fn config_save(
     let Some(toml_str) = body.get("toml").and_then(|v| v.as_str()) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "missing 'toml' field" })),
+            Json(config_error(CONFIG_TOML_REQUIRED, "missing 'toml' field")),
         )
             .into_response();
     };
@@ -183,6 +203,7 @@ pub async fn config_save(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
+                "code": CONFIG_INVALID_TOML,
                 "error": format!("invalid TOML: {e}"),
                 "valid": false,
             })),
@@ -202,7 +223,10 @@ pub async fn config_save(
         },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("failed to save config: {e}") })),
+            Json(config_error(
+                CONFIG_SAVE_FAILED,
+                format!("failed to save config: {e}"),
+            )),
         )
             .into_response(),
     }
@@ -235,6 +259,7 @@ pub async fn restart(State(state): State<crate::server::AppState>) -> impl IntoR
                     return (
                         StatusCode::BAD_REQUEST,
                         Json(serde_json::json!({
+                            "code": CONFIG_RESTART_INVALID,
                             "error": format!("Config is invalid, refusing to restart: {e}"),
                             "valid": false,
                         })),
@@ -250,9 +275,10 @@ pub async fn restart(State(state): State<crate::server::AppState>) -> impl IntoR
                 );
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": format!("Cannot read config file: {e}"),
-                    })),
+                    Json(config_error(
+                        CONFIG_RESTART_READ_FAILED,
+                        format!("Cannot read config file: {e}"),
+                    )),
                 )
                     .into_response();
             },

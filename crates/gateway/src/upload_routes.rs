@@ -34,6 +34,18 @@ pub struct UploadQuery {
 
 /// Maximum upload size: 25 MB (also used as the route-level body limit).
 pub const MAX_UPLOAD_SIZE: usize = 25 * 1024 * 1024;
+const UPLOAD_EMPTY_BODY: &str = "UPLOAD_EMPTY_BODY";
+const UPLOAD_BODY_TOO_LARGE: &str = "UPLOAD_BODY_TOO_LARGE";
+const UPLOAD_SESSION_STORE_UNAVAILABLE: &str = "UPLOAD_SESSION_STORE_UNAVAILABLE";
+const UPLOAD_SAVE_FAILED: &str = "UPLOAD_SAVE_FAILED";
+
+fn upload_error(code: &str, error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "ok": false,
+        "code": code,
+        "error": error.into()
+    })
+}
 
 /// `POST /api/sessions/{session_key}/upload`
 ///
@@ -50,7 +62,7 @@ pub async fn session_upload(
     if body.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": "empty body" })),
+            Json(upload_error(UPLOAD_EMPTY_BODY, "empty body")),
         )
             .into_response();
     }
@@ -59,10 +71,13 @@ pub async fn session_upload(
     if body.len() > MAX_UPLOAD_SIZE {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
-            Json(serde_json::json!({
-                "ok": false,
-                "error": format!("body exceeds maximum upload size ({} bytes)", MAX_UPLOAD_SIZE),
-            })),
+            Json(upload_error(
+                UPLOAD_BODY_TOO_LARGE,
+                format!(
+                    "body exceeds maximum upload size ({} bytes)",
+                    MAX_UPLOAD_SIZE
+                ),
+            )),
         )
             .into_response();
     }
@@ -100,7 +115,10 @@ pub async fn session_upload(
     let Some(ref store) = state.gateway.services.session_store else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "ok": false, "error": "session store not available" })),
+            Json(upload_error(
+                UPLOAD_SESSION_STORE_UNAVAILABLE,
+                "session store not available",
+            )),
         )
             .into_response();
     };
@@ -111,7 +129,10 @@ pub async fn session_upload(
         warn!(session_key, filename, error = %e, "failed to save uploaded media");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "ok": false, "error": format!("failed to save file: {e}") })),
+            Json(upload_error(
+                UPLOAD_SAVE_FAILED,
+                format!("failed to save file: {e}"),
+            )),
         )
             .into_response();
     }

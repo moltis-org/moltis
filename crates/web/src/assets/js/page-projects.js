@@ -5,6 +5,7 @@ import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { fetchProjects } from "./projects.js";
 import { registerPage } from "./router.js";
 import { routes } from "./routes.js";
@@ -49,10 +50,10 @@ function PathInput(props) {
 	}
 
 	return html`<div class="project-dir-group">
-    <div class="text-xs text-[var(--muted)] mb-1">Directory</div>
+    <div class="text-xs text-[var(--muted)] mb-1">${t("projects:pathInput.directory")}</div>
     <div class="flex gap-2 items-center">
     <input ref=${inputRef} type="text" class="provider-key-input flex-1"
-      placeholder="/path/to/project" style="font-family:var(--font-mono);"
+      placeholder=${t("projects:pathInput.placeholder")} style="font-family:var(--font-mono);"
       onInput=${onInput} />
     <button class="provider-btn"
       onClick=${() => {
@@ -61,7 +62,7 @@ function PathInput(props) {
 				props.onAdd(dir).then(() => {
 					if (inputRef.current) inputRef.current.value = "";
 				});
-			}}>Add</button>
+			}}>${t("common:actions.add")}</button>
     </div>
     ${
 			completions.value.length > 0 &&
@@ -133,21 +134,21 @@ function ProjectEditForm(props) {
 	}
 
 	return html`<div class="project-edit-form">
-    ${field("Label", labelRef, p.label, "Project name")}
-    ${field("Directory", dirRef, p.directory, "/path/to/project", true)}
+    ${field(t("projects:editForm.label"), labelRef, p.label, t("projects:editForm.labelPlaceholder"))}
+    ${field(t("projects:editForm.directory"), dirRef, p.directory, t("projects:editForm.directoryPlaceholder"), true)}
     <div class="project-edit-group">
-      <div class="text-xs text-[var(--muted)] project-edit-label">System prompt (optional)</div>
+      <div class="text-xs text-[var(--muted)] project-edit-label">${t("projects:editForm.systemPrompt")}</div>
       <textarea ref=${promptRef} class="provider-key-input"
-        placeholder="Extra instructions for the LLM when working on this project..."
+        placeholder=${t("projects:editForm.systemPromptPlaceholder")}
         style="width:100%;min-height:60px;resize-y;font-size:.8rem;">${p.system_prompt || ""}</textarea>
     </div>
-    ${field("Setup command", setupRef, p.setup_command, "e.g. pnpm install", true)}
-    ${field("Teardown command", teardownRef, p.teardown_command, "e.g. docker compose down", true)}
-    ${field("Branch prefix", prefixRef, p.branch_prefix, "default: moltis", true)}
+    ${field(t("projects:editForm.setupCommand"), setupRef, p.setup_command, t("projects:editForm.setupCommandPlaceholder"), true)}
+    ${field(t("projects:editForm.teardownCommand"), teardownRef, p.teardown_command, t("projects:editForm.teardownCommandPlaceholder"), true)}
+    ${field(t("projects:editForm.branchPrefix"), prefixRef, p.branch_prefix, t("projects:editForm.branchPrefixPlaceholder"), true)}
     <div class="project-edit-group">
-      <div class="text-xs text-[var(--muted)] project-edit-label">Sandbox image</div>
+      <div class="text-xs text-[var(--muted)] project-edit-label">${t("projects:editForm.sandboxImage")}</div>
       <input ref=${imageRef} type="text" class="provider-key-input" list="project-image-list"
-        value=${p.sandbox_image || ""} placeholder="Default (ubuntu:25.10)"
+        value=${p.sandbox_image || ""} placeholder=${t("projects:editForm.sandboxImagePlaceholder")}
         style="width:100%;font-family:var(--font-mono);font-size:.8rem;" />
       <datalist id="project-image-list">
         ${cachedImages.value.map((img) => html`<option key=${img.tag} value=${img.tag} />`)}
@@ -155,13 +156,13 @@ function ProjectEditForm(props) {
     </div>
     <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px;">
       <input ref=${wtRef} type="checkbox" checked=${p.auto_worktree} />
-      <span class="text-xs text-[var(--text)]">Auto-create git worktree per session</span>
+      <span class="text-xs text-[var(--text)]">${t("projects:editForm.autoWorktree")}</span>
     </div>
     <div style="display:flex;gap:8px;">
-      <button class="provider-btn" onClick=${onSave}>Save</button>
+      <button class="provider-btn" onClick=${onSave}>${t("common:actions.save")}</button>
       <button class="provider-btn provider-btn-secondary" onClick=${() => {
 				editingProject.value = null;
-			}}>Cancel</button>
+			}}>${t("common:actions.cancel")}</button>
     </div>
   </div>`;
 }
@@ -177,12 +178,12 @@ function ProjectCard(props) {
     <div style="flex:1;min-width:0;">
       <div class="flex items-center gap-2">
         <div class="provider-item-name">${p.label || p.id}</div>
-        ${p.detected && html`<span class="provider-item-badge api-key">auto</span>`}
-        ${p.auto_worktree && html`<span class="provider-item-badge oauth">worktree</span>`}
-        ${p.setup_command && html`<span class="provider-item-badge api-key">setup</span>`}
-        ${p.teardown_command && html`<span class="provider-item-badge api-key">teardown</span>`}
+        ${p.detected && html`<span class="provider-item-badge api-key">${t("projects:badges.auto")}</span>`}
+        ${p.auto_worktree && html`<span class="provider-item-badge oauth">${t("projects:badges.worktree")}</span>`}
+        ${p.setup_command && html`<span class="provider-item-badge api-key">${t("projects:badges.setup")}</span>`}
+        ${p.teardown_command && html`<span class="provider-item-badge api-key">${t("projects:badges.teardown")}</span>`}
         ${p.branch_prefix && html`<span class="provider-item-badge oauth">${p.branch_prefix}/*</span>`}
-        ${p.sandbox_image && html`<span class="provider-item-badge api-key" title=${p.sandbox_image}>image</span>`}
+        ${p.sandbox_image && html`<span class="provider-item-badge api-key" title=${p.sandbox_image}>${t("projects:badges.image")}</span>`}
       </div>
       <div style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">
         ${p.directory}
@@ -190,15 +191,15 @@ function ProjectCard(props) {
       ${
 				p.system_prompt &&
 				html`<div style="font-size:.7rem;color:var(--muted);margin-top:2px;font-style:italic;">
-        System prompt: ${p.system_prompt.substring(0, 80)}${p.system_prompt.length > 80 ? "..." : ""}
+        ${t("projects:card.systemPromptPrefix")}${p.system_prompt.substring(0, 80)}${p.system_prompt.length > 80 ? "..." : ""}
       </div>`
 			}
     </div>
     <div style="display:flex;gap:4px;flex-shrink:0;">
-      <button class="session-action-btn" title="Edit project" onClick=${() => {
+      <button class="session-action-btn" title=${t("projects:card.editProject")} onClick=${() => {
 				editingProject.value = p.id;
-			}}>edit</button>
-      <button class="session-action-btn session-delete" title="Remove project" onClick=${onDelete}>x</button>
+			}}>${t("projects:card.edit")}</button>
+      <button class="session-action-btn session-delete" title=${t("projects:card.removeProject")} onClick=${onDelete}>x</button>
     </div>
   </div>`;
 }
@@ -242,13 +243,10 @@ function ProjectsPage() {
 
 	function onClearAll() {
 		if (clearing.value) return;
-		requestConfirm(
-			"Clear all repositories from Moltis? This only removes them from the list and does not delete files on disk.",
-			{
-				confirmLabel: "Clear all",
-				danger: true,
-			},
-		).then((yes) => {
+		requestConfirm(t("projects:confirmClearAll"), {
+			confirmLabel: t("projects:confirmClearAllButton"),
+			danger: true,
+		}).then((yes) => {
 			if (!yes) return;
 			var ids = projectsSig.value.map((p) => p.id);
 			if (ids.length === 0) return;
@@ -271,19 +269,19 @@ function ProjectsPage() {
 	return html`
     <div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
       <div class="flex items-center gap-3">
-        <h2 class="text-lg font-medium text-[var(--text-strong)]">Repositories</h2>
+        <h2 class="text-lg font-medium text-[var(--text-strong)]">${t("projects:title")}</h2>
         <button class="provider-btn provider-btn-secondary"
           onClick=${onDetect} disabled=${detecting.value}
-          title="Scan common locations for git repositories and add them as projects">
-          ${detecting.value ? "Detecting\u2026" : "Auto-detect"}
+          title=${t("projects:autoDetectTooltip")}>
+          ${detecting.value ? t("projects:detecting") : t("projects:autoDetect")}
         </button>
         <button
           class="provider-btn provider-btn-danger"
           onClick=${onClearAll}
           disabled=${clearDisabled}
-          title="Remove all repository entries from Moltis without deleting files on disk"
+          title=${t("projects:clearAllTooltip")}
         >
-          ${clearing.value ? "Clearing\u2026" : "Clear All"}
+          ${clearing.value ? t("projects:clearing") : t("projects:clearAll")}
         </button>
       </div>
       <p class="text-xs text-[var(--muted)] max-w-form">

@@ -166,7 +166,7 @@ export function setAll(serverSessions) {
  * Reuses existing instance when present; creates and appends when missing.
  */
 export function upsert(serverData) {
-	if (!(serverData && serverData.key)) return null;
+	if (!serverData?.key) return null;
 	var prev = getByKey(serverData.key);
 	if (prev) {
 		prev.update(serverData);

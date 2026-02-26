@@ -1,6 +1,7 @@
 // ── Session project combo (in chat header) ──────────────────
 
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import * as S from "./state.js";
 
 export function openProjectDropdown() {
@@ -22,10 +23,10 @@ export function renderProjectDropdownList() {
 	none.className = `model-dropdown-item${S.activeProjectId ? "" : " selected"}`;
 	var noneLabel = document.createElement("span");
 	noneLabel.className = "model-item-label";
-	noneLabel.textContent = "No project";
+	noneLabel.textContent = t("common:sessions.noProject");
 	none.appendChild(noneLabel);
 	none.addEventListener("click", () => {
-		selectProject("", "No project");
+		selectProject("", t("common:sessions.noProject"));
 	});
 	S.projectDropdownList.appendChild(none);
 	(S.projects || []).forEach((p) => {
@@ -55,7 +56,7 @@ export function selectProject(id, label) {
 export function updateSessionProjectSelect(projectId) {
 	if (!S.projectComboLabel) return;
 	if (!projectId) {
-		S.projectComboLabel.textContent = "No project";
+		S.projectComboLabel.textContent = t("common:sessions.noProject");
 		return;
 	}
 	var proj = (S.projects || []).find((p) => p.id === projectId);
@@ -80,5 +81,12 @@ export function bindProjectComboEvents() {
 document.addEventListener("click", (e) => {
 	if (S.projectCombo && !S.projectCombo.contains(e.target)) {
 		closeProjectDropdown();
+	}
+});
+
+window.addEventListener("moltis:locale-changed", () => {
+	updateSessionProjectSelect(S.activeProjectId);
+	if (S.projectDropdown && !S.projectDropdown.classList.contains("hidden")) {
+		renderProjectDropdownList();
 	}
 });
