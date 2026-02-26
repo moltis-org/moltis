@@ -7062,45 +7062,43 @@ async fn deliver_channel_replies_to_targets(
                 },
                 moltis_channels::ChannelType::MsTeams
                 | moltis_channels::ChannelType::Discord
-                | moltis_channels::ChannelType::Whatsapp => {
-                    match tts_payload {
-                        Some(payload) => {
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
+                | moltis_channels::ChannelType::Whatsapp => match tts_payload {
+                    Some(payload) => {
+                        if let Err(e) = outbound
+                            .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
+                            .await
+                        {
+                            warn!(
+                                account_id = target.account_id,
+                                chat_id = target.chat_id,
+                                "failed to send channel voice reply: {e}"
+                            );
+                        }
+                    },
+                    None => {
+                        let result = if logbook_html.is_empty() {
+                            outbound
+                                .send_text(&target.account_id, &target.chat_id, &text, reply_to)
                                 .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
-                        },
-                        None => {
-                            let result = if logbook_html.is_empty() {
-                                outbound
-                                    .send_text(&target.account_id, &target.chat_id, &text, reply_to)
-                                    .await
-                            } else {
-                                outbound
-                                    .send_text_with_suffix(
-                                        &target.account_id,
-                                        &target.chat_id,
-                                        &text,
-                                        &logbook_html,
-                                        reply_to,
-                                    )
-                                    .await
-                            };
-                            if let Err(e) = result {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    "failed to send channel reply: {e}"
-                                );
-                            }
-                        },
-                    }
+                        } else {
+                            outbound
+                                .send_text_with_suffix(
+                                    &target.account_id,
+                                    &target.chat_id,
+                                    &text,
+                                    &logbook_html,
+                                    reply_to,
+                                )
+                                .await
+                        };
+                        if let Err(e) = result {
+                            warn!(
+                                account_id = target.account_id,
+                                chat_id = target.chat_id,
+                                "failed to send channel reply: {e}"
+                            );
+                        }
+                    },
                 },
             }
         }));

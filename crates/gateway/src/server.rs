@@ -2320,7 +2320,6 @@ pub async fn prepare_gateway(
             }
         }
 
-
         // Load persisted channels that were not started from config.
         match channel_store.list().await {
             Ok(stored) => {
