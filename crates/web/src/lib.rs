@@ -82,6 +82,10 @@ fn build_api_routes() -> Router<AppState> {
             get(api::api_get_default_image_handler).put(api::api_set_default_image_handler),
         )
         .route(
+            "/api/sandbox/shared-home",
+            get(api::api_get_shared_home_handler).put(api::api_set_shared_home_handler),
+        )
+        .route(
             "/api/sandbox/containers",
             get(api::api_list_containers_handler),
         )

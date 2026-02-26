@@ -234,6 +234,7 @@ Exact commands (must match `local-validate.sh`):
 - Fmt: `cargo +nightly-2025-11-30 fmt --all -- --check`
 - Clippy: `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`
 - macOS without `nvcc`: clippy without `--all-features`
+- macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate build`
 
 ### PR Descriptions
 

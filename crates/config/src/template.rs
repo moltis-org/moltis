@@ -234,6 +234,7 @@ home_persistence = "shared"       # Persist /home/sandbox across container recre
                                   #   "off"     - Ephemeral home
                                   #   "session" - Per-session persisted home
                                   #   "shared"  - One shared persisted home (default)
+# shared_home_dir = "/path/to/shared-home"  # Host dir for shared persistence (default: data_dir()/sandbox/home/shared)
 backend = "auto"                  # Container backend:
                                   #   "auto"            - Auto-detect (prefers Apple Container on macOS)
                                   #   "docker"          - Use Docker

@@ -1,0 +1,69 @@
+name: Moltis
+options:
+  minimumXcodeGenVersion: 2.42.0
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    HEADER_SEARCH_PATHS:
+      - "$(inherited)"
+      - "$(SRCROOT)/Generated"
+    LIBRARY_SEARCH_PATHS:
+      - "$(inherited)"
+      - "$(SRCROOT)/Generated"
+
+packages: {}
+
+targets:
+  Moltis:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.moltis.app
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_EMIT_LOC_STRINGS: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridging-Header.h
+        OTHER_LDFLAGS:
+          - "-lmoltis_bridge"
+          - "-lsqlite3"
+          - "-lz"
+          - "-lc++"
+          - "-framework"
+          - "Accelerate"
+          - "-framework"
+          - "SystemConfiguration"
+          - "-framework"
+          - "Security"
+          - "-framework"
+          - "CoreFoundation"
+          - "-framework"
+          - "IOKit"
+          - "-framework"
+          - "CoreServices"
+    scheme:
+      testTargets:
+        - MoltisTests
+
+  MoltisTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: Moltis
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.moltis.app.tests
+        GENERATE_INFOPLIST_FILE: YES

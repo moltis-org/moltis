@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use {
     anyhow::Result,
@@ -442,6 +446,9 @@ pub struct SandboxConfig {
     pub workspace_mount: WorkspaceMount,
     /// Persistence strategy for `/home/sandbox`.
     pub home_persistence: HomePersistence,
+    /// Host directory used for shared `/home/sandbox` persistence.
+    /// Relative paths are resolved against `data_dir()`.
+    pub shared_home_dir: Option<PathBuf>,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
@@ -463,6 +470,7 @@ impl Default for SandboxConfig {
             scope: SandboxScope::default(),
             workspace_mount: WorkspaceMount::default(),
             home_persistence: HomePersistence::default(),
+            shared_home_dir: None,
             image: None,
             container_prefix: None,
             no_network: false,
@@ -493,6 +501,12 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 _ => WorkspaceMount::Ro,
             },
             home_persistence: HomePersistence::from(&cfg.home_persistence),
+            shared_home_dir: cfg
+                .shared_home_dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from),
             image: cfg.image.clone(),
             container_prefix: cfg.container_prefix.clone(),
             no_network: cfg.no_network,
@@ -601,11 +615,34 @@ fn sandbox_home_persistence_base_dir() -> PathBuf {
     moltis_config::data_dir().join("sandbox").join("home")
 }
 
+fn default_shared_home_dir() -> PathBuf {
+    sandbox_home_persistence_base_dir().join("shared")
+}
+
+fn resolve_shared_home_dir(config: &SandboxConfig) -> PathBuf {
+    let Some(path) = config
+        .shared_home_dir
+        .as_ref()
+        .filter(|path| !path.as_os_str().is_empty())
+    else {
+        return default_shared_home_dir();
+    };
+    if path.is_absolute() {
+        return path.clone();
+    }
+    moltis_config::data_dir().join(path)
+}
+
+/// Effective host path used when shared home persistence is enabled.
+pub fn shared_home_dir_path(config: &SandboxConfig) -> PathBuf {
+    resolve_shared_home_dir(config)
+}
+
 fn sandbox_home_persistence_host_dir(config: &SandboxConfig, id: &SandboxId) -> Option<PathBuf> {
     let base = sandbox_home_persistence_base_dir();
     match config.home_persistence {
         HomePersistence::Off => None,
-        HomePersistence::Shared => Some(base.join("shared")),
+        HomePersistence::Shared => Some(resolve_shared_home_dir(config)),
         HomePersistence::Session => {
             Some(base.join("session").join(sanitize_path_component(&id.key)))
         },
@@ -749,7 +786,7 @@ pub struct SandboxImage {
 /// List all local `<instance>-sandbox:*` images across available container CLIs.
 pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
     let mut images = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
 
     // Docker: supports --format with Go templates.
     if is_cli_available("docker") {
@@ -936,9 +973,8 @@ pub struct RunningContainer {
 /// runtime. These ghosts appear in `container list` after a failed
 /// `container rm -f` and cannot be deleted until the daemon restarts.
 /// Filtering them out of list results gives the UI a consistent view.
-static ZOMBIE_CONTAINERS: std::sync::LazyLock<
-    std::sync::RwLock<std::collections::HashSet<String>>,
-> = std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashSet::new()));
+static ZOMBIE_CONTAINERS: std::sync::LazyLock<std::sync::RwLock<HashSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(HashSet::new()));
 
 fn mark_zombie(name: &str) {
     if let Ok(mut set) = ZOMBIE_CONTAINERS.write() {
@@ -971,7 +1007,7 @@ fn is_zombie(name: &str) -> bool {
 /// merging results with the appropriate backend label.
 pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<RunningContainer>> {
     let mut containers = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
 
     // Apple Container: `container list --format json` outputs a JSON array.
     // Each element has nested fields: configuration.id, status,
@@ -3156,6 +3192,25 @@ fn is_cli_available(name: &str) -> bool {
 /// Events emitted by the sandbox subsystem for UI feedback.
 #[derive(Debug, Clone)]
 pub enum SandboxEvent {
+    /// First-run container/image setup is about to begin for a session.
+    Preparing {
+        session_key: String,
+        backend: String,
+        image: String,
+    },
+    /// First-run container/image setup completed for a session.
+    Prepared {
+        session_key: String,
+        backend: String,
+        image: String,
+    },
+    /// First-run container/image setup failed for a session.
+    PrepareFailed {
+        session_key: String,
+        backend: String,
+        image: String,
+        error: String,
+    },
     /// Package provisioning started (Apple Container per-container install).
     Provisioning {
         container: String,
@@ -3177,8 +3232,11 @@ pub struct SandboxRouter {
     image_overrides: RwLock<HashMap<String, String>>,
     /// Runtime override for the global default image (set via API, persisted externally).
     global_image_override: RwLock<Option<String>>,
-    /// Event channel for sandbox events (provision start/done/error).
+    /// Event channel for sandbox lifecycle events (prepare/provision/build feedback).
     event_tx: tokio::sync::broadcast::Sender<SandboxEvent>,
+    /// Session keys that have already completed sandbox initialization.
+    /// Used to avoid repeating first-run preparation banners on every command.
+    prepared_sessions: RwLock<HashSet<String>>,
     /// Whether a sandbox image pre-build is currently in progress.
     /// Used by the gateway to show a banner in the UI.
     pub building_flag: std::sync::atomic::AtomicBool,
@@ -3197,6 +3255,7 @@ impl SandboxRouter {
             image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
+            prepared_sessions: RwLock::new(HashSet::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -3211,11 +3270,12 @@ impl SandboxRouter {
             image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
+            prepared_sessions: RwLock::new(HashSet::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    /// Subscribe to sandbox events (provision start/done/error).
+    /// Subscribe to sandbox lifecycle events.
     pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<SandboxEvent> {
         self.event_tx.subscribe()
     }
@@ -3223,6 +3283,20 @@ impl SandboxRouter {
     /// Emit a sandbox event. Silently drops if no subscribers.
     pub fn emit_event(&self, event: SandboxEvent) {
         let _ = self.event_tx.send(event);
+    }
+
+    /// Mark a session as preparing for sandbox first-run work.
+    /// Returns `true` only the first time for a session key.
+    pub async fn mark_preparing_once(&self, session_key: &str) -> bool {
+        self.prepared_sessions
+            .write()
+            .await
+            .insert(session_key.to_string())
+    }
+
+    /// Clear preparation marker for a session (used on cleanup or prepare failure).
+    pub async fn clear_prepared_session(&self, session_key: &str) {
+        self.prepared_sessions.write().await.remove(session_key);
     }
 
     /// Check whether a session should run sandboxed.
@@ -3280,6 +3354,7 @@ impl SandboxRouter {
         let id = self.sandbox_id_for(session_key);
         self.backend.cleanup(&id).await?;
         self.remove_override(session_key).await;
+        self.clear_prepared_session(session_key).await;
         Ok(())
     }
 
@@ -3573,6 +3648,43 @@ mod tests {
             .join("sandbox")
             .join("home")
             .join("shared");
+        let expected_volume = format!("{}:/home/sandbox:rw", expected_host_dir.display());
+        assert_eq!(args[1], expected_volume);
+    }
+
+    #[test]
+    fn test_docker_home_persistence_args_custom_shared_absolute_path() {
+        let config = SandboxConfig {
+            shared_home_dir: Some(PathBuf::from("/tmp/moltis-shared-home")),
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "sess-1".into(),
+        };
+        let args = docker.home_persistence_args(&id).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "-v");
+        let expected_volume = "/tmp/moltis-shared-home:/home/sandbox:rw".to_string();
+        assert_eq!(args[1], expected_volume);
+    }
+
+    #[test]
+    fn test_docker_home_persistence_args_custom_shared_relative_path() {
+        let config = SandboxConfig {
+            shared_home_dir: Some(PathBuf::from("sandbox/custom-shared")),
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "sess-1".into(),
+        };
+        let args = docker.home_persistence_args(&id).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "-v");
+        let expected_host_dir = moltis_config::data_dir().join("sandbox/custom-shared");
         let expected_volume = format!("{}:/home/sandbox:rw", expected_host_dir.display());
         assert_eq!(args[1], expected_volume);
     }
@@ -4003,6 +4115,11 @@ mod tests {
             },
             _ => panic!("unexpected event variant"),
         }
+
+        assert!(router.mark_preparing_once("main").await);
+        assert!(!router.mark_preparing_once("main").await);
+        router.clear_prepared_session("main").await;
+        assert!(router.mark_preparing_once("main").await);
     }
 
     #[tokio::test]

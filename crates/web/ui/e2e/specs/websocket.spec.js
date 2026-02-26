@@ -55,6 +55,51 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("chat.clear emits session patched event", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const events = await import(`${prefix}js/events.js`);
+
+			window.__sessionWsEvents = [];
+			if (window.__sessionWsEventsOff) {
+				window.__sessionWsEventsOff();
+			}
+			window.__sessionWsEventsOff = events.onEvent("session", (payload) => {
+				window.__sessionWsEvents.push(payload);
+			});
+		});
+
+		await expectRpcOk(page, "chat.clear", {});
+
+		await expect
+			.poll(
+				() =>
+					page.evaluate(
+						() =>
+							window.__sessionWsEvents.filter(
+								(payload) => payload?.kind === "patched" && payload?.sessionKey === "main",
+							).length,
+					),
+				{ timeout: 10_000 },
+			)
+			.toBeGreaterThan(0);
+
+		await page.evaluate(() => {
+			if (window.__sessionWsEventsOff) {
+				window.__sessionWsEventsOff();
+				window.__sessionWsEventsOff = null;
+			}
+		});
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("memory info updates from tick events", async ({ page }) => {
 		await page.goto("/");
 		await waitForWsConnected(page);

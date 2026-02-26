@@ -74,6 +74,7 @@ async fn start_auth_server_impl(
         18789,
         false,
         None,
+        None, // session_event_bus
         #[cfg(feature = "metrics")]
         None,
         #[cfg(feature = "metrics")]
@@ -142,6 +143,7 @@ async fn start_localhost_server_with_vault() -> (
         18789,
         false,
         None,
+        None, // session_event_bus
         #[cfg(feature = "metrics")]
         None,
         #[cfg(feature = "metrics")]

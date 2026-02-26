@@ -263,7 +263,7 @@ impl LiveOnboardingService {
 
     /// Read identity from the config file (for `agent.identity.get`).
     pub fn identity_get(&self) -> moltis_config::ResolvedIdentity {
-        if self.config_path.exists()
+        let id = if self.config_path.exists()
             && let Ok(cfg) = moltis_config::loader::load_config(&self.config_path)
         {
             info!(
@@ -272,57 +272,20 @@ impl LiveOnboardingService {
                 config_theme = ?cfg.identity.theme,
                 "identity_get: loaded config"
             );
-            let mut id = moltis_config::ResolvedIdentity::from_config(&cfg);
-            if let Some(file_identity) = moltis_config::load_identity() {
-                info!(
-                    file_name = ?file_identity.name,
-                    file_theme = ?file_identity.theme,
-                    "identity_get: loaded IDENTITY.md overlay"
-                );
-                if let Some(name) = file_identity.name {
-                    id.name = name;
-                }
-                if let Some(emoji) = file_identity.emoji {
-                    id.emoji = Some(emoji);
-                }
-                if let Some(theme) = file_identity.theme {
-                    id.theme = Some(theme);
-                }
-            }
-            if let Some(file_user) = moltis_config::load_user()
-                && let Some(name) = file_user.name
-            {
-                id.user_name = Some(name);
-            }
-            id.soul = moltis_config::load_soul();
+            moltis_config::resolve_identity_from_config(&cfg)
+        } else {
             info!(
-                resolved_name = %id.name,
-                resolved_theme = ?id.theme,
-                resolved_user_name = ?id.user_name,
-                "identity_get: final resolved identity"
+                config_path = %self.config_path.display(),
+                "identity_get: config not found, using defaults"
             );
-            return id;
-        }
-        info!(
-            config_path = %self.config_path.display(),
-            "identity_get: config not found, using defaults"
-        );
-        let mut id = moltis_config::ResolvedIdentity::default();
-        if let Some(file_identity) = moltis_config::load_identity() {
-            if let Some(name) = file_identity.name {
-                id.name = name;
-            }
-            id.emoji = file_identity.emoji;
-            id.theme = file_identity.theme;
-        }
-        if let Some(file_user) = moltis_config::load_user() {
-            id.user_name = file_user.name;
-        }
-        id.soul = moltis_config::load_soul();
+            moltis_config::resolve_identity_from_config(&MoltisConfig::default())
+        };
         info!(
             resolved_name = %id.name,
+            resolved_emoji = ?id.emoji,
             resolved_theme = ?id.theme,
-            "identity_get: final resolved identity (from defaults)"
+            resolved_user_name = ?id.user_name,
+            "identity_get: resolved identity"
         );
         id
     }

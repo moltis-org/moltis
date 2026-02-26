@@ -5,6 +5,7 @@ set -euo pipefail
 ACTIVE_PIDS=()
 CURRENT_PID=""
 RUN_CHECK_ASYNC_PID=""
+STATUS_PUBLISH_ENABLED=1
 
 remove_active_pid() {
   local target="$1"
@@ -15,7 +16,7 @@ remove_active_pid() {
       kept+=("$pid")
     fi
   done
-  if ((${#kept[@]} > 0)); then
+  if [[ "${#kept[@]}" -gt 0 ]]; then
     ACTIVE_PIDS=("${kept[@]}")
   else
     ACTIVE_PIDS=()
@@ -177,7 +178,8 @@ zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --m
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
-coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo llvm-cov --workspace --all-features --html}"
+coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
+macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate build}"
 
 strip_all_features_flag() {
   local cmd="$1"
@@ -196,7 +198,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
     test_cmd="cargo nextest run"
   fi
   if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
-    coverage_cmd="cargo llvm-cov --workspace --html"
+    coverage_cmd="cargo +${nightly_toolchain} llvm-cov --workspace --html"
   fi
   lint_cmd="$(strip_all_features_flag "$lint_cmd")"
   test_cmd="$(strip_all_features_flag "$test_cmd")"
@@ -247,12 +249,46 @@ repair_stale_llama_build_dirs() {
   shopt -u nullglob
 }
 
+cleanup_e2e_ports() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local port
+  for port in "${MOLTIS_E2E_PORT:-18789}" "${MOLTIS_E2E_ONBOARDING_PORT:-18790}"; do
+    local pids
+    pids="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -z "$pids" ]]; then
+      continue
+    fi
+
+    echo "Stopping stale process(es) on TCP ${port}: ${pids//$'\n'/ }"
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null || true
+    done <<<"$pids"
+
+    sleep 1
+
+    local remaining
+    remaining="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "$remaining" ]]; then
+      while IFS= read -r pid; do
+        [[ -n "$pid" ]] && kill -KILL "$pid" 2>/dev/null || true
+      done <<<"$remaining"
+    fi
+  done
+}
+
 set_status() {
   local state="$1"
   local context="$2"
   local description="$3"
 
   if [[ "$LOCAL_ONLY" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ "$STATUS_PUBLISH_ENABLED" -eq 0 ]]; then
     return 0
   fi
 
@@ -273,7 +309,9 @@ If this is an org with SSO enforcement, authorize the token for the org.
 If GH_TOKEN is set in your shell, try unsetting it to use your gh auth token:
   unset GH_TOKEN
 EOF
-    return 1
+    STATUS_PUBLISH_ENABLED=0
+    echo "Disabling further status publication for this run; continuing local checks." >&2
+    return 0
   fi
 }
 
@@ -419,8 +457,22 @@ run_check "local/lockfile" "cargo fetch --locked"
 run_check "local/lint" "$lint_cmd"
 run_check "local/test" "$test_cmd"
 
+# Native macOS app validation (macOS hosts only).
+if [[ "${LOCAL_VALIDATE_SKIP_MACOS_APP:-0}" != "1" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    run_check "local/macos-app" "$macos_app_cmd"
+  else
+    echo "Skipping macOS app checks (requires macOS host)."
+    set_status success "local/macos-app" "Skipped on non-macOS host"
+  fi
+else
+  echo "Skipping macOS app checks (LOCAL_VALIDATE_SKIP_MACOS_APP=1)."
+  set_status success "local/macos-app" "Skipped via LOCAL_VALIDATE_SKIP_MACOS_APP"
+fi
+
 # Gateway web UI e2e tests.
 if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" != "1" ]]; then
+  cleanup_e2e_ports
   run_check "local/e2e" "$e2e_cmd"
 else
   echo "Skipping E2E checks (LOCAL_VALIDATE_SKIP_E2E=1)."

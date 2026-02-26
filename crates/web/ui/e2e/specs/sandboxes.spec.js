@@ -40,6 +40,72 @@ test.describe("Sandboxes page – Image tag truncation", () => {
 	});
 });
 
+test.describe("Sandboxes page – Shared home settings", () => {
+	test("shows shared folder status and saves updates", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		let savedBody = null;
+
+		await page.route("**/api/sandbox/shared-home", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({
+						enabled: true,
+						mode: "shared",
+						path: "/tmp/moltis-shared",
+						configured_path: "/tmp/moltis-shared",
+					}),
+				});
+			}
+			if (request.method() === "PUT") {
+				savedBody = request.postDataJSON();
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({
+						ok: true,
+						restart_required: true,
+						config: {
+							enabled: false,
+							mode: "off",
+							path: "/tmp/moltis-new-shared",
+							configured_path: "/tmp/moltis-new-shared",
+						},
+					}),
+				});
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		const sharedHomeSection = page.locator("div.max-w-form", {
+			has: page.getByText("Shared home folder", { exact: true }),
+		});
+
+		await expect(sharedHomeSection.getByText("Shared home folder", { exact: true })).toBeVisible();
+		await expect(sharedHomeSection.getByLabel("Enable shared home folder")).toBeChecked();
+		await expect(sharedHomeSection.getByLabel("Shared folder location")).toHaveValue("/tmp/moltis-shared");
+
+		await sharedHomeSection.getByLabel("Enable shared home folder").uncheck();
+		await sharedHomeSection.getByLabel("Shared folder location").fill("/tmp/moltis-new-shared");
+		const saveResponse = page.waitForResponse(
+			(r) => r.url().includes("/api/sandbox/shared-home") && r.request().method() === "PUT" && r.status() === 200,
+		);
+		await sharedHomeSection.getByRole("button", { name: "Save", exact: true }).click();
+		await saveResponse;
+
+		expect(savedBody).toEqual({
+			enabled: false,
+			path: "/tmp/moltis-new-shared",
+		});
+		await expect(sharedHomeSection.getByText("Saved. Restart Moltis to apply shared folder changes.", { exact: true })).toBeVisible();
+		await expect(sharedHomeSection.getByText("disabled (off)")).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+});
+
 test.describe("Sandboxes page – Running Containers", () => {
 	test("running containers section renders with heading and refresh button", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);

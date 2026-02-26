@@ -9,6 +9,7 @@ pub mod error;
 pub mod key;
 pub mod message;
 pub mod metadata;
+pub mod session_events;
 pub mod state_store;
 pub mod store;
 

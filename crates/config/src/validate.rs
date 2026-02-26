@@ -133,6 +133,7 @@ fn build_schema_map() -> KnownKeys {
             ("scope", Leaf),
             ("workspace_mount", Leaf),
             ("home_persistence", Leaf),
+            ("shared_home_dir", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
@@ -330,6 +331,7 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("offered", Array(Box::new(Leaf))),
                 ("telegram", Map(Box::new(Leaf))),
+                ("whatsapp", Map(Box::new(Leaf))),
                 ("msteams", Map(Box::new(Leaf))),
                 ("discord", Map(Box::new(Leaf))),
             ])),
