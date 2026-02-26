@@ -65,6 +65,20 @@ pub async fn handle_sandbox(action: SandboxAction) -> Result<()> {
     }
 }
 
+fn image_build_not_supported_notice(backend: &str) -> Option<(&'static str, &'static str)> {
+    match backend {
+        "restricted-host" => Some((
+            "Restricted-host sandbox does not use container images — nothing to build.",
+            "This backend provides env clearing + rlimit isolation without containers.",
+        )),
+        "wasm" | "wasmtime" => Some((
+            "WASM sandbox does not use container images — nothing to build.",
+            "The WASM backend uses Wasmtime + WASI for sandboxed execution.",
+        )),
+        _ => None,
+    }
+}
+
 async fn list() -> Result<()> {
     let images = sandbox::list_sandbox_images().await?;
     if images.is_empty() {
@@ -83,18 +97,10 @@ async fn build() -> Result<()> {
     let mut sandbox_config = sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
     sandbox_config.container_prefix = Some(instance_sandbox_prefix(&config));
 
-    match sandbox_config.backend.as_str() {
-        "restricted-host" => {
-            println!("Restricted-host sandbox does not use container images — nothing to build.");
-            println!("This backend provides env clearing + rlimit isolation without containers.");
-            return Ok(());
-        },
-        "wasm" | "wasmtime" => {
-            println!("WASM sandbox does not use container images — nothing to build.");
-            println!("The WASM backend uses Wasmtime + WASI for sandboxed execution.");
-            return Ok(());
-        },
-        _ => {},
+    if let Some((line_one, line_two)) = image_build_not_supported_notice(&sandbox_config.backend) {
+        println!("{line_one}");
+        println!("{line_two}");
+        return Ok(());
     }
 
     let packages = sandbox_config.packages.clone();
@@ -163,4 +169,34 @@ async fn clean() -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::image_build_not_supported_notice;
+
+    #[test]
+    fn wasm_backends_skip_image_build() {
+        let notice = image_build_not_supported_notice("wasm");
+        assert!(notice.is_some());
+
+        let notice_alias = image_build_not_supported_notice("wasmtime");
+        assert_eq!(notice, notice_alias);
+    }
+
+    #[test]
+    fn restricted_host_skips_image_build() {
+        let notice = image_build_not_supported_notice("restricted-host");
+        assert!(notice.is_some());
+        if let Some((line_one, line_two)) = notice {
+            assert!(line_one.contains("does not use container images"));
+            assert!(line_two.contains("rlimit isolation"));
+        }
+    }
+
+    #[test]
+    fn container_backends_require_image_build() {
+        assert_eq!(image_build_not_supported_notice("docker"), None);
+        assert_eq!(image_build_not_supported_notice("apple-container"), None);
+    }
 }
