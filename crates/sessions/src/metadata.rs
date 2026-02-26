@@ -441,7 +441,10 @@ impl SqliteSessionMetadata {
         .bind(now)
         .execute(&self.pool)
         .await?;
-        let entry = self.get(key).await.ok_or_else(|| sqlx::Error::RowNotFound)?;
+        let entry = self
+            .get(key)
+            .await
+            .ok_or_else(|| sqlx::Error::RowNotFound)?;
         // version == 0 means freshly inserted; > 0 means conflict-updated.
         if entry.version == 0 {
             self.emit(crate::session_events::SessionEvent::Created {

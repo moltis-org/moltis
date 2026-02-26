@@ -2714,7 +2714,6 @@ impl ChatService for LiveChatService {
                 }
             }
 
-
             let state = Arc::clone(&self.state);
             let active_runs = Arc::clone(&self.active_runs);
             let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
@@ -2782,7 +2781,6 @@ impl ChatService for LiveChatService {
                 if let Ok(count) = session_store.count(&session_key_clone).await {
                     session_metadata.touch(&session_key_clone, count).await;
                 }
-
 
                 active_runs.write().await.remove(&run_id_clone);
                 let mut runs_by_session = active_runs_by_session.write().await;
@@ -3269,7 +3267,6 @@ impl ChatService for LiveChatService {
             }
         }
 
-
         let agent_timeout_secs = moltis_config::discover_and_load().tools.agent_timeout_secs;
 
         let message_queue = Arc::clone(&self.message_queue);
@@ -3419,7 +3416,6 @@ impl ChatService for LiveChatService {
                 if let Ok(count) = session_store.count(&session_key_clone).await {
                     session_metadata.touch(&session_key_clone, count).await;
                 }
-
             }
 
             active_runs.write().await.remove(&run_id_clone);
@@ -3701,7 +3697,6 @@ impl ChatService for LiveChatService {
             if let Ok(count) = self.session_store.count(&session_key).await {
                 self.session_metadata.touch(&session_key, count).await;
             }
-
         }
 
         match result {
@@ -3730,7 +3725,6 @@ impl ChatService for LiveChatService {
                 if let Ok(count) = self.session_store.count(&session_key).await {
                     self.session_metadata.touch(&session_key, count).await;
                 }
-    
 
                 Err(error_msg.into())
             },
@@ -3848,7 +3842,6 @@ impl ChatService for LiveChatService {
         // Reset metadata message count and preview.
         self.session_metadata.touch(&session_key, 0).await;
         self.session_metadata.set_preview(&session_key, None).await;
-
 
         // Notify all WebSocket clients so the web UI clears the session
         // even when /clear is issued from a channel (e.g. Telegram).
@@ -4002,7 +3995,6 @@ impl ChatService for LiveChatService {
             .map_err(ServiceError::message)?;
 
         self.session_metadata.touch(&session_key, 1).await;
-
 
         // Save compaction summary to memory file and trigger sync.
         if let Some(mm) = self.state.memory_manager() {

@@ -1661,9 +1661,7 @@ pub async fn prepare_gateway(
     let project_store: Arc<dyn ProjectStore> =
         Arc::new(moltis_projects::SqliteProjectStore::new(db_pool.clone()));
     let session_store = Arc::new(SessionStore::new(sessions_dir));
-    let event_bus_for_metadata = session_event_bus
-        .clone()
-        .unwrap_or_default();
+    let event_bus_for_metadata = session_event_bus.clone().unwrap_or_default();
     let session_metadata = Arc::new(SqliteSessionMetadata::with_event_bus(
         db_pool.clone(),
         event_bus_for_metadata,

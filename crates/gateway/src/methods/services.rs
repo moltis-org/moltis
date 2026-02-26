@@ -7,7 +7,10 @@ use std::{
 
 use tracing::warn;
 
-use {moltis_config::VoiceSttProvider, moltis_protocol::{ErrorShape, error_codes}};
+use {
+    moltis_config::VoiceSttProvider,
+    moltis_protocol::{ErrorShape, error_codes},
+};
 
 use crate::broadcast::{BroadcastOpts, broadcast};
 
