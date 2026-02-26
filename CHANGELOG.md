@@ -58,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
+- Docker image now installs Docker CLI from Docker’s official Debian repository (`docker-ce-cli`), avoiding API mismatches with newer host daemons during sandbox builds/exec
+- Chat UI now shows a first-run sandbox preparation status message before container/image setup begins, so startup delays are visible while sandbox resources are created
 - OpenAI TTS and Whisper STT now correctly reuse OpenAI credentials from
   voice config, `OPENAI_API_KEY`, or the LLM OpenAI provider config.
 - Voice provider parsing now accepts `openai-tts` and `google-tts` aliases
