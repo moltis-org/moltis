@@ -8,6 +8,11 @@ use std::{
 use anyhow::Result;
 #[cfg(feature = "wasm")]
 use sha2::{Digest, Sha256};
+#[cfg(feature = "wasm")]
+use wasmtime_wasi::WasiView;
+
+#[cfg(feature = "wasm")]
+use crate::wasm_component::{HttpHostImpl, add_http_outgoing_handler_to_linker};
 
 #[cfg(feature = "wasm")]
 type ComponentCache = HashMap<[u8; 32], wasmtime::component::Component>;
@@ -63,6 +68,19 @@ impl WasmComponentEngine {
 
     pub fn compile_module(&self, wasm_bytes: &[u8]) -> Result<wasmtime::Module> {
         wasmtime::Module::new(&self.engine, wasm_bytes)
+    }
+
+    pub fn create_http_linker<T>(
+        &self,
+        host_getter: impl Fn(&mut T) -> &mut HttpHostImpl + Copy + Send + Sync + 'static,
+    ) -> Result<wasmtime::component::Linker<T>>
+    where
+        T: WasiView + 'static,
+    {
+        let mut linker = wasmtime::component::Linker::new(&self.engine);
+        wasmtime_wasi::add_to_linker_sync(&mut linker)?;
+        add_http_outgoing_handler_to_linker(&mut linker, host_getter)?;
+        Ok(linker)
     }
 
     fn read_cache(&self) -> RwLockReadGuard<'_, ComponentCache> {

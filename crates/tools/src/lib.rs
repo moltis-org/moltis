@@ -36,6 +36,7 @@ pub mod send_image;
 pub mod session_state;
 pub mod skill_tools;
 pub mod spawn_agent;
+pub mod ssrf;
 #[cfg(feature = "wasm")]
 pub mod wasm_component;
 #[cfg(feature = "wasm")]
