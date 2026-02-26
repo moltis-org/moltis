@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+};
 
 use {
     anyhow::{Result, bail},
@@ -60,6 +63,11 @@ impl NetworkProxyServer {
                 accept = listener.accept() => {
                     match accept {
                         Ok((stream, peer)) => {
+                            if !is_private_or_loopback(&peer.ip()) {
+                                debug!(peer = %peer, "rejected proxy connection from non-private IP");
+                                drop(stream);
+                                continue;
+                            }
                             let filter = Arc::clone(&self.filter);
                             let audit_tx = self.audit_tx.clone();
                             tokio::spawn(async move {
@@ -86,6 +94,35 @@ impl NetworkProxyServer {
     pub fn addr(&self) -> SocketAddr {
         self.listener_addr
     }
+}
+
+/// Returns `true` if the IP is loopback or belongs to a private/link-local
+/// range.  Used to reject connections from public IPs when the proxy binds
+/// to `0.0.0.0` so container VMs on bridge/vmnet networks can reach it.
+fn is_private_or_loopback(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()            // 127.0.0.0/8
+                || v4.is_private()       // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local()    // 169.254/16
+                || is_cgnat(*v4)         // 100.64/10 (Tailscale, CGNAT)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()             // ::1
+                || is_ula(*v6)           // fc00::/7
+        }
+    }
+}
+
+/// CGNAT / shared address space (100.64.0.0/10), also used by Tailscale.
+fn is_cgnat(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 100 && (octets[1] & 0xC0) == 64
+}
+
+/// IPv6 Unique Local Address (fc00::/7).
+fn is_ula(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xFE00) == 0xFC00
 }
 
 async fn shutdown_signal(rx: &tokio::sync::watch::Receiver<bool>) {
@@ -718,5 +755,34 @@ mod tests {
         );
         assert_eq!(url_to_path("http://example.com"), "/");
         assert_eq!(url_to_path("https://api.github.com/v1/repos"), "/v1/repos");
+    }
+
+    #[test]
+    fn test_is_private_or_loopback() {
+        // Loopback
+        assert!(is_private_or_loopback(&IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert!(is_private_or_loopback(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+
+        // Private ranges (RFC 1918)
+        assert!(is_private_or_loopback(&"10.0.0.1".parse().unwrap()));
+        assert!(is_private_or_loopback(&"172.17.0.1".parse().unwrap())); // Docker bridge
+        assert!(is_private_or_loopback(&"192.168.64.1".parse().unwrap())); // macOS vmnet
+
+        // CGNAT / Tailscale
+        assert!(is_private_or_loopback(&"100.64.0.1".parse().unwrap()));
+        assert!(is_private_or_loopback(&"100.127.255.254".parse().unwrap()));
+
+        // Link-local
+        assert!(is_private_or_loopback(&"169.254.1.1".parse().unwrap()));
+
+        // IPv6 ULA
+        assert!(is_private_or_loopback(&"fd00::1".parse().unwrap()));
+
+        // Public IPs must be rejected
+        assert!(!is_private_or_loopback(&"8.8.8.8".parse().unwrap()));
+        assert!(!is_private_or_loopback(&"1.1.1.1".parse().unwrap()));
+        assert!(!is_private_or_loopback(
+            &"2001:db8::1".parse().unwrap()
+        ));
     }
 }

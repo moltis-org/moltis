@@ -1957,7 +1957,7 @@ pub async fn prepare_gateway(
             std::time::Duration::from_secs(30),
         ));
         let proxy_addr: SocketAddr = (
-            [127, 0, 0, 1],
+            [0, 0, 0, 0],
             moltis_tools::network_proxy::DEFAULT_PROXY_PORT,
         )
             .into();
