@@ -3804,7 +3804,7 @@ pub async fn start_gateway(
         });
     }
 
-    // Spawn sandbox event broadcast task: forwards provision events to WS clients.
+    // Spawn sandbox event broadcast task: forwards sandbox lifecycle events to WS clients.
     {
         let event_state = Arc::clone(&state);
         let mut event_rx = sandbox_router.subscribe_events();
@@ -3813,6 +3813,47 @@ pub async fn start_gateway(
                 match event_rx.recv().await {
                     Ok(event) => {
                         let (event_name, payload) = match event {
+                            moltis_tools::sandbox::SandboxEvent::Preparing {
+                                session_key,
+                                backend,
+                                image,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "start",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                }),
+                            ),
+                            moltis_tools::sandbox::SandboxEvent::Prepared {
+                                session_key,
+                                backend,
+                                image,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "done",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                }),
+                            ),
+                            moltis_tools::sandbox::SandboxEvent::PrepareFailed {
+                                session_key,
+                                backend,
+                                image,
+                                error,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "error",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                    "error": error,
+                                }),
+                            ),
                             moltis_tools::sandbox::SandboxEvent::Provisioning {
                                 container,
                                 packages,

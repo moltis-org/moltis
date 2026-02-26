@@ -314,8 +314,8 @@ test.describe("Settings navigation", () => {
 			"Authentication",
 		];
 		if (navItems.includes("Encryption")) expectedPrefix.push("Encryption");
-		expectedPrefix.push("Tailscale", "Channels", "Hooks", "LLMs", "MCP", "Skills");
-		const expectedSystem = ["Terminal", "Sandboxes", "Monitoring", "Logs"];
+		expectedPrefix.push("Tailscale", "Sandboxes", "Channels", "Hooks", "LLMs", "MCP", "Skills");
+		const expectedSystem = ["Terminal", "Monitoring", "Logs"];
 		const expected = [...expectedPrefix];
 		if (navItems.includes("OpenClaw Import")) expected.push("OpenClaw Import");
 		if (navItems.includes("Voice")) expected.push("Voice");
