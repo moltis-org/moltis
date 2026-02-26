@@ -86,11 +86,13 @@ auth/config files survive container recreation. You can change this with
 ```toml
 [tools.exec.sandbox]
 home_persistence = "session"   # "off", "session", or "shared" (default)
+# shared_home_dir = "/path/to/shared-home"  # optional, used when mode is "shared"
 ```
 
 - `off`: no home mount, container home is ephemeral
 - `session`: mount a per-session host folder to `/home/sandbox`
 - `shared`: mount one shared host folder to `/home/sandbox` for all sessions
+  (defaults to `data_dir()/sandbox/home/shared`, or `shared_home_dir` if set)
 
 Moltis stores persisted homes under `data_dir()/sandbox/home/`.
 

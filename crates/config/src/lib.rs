@@ -22,8 +22,9 @@ pub use {
         identity_path, load_agents_md, load_agents_md_for_agent, load_heartbeat_md, load_identity,
         load_identity_for_agent, load_memory_md, load_memory_md_for_agent, load_soul,
         load_soul_for_agent, load_tools_md, load_tools_md_for_agent, load_user, memory_path,
-        save_config, save_identity, save_identity_for_agent, save_raw_config, save_soul, save_user,
-        set_config_dir, set_data_dir, soul_path, tools_path, update_config, user_global_config_dir,
+        resolve_identity, resolve_identity_from_config, save_config, save_identity,
+        save_identity_for_agent, save_raw_config, save_soul, save_user, set_config_dir,
+        set_data_dir, soul_path, tools_path, update_config, user_global_config_dir,
         user_global_config_dir_if_different, user_path,
     },
     schema::{

@@ -511,37 +511,33 @@ test.describe("Session management", () => {
 		await createSession(page);
 		const sessionUrl = page.url();
 
-		// Simulate an unmodified fork: set forkPoint = messageCount = 5
-		// so the session looks like a fork with messages but no new ones added.
+		// Simulate an unmodified fork and click Delete in the same page tick
+		// to avoid races with background session refreshes.
 		await expect
 			.poll(
 				() =>
 					page.evaluate(() => {
 						const store = window.__moltis_stores?.sessionStore;
 						const session = store?.activeSession?.value;
-						if (!session) return false;
+						const deleteBtn = document.querySelector('button[title="Delete session"]');
+						if (!(session && deleteBtn)) return false;
 						session.forkPoint = 5;
 						session.messageCount = 5;
-						// Bump dataVersion to trigger re-render
 						session.dataVersion.value++;
+						deleteBtn.click();
 						return true;
 					}),
 				{ timeout: 10_000 },
 			)
 			.toBe(true);
 
-		// Click the Delete button — should NOT show a confirmation dialog
-		const deleteBtn = page.locator('button[title="Delete session"]');
-		await expect(deleteBtn).toBeVisible();
-		await deleteBtn.click();
+		// The confirmation dialog should NOT be visible.
+		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
 
 		// The session should be deleted immediately (no dialog appeared)
 		// so we should navigate away from the current session URL
-		await page.waitForURL((url) => url.href !== sessionUrl, { timeout: 5_000 });
+		await page.waitForURL((url) => url.href !== sessionUrl, { timeout: 10_000 });
 		await expectPageContentMounted(page);
-
-		// The confirmation dialog should NOT be visible
-		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});

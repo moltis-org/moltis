@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     env_subst::substitute_env,
-    schema::{AgentIdentity, MoltisConfig, UserProfile},
+    schema::{AgentIdentity, MoltisConfig, ResolvedIdentity, UserProfile},
 };
 
 /// Generate a random available port by binding to port 0 and reading the assigned port.
@@ -318,6 +318,42 @@ pub fn load_identity_for_agent(agent_id: &str) -> Option<AgentIdentity> {
         return load_identity();
     }
     load_identity_from_path(&agent_workspace_dir(agent_id).join("IDENTITY.md"))
+}
+
+/// Build a fully-resolved identity by merging all sources:
+/// `moltis.toml` `[identity]` + `IDENTITY.md` frontmatter + `USER.md` + `SOUL.md`.
+///
+/// This is the single source of truth used by both the gateway (`identity_get`)
+/// and the Swift FFI bridge.
+pub fn resolve_identity() -> ResolvedIdentity {
+    let config = discover_and_load();
+    resolve_identity_from_config(&config)
+}
+
+/// Like [`resolve_identity`] but accepts a pre-loaded config.
+pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
+    let mut id = ResolvedIdentity::from_config(config);
+
+    if let Some(file_identity) = load_identity() {
+        if let Some(name) = file_identity.name {
+            id.name = name;
+        }
+        if let Some(emoji) = file_identity.emoji {
+            id.emoji = Some(emoji);
+        }
+        if let Some(theme) = file_identity.theme {
+            id.theme = Some(theme);
+        }
+    }
+
+    if let Some(file_user) = load_user()
+        && let Some(name) = file_user.name
+    {
+        id.user_name = Some(name);
+    }
+
+    id.soul = load_soul();
+    id
 }
 
 /// Load user values from `USER.md` frontmatter if present.

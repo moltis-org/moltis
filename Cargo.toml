@@ -33,6 +33,7 @@ members = [
   "crates/service-traits",
   "crates/sessions",
   "crates/skills",
+  "crates/swift-bridge",
   "crates/tailscale",
   "crates/telegram",
   "crates/tls",
@@ -225,6 +226,7 @@ moltis-routing         = { path = "crates/routing" }
 moltis-service-traits  = { path = "crates/service-traits" }
 moltis-sessions        = { path = "crates/sessions" }
 moltis-skills          = { path = "crates/skills" }
+moltis-swift-bridge    = { path = "crates/swift-bridge" }
 moltis-tailscale       = { path = "crates/tailscale" }
 moltis-telegram        = { path = "crates/telegram" }
 moltis-tls             = { path = "crates/tls" }
