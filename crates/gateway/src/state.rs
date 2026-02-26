@@ -79,8 +79,7 @@ use moltis_protocol::{ConnectParams, EventFrame};
 
 use moltis_tools::sandbox::SandboxRouter;
 
-use moltis_channels::ChannelReplyTarget;
-use moltis_sessions::session_events::SessionEventBus;
+use {moltis_channels::ChannelReplyTarget, moltis_sessions::session_events::SessionEventBus};
 
 use crate::{
     auth::{CredentialStore, ResolvedAuth},

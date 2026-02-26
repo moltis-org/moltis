@@ -9,8 +9,8 @@ use tracing::warn;
 
 use {
     moltis_config::VoiceSttProvider,
-    moltis_sessions::session_events::SessionEvent,
     moltis_protocol::{ErrorShape, error_codes},
+    moltis_sessions::session_events::SessionEvent,
 };
 
 use crate::broadcast::{BroadcastOpts, broadcast};
@@ -1004,9 +1004,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "kind": "deleted",
                             "sessionKey": key,
                         }),
-                        BroadcastOpts { drop_if_slow: true, ..Default::default() },
-                        )
-                        .await;
+                        BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 }
                 Ok(result)
             })
@@ -1061,9 +1064,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "kind": "created",
                             "sessionKey": key,
                         }),
-                        BroadcastOpts { drop_if_slow: true, ..Default::default() },
-                        )
-                        .await;
+                        BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 }
                 Ok(result)
             })

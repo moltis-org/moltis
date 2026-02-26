@@ -958,9 +958,7 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
                 encode_json(&OkResponse { ok: true })
             },
             Err(error) => {
-                emit_log("ERROR", "bridge.config", &format!(
-                    "Save failed: {error}"
-                ));
+                emit_log("ERROR", "bridge.config", &format!("Save failed: {error}"));
                 encode_error("save_failed", &error.to_string())
             },
         }
@@ -1131,8 +1129,8 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
                 None, // log_buffer
                 request.config_dir.map(std::path::PathBuf::from),
                 request.data_dir.map(std::path::PathBuf::from),
-                None, // tailscale_opts
-                Some(moltis_web::web_routes), // full web UI
+                None,                                   // tailscale_opts
+                Some(moltis_web::web_routes),           // full web UI
                 Some(BRIDGE.session_event_bus.clone()), // share bus with gateway
             )) {
             Ok(p) => p,
