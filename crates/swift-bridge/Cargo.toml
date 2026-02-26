@@ -20,7 +20,7 @@ axum = { workspace = true }
 metrics = { workspace = true, optional = true }
 moltis-agents = { workspace = true }
 moltis-config = { workspace = true }
-moltis-gateway = { workspace = true, features = ["web-ui", "metrics", "file-watcher", "voice"] }
+moltis-gateway = { workspace = true, default-features = true, features = ["web-ui", "metrics", "file-watcher", "voice"] }
 moltis-projects = { workspace = true }
 moltis-provider-setup = { workspace = true }
 moltis-providers = { workspace = true }
