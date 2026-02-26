@@ -84,6 +84,7 @@ default = [
   "tls",
   "vault",
   "voice",
+  "wasm",
   "web-ui",
   "whatsapp",
 ]
@@ -105,6 +106,7 @@ tailscale          = ["moltis-gateway/tailscale", "moltis-web?/tailscale"]
 tls                = ["moltis-gateway/tls"]
 vault              = ["moltis-gateway/vault", "moltis-web?/vault"]
 voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
+wasm               = ["moltis-tools/wasm"]
 web-ui             = ["dep:moltis-web", "moltis-gateway/web-ui"]
 whatsapp           = ["moltis-gateway/whatsapp"]
 

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **WASM sandbox backend** (`wasm` feature, default on) — Wasmtime-based sandbox with restricted host execution (env clearing, restricted PATH, rlimits) and a fuel-metered Wasmtime engine for future WASM module execution. Configurable via `wasm_fuel_limit` and `wasm_epoch_interval_ms` in `[tools.exec.sandbox]`
+- **Docker security hardening** — containers now launch with `--cap-drop ALL`, `--security-opt no-new-privileges`, tmpfs mounts for `/tmp` and `/run`, and `--read-only` root filesystem for prebuilt images
+- **Generic sandbox failover chain** — auto-detection now tries Apple Container → Docker → WASM → NoSandbox. Docker-to-WASM failover triggers on daemon connectivity errors. The failover mechanism is no longer Apple Container-specific
 - Real-time session sync between macOS app and web UI via `SessionEventBus` (`tokio::sync::broadcast`). Sessions created, deleted, or patched in one UI instantly appear in the other. New FFI callback `moltis_set_session_event_callback` and WebSocket `"session"` events for create/delete/fork operations.
 - Swift bridge: persistent session storage via FFI — `moltis_list_sessions`, `moltis_switch_session`, `moltis_create_session`, `moltis_session_chat_stream` functions backed by JSONL files and shared SQLite metadata (`moltis.db`) across all UIs (macOS app, web, TUI)
 - **Internationalization (i18n)**: web UI now supports runtime language switching via `i18next` with English and French locales. Error codes use structured constants with locale-aware error messages across API handlers, terminal, chat, and environment routes. Onboarding step labels, navigation buttons, and page strings use translation keys (`t()` calls)

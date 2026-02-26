@@ -83,6 +83,15 @@ async fn build() -> Result<()> {
     let mut sandbox_config = sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
     sandbox_config.container_prefix = Some(instance_sandbox_prefix(&config));
 
+    match sandbox_config.backend.as_str() {
+        "wasm" | "wasmtime" => {
+            println!("WASM sandbox does not use container images — nothing to build.");
+            println!("The WASM backend provides restricted host execution without containers.");
+            return Ok(());
+        },
+        _ => {},
+    }
+
     let packages = sandbox_config.packages.clone();
     if packages.is_empty() {
         println!("No packages configured — nothing to build.");

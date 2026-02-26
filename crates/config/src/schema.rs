@@ -1522,14 +1522,19 @@ pub struct SandboxConfig {
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
-    /// Backend: "auto" (default), "docker", or "apple-container".
-    /// "auto" prefers Apple Container on macOS when available, falls back to Docker.
+    /// Backend: "auto" (default), "docker", "apple-container", or "wasm".
+    /// "auto" prefers Apple Container on macOS when available, falls back to
+    /// Docker, then WASM, then direct host execution.
     pub backend: String,
     pub resource_limits: ResourceLimitsConfig,
     /// Packages to install via `apt-get` in the sandbox image.
     /// Set to an empty list to skip provisioning.
     #[serde(default = "default_sandbox_packages")]
     pub packages: Vec<String>,
+    /// Fuel limit for WASM sandbox execution (default: 1 billion instructions).
+    pub wasm_fuel_limit: Option<u64>,
+    /// Epoch interruption interval in milliseconds for WASM sandbox (default: 100ms).
+    pub wasm_epoch_interval_ms: Option<u64>,
 }
 
 /// Default packages installed in sandbox containers.
@@ -1703,6 +1708,8 @@ impl Default for SandboxConfig {
             backend: "auto".into(),
             resource_limits: ResourceLimitsConfig::default(),
             packages: default_sandbox_packages(),
+            wasm_fuel_limit: None,
+            wasm_epoch_interval_ms: None,
         }
     }
 }

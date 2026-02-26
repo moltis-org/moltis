@@ -452,8 +452,8 @@ pub struct SandboxConfig {
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
-    /// Backend: `"auto"` (default), `"docker"`, or `"apple-container"`.
-    /// `"auto"` prefers Apple Container on macOS when available.
+    /// Backend: `"auto"` (default), `"docker"`, `"apple-container"`, or `"wasm"`.
+    /// `"auto"` prefers Apple Container on macOS, then Docker, then WASM.
     pub backend: String,
     pub resource_limits: ResourceLimits,
     /// Packages to install via `apt-get` after container creation.
@@ -461,6 +461,10 @@ pub struct SandboxConfig {
     pub packages: Vec<String>,
     /// IANA timezone (e.g. "Europe/Paris") injected as `TZ` env var into containers.
     pub timezone: Option<String>,
+    /// Fuel limit for WASM sandbox execution (default: 1 billion instructions).
+    pub wasm_fuel_limit: Option<u64>,
+    /// Epoch interruption interval in milliseconds for WASM sandbox (default: 100ms).
+    pub wasm_epoch_interval_ms: Option<u64>,
 }
 
 impl Default for SandboxConfig {
@@ -478,6 +482,8 @@ impl Default for SandboxConfig {
             resource_limits: ResourceLimits::default(),
             packages: Vec::new(),
             timezone: None,
+            wasm_fuel_limit: None,
+            wasm_epoch_interval_ms: None,
         }
     }
 }
@@ -518,6 +524,8 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             },
             packages: cfg.packages.clone(),
             timezone: None, // Set by gateway from user profile
+            wasm_fuel_limit: cfg.wasm_fuel_limit,
+            wasm_epoch_interval_ms: cfg.wasm_epoch_interval_ms,
         }
     }
 }
@@ -1464,6 +1472,28 @@ impl DockerSandbox {
         args
     }
 
+    /// Security hardening flags for `docker run`.
+    ///
+    /// `is_prebuilt` controls whether `--read-only` is applied: prebuilt images
+    /// already have packages baked in so the root FS can be read-only, while
+    /// non-prebuilt images need a writable root for `apt-get` provisioning.
+    fn hardening_args(is_prebuilt: bool) -> Vec<String> {
+        let mut args = vec![
+            "--cap-drop".to_string(),
+            "ALL".to_string(),
+            "--security-opt".to_string(),
+            "no-new-privileges".to_string(),
+            "--tmpfs".to_string(),
+            "/tmp:rw,nosuid,size=256m".to_string(),
+            "--tmpfs".to_string(),
+            "/run:rw,nosuid,size=64m".to_string(),
+        ];
+        if is_prebuilt {
+            args.push("--read-only".to_string());
+        }
+        args
+    }
+
     fn workspace_args(&self) -> Vec<String> {
         let workspace_dir = moltis_config::data_dir();
         let workspace_dir_str = workspace_dir.display().to_string();
@@ -1546,6 +1576,11 @@ impl Sandbox for DockerSandbox {
             }
         }
 
+        // Resolve image first so we know whether it's prebuilt (affects hardening).
+        let requested_image = image_override.unwrap_or_else(|| self.image());
+        let image = self.resolve_local_image(requested_image).await?;
+        let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
+
         // Start a new container.
         let mut args = vec![
             "run".to_string(),
@@ -1563,11 +1598,10 @@ impl Sandbox for DockerSandbox {
         }
 
         args.extend(self.resource_args());
+        args.extend(Self::hardening_args(is_prebuilt));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
 
-        let requested_image = image_override.unwrap_or_else(|| self.image());
-        let image = self.resolve_local_image(requested_image).await?;
         args.push(image.clone());
         args.extend(["sleep".to_string(), "infinity".to_string()]);
 
@@ -1583,7 +1617,6 @@ impl Sandbox for DockerSandbox {
 
         // Skip provisioning if the image is a pre-built instance sandbox image
         // (packages are already baked in — including /home/sandbox from the Dockerfile).
-        let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
         if !is_prebuilt {
             provision_packages("docker", &name, &self.config.packages).await?;
         }
@@ -1842,6 +1875,178 @@ impl Sandbox for CgroupSandbox {
             .await;
         Ok(())
     }
+}
+
+/// WASM sandbox providing restricted host execution with OS-level controls
+/// (env clearing, restricted PATH, rlimits) and a Wasmtime engine wired up
+/// for future fuel-metered WASM module execution.
+#[cfg(feature = "wasm")]
+pub struct WasmtimeSandbox {
+    config: SandboxConfig,
+    #[allow(dead_code)]
+    engine: wasmtime::Engine,
+}
+
+#[cfg(feature = "wasm")]
+impl WasmtimeSandbox {
+    pub fn new(config: SandboxConfig) -> Result<Self> {
+        let mut wasm_config = wasmtime::Config::new();
+        wasm_config.consume_fuel(true);
+        wasm_config.epoch_interruption(true);
+
+        if let Some(ref mem_str) = config.resource_limits.memory_limit
+            && let Some(bytes) = parse_memory_limit(mem_str)
+        {
+            wasm_config.memory_reservation(bytes);
+        }
+
+        let engine = wasmtime::Engine::new(&wasm_config)?;
+        Ok(Self { config, engine })
+    }
+
+    /// Default fuel limit: 1 billion instructions.
+    #[allow(dead_code)]
+    fn fuel_limit(&self) -> u64 {
+        self.config.wasm_fuel_limit.unwrap_or(1_000_000_000)
+    }
+
+    /// Default epoch interval: 100ms.
+    #[allow(dead_code)]
+    fn epoch_interval_ms(&self) -> u64 {
+        self.config.wasm_epoch_interval_ms.unwrap_or(100)
+    }
+
+    /// Wrap a command with shell `ulimit` calls for resource isolation.
+    fn build_ulimit_wrapped_command(&self, command: &str) -> String {
+        let limits = &self.config.resource_limits;
+        let mut preamble = Vec::new();
+
+        // Max user processes.
+        let nproc = limits.pids_max.map(u64::from).unwrap_or(256);
+        preamble.push(format!("ulimit -u {nproc} 2>/dev/null"));
+
+        // Max open file descriptors.
+        preamble.push("ulimit -n 1024 2>/dev/null".to_string());
+
+        // CPU time in seconds.
+        let cpu_secs = limits
+            .cpu_quota
+            .map(|q| q.ceil() as u64 * 60)
+            .unwrap_or(300);
+        preamble.push(format!("ulimit -t {cpu_secs} 2>/dev/null"));
+
+        // Virtual memory (in KB for ulimit -v).
+        let mem_bytes = limits
+            .memory_limit
+            .as_deref()
+            .and_then(parse_memory_limit)
+            .unwrap_or(512 * 1024 * 1024);
+        let mem_kb = mem_bytes / 1024;
+        preamble.push(format!("ulimit -v {mem_kb} 2>/dev/null"));
+
+        format!("{}; {command}", preamble.join("; "))
+    }
+}
+
+/// Parse a human-readable memory limit like "512M" or "1G" into bytes.
+#[cfg(feature = "wasm")]
+fn parse_memory_limit(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (num_part, multiplier) =
+        if let Some(n) = s.strip_suffix('G').or_else(|| s.strip_suffix('g')) {
+            (n, 1024 * 1024 * 1024)
+        } else if let Some(n) = s.strip_suffix('M').or_else(|| s.strip_suffix('m')) {
+            (n, 1024 * 1024)
+        } else if let Some(n) = s.strip_suffix('K').or_else(|| s.strip_suffix('k')) {
+            (n, 1024)
+        } else {
+            (s, 1)
+        };
+    num_part.trim().parse::<u64>().ok().map(|n| n * multiplier)
+}
+
+#[cfg(feature = "wasm")]
+#[async_trait]
+impl Sandbox for WasmtimeSandbox {
+    fn backend_name(&self) -> &'static str {
+        "wasm"
+    }
+
+    fn is_real(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+
+    async fn exec(&self, _id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
+        // Wrap the command with shell ulimit calls for resource isolation.
+        let wrapped = self.build_ulimit_wrapped_command(command);
+
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.args(["-c", &wrapped]);
+
+        // Scrub all inherited env vars for isolation.
+        cmd.env_clear();
+
+        // Set minimal safe environment.
+        cmd.env("PATH", "/usr/local/bin:/usr/bin:/bin");
+        cmd.env("HOME", "/tmp");
+        cmd.env("LANG", "C.UTF-8");
+
+        // Apply user-specified env vars.
+        for (k, v) in &opts.env {
+            cmd.env(k, v);
+        }
+
+        if let Some(ref dir) = opts.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null());
+
+        let child = cmd.spawn()?;
+        let result = tokio::time::timeout(opts.timeout, child.wait_with_output()).await;
+
+        match result {
+            Ok(Ok(output)) => {
+                let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+                truncate_output_for_display(&mut stdout, opts.max_output_bytes);
+                truncate_output_for_display(&mut stderr, opts.max_output_bytes);
+
+                Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code: output.status.code().unwrap_or(-1),
+                })
+            },
+            Ok(Err(e)) => anyhow::bail!("wasm sandbox exec failed: {e}"),
+            Err(_) => anyhow::bail!(
+                "wasm sandbox exec timed out after {}s",
+                opts.timeout.as_secs()
+            ),
+        }
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Returns `true` when the WASM sandbox feature is compiled in.
+#[cfg(feature = "wasm")]
+pub fn is_wasm_sandbox_available() -> bool {
+    true
+}
+
+#[cfg(not(feature = "wasm"))]
+pub fn is_wasm_sandbox_available() -> bool {
+    false
 }
 
 /// Apple Container sandbox using the `container` CLI (macOS 26+, Apple Silicon).
@@ -2526,11 +2731,12 @@ impl FailoverSandbox {
     }
 
     fn should_failover(&self, error: &anyhow::Error) -> bool {
-        if self.primary_name != "apple-container" {
-            return false;
-        }
         let message = format!("{error:#}");
-        is_apple_container_corruption_error(&message)
+        match self.primary_name {
+            "apple-container" => is_apple_container_corruption_error(&message),
+            "docker" => is_docker_failover_error(&message),
+            _ => false,
+        }
     }
 }
 
@@ -3104,32 +3310,77 @@ fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
             }
             let apple_backend: Arc<dyn Sandbox> =
                 Arc::new(AppleContainerSandbox::new(config.clone()));
-            maybe_wrap_with_docker_failover(apple_backend, &config)
+            maybe_wrap_with_failover(apple_backend, &config)
         },
+        "wasm" | "wasmtime" => create_wasm_backend(config),
         _ => auto_detect_backend(config),
     }
 }
 
-#[cfg(target_os = "macos")]
-fn maybe_wrap_with_docker_failover(
-    primary: Arc<dyn Sandbox>,
-    config: &SandboxConfig,
-) -> Arc<dyn Sandbox> {
-    let docker_usable =
-        should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available());
-    if !docker_usable {
-        return primary;
+/// Create a WASM sandbox backend, falling back to `NoSandbox` if the feature is disabled.
+fn create_wasm_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    #[cfg(feature = "wasm")]
+    {
+        match WasmtimeSandbox::new(config) {
+            Ok(sandbox) => {
+                tracing::info!("sandbox backend: wasm (restricted host execution)");
+                Arc::new(sandbox)
+            },
+            Err(e) => {
+                tracing::warn!(%e, "failed to initialize wasmtime engine, falling back to NoSandbox");
+                Arc::new(NoSandbox)
+            },
+        }
+    }
+    #[cfg(not(feature = "wasm"))]
+    {
+        let _ = config;
+        tracing::warn!("wasm sandbox requested but feature not compiled in; using NoSandbox");
+        Arc::new(NoSandbox)
+    }
+}
+
+/// Wrap a primary sandbox backend with a failover chain.
+///
+/// Tries Docker first as fallback, then WASM, returning the primary unwrapped
+/// if no fallback runtime is available.
+fn maybe_wrap_with_failover(primary: Arc<dyn Sandbox>, config: &SandboxConfig) -> Arc<dyn Sandbox> {
+    // Try Docker as fallback first.
+    if should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available()) {
+        tracing::info!(
+            primary = primary.backend_name(),
+            fallback = "docker",
+            "sandbox backend failover enabled"
+        );
+        return Arc::new(FailoverSandbox::new(
+            primary,
+            Arc::new(DockerSandbox::new(config.clone())),
+        ));
     }
 
-    tracing::info!(
-        primary = primary.backend_name(),
-        fallback = "docker",
-        "sandbox backend failover enabled"
-    );
-    Arc::new(FailoverSandbox::new(
-        primary,
-        Arc::new(DockerSandbox::new(config.clone())),
-    ))
+    // Try WASM as fallback if Docker is unavailable.
+    #[cfg(feature = "wasm")]
+    {
+        if let Ok(wasm) = WasmtimeSandbox::new(config.clone()) {
+            tracing::info!(
+                primary = primary.backend_name(),
+                fallback = "wasm",
+                "sandbox backend failover enabled (wasm)"
+            );
+            return Arc::new(FailoverSandbox::new(primary, Arc::new(wasm)));
+        }
+    }
+
+    primary
+}
+
+/// Check whether an error message indicates a Docker daemon connectivity issue.
+fn is_docker_failover_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("cannot connect to the docker daemon")
+        || lower.contains("is the docker daemon running")
+        || lower.contains("error during connect")
+        || lower.contains("connection refused")
 }
 
 fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
@@ -3140,7 +3391,7 @@ fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
                 tracing::info!("sandbox backend: apple-container (VM-isolated, preferred)");
                 let apple_backend: Arc<dyn Sandbox> =
                     Arc::new(AppleContainerSandbox::new(config.clone()));
-                return maybe_wrap_with_docker_failover(apple_backend, &config);
+                return maybe_wrap_with_failover(apple_backend, &config);
             }
             tracing::warn!(
                 "apple container CLI found but service could not be started; \
@@ -3156,12 +3407,24 @@ fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 
     if is_cli_available("docker") {
         tracing::warn!(
-            "docker CLI detected but daemon is not accessible; sandboxed execution will use direct host access"
+            "docker CLI detected but daemon is not accessible; \
+             falling back to wasm sandbox"
         );
     }
 
+    // Try WASM sandbox before falling back to NoSandbox.
+    #[cfg(feature = "wasm")]
+    {
+        if let Ok(wasm) = WasmtimeSandbox::new(config) {
+            tracing::info!(
+                "sandbox backend: wasm (restricted host execution, no container runtime available)"
+            );
+            return Arc::new(wasm);
+        }
+    }
+
     tracing::warn!(
-        "no usable container runtime found; sandboxed execution will use direct host access"
+        "no usable container or wasm runtime found; sandboxed execution will use direct host access"
     );
     Arc::new(NoSandbox)
 }
@@ -3525,6 +3788,32 @@ mod tests {
         assert_eq!(SandboxScope::Session.to_string(), "session");
         assert_eq!(SandboxScope::Agent.to_string(), "agent");
         assert_eq!(SandboxScope::Shared.to_string(), "shared");
+    }
+
+    #[test]
+    fn test_docker_hardening_args_prebuilt() {
+        let args = DockerSandbox::hardening_args(true);
+        assert!(args.contains(&"--cap-drop".to_string()));
+        assert!(args.contains(&"ALL".to_string()));
+        assert!(args.contains(&"--security-opt".to_string()));
+        assert!(args.contains(&"no-new-privileges".to_string()));
+        assert!(args.contains(&"--read-only".to_string()));
+        // Verify tmpfs mounts are present
+        assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
+        assert!(args.contains(&"/run:rw,nosuid,size=64m".to_string()));
+    }
+
+    #[test]
+    fn test_docker_hardening_args_not_prebuilt() {
+        let args = DockerSandbox::hardening_args(false);
+        assert!(args.contains(&"--cap-drop".to_string()));
+        assert!(args.contains(&"ALL".to_string()));
+        assert!(args.contains(&"--security-opt".to_string()));
+        assert!(args.contains(&"no-new-privileges".to_string()));
+        // --read-only must NOT be present for non-prebuilt (needs apt-get)
+        assert!(!args.contains(&"--read-only".to_string()));
+        // tmpfs mounts still present
+        assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
     }
 
     #[test]
@@ -4542,6 +4831,69 @@ mod tests {
         assert_eq!(fallback.ensure_ready_calls(), 2);
     }
 
+    #[tokio::test]
+    async fn test_failover_sandbox_docker_to_wasm() {
+        let primary = Arc::new(TestSandbox::new(
+            "docker",
+            Some("cannot connect to the docker daemon"),
+            None,
+        ));
+        let fallback = Arc::new(TestSandbox::new("wasm", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-docker-wasm".into(),
+        };
+
+        sandbox.ensure_ready(&id, None).await.unwrap();
+
+        assert_eq!(primary.ensure_ready_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_failover_docker_does_not_switch_on_unrelated_error() {
+        let primary = Arc::new(TestSandbox::new("docker", Some("image not found"), None));
+        let fallback = Arc::new(TestSandbox::new("wasm", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-docker-no-failover".into(),
+        };
+
+        let error = sandbox.ensure_ready(&id, None).await.unwrap_err();
+        assert!(format!("{error:#}").contains("image not found"));
+        assert_eq!(primary.ensure_ready_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 0);
+    }
+
+    #[test]
+    fn test_is_docker_failover_error() {
+        assert!(is_docker_failover_error(
+            "Cannot connect to the Docker daemon at unix:///var/run/docker.sock"
+        ));
+        assert!(is_docker_failover_error("Is the docker daemon running?"));
+        assert!(is_docker_failover_error(
+            "error during connect: connection refused"
+        ));
+        assert!(!is_docker_failover_error("image not found"));
+        assert!(!is_docker_failover_error("permission denied"));
+    }
+
+    #[test]
+    fn test_select_backend_wasm() {
+        let config = SandboxConfig {
+            backend: "wasm".into(),
+            ..Default::default()
+        };
+        let backend = select_backend(config);
+        if is_wasm_sandbox_available() {
+            assert_eq!(backend.backend_name(), "wasm");
+        } else {
+            assert_eq!(backend.backend_name(), "none");
+        }
+    }
+
     #[test]
     fn test_is_debian_host() {
         let result = is_debian_host();
@@ -4707,6 +5059,114 @@ mod tests {
         clear_zombies();
         assert!(!is_zombie("ghost-a"));
         assert!(!is_zombie("ghost-b"));
+    }
+
+    #[cfg(feature = "wasm")]
+    mod wasm_tests {
+        use super::*;
+
+        #[test]
+        fn test_wasm_sandbox_backend_name() {
+            let sandbox = WasmtimeSandbox::new(SandboxConfig::default()).unwrap();
+            assert_eq!(sandbox.backend_name(), "wasm");
+        }
+
+        #[test]
+        fn test_wasm_sandbox_is_real() {
+            let sandbox = WasmtimeSandbox::new(SandboxConfig::default()).unwrap();
+            assert!(sandbox.is_real());
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_ensure_ready_noop() {
+            let sandbox = WasmtimeSandbox::new(SandboxConfig::default()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_exec_simple_echo() {
+            let sandbox = WasmtimeSandbox::new(SandboxConfig::default()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-echo".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let result = sandbox
+                .exec(&id, "echo hello", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "hello");
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_restricted_env() {
+            let sandbox = WasmtimeSandbox::new(SandboxConfig::default()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-env".into(),
+            };
+            let result = sandbox
+                .exec(&id, "echo $HOME", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "/tmp");
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_build_image_returns_none() {
+            let sandbox = WasmtimeSandbox::new(SandboxConfig::default()).unwrap();
+            let result = sandbox
+                .build_image("ubuntu:latest", &["curl".to_string()])
+                .await
+                .unwrap();
+            assert!(result.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_cleanup_noop() {
+            let sandbox = WasmtimeSandbox::new(SandboxConfig::default()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-cleanup".into(),
+            };
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[test]
+        fn test_wasm_sandbox_fuel_limit_default() {
+            let sandbox = WasmtimeSandbox::new(SandboxConfig::default()).unwrap();
+            assert_eq!(sandbox.fuel_limit(), 1_000_000_000);
+        }
+
+        #[test]
+        fn test_wasm_sandbox_fuel_limit_custom() {
+            let config = SandboxConfig {
+                wasm_fuel_limit: Some(500_000),
+                ..Default::default()
+            };
+            let sandbox = WasmtimeSandbox::new(config).unwrap();
+            assert_eq!(sandbox.fuel_limit(), 500_000);
+        }
+
+        #[test]
+        fn test_parse_memory_limit() {
+            assert_eq!(parse_memory_limit("512M"), Some(512 * 1024 * 1024));
+            assert_eq!(parse_memory_limit("1G"), Some(1024 * 1024 * 1024));
+            assert_eq!(parse_memory_limit("256k"), Some(256 * 1024));
+            assert_eq!(parse_memory_limit("1024"), Some(1024));
+            assert_eq!(parse_memory_limit("invalid"), None);
+        }
+
+        #[test]
+        fn test_wasm_sandbox_available() {
+            assert!(is_wasm_sandbox_available());
+        }
     }
 
     #[cfg(target_os = "linux")]

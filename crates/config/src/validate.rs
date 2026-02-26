@@ -140,6 +140,8 @@ fn build_schema_map() -> KnownKeys {
             ("backend", Leaf),
             ("resource_limits", resource_limits()),
             ("packages", Leaf),
+            ("wasm_fuel_limit", Leaf),
+            ("wasm_epoch_interval_ms", Leaf),
         ]))
     };
 
@@ -942,7 +944,7 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     }
 
     // Unknown sandbox backend
-    let valid_sandbox_backends = ["auto", "docker", "apple-container"];
+    let valid_sandbox_backends = ["auto", "docker", "apple-container", "wasm"];
     if !valid_sandbox_backends.contains(&config.tools.exec.sandbox.backend.as_str()) {
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,

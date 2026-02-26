@@ -12,6 +12,7 @@ Configure in `moltis.toml`:
 backend = "auto"          # default — picks the best available
 # backend = "docker"      # force Docker
 # backend = "apple-container"  # force Apple Container (macOS only)
+# backend = "wasm"        # force WASM sandbox (restricted host execution)
 ```
 
 With `"auto"` (the default), Moltis picks the strongest available backend:
@@ -20,7 +21,8 @@ With `"auto"` (the default), Moltis picks the strongest available backend:
 |----------|-------------------|----------|--------------------|
 | 1        | Apple Container   | macOS    | VM (Virtualization.framework) |
 | 2        | Docker            | any      | Linux namespaces / cgroups    |
-| 3        | none (host)       | any      | no isolation                  |
+| 3        | WASM (Wasmtime)   | any      | restricted host execution (env, rlimits) |
+| 4        | none (host)       | any      | no isolation                  |
 
 ## Apple Container (recommended on macOS)
 
@@ -66,11 +68,131 @@ overhead than Apple Container.
 
 Install from https://docs.docker.com/get-docker/
 
+### Docker Hardening
+
+Docker containers launched by Moltis include the following security hardening
+flags by default:
+
+| Flag | Effect |
+|------|--------|
+| `--cap-drop ALL` | Drops all Linux capabilities |
+| `--security-opt no-new-privileges` | Prevents privilege escalation via setuid/setgid binaries |
+| `--tmpfs /tmp:rw,nosuid,size=256m` | Writable tmpfs for temp files (noexec on real root) |
+| `--tmpfs /run:rw,nosuid,size=64m` | Writable tmpfs for runtime files |
+| `--read-only` | Read-only root filesystem (prebuilt images only) |
+
+The `--read-only` flag is applied only to prebuilt sandbox images (where
+packages are already baked in). Non-prebuilt images need a writable root
+filesystem for `apt-get` provisioning on first start.
+
+## WASM Sandbox (Wasmtime)
+
+The WASM sandbox provides an intermediate isolation tier between full container
+runtimes and bare host execution. It uses restricted host execution with
+OS-level controls, and includes a [Wasmtime](https://wasmtime.dev/) engine
+configured for fuel-metered WASM module execution in future releases.
+
+The WASM backend is automatically selected when no Docker daemon or Apple
+Container runtime is available, preventing fallback to completely unprotected
+host execution.
+
+### How It Works
+
+When the WASM sandbox runs a command, it:
+
+1. **Clears the environment** — all inherited environment variables are removed
+2. **Sets a restricted PATH** — only `/usr/local/bin:/usr/bin:/bin`
+3. **Sets HOME to `/tmp`** — prevents access to the user's home directory
+4. **Applies resource limits** via shell `ulimit`:
+   - `ulimit -u` (max processes) from `pids_max` config (default: 256)
+   - `ulimit -n 1024` (max open files)
+   - `ulimit -t` (CPU seconds) from `cpu_quota` config (default: 300s)
+   - `ulimit -v` (virtual memory) from `memory_limit` config (default: 512M)
+5. **Enforces a timeout** via `tokio::time::timeout`
+
+User-specified environment variables from `opts.env` are re-applied after the
+environment is cleared, so the LLM tool can still pass required variables.
+
+### Configuration
+
+```toml
+[tools.exec.sandbox]
+backend = "wasm"
+
+[tools.exec.sandbox.resource_limits]
+memory_limit = "512M"    # virtual memory cap
+cpu_quota = 1.0          # → ulimit -t = ceil(cpu_quota) × 60 seconds
+pids_max = 256           # max child processes
+```
+
+WASM-specific settings for the Wasmtime engine (used for future WASM module
+execution):
+
+```toml
+[tools.exec.sandbox]
+wasm_fuel_limit = 1000000000       # instruction fuel (default: 1 billion)
+wasm_epoch_interval_ms = 100       # epoch interruption interval (default: 100ms)
+```
+
+### Limitations
+
+- No filesystem isolation — commands run on the host filesystem (with a
+  restricted environment)
+- No network isolation — commands can make network requests
+- `ulimit` enforcement is best-effort — a command may exceed limits if the
+  shell built-in is not supported or if limits are already lower
+- No image building — `moltis sandbox build` returns immediately for the WASM
+  backend
+
+### When to Use
+
+The WASM sandbox is a good fit when:
+
+- You cannot install Docker or Apple Container (CI, minimal VMs, embedded)
+- You want lightweight isolation without container overhead
+- You are running on a system where the overhead of a full container runtime is
+  unacceptable
+
+For production use with untrusted workloads, prefer Apple Container or Docker.
+
+### Compile-Time Feature
+
+The WASM sandbox is gated behind the `wasm` cargo feature, which is enabled by
+default. To build without Wasmtime (saves ~30 MB binary size):
+
+```bash
+cargo build --release --no-default-features --features lightweight
+```
+
+When the feature is disabled and the config requests `backend = "wasm"`, Moltis
+falls back to `NoSandbox` with a warning.
+
 ## No sandbox
 
-If neither runtime is found, commands execute directly on the host. The
-startup banner will show a warning. This is **not recommended** for untrusted
-workloads.
+If no runtime is found (and the `wasm` feature is disabled), commands execute
+directly on the host. The startup banner will show a warning. This is **not
+recommended** for untrusted workloads.
+
+## Failover Chain
+
+Moltis wraps the primary sandbox backend with automatic failover:
+
+- **Apple Container → Docker → WASM → NoSandbox**: if Apple Container enters a
+  corrupted state (stale metadata, missing config, VM boot failure), Moltis
+  fails over to Docker. If Docker is unavailable, it tries WASM.
+- **Docker → WASM**: if Docker loses its daemon connection during a session,
+  Moltis fails over to the WASM sandbox rather than failing the command.
+
+Failover is sticky for the lifetime of the gateway process — once triggered,
+all subsequent commands use the fallback backend. Restart the gateway to retry
+the primary backend.
+
+Failover triggers:
+
+| Primary | Triggers |
+|---------|----------|
+| Apple Container | `config.json missing`, `VM never booted`, `NSPOSIXErrorDomain Code=22`, service errors |
+| Docker | `cannot connect to the docker daemon`, `connection refused`, `is the docker daemon running` |
 
 ## Per-session overrides
 
@@ -96,6 +218,9 @@ home_persistence = "session"   # "off", "session", or "shared" (default)
 
 Moltis stores persisted homes under `data_dir()/sandbox/home/`.
 
+> **Note**: Home persistence applies to Docker and Apple Container backends.
+> The WASM backend uses `HOME=/tmp` and does not mount persistent storage.
+
 ## Resource limits
 
 ```toml
@@ -104,3 +229,24 @@ memory_limit = "512M"
 cpu_quota = 1.0
 pids_max = 256
 ```
+
+How resource limits are applied depends on the backend:
+
+| Limit | Docker | Apple Container | WASM | cgroup (Linux) |
+|-------|--------|-----------------|------|----------------|
+| `memory_limit` | `--memory` | `--memory` | `ulimit -v` | `MemoryMax=` |
+| `cpu_quota` | `--cpus` | `--cpus` | `ulimit -t` (seconds) | `CPUQuota=` |
+| `pids_max` | `--pids-limit` | `--pids-limit` | `ulimit -u` | `TasksMax=` |
+
+## Comparison
+
+| Feature | Apple Container | Docker | WASM | none |
+|---------|----------------|--------|------|------|
+| Filesystem isolation | ✅ VM boundary | ✅ namespaces | ❌ host FS | ❌ |
+| Network isolation | ✅ | ✅ | ❌ | ❌ |
+| Kernel isolation | ✅ separate kernel | ❌ shared kernel | ❌ | ❌ |
+| Environment isolation | ✅ | ✅ | ✅ cleared + restricted | ❌ |
+| Resource limits | ✅ | ✅ | ✅ ulimit | ❌ |
+| Image building | ✅ (via Docker) | ✅ | ❌ | ❌ |
+| Platform | macOS 26+ | any | any | any |
+| Overhead | low | medium | minimal | none |

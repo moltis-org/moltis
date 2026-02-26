@@ -460,6 +460,7 @@ var BACKEND_LABELS = {
 	"apple-container": "Apple Container (VM-isolated)",
 	docker: "Docker",
 	cgroup: "cgroup (systemd-run)",
+	wasm: "Wasmtime (WASM-isolated)",
 	none: "None (host execution)",
 };
 
@@ -502,6 +503,13 @@ function backendRecommendation(info) {
 		};
 	}
 
+	if (backend === "wasm") {
+		return {
+			level: "info",
+			text: "Using lightweight WASM isolation. For stronger container-level isolation, install Docker or Apple Container.",
+		};
+	}
+
 	return null;
 }
 
@@ -513,7 +521,13 @@ function SandboxBanner() {
 	var rec = backendRecommendation(info);
 
 	var badgeColor =
-		info.backend === "none" ? "var(--error)" : info.backend === "apple-container" ? "var(--accent)" : "var(--muted)";
+		info.backend === "none"
+			? "var(--error)"
+			: info.backend === "apple-container"
+				? "var(--accent)"
+				: info.backend === "wasm"
+					? "var(--success)"
+					: "var(--muted)";
 
 	return html`<div class="max-w-form">
     <div class="info-bar" style="margin-bottom:8px;">

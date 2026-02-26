@@ -185,6 +185,8 @@ rstest                = "0.25"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
+wasmtime              = "30"
+wasmtime-wasi         = "30"
 which                 = "8"
 # CalDAV / iCalendar
 hyper-rustls  = { features = ["http1", "native-tokio", "ring", "tls12"], version = "0.27" }

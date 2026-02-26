@@ -4,8 +4,9 @@ name              = "moltis-tools"
 version.workspace = true
 
 [features]
-default = ["metrics"]
+default = ["metrics", "wasm"]
 metrics = ["dep:moltis-metrics"]
+wasm    = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dependencies]
 anyhow           = { workspace = true }
@@ -34,6 +35,8 @@ tokio            = { workspace = true }
 tracing          = { workspace = true }
 url              = { workspace = true }
 uuid             = { workspace = true }
+wasmtime         = { optional = true, workspace = true }
+wasmtime-wasi    = { optional = true, workspace = true }
 
 [dev-dependencies]
 mockito      = { workspace = true }

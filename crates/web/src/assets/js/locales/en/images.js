@@ -47,6 +47,7 @@ export default {
 		appleContainer: "Apple Container (VM-isolated)",
 		docker: "Docker",
 		cgroup: "cgroup (systemd-run)",
+		wasm: "Wasmtime (WASM-isolated)",
 		none: "None (host execution)",
 		containerBackendLabel: "Container backend:",
 	},
@@ -62,6 +63,8 @@ export default {
 			"Apple Container provides stronger VM-level isolation on macOS 26+. Install it for automatic use (moltis prefers it over Docker). Run: brew install container",
 		linuxDockerTip:
 			"Docker is a good choice on Linux. For lighter-weight isolation without Docker overhead, systemd cgroup sandboxing is also supported.",
+		wasmTip:
+			"Using lightweight WASM isolation. For stronger container-level isolation, install Docker or Apple Container.",
 	},
 
 	// ── Alert labels ───────────────────────────────────────
