@@ -133,6 +133,7 @@ fn build_schema_map() -> KnownKeys {
             ("scope", Leaf),
             ("workspace_mount", Leaf),
             ("home_persistence", Leaf),
+            ("shared_home_dir", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),

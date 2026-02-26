@@ -1516,6 +1516,9 @@ pub struct SandboxConfig {
     pub workspace_mount: String,
     /// Persistence strategy for `/home/sandbox`: off, session, or shared.
     pub home_persistence: HomePersistenceConfig,
+    /// Optional host directory for shared `/home/sandbox` persistence.
+    /// Relative paths are resolved against `data_dir()`.
+    pub shared_home_dir: Option<String>,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
@@ -1693,6 +1696,7 @@ impl Default for SandboxConfig {
             scope: "session".into(),
             workspace_mount: "ro".into(),
             home_persistence: HomePersistenceConfig::default(),
+            shared_home_dir: None,
             image: None,
             container_prefix: None,
             no_network: true,

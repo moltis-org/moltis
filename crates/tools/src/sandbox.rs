@@ -446,6 +446,9 @@ pub struct SandboxConfig {
     pub workspace_mount: WorkspaceMount,
     /// Persistence strategy for `/home/sandbox`.
     pub home_persistence: HomePersistence,
+    /// Host directory used for shared `/home/sandbox` persistence.
+    /// Relative paths are resolved against `data_dir()`.
+    pub shared_home_dir: Option<PathBuf>,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
@@ -467,6 +470,7 @@ impl Default for SandboxConfig {
             scope: SandboxScope::default(),
             workspace_mount: WorkspaceMount::default(),
             home_persistence: HomePersistence::default(),
+            shared_home_dir: None,
             image: None,
             container_prefix: None,
             no_network: false,
@@ -497,6 +501,12 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 _ => WorkspaceMount::Ro,
             },
             home_persistence: HomePersistence::from(&cfg.home_persistence),
+            shared_home_dir: cfg
+                .shared_home_dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from),
             image: cfg.image.clone(),
             container_prefix: cfg.container_prefix.clone(),
             no_network: cfg.no_network,
@@ -605,11 +615,34 @@ fn sandbox_home_persistence_base_dir() -> PathBuf {
     moltis_config::data_dir().join("sandbox").join("home")
 }
 
+fn default_shared_home_dir() -> PathBuf {
+    sandbox_home_persistence_base_dir().join("shared")
+}
+
+fn resolve_shared_home_dir(config: &SandboxConfig) -> PathBuf {
+    let Some(path) = config
+        .shared_home_dir
+        .as_ref()
+        .filter(|path| !path.as_os_str().is_empty())
+    else {
+        return default_shared_home_dir();
+    };
+    if path.is_absolute() {
+        return path.clone();
+    }
+    moltis_config::data_dir().join(path)
+}
+
+/// Effective host path used when shared home persistence is enabled.
+pub fn shared_home_dir_path(config: &SandboxConfig) -> PathBuf {
+    resolve_shared_home_dir(config)
+}
+
 fn sandbox_home_persistence_host_dir(config: &SandboxConfig, id: &SandboxId) -> Option<PathBuf> {
     let base = sandbox_home_persistence_base_dir();
     match config.home_persistence {
         HomePersistence::Off => None,
-        HomePersistence::Shared => Some(base.join("shared")),
+        HomePersistence::Shared => Some(resolve_shared_home_dir(config)),
         HomePersistence::Session => {
             Some(base.join("session").join(sanitize_path_component(&id.key)))
         },
@@ -3615,6 +3648,43 @@ mod tests {
             .join("sandbox")
             .join("home")
             .join("shared");
+        let expected_volume = format!("{}:/home/sandbox:rw", expected_host_dir.display());
+        assert_eq!(args[1], expected_volume);
+    }
+
+    #[test]
+    fn test_docker_home_persistence_args_custom_shared_absolute_path() {
+        let config = SandboxConfig {
+            shared_home_dir: Some(PathBuf::from("/tmp/moltis-shared-home")),
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "sess-1".into(),
+        };
+        let args = docker.home_persistence_args(&id).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "-v");
+        let expected_volume = "/tmp/moltis-shared-home:/home/sandbox:rw".to_string();
+        assert_eq!(args[1], expected_volume);
+    }
+
+    #[test]
+    fn test_docker_home_persistence_args_custom_shared_relative_path() {
+        let config = SandboxConfig {
+            shared_home_dir: Some(PathBuf::from("sandbox/custom-shared")),
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "sess-1".into(),
+        };
+        let args = docker.home_persistence_args(&id).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "-v");
+        let expected_host_dir = moltis_config::data_dir().join("sandbox/custom-shared");
         let expected_volume = format!("{}:/home/sandbox:rw", expected_host_dir.display());
         assert_eq!(args[1], expected_volume);
     }

@@ -64,6 +64,7 @@ mode = "all"                    # "off", "non-main", or "all"
 scope = "session"               # "command", "session", or "global"
 workspace_mount = "ro"          # "ro", "rw", or "none"
 home_persistence = "shared"     # "off", "session", or "shared" (default: "shared")
+# shared_home_dir = "/path/to/shared-home"  # Optional path for shared mode
 backend = "auto"                # "auto", "docker", or "apple-container"
 no_network = true
 
@@ -294,6 +295,7 @@ mode = "all"
 scope = "session"
 workspace_mount = "ro"
 home_persistence = "session"
+# shared_home_dir = "/path/to/shared-home"
 backend = "auto"
 no_network = true
 packages = ["curl", "git", "jq", "python3", "nodejs", "golang-go"]

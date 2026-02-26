@@ -34,6 +34,7 @@ const SANDBOX_CONTAINER_REMOVE_FAILED: &str = "SANDBOX_CONTAINER_REMOVE_FAILED";
 const SANDBOX_CONTAINERS_CLEAN_FAILED: &str = "SANDBOX_CONTAINERS_CLEAN_FAILED";
 const SANDBOX_DISK_USAGE_FAILED: &str = "SANDBOX_DISK_USAGE_FAILED";
 const SANDBOX_DAEMON_RESTART_FAILED: &str = "SANDBOX_DAEMON_RESTART_FAILED";
+const SANDBOX_SHARED_HOME_SAVE_FAILED: &str = "SANDBOX_SHARED_HOME_SAVE_FAILED";
 
 fn api_error(code: &str, error: impl Into<String>) -> serde_json::Value {
     serde_json::json!({
@@ -44,6 +45,32 @@ fn api_error(code: &str, error: impl Into<String>) -> serde_json::Value {
 
 fn api_error_response(status: StatusCode, code: &str, error: impl Into<String>) -> Response {
     (status, Json(api_error(code, error))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct SandboxSharedHomeUpdateRequest {
+    enabled: bool,
+    path: Option<String>,
+}
+
+fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
+    let runtime_cfg = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    let mode = match config.tools.exec.sandbox.home_persistence {
+        moltis_config::schema::HomePersistenceConfig::Off => "off",
+        moltis_config::schema::HomePersistenceConfig::Session => "session",
+        moltis_config::schema::HomePersistenceConfig::Shared => "shared",
+    };
+    serde_json::json!({
+        "enabled": matches!(
+            config.tools.exec.sandbox.home_persistence,
+            moltis_config::schema::HomePersistenceConfig::Shared
+        ),
+        "mode": mode,
+        "path": moltis_tools::sandbox::shared_home_dir_path(&runtime_cfg)
+            .display()
+            .to_string(),
+        "configured_path": config.tools.exec.sandbox.shared_home_dir.clone(),
+    })
 }
 
 // ── Session media ────────────────────────────────────────────────────────────
@@ -463,6 +490,54 @@ pub async fn api_set_default_image_handler(
             SANDBOX_BACKEND_UNAVAILABLE,
             "no sandbox backend available",
         )
+    }
+}
+
+pub async fn api_get_shared_home_handler() -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    Json(shared_home_config_payload(&config))
+}
+
+pub async fn api_set_shared_home_handler(
+    Json(body): Json<SandboxSharedHomeUpdateRequest>,
+) -> impl IntoResponse {
+    let path = body
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(ToOwned::to_owned);
+
+    let update_result = moltis_config::update_config(|cfg| {
+        cfg.tools.exec.sandbox.shared_home_dir = path.clone();
+        if body.enabled {
+            cfg.tools.exec.sandbox.home_persistence =
+                moltis_config::schema::HomePersistenceConfig::Shared;
+        } else if matches!(
+            cfg.tools.exec.sandbox.home_persistence,
+            moltis_config::schema::HomePersistenceConfig::Shared
+        ) {
+            cfg.tools.exec.sandbox.home_persistence =
+                moltis_config::schema::HomePersistenceConfig::Off;
+        }
+    });
+
+    match update_result {
+        Ok(saved_path) => {
+            let config = moltis_config::discover_and_load();
+            Json(serde_json::json!({
+                "ok": true,
+                "restart_required": true,
+                "config_path": saved_path.display().to_string(),
+                "config": shared_home_config_payload(&config),
+            }))
+            .into_response()
+        },
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SANDBOX_SHARED_HOME_SAVE_FAILED,
+            e.to_string(),
+        ),
     }
 }
 
