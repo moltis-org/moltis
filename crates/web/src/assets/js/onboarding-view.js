@@ -7,10 +7,18 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { addChannel, fetchChannelStatus, validateChannelFields } from "./channel-utils.js";
+import {
+	addChannel,
+	buildTeamsEndpoint,
+	defaultTeamsBaseUrl,
+	fetchChannelStatus,
+	generateWebhookSecretHex,
+	validateChannelFields,
+} from "./channel-utils.js";
 import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
@@ -42,10 +50,10 @@ function ensureWsConnected() {
 	connectWs({ backoff: { factor: 2, max: 10000 } });
 }
 
-// ── Step indicator ──────────────────────────────────────────
+var WS_RETRY_LIMIT = 75;
+var WS_RETRY_DELAY_MS = 200;
 
-var BASE_STEP_LABELS = ["Security", "LLM", "Channel", "Identity", "Summary"];
-var VOICE_STEP_LABELS = ["Security", "LLM", "Voice", "Channel", "Identity", "Summary"];
+// ── Step indicator ──────────────────────────────────────────
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
@@ -63,7 +71,7 @@ function detectBrowserTimezone() {
 
 function ErrorPanel({ message }) {
 	return html`<div role="alert" class="alert-error-text whitespace-pre-line">
-		<span class="text-[var(--error)] font-medium">Error:</span> ${message}
+		<span class="text-[var(--error)] font-medium">${t("onboarding:errorPrefix")}</span> ${message}
 	</div>`;
 }
 
@@ -131,6 +139,8 @@ function AuthStep({ onNext, skippable }) {
 	var [optPw, setOptPw] = useState("");
 	var [optPwConfirm, setOptPwConfirm] = useState("");
 	var [optPwSaving, setOptPwSaving] = useState(false);
+	var [recoveryKey, setRecoveryKey] = useState(null);
+	var [recoveryCopied, setRecoveryCopied] = useState(false);
 
 	var isIpAddress = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[");
 	var browserSupportsWebauthn = !!window.PublicKeyCredential;
@@ -186,7 +196,17 @@ function AuthStep({ onNext, skippable }) {
 			.then((r) => {
 				if (r.ok) {
 					ensureWsConnected();
-					onNext();
+					return r
+						.json()
+						.then((data) => {
+							if (data.recovery_key) {
+								setRecoveryKey(data.recovery_key);
+								setSaving(false);
+							} else {
+								onNext();
+							}
+						})
+						.catch(() => onNext());
 				} else {
 					return r.text().then((t) => {
 						setError(t || "Setup failed");
@@ -320,7 +340,7 @@ function AuthStep({ onNext, skippable }) {
 	// Setup already complete (passkeys/password configured) — let user proceed.
 	if (setupComplete) {
 		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:auth.secureYourInstance")}</h2>
 			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
 				<span class="icon icon-checkmark"></span>
 				Authentication is already configured.
@@ -330,6 +350,39 @@ function AuthStep({ onNext, skippable }) {
 					ensureWsConnected();
 					onNext();
 				}}>Next</button>
+			</div>
+		</div>`;
+	}
+
+	// ── Recovery key display after vault initialization ────
+	if (recoveryKey) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+
+			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
+				<span class="icon icon-checkmark"></span>
+				Password set and vault initialized
+			</div>
+
+			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+				<div class="text-xs text-[var(--muted)]" style="margin-bottom:8px;">Recovery key</div>
+				<code class="select-all break-all" style="font-family:var(--font-mono);font-size:.8rem;color:var(--text-strong);display:block;line-height:1.5;">${recoveryKey}</code>
+				<div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+					<button type="button" class="provider-btn provider-btn-secondary" onClick=${() => {
+						navigator.clipboard.writeText(recoveryKey).then(() => {
+							setRecoveryCopied(true);
+							setTimeout(() => setRecoveryCopied(false), 2000);
+						});
+					}}>${recoveryCopied ? "Copied!" : "Copy"}</button>
+				</div>
+			</div>
+
+			<div class="text-xs" style="color:var(--error);max-width:600px;">
+				Save this recovery key in a safe place. It will not be shown again. You need it to unlock the vault if you forget your password.
+			</div>
+
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				<button type="button" class="provider-btn" onClick=${onNext}>Continue</button>
 			</div>
 		</div>`;
 	}
@@ -348,7 +401,7 @@ function AuthStep({ onNext, skippable }) {
 	// ── After passkey registration: optional password ────────
 	if (passkeyDone) {
 		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:auth.secureYourInstance")}</h2>
 
 			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
 				<span class="icon icon-checkmark"></span>
@@ -388,9 +441,13 @@ function AuthStep({ onNext, skippable }) {
 
 	// ── Method selection ─────────────────────────────────────
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:auth.secureYourInstance")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
-			${localhostOnly ? "Choose how to secure your instance, or skip for now." : "Choose how to secure your instance."}
+			${
+				localhostOnly
+					? "Choose how to secure your instance, or skip for now. Setting a password also enables the encryption vault, which protects API keys and secrets stored in the database."
+					: "Choose how to secure your instance."
+			}
 		</p>
 
 		${
@@ -421,7 +478,7 @@ function AuthStep({ onNext, skippable }) {
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Password</span>
 				</div>
-				<div class="text-xs text-[var(--muted)] mt-1">Set a traditional password</div>
+				<div class="text-xs text-[var(--muted)] mt-1">Set a password and enable the encryption vault for stored secrets</div>
 			</div>
 		</div>
 
@@ -440,7 +497,11 @@ function AuthStep({ onNext, skippable }) {
 				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>
 					${saving ? "Registering\u2026" : "Register passkey"}
 				</button>
-				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+				${
+					skippable
+						? html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>`
+						: null
+				}
 			</div>
 		</div>`
 		}
@@ -465,7 +526,11 @@ function AuthStep({ onNext, skippable }) {
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
 				</button>
-				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+				${
+					skippable
+						? html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>`
+						: null
+				}
 			</div>
 		</form>`
 		}
@@ -473,7 +538,11 @@ function AuthStep({ onNext, skippable }) {
 		${
 			method === null &&
 			html`<div class="flex flex-wrap items-center gap-3 mt-1">
-			${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+			${
+				skippable
+					? html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>`
+					: null
+			}
 		</div>`
 		}
 	</div>`;
@@ -489,6 +558,21 @@ function IdentityStep({ onNext, onBack }) {
 	var [theme, setTheme] = useState(identity.theme || "");
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
+
+	useEffect(() => {
+		var cancelled = false;
+		refreshGon().then(() => {
+			if (cancelled) return;
+			var refreshed = getGon("identity") || {};
+			if (refreshed.user_name) setUserName((prev) => prev || refreshed.user_name);
+			if (refreshed.name) setName((prev) => (prev && prev !== "Moltis" ? prev : refreshed.name));
+			if (refreshed.emoji) setEmoji((prev) => (prev && prev !== "\u{1f916}" ? prev : refreshed.emoji));
+			if (refreshed.theme) setTheme((prev) => prev || refreshed.theme);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	function onSubmit(e) {
 		e.preventDefault();
@@ -518,7 +602,7 @@ function IdentityStep({ onNext, onBack }) {
 	}
 
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Set up your identity</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:identity.title")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Tell us about yourself and customise your agent.</p>
 		<form onSubmit=${onSubmit} class="flex flex-col gap-4">
 			<!-- User section -->
@@ -546,12 +630,16 @@ function IdentityStep({ onNext, onBack }) {
 					<div class="text-xs text-[var(--muted)] mb-1">Theme</div>
 					<input type="text" class="provider-key-input w-full"
 						value=${theme} onInput=${(e) => setTheme(e.target.value)}
-						placeholder="e.g. wise owl, chill fox" />
+						placeholder="wise owl, chill fox, witty robot\u2026" />
 				</div>
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex flex-wrap items-center gap-3 mt-1">
-				${onBack && html`<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>`}
+				${
+					onBack
+						? html`<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>`
+						: null
+				}
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Saving\u2026" : "Continue"}
 				</button>
@@ -997,9 +1085,12 @@ function ProviderStep({ onNext, onBack }) {
 					return;
 				}
 
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
 					attempts += 1;
-					window.setTimeout(loadProviders, 200);
+					window.setTimeout(loadProviders, WS_RETRY_DELAY_MS);
 					return;
 				}
 
@@ -1413,13 +1504,13 @@ function ProviderStep({ onNext, onBack }) {
 	// ── Render ────────────────────────────────────────────────
 
 	if (loading) {
-		return html`<div class="text-sm text-[var(--muted)]">Loading LLMs\u2026</div>`;
+		return html`<div class="text-sm text-[var(--muted)]">${t("onboarding:provider.loadingLlms")}</div>`;
 	}
 
 	var configuredProviders = providers.filter((p) => p.configured);
 
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Add LLMs</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:provider.addLlms")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Configure one or more LLM providers to power your agent. You can add more later in Settings.</p>
 		${
 			configuredProviders.length > 0
@@ -1473,9 +1564,9 @@ function ProviderStep({ onNext, onBack }) {
 		</div>
 		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>Continue</button>
-			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>
+			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>${t("common:actions.continue")}</button>
+			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>
 		</div>
 	</div>`;
 }
@@ -1652,9 +1743,12 @@ function VoiceStep({ onNext, onBack }) {
 					setLoading(false);
 					return;
 				}
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
 					attempts += 1;
-					window.setTimeout(load, 200);
+					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;
 				}
 				// Voice not compiled → skip
@@ -2000,28 +2094,44 @@ function VoiceStep({ onNext, onBack }) {
 
 		${error && !configuring ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			<button class="provider-btn" onClick=${onNext}>Continue</button>
-			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>
+			<button class="provider-btn" onClick=${onNext}>${t("common:actions.continue")}</button>
+			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>
 		</div>
 	</div>`;
 }
 
 // ── Channel step ────────────────────────────────────────────
 
-function ChannelStep({ onNext, onBack }) {
+function ChannelTypeSelector({ onSelect, offered }) {
+	return html`<div class="flex gap-3">
+		${
+			offered.has("telegram") &&
+			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("telegram")}>
+			<span class="icon icon-xl icon-telegram"></span>
+			<span class="text-sm font-medium text-[var(--text-strong)]">Telegram</span>
+		</button>`
+		}
+		${
+			offered.has("msteams") &&
+			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("msteams")}>
+			<span class="icon icon-xl icon-msteams"></span>
+			<span class="text-sm font-medium text-[var(--text-strong)]">Microsoft Teams</span>
+		</button>`
+		}
+	</div>`;
+}
+
+function TelegramForm({ onConnected, error, setError }) {
 	var [accountId, setAccountId] = useState("");
 	var [token, setToken] = useState("");
 	var [dmPolicy, setDmPolicy] = useState("allowlist");
 	var [allowlist, setAllowlist] = useState("");
 	var [saving, setSaving] = useState(false);
-	var [connected, setConnected] = useState(false);
-	var [connectedName, setConnectedName] = useState("");
-	var [error, setError] = useState(null);
 
 	function onSubmit(e) {
 		e.preventDefault();
-		var v = validateChannelFields(accountId, token);
+		var v = validateChannelFields("telegram", accountId, token);
 		if (!v.valid) {
 			setError(v.error);
 			return;
@@ -2041,82 +2151,238 @@ function ChannelStep({ onNext, onBack }) {
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
-				setConnected(true);
-				setConnectedName(accountId.trim());
+				onConnected(accountId.trim(), "telegram");
 			} else {
 				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect bot.");
 			}
 		});
 	}
 
-	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Connect Telegram</h2>
-		<p class="text-xs text-[var(--muted)] leading-relaxed">Connect a Telegram bot so you can chat from your phone. You can set this up later in Channels.</p>
-		${
-			connected
-				? html`<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
-				<span class="icon icon-lg icon-check-circle shrink-0" style="color:var(--ok)"></span>
-				<div>
-					<div class="text-sm font-medium text-[var(--text-strong)]">Bot connected</div>
-					<div class="text-xs text-[var(--muted)] mt-0.5">@${connectedName} is now linked to your agent.</div>
-				</div>
-			</div>`
-				: html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
-				<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
-					<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
-					<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
-					<span>2. Send /newbot and follow the prompts</span>
-					<span>3. Copy the bot token and paste it below</span>
-				</div>
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Bot username</label>
-					<input type="text" class="provider-key-input w-full"
-						value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
-						placeholder="e.g. my_assistant_bot"
-						autocomplete="off"
-						autocapitalize="none"
-						autocorrect="off"
-						spellcheck="false"
-						name="telegram_bot_username"
-						autofocus />
-				</div>
-					<div>
-						<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
-						<input type="password" class="provider-key-input w-full"
-							value=${token} onInput=${(e) => setToken(e.target.value)}
-							placeholder="123456:ABC-DEF..."
-							autocomplete="new-password"
-							autocapitalize="none"
-							autocorrect="off"
-							spellcheck="false"
-							name="telegram_bot_token" />
-				</div>
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
-					<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
-						<option value="allowlist">Allowlist only (recommended)</option>
-						<option value="open">Open (anyone)</option>
-						<option value="disabled">Disabled</option>
-					</select>
-				</div>
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
-					<textarea class="provider-key-input w-full" rows="2"
-						value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
-						placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
-					<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
-				</div>
-				${error && html`<${ErrorPanel} message=${error} />`}
-			</form>`
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
+			<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
+			<span>2. Send /newbot and follow the prompts</span>
+			<span>3. Copy the bot token and paste it below</span>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Bot username</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
+				placeholder="e.g. my_assistant_bot"
+				autocomplete="off"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="telegram_bot_username"
+				autofocus />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
+			<input type="password" class="provider-key-input w-full"
+				value=${token} onInput=${(e) => setToken(e.target.value)}
+				placeholder="123456:ABC-DEF..."
+				autocomplete="new-password"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="telegram_bot_token" />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+				<option value="allowlist">Allowlist only (recommended)</option>
+				<option value="open">Open (anyone)</option>
+				<option value="disabled">Disabled</option>
+			</select>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
+			<textarea class="provider-key-input w-full" rows="2"
+				value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+				placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
+			<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
+		</div>
+		${error && html`<${ErrorPanel} message=${error} />`}
+		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
+	</form>`;
+}
+
+function TeamsForm({ onConnected, error, setError }) {
+	var [appId, setAppId] = useState("");
+	var [appPassword, setAppPassword] = useState("");
+	var [webhookSecret, setWebhookSecret] = useState("");
+	var [baseUrl, setBaseUrl] = useState(defaultTeamsBaseUrl());
+	var [bootstrapEndpoint, setBootstrapEndpoint] = useState("");
+	var [saving, setSaving] = useState(false);
+
+	function onBootstrap() {
+		var id = appId.trim();
+		if (!id) {
+			setError("Enter App ID first.");
+			return;
 		}
-		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			${
-				connected
-					? html`<button type="button" class="provider-btn" onClick=${onNext}>Continue</button>`
-					: html`<button type="button" class="provider-btn" disabled=${saving} onClick=${onSubmit}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>`
+		var secret = webhookSecret.trim();
+		if (!secret) {
+			secret = generateWebhookSecretHex();
+			setWebhookSecret(secret);
+		}
+		var endpoint = buildTeamsEndpoint(baseUrl, id, secret);
+		if (!endpoint) {
+			setError("Enter a valid public base URL (e.g. https://bot.example.com).");
+			return;
+		}
+		setBootstrapEndpoint(endpoint);
+		setError(null);
+	}
+
+	function onCopyEndpoint() {
+		if (!bootstrapEndpoint) return;
+		if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+			navigator.clipboard.writeText(bootstrapEndpoint);
+		}
+	}
+
+	function onSubmit(e) {
+		e.preventDefault();
+		var v = validateChannelFields("msteams", appId, appPassword);
+		if (!v.valid) {
+			setError(v.error);
+			return;
+		}
+		setError(null);
+		setSaving(true);
+		var config = {
+			app_id: appId.trim(),
+			app_password: appPassword.trim(),
+			dm_policy: "allowlist",
+			mention_mode: "mention",
+			allowlist: [],
+		};
+		if (webhookSecret.trim()) config.webhook_secret = webhookSecret.trim();
+		addChannel("msteams", appId.trim(), config).then((res) => {
+			setSaving(false);
+			if (res?.ok) {
+				onConnected(appId.trim(), "msteams");
+			} else {
+				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.");
 			}
-			<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
+		});
+	}
+
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">Microsoft Teams setup</span>
+			<span>1. <a href="https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration" target="_blank" class="text-[var(--accent)] underline">Create an Azure Bot registration</a> and copy the App ID + App Password.</span>
+			<span>2. Generate the messaging endpoint below and paste it into your Azure Bot configuration.</span>
+			<span>3. Optional CLI shortcut: <code class="text-xs">moltis channels teams bootstrap</code>.</span>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">App ID / Account ID</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${appId} onInput=${(e) => setAppId(e.target.value)}
+				placeholder="Azure App ID or alias"
+				autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+				name="teams_app_id" autofocus />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">App Password (client secret)</label>
+			<input type="password" class="provider-key-input w-full"
+				value=${appPassword} onInput=${(e) => setAppPassword(e.target.value)}
+				placeholder="Azure client secret"
+				autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
+				name="teams_app_password" />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Webhook Secret (optional)</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${webhookSecret} onInput=${(e) => setWebhookSecret(e.target.value)}
+				placeholder="shared secret for ?secret=..." />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Public Base URL</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}
+				placeholder="https://bot.example.com" />
+		</div>
+		<div class="flex gap-2">
+			<button type="button" class="provider-btn provider-btn-sm provider-btn-secondary" onClick=${onBootstrap}>Generate Endpoint</button>
+			${bootstrapEndpoint && html`<button type="button" class="provider-btn provider-btn-sm provider-btn-secondary" onClick=${onCopyEndpoint}>Copy</button>`}
+		</div>
+		${
+			bootstrapEndpoint &&
+			html`<div>
+			<div class="text-xs text-[var(--muted)]">Messaging endpoint</div>
+			<code class="text-xs block break-all">${bootstrapEndpoint}</code>
+		</div>`
+		}
+		${error && html`<${ErrorPanel} message=${error} />`}
+		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Teams"}</button>
+	</form>`;
+}
+
+function ChannelSuccess({ channelName, channelType: type, onAnother }) {
+	var label = type === "msteams" ? "Microsoft Teams" : "Telegram";
+	return html`<div class="flex flex-col gap-3">
+		<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
+			<span class="icon icon-lg icon-check-circle shrink-0" style="color:var(--ok)"></span>
+			<div>
+				<div class="text-sm font-medium text-[var(--text-strong)]">Channel connected</div>
+				<div class="text-xs text-[var(--muted)] mt-0.5">${channelName} (${label}) is now linked to your agent.</div>
+			</div>
+		</div>
+		<button type="button" class="text-xs text-[var(--accent)] cursor-pointer bg-transparent border-none underline self-start" onClick=${onAnother}>Connect another channel</button>
+	</div>`;
+}
+
+function ChannelStep({ onNext, onBack }) {
+	var offeredList = getGon("channels_offered") || ["telegram"];
+	var offered = new Set(offeredList);
+	var singleType = offeredList.length === 1 ? offeredList[0] : null;
+
+	var [phase, setPhase] = useState(singleType ? "form" : "select");
+	var [selectedType, setSelectedType] = useState(singleType);
+	var [connectedName, setConnectedName] = useState("");
+	var [connectedType, setConnectedType] = useState(null);
+	var [error, setError] = useState(null);
+
+	function onSelectType(type) {
+		setSelectedType(type);
+		setPhase("form");
+		setError(null);
+	}
+
+	function onConnected(name, type) {
+		setConnectedName(name);
+		setConnectedType(type);
+		setPhase("success");
+		setError(null);
+	}
+
+	function onAnother() {
+		if (singleType) {
+			setPhase("form");
+			setError(null);
+		} else {
+			setPhase("select");
+			setSelectedType(null);
+			setError(null);
+		}
+	}
+
+	var showBackSelector = phase === "form" && !singleType;
+
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Connect a Channel</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">Connect a messaging channel so you can chat from your phone or team workspace. You can set this up later in Channels.</p>
+		${phase === "select" && html`<${ChannelTypeSelector} onSelect=${onSelectType} offered=${offered} />`}
+		${phase === "form" && selectedType === "telegram" && html`<${TelegramForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
+		${phase === "form" && selectedType === "msteams" && html`<${TeamsForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
+		${phase === "success" && html`<${ChannelSuccess} channelName=${connectedName} channelType=${connectedType} onAnother=${onAnother} />`}
+		<div class="flex flex-wrap items-center gap-3 mt-1">
+			<button type="button" class="provider-btn provider-btn-secondary" onClick=${showBackSelector ? () => setPhase("select") : onBack}>${t("common:actions.back")}</button>
+			${phase === "success" && html`<button type="button" class="provider-btn" onClick=${onNext}>${t("common:actions.continue")}</button>`}
+			<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>
 		</div>
 	</div>`;
 }
@@ -2153,6 +2419,214 @@ function SummaryRow({ icon, label, children }) {
 		<div class="flex-1 min-w-0">
 			<div class="text-sm font-medium text-[var(--text-strong)]">${label}</div>
 			<div class="text-xs text-[var(--muted)] mt-1">${children}</div>
+		</div>
+	</div>`;
+}
+
+// ── OpenClaw import step (conditional) ───────────────────────
+
+function OpenClawImportStep({ onNext, onBack }) {
+	var [loading, setLoading] = useState(true);
+	var [scan, setScan] = useState(null);
+	var [importing, setImporting] = useState(false);
+	var [done, setDone] = useState(false);
+	var [result, setResult] = useState(null);
+	var [error, setError] = useState(null);
+	var [selection, setSelection] = useState({
+		identity: true,
+		providers: true,
+		skills: true,
+		memory: true,
+		channels: true,
+		sessions: true,
+	});
+
+	useEffect(() => {
+		var cancelled = false;
+		sendRpc("openclaw.scan", {}).then((res) => {
+			if (cancelled) return;
+			if (res?.ok) {
+				setScan(res.payload);
+			} else {
+				setError("Failed to scan OpenClaw installation");
+			}
+			setLoading(false);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	function toggleCategory(key) {
+		setSelection((prev) => {
+			var next = Object.assign({}, prev);
+			next[key] = !prev[key];
+			return next;
+		});
+	}
+
+	async function doImport() {
+		setImporting(true);
+		setError(null);
+		var res = await sendRpc("openclaw.import", selection);
+		setImporting(false);
+		if (res?.ok) {
+			setResult(res.payload);
+			await refreshGon();
+			setDone(true);
+		} else {
+			setError(res?.error?.message || "Import failed");
+		}
+	}
+
+	if (loading) {
+		return html`<div class="flex flex-col items-center justify-center gap-3 min-h-[200px]">
+			<div class="inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin"></div>
+			<div class="text-sm text-[var(--muted)]">Scanning OpenClaw installation\u2026</div>
+		</div>`;
+	}
+
+	if (done && result) {
+		var total = (result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0);
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Import Complete</h2>
+			<p class="text-xs text-[var(--muted)] leading-relaxed">${total} item(s) imported from OpenClaw.</p>
+			${
+				result.categories
+					? html`<div class="flex flex-col gap-1">
+						${result.categories.map(
+							(cat) => html`<div key=${cat.category} class="text-xs text-[var(--text)]">
+								<span class="font-mono">[${cat.status === "success" ? "\u2713" : cat.status === "partial" ? "~" : cat.status === "skipped" ? "-" : "!"}]</span>
+								${cat.category}: ${cat.items_imported} imported, ${cat.items_skipped} skipped
+								${(cat.warnings || []).map((w) => html`<div class="text-[var(--warn)] ml-6">${w}</div>`)}
+							</div>`,
+						)}
+					</div>`
+					: null
+			}
+			${
+				result.todos?.length > 0
+					? html`<div class="text-xs text-[var(--muted)]">
+						<div class="font-medium">Not yet supported in Moltis:</div>
+						${result.todos.map((t) => html`<div key=${t.feature}>\u2022 ${t.feature}: ${t.description}</div>`)}
+					</div>`
+					: null
+			}
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				<button class="provider-btn" onClick=${onNext}>Continue</button>
+			</div>
+		</div>`;
+	}
+
+	if (!scan?.detected) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Import from OpenClaw</h2>
+			<p class="text-xs text-[var(--muted)]">Could not scan OpenClaw installation.</p>
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				${onBack ? html`<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>` : null}
+				<button class="provider-btn" onClick=${onNext}>Skip</button>
+			</div>
+		</div>`;
+	}
+
+	var categories = [
+		{
+			key: "identity",
+			label: "Identity",
+			available: scan.identity_available,
+			detail: [scan.identity_agent_name, scan.identity_theme].filter(Boolean).join(", ") || null,
+		},
+		{ key: "providers", label: "Providers", available: scan.providers_available },
+		{ key: "skills", label: "Skills", available: scan.skills_count > 0, detail: `${scan.skills_count} skill(s)` },
+		{
+			key: "memory",
+			label: "Memory",
+			available: scan.memory_available,
+			detail: `${scan.memory_files_count} memory file(s)`,
+		},
+		{
+			key: "channels",
+			label: "Channels",
+			available: scan.channels_available,
+			detail: `${scan.telegram_accounts} Telegram account(s)`,
+		},
+		{
+			key: "sessions",
+			label: "Sessions",
+			available: scan.sessions_count > 0,
+			detail: `${scan.sessions_count} session(s)`,
+		},
+	];
+	var anySelected = categories.some((c) => c.available && selection[c.key]);
+
+	var workspaceMissing = !scan.memory_available && scan.skills_count === 0 && !scan.identity_theme;
+
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Import from OpenClaw</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">
+			We detected an OpenClaw installation at <code class="text-[var(--text)]">${scan.home_dir}</code>.
+			Select the data you'd like to import.
+		</p>
+		${
+			workspaceMissing
+				? html`<p class="text-xs text-[var(--muted)] leading-relaxed">
+			If OpenClaw ran on another machine, copy its workspace directory
+			(e.g. <code>clawd/</code>) into <code>${scan.home_dir}/</code> or <code>~/</code>
+			for a full import including identity, memory, and skills.
+		</p>`
+				: null
+		}
+		${error ? html`<${ErrorPanel} message=${error} />` : null}
+		<div class="flex flex-col gap-2" style="max-width:400px;">
+			${categories.map(
+				(cat) => html`<label
+					key=${cat.key}
+					class="flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}">
+					<input
+						type="checkbox"
+						checked=${selection[cat.key] && cat.available}
+						disabled=${!cat.available || importing}
+						onChange=${() => toggleCategory(cat.key)}
+					/>
+					<span>${cat.label}</span>
+					${cat.detail && cat.available ? html`<span class="text-xs text-[var(--muted)]">(${cat.detail})</span>` : null}
+					${cat.available ? null : html`<span class="text-xs text-[var(--muted)]">(not found)</span>`}
+				</label>`,
+			)}
+		</div>
+		${
+			scan.agents?.length > 1
+				? html`<div class="text-xs text-[var(--muted)] leading-relaxed border border-[var(--border)] rounded p-2" style="max-width:400px;">
+					<span class="font-medium text-[var(--text)]">${scan.agents.length} agents detected</span>
+					<span class="ml-1">\u2014 non-default agents will be created as separate personas:</span>
+					<ul class="mt-1 ml-4 list-disc">
+						${scan.agents.map(
+							(a) =>
+								html`<li key=${a.openclaw_id}>
+									<span class="text-[var(--text)]">${a.name || a.openclaw_id}</span>${a.is_default ? html`<span class="ml-1 text-[var(--muted)]">(default)</span>` : null}${a.theme ? html`<span class="ml-1 text-[var(--muted)]">\u2014 ${a.theme}</span>` : null}
+								</li>`,
+						)}
+					</ul>
+				</div>`
+				: null
+		}
+		${
+			scan.unsupported_channels?.length > 0
+				? html`<p class="text-xs text-[var(--muted)]">
+					Unsupported channels (coming soon): ${scan.unsupported_channels.join(", ")}
+				</p>`
+				: null
+		}
+		<div class="flex flex-wrap items-center gap-3 mt-1">
+			${onBack ? html`<button class="provider-btn provider-btn-secondary" onClick=${onBack} disabled=${importing}>Back</button>` : null}
+			<button class="provider-btn" onClick=${doImport} disabled=${!anySelected || importing}>
+				${importing ? "Importing\u2026" : "Import Selected"}
+			</button>
+			<button
+				class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline"
+				onClick=${onNext}
+				disabled=${importing}
+			>Skip for now</button>
 		</div>
 	</div>`;
 }
@@ -2211,7 +2685,7 @@ function SummaryStep({ onBack, onFinish }) {
 	if (loading || !data) {
 		return html`<div class="flex flex-col items-center justify-center gap-3 min-h-[200px]">
 			<div class="inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin"></div>
-			<div class="text-sm text-[var(--muted)]">Loading summary\u2026</div>
+			<div class="text-sm text-[var(--muted)]">${t("onboarding:summary.loadingSummary")}</div>
 		</div>`;
 	}
 
@@ -2219,7 +2693,7 @@ function SummaryStep({ onBack, onFinish }) {
 	var configuredProviders = data.providers.filter((p) => p.configured);
 
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Setup Summary</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:summary.title")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Overview of your configuration. You can change any of these later in Settings.</p>
 
 		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto -mr-4 pr-4">
@@ -2354,7 +2828,7 @@ function SummaryStep({ onBack, onFinish }) {
 		</div>
 
 		<div class="flex flex-wrap items-center gap-3 mt-1">
-			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>
 			<div class="flex-1" />
 			<button class="provider-btn" onClick=${onFinish}>${data.identity?.emoji || ""} ${data.identity?.name || "Your agent"}, reporting for duty</button>
 		</div>
@@ -2425,15 +2899,29 @@ function OnboardingPage() {
 
 	if (step === -1) {
 		return html`<div class="onboarding-card">
-			<div class="text-sm text-[var(--muted)]">Loading\u2026</div>
+			<div class="text-sm text-[var(--muted)]">${t("common:status.loading")}</div>
 		</div>`;
 	}
 
-	// Build step list dynamically based on auth + voice availability
-	var allLabels = voiceAvailable ? VOICE_STEP_LABELS : BASE_STEP_LABELS;
+	// Build step list dynamically based on auth + voice + openclaw availability
+	var openclawDetected = getGon("openclaw_detected") === true;
+	var allLabels = [t("onboarding:steps.security")];
+	if (openclawDetected) allLabels.push(t("onboarding:steps.import"));
+	allLabels.push(t("onboarding:steps.llm"));
+	if (voiceAvailable) allLabels.push(t("onboarding:steps.voice"));
+	allLabels.push(t("onboarding:steps.channel"), t("onboarding:steps.identity"), t("onboarding:steps.summary"));
 	var steps = authNeeded ? allLabels : allLabels.slice(1);
 	var stepIndex = authNeeded ? step : step - 1;
-	var lastStep = voiceAvailable ? 5 : 4;
+
+	// Compute dynamic step indices: Auth(0) → Import? → LLM → Voice? → Channel → Identity → Summary
+	var nextIdx = 1;
+	var importStep = openclawDetected ? nextIdx++ : -1;
+	var llmStep = nextIdx++;
+	var voiceStep = voiceAvailable ? nextIdx++ : -1;
+	var channelStep = nextIdx++;
+	var identityStep = nextIdx++;
+	var summaryStep = nextIdx;
+	var lastStep = summaryStep;
 
 	function goNext() {
 		if (step === lastStep) {
@@ -2455,20 +2943,14 @@ function OnboardingPage() {
 		}
 	}
 
-	// Determine which component to show for each step
-	// Order: Auth(0) → LLM(1) → Voice(2)? → Channel → Identity → Summary
-	var voiceStep = voiceAvailable ? 2 : -1;
-	var channelStep = voiceAvailable ? 3 : 2;
-	var identityStep = voiceAvailable ? 4 : 3;
-	var summaryStep = voiceAvailable ? 5 : 4;
-
 	var startedAt = getGon("started_at");
 
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
 		<div class="mt-6">
 			${step === 0 && html`<${AuthStep} onNext=${goNext} skippable=${authSkippable} />`}
-			${step === 1 && html`<${ProviderStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
+			${step === importStep && html`<${OpenClawImportStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
+			${step === llmStep && html`<${ProviderStep} onNext=${goNext} onBack=${authNeeded || openclawDetected ? goBack : null} />`}
 			${step === voiceStep && html`<${VoiceStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === channelStep && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === identityStep && html`<${IdentityStep} onNext=${goNext} onBack=${goBack} />`}

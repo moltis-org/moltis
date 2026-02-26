@@ -9,7 +9,7 @@ use moltis_projects::{
     detect::{auto_detect, default_scan_dirs},
 };
 
-use crate::services::{ProjectService, ServiceResult};
+use crate::services::{ProjectService, ServiceError, ServiceResult};
 
 pub struct LiveProjectService {
     store: Arc<dyn ProjectStore>,
@@ -24,8 +24,8 @@ impl LiveProjectService {
 #[async_trait]
 impl ProjectService for LiveProjectService {
     async fn list(&self) -> ServiceResult {
-        let projects = self.store.list().await.map_err(|e| e.to_string())?;
-        serde_json::to_value(projects).map_err(|e| e.to_string())
+        let projects = self.store.list().await.map_err(ServiceError::message)?;
+        Ok(serde_json::to_value(projects)?)
     }
 
     async fn get(&self, params: Value) -> ServiceResult {
@@ -33,18 +33,17 @@ impl ProjectService for LiveProjectService {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'id' parameter".to_string())?;
-        let project = self.store.get(id).await.map_err(|e| e.to_string())?;
-        serde_json::to_value(project).map_err(|e| e.to_string())
+        let project = self.store.get(id).await.map_err(ServiceError::message)?;
+        Ok(serde_json::to_value(project)?)
     }
 
     async fn upsert(&self, params: Value) -> ServiceResult {
-        let project: moltis_projects::Project =
-            serde_json::from_value(params).map_err(|e| e.to_string())?;
+        let project: moltis_projects::Project = serde_json::from_value(params)?;
         self.store
             .upsert(project.clone())
             .await
-            .map_err(|e| e.to_string())?;
-        serde_json::to_value(project).map_err(|e| e.to_string())
+            .map_err(ServiceError::message)?;
+        Ok(serde_json::to_value(project)?)
     }
 
     async fn delete(&self, params: Value) -> ServiceResult {
@@ -52,7 +51,7 @@ impl ProjectService for LiveProjectService {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'id' parameter".to_string())?;
-        self.store.delete(id).await.map_err(|e| e.to_string())?;
+        self.store.delete(id).await.map_err(ServiceError::message)?;
         Ok(serde_json::json!({"deleted": id}))
     }
 
@@ -62,7 +61,7 @@ impl ProjectService for LiveProjectService {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let existing = self.store.list().await.map_err(|e| e.to_string())?;
+        let existing = self.store.list().await.map_err(ServiceError::message)?;
         let known_ids: Vec<String> = existing.iter().map(|p| p.id.clone()).collect();
 
         let dir_refs: Vec<std::path::PathBuf> = if dirs.is_empty() {
@@ -79,7 +78,7 @@ impl ProjectService for LiveProjectService {
             }
         }
 
-        serde_json::to_value(detected).map_err(|e| e.to_string())
+        Ok(serde_json::to_value(detected)?)
     }
 
     async fn complete_path(&self, params: Value) -> ServiceResult {
@@ -88,7 +87,7 @@ impl ProjectService for LiveProjectService {
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
-        serde_json::to_value(results).map_err(|e| e.to_string())
+        Ok(serde_json::to_value(results)?)
     }
 
     async fn context(&self, params: Value) -> ServiceResult {
@@ -100,10 +99,11 @@ impl ProjectService for LiveProjectService {
             .store
             .get(id)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(ServiceError::message)?
             .ok_or_else(|| format!("project '{id}' not found"))?;
 
-        let context_files = load_context_files(&project.directory).map_err(|e| e.to_string())?;
+        let context_files =
+            load_context_files(&project.directory).map_err(ServiceError::message)?;
         let entries: Vec<Value> = context_files
             .iter()
             .map(|cf| {

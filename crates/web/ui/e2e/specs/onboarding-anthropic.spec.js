@@ -29,6 +29,16 @@ async function maybeCompleteIdentity(page) {
 	await page.getByRole("button", { name: "Continue", exact: true }).click();
 }
 
+async function maybeSkipOpenClawImport(page) {
+	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
+	if (!(await isVisible(importHeading))) return;
+
+	const skipBtn = page.getByRole("button", { name: /^Skip/ }).first();
+	if (await isVisible(skipBtn)) {
+		await skipBtn.click();
+	}
+}
+
 async function moveToLlmStep(page) {
 	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
 	if (await isVisible(llmHeading)) return;
@@ -37,6 +47,9 @@ async function moveToLlmStep(page) {
 	if (await isVisible(llmHeading)) return;
 
 	await maybeCompleteIdentity(page);
+	if (await isVisible(llmHeading)) return;
+
+	await maybeSkipOpenClawImport(page);
 	if (await isVisible(llmHeading)) return;
 
 	await expect(llmHeading).toBeVisible({ timeout: 15_000 });

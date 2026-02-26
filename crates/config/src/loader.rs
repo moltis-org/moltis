@@ -74,18 +74,20 @@ fn data_dir_override() -> Option<PathBuf> {
 /// Load config from the given path (any supported format).
 ///
 /// After parsing, `MOLTIS_*` env vars are applied as overrides.
-pub fn load_config(path: &Path) -> anyhow::Result<MoltisConfig> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+pub fn load_config(path: &Path) -> crate::Result<MoltisConfig> {
+    let raw = std::fs::read_to_string(path).map_err(|source| {
+        crate::Error::external(format!("failed to read {}", path.display()), source)
+    })?;
     let raw = substitute_env(&raw);
     let config = parse_config(&raw, path)?;
     Ok(apply_env_overrides(config))
 }
 
 /// Load and parse the config file with env substitution and includes.
-pub fn load_config_value(path: &Path) -> anyhow::Result<serde_json::Value> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+pub fn load_config_value(path: &Path) -> crate::Result<serde_json::Value> {
+    let raw = std::fs::read_to_string(path).map_err(|source| {
+        crate::Error::external(format!("failed to read {}", path.display()), source)
+    })?;
     let raw = substitute_env(&raw);
     parse_config_value(&raw, path)
 }
@@ -285,6 +287,11 @@ pub fn memory_path() -> PathBuf {
     data_dir().join("MEMORY.md")
 }
 
+/// Return the workspace directory for a named agent: `data_dir()/agents/<id>`.
+pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
+    data_dir().join("agents").join(agent_id)
+}
+
 /// Load identity values from `IDENTITY.md` frontmatter if present.
 pub fn load_identity() -> Option<AgentIdentity> {
     let path = identity_path();
@@ -296,6 +303,21 @@ pub fn load_identity() -> Option<AgentIdentity> {
     } else {
         Some(identity)
     }
+}
+
+/// Load identity values for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/IDENTITY.md` first and
+/// falls back to the root `IDENTITY.md`.
+pub fn load_identity_for_agent(agent_id: &str) -> Option<AgentIdentity> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("IDENTITY.md");
+        if let Some(identity) = load_identity_from_path(&main_path) {
+            return Some(identity);
+        }
+        return load_identity();
+    }
+    load_identity_from_path(&agent_workspace_dir(agent_id).join("IDENTITY.md"))
 }
 
 /// Load user values from `USER.md` frontmatter if present.
@@ -388,8 +410,23 @@ pub fn load_soul() -> Option<String> {
     }
 }
 
+/// Load SOUL.md for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/SOUL.md` first and
+/// falls back to the root `SOUL.md`.
+pub fn load_soul_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("SOUL.md");
+        if let Some(soul) = load_workspace_markdown(main_path) {
+            return Some(soul);
+        }
+        return load_soul();
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("SOUL.md"))
+}
+
 /// Write `DEFAULT_SOUL` to `SOUL.md` when the file doesn't already exist.
-fn write_default_soul() -> anyhow::Result<()> {
+fn write_default_soul() -> crate::Result<()> {
     let path = soul_path();
     if path.exists() {
         return Ok(());
@@ -407,9 +444,21 @@ pub fn load_agents_md() -> Option<String> {
     load_workspace_markdown(agents_path())
 }
 
+/// Load AGENTS.md for a specific agent, falling back to the root file.
+pub fn load_agents_md_for_agent(agent_id: &str) -> Option<String> {
+    let agent_path = agent_workspace_dir(agent_id).join("AGENTS.md");
+    load_workspace_markdown(agent_path).or_else(load_agents_md)
+}
+
 /// Load TOOLS.md from the workspace root (`data_dir`) if present and non-empty.
 pub fn load_tools_md() -> Option<String> {
     load_workspace_markdown(tools_path())
+}
+
+/// Load TOOLS.md for a specific agent, falling back to the root file.
+pub fn load_tools_md_for_agent(agent_id: &str) -> Option<String> {
+    let agent_path = agent_workspace_dir(agent_id).join("TOOLS.md");
+    load_workspace_markdown(agent_path).or_else(load_tools_md)
 }
 
 /// Load HEARTBEAT.md from the workspace root (`data_dir`) if present and non-empty.
@@ -422,12 +471,27 @@ pub fn load_memory_md() -> Option<String> {
     load_workspace_markdown(memory_path())
 }
 
+/// Load MEMORY.md for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/MEMORY.md` first and
+/// falls back to the root `MEMORY.md`.
+pub fn load_memory_md_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("MEMORY.md");
+        if let Some(memory) = load_workspace_markdown(main_path) {
+            return Some(memory);
+        }
+        return load_memory_md();
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("MEMORY.md"))
+}
+
 /// Persist SOUL.md in the workspace root (`data_dir`).
 ///
 /// - `Some(non-empty)` writes `SOUL.md` with the given content
 /// - `None` or empty writes an empty `SOUL.md` so that `load_soul()`
 ///   returns `None` without re-seeding the default
-pub fn save_soul(soul: Option<&str>) -> anyhow::Result<PathBuf> {
+pub fn save_soul(soul: Option<&str>) -> crate::Result<PathBuf> {
     let path = soul_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -446,7 +510,7 @@ pub fn save_soul(soul: Option<&str>) -> anyhow::Result<PathBuf> {
 }
 
 /// Persist identity values to `IDENTITY.md` using YAML frontmatter.
-pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
+pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     let path = identity_path();
     let has_values =
         identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
@@ -481,8 +545,40 @@ pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
+/// Persist identity values for a non-main agent into its workspace.
+pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crate::Result<PathBuf> {
+    let dir = agent_workspace_dir(agent_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("IDENTITY.md");
+
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
+
+    if !has_values {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        return Ok(path);
+    }
+
+    let mut yaml_lines = Vec::new();
+    if let Some(name) = identity.name.as_deref() {
+        yaml_lines.push(format!("name: {}", yaml_scalar(name)));
+    }
+    if let Some(emoji) = identity.emoji.as_deref() {
+        yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
+    }
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
+    }
+
+    let content = format!("---\n{}\n---\n", yaml_lines.join("\n"));
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
 /// Persist user values to `USER.md` using YAML frontmatter.
-pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
+pub fn save_user(user: &UserProfile) -> crate::Result<PathBuf> {
     let path = user_path();
     let has_values = user.name.is_some() || user.timezone.is_some() || user.location.is_some();
 
@@ -523,7 +619,7 @@ pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
+pub fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return None;
@@ -536,6 +632,10 @@ fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
 
 fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
     let mut identity = AgentIdentity::default();
+    // Legacy fields for backward compat with old IDENTITY.md files.
+    let mut creature: Option<String> = None;
+    let mut vibe: Option<String> = None;
+
     for raw in frontmatter.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -552,11 +652,25 @@ fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
         match key {
             "name" => identity.name = Some(value.to_string()),
             "emoji" => identity.emoji = Some(value.to_string()),
-            // Accept "creature" and "vibe" as backward-compat aliases for "theme".
-            "theme" | "creature" | "vibe" => identity.theme = Some(value.to_string()),
+            "theme" => identity.theme = Some(value.to_string()),
+            // Backward compat: compose legacy creature/vibe into theme.
+            "creature" => creature = Some(value.to_string()),
+            "vibe" => vibe = Some(value.to_string()),
             _ => {},
         }
     }
+
+    // If no explicit `theme` was set, compose from legacy creature/vibe.
+    if identity.theme.is_none() {
+        let composed = match (vibe, creature) {
+            (Some(v), Some(c)) => Some(format!("{v} {c}")),
+            (Some(v), None) => Some(v),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        };
+        identity.theme = composed;
+    }
+
     identity
 }
 
@@ -641,6 +755,17 @@ fn load_workspace_markdown(path: PathBuf) -> Option<String> {
     }
 }
 
+fn load_identity_from_path(path: &Path) -> Option<AgentIdentity> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let frontmatter = extract_yaml_frontmatter(&content)?;
+    let identity = parse_identity_frontmatter(frontmatter);
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
+        None
+    } else {
+        Some(identity)
+    }
+}
+
 fn strip_leading_html_comments(content: &str) -> &str {
     let mut rest = content;
     loop {
@@ -687,7 +812,7 @@ static CONFIG_SAVE_LOCK: Mutex<ConfigSaveState> = Mutex::new(ConfigSaveState { t
 ///
 /// Acquires a process-wide lock so concurrent callers cannot race.
 /// Returns the path written to.
-pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBuf> {
+pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> crate::Result<PathBuf> {
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
@@ -701,7 +826,7 @@ pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBu
 /// Creates parent directories if needed. Returns the path written to.
 ///
 /// Prefer [`update_config`] for read-modify-write cycles to avoid races.
-pub fn save_config(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
+pub fn save_config(config: &MoltisConfig) -> crate::Result<PathBuf> {
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
@@ -712,9 +837,9 @@ pub fn save_config(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
 ///
 /// Validates the input by parsing it first. Acquires the config save lock
 /// so concurrent callers cannot race.  Returns the path written to.
-pub fn save_raw_config(toml_str: &str) -> anyhow::Result<PathBuf> {
-    let _: MoltisConfig =
-        toml::from_str(toml_str).map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
+pub fn save_raw_config(toml_str: &str) -> crate::Result<PathBuf> {
+    let _: MoltisConfig = toml::from_str(toml_str)
+        .map_err(|source| crate::Error::external(format!("invalid config: {source}"), source))?;
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = find_or_default_config_path();
     guard.target_path = Some(path.clone());
@@ -730,12 +855,12 @@ pub fn save_raw_config(toml_str: &str) -> anyhow::Result<PathBuf> {
 ///
 /// For existing TOML files, this preserves user comments by merging the new
 /// serialized values into the current document structure before writing.
-pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result<PathBuf> {
+pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let toml_str =
-        toml::to_string_pretty(config).map_err(|e| anyhow::anyhow!("serialize config: {e}"))?;
+    let toml_str = toml::to_string_pretty(config)
+        .map_err(|source| crate::Error::external("serialize config", source))?;
 
     let is_toml_path = path
         .extension()
@@ -759,14 +884,14 @@ pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result
     Ok(path.to_path_buf())
 }
 
-fn merge_toml_preserving_comments(path: &Path, updated_toml: &str) -> anyhow::Result<()> {
+fn merge_toml_preserving_comments(path: &Path, updated_toml: &str) -> crate::Result<()> {
     let current_toml = std::fs::read_to_string(path)?;
     let mut current_doc = current_toml
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| anyhow::anyhow!("parse existing TOML: {e}"))?;
+        .map_err(|source| crate::Error::external("parse existing TOML", source))?;
     let updated_doc = updated_toml
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| anyhow::anyhow!("parse updated TOML: {e}"))?;
+        .map_err(|source| crate::Error::external("parse updated TOML", source))?;
 
     merge_toml_tables(current_doc.as_table_mut(), updated_doc.as_table());
     std::fs::write(path, current_doc.to_string())?;
@@ -809,7 +934,7 @@ fn merge_toml_items(current: &mut toml_edit::Item, updated: &toml_edit::Item) {
 /// Write the default config file to the user-global config path.
 /// Only called when no config file exists yet.
 /// Uses a comprehensive template with all options documented.
-fn write_default_config(path: &Path, config: &MoltisConfig) -> anyhow::Result<()> {
+fn write_default_config(path: &Path, config: &MoltisConfig) -> crate::Result<()> {
     if path.exists() {
         return Ok(());
     }
@@ -955,18 +1080,20 @@ fn set_nested(root: &mut serde_json::Value, path: &[String], val: serde_json::Va
     }
 }
 
-fn parse_config(raw: &str, path: &Path) -> anyhow::Result<MoltisConfig> {
+fn parse_config(raw: &str, path: &Path) -> crate::Result<MoltisConfig> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("toml");
 
     match ext {
         "toml" => Ok(toml::from_str(raw)?),
         "yaml" | "yml" => Ok(serde_yaml::from_str(raw)?),
         "json" => Ok(serde_json::from_str(raw)?),
-        _ => anyhow::bail!("unsupported config format: .{ext}"),
+        _ => Err(crate::Error::message(format!(
+            "unsupported config format: .{ext}"
+        ))),
     }
 }
 
-fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Value> {
+fn parse_config_value(raw: &str, path: &Path) -> crate::Result<serde_json::Value> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("toml");
 
     match ext {
@@ -979,7 +1106,9 @@ fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Valu
             Ok(serde_json::to_value(v)?)
         },
         "json" => Ok(serde_json::from_str(raw)?),
-        _ => anyhow::bail!("unsupported config format: .{ext}"),
+        _ => Err(crate::Error::message(format!(
+            "unsupported config format: .{ext}"
+        ))),
     }
 }
 
@@ -1270,7 +1399,7 @@ name = "Rex"
         let identity = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: Some("🐶".to_string()),
-            theme: Some("chill dog".to_string()),
+            theme: Some("chill dog golden retriever".to_string()),
         };
 
         let path = save_identity(&identity).expect("save identity");
@@ -1280,7 +1409,7 @@ name = "Rex"
         let loaded = load_identity().expect("load identity");
         assert_eq!(loaded.name.as_deref(), Some("Rex"));
         assert_eq!(loaded.emoji.as_deref(), Some("🐶"), "raw file:\n{raw}");
-        assert_eq!(loaded.theme.as_deref(), Some("chill dog"));
+        assert_eq!(loaded.theme.as_deref(), Some("chill dog golden retriever"));
 
         clear_data_dir();
     }

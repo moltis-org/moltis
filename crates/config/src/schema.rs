@@ -23,6 +23,12 @@ pub struct AgentIdentity {
 #[derive(Debug, Clone)]
 pub struct Timezone(pub chrono_tz::Tz);
 
+#[derive(Debug, thiserror::Error)]
+#[error("unknown IANA timezone: {value}")]
+pub struct TimezoneParseError {
+    value: String,
+}
+
 impl Timezone {
     /// The IANA name, e.g. `"Europe/Paris"`.
     #[must_use]
@@ -44,12 +50,14 @@ impl std::fmt::Display for Timezone {
 }
 
 impl std::str::FromStr for Timezone {
-    type Err = String;
+    type Err = TimezoneParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         s.parse::<chrono_tz::Tz>()
             .map(Self)
-            .map_err(|_| format!("unknown IANA timezone: {s}"))
+            .map_err(|_| TimezoneParseError {
+                value: s.to_string(),
+            })
     }
 }
 
@@ -68,9 +76,7 @@ impl Serialize for Timezone {
 impl<'de> Deserialize<'de> for Timezone {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
-        s.parse::<chrono_tz::Tz>()
-            .map(Self)
-            .map_err(serde::de::Error::custom)
+        s.parse::<Self>().map_err(serde::de::Error::custom)
     }
 }
 
@@ -199,6 +205,7 @@ pub struct MoltisConfig {
     pub heartbeat: HeartbeatConfig,
     pub voice: VoiceConfig,
     pub cron: CronConfig,
+    pub caldav: CalDavConfig,
     /// Environment variables injected into the Moltis process at startup.
     /// Useful for API keys in Docker where you can't easily set env vars.
     /// Process env vars take precedence (existing vars are not overwritten).
@@ -765,6 +772,70 @@ impl Default for CronConfig {
     }
 }
 
+/// CalDAV integration configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalDavConfig {
+    /// Whether CalDAV integration is enabled.
+    pub enabled: bool,
+    /// Default account name to use when none is specified.
+    pub default_account: Option<String>,
+    /// Named CalDAV accounts.
+    #[serde(default)]
+    pub accounts: HashMap<String, CalDavAccountConfig>,
+}
+
+/// Configuration for a single CalDAV account.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalDavAccountConfig {
+    /// CalDAV server URL (e.g. "https://caldav.fastmail.com/dav/calendars").
+    pub url: Option<String>,
+    /// Username for authentication.
+    pub username: Option<String>,
+    /// Password or app-specific password.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub password: Option<Secret<String>>,
+    /// Provider hint: "fastmail", "icloud", or "generic".
+    pub provider: Option<String>,
+    /// HTTP request timeout in seconds.
+    #[serde(default = "default_caldav_timeout")]
+    pub timeout_seconds: u64,
+}
+
+impl Default for CalDavAccountConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            username: None,
+            password: None,
+            provider: None,
+            timeout_seconds: default_caldav_timeout(),
+        }
+    }
+}
+
+impl std::fmt::Debug for CalDavAccountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CalDavAccountConfig")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("provider", &self.provider)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
+}
+
+fn default_caldav_timeout() -> u64 {
+    30
+}
+
 /// Tailscale Serve/Funnel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1010,12 +1081,36 @@ pub struct McpOAuthOverrideEntry {
 }
 
 /// Channel configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChannelsConfig {
+    /// Which channel types are offered in the web UI (onboarding + channels page).
+    /// Defaults to `["telegram"]`. Set to `["telegram", "msteams"]` to opt in to Teams.
+    #[serde(
+        default = "default_channels_offered",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub offered: Vec<String>,
     /// Telegram bot accounts, keyed by account ID.
     #[serde(default)]
     pub telegram: HashMap<String, serde_json::Value>,
+    /// Microsoft Teams bot accounts, keyed by account ID.
+    #[serde(default)]
+    pub msteams: HashMap<String, serde_json::Value>,
+}
+
+fn default_channels_offered() -> Vec<String> {
+    vec!["telegram".into()]
+}
+
+impl Default for ChannelsConfig {
+    fn default() -> Self {
+        Self {
+            offered: default_channels_offered(),
+            telegram: HashMap::new(),
+            msteams: HashMap::new(),
+        }
+    }
 }
 
 /// TLS configuration for the gateway HTTPS server.
@@ -1398,6 +1493,16 @@ pub struct ResourceLimitsConfig {
     pub pids_max: Option<u32>,
 }
 
+/// Persistence strategy for `/home/sandbox` in sandbox containers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HomePersistenceConfig {
+    Off,
+    Session,
+    #[default]
+    Shared,
+}
+
 /// Sandbox configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1405,6 +1510,8 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Persistence strategy for `/home/sandbox`: off, session, or shared.
+    pub home_persistence: HomePersistenceConfig,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
@@ -1442,6 +1549,7 @@ fn default_sandbox_packages() -> Vec<String> {
         "npm",
         "ruby",
         "ruby-dev",
+        "golang-go",
         // Build toolchain & native deps
         "build-essential",
         "clang",
@@ -1580,6 +1688,7 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            home_persistence: HomePersistenceConfig::default(),
             image: None,
             container_prefix: None,
             no_network: true,
@@ -1633,6 +1742,19 @@ pub struct ProvidersConfig {
     pub local_models: Vec<String>,
 }
 
+/// Streaming transport for provider response streams.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderStreamTransport {
+    /// Use HTTP + SSE streaming (current default).
+    #[default]
+    Sse,
+    /// Use WebSocket mode when supported by the provider API.
+    Websocket,
+    /// Try WebSocket first, then fall back to SSE on transport/setup failure.
+    Auto,
+}
+
 /// Configuration for a single LLM provider.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1660,6 +1782,12 @@ pub struct ProviderEntry {
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub fetch_models: bool,
 
+    /// Streaming transport for this provider (`sse`, `websocket`, `auto`).
+    ///
+    /// Defaults to `sse` for compatibility.
+    #[serde(default, skip_serializing_if = "is_default_provider_stream_transport")]
+    pub stream_transport: ProviderStreamTransport,
+
     /// Optional alias for this provider instance.
     ///
     /// When set, this alias is used in metrics labels instead of the provider name.
@@ -1677,6 +1805,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("base_url", &self.base_url)
             .field("models", &self.models)
             .field("fetch_models", &self.fetch_models)
+            .field("stream_transport", &self.stream_transport)
             .field("alias", &self.alias)
             .finish()
     }
@@ -1690,6 +1819,7 @@ impl Default for ProviderEntry {
             base_url: None,
             models: Vec::new(),
             fetch_models: true,
+            stream_transport: ProviderStreamTransport::Sse,
             alias: None,
         }
     }
@@ -1717,6 +1847,10 @@ where
 
 const fn is_true(value: &bool) -> bool {
     *value
+}
+
+const fn is_default_provider_stream_transport(value: &ProviderStreamTransport) -> bool {
+    matches!(value, ProviderStreamTransport::Sse)
 }
 
 impl ProvidersConfig {
@@ -1927,5 +2061,34 @@ OPENROUTER_API_KEY = "sk-or-test"
         let entry = ProviderEntry::default();
         assert!(entry.fetch_models);
         assert!(entry.models.is_empty());
+    }
+
+    #[test]
+    fn channels_config_defaults_to_telegram_offered() {
+        let config = ChannelsConfig::default();
+        assert_eq!(config.offered, vec!["telegram".to_string()]);
+    }
+
+    #[test]
+    fn channels_config_empty_toml_defaults_offered() {
+        let config: ChannelsConfig = toml::from_str("").unwrap();
+        assert_eq!(config.offered, vec!["telegram".to_string()]);
+    }
+
+    #[test]
+    fn channels_config_explicit_offered() {
+        let config: ChannelsConfig =
+            toml::from_str(r#"offered = ["telegram", "msteams"]"#).unwrap();
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "msteams".to_string()
+        ]);
+    }
+
+    #[test]
+    fn sandbox_defaults_include_go_runtime() {
+        let sandbox = SandboxConfig::default();
+        assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
+        assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
     }
 }

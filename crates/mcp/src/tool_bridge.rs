@@ -2,9 +2,10 @@
 
 use std::sync::Arc;
 
-use {anyhow::Result, async_trait::async_trait};
+use async_trait::async_trait;
 
 use crate::{
+    error::{Error, Result},
     traits::McpClientTrait,
     types::{McpToolDef, ToolContent},
 };
@@ -115,7 +116,7 @@ impl McpAgentTool for McpToolBridge {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            anyhow::bail!("MCP tool error: {text}");
+            return Err(Error::message(format!("MCP tool error: {text}")));
         }
 
         // Flatten text content into a single JSON value.

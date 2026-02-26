@@ -26,6 +26,7 @@
 - [Sandbox](sandbox.md)
 - [Voice](voice.md)
 - [Browser Automation](browser-automation.md)
+- [CalDAV (Calendars)](caldav.md)
 - [GraphQL API](graphql.md)
 - [Session State](session-state.md)
 - [Session Branching](session-branching.md)
@@ -34,12 +35,14 @@
 - [Mobile PWA](mobile-pwa.md)
 - [Native Swift Embedding (POC)](native-swift-embedding.md)
 - [macOS App FFI Bridge (WIP)](macos-app-ffi-bridge.md)
+- [OpenClaw Import](openclaw-import.md)
 
 ---
 
 # Security
 
 - [Authentication](authentication.md)
+- [Encryption at Rest (Vault)](vault.md)
 - [Security Architecture](security.md)
 - [Third-Party Skills Security](skills-security.md)
 

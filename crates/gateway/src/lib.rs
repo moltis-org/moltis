@@ -10,6 +10,7 @@
 //! All domain logic (agents, channels, etc.) lives in other crates and is
 //! invoked through method handlers registered in `methods.rs`.
 
+pub mod agent_persona;
 pub mod approval;
 pub mod auth;
 pub mod auth_middleware;
@@ -18,6 +19,7 @@ pub mod auth_webauthn;
 pub mod broadcast;
 pub mod channel;
 pub mod channel_events;
+pub mod channel_outbound;
 pub mod channel_store;
 pub mod chat;
 pub mod chat_error;
@@ -49,7 +51,6 @@ pub mod request_throttle;
 pub mod server;
 pub mod services;
 pub mod session;
-pub mod session_events;
 pub mod session_types;
 pub mod share_store;
 pub mod state;

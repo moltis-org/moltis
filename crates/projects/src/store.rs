@@ -4,9 +4,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use {anyhow::Result, async_trait::async_trait};
-
-use crate::types::Project;
+use {
+    crate::{Result, types::Project},
+    async_trait::async_trait,
+};
 
 fn now_ms() -> u64 {
     SystemTime::now()

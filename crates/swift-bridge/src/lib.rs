@@ -15,7 +15,6 @@ use {
         ChatMessage as AgentChatMessage, LlmProvider, StreamEvent, Usage, UserContent,
     },
     moltis_config::validate::Severity,
-    moltis_gateway::session_events::{SessionEvent, SessionEventBus},
     moltis_provider_setup::{
         KeyStore, config_with_saved_keys, detect_auto_provider_sources_with_overrides,
         known_providers,
@@ -24,6 +23,7 @@ use {
     moltis_sessions::{
         message::PersistedMessage,
         metadata::{SessionEntry, SqliteSessionMetadata},
+        session_events::{SessionEvent, SessionEventBus},
         store::SessionStore,
     },
     serde::{Deserialize, Serialize},
@@ -830,7 +830,7 @@ pub extern "C" fn moltis_known_providers() -> *mut c_char {
             .map(|p| BridgeKnownProvider {
                 name: p.name,
                 display_name: p.display_name,
-                auth_type: p.auth_type,
+                auth_type: p.auth_type.as_str(),
                 env_key: p.env_key,
                 default_base_url: p.default_base_url,
                 requires_model: p.requires_model,
@@ -916,7 +916,7 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
                 emit_log("ERROR", "bridge.config", &format!(
                     "Save failed: {error}"
                 ));
-                encode_error("save_failed", &error)
+                encode_error("save_failed", &error.to_string())
             },
         }
     })
@@ -1079,6 +1079,7 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
                 None, // log_buffer
                 request.config_dir.map(std::path::PathBuf::from),
                 request.data_dir.map(std::path::PathBuf::from),
+                None, // tailscale_opts
                 Some(moltis_web::web_routes), // full web UI
                 Some(BRIDGE.session_event_bus.clone()), // share bus with gateway
             ),

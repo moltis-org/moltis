@@ -55,7 +55,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 | Runtime | Node.js + npm | Single binary | Node.js | Single binary (3.4 MB) | **Single binary (44 MB)** |
 | Sandbox | App-level | — | Docker | Docker | **Docker + Apple Container** |
 | Memory safety | GC | GC | GC | Ownership | **Ownership, zero `unsafe`\*** |
-| Auth | Basic | API keys | None | Token + OAuth | **Password + Passkey + API keys** |
+| Auth | Basic | API keys | None | Token + OAuth | **Password + Passkey + API keys + Vault** |
 | Voice I/O | Plugin | — | — | — | **Built-in (15+ providers)** |
 | MCP | Yes | — | — | — | **Yes (stdio + HTTP/SSE)** |
 | Hooks | Yes (limited) | — | — | — | **15 event types** |
@@ -89,11 +89,11 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 | Web UI | `moltis-web` | 4.3K |
 | Voice | `moltis-voice` | 4.7K |
 | Memory | `moltis-memory`, `moltis-qmd` | 5.8K |
-| Channels | `moltis-telegram`, `moltis-channels` | 6.4K |
+| Channels | `moltis-telegram`, `moltis-msteams`, `moltis-channels` | 6.4K |
 | Browser | `moltis-browser` | 4.8K |
 | Scheduling | `moltis-cron` | 3.8K |
 | Extensibility | `moltis-mcp`, `moltis-skills` | 7.4K |
-| Auth/OAuth | `moltis-oauth`, `moltis-onboarding` | 2.8K |
+| Auth/OAuth | `moltis-oauth`, `moltis-onboarding`, `moltis-vault` | 2.8K |
 | Metrics | `moltis-metrics` | 1.7K |
 | Other | `moltis-projects`, `moltis-routing`, `moltis-protocol`, `moltis-media`, `moltis-canvas`, `moltis-auto-reply` | 2.4K |
 
@@ -114,9 +114,10 @@ See [Security Architecture](https://docs.moltis.org/security.html) for details.
 ## Features
 
 - **AI Gateway** — Multi-provider LLM support (OpenAI Codex, GitHub Copilot, Local), streaming responses, agent loop with sub-agent delegation, parallel tool execution
-- **Communication** — Web UI, Telegram, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
-- **Memory & Context** — Embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, project context
+- **Communication** — Web UI, Telegram, Microsoft Teams, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
+- **Memory & Context** — Per-agent memory workspaces, embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, project context
 - **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system, 15 lifecycle hook events with circuit breaker, destructive command guard
+- **Security** — Encryption-at-rest vault (XChaCha20-Poly1305 + Argon2id), password + passkey + API key auth, sandbox isolation, SSRF/CSWSH protection
 - **Operations** — Cron scheduling, OpenTelemetry tracing, Prometheus metrics, cloud deploy (Fly.io, DigitalOcean), Tailscale integration
 
 ## How It Works

@@ -1,6 +1,7 @@
 // ── Model selector ──────────────────────────────────────────
 
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { showModelNotice } from "./page-chat.js";
 import * as S from "./state.js";
 import { modelStore } from "./stores/model-store.js";
@@ -86,7 +87,7 @@ function buildModelItem(m, currentId) {
 	if (m.unsupported) {
 		var badge = document.createElement("span");
 		badge.className = "model-item-unsupported";
-		badge.textContent = "unsupported";
+		badge.textContent = t("common:labels.unsupported");
 		if (m.unsupportedReason) badge.title = m.unsupportedReason;
 		meta.appendChild(badge);
 	}
@@ -109,7 +110,7 @@ export function renderModelList(query) {
 	if (filtered.length === 0) {
 		var empty = document.createElement("div");
 		empty.className = "model-dropdown-empty";
-		empty.textContent = "No matching models";
+		empty.textContent = t("common:labels.noMatchingModels");
 		S.modelDropdownList.appendChild(empty);
 		return;
 	}
@@ -180,5 +181,12 @@ export function bindModelComboEvents() {
 document.addEventListener("click", (e) => {
 	if (S.modelCombo && !S.modelCombo.contains(e.target)) {
 		closeModelDropdown();
+	}
+});
+
+window.addEventListener("moltis:locale-changed", () => {
+	if (S.modelDropdown && !S.modelDropdown.classList.contains("hidden")) {
+		var query = S.modelSearchInput ? S.modelSearchInput.value.trim() : "";
+		renderModelList(query);
 	}
 });

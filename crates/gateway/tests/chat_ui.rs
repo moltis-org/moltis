@@ -297,7 +297,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
     let result = chat.send(serde_json::json!({ "text": "hello" })).await;
     match result {
         Err(e) => assert!(
-            !e.contains("chat not configured"),
+            !e.to_string().contains("chat not configured"),
             "expected LiveChatService (not noop), got: {e}"
         ),
         Ok(_) => { /* providers found (e.g. Codex tokens on this machine) — OK */ },

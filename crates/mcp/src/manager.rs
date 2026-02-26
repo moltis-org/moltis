@@ -3,7 +3,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use {
-    anyhow::{Context, Result},
     tokio::sync::RwLock,
     tracing::{info, warn},
 };
@@ -11,6 +10,7 @@ use {
 use crate::{
     auth::{McpAuthState, McpOAuthOverride, McpOAuthProvider, SharedAuthProvider},
     client::{McpClient, McpClientState},
+    error::{Context, Error, Result},
     registry::{McpOAuthConfig, McpRegistry, McpServerConfig, TransportType},
     tool_bridge::McpToolBridge,
     traits::McpClientTrait,
@@ -161,8 +161,9 @@ impl McpManager {
                         Ok(client) => (client, None),
                         Err(e) => {
                             // Check if it's a 401 Unauthorized.
-                            if let Some(McpTransportError::Unauthorized { www_authenticate }) =
-                                e.downcast_ref::<McpTransportError>()
+                            if let Error::Transport(McpTransportError::Unauthorized {
+                                www_authenticate,
+                            }) = &e
                             {
                                 info!(
                                     server = %name,
@@ -579,10 +580,10 @@ mod tests {
             .oauth_start_server("stdio", "https://example.com/auth/callback")
             .await
             .expect_err("expected oauth start to fail for stdio transport");
-        assert!(
-            err.downcast_ref::<McpManagerError>()
-                .is_some_and(|e| matches!(e, McpManagerError::NotSseTransport { .. }))
-        );
+        assert!(matches!(
+            err,
+            Error::Manager(McpManagerError::NotSseTransport { .. })
+        ));
     }
 
     #[tokio::test]
@@ -592,9 +593,9 @@ mod tests {
             .oauth_complete_callback("unknown-state", "code")
             .await
             .expect_err("expected unknown state to fail");
-        assert!(
-            err.downcast_ref::<McpManagerError>()
-                .is_some_and(|e| matches!(e, McpManagerError::OAuthStateNotFound))
-        );
+        assert!(matches!(
+            err,
+            Error::Manager(McpManagerError::OAuthStateNotFound)
+        ));
     }
 }

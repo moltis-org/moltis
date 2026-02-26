@@ -1,18 +1,21 @@
-#[cfg(feature = "qmd")]
-use std::collections::HashMap;
-use std::{sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use tracing::warn;
 
 use {
     moltis_config::VoiceSttProvider,
+    moltis_sessions::session_events::SessionEvent,
     moltis_protocol::{ErrorShape, error_codes},
 };
 
 use crate::broadcast::{BroadcastOpts, broadcast};
-use crate::session_events::SessionEvent;
 
-use super::MethodRegistry;
+use super::{MethodContext, MethodRegistry};
 
 pub(super) fn model_probe_params(provider: Option<&str>) -> serde_json::Value {
     let mut params = serde_json::json!({
@@ -27,6 +30,255 @@ pub(super) fn model_probe_params(provider: Option<&str>) -> serde_json::Value {
     params
 }
 
+async fn active_session_key_for_ctx(ctx: &MethodContext) -> Option<String> {
+    if let Some(session_key) = ctx
+        .params
+        .get("_session_key")
+        .and_then(|v| v.as_str())
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(session_key.to_string());
+    }
+    let inner = ctx.state.inner.read().await;
+    inner.active_sessions.get(&ctx.client_conn_id).cloned()
+}
+
+async fn default_agent_id_for_ctx(ctx: &MethodContext) -> String {
+    if let Some(ref store) = ctx.state.services.agent_persona_store {
+        return store
+            .default_id()
+            .await
+            .unwrap_or_else(|_| "main".to_string());
+    }
+    "main".to_string()
+}
+
+async fn agent_exists_for_ctx(ctx: &MethodContext, agent_id: &str) -> bool {
+    if agent_id == "main" {
+        return true;
+    }
+    if let Some(ref store) = ctx.state.services.agent_persona_store {
+        return store.get(agent_id).await.ok().flatten().is_some();
+    }
+    false
+}
+
+async fn resolve_session_agent_id_for_ctx(ctx: &MethodContext) -> String {
+    let default_id = default_agent_id_for_ctx(ctx).await;
+    let Some(session_key) = active_session_key_for_ctx(ctx).await else {
+        return default_id;
+    };
+    let Some(ref metadata) = ctx.state.services.session_metadata else {
+        return default_id;
+    };
+    let Some(entry) = metadata.get(&session_key).await else {
+        return default_id;
+    };
+    let Some(agent_id) = entry
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return default_id;
+    };
+    if agent_exists_for_ctx(ctx, agent_id).await {
+        return agent_id.to_string();
+    }
+    warn!(
+        session = %session_key,
+        agent_id,
+        fallback = %default_id,
+        "session references unknown agent, falling back to default"
+    );
+    let _ = metadata.set_agent_id(&session_key, Some(&default_id)).await;
+    default_id
+}
+
+fn parse_agent_id_param(params: &serde_json::Value) -> Option<String> {
+    params
+        .get("agent_id")
+        .or_else(|| params.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+async fn resolve_requested_agent_id(
+    ctx: &MethodContext,
+    params: &serde_json::Value,
+) -> Result<String, ErrorShape> {
+    if let Some(id) = parse_agent_id_param(params) {
+        if agent_exists_for_ctx(ctx, &id).await {
+            return Ok(id);
+        }
+        return Err(ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            format!("agent '{id}' not found"),
+        ));
+    }
+    Ok(default_agent_id_for_ctx(ctx).await)
+}
+
+fn read_identity_payload_for_agent(agent_id: &str) -> serde_json::Value {
+    let config = moltis_config::discover_and_load();
+    let mut identity = config.identity.clone();
+    if let Some(file_identity) = moltis_config::load_identity_for_agent(agent_id) {
+        if file_identity.name.is_some() {
+            identity.name = file_identity.name;
+        }
+        if file_identity.emoji.is_some() {
+            identity.emoji = file_identity.emoji;
+        }
+        if file_identity.theme.is_some() {
+            identity.theme = file_identity.theme;
+        }
+    }
+    let mut user = config.user;
+    if let Some(file_user) = moltis_config::load_user() {
+        if file_user.name.is_some() {
+            user.name = file_user.name;
+        }
+        if file_user.timezone.is_some() {
+            user.timezone = file_user.timezone;
+        }
+    }
+    let resolved_name = identity
+        .name
+        .clone()
+        .unwrap_or_else(|| "moltis".to_string());
+    let identity_path = if agent_id == "main" {
+        let main_path = moltis_config::agent_workspace_dir("main").join("IDENTITY.md");
+        if main_path.exists() {
+            main_path
+        } else {
+            moltis_config::identity_path()
+        }
+    } else {
+        moltis_config::agent_workspace_dir(agent_id).join("IDENTITY.md")
+    };
+    let identity_text = std::fs::read_to_string(identity_path)
+        .ok()
+        .and_then(|content| moltis_config::extract_yaml_frontmatter(&content).map(str::to_string));
+    let soul = moltis_config::load_soul_for_agent(agent_id);
+    let identity_name = identity.name.clone();
+    let identity_emoji = identity.emoji.clone();
+    let identity_theme = identity.theme.clone();
+    let user_name = user.name.clone();
+    let user_timezone = user.timezone.as_ref().map(|tz| tz.name().to_string());
+    serde_json::json!({
+        "name": resolved_name,
+        "emoji": identity_emoji.clone(),
+        "theme": identity_theme.clone(),
+        "user_name": user_name,
+        "user_timezone": user_timezone,
+        "identity": identity_text,
+        "identity_fields": {
+            "name": identity_name,
+            "emoji": identity_emoji,
+            "theme": identity_theme,
+        },
+        "soul": soul,
+    })
+}
+
+fn write_soul_for_agent(agent_id: &str, soul: Option<String>) -> Result<(), ErrorShape> {
+    if agent_id == "main" {
+        moltis_config::save_soul(soul.as_deref())
+            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+        return Ok(());
+    }
+    let dir = moltis_config::agent_workspace_dir(agent_id);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+    let soul_path = dir.join("SOUL.md");
+    match soul.as_deref().map(str::trim) {
+        Some(content) if !content.is_empty() => {
+            std::fs::write(&soul_path, content)
+                .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+        },
+        _ => {
+            std::fs::write(&soul_path, "")
+                .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+        },
+    }
+    Ok(())
+}
+
+fn normalize_relative_agent_path(path: &str) -> Result<PathBuf, ErrorShape> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            "missing 'path' parameter",
+        ));
+    }
+    let candidate = Path::new(trimmed);
+    if candidate.is_absolute() {
+        return Err(ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            "path must be relative",
+        ));
+    }
+    for component in candidate.components() {
+        if matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
+            return Err(ErrorShape::new(
+                error_codes::INVALID_REQUEST,
+                "path traversal is not allowed",
+            ));
+        }
+    }
+    Ok(candidate.to_path_buf())
+}
+
+fn read_agent_file(agent_id: &str, relative_path: &Path) -> Result<String, ErrorShape> {
+    let primary = moltis_config::agent_workspace_dir(agent_id).join(relative_path);
+    let fallback = (agent_id == "main").then(|| moltis_config::data_dir().join(relative_path));
+
+    let target = if primary.exists() {
+        Some(primary)
+    } else {
+        fallback.filter(|path| path.exists())
+    }
+    .ok_or_else(|| ErrorShape::new(error_codes::INVALID_REQUEST, "file not found"))?;
+
+    std::fs::read_to_string(target)
+        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
+}
+
+fn list_agent_workspace_files_recursively(
+    root: &Path,
+    base: &Path,
+    files: &mut Vec<serde_json::Value>,
+) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            list_agent_workspace_files_recursively(&path, base, files);
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        if let Ok(relative) = path.strip_prefix(base) {
+            files.push(serde_json::json!({
+                "path": relative.to_string_lossy(),
+                "size": entry.metadata().ok().map(|m| m.len()),
+            }));
+        }
+    }
+}
+
 pub(super) fn register(reg: &mut MethodRegistry) {
     // Agent
     reg.register(
@@ -38,7 +290,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .agent
                     .run(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -51,7 +303,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .agent
                     .run_wait(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -59,12 +311,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "agent.identity.get",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .identity_get()
-                    .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                let agent_id = resolve_session_agent_id_for_ctx(&ctx).await;
+                Ok(read_identity_payload_for_agent(&agent_id))
             })
         }),
     );
@@ -72,12 +320,36 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "agent.identity.update",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .identity_update(ctx.params)
-                    .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                let agent_id = resolve_session_agent_id_for_ctx(&ctx).await;
+                if agent_id == "main" {
+                    return ctx
+                        .state
+                        .services
+                        .onboarding
+                        .identity_update(ctx.params)
+                        .await
+                        .map_err(ErrorShape::from);
+                }
+                let identity = moltis_config::schema::AgentIdentity {
+                    name: ctx
+                        .params
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    emoji: ctx
+                        .params
+                        .get("emoji")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    theme: ctx
+                        .params
+                        .get("theme")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                };
+                moltis_config::save_identity_for_agent(&agent_id, &identity)
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                Ok(read_identity_payload_for_agent(&agent_id))
             })
         }),
     );
@@ -90,12 +362,18 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .get("soul")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                ctx.state
-                    .services
-                    .onboarding
-                    .identity_update_soul(soul)
-                    .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                let agent_id = resolve_session_agent_id_for_ctx(&ctx).await;
+                if agent_id == "main" {
+                    return ctx
+                        .state
+                        .services
+                        .onboarding
+                        .identity_update_soul(soul)
+                        .await
+                        .map_err(ErrorShape::from);
+                }
+                write_soul_for_agent(&agent_id, soul)?;
+                Ok(serde_json::json!({ "ok": true }))
             })
         }),
     );
@@ -108,10 +386,408 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .agent
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
+    #[cfg(feature = "agent")]
+    {
+        reg.register(
+            "agents.list",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let Some(ref store) = ctx.state.services.agent_persona_store else {
+                        return Err(ErrorShape::new(
+                            error_codes::UNAVAILABLE,
+                            "agent personas not available",
+                        ));
+                    };
+                    let default_id = store.default_id().await.map_err(ErrorShape::from)?;
+                    let agents = store.list().await.map_err(ErrorShape::from)?;
+                    Ok(serde_json::json!({
+                        "default_id": default_id,
+                        "agents": agents,
+                    }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.get",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    let Some(ref store) = ctx.state.services.agent_persona_store else {
+                        return Err(ErrorShape::new(
+                            error_codes::UNAVAILABLE,
+                            "agent personas not available",
+                        ));
+                    };
+                    let Some(agent) = store.get(&id).await.map_err(ErrorShape::from)? else {
+                        return Err(ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "agent not found",
+                        ));
+                    };
+
+                    let mut payload = serde_json::to_value(agent)
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.insert(
+                            "identity_fields".to_string(),
+                            serde_json::json!(
+                                moltis_config::load_identity_for_agent(&id).unwrap_or_default()
+                            ),
+                        );
+                        obj.insert(
+                            "soul".to_string(),
+                            serde_json::json!(moltis_config::load_soul_for_agent(&id)),
+                        );
+                        obj.insert(
+                            "default_id".to_string(),
+                            serde_json::json!(
+                                store
+                                    .default_id()
+                                    .await
+                                    .unwrap_or_else(|_| "main".to_string())
+                            ),
+                        );
+                    }
+                    Ok(payload)
+                })
+            }),
+        );
+        reg.register(
+            "agents.create",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let Some(ref store) = ctx.state.services.agent_persona_store else {
+                        return Err(ErrorShape::new(
+                            error_codes::UNAVAILABLE,
+                            "agent personas not available",
+                        ));
+                    };
+                    let params: crate::agent_persona::CreateAgentParams =
+                        serde_json::from_value(ctx.params).map_err(|e| {
+                            ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string())
+                        })?;
+                    let agent = store.create(params).await.map_err(ErrorShape::from)?;
+                    serde_json::to_value(&agent)
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
+                })
+            }),
+        );
+        reg.register(
+            "agents.update",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    let Some(ref store) = ctx.state.services.agent_persona_store else {
+                        return Err(ErrorShape::new(
+                            error_codes::UNAVAILABLE,
+                            "agent personas not available",
+                        ));
+                    };
+                    let params: crate::agent_persona::UpdateAgentParams =
+                        serde_json::from_value(ctx.params).map_err(|e| {
+                            ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string())
+                        })?;
+                    let agent = store.update(&id, params).await.map_err(ErrorShape::from)?;
+                    serde_json::to_value(&agent)
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
+                })
+            }),
+        );
+        reg.register(
+            "agents.delete",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    let Some(ref store) = ctx.state.services.agent_persona_store else {
+                        return Err(ErrorShape::new(
+                            error_codes::UNAVAILABLE,
+                            "agent personas not available",
+                        ));
+                    };
+                    let fallback_default_id = store.default_id().await.map_err(ErrorShape::from)?;
+                    let mut reassigned_sessions = 0_u64;
+                    if let Some(ref meta) = ctx.state.services.session_metadata {
+                        let sessions = meta.list_by_agent_id(&id).await.map_err(|e| {
+                            ErrorShape::new(error_codes::UNAVAILABLE, e.to_string())
+                        })?;
+                        for session in sessions {
+                            meta.set_agent_id(&session.key, Some(&fallback_default_id))
+                                .await
+                                .map_err(|e| {
+                                    ErrorShape::new(error_codes::UNAVAILABLE, e.to_string())
+                                })?;
+                            reassigned_sessions = reassigned_sessions.saturating_add(1);
+                        }
+                    }
+                    store.delete(&id).await.map_err(ErrorShape::from)?;
+                    Ok(serde_json::json!({
+                        "deleted": true,
+                        "reassigned_sessions": reassigned_sessions,
+                        "default_id": fallback_default_id,
+                    }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.set_default",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    let Some(ref store) = ctx.state.services.agent_persona_store else {
+                        return Err(ErrorShape::new(
+                            error_codes::UNAVAILABLE,
+                            "agent personas not available",
+                        ));
+                    };
+                    let default_id = store.set_default(&id).await.map_err(ErrorShape::from)?;
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "default_id": default_id,
+                    }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.set_session",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let session_key = ctx
+                        .params
+                        .get("session_key")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            ErrorShape::new(
+                                error_codes::INVALID_REQUEST,
+                                "missing 'session_key' parameter",
+                            )
+                        })?;
+                    let agent_id = if let Some(agent_id) = parse_agent_id_param(&ctx.params) {
+                        if !agent_exists_for_ctx(&ctx, &agent_id).await {
+                            return Err(ErrorShape::new(
+                                error_codes::INVALID_REQUEST,
+                                format!("agent '{agent_id}' not found"),
+                            ));
+                        }
+                        agent_id
+                    } else {
+                        default_agent_id_for_ctx(&ctx).await
+                    };
+                    let Some(ref meta) = ctx.state.services.session_metadata else {
+                        return Err(ErrorShape::new(
+                            error_codes::UNAVAILABLE,
+                            "session metadata not available",
+                        ));
+                    };
+                    meta.upsert(session_key, None)
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    meta.set_agent_id(session_key, Some(&agent_id))
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    Ok(serde_json::json!({ "ok": true, "agent_id": agent_id }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.identity.get",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let agent_id = resolve_requested_agent_id(&ctx, &ctx.params).await?;
+                    Ok(read_identity_payload_for_agent(&agent_id))
+                })
+            }),
+        );
+        reg.register(
+            "agents.identity.update",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let agent_id = resolve_requested_agent_id(&ctx, &ctx.params).await?;
+                    if agent_id == "main" {
+                        return ctx
+                            .state
+                            .services
+                            .onboarding
+                            .identity_update(ctx.params)
+                            .await
+                            .map_err(ErrorShape::from);
+                    }
+                    let identity = moltis_config::schema::AgentIdentity {
+                        name: ctx
+                            .params
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        emoji: ctx
+                            .params
+                            .get("emoji")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        theme: ctx
+                            .params
+                            .get("theme")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                    };
+                    moltis_config::save_identity_for_agent(&agent_id, &identity)
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    Ok(serde_json::json!({ "ok": true }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.identity.update_soul",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let agent_id = resolve_requested_agent_id(&ctx, &ctx.params).await?;
+                    let soul = ctx
+                        .params
+                        .get("soul")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    write_soul_for_agent(&agent_id, soul)?;
+                    Ok(serde_json::json!({ "ok": true }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.files.list",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let agent_id = resolve_requested_agent_id(&ctx, &ctx.params).await?;
+                    let mut files: Vec<serde_json::Value> = Vec::new();
+                    let root = moltis_config::agent_workspace_dir(&agent_id);
+                    let root_exists = root.exists();
+                    if root_exists {
+                        list_agent_workspace_files_recursively(&root, &root, &mut files);
+                    }
+                    if agent_id == "main" {
+                        for file_name in &[
+                            "IDENTITY.md",
+                            "SOUL.md",
+                            "MEMORY.md",
+                            "AGENTS.md",
+                            "TOOLS.md",
+                        ] {
+                            let agent_path = root.join(file_name);
+                            let root_path = moltis_config::data_dir().join(file_name);
+                            if !agent_path.exists() && root_path.exists() {
+                                files.push(serde_json::json!({
+                                    "path": file_name,
+                                    "source": "root",
+                                    "size": std::fs::metadata(root_path).ok().map(|m| m.len()),
+                                }));
+                            }
+                        }
+                    }
+                    files.sort_by(|left, right| {
+                        let left_path = left
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        let right_path = right
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        left_path.cmp(right_path)
+                    });
+                    Ok(serde_json::json!({
+                        "agent_id": agent_id,
+                        "files": files,
+                    }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.files.get",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let agent_id = resolve_requested_agent_id(&ctx, &ctx.params).await?;
+                    let relative_path = normalize_relative_agent_path(
+                        ctx.params
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(
+                                    error_codes::INVALID_REQUEST,
+                                    "missing 'path' parameter",
+                                )
+                            })?,
+                    )?;
+                    let content = read_agent_file(&agent_id, &relative_path)?;
+                    Ok(serde_json::json!({
+                        "agent_id": agent_id,
+                        "path": relative_path.to_string_lossy(),
+                        "content": content,
+                    }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.files.set",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let agent_id = resolve_requested_agent_id(&ctx, &ctx.params).await?;
+                    let relative_path = normalize_relative_agent_path(
+                        ctx.params
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(
+                                    error_codes::INVALID_REQUEST,
+                                    "missing 'path' parameter",
+                                )
+                            })?,
+                    )?;
+                    let content = ctx
+                        .params
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    let full_path =
+                        moltis_config::agent_workspace_dir(&agent_id).join(&relative_path);
+                    if let Some(parent) = full_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            ErrorShape::new(error_codes::UNAVAILABLE, e.to_string())
+                        })?;
+                    }
+                    std::fs::write(&full_path, content)
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "agent_id": agent_id,
+                        "path": relative_path.to_string_lossy(),
+                    }))
+                })
+            }),
+        );
+    }
 
     // Sessions
     reg.register(
@@ -124,7 +800,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // Inject replying state so the frontend can restore the
                 // thinking indicator after a full page reload.
@@ -153,7 +829,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .preview(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -166,7 +842,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .search(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -180,7 +856,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .resolve(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // Newly created sessions have an empty history array.
                 let is_new = result
@@ -229,7 +905,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .patch(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 let version = result.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
                 ctx.state.session_event_bus.publish(SessionEvent::Patched {
                     session_key: key.clone(),
@@ -281,7 +957,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .voice_generate(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -294,7 +970,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .reset(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -314,7 +990,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .delete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 if !key.is_empty() {
                     ctx.state.session_event_bus.publish(SessionEvent::Deleted {
                         session_key: key.clone(),
@@ -327,8 +1003,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "sessionKey": key,
                         }),
                         BroadcastOpts { drop_if_slow: true, ..Default::default() },
-                    )
-                    .await;
+                        )
+                        .await;
                 }
                 Ok(result)
             })
@@ -343,7 +1019,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .clear_all()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -356,7 +1032,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .compact(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -371,7 +1047,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .fork(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 if let Some(key) = result.get("key").and_then(|k| k.as_str()) {
                     ctx.state.session_event_bus.publish(SessionEvent::Created {
                         session_key: key.to_string(),
@@ -384,8 +1060,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "sessionKey": key,
                         }),
                         BroadcastOpts { drop_if_slow: true, ..Default::default() },
-                    )
-                    .await;
+                        )
+                        .await;
                 }
                 Ok(result)
             })
@@ -400,7 +1076,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .branches(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -413,7 +1089,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .share_create(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -426,7 +1102,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .share_list(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -439,7 +1115,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .share_revoke(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -454,7 +1130,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -468,7 +1144,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -481,7 +1157,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .add(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -494,7 +1170,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -507,7 +1183,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .update(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -520,7 +1196,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .logout(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -533,7 +1209,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .senders_list(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -546,7 +1222,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .sender_approve(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -559,7 +1235,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .sender_deny(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -572,7 +1248,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .send(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -587,7 +1263,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .get(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -600,7 +1276,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .set(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -613,7 +1289,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .apply(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -626,7 +1302,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .patch(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -639,7 +1315,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .schema()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -654,7 +1330,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -667,7 +1343,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -680,7 +1356,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .add(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -693,7 +1369,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .update(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -706,7 +1382,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -719,7 +1395,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .run(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -732,7 +1408,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .runs(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -760,7 +1436,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 let jobs: Vec<moltis_cron::types::CronJob> =
                     serde_json::from_value(jobs_val).unwrap_or_default();
                 let hb_job = jobs.iter().find(|j| j.name == "__heartbeat__");
@@ -801,7 +1477,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .cron
                         .list()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                        .map_err(ErrorShape::from)?;
                     let jobs: Vec<moltis_cron::types::CronJob> =
                         serde_json::from_value(jobs_val).unwrap_or_default();
                     if let Some(hb_job) = jobs.iter().find(|j| j.name == "__heartbeat__") {
@@ -860,7 +1536,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "patch": job_patch,
                             }))
                             .await
-                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                            .map_err(ErrorShape::from)?;
                     }
                     Ok(serde_json::json!({ "updated": true }))
                 })
@@ -876,7 +1552,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 let jobs: Vec<moltis_cron::types::CronJob> =
                     serde_json::from_value(jobs_val).unwrap_or_default();
                 let hb_job = jobs
@@ -893,7 +1569,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         "force": true,
                     }))
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 Ok(serde_json::json!({ "triggered": true }))
             })
         }),
@@ -908,7 +1584,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 let jobs: Vec<moltis_cron::types::CronJob> =
                     serde_json::from_value(jobs_val).unwrap_or_default();
                 let hb_job = jobs
@@ -930,7 +1606,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         "limit": limit,
                     }))
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -964,7 +1640,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .send(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -977,7 +1653,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .abort(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -990,7 +1666,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .cancel_queued(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1005,7 +1681,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .history(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1018,7 +1694,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .inject(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1033,7 +1709,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .clear(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1048,7 +1724,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .compact(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1064,7 +1740,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .context(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1095,7 +1771,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .raw_prompt(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1126,7 +1802,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .full_context(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1143,6 +1819,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .ok_or_else(|| {
                         ErrorShape::new(error_codes::INVALID_REQUEST, "missing 'key' parameter")
                     })?;
+                let previous_active_key = {
+                    let inner = ctx.state.inner.read().await;
+                    inner.active_sessions.get(&ctx.client_conn_id).cloned()
+                };
+                let was_existing_session =
+                    if let Some(ref metadata) = ctx.state.services.session_metadata {
+                        metadata.get(key).await.is_some()
+                    } else {
+                        false
+                    };
 
                 // Store the active session (and project if provided) for this connection.
                 {
@@ -1165,11 +1851,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Resolve first (auto-creates session if needed), then
                 // persist project_id so the entry exists when we patch.
+                let mut resolve_params = serde_json::json!({ "key": key });
+                if !was_existing_session
+                    && let Some(previous_key) = previous_active_key
+                        .as_deref()
+                        .filter(|previous_key| *previous_key != key)
+                {
+                    resolve_params["inherit_agent_from"] = serde_json::json!(previous_key);
+                }
                 let result = ctx
                     .state
                     .services
                     .session
-                    .resolve(serde_json::json!({ "key": key }))
+                    .resolve(resolve_params)
                     .await
                     .map_err(|e| {
                         tracing::error!("session resolve failed: {e}");
@@ -1203,7 +1897,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             .unwrap_or(false)
                         && let Some(dir) = proj_val.get("directory").and_then(|v| v.as_str())
                     {
-                        let project_dir = std::path::Path::new(dir);
+                        let project_dir = Path::new(dir);
                         let create_result =
                             match moltis_projects::WorktreeManager::resolve_base_branch(project_dir)
                                 .await
@@ -1302,7 +1996,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .status()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1315,7 +2009,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .providers()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1328,7 +2022,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .enable(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1341,7 +2035,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .disable()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1354,7 +2048,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .convert(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1438,7 +2132,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .set_provider(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1451,7 +2145,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .stt
                         .status()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1464,7 +2158,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .stt
                         .providers()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1477,7 +2171,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .stt
                         .transcribe(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1490,7 +2184,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .stt
                         .set_provider(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1506,7 +2200,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1519,7 +2213,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1532,7 +2226,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .bins()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1588,12 +2282,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "phase": "error",
                                 "source": source,
                                 "op_id": op_id,
-                                "error": e,
+                                "error": e.to_string(),
                             }),
                             BroadcastOpts::default(),
                         )
                         .await;
-                        Err(ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        Err(ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
                     },
                 }
             })
@@ -1608,7 +2302,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1621,7 +2315,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .update(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1634,7 +2328,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .repos_list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1647,7 +2341,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .repos_remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1660,7 +2354,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .emergency_disable()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1673,7 +2367,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .skill_trust(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1686,7 +2380,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .skill_enable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1699,7 +2393,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .skill_disable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1712,7 +2406,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .skill_detail(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1725,7 +2419,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .install_dep(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1740,7 +2434,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1753,7 +2447,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .add(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1766,7 +2460,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1779,7 +2473,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .enable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1792,7 +2486,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .disable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1805,7 +2499,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .status(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1818,7 +2512,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .tools(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1831,7 +2525,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .restart(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1844,7 +2538,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .reauth(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1857,7 +2551,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .oauth_start(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1870,7 +2564,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .oauth_complete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1883,7 +2577,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .update(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1898,7 +2592,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .browser
                     .request(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1913,7 +2607,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .usage
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1926,7 +2620,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .usage
                     .cost(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1941,7 +2635,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .get()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1954,7 +2648,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .set(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1967,7 +2661,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .node_get(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1980,7 +2674,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .node_set(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1993,7 +2687,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .request(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2006,7 +2700,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .resolve(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2021,7 +2715,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2034,7 +2728,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .list_all()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2047,7 +2741,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .disable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2060,7 +2754,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .enable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2073,7 +2767,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .detect_supported(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2086,7 +2780,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .test(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2101,7 +2795,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .available()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2121,7 +2815,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .save_key(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // Kick off background model detection after saving provider
                 // credentials, matching the behaviour of oauth.complete.
@@ -2145,7 +2839,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .validate_key(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2164,7 +2858,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .oauth_start(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // If oauth.start short-circuited because valid tokens already
                 // existed, trigger a provider-scoped background probe now.
@@ -2194,7 +2888,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .oauth_status(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2208,7 +2902,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .oauth_complete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 let provider_name = result
                     .get("provider")
@@ -2236,7 +2930,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .save_model(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2256,7 +2950,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .save_models(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // Kick off background support probing after saving preferred models.
                 let model_service = Arc::clone(&ctx.state.services.model);
@@ -2279,7 +2973,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .remove_key(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2293,7 +2987,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .add_custom(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2308,7 +3002,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .system_info()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2321,7 +3015,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .models()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2334,7 +3028,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .configure(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2347,7 +3041,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2360,7 +3054,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .search_hf(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2373,7 +3067,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .configure_custom(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2386,7 +3080,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .remove_model(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2401,7 +3095,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .voicewake
                     .get()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2414,7 +3108,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .voicewake
                     .set(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2427,7 +3121,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .voicewake
                     .wake(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2440,7 +3134,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .voicewake
                     .talk_mode(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2455,7 +3149,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .update
                     .run(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2470,7 +3164,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .wizard_start(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2483,7 +3177,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .wizard_next(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2496,7 +3190,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .wizard_cancel()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2509,7 +3203,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .wizard_status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2524,7 +3218,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .web_login
                     .start(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2537,7 +3231,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .web_login
                     .wait(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2553,7 +3247,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2566,7 +3260,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .get(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2579,7 +3273,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .upsert(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2592,7 +3286,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .delete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2605,7 +3299,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .detect(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2618,7 +3312,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .complete_path(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2631,7 +3325,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .context(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -3449,7 +4143,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 })?;
 
                 // Write the content to HOOK.md.
-                let hook_md_path = std::path::PathBuf::from(&source_path).join("HOOK.md");
+                let hook_md_path = PathBuf::from(&source_path).join("HOOK.md");
                 std::fs::write(&hook_md_path, content).map_err(|e| {
                     ErrorShape::new(
                         error_codes::UNAVAILABLE,
@@ -3472,6 +4166,106 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::pin(async move {
                 reload_hooks(&ctx.state).await;
                 Ok(serde_json::json!({ "ok": true }))
+            })
+        }),
+    );
+
+    // ── OpenClaw import ─────────────────────────────────────────────────
+
+    reg.register(
+        "openclaw.detect",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .openclaw_detect()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "openclaw.scan",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .openclaw_scan()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "openclaw.import",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .openclaw_import(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    // ── Logs ────────────────────────────────────────────────────────────────
+
+    reg.register(
+        "logs.tail",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .logs
+                    .tail(ctx.params)
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    reg.register(
+        "logs.list",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .logs
+                    .list(ctx.params)
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    reg.register(
+        "logs.status",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .logs
+                    .status()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    reg.register(
+        "logs.ack",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .logs
+                    .ack()
+                    .await
+                    .map_err(ErrorShape::from)
             })
         }),
     );

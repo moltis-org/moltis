@@ -9,13 +9,14 @@
 use std::sync::Arc;
 
 use {
-    anyhow::{Context, Result, bail},
     async_trait::async_trait,
     secrecy::{ExposeSecret, Secret},
     tokio::sync::RwLock,
     tracing::{debug, info, warn},
     url::Url,
 };
+
+use crate::error::{Context, Error, Result};
 
 use moltis_oauth::{
     OAuthConfig, OAuthFlow, OAuthTokens, RegistrationStore, StoredRegistration, TokenStore,
@@ -200,7 +201,9 @@ impl McpOAuthProvider {
         let flow = OAuthFlow::new(config);
         match flow.refresh(refresh_token.expose_secret()).await {
             Ok(new_tokens) => {
-                self.token_store.save(&self.store_key(), &new_tokens)?;
+                self.token_store
+                    .save(&self.store_key(), &new_tokens)
+                    .context("failed to persist refreshed OAuth tokens")?;
                 info!(server = %self.server_name, "MCP OAuth token refreshed");
                 Ok(Some(new_tokens))
             },
@@ -258,7 +261,7 @@ impl McpOAuthProvider {
         );
 
         let flow = OAuthFlow::new(config.clone());
-        let auth_req = flow.start()?;
+        let auth_req = flow.start().context("failed to start OAuth flow")?;
 
         *self.pending_oauth.write().await = Some(PendingOAuthFlow {
             state: auth_req.state.clone(),
@@ -299,7 +302,9 @@ impl McpOAuthProvider {
             .await
             .context("OAuth token exchange failed")?;
 
-        self.token_store.save(&self.store_key(), &tokens)?;
+        self.token_store
+            .save(&self.store_key(), &tokens)
+            .context("failed to persist exchanged OAuth tokens")?;
         *self.cached_token.write().await = Some(tokens);
         *self.state.write().await = McpAuthState::Authenticated;
 
@@ -391,7 +396,9 @@ impl McpOAuthProvider {
                     .context("no authorization_servers in protected resource metadata")?;
                 let as_url = Url::parse(as_url_str)
                     .with_context(|| format!("invalid authorization server URL: {as_url_str}"))?;
-                let as_meta = fetch_as_metadata(&self.http_client, &as_url).await?;
+                let as_meta = fetch_as_metadata(&self.http_client, &as_url)
+                    .await
+                    .context("failed to fetch authorization server metadata")?;
                 (as_meta, resource)
             },
             Err(e) => {
@@ -416,7 +423,11 @@ impl McpOAuthProvider {
                             )
                         })?
                     },
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        return Err(Error::message(format!(
+                            "failed to fetch authorization server metadata: {e}"
+                        )));
+                    },
                 };
                 // When resource metadata is unavailable we fall back to origin
                 // as the resource indicator to avoid path-scoped audience mismatches.
@@ -453,7 +464,8 @@ impl McpOAuthProvider {
                 vec![redirect_uri.to_string()],
                 &format!("moltis ({})", self.server_name),
             )
-            .await?;
+            .await
+            .context("failed to register OAuth client")?;
 
             // Persist registration
             let stored = StoredRegistration {
@@ -467,11 +479,15 @@ impl McpOAuthProvider {
                     .map(|d| d.as_secs())
                     .unwrap_or(0),
             };
-            self.registration_store.save(&self.server_url, &stored)?;
+            self.registration_store
+                .save(&self.server_url, &stored)
+                .context("failed to persist OAuth registration")?;
 
             reg.client_id
         } else {
-            bail!("AS does not support dynamic client registration and no client_id configured");
+            return Err(Error::message(
+                "AS does not support dynamic client registration and no client_id configured",
+            ));
         };
 
         Ok((

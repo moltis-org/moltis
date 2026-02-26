@@ -49,7 +49,7 @@ impl MockDispatch {
         let responses = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         match responses.get(method) {
             Some(v) => Ok(v.clone()),
-            None => Err(format!("no mock response for {method}")),
+            None => Err(format!("no mock response for {method}").into()),
         }
     }
 
@@ -575,6 +575,18 @@ impl moltis_service_traits::OnboardingService for MockOnboarding {
     async fn identity_update_soul(&self, soul: Option<String>) -> ServiceResult {
         self.0
             .call("agent.identity.update_soul", json!({ "soul": soul }))
+    }
+
+    async fn openclaw_detect(&self) -> ServiceResult {
+        self.0.call("openclaw.detect", json!({}))
+    }
+
+    async fn openclaw_scan(&self) -> ServiceResult {
+        self.0.call("openclaw.scan", json!({}))
+    }
+
+    async fn openclaw_import(&self, p: Value) -> ServiceResult {
+        self.0.call("openclaw.import", p)
     }
 }
 

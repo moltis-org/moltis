@@ -250,6 +250,23 @@ read status and logs, don't grant `operator.write`.
 Existing API keys created without scopes will be **denied access** until
 scopes are added. Re-create keys with explicit scopes to restore access.
 
+## Encryption at Rest
+
+Sensitive data in the SQLite database (environment variables containing
+API keys, tokens, etc.) is encrypted at rest using XChaCha20-Poly1305.
+The encryption key is derived from the user's password via Argon2id.
+
+The vault initializes when a first password is set (during setup or later
+in Settings > Authentication), unseals automatically on login, and
+re-seals on server restart. A recovery key is provided at initialization
+for emergency access.
+
+When the vault is sealed, a middleware layer blocks API requests with
+`423 Locked` to prevent serving stale data.
+
+For full details on the key hierarchy, vault states, API endpoints, and
+cryptographic parameters, see [Encryption at Rest (Vault)](vault.md).
+
 ## Network Security
 
 ### TLS Encryption
@@ -388,13 +405,74 @@ no loopback bypass, no exceptions.
    Once a password is configured (Tier 1), authentication is required
    for all traffic regardless of `is_local_connection()`.
 
-3. **WebSocket proxying** must forward the `Origin` and `Host` headers
-   correctly.  Moltis validates same-origin on WebSocket upgrades to
-   prevent cross-site WebSocket hijacking (CSWSH).
+3. **WebSocket proxying** must preserve browser origin host info
+   (`Host`, or `X-Forwarded-Host` if `Host` is rewritten). Moltis
+   validates same-origin on WebSocket upgrades to prevent cross-site
+   WebSocket hijacking (CSWSH).
 
-4. **TLS termination** should happen at the proxy.  Moltis can also
-   serve TLS directly (`[tls] enabled = true`), but most proxy setups
-   handle certificates at the edge.
+4. **TLS termination** should happen at the proxy. Run Moltis with
+   `--no-tls` (or `MOLTIS_NO_TLS=true`) in this mode.
+
+   If your browser is being redirected to `https://<domain>:13131`,
+   Moltis TLS is still enabled while your proxy upstream is plain HTTP.
+
+5. **Advanced TLS upstream mode** (optional): if your proxy connects to
+   Moltis using HTTPS upstream (or TCP TLS passthrough), you may keep
+   Moltis TLS enabled. Set `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true` to
+   acknowledge this non-default setup.
+
+### Nginx Proxy Manager (known-good headers)
+
+If WebSockets fail behind NPM while HTTP works, ensure:
+
+- Moltis runs with `MOLTIS_BEHIND_PROXY=true`
+- For standard edge TLS termination, Moltis runs with `--no-tls`
+- NPM preserves browser host/origin context
+
+Use this in NPM's **Advanced** field:
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+```
+
+Upstream scheme guidance:
+
+- **Edge TLS termination (most setups)**: proxy to `http://<moltis-host>:13131`
+  with Moltis started using `--no-tls`
+- **HTTPS upstream / TLS passthrough**: proxy to `https://<moltis-host>:13131`
+  and set `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`
+
+### Passkeys Behind Proxies (Host Changes)
+
+WebAuthn passkeys are bound to an RP ID (domain identity), not just the
+server process. In practice:
+
+- If users move from one hostname to another, old passkeys for the old host
+  will not authenticate on the new host.
+- If a proxy rewrites `Host` and does not preserve browser host context,
+  passkey routes can fail with "no passkey config for this hostname".
+
+For stable proxy deployments, set explicit WebAuthn identity to your public
+domain:
+
+```bash
+MOLTIS_BEHIND_PROXY=true
+MOLTIS_NO_TLS=true
+MOLTIS_WEBAUTHN_RP_ID=chat.example.com
+MOLTIS_WEBAUTHN_ORIGIN=https://chat.example.com
+```
+
+Migration guidance when changing host/domain:
+
+1. Keep password login enabled during migration.
+2. Deploy with the new `MOLTIS_WEBAUTHN_RP_ID`/`MOLTIS_WEBAUTHN_ORIGIN`.
+3. Ask users to register a new passkey on the new host.
+4. Remove old passkeys after new-host login is confirmed.
 
 ## Production Recommendations
 

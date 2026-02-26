@@ -1,8 +1,8 @@
-//! Session event bus for cross-UI synchronisation.
+//! Session event bus for cross-UI synchronization.
 //!
 //! A `tokio::sync::broadcast` channel carries lightweight [`SessionEvent`]
-//! values so that both the macOS bridge FFI and the gateway WebSocket layer
-//! can be notified whenever sessions are created, deleted, or patched.
+//! values so both the macOS bridge FFI and gateway WebSocket layer can
+//! observe session lifecycle updates.
 
 use tokio::sync::broadcast;
 
@@ -16,7 +16,7 @@ pub enum SessionEvent {
 
 /// Thin wrapper around a `broadcast::Sender<SessionEvent>`.
 ///
-/// Cloning the bus is cheap (Arc internally) and gives every holder
+/// Cloning the bus is cheap (Arc internally) and gives each holder
 /// the ability to both publish and subscribe.
 #[derive(Clone, Debug)]
 pub struct SessionEventBus {
@@ -39,7 +39,7 @@ impl SessionEventBus {
     /// Publish an event. Returns the number of active receivers.
     /// If there are no subscribers the event is silently dropped.
     pub fn publish(&self, event: SessionEvent) -> usize {
-        // `send` returns Err only when there are zero receivers — not a problem.
+        // `send` returns Err only when there are zero receivers, not a problem.
         self.tx.send(event).unwrap_or(0)
     }
 

@@ -1,0 +1,35 @@
+[package]
+description       = "Import data from an existing OpenClaw installation into Moltis"
+edition.workspace = true
+license.workspace = true
+name              = "moltis-openclaw-import"
+version.workspace = true
+
+[dependencies]
+dirs-next             = { workspace = true }
+json5                 = { workspace = true }
+moltis-common         = { workspace = true }
+moltis-config         = { workspace = true }
+moltis-oauth          = { workspace = true }
+notify-debouncer-full = { optional = true, workspace = true }
+secrecy               = { workspace = true }
+serde                 = { workspace = true }
+serde_json            = { workspace = true }
+serde_yaml            = { workspace = true }
+thiserror             = { workspace = true }
+time                  = { workspace = true, features = ["parsing"] }
+tokio                 = { workspace = true }
+toml                  = { workspace = true }
+tracing               = { workspace = true }
+walkdir               = { workspace = true }
+
+[features]
+default      = []
+file-watcher = ["dep:notify-debouncer-full"]
+
+[dev-dependencies]
+notify-debouncer-full = { workspace = true }
+tempfile              = { workspace = true }
+
+[lints]
+workspace = true

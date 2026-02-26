@@ -3,12 +3,56 @@
 //! Supports both Docker and Apple Container backends, auto-detecting the best
 //! available option (prefers Apple Container on macOS when available).
 
-use std::process::Command;
+use std::{fmt::Display, process::Command};
 
 use {
-    anyhow::{Context, Result, bail},
+    crate::error::Error,
     tracing::{debug, info, warn},
 };
+
+type Result<T> = std::result::Result<T, Error>;
+
+trait ContextExt<T> {
+    fn context(self, context: impl Into<String>) -> Result<T>;
+
+    fn with_context<C, F>(self, f: F) -> Result<T>
+    where
+        C: Into<String>,
+        F: FnOnce() -> C;
+}
+
+impl<T, E> ContextExt<T> for std::result::Result<T, E>
+where
+    E: Display,
+{
+    fn context(self, context: impl Into<String>) -> Result<T> {
+        let context = context.into();
+        self.map_err(|source| Error::LaunchFailed(format!("{context}: {source}")))
+    }
+
+    fn with_context<C, F>(self, f: F) -> Result<T>
+    where
+        C: Into<String>,
+        F: FnOnce() -> C,
+    {
+        let context = f().into();
+        self.map_err(|source| Error::LaunchFailed(format!("{context}: {source}")))
+    }
+}
+
+impl<T> ContextExt<T> for Option<T> {
+    fn context(self, context: impl Into<String>) -> Result<T> {
+        self.ok_or_else(|| Error::LaunchFailed(context.into()))
+    }
+
+    fn with_context<C, F>(self, f: F) -> Result<T>
+    where
+        C: Into<String>,
+        F: FnOnce() -> C,
+    {
+        self.ok_or_else(|| Error::LaunchFailed(f().into()))
+    }
+}
 
 fn browser_container_name_prefix(container_prefix: &str) -> String {
     format!("{container_prefix}-")
@@ -96,10 +140,10 @@ impl BrowserContainer {
         profile_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
         if !backend.is_available() {
-            bail!(
+            return Err(Error::LaunchFailed(format!(
                 "{} is not available. Please install it to use sandboxed browser.",
                 backend.cli()
-            );
+            )));
         }
 
         // Find an available port
@@ -330,11 +374,16 @@ fn start_docker_container(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("failed to start docker container: {}", stderr.trim());
+        return Err(Error::LaunchFailed(format!(
+            "failed to start docker container: {}",
+            stderr.trim()
+        )));
     }
 
     if container_name.is_empty() {
-        bail!("docker container name is empty");
+        return Err(Error::LaunchFailed(
+            "docker container name is empty".to_string(),
+        ));
     }
 
     Ok(container_name)
@@ -395,7 +444,10 @@ fn start_apple_container(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("failed to start apple container: {}", stderr.trim());
+        return Err(Error::LaunchFailed(format!(
+            "failed to start apple container: {}",
+            stderr.trim()
+        )));
     }
 
     Ok(container_name)
@@ -419,10 +471,10 @@ pub fn detect_backend() -> Result<ContainerBackend> {
         return Ok(ContainerBackend::Docker);
     }
 
-    bail!(
-        "No container runtime available. Please install Docker \
-         to use sandboxed browser mode."
-    )
+    Err(Error::LaunchFailed(
+        "No container runtime available. Please install Docker to use sandboxed browser mode."
+            .to_string(),
+    ))
 }
 
 /// Check if Apple Container is actually functional (has required plugins).
@@ -479,10 +531,10 @@ fn wait_for_ready(port: u16) -> Result<()> {
 
     loop {
         if start.elapsed() > timeout {
-            bail!(
+            return Err(Error::LaunchFailed(format!(
                 "browser container failed to become ready within {}s",
                 timeout.as_secs()
-            );
+            )));
         }
 
         // Try HTTP GET /json/version - this endpoint returns 200 when Chrome is ready
@@ -514,7 +566,7 @@ fn probe_http_endpoint(port: u16) -> Result<bool> {
     let addr = format!("127.0.0.1:{}", port);
     let socket_addr = addr
         .parse()
-        .map_err(|e| anyhow::anyhow!("invalid address {addr}: {e}"))?;
+        .map_err(|e| Error::LaunchFailed(format!("invalid address {addr}: {e}")))?;
     let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -610,10 +662,10 @@ fn cleanup_stale_docker_browser_containers(container_prefix: &str) -> Result<usi
         .context("failed to list docker containers")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
+        return Err(Error::LaunchFailed(format!(
             "docker ps failed while cleaning stale browser containers: {}",
             stderr.trim()
-        );
+        )));
     }
 
     let names = parse_docker_container_names(&output.stdout, container_prefix);
@@ -650,10 +702,10 @@ fn cleanup_stale_apple_browser_containers(container_prefix: &str) -> Result<usiz
         .context("failed to list apple containers")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
+        return Err(Error::LaunchFailed(format!(
             "container list failed while cleaning stale browser containers: {}",
             stderr.trim()
-        );
+        )));
     }
 
     let names = parse_apple_container_names_for_prefix(&output.stdout, container_prefix)?;
@@ -758,7 +810,10 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("failed to pull browser image: {}", stderr.trim());
+        return Err(Error::LaunchFailed(format!(
+            "failed to pull browser image: {}",
+            stderr.trim()
+        )));
     }
 
     info!(

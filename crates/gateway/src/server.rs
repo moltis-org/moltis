@@ -42,6 +42,7 @@ use {
     moltis_projects::ProjectStore,
     moltis_sessions::{
         metadata::{SessionMetadata, SqliteSessionMetadata},
+        session_events::{SessionEvent, SessionEventBus},
         store::SessionStore,
     },
 };
@@ -233,7 +234,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             .send_text(
                 &reply_target.account_id,
                 &reply_target.chat_id,
-                "Please share your location using the attachment menu (📎 → Location).",
+                "Please share your location in this chat.",
                 None,
             )
             .await?;
@@ -817,6 +818,14 @@ pub fn finalize_gateway_app(
         app_state.clone(),
         crate::auth_middleware::auth_gate,
     ));
+    // Vault guard blocks API requests when the vault is sealed (not
+    // uninitialized). Applied after auth_gate so sealed state is checked
+    // only for authenticated requests.
+    #[cfg(feature = "vault")]
+    let router = router.layer(axum::middleware::from_fn_with_state(
+        app_state.clone(),
+        crate::auth_middleware::vault_guard,
+    ));
     let router = router.layer(axum::middleware::from_fn_with_state(
         app_state.clone(),
         crate::request_throttle::throttle_gate,
@@ -856,6 +865,25 @@ fn env_var_or_unset(name: &str) -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "<unset>".to_string())
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn validate_proxy_tls_configuration(
+    behind_proxy: bool,
+    tls_enabled: bool,
+    allow_tls_behind_proxy: bool,
+) -> anyhow::Result<()> {
+    if behind_proxy && tls_enabled && !allow_tls_behind_proxy {
+        anyhow::bail!(
+            "MOLTIS_BEHIND_PROXY=true with Moltis TLS enabled is usually a proxy misconfiguration. Run with --no-tls (or MOLTIS_NO_TLS=true). If your proxy upstream is HTTPS/TCP passthrough by design, set MOLTIS_ALLOW_TLS_BEHIND_PROXY=true."
+        );
+    }
+    Ok(())
 }
 
 fn log_path_diagnostics(kind: &str, path: &FsPath) {
@@ -929,6 +957,53 @@ fn log_directory_write_probe(dir: &FsPath) {
             );
         },
     }
+}
+
+#[cfg(feature = "openclaw-import")]
+fn log_startup_openclaw_detection() -> String {
+    match moltis_openclaw_import::detect() {
+        Some(detection) => {
+            info!(
+                openclaw_home = %detection.home_dir.display(),
+                openclaw_workspace = %detection.workspace_dir.display(),
+                has_config = detection.has_config,
+                has_credentials = detection.has_credentials,
+                has_memory = detection.has_memory,
+                has_skills = detection.has_skills,
+                has_mcp_servers = detection.has_mcp_servers,
+                sessions = detection.session_count,
+                agents = detection.agent_ids.len(),
+                agent_ids = ?detection.agent_ids,
+                unsupported_channels = ?detection.unsupported_channels,
+                "startup OpenClaw installation detected"
+            );
+            format!("detected ({})", detection.home_dir.display())
+        },
+        None => {
+            info!(
+                openclaw_home_env = %env_var_or_unset("OPENCLAW_HOME"),
+                openclaw_profile_env = %env_var_or_unset("OPENCLAW_PROFILE"),
+                "startup OpenClaw installation not detected (checked OPENCLAW_HOME and ~/.openclaw)"
+            );
+            "not detected".to_string()
+        },
+    }
+}
+
+#[cfg(not(feature = "openclaw-import"))]
+fn log_startup_openclaw_detection() -> String {
+    info!("startup OpenClaw import feature disabled; detection skipped");
+    "feature disabled".to_string()
+}
+
+#[cfg(feature = "openclaw-import")]
+pub fn openclaw_detected_for_ui() -> bool {
+    moltis_openclaw_import::detect().is_some()
+}
+
+#[cfg(not(feature = "openclaw-import"))]
+pub fn openclaw_detected_for_ui() -> bool {
+    false
 }
 
 fn log_startup_config_storage_diagnostics() {
@@ -1056,7 +1131,7 @@ pub async fn prepare_gateway(
     data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
-    session_event_bus: Option<crate::session_events::SessionEventBus>,
+    session_event_bus: Option<SessionEventBus>,
 ) -> anyhow::Result<PreparedGateway> {
     // Apply directory overrides before loading config.
     if let Some(dir) = config_dir {
@@ -1084,6 +1159,22 @@ pub async fn prepare_gateway(
     // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
     if no_tls {
         config.tls.enabled = false;
+    }
+    let behind_proxy = env_flag_enabled("MOLTIS_BEHIND_PROXY");
+    let allow_tls_behind_proxy = env_flag_enabled("MOLTIS_ALLOW_TLS_BEHIND_PROXY");
+    #[cfg(feature = "tls")]
+    let tls_enabled_for_gateway = config.tls.enabled;
+    #[cfg(not(feature = "tls"))]
+    let tls_enabled_for_gateway = false;
+    validate_proxy_tls_configuration(
+        behind_proxy,
+        tls_enabled_for_gateway,
+        allow_tls_behind_proxy,
+    )?;
+    if behind_proxy && tls_enabled_for_gateway && allow_tls_behind_proxy {
+        warn!(
+            "MOLTIS_ALLOW_TLS_BEHIND_PROXY=true is set; ensure your proxy uses HTTPS upstream or TLS passthrough to avoid redirect loops"
+        );
     }
 
     let base_provider_config = config.providers.clone();
@@ -1217,9 +1308,6 @@ pub async fn prepare_gateway(
     let onboarding_config_path = moltis_config::find_or_default_config_path();
     let live_onboarding =
         moltis_onboarding::service::LiveOnboardingService::new(onboarding_config_path);
-    services = services.with_onboarding(Arc::new(
-        crate::onboarding::GatewayOnboardingService::new(live_onboarding),
-    ));
     // Wire live local-llm service when the feature is enabled.
     #[cfg(feature = "local-llm")]
     let local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>> = {
@@ -1343,6 +1431,8 @@ pub async fn prepare_gateway(
     });
     log_startup_config_storage_diagnostics();
 
+    let openclaw_startup_status = log_startup_openclaw_detection();
+
     // Enable log persistence so entries survive restarts.
     if let Some(ref buf) = log_buffer {
         buf.enable_persistence(data_dir.join("logs.jsonl"));
@@ -1369,10 +1459,38 @@ pub async fn prepare_gateway(
         .await
         .expect("failed to run gateway migrations");
 
+    // Vault migrations (vault_metadata table).
+    #[cfg(feature = "vault")]
+    moltis_vault::run_migrations(&db_pool)
+        .await
+        .expect("failed to run vault migrations");
+
     // Migrate plugins data into unified skills system (idempotent, non-fatal).
     moltis_skills::migration::migrate_plugins_to_skills(&data_dir).await;
 
+    // Initialize vault for encryption-at-rest.
+    #[cfg(feature = "vault")]
+    let vault: Option<Arc<moltis_vault::Vault>> = {
+        match moltis_vault::Vault::new(db_pool.clone()).await {
+            Ok(v) => {
+                info!(status = ?v.status().await, "vault ready");
+                Some(Arc::new(v))
+            },
+            Err(e) => {
+                warn!(error = %e, "vault init failed, encryption disabled");
+                None
+            },
+        }
+    };
+
     // Initialize credential store (auth tables).
+    #[cfg(feature = "vault")]
+    let credential_store = Arc::new(
+        auth::CredentialStore::with_vault(db_pool.clone(), &config.auth, vault.clone())
+            .await
+            .expect("failed to init credential store"),
+    );
+    #[cfg(not(feature = "vault"))]
     let credential_store = Arc::new(
         auth::CredentialStore::new(db_pool.clone())
             .await
@@ -1549,6 +1667,21 @@ pub async fn prepare_gateway(
         db_pool.clone(),
     ));
 
+    // Wire agent persona store for multi-agent support (created early so onboarding can use it).
+    let agent_persona_store = Arc::new(crate::agent_persona::AgentPersonaStore::new(
+        db_pool.clone(),
+    ));
+    if let Err(e) = agent_persona_store.ensure_main_workspace_seeded() {
+        tracing::warn!(error = %e, "failed to seed main agent workspace");
+    }
+
+    services =
+        services.with_onboarding(Arc::new(crate::onboarding::GatewayOnboardingService::new(
+            live_onboarding,
+            Arc::clone(&session_metadata),
+            Arc::clone(&agent_persona_store),
+        )));
+
     // Session service wired below after sandbox_router is created.
 
     // Wire live project service.
@@ -1597,7 +1730,7 @@ pub async fn prepare_gateway(
         Box::pin(async move {
             let state = st
                 .get()
-                .ok_or_else(|| anyhow::anyhow!("gateway not ready"))?;
+                .ok_or_else(|| moltis_cron::Error::message("gateway not ready"))?;
 
             // OpenClaw-style cost guard: if HEARTBEAT.md exists but is effectively
             // empty (comments/blank scaffold) and there's no explicit
@@ -1678,9 +1811,8 @@ pub async fn prepare_gateway(
             // formatting hint so the LLM produces channel-friendly content.
             let prompt_text = if req.deliver && !is_heartbeat_turn {
                 format!(
-                    "Your response will be delivered to a Telegram channel. \
-                     Keep it concise and use plain text or basic Telegram HTML \
-                     formatting (<b>, <i>, <code>). Stay under 4000 characters.\n\n\
+                    "Your response will be delivered to an external chat channel. \
+                     Keep it concise and prefer plain text with minimal formatting.\n\n\
                      {prompt_text}"
                 )
             } else {
@@ -1694,7 +1826,10 @@ pub async fn prepare_gateway(
             if let Some(ref model) = req.model {
                 params["model"] = serde_json::Value::String(model.clone());
             }
-            let result = chat.send_sync(params).await.map_err(|e| anyhow::anyhow!(e));
+            let result = chat
+                .send_sync(params)
+                .await
+                .map_err(|e| moltis_cron::Error::message(e.to_string()));
 
             // Clean up sandbox overrides.
             if let Some(ref router) = state.sandbox_router {
@@ -2086,7 +2221,9 @@ pub async fn prepare_gateway(
 
     // Session service is wired after hook registry is built (below).
 
-    // Wire channel store and Telegram channel service.
+    let msteams_webhook_plugin: Arc<tokio::sync::RwLock<moltis_msteams::MsTeamsPlugin>>;
+
+    // Wire channel store and channel plugins.
     {
         use moltis_channels::store::ChannelStore;
 
@@ -2094,71 +2231,125 @@ pub async fn prepare_gateway(
             crate::channel_store::SqliteChannelStore::new(db_pool.clone()),
         );
 
-        let channel_sink = Arc::new(crate::channel_events::GatewayChannelEventSink::new(
-            Arc::clone(&deferred_state),
+        let channel_sink: Arc<dyn moltis_channels::ChannelEventSink> = Arc::new(
+            crate::channel_events::GatewayChannelEventSink::new(Arc::clone(&deferred_state)),
+        );
+        let tg_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_telegram::TelegramPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
         ));
-        let mut tg_plugin = moltis_telegram::TelegramPlugin::new()
-            .with_message_log(Arc::clone(&message_log))
-            .with_event_sink(channel_sink);
+        let msteams_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_msteams::MsTeamsPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(channel_sink),
+        ));
+        msteams_webhook_plugin = Arc::clone(&msteams_plugin);
 
-        // Start channels from config file (these take precedence).
-        let tg_accounts = &config.channels.telegram;
-        let mut started: HashSet<String> = HashSet::new();
-        for (account_id, account_config) in tg_accounts {
-            if let Err(e) = tg_plugin
-                .start_account(account_id, account_config.clone())
-                .await
-            {
-                tracing::warn!(account_id, "failed to start telegram account: {e}");
-            } else {
-                started.insert(account_id.clone());
+        // Start channels from config file (these take precedence over DB rows).
+        let mut started: HashSet<(String, String)> = HashSet::new();
+
+        {
+            let mut tg = tg_plugin.write().await;
+            for (account_id, account_config) in &config.channels.telegram {
+                if let Err(e) = tg.start_account(account_id, account_config.clone()).await {
+                    tracing::warn!(account_id, "failed to start telegram account: {e}");
+                } else {
+                    started.insert(("telegram".into(), account_id.clone()));
+                }
             }
         }
 
-        // Load persisted channels that weren't in the config file.
+        {
+            let mut ms = msteams_plugin.write().await;
+            for (account_id, account_config) in &config.channels.msteams {
+                if let Err(e) = ms.start_account(account_id, account_config.clone()).await {
+                    tracing::warn!(account_id, "failed to start microsoft teams account: {e}");
+                } else {
+                    started.insert(("msteams".into(), account_id.clone()));
+                }
+            }
+        }
+
+        // Load persisted channels that were not started from config.
         match channel_store.list().await {
             Ok(stored) => {
                 info!("{} stored channel(s) found in database", stored.len());
                 for ch in stored {
-                    if started.contains(&ch.account_id) {
+                    let key = (ch.channel_type.clone(), ch.account_id.clone());
+                    if started.contains(&key) {
                         info!(
                             account_id = ch.account_id,
+                            channel_type = ch.channel_type,
                             "skipping stored channel (already started from config)"
                         );
                         continue;
                     }
+
                     info!(
                         account_id = ch.account_id,
                         channel_type = ch.channel_type,
                         "starting stored channel"
                     );
-                    if let Err(e) = tg_plugin.start_account(&ch.account_id, ch.config).await {
+                    let start_result = match ch.channel_type.parse::<moltis_channels::ChannelType>()
+                    {
+                        Ok(moltis_channels::ChannelType::Telegram) => {
+                            let mut tg = tg_plugin.write().await;
+                            tg.start_account(&ch.account_id, ch.config).await
+                        },
+                        Ok(moltis_channels::ChannelType::MsTeams) => {
+                            let mut ms = msteams_plugin.write().await;
+                            ms.start_account(&ch.account_id, ch.config).await
+                        },
+                        Err(e) => Err(moltis_channels::Error::invalid_input(e)),
+                    };
+
+                    if let Err(e) = start_result {
                         tracing::warn!(
                             account_id = ch.account_id,
-                            "failed to start stored telegram account: {e}"
+                            channel_type = ch.channel_type,
+                            "failed to start stored channel account: {e}"
                         );
                     } else {
-                        started.insert(ch.account_id);
+                        started.insert(key);
                     }
                 }
             },
-            Err(e) => {
-                tracing::warn!("failed to load stored channels: {e}");
-            },
+            Err(e) => tracing::warn!("failed to load stored channels: {e}"),
         }
 
         if !started.is_empty() {
-            info!("{} telegram account(s) started", started.len());
+            info!("{} channel account(s) started", started.len());
         }
 
-        // Grab shared outbound adapters before moving tg_plugin into the channel service.
-        let tg_outbound = tg_plugin.shared_outbound();
-        let tg_stream_outbound = tg_plugin.shared_stream_outbound();
-        services = services.with_channel_outbound(tg_outbound);
-        services = services.with_channel_stream_outbound(tg_stream_outbound);
+        let (tg_outbound, tg_stream_outbound) = {
+            let tg = tg_plugin.read().await;
+            (tg.shared_outbound(), tg.shared_stream_outbound())
+        };
+        let (ms_outbound, ms_stream_outbound) = {
+            let ms = msteams_plugin.read().await;
+            (ms.shared_outbound(), ms.shared_stream_outbound())
+        };
+
+        let multi_router = Arc::new(crate::channel_outbound::MultiChannelOutbound::new(
+            Arc::clone(&tg_plugin),
+            Arc::clone(&msteams_plugin),
+            tg_outbound,
+            ms_outbound,
+            tg_stream_outbound,
+            ms_stream_outbound,
+        ));
+
+        services = services.with_channel_outbound(
+            Arc::clone(&multi_router) as Arc<dyn moltis_channels::ChannelOutbound>
+        );
+        services = services.with_channel_stream_outbound(
+            multi_router as Arc<dyn moltis_channels::ChannelStreamOutbound>,
+        );
 
         services.channel = Arc::new(crate::channel::LiveChannelService::new(
             tg_plugin,
+            msteams_plugin,
             channel_store,
             Arc::clone(&message_log),
             Arc::clone(&session_metadata),
@@ -2168,6 +2359,8 @@ pub async fn prepare_gateway(
     services = services.with_session_metadata(Arc::clone(&session_metadata));
     services = services.with_session_store(Arc::clone(&session_store));
     services = services.with_session_share_store(Arc::clone(&session_share_store));
+
+    services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
     seed_default_workspace_markdown_files();
@@ -2185,6 +2378,7 @@ pub async fn prepare_gateway(
                 .with_tts_service(Arc::clone(&services.tts))
                 .with_share_store(Arc::clone(&session_share_store))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
+                .with_agent_persona_store(Arc::clone(&agent_persona_store))
                 .with_project_store(Arc::clone(&project_store))
                 .with_state_store(Arc::clone(&session_state_store))
                 .with_browser_service(Arc::clone(&services.browser));
@@ -2378,6 +2572,7 @@ pub async fn prepare_gateway(
                     let data_memory_file = data_dir.join("MEMORY.md");
                     let data_memory_file_lower = data_dir.join("memory.md");
                     let data_memory_sub = data_dir.join("memory");
+                    let agents_root = data_dir.join("agents");
 
                     let config = moltis_memory::config::MemoryConfig {
                         db_path: memory_db_path.to_string_lossy().into(),
@@ -2386,6 +2581,9 @@ pub async fn prepare_gateway(
                             data_memory_file,
                             data_memory_file_lower,
                             data_memory_sub,
+                            // Include all agent workspaces so per-agent memory writes
+                            // remain indexed across periodic full syncs.
+                            agents_root,
                         ],
                         ..Default::default()
                     };
@@ -2522,11 +2720,6 @@ pub async fn prepare_gateway(
 
     let is_localhost =
         matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
-    #[cfg(feature = "tls")]
-    let tls_active_for_state = config.tls.enabled;
-    #[cfg(not(feature = "tls"))]
-    let tls_active_for_state = false;
-
     // Initialize metrics system.
     #[cfg(feature = "metrics")]
     let metrics_handle = {
@@ -2571,10 +2764,6 @@ pub async fn prepare_gateway(
         }
     };
 
-    let behind_proxy = std::env::var("MOLTIS_BEHIND_PROXY")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
     // Keep a reference to the browser service for periodic cleanup and shutdown.
     let browser_for_lifecycle = Arc::clone(&services.browser);
 
@@ -2585,7 +2774,7 @@ pub async fn prepare_gateway(
         Some(Arc::clone(&credential_store)),
         is_localhost,
         behind_proxy,
-        tls_active_for_state,
+        tls_enabled_for_gateway,
         hook_registry.clone(),
         memory_manager.clone(),
         port,
@@ -2596,6 +2785,8 @@ pub async fn prepare_gateway(
         metrics_handle,
         #[cfg(feature = "metrics")]
         metrics_store.clone(),
+        #[cfg(feature = "vault")]
+        vault.clone(),
     );
 
     // Store discovered hook info and disabled set in state for the web UI.
@@ -2670,8 +2861,12 @@ pub async fn prepare_gateway(
     // expensive and noisy — non-chat models (image, audio, video) would
     // generate spurious warnings.
 
-    // Store heartbeat config on state for gon data and RPC methods.
-    state.inner.write().await.heartbeat_config = config.heartbeat.clone();
+    // Store heartbeat config and channels offered on state for gon data and RPC methods.
+    {
+        let mut inner = state.inner.write().await;
+        inner.heartbeat_config = config.heartbeat.clone();
+        inner.channels_offered = config.channels.offered.clone();
+    }
     #[cfg(feature = "graphql")]
     state.set_graphql_enabled(config.graphql.enabled);
 
@@ -2728,6 +2923,13 @@ pub async fn prepare_gateway(
                 t
             };
             tool_registry.register(Box::new(t));
+        }
+
+        #[cfg(feature = "caldav")]
+        {
+            if let Some(t) = moltis_caldav::tool::CalDavTool::from_config(&config.caldav) {
+                tool_registry.register(Box::new(t));
+            }
         }
 
         // Register memory tools if the memory system is available.
@@ -2902,6 +3104,77 @@ pub async fn prepare_gateway(
         }
     }
 
+    // Spawn OpenClaw session watcher for automatic background syncing.
+    #[cfg(all(feature = "file-watcher", feature = "openclaw-import"))]
+    {
+        if let Some(detection) = moltis_openclaw_import::detect() {
+            let import_agent = if detection.agent_ids.contains(&"main".to_string()) {
+                "main"
+            } else {
+                detection
+                    .agent_ids
+                    .first()
+                    .map(|s| s.as_str())
+                    .unwrap_or("main")
+            };
+            let sessions_dir = detection
+                .home_dir
+                .join("agents")
+                .join(import_agent)
+                .join("agent")
+                .join("sessions");
+            if sessions_dir.is_dir() {
+                match moltis_openclaw_import::watcher::ImportWatcher::start(sessions_dir) {
+                    Ok((_watcher, mut rx)) => {
+                        info!("openclaw: session watcher started");
+                        let watcher_data_dir = data_dir.clone();
+                        tokio::spawn(async move {
+                            let _watcher = _watcher; // keep alive
+                            let mut interval =
+                                tokio::time::interval(std::time::Duration::from_secs(60));
+                            interval.tick().await; // skip first immediate tick
+                            loop {
+                                tokio::select! {
+                                    Some(_event) = rx.recv() => {
+                                        debug!("openclaw: session change detected, running incremental import");
+                                        let report = moltis_openclaw_import::import_sessions_only(
+                                            &detection, &watcher_data_dir,
+                                        );
+                                        if report.items_imported > 0 || report.items_updated > 0 {
+                                            info!(
+                                                imported = report.items_imported,
+                                                updated = report.items_updated,
+                                                skipped = report.items_skipped,
+                                                "openclaw: incremental session sync complete"
+                                            );
+                                        }
+                                    }
+                                    _ = interval.tick() => {
+                                        debug!("openclaw: periodic session sync");
+                                        let report = moltis_openclaw_import::import_sessions_only(
+                                            &detection, &watcher_data_dir,
+                                        );
+                                        if report.items_imported > 0 || report.items_updated > 0 {
+                                            info!(
+                                                imported = report.items_imported,
+                                                updated = report.items_updated,
+                                                skipped = report.items_skipped,
+                                                "openclaw: periodic session sync complete"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    },
+                    Err(e) => {
+                        warn!("openclaw: failed to start session watcher: {e}");
+                    },
+                }
+            }
+        }
+    }
+
     // Spawn MCP health polling + auto-restart background task.
     {
         let health_state = Arc::clone(&state);
@@ -2951,9 +3224,271 @@ pub async fn prepare_gateway(
         router
     };
 
-    let app = finalize_gateway_app(router, app_state, config.server.http_request_logs);
+    let mut app = finalize_gateway_app(router, app_state, config.server.http_request_logs);
 
-    // ── Spawn background tasks ─────────────────────────────────────────
+    app = app.route(
+        "/api/channels/msteams/{account_id}/webhook",
+        axum::routing::post(
+            move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                  axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+                  Json(payload): Json<serde_json::Value>| {
+                let teams_plugin = Arc::clone(&msteams_webhook_plugin);
+                async move {
+                    let secret = query.get("secret").map(String::as_str);
+                    let result = {
+                        let plugin = teams_plugin.read().await;
+                        plugin.ingest_activity(&account_id, payload, secret).await
+                    };
+                    match result {
+                        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))),
+                        Err(e) => {
+                            let msg = e.to_string();
+                            if msg.contains("invalid Teams webhook secret") {
+                                (
+                                    StatusCode::UNAUTHORIZED,
+                                    Json(serde_json::json!({ "ok": false, "error": msg })),
+                                )
+                            } else if msg.contains("unknown Teams account") {
+                                (
+                                    StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({ "ok": false, "error": msg })),
+                                )
+                            } else {
+                                (
+                                    StatusCode::BAD_REQUEST,
+                                    Json(serde_json::json!({ "ok": false, "error": msg })),
+                                )
+                            }
+                        },
+                    }
+                }
+            },
+        ),
+    );
+
+    let addr: SocketAddr = format!("{bind}:{port}").parse()?;
+
+    // Resolve TLS configuration (only when compiled with the `tls` feature).
+    let tls_active = tls_enabled_for_gateway;
+
+    #[cfg(feature = "tls")]
+    let mut ca_cert_path: Option<PathBuf> = None;
+    #[cfg(feature = "tls")]
+    if tls_active {
+        let tls_config = &config.tls;
+        let (ca_path, _cert_path, _key_path) = if let (Some(cert_str), Some(key_str)) =
+            (&tls_config.cert_path, &tls_config.key_path)
+        {
+            // User-provided certs.
+            let cert = PathBuf::from(cert_str);
+            let key = PathBuf::from(key_str);
+            let ca = tls_config.ca_cert_path.as_ref().map(PathBuf::from);
+            (ca, cert, key)
+        } else if tls_config.auto_generate {
+            // Auto-generate certificates.
+            let mgr = crate::tls::FsCertManager::new()?;
+            let (ca, cert, key) = mgr.ensure_certs()?;
+            (Some(ca), cert, key)
+        } else {
+            anyhow::bail!(
+                "TLS is enabled but no certificates configured and auto_generate is false"
+            );
+        };
+
+        ca_cert_path = ca_path.clone();
+
+        // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
+        if let Some(ref ca) = ca_path {
+            let ca_bytes = Arc::new(std::fs::read(ca)?);
+            let ca_clone = Arc::clone(&ca_bytes);
+            app = app.route(
+                "/certs/ca.pem",
+                get(move || {
+                    let data = Arc::clone(&ca_clone);
+                    async move {
+                        (
+                            [
+                                ("content-type", "application/x-pem-file"),
+                                (
+                                    "content-disposition",
+                                    "attachment; filename=\"moltis-ca.pem\"",
+                                ),
+                            ],
+                            data.as_ref().clone(),
+                        )
+                    }
+                }),
+            );
+        }
+    }
+
+    // Count enabled skills and repos for startup banner.
+    let (skill_count, repo_count) = {
+        use moltis_skills::discover::{FsSkillDiscoverer, SkillDiscoverer};
+        let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
+        let sc = discoverer.discover().await.map(|s| s.len()).unwrap_or(0);
+        let rc = moltis_skills::manifest::ManifestStore::default_path()
+            .ok()
+            .map(|p| {
+                let store = moltis_skills::manifest::ManifestStore::new(p);
+                store.load().map(|m| m.repos.len()).unwrap_or(0)
+            })
+            .unwrap_or(0);
+        (sc, rc)
+    };
+
+    // Startup banner.
+    let scheme = if tls_active {
+        "https"
+    } else {
+        "http"
+    };
+    // When bound to an unspecified address (0.0.0.0 / ::), resolve the
+    // machine's outbound IP so the printed URL is clickable.
+    let display_ip = if addr.ip().is_unspecified() {
+        resolve_outbound_ip(addr.ip().is_ipv6())
+            .map(|ip| SocketAddr::new(ip, port))
+            .unwrap_or(addr)
+    } else {
+        addr
+    };
+    // Use plain localhost for display URLs when bound to loopback with TLS.
+    #[cfg(feature = "tls")]
+    let display_host = if is_localhost && tls_active {
+        format!("localhost:{port}")
+    } else {
+        display_ip.to_string()
+    };
+    #[cfg(not(feature = "tls"))]
+    let display_host = display_ip.to_string();
+    let passkey_origins = webauthn_registry
+        .as_ref()
+        .map(|registry| registry.get_all_origins())
+        .unwrap_or_default();
+    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
+    let mut lines = vec![
+        format!("moltis gateway v{}", state.version),
+        format!(
+            "protocol v{}, listening on {}://{} ({})",
+            moltis_protocol::PROTOCOL_VERSION,
+            scheme,
+            display_host,
+            if tls_active {
+                "HTTP/2 + HTTP/1.1"
+            } else {
+                "HTTP/1.1"
+            },
+        ),
+        startup_bind_line(addr),
+        format!("{} methods registered", methods.method_names().len()),
+        format!("llm: {}", provider_summary),
+        format!(
+            "skills: {} enabled, {} repo{}",
+            skill_count,
+            repo_count,
+            if repo_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ),
+        format!(
+            "mcp: {} configured{}",
+            mcp_configured_count,
+            if mcp_configured_count > 0 {
+                " (starting in background)"
+            } else {
+                ""
+            }
+        ),
+        format!("sandbox: {} backend", sandbox_router.backend_name()),
+        format!(
+            "config: {}",
+            moltis_config::find_or_default_config_path().display()
+        ),
+        format!("data: {}", data_dir.display()),
+        format!("openclaw: {openclaw_startup_status}"),
+    ];
+    lines.extend(startup_passkey_origin_lines(&passkey_origins));
+    // Hint about Apple Container on macOS when using Docker.
+    #[cfg(target_os = "macos")]
+    if sandbox_router.backend_name() == "docker" {
+        lines.push(
+            "hint: install Apple Container for VM-isolated sandboxing (see docs/sandbox.md)".into(),
+        );
+    }
+    // Warn when no sandbox backend is available.
+    if sandbox_router.backend_name() == "none" {
+        if moltis_tools::sandbox::is_debian_host() && !sandbox_router.config().packages.is_empty() {
+            lines.push(
+                "⚠ no container runtime found; installing packages on host in background".into(),
+            );
+        } else {
+            lines.push("⚠ no container runtime found; commands run on host".into());
+        }
+    }
+    // Display setup code if one was generated.
+    if let Some(ref code) = setup_code_display {
+        lines.extend(startup_setup_code_lines(code));
+    }
+    #[cfg(feature = "tls")]
+    if tls_active {
+        if let Some(ref ca) = ca_cert_path {
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
+            let ca_host = if is_localhost {
+                "localhost"
+            } else {
+                bind
+            };
+            lines.push(format!(
+                "CA cert: http://{}:{}/certs/ca.pem",
+                ca_host, http_port
+            ));
+            lines.push(format!("  or: {}", ca.display()));
+        }
+        lines.push("run `moltis trust-ca` to remove browser warnings".into());
+    }
+    // Tailscale: enable serve/funnel and show in banner.
+    #[cfg(feature = "tailscale")]
+    {
+        if tailscale_mode != TailscaleMode::Off {
+            let manager = CliTailscaleManager::new();
+            let ts_result = match tailscale_mode {
+                TailscaleMode::Serve => manager.enable_serve(port, tls_active).await,
+                TailscaleMode::Funnel => manager.enable_funnel(port, tls_active).await,
+                TailscaleMode::Off => unreachable!(),
+            };
+            match ts_result {
+                Ok(()) => {
+                    if let Ok(Some(hostname)) = manager.hostname().await {
+                        lines.push(format!("tailscale {tailscale_mode}: https://{hostname}"));
+                    } else {
+                        lines.push(format!("tailscale {tailscale_mode}: enabled"));
+                    }
+                },
+                Err(e) => {
+                    warn!("failed to enable tailscale {tailscale_mode}: {e}");
+                    lines.push(format!("tailscale {tailscale_mode}: FAILED ({e})"));
+                },
+            }
+        }
+    }
+    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0) + 4;
+    info!("┌{}┐", "─".repeat(width));
+    for line in &lines {
+        info!("│  {:<w$}│", line, w = width - 2);
+    }
+    info!("└{}┘", "─".repeat(width));
+
+    // Dispatch GatewayStart hook.
+    if let Some(ref hooks) = state.inner.read().await.hook_registry {
+        let payload = moltis_common::hooks::HookPayload::GatewayStart {
+            address: addr.to_string(),
+        };
+        if let Err(e) = hooks.dispatch(&payload).await {
+            tracing::warn!("GatewayStart hook dispatch failed: {e}");
+        }
+    }
 
     // Spawn periodic browser cleanup task (every 30s, removes idle instances).
     {
@@ -3005,7 +3540,6 @@ pub async fn prepare_gateway(
         let ws_state = Arc::clone(&state);
         let mut rx = state.session_event_bus.subscribe();
         tokio::spawn(async move {
-            use crate::session_events::SessionEvent;
             loop {
                 match rx.recv().await {
                     Ok(event) => {
@@ -3819,12 +4353,14 @@ async fn ws_upgrade_handler(
         .get(axum::http::header::ORIGIN)
         .and_then(|v| v.to_str().ok())
     {
-        let host = headers
-            .get(axum::http::header::HOST)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if !is_same_origin(origin, host) {
-            tracing::warn!(origin, host, remote = %addr, "rejected cross-origin WebSocket upgrade");
+        let host = websocket_origin_host(&headers, state.gateway.behind_proxy).unwrap_or_default();
+        if !is_same_origin(origin, &host) {
+            tracing::warn!(
+                origin,
+                host = %host,
+                remote = %addr,
+                "rejected cross-origin WebSocket upgrade"
+            );
             return (
                 StatusCode::FORBIDDEN,
                 "cross-origin WebSocket connections are not allowed",
@@ -3860,6 +4396,26 @@ async fn ws_upgrade_handler(
         )
     })
     .into_response()
+}
+
+fn websocket_origin_host(headers: &axum::http::HeaderMap, behind_proxy: bool) -> Option<String> {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned);
+    if !behind_proxy {
+        return host;
+    }
+    headers
+        .get("x-forwarded-host")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or(host)
 }
 
 /// Dedicated host terminal WebSocket stream (`Settings > Terminal`).
@@ -3986,6 +4542,19 @@ fn startup_setup_code_lines(code: &str) -> Vec<String> {
 /// header.  Accepts `localhost`, `127.0.0.1`, and `[::1]` interchangeably
 /// so that `http://localhost:8080` matches a Host of `127.0.0.1:8080`.
 fn is_same_origin(origin: &str, host: &str) -> bool {
+    fn default_port_for_scheme(scheme: &str) -> Option<&'static str> {
+        match scheme {
+            "http" | "ws" => Some("80"),
+            "https" | "wss" => Some("443"),
+            _ => None,
+        }
+    }
+
+    let origin_scheme = origin
+        .split("://")
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     // Origin is a full URL (e.g. "https://localhost:8080"), Host is just
     // "host:port" or "host".
     let origin_host = origin
@@ -4015,8 +4584,8 @@ fn is_same_origin(origin: &str, host: &str) -> bool {
         }
     }
 
-    let origin_port = get_port(origin_host);
-    let host_port = get_port(host);
+    let origin_port = get_port(origin_host).or_else(|| default_port_for_scheme(&origin_scheme));
+    let host_port = get_port(host).or_else(|| default_port_for_scheme(&origin_scheme));
 
     let oh = strip_port(origin_host);
     let hh = strip_port(host);
@@ -4881,6 +5450,14 @@ mod tests {
     }
 
     #[test]
+    fn same_origin_treats_default_ports_as_equivalent() {
+        assert!(is_same_origin("https://example.com", "example.com:443"));
+        assert!(is_same_origin("https://example.com:443", "example.com"));
+        assert!(is_same_origin("http://example.com", "example.com:80"));
+        assert!(is_same_origin("http://example.com:80", "example.com"));
+    }
+
+    #[test]
     fn same_origin_localhost_variants() {
         // localhost ↔ 127.0.0.1
         assert!(is_same_origin("http://localhost:8080", "127.0.0.1:8080"));
@@ -4939,6 +5516,31 @@ mod tests {
             "https://app.moltis.localhost:8080",
             "localhost:8080"
         ));
+    }
+
+    #[test]
+    fn websocket_origin_host_prefers_forwarded_host_when_behind_proxy() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "127.0.0.1:13131".parse().unwrap());
+        headers.insert("x-forwarded-host", "chat.example.com".parse().unwrap());
+        assert_eq!(
+            websocket_origin_host(&headers, true).as_deref(),
+            Some("chat.example.com")
+        );
+    }
+
+    #[test]
+    fn websocket_origin_host_uses_host_without_proxy_mode() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::HOST,
+            "gateway.example.com:8443".parse().unwrap(),
+        );
+        headers.insert("x-forwarded-host", "chat.example.com".parse().unwrap());
+        assert_eq!(
+            websocket_origin_host(&headers, false).as_deref(),
+            Some("gateway.example.com:8443")
+        );
     }
 
     #[test]
@@ -5010,6 +5612,25 @@ mod tests {
             "enter this code to set your password or register a passkey",
             "",
         ]);
+    }
+
+    #[test]
+    fn proxy_tls_validation_rejects_common_misconfiguration() {
+        let err = validate_proxy_tls_configuration(true, true, false)
+            .expect_err("behind proxy with TLS should fail without explicit override");
+        let message = err.to_string();
+        assert!(message.contains("MOLTIS_BEHIND_PROXY=true"));
+        assert!(message.contains("--no-tls"));
+    }
+
+    #[test]
+    fn proxy_tls_validation_allows_proxy_mode_when_tls_is_disabled() {
+        assert!(validate_proxy_tls_configuration(true, false, false).is_ok());
+    }
+
+    #[test]
+    fn proxy_tls_validation_allows_explicit_tls_override() {
+        assert!(validate_proxy_tls_configuration(true, true, true).is_ok());
     }
 
     #[test]

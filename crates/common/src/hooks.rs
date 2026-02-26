@@ -15,7 +15,7 @@ use std::{
 };
 
 use {
-    anyhow::Result,
+    crate::error::Result,
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     serde_json::Value,
@@ -780,7 +780,7 @@ mod tests {
                 _event: HookEvent,
                 _payload: &HookPayload,
             ) -> Result<HookAction> {
-                anyhow::bail!("always fails")
+                Err(crate::error::Error::message("always fails"))
             }
         }
 

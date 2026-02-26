@@ -1,4 +1,6 @@
-use {anyhow::Result, async_trait::async_trait};
+use async_trait::async_trait;
+
+use crate::Result;
 
 /// A single logged inbound message.
 #[derive(Debug, Clone)]
@@ -31,6 +33,15 @@ pub struct SenderSummary {
 #[async_trait]
 pub trait MessageLog: Send + Sync {
     async fn log(&self, entry: MessageLogEntry) -> Result<()>;
-    async fn list_by_account(&self, account_id: &str, limit: u32) -> Result<Vec<MessageLogEntry>>;
-    async fn unique_senders(&self, account_id: &str) -> Result<Vec<SenderSummary>>;
+    async fn list_by_account(
+        &self,
+        channel_type: &str,
+        account_id: &str,
+        limit: u32,
+    ) -> Result<Vec<MessageLogEntry>>;
+    async fn unique_senders(
+        &self,
+        channel_type: &str,
+        account_id: &str,
+    ) -> Result<Vec<SenderSummary>>;
 }

@@ -31,6 +31,11 @@ const HOST_TERMINAL_TMUX_CONFIG_PATH: &str = "/dev/null";
 const HOST_TERMINAL_MAX_INPUT_BYTES: usize = 8 * 1024;
 const HOST_TERMINAL_DEFAULT_COLS: u16 = 220;
 const HOST_TERMINAL_DEFAULT_ROWS: u16 = 56;
+const TERMINAL_SESSION_INIT_FAILED: &str = "TERMINAL_SESSION_INIT_FAILED";
+const TERMINAL_WINDOWS_LIST_FAILED: &str = "TERMINAL_WINDOWS_LIST_FAILED";
+const TERMINAL_TMUX_UNAVAILABLE: &str = "TERMINAL_TMUX_UNAVAILABLE";
+const TERMINAL_WINDOW_NAME_INVALID: &str = "TERMINAL_WINDOW_NAME_INVALID";
+const TERMINAL_WINDOW_CREATE_FAILED: &str = "TERMINAL_WINDOW_CREATE_FAILED";
 
 // ── Data structures ──────────────────────────────────────────────────────────
 
@@ -84,7 +89,36 @@ struct HostTerminalPtyRuntime {
     output_rx: tokio::sync::mpsc::UnboundedReceiver<HostTerminalOutputEvent>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+struct TerminalError {
+    message: String,
+}
+
+impl From<String> for TerminalError {
+    fn from(message: String) -> Self {
+        Self { message }
+    }
+}
+
+impl From<&str> for TerminalError {
+    fn from(message: &str) -> Self {
+        Self {
+            message: message.to_string(),
+        }
+    }
+}
+
+type TerminalResult<T> = Result<T, TerminalError>;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+fn terminal_error(code: &str, error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
+        "error": error.into(),
+    })
+}
 
 fn host_terminal_working_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -224,13 +258,13 @@ fn host_terminal_apply_tmux_profile() {
     }
 }
 
-fn host_terminal_normalize_window_name(name: &str) -> Result<String, String> {
+fn host_terminal_normalize_window_name(name: &str) -> TerminalResult<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err("window name cannot be empty".to_string());
+        return Err("window name cannot be empty".into());
     }
     if trimmed.chars().count() > 64 {
-        return Err("window name must be 64 characters or fewer".to_string());
+        return Err("window name must be 64 characters or fewer".into());
     }
     Ok(trimmed.to_string())
 }
@@ -278,7 +312,7 @@ fn host_terminal_default_window_target(windows: &[HostTerminalWindowInfo]) -> Op
         .map(|window| window.id.clone())
 }
 
-fn host_terminal_ensure_tmux_session() -> Result<(), String> {
+fn host_terminal_ensure_tmux_session() -> TerminalResult<()> {
     let mut has_cmd = host_terminal_tmux_command();
     let has_output = has_cmd
         .args(["has-session", "-t", HOST_TERMINAL_SESSION_NAME])
@@ -315,12 +349,14 @@ fn host_terminal_ensure_tmux_session() -> Result<(), String> {
         Err(format!(
             "failed to create tmux session '{}' (exit {})",
             HOST_TERMINAL_SESSION_NAME, create_output.status
-        ))
+        )
+        .into())
     } else {
         Err(format!(
             "failed to create tmux session '{}': {}",
             HOST_TERMINAL_SESSION_NAME, stderr
-        ))
+        )
+        .into())
     }
 }
 
@@ -340,7 +376,7 @@ fn host_terminal_parse_tmux_window_line(line: &str) -> Option<HostTerminalWindow
     })
 }
 
-fn host_terminal_tmux_list_windows() -> Result<Vec<HostTerminalWindowInfo>, String> {
+fn host_terminal_tmux_list_windows() -> TerminalResult<Vec<HostTerminalWindowInfo>> {
     let mut cmd = host_terminal_tmux_command();
     let output = cmd
         .args([
@@ -356,12 +392,9 @@ fn host_terminal_tmux_list_windows() -> Result<Vec<HostTerminalWindowInfo>, Stri
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
         if stderr.is_empty() {
-            return Err(format!(
-                "failed to list tmux windows (exit {})",
-                output.status
-            ));
+            return Err(format!("failed to list tmux windows (exit {})", output.status).into());
         }
-        return Err(format!("failed to list tmux windows: {stderr}"));
+        return Err(format!("failed to list tmux windows: {stderr}").into());
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut windows: Vec<HostTerminalWindowInfo> = stdout
@@ -372,7 +405,7 @@ fn host_terminal_tmux_list_windows() -> Result<Vec<HostTerminalWindowInfo>, Stri
     Ok(windows)
 }
 
-fn host_terminal_tmux_create_window(name: Option<&str>) -> Result<String, String> {
+fn host_terminal_tmux_create_window(name: Option<&str>) -> TerminalResult<String> {
     let mut cmd = host_terminal_tmux_command();
     cmd.args([
         "new-window",
@@ -393,12 +426,9 @@ fn host_terminal_tmux_create_window(name: Option<&str>) -> Result<String, String
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
         if stderr.is_empty() {
-            return Err(format!(
-                "failed to create tmux window (exit {})",
-                output.status
-            ));
+            return Err(format!("failed to create tmux window (exit {})", output.status).into());
         }
-        return Err(format!("failed to create tmux window: {stderr}"));
+        return Err(format!("failed to create tmux window: {stderr}").into());
     }
     let window_id_raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let window_id = host_terminal_normalize_window_target(&window_id_raw)
@@ -407,7 +437,7 @@ fn host_terminal_tmux_create_window(name: Option<&str>) -> Result<String, String
     Ok(window_id)
 }
 
-fn host_terminal_tmux_select_window(window_target: &str) -> Result<(), String> {
+fn host_terminal_tmux_select_window(window_target: &str) -> TerminalResult<()> {
     let mut cmd = host_terminal_tmux_command();
     let output = cmd
         .args(["select-window", "-t", window_target])
@@ -422,12 +452,14 @@ fn host_terminal_tmux_select_window(window_target: &str) -> Result<(), String> {
         Err(format!(
             "failed to select tmux window '{}' (exit {})",
             window_target, output.status
-        ))
+        )
+        .into())
     } else {
         Err(format!(
             "failed to select tmux window '{}': {}",
             window_target, stderr
-        ))
+        )
+        .into())
     }
 }
 
@@ -508,7 +540,7 @@ fn spawn_host_terminal_runtime(
     rows: u16,
     use_tmux_persistence: bool,
     tmux_window_target: Option<&str>,
-) -> Result<HostTerminalPtyRuntime, String> {
+) -> TerminalResult<HostTerminalPtyRuntime> {
     if use_tmux_persistence {
         host_terminal_ensure_tmux_session()?;
         if let Some(target) = tmux_window_target {
@@ -555,7 +587,7 @@ fn spawn_host_terminal_runtime(
 
 fn spawn_host_terminal_reader(
     mut reader: Box<dyn Read + Send>,
-) -> Result<tokio::sync::mpsc::UnboundedReceiver<HostTerminalOutputEvent>, String> {
+) -> TerminalResult<tokio::sync::mpsc::UnboundedReceiver<HostTerminalOutputEvent>> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<HostTerminalOutputEvent>();
     std::thread::Builder::new()
         .name("moltis-host-terminal-reader".to_string())
@@ -593,7 +625,7 @@ fn spawn_host_terminal_reader(
 fn host_terminal_write_input(
     runtime: &mut HostTerminalPtyRuntime,
     input: &str,
-) -> Result<(), String> {
+) -> TerminalResult<()> {
     runtime
         .writer
         .write_all(input.as_bytes())
@@ -609,7 +641,7 @@ fn host_terminal_resize(
     runtime: &HostTerminalPtyRuntime,
     cols: u16,
     rows: u16,
-) -> Result<(), String> {
+) -> TerminalResult<()> {
     let next_rows = rows.max(1);
     let next_cols = cols.max(2);
     runtime
@@ -823,7 +855,10 @@ pub async fn api_terminal_windows_handler() -> impl IntoResponse {
     if let Err(err) = host_terminal_ensure_tmux_session() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
+            Json(terminal_error(
+                TERMINAL_SESSION_INIT_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response();
     }
@@ -836,7 +871,10 @@ pub async fn api_terminal_windows_handler() -> impl IntoResponse {
         .into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
+            Json(terminal_error(
+                TERMINAL_WINDOWS_LIST_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response(),
     }
@@ -848,9 +886,10 @@ pub async fn api_terminal_windows_create_handler(
     if !host_terminal_tmux_available() {
         return (
             StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "tmux is not available on host terminal",
-            })),
+            Json(terminal_error(
+                TERMINAL_TMUX_UNAVAILABLE,
+                "tmux is not available on host terminal",
+            )),
         )
             .into_response();
     }
@@ -864,7 +903,10 @@ pub async fn api_terminal_windows_create_handler(
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": err })),
+                Json(terminal_error(
+                    TERMINAL_WINDOW_NAME_INVALID,
+                    err.to_string(),
+                )),
             )
                 .into_response();
         },
@@ -872,7 +914,10 @@ pub async fn api_terminal_windows_create_handler(
     if let Err(err) = host_terminal_ensure_tmux_session() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
+            Json(terminal_error(
+                TERMINAL_SESSION_INIT_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response();
     }
@@ -894,13 +939,19 @@ pub async fn api_terminal_windows_create_handler(
             },
             Err(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": err })),
+                Json(terminal_error(
+                    TERMINAL_WINDOWS_LIST_FAILED,
+                    err.to_string(),
+                )),
             )
                 .into_response(),
         },
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
+            Json(terminal_error(
+                TERMINAL_WINDOW_CREATE_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response(),
     }
@@ -945,7 +996,10 @@ pub async fn api_terminal_ws_upgrade_handler(
     if !header_authenticated {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "not authenticated" })),
+            Json(terminal_error(
+                "AUTH_NOT_AUTHENTICATED",
+                "not authenticated",
+            )),
         )
             .into_response();
     }
@@ -972,14 +1026,14 @@ async fn terminal_ws_send_json(
 
 async fn terminal_ws_send_status(
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
-    text: &str,
+    text: impl std::fmt::Display,
     level: &str,
 ) -> bool {
     terminal_ws_send_json(
         ws_tx,
         serde_json::json!({
             "type": "status",
-            "text": text,
+            "text": text.to_string(),
             "level": level,
         }),
     )

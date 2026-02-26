@@ -5,6 +5,12 @@ export function makeTelegramIcon() {
 	return el;
 }
 
+export function makeTeamsIcon() {
+	var el = document.createElement("span");
+	el.className = "icon icon-msteams";
+	return el;
+}
+
 export function makeCronIcon() {
 	var el = document.createElement("span");
 	el.className = "icon icon-cron";

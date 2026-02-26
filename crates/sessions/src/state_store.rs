@@ -5,7 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use crate::Result;
 
 /// A single state entry.
 #[derive(Debug, Clone)]

@@ -7,6 +7,7 @@ import { applyIdentityFavicon, formatPageTitle } from "./branding.js";
 import { SessionList } from "./components/session-list.js";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
+import { init as initI18n, translateStaticElements } from "./i18n.js";
 import { initMobile, toggleSessions } from "./mobile.js";
 import { updateNavCounts } from "./nav-counts.js";
 import { renderSessionProjectSelect } from "./project-combo.js";
@@ -58,6 +59,22 @@ initTheme();
 injectMarkdownStyles();
 initPWA();
 initMobile();
+var i18nReady = initI18n()
+	.then(() => {
+		translateStaticElements(document.documentElement);
+	})
+	.catch((err) => {
+		console.warn("[i18n] failed to initialize", err);
+	});
+var appStarted = false;
+
+function startAppAfterI18n() {
+	if (appStarted) return;
+	appStarted = true;
+	i18nReady.finally(() => {
+		startApp();
+	});
+}
 
 var UPDATE_DISMISS_KEY = "moltis-update-dismissed-version";
 var currentUpdateVersion = null;
@@ -86,6 +103,8 @@ try {
 gon.onChange("update", showUpdateBanner);
 onEvent("update.available", showUpdateBanner);
 initUpdateBannerDismiss();
+showVaultBanner(gon.get("vault_status"));
+gon.onChange("vault_status", showVaultBanner);
 onEvent("session", (payload) => {
 	fetchSessions();
 	if (payload && payload.kind === "patched" && payload.sessionKey === S.activeSessionKey) {
@@ -245,7 +264,7 @@ fetch("/api/auth/status")
 	.then((auth) => {
 		if (!auth) {
 			// Auth endpoints not available — no auth configured, proceed normally.
-			startApp();
+			startAppAfterI18n();
 			return;
 		}
 		if (auth.setup_required) {
@@ -260,11 +279,11 @@ fetch("/api/auth/status")
 			return;
 		}
 		updateAuthChrome(auth);
-		startApp();
+		startAppAfterI18n();
 	})
 	.catch(() => {
 		// If auth check fails, proceed anyway (backward compat).
-		startApp();
+		startAppAfterI18n();
 	});
 
 function showUpdateBanner(update) {
@@ -301,6 +320,12 @@ function initUpdateBannerDismiss() {
 		var el = document.getElementById("updateBanner");
 		if (el) el.style.display = "none";
 	});
+}
+
+function showVaultBanner(status) {
+	var el = document.getElementById("vaultBanner");
+	if (!el) return;
+	el.style.display = status === "sealed" ? "" : "none";
 }
 
 function showBranchBanner(branch) {

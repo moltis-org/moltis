@@ -6,7 +6,7 @@
 use std::io::Cursor;
 
 use {
-    anyhow::{Context, Result},
+    crate::{Error, Result},
     image::{DynamicImage, GenericImageView, ImageFormat, ImageReader},
 };
 
@@ -50,12 +50,12 @@ pub struct OptimizedImage {
 pub fn get_image_metadata(data: &[u8]) -> Result<ImageMetadata> {
     let reader = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
-        .context("failed to guess image format")?;
+        .map_err(|source| Error::external("failed to guess image format", source))?;
 
     let format = reader.format();
     let (width, height) = reader
         .into_dimensions()
-        .context("failed to read image dimensions")?;
+        .map_err(|source| Error::external("failed to read image dimensions", source))?;
 
     Ok(ImageMetadata {
         width,
@@ -85,9 +85,9 @@ pub fn needs_optimization(data: &[u8], max_dimension: u32) -> Result<bool> {
 pub fn resize_image(data: &[u8], max_width: u32, max_height: u32) -> Result<Vec<u8>> {
     let img = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
-        .context("failed to guess image format")?
+        .map_err(|source| Error::external("failed to guess image format", source))?
         .decode()
-        .context("failed to decode image")?;
+        .map_err(|source| Error::external("failed to decode image", source))?;
 
     let (orig_width, orig_height) = img.dimensions();
 
@@ -108,7 +108,7 @@ pub fn resize_image(data: &[u8], max_width: u32, max_height: u32) -> Result<Vec<
     let mut output = Cursor::new(Vec::new());
     resized
         .write_to(&mut output, ImageFormat::Jpeg)
-        .context("failed to encode resized image")?;
+        .map_err(|source| Error::external("failed to encode resized image", source))?;
 
     Ok(output.into_inner())
 }
@@ -132,9 +132,9 @@ pub fn optimize_for_llm(data: &[u8], max_dimension: Option<u32>) -> Result<Optim
 
     let img = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
-        .context("failed to guess image format")?
+        .map_err(|source| Error::external("failed to guess image format", source))?
         .decode()
-        .context("failed to decode image")?;
+        .map_err(|source| Error::external("failed to decode image", source))?;
 
     let (orig_width, orig_height) = img.dimensions();
     let needs_resize =
@@ -178,7 +178,7 @@ pub fn optimize_for_llm(data: &[u8], max_dimension: Option<u32>) -> Result<Optim
         let mut output = Cursor::new(Vec::new());
         resized
             .write_to(&mut output, ImageFormat::Png)
-            .context("failed to encode as PNG")?;
+            .map_err(|source| Error::external("failed to encode as PNG", source))?;
         (output.into_inner(), "image/png")
     } else {
         // Convert to JPEG for efficiency
@@ -229,7 +229,7 @@ fn encode_jpeg_with_quality(img: &DynamicImage, quality: u8) -> Result<(Vec<u8>,
     let mut output = Cursor::new(Vec::new());
     let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, quality);
     img.write_with_encoder(encoder)
-        .context("failed to encode as JPEG")?;
+        .map_err(|source| Error::external("failed to encode as JPEG", source))?;
     Ok((output.into_inner(), "image/jpeg"))
 }
 
@@ -248,7 +248,9 @@ fn reduce_size_to_fit(img: &DynamicImage, max_bytes: usize) -> Result<Vec<u8>> {
     let smaller_dim = (width.min(height) as f64 * 0.75).round() as u32;
 
     if smaller_dim < 256 {
-        anyhow::bail!("image cannot be reduced to fit within size limit");
+        return Err(Error::invalid_input(
+            "image cannot be reduced to fit within size limit",
+        ));
     }
 
     let resized = img.resize(

@@ -45,6 +45,7 @@ jobs:
         with:
           version: "2.3.13"
       - run: biome ci crates/web/src/assets/js/
+      - run: ./scripts/i18n-check.sh
 
   fmt:
     needs: zizmor

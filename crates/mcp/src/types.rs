@@ -1,5 +1,7 @@
 //! MCP protocol types (JSON-RPC 2.0 over stdio).
 
+use std::error::Error as StdError;
+
 use serde::{Deserialize, Serialize};
 
 // ── JSON-RPC 2.0 ────────────────────────────────────────────────────
@@ -199,7 +201,10 @@ pub enum McpTransportError {
     HttpError { status: u16, body: String },
     /// Any other transport error.
     #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    Other {
+        #[from]
+        source: Box<dyn StdError + Send + Sync>,
+    },
 }
 
 #[cfg(test)]

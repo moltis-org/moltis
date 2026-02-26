@@ -186,7 +186,7 @@ flatpak:
     cd flatpak && flatpak-builder --repo=repo --force-clean builddir org.moltbot.Moltis.yml
 
 # Run all CI checks (format, lint, build, test)
-ci: format-check lint build test
+ci: format-check lint i18n-check build test
 
 # Run the same Rust preflight gates used before release packaging.
 release-preflight: lockfile-check
@@ -201,6 +201,10 @@ ship commit_message='' pr_title='' pr_body='':
 # Run all tests
 test:
     cargo nextest run --all-features
+
+# Verify locale key parity across frontend i18n bundles.
+i18n-check:
+    ./scripts/i18n-check.sh
 
 # Install browser tooling for gateway web UI e2e tests.
 ui-e2e-install:

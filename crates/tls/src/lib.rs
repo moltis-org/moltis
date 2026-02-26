@@ -5,6 +5,10 @@
 //! server on a secondary port serves the CA cert for easy download and
 //! redirects everything else to HTTPS.
 
+pub mod error;
+
+pub use error::{Context, Error, Result};
+
 use std::{
     io::BufReader,
     net::SocketAddr,
@@ -14,7 +18,6 @@ use std::{
 };
 
 use {
-    anyhow::{Context, Result},
     axum::{Router, extract::State, response::IntoResponse, routing::get},
     rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose, SanType},
     rustls::ServerConfig,
