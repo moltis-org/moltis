@@ -104,9 +104,9 @@ struct ProviderConfigForm: View {
     }
 
     private static let monthYearFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM yyyy"
-        return f
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM yyyy"
+        return formatter
     }()
 
     private static func formatModelDate(_ epoch: Int?) -> String? {

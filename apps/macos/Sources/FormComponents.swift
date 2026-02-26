@@ -133,15 +133,21 @@ struct SettingsEmptyState: View {
 
 // MARK: - SearchablePopoverPicker (popover with search + list)
 
+struct SearchableOption: Identifiable {
+    let id: String
+    let display: String
+    let detail: String?
+}
+
 struct SearchablePopoverPicker: View {
     let label: String
     @Binding var selection: String?
-    let options: [(id: String, display: String, detail: String?)]
+    let options: [SearchableOption]
 
     init(
         label: String,
         selection: Binding<String?>,
-        options: [(id: String, display: String, detail: String?)]
+        options: [SearchableOption]
     ) {
         self.label = label
         self._selection = selection
@@ -155,13 +161,15 @@ struct SearchablePopoverPicker: View {
     ) {
         self.label = label
         self._selection = selection
-        self.options = options.map { (id: $0.id, display: $0.display, detail: nil as String?) }
+        self.options = options.map { option in
+            SearchableOption(id: option.id, display: option.display, detail: nil)
+        }
     }
 
     @State private var isPresented = false
     @State private var searchText = ""
 
-    private var filteredOptions: [(id: String, display: String, detail: String?)] {
+    private var filteredOptions: [SearchableOption] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if query.isEmpty { return options }
         return options.filter {
@@ -381,31 +389,5 @@ struct StreamingCursorView: View {
                 value: visible
             )
             .onAppear { visible = false }
-    }
-}
-
-// MARK: - MoltisEditorField (for multi-line text editing in forms)
-
-struct MoltisEditorField: View {
-    @Binding var text: String
-    let minHeight: CGFloat
-
-    init(text: Binding<String>, minHeight: CGFloat = 160) {
-        _text = text
-        self.minHeight = minHeight
-    }
-
-    var body: some View {
-        TextEditor(text: $text)
-            .font(.system(.body, design: .monospaced))
-            .scrollContentBackground(.hidden)
-            .padding(6)
-            .frame(minHeight: minHeight)
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .overlay {
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4))
-            }
     }
 }

@@ -29,10 +29,10 @@ enum ChatAttachmentKind: Equatable {
 
     static func == (lhs: ChatAttachmentKind, rhs: ChatAttachmentKind) -> Bool {
         switch (lhs, rhs) {
-        case let (.image(a), .image(b)):
-            return a === b
-        case let (.file(a), .file(b)):
-            return a == b
+        case let (.image(lhsImage), .image(rhsImage)):
+            return lhsImage === rhsImage
+        case let (.file(lhsURL), .file(rhsURL)):
+            return lhsURL == rhsURL
         default:
             return false
         }

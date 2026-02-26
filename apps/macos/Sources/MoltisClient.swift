@@ -275,7 +275,7 @@ enum StreamEventType {
 }
 
 private struct BridgeStreamEventPayload: Decodable {
-    let type_: String
+    let eventType: String
     let text: String?
     let message: String?
     let inputTokens: UInt32?
@@ -285,7 +285,7 @@ private struct BridgeStreamEventPayload: Decodable {
     let provider: String?
 
     private enum CodingKeys: String, CodingKey {
-        case type_  = "type"
+        case eventType = "type"
         case text
         case message
         case inputTokens = "input_tokens"
@@ -334,7 +334,7 @@ private func streamCallbackHandler(
     let event: StreamEventType
     var isTerminal = false
 
-    switch payload.type_ {
+    switch payload.eventType {
     case "delta":
         event = .delta(text: payload.text ?? "")
     case "done":
