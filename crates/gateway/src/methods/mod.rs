@@ -404,6 +404,7 @@ pub(crate) fn load_disabled_hooks() -> std::collections::HashSet<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
