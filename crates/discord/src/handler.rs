@@ -64,6 +64,111 @@ fn discord_message_created_ms(message_id: MessageId) -> u64 {
     (message_id.get() >> 22).saturating_add(DISCORD_EPOCH_MS)
 }
 
+fn is_valid_lat_lon(latitude: f64, longitude: f64) -> bool {
+    (-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude)
+}
+
+fn parse_coordinate_component(input: &str) -> Option<f64> {
+    let trimmed = input
+        .trim()
+        .trim_matches(|c| matches!(c, '(' | ')' | '[' | ']' | '{' | '}'));
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut end = 0usize;
+    for (idx, ch) in trimmed.char_indices() {
+        if ch.is_ascii_digit() || matches!(ch, '+' | '-' | '.') {
+            end = idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if end == 0 {
+        return None;
+    }
+    let token = &trimmed[..end];
+    if !token.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    token.parse::<f64>().ok()
+}
+
+fn parse_coordinate_pair(input: &str) -> Option<(f64, f64)> {
+    let mut parts = input.split(',');
+    let latitude = parse_coordinate_component(parts.next()?)?;
+    let longitude = parse_coordinate_component(parts.next()?)?;
+    if is_valid_lat_lon(latitude, longitude) {
+        Some((latitude, longitude))
+    } else {
+        None
+    }
+}
+
+fn parse_coordinates_from_url(url_str: &str) -> Option<(f64, f64)> {
+    let parsed = reqwest::Url::parse(url_str).ok()?;
+
+    for key in ["ll", "q", "query"] {
+        if let Some((_, value)) = parsed
+            .query_pairs()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            && let Some(coords) = parse_coordinate_pair(value.as_ref())
+        {
+            return Some(coords);
+        }
+    }
+
+    for segment in [
+        parsed.path(),
+        parsed.fragment().unwrap_or_default(),
+        url_str,
+    ] {
+        if let Some(at_pos) = segment.find('@')
+            && let Some(coords) = parse_coordinate_pair(&segment[at_pos + 1..])
+        {
+            return Some(coords);
+        }
+    }
+
+    None
+}
+
+fn parse_map_link_coordinates(text: &str) -> Option<(f64, f64)> {
+    for raw in text.split_whitespace() {
+        let token = raw.trim_matches(|c: char| {
+            matches!(
+                c,
+                '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.' | '!' | '?'
+            )
+        });
+        if !(token.starts_with("http://") || token.starts_with("https://")) {
+            continue;
+        }
+        if let Some(coords) = parse_coordinates_from_url(token) {
+            return Some(coords);
+        }
+    }
+    None
+}
+
+fn parse_plain_text_coordinates(text: &str) -> Option<(f64, f64)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || !trimmed.contains(',') {
+        return None;
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '.' | ',' | ' ' | '\t' | '(' | ')'))
+    {
+        return None;
+    }
+    parse_coordinate_pair(trimmed)
+}
+
+fn extract_location_coordinates(text: &str) -> Option<(f64, f64)> {
+    parse_map_link_coordinates(text).or_else(|| parse_plain_text_coordinates(text))
+}
+
 /// Strip the bot mention (e.g. `<@123456789>`) from the beginning of a message.
 pub fn strip_bot_mention(text: &str, bot_id: u64) -> String {
     let mention = format!("<@{bot_id}>");
@@ -315,6 +420,34 @@ impl EventHandler for Handler {
             return;
         }
 
+        let mut inferred_kind = ChannelMessageKind::Text;
+        if let Some((latitude, longitude)) = extract_location_coordinates(&text) {
+            let resolved = sink
+                .resolve_pending_location(&reply_to, latitude, longitude)
+                .await;
+            if resolved {
+                info!(
+                    account_id = %self.account_id,
+                    chat_id,
+                    peer_id,
+                    latitude,
+                    longitude,
+                    "discord location input resolved pending request"
+                );
+                if let Err(e) =
+                    send_discord_text_simple(&ctx, msg.channel_id, "Location updated.").await
+                {
+                    warn!(
+                        account_id = %self.account_id,
+                        chat_id,
+                        "failed to send location confirmation: {e}"
+                    );
+                }
+                return;
+            }
+            inferred_kind = ChannelMessageKind::Location;
+        }
+
         // Dispatch to chat.
         info!(
             account_id = %self.account_id,
@@ -327,7 +460,7 @@ impl EventHandler for Handler {
             channel_type: ChannelType::Discord,
             sender_name,
             username,
-            message_kind: Some(ChannelMessageKind::Text),
+            message_kind: Some(inferred_kind),
             model: config.model.clone(),
             audio_filename: None,
         })
@@ -690,6 +823,48 @@ mod tests {
     #[test]
     fn strip_mention_different_bot() {
         assert_eq!(strip_bot_mention("<@999> hello", 123), "<@999> hello");
+    }
+
+    #[test]
+    fn extract_location_coordinates_from_plain_pair() {
+        let coords = extract_location_coordinates("48.8566, 2.3522")
+            .unwrap_or_else(|| panic!("expected coordinates"));
+        assert!((coords.0 - 48.8566).abs() < 1e-6);
+        assert!((coords.1 - 2.3522).abs() < 1e-6);
+    }
+
+    #[test]
+    fn extract_location_coordinates_from_google_query() {
+        let coords =
+            extract_location_coordinates("https://www.google.com/maps?q=37.7749,-122.4194")
+                .unwrap_or_else(|| panic!("expected coordinates"));
+        assert!((coords.0 - 37.7749).abs() < 1e-6);
+        assert!((coords.1 + 122.4194).abs() < 1e-6);
+    }
+
+    #[test]
+    fn extract_location_coordinates_from_google_path_marker() {
+        let coords = extract_location_coordinates(
+            "https://www.google.com/maps/place/test/@48.8566,2.3522,14z/data=!3m1!4b1",
+        )
+        .unwrap_or_else(|| panic!("expected coordinates"));
+        assert!((coords.0 - 48.8566).abs() < 1e-6);
+        assert!((coords.1 - 2.3522).abs() < 1e-6);
+    }
+
+    #[test]
+    fn extract_location_coordinates_from_apple_maps() {
+        let coords =
+            extract_location_coordinates("https://maps.apple.com/?ll=34.0522,-118.2437&z=12")
+                .unwrap_or_else(|| panic!("expected coordinates"));
+        assert!((coords.0 - 34.0522).abs() < 1e-6);
+        assert!((coords.1 + 118.2437).abs() < 1e-6);
+    }
+
+    #[test]
+    fn extract_location_coordinates_rejects_non_location_text() {
+        assert!(extract_location_coordinates("hey what's up?").is_none());
+        assert!(extract_location_coordinates("my score is 1,2 today").is_none());
     }
 
     #[test]

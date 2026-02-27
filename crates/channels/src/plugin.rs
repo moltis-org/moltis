@@ -199,6 +199,20 @@ pub trait ChannelEventSink: Send + Sync {
         false
     }
 
+    /// Resolve a pending tool-triggered location request from channel text/link input.
+    ///
+    /// Unlike `update_location`, this should not update cached location state
+    /// when there is no pending request. Returns `true` only when a pending
+    /// request was found and resolved.
+    async fn resolve_pending_location(
+        &self,
+        _reply_to: &ChannelReplyTarget,
+        _latitude: f64,
+        _longitude: f64,
+    ) -> bool {
+        false
+    }
+
     /// Dispatch an inbound message with attachments (images, files) to the chat session.
     ///
     /// This is used when a channel message contains both text and media (e.g., a
