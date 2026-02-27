@@ -243,7 +243,7 @@ actor MoltisWSClient {
             let frame = try JSONDecoder().decode(RPCResponse.self, from: data)
 
             switch frame.type {
-            case "res":
+            case .res:
                 // Match response to pending request
                 if let id = frame.id {
                     let method = pendingRequestMethods.removeValue(forKey: id) ?? "unknown"
@@ -262,7 +262,7 @@ actor MoltisWSClient {
                     continuation.resume(returning: frame)
                 }
 
-            case "event":
+            case .event:
                 guard let eventName = frame.event else { return }
 
                 // Handle tick (heartbeat)
@@ -287,11 +287,17 @@ actor MoltisWSClient {
                     handler(eventName, .empty)
                 }
 
-            default:
-                logger.debug("Unknown frame type: \(frame.type)")
+            case nil:
+                // Unknown or unrecognized frame type — ignore silently.
+                break
             }
         } catch {
-            logger.warning("Failed to decode message: \(error.localizedDescription)")
+            let preview = text.prefix(300)
+            if let decodingError = error as? DecodingError {
+                logger.warning("Failed to decode message: \(decodingError) raw=\(preview, privacy: .public)")
+            } else {
+                logger.warning("Failed to decode message: \(error.localizedDescription) raw=\(preview, privacy: .public)")
+            }
         }
     }
 

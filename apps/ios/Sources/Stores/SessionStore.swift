@@ -22,9 +22,8 @@ final class SessionStore: ObservableObject {
 
         do {
             let gqlSessions = try await graphqlClient.fetchSessions()
-            sessions = gqlSessions
-                .map { ChatSession.from($0) }
-                .sorted { $0.updatedAt > $1.updatedAt }
+            // Server returns sessions pre-sorted: main first, then by updated_at DESC.
+            sessions = gqlSessions.map { ChatSession.from($0) }
         } catch {
             logger.error("Failed to load sessions: \(error.localizedDescription)")
         }
@@ -41,9 +40,7 @@ final class SessionStore: ObservableObject {
 
         do {
             let gqlSessions = try await graphqlClient.searchSessions(query: query)
-            sessions = gqlSessions
-                .map { ChatSession.from($0) }
-                .sorted { $0.updatedAt > $1.updatedAt }
+            sessions = gqlSessions.map { ChatSession.from($0) }
         } catch {
             logger.error("Failed to search sessions: \(error.localizedDescription)")
         }

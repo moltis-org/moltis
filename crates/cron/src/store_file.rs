@@ -109,13 +109,14 @@ impl CronStore for FileStore {
         let path = self.runs_path(job_id);
         let mut line = serde_json::to_string(run)?;
         line.push('\n');
-        fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
-            .await?
-            .write_all(line.as_bytes())
             .await?;
+        file.write_all(line.as_bytes()).await?;
+        file.flush().await?;
+        file.sync_data().await?;
         Ok(())
     }
 
@@ -128,7 +129,17 @@ impl CronStore for FileStore {
         let all: Vec<CronRunRecord> = data
             .lines()
             .filter(|l| !l.trim().is_empty())
-            .filter_map(|l| serde_json::from_str(l).ok())
+            .filter_map(|l| match serde_json::from_str(l) {
+                Ok(record) => Some(record),
+                Err(e) => {
+                    tracing::warn!(
+                        job_id,
+                        error = %e,
+                        "skipping unparseable cron run record"
+                    );
+                    None
+                },
+            })
             .collect();
         let start = all.len().saturating_sub(limit);
         Ok(all[start..].to_vec())

@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import os
 
 struct DiscoveredServer: Identifiable, Hashable {
     let id: String
@@ -31,6 +32,7 @@ struct DiscoveredServer: Identifiable, Hashable {
 final class BonjourBrowser: ObservableObject {
     @Published private(set) var servers: [DiscoveredServer] = []
 
+    private let logger = Logger(subsystem: "org.moltis.ios", category: "bonjour")
     private var browser: NWBrowser?
     private var connections: [String: NWConnection] = [:]
 
@@ -52,7 +54,7 @@ final class BonjourBrowser: ObservableObject {
         browser.stateUpdateHandler = { state in
             switch state {
             case .failed(let error):
-                print("[BonjourBrowser] failed: \(error)")
+                self.logger.error("Bonjour browse failed: \(error.localizedDescription, privacy: .public)")
             default:
                 break
             }

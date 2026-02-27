@@ -13,6 +13,10 @@ final class ModelStore: ObservableObject {
     }
     @Published var isLoading = false
 
+    /// Set by the presenting view before showing the picker so `selectModel` knows
+    /// which session to patch.
+    var currentSessionKey: String = "main"
+
     private weak var connectionStore: ConnectionStore?
     private let logger = Logger(subsystem: "org.moltis.ios", category: "models")
     private let selectedModelKey = "selected_model_id"
@@ -57,8 +61,11 @@ final class ModelStore: ObservableObject {
         selectedModelId = id
         guard let wsClient = connectionStore?.wsClient else { return }
         do {
-            let params: [String: AnyCodable] = ["modelId": AnyCodable(id)]
-            _ = try await wsClient.send(method: "models.set", params: params)
+            let params: [String: AnyCodable] = [
+                "key": AnyCodable(currentSessionKey),
+                "model": AnyCodable(id),
+            ]
+            _ = try await wsClient.send(method: "sessions.patch", params: params)
         } catch {
             logger.error("Failed to set model: \(error.localizedDescription)")
         }

@@ -299,8 +299,8 @@ pub struct Policy {
     pub tick_interval_ms: u64,
 }
 
-impl Policy {
-    pub fn default_policy() -> Self {
+impl Default for Policy {
+    fn default() -> Self {
         Self {
             max_payload: MAX_PAYLOAD_BYTES,
             max_buffered_bytes: MAX_BUFFERED_BYTES,
@@ -308,6 +308,24 @@ impl Policy {
         }
     }
 }
+
+// ── Known events ─────────────────────────────────────────────────────────────
+
+pub const KNOWN_EVENTS: &[&str] = &[
+    "tick",
+    "shutdown",
+    "agent",
+    "chat",
+    "presence",
+    "health",
+    "exec.approval.requested",
+    "exec.approval.resolved",
+    "device.pair.requested",
+    "device.pair.resolved",
+    "node.pair.requested",
+    "node.pair.resolved",
+    "node.invoke.request",
+];
 
 // ── Roles and scopes ─────────────────────────────────────────────────────────
 

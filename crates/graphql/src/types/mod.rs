@@ -115,6 +115,8 @@ pub struct SessionEntry {
     #[serde(default)]
     pub fork_point: Option<u64>,
     #[serde(default)]
+    pub preview: Option<String>,
+    #[serde(default)]
     pub mcp_disabled: Option<bool>,
     #[serde(default)]
     pub replying: Option<bool>,
@@ -414,7 +416,7 @@ pub struct ProviderInfo {
 pub struct ModelInfo {
     #[serde(default)]
     pub id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "displayName")]
     pub name: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,

@@ -161,7 +161,7 @@ final class AuthManager: ObservableObject {
         authError = nil
         defer { isAuthenticating = false }
 
-        let baseURL = normalizedBaseURL(serverURL)
+        let baseURL = ServerConnection.normalizedURL(serverURL)
 
         // 1. Login to get session cookie
         let sessionCookie = try await login(baseURL: baseURL, password: password)
@@ -172,14 +172,7 @@ final class AuthManager: ObservableObject {
         // 3. Save the server
         let server = ServerConnection(name: serverName, url: serverURL)
         server.saveApiKey(apiKey)
-
-        if let idx = servers.firstIndex(where: { $0.url == serverURL }) {
-            servers[idx] = server
-        } else {
-            servers.append(server)
-        }
-        activeServer = server
-        saveServers()
+        upsertAndActivate(server)
 
         logger.info("Authenticated to \(serverURL.absoluteString)")
         return server
@@ -196,7 +189,7 @@ final class AuthManager: ObservableObject {
         defer { isAuthenticating = false }
 
         // Validate the key by checking auth status with it
-        let baseURL = normalizedBaseURL(serverURL)
+        let baseURL = ServerConnection.normalizedURL(serverURL)
         var request = URLRequest(url: baseURL.appendingPathComponent("api/gon"))
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -210,14 +203,7 @@ final class AuthManager: ObservableObject {
 
         let server = ServerConnection(name: serverName, url: serverURL)
         server.saveApiKey(apiKey)
-
-        if let idx = servers.firstIndex(where: { $0.url == serverURL }) {
-            servers[idx] = server
-        } else {
-            servers.append(server)
-        }
-        activeServer = server
-        saveServers()
+        upsertAndActivate(server)
 
         logger.info("Connected to \(serverURL.absoluteString) with API key")
         return server
@@ -248,12 +234,14 @@ final class AuthManager: ObservableObject {
 
     // MARK: - Private helpers
 
-    private func normalizedBaseURL(_ url: URL) -> URL {
-        var urlString = url.absoluteString
-        while urlString.hasSuffix("/") {
-            urlString.removeLast()
+    private func upsertAndActivate(_ server: ServerConnection) {
+        if let idx = servers.firstIndex(where: { $0.url == server.url }) {
+            servers[idx] = server
+        } else {
+            servers.append(server)
         }
-        return URL(string: urlString) ?? url
+        activeServer = server
+        saveServers()
     }
 
     private func endpointURL(baseURL: URL, endpointPath: String) -> URL? {

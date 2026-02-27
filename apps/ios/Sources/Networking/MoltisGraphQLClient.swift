@@ -124,18 +124,7 @@ actor MoltisGraphQLClient {
 
     func fetchSessions() async throws -> [GQLSession] {
         let data = try await execute(MoltisAPI.FetchSessionsQuery(), operationName: "FetchSessions")
-        return data.sessions.list.map { session in
-            GQLSession(
-                id: session.id ?? session.key,
-                key: session.key,
-                label: session.label,
-                model: session.model,
-                createdAt: session.createdAt,
-                updatedAt: session.updatedAt,
-                messageCount: session.messageCount,
-                archived: session.archived
-            )
-        }
+        return data.sessions.list.map { mapSession($0.fragments.sessionFields) }
     }
 
     func searchSessions(query searchQuery: String) async throws -> [GQLSession] {
@@ -143,18 +132,7 @@ actor MoltisGraphQLClient {
             MoltisAPI.SearchSessionsQuery(query: searchQuery),
             operationName: "SearchSessions"
         )
-        return data.sessions.search.map { session in
-            GQLSession(
-                id: session.id ?? session.key,
-                key: session.key,
-                label: session.label,
-                model: session.model,
-                createdAt: session.createdAt,
-                updatedAt: session.updatedAt,
-                messageCount: session.messageCount,
-                archived: session.archived
-            )
-        }
+        return data.sessions.search.map { mapSession($0.fragments.sessionFields) }
     }
 
     func fetchModels() async throws -> [GQLModel] {
@@ -167,6 +145,20 @@ actor MoltisGraphQLClient {
                 tier: nil
             )
         }
+    }
+
+    private func mapSession(_ s: MoltisAPI.SessionFields) -> GQLSession {
+        GQLSession(
+            id: s.id ?? s.key,
+            key: s.key,
+            label: s.label,
+            model: s.model,
+            preview: s.preview,
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt,
+            messageCount: s.messageCount,
+            archived: s.archived
+        )
     }
 
     func fetchStatus() async throws -> GQLStatus {
@@ -206,6 +198,7 @@ struct GQLSession: Decodable, Identifiable, Equatable {
     let key: String
     let label: String?
     let model: String?
+    let preview: String?
     let createdAt: String?
     let updatedAt: String?
     let messageCount: Int?

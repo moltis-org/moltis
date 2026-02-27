@@ -1441,10 +1441,19 @@ pub async fn prepare_gateway(
         buf.enable_persistence(data_dir.join("logs.jsonl"));
     }
     let db_path = data_dir.join("moltis.db");
-    let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
-    let db_pool = sqlx::SqlitePool::connect(&db_url)
-        .await
-        .expect("failed to open moltis.db");
+    let db_pool = {
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+        use std::str::FromStr;
+        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+            .expect("invalid db path")
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        sqlx::SqlitePool::connect_with(options)
+            .await
+            .expect("failed to open moltis.db")
+    };
 
     // Run database migrations from each crate in dependency order.
     // Order matters: sessions depends on projects (FK reference).

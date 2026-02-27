@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ModelPickerView: View {
     @EnvironmentObject var modelStore: ModelStore
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         List {
@@ -13,7 +14,10 @@ struct ModelPickerView: View {
                 Section(group.provider) {
                     ForEach(group.models) { model in
                         Button {
-                            Task { await modelStore.selectModel(id: model.id) }
+                            Task {
+                                await modelStore.selectModel(id: model.id)
+                                dismiss()
+                            }
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {

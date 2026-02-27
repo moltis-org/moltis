@@ -9,7 +9,8 @@ use {
 
 use moltis_protocol::{
     ConnectParams, ErrorShape, EventFrame, Features, GatewayFrame, HANDSHAKE_TIMEOUT_MS, HelloAuth,
-    HelloOk, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION, Policy, ResponseFrame, ServerInfo, error_codes,
+    HelloOk, KNOWN_EVENTS, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION, Policy, ResponseFrame, ServerInfo,
+    error_codes, roles, scopes,
 };
 
 use crate::{
@@ -196,7 +197,7 @@ pub async fn handle_connection(
         return;
     }
 
-    let role = params.role.clone().unwrap_or_else(|| "operator".into());
+    let role = params.role.clone().unwrap_or_else(|| roles::OPERATOR.into());
 
     // Determine scopes based on auth method.
     // API keys MUST declare scopes explicitly — empty scopes means no access.
@@ -222,11 +223,11 @@ pub async fn handle_connection(
         None => {
             // Non-API-key auth (password, local, legacy) → full access.
             vec![
-                "operator.admin".into(),
-                "operator.read".into(),
-                "operator.write".into(),
-                "operator.approvals".into(),
-                "operator.pairing".into(),
+                scopes::ADMIN.into(),
+                scopes::READ.into(),
+                scopes::WRITE.into(),
+                scopes::APPROVALS.into(),
+                scopes::PAIRING.into(),
             ]
         },
     };
@@ -255,26 +256,12 @@ pub async fn handle_connection(
         },
         features: Features {
             methods: methods.method_names(),
-            events: vec![
-                "tick".into(),
-                "shutdown".into(),
-                "agent".into(),
-                "chat".into(),
-                "presence".into(),
-                "health".into(),
-                "exec.approval.requested".into(),
-                "exec.approval.resolved".into(),
-                "device.pair.requested".into(),
-                "device.pair.resolved".into(),
-                "node.pair.requested".into(),
-                "node.pair.resolved".into(),
-                "node.invoke.request".into(),
-            ],
+            events: KNOWN_EVENTS.iter().map(|s| (*s).into()).collect(),
         },
         snapshot: serde_json::json!({}),
         canvas_host_url: None,
         auth: Some(hello_auth),
-        policy: Policy::default_policy(),
+        policy: Policy::default(),
     };
     #[allow(clippy::unwrap_used)] // serializing known-valid struct
     let hello_val = serde_json::to_value(&hello).unwrap();
@@ -336,7 +323,7 @@ pub async fn handle_connection(
     }
 
     // If node role, register in node registry.
-    if role == "node" {
+    if role == roles::NODE {
         let caps = params.caps.clone().unwrap_or_default();
         let commands = params.commands.clone().unwrap_or_default();
         let permissions: HashMap<String, bool> = params

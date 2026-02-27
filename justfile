@@ -267,8 +267,8 @@ ios-build: ios-generate
 ios-lint:
     cd apps/ios && swiftlint
 
-# Open iOS project in Xcode.
-ios-open: ios-generate
+# Open iOS project in Xcode (regenerates GraphQL types and project first).
+ios-open: ios-graphql ios-generate
     open apps/ios/Moltis.xcodeproj
 
 # Build the APNS push relay.

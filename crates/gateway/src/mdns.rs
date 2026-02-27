@@ -56,3 +56,27 @@ pub fn shutdown(daemon: &ServiceDaemon) {
         Err(e) => tracing::debug!("mDNS shutdown error: {e}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_type_is_moltis_tcp() {
+        assert_eq!(SERVICE_TYPE, "_moltis._tcp.local.");
+    }
+
+    #[test]
+    fn register_and_shutdown_smoke() {
+        let daemon = register("test-instance", 0, "0.0.0-test")
+            .expect("mDNS register should succeed");
+        shutdown(&daemon);
+    }
+
+    #[test]
+    fn register_with_unicode_instance_name() {
+        let daemon = register("moltis-тест", 0, "0.0.0-test")
+            .expect("mDNS register should handle unicode");
+        shutdown(&daemon);
+    }
+}

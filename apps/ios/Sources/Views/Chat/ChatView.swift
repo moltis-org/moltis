@@ -77,6 +77,7 @@ struct ChatView: View {
 
             Button {
                 isInputFocused = false
+                connectionStore.modelStore.currentSessionKey = chatStore.currentSessionKey
                 showModelPicker = true
             } label: {
                 HStack(spacing: 8) {
@@ -151,16 +152,15 @@ struct ChatView: View {
 
     private var visibleSessions: [ChatSession] {
         let query = sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // SessionStore already sorts by updatedAt descending.
         let base = connectionStore.sessionStore.sessions.filter { !$0.archived }
         guard !query.isEmpty else {
-            return base.sorted { $0.updatedAt > $1.updatedAt }
+            return base
         }
-        return base
-            .filter {
-                $0.title.localizedCaseInsensitiveContains(query)
-                    || $0.key.localizedCaseInsensitiveContains(query)
-            }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        return base.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+                || $0.key.localizedCaseInsensitiveContains(query)
+        }
     }
 
     private func closeSessionDrawer() {
@@ -172,9 +172,7 @@ struct ChatView: View {
     private func selectSession(_ session: ChatSession) {
         Task {
             await chatStore.switchSession(key: session.key)
-            await MainActor.run {
-                closeSessionDrawer()
-            }
+            closeSessionDrawer()
         }
     }
 
@@ -184,9 +182,7 @@ struct ChatView: View {
                 await chatStore.switchSession(key: key)
                 await connectionStore.sessionStore.loadSessions()
             }
-            await MainActor.run {
-                closeSessionDrawer()
-            }
+            closeSessionDrawer()
         }
     }
 

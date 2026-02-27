@@ -3,17 +3,15 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		00925A1A3D8F3B1060A9A4C2 /* StreamingIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 881A1665639F944665F2B124 /* StreamingIndicator.swift */; };
-		09C1AACD68D54710511D0BE4 /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6686ADFB8A2E415E4BCDC2D6 /* SessionListView.swift */; };
 		09E9AF0C137A80E23A5866A0 /* FetchSessionsQuery.graphql.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EBB2C7E82B11E48DADB9FBC /* FetchSessionsQuery.graphql.swift */; };
 		0E985C18502AC029B110EF78 /* ID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB188DABFE6E073D77AE761 /* ID.swift */; };
 		10E2002A54CF8BCACCBE36EA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACC1772D9D2487088436832 /* ContentView.swift */; };
 		1360937EF13B1EC1566FF78D /* AgentMutation.graphql.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE93EB28C35A219E6587B87C /* AgentMutation.graphql.swift */; };
-		136A91D63F6CCDCCDD79C7A3 /* SharedStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF246760EF3D4E4829B8D0DC /* SharedStorage.swift */; };
 		13F926DBBFBE06A285C300E6 /* ToolCallBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2BC4123F39217FD14202F3 /* ToolCallBanner.swift */; };
 		16EC85E110B3E4A08D613B41 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0AC8AC881F3FCFA9253ECC69 /* Assets.xcassets */; };
 		25051533B117EB2B635F43FE /* SchemaConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0BA65D735444C021A7F673 /* SchemaConfiguration.swift */; };
@@ -114,8 +112,7 @@
 		4E0842D69007EBE2B544FE69 /* IntentCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentCardView.swift; sourceTree = "<group>"; };
 		5ACC1772D9D2487088436832 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		65519BB6415C8C7821CA8739 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
-		6686ADFB8A2E415E4BCDC2D6 /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
-		6BE1F8172A34434BB04FE5AC /* MoltisWidgetExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MoltisWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		6BE1F8172A34434BB04FE5AC /* MoltisWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MoltisWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		700DDFBD8B9B6AE3FEB8EFDC /* StatusInfo.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusInfo.graphql.swift; sourceTree = "<group>"; };
 		7361989857D7274F32936A59 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		7E14FF444B23995CFD4D3A45 /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
@@ -136,12 +133,11 @@
 		A0186649DD263747E78D70FA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A0CE48BAE678CD726739E73A /* MutationRoot.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MutationRoot.graphql.swift; sourceTree = "<group>"; };
 		A7CD401781C2F2C05548F186 /* BoolResult.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoolResult.graphql.swift; sourceTree = "<group>"; };
-		A970120FDF86A58491F33AB9 /* Moltis.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Moltis.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A970120FDF86A58491F33AB9 /* Moltis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Moltis.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B41574B5E26A62A4624B7133 /* ChatEventTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatEventTypes.swift; sourceTree = "<group>"; };
 		BE93EB28C35A219E6587B87C /* AgentMutation.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMutation.graphql.swift; sourceTree = "<group>"; };
 		C4D67563E8990EF1D4E93EE7 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		CC0782EEFDE06401779DEA11 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
-		CF246760EF3D4E4829B8D0DC /* SharedStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedStorage.swift; sourceTree = "<group>"; };
 		D44C4BBE9AFAD0B87C7B44CF /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
 		D5B282C75F9EFD47CAB024ED /* SchemaMetadata.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemaMetadata.graphql.swift; sourceTree = "<group>"; };
 		DE2C8DE66CB55FDAAF8FBEAC /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
@@ -183,7 +179,6 @@
 			isa = PBXGroup;
 			children = (
 				2C28816E54D9FADBE6BD73DD /* ChatModels.swift */,
-				CF246760EF3D4E4829B8D0DC /* SharedStorage.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -382,7 +377,6 @@
 		E5563C29B26B35B968F4880C /* Sessions */ = {
 			isa = PBXGroup;
 			children = (
-				6686ADFB8A2E415E4BCDC2D6 /* SessionListView.swift */,
 				7E14FF444B23995CFD4D3A45 /* SessionRow.swift */,
 			);
 			path = Sessions;
@@ -467,8 +461,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = 05A5349E823228D1F723C88A /* Build configuration list for PBXProject "Moltis" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -483,7 +475,6 @@
 			packageReferences = (
 				9C3F735C5904C9B0CE27FD10 /* XCRemoteSwiftPackageReference "apollo-ios" */,
 			);
-			preferredProjectObjectVersion = 54;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -548,13 +539,11 @@
 				58A537B809DE6C171D0661E2 /* ServerListView.swift in Sources */,
 				D89813D924D0E7351593D96F /* SessionEntry.graphql.swift in Sources */,
 				FF31A4E66C406D2E29E3D76A /* SessionFields.graphql.swift in Sources */,
-				09C1AACD68D54710511D0BE4 /* SessionListView.swift in Sources */,
 				A68E336B83510BD1CB1445CC /* SessionQuery.graphql.swift in Sources */,
 				B15A378B8683CD574EA52991 /* SessionRow.swift in Sources */,
 				F24F30A082C8B48746F4481B /* SessionStore.swift in Sources */,
 				C343EA6798B01FBAC6E10C69 /* SettingsStore.swift in Sources */,
 				2AC44440EBC916A99AD2F408 /* SettingsView.swift in Sources */,
-				136A91D63F6CCDCCDD79C7A3 /* SharedStorage.swift in Sources */,
 				DF62953F9BFA708479715ED3 /* StatusInfo.graphql.swift in Sources */,
 				00925A1A3D8F3B1060A9A4C2 /* StreamingIndicator.swift in Sources */,
 				13F926DBBFBE06A285C300E6 /* ToolCallBanner.swift in Sources */,
@@ -590,6 +579,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Moltis.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = VJAHQVZ96V;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -611,6 +601,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Widget/MoltisWidgetExtension.entitlements;
+				DEVELOPMENT_TEAM = VJAHQVZ96V;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -629,6 +620,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Widget/MoltisWidgetExtension.entitlements;
+				DEVELOPMENT_TEAM = VJAHQVZ96V;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -649,6 +641,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Moltis.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = VJAHQVZ96V;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

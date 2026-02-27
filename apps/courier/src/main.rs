@@ -15,6 +15,7 @@ use {
     },
     clap::Parser,
     serde::{Deserialize, Serialize},
+    sha2::{Digest, Sha256},
 };
 
 /// Privacy-preserving APNS push relay for Moltis gateways.
@@ -64,17 +65,14 @@ struct AppState {
 #[derive(Deserialize)]
 struct PushRequest {
     device_token: String,
-    #[serde(default = "default_environment")]
+    #[serde(default)]
     environment: ApnsEnvironment,
 }
 
-fn default_environment() -> ApnsEnvironment {
-    ApnsEnvironment::Production
-}
-
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Deserialize, Clone, Copy, Default)]
 #[serde(rename_all = "lowercase")]
 enum ApnsEnvironment {
+    #[default]
     Production,
     Sandbox,
 }
@@ -133,29 +131,39 @@ async fn handle_health() -> StatusCode {
     StatusCode::OK
 }
 
+/// Extract bearer token from Authorization header and validate against expected.
+///
+/// Uses SHA-256 hash comparison to avoid timing side-channels.
+/// Returns `true` if no auth is configured (open relay) or if the token matches.
+fn check_auth(expected: &Option<String>, headers: &HeaderMap) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+
+    let provided = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+
+    provided.is_some_and(|token| {
+        let expected_hash = Sha256::digest(expected.as_bytes());
+        let provided_hash = Sha256::digest(token.as_bytes());
+        expected_hash == provided_hash
+    })
+}
+
 async fn handle_push(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Check auth token if configured.
-    if let Some(expected) = &state.auth_token {
-        let provided = headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "));
-
-        match provided {
-            Some(token) if token == expected => {},
-            _ => {
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    Json(ErrorResponse {
-                        error: "unauthorized".to_string(),
-                    }),
-                ));
-            },
-        }
+    if !check_auth(&state.auth_token, &headers) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "unauthorized".to_string(),
+            }),
+        ));
     }
 
     if req.device_token.is_empty() {
@@ -179,11 +187,13 @@ async fn handle_push(
 
     let payload = builder.build(&req.device_token, options);
 
-    // The a2 client internally selects the endpoint URL.
-    // For sandbox support we would need a second client instance;
-    // for now we log if the caller asked for sandbox but we used production.
     if matches!(req.environment, ApnsEnvironment::Sandbox) {
-        tracing::warn!("sandbox environment requested but client uses production endpoint");
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse {
+                error: "sandbox environment is not supported by this relay".to_string(),
+            }),
+        ));
     }
 
     match state.apns.send(payload).await {
@@ -198,7 +208,7 @@ async fn handle_push(
             Err((
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
-                    error: format!("apns rejected: {e}"),
+                    error: "push delivery failed".to_string(),
                 }),
             ))
         },
@@ -209,10 +219,12 @@ async fn handle_push(
 mod tests {
     use super::*;
 
+    // ── Serde tests ─────────────────────────────────────────────────────────
+
     #[test]
     fn parse_push_request_production() {
         let json = r#"{"device_token": "abc123"}"#;
-        let req: PushRequest = serde_json::from_str(json).ok().unwrap();
+        let req: PushRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.device_token, "abc123");
         assert!(matches!(req.environment, ApnsEnvironment::Production));
     }
@@ -220,7 +232,7 @@ mod tests {
     #[test]
     fn parse_push_request_sandbox() {
         let json = r#"{"device_token": "abc123", "environment": "sandbox"}"#;
-        let req: PushRequest = serde_json::from_str(json).ok().unwrap();
+        let req: PushRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.device_token, "abc123");
         assert!(matches!(req.environment, ApnsEnvironment::Sandbox));
     }
@@ -237,7 +249,7 @@ mod tests {
         let resp = ErrorResponse {
             error: "test error".to_string(),
         };
-        let json = serde_json::to_string(&resp).ok().unwrap();
+        let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("test error"));
     }
 
@@ -246,7 +258,70 @@ mod tests {
         let resp = PushResponse {
             status: "sent".to_string(),
         };
-        let json = serde_json::to_string(&resp).ok().unwrap();
+        let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("sent"));
+    }
+
+    #[test]
+    fn apns_environment_default_is_production() {
+        assert!(matches!(
+            ApnsEnvironment::default(),
+            ApnsEnvironment::Production
+        ));
+    }
+
+    // ── Auth validation tests ───────────────────────────────────────────────
+
+    #[test]
+    fn check_auth_no_token_configured_accepts_all() {
+        let headers = HeaderMap::new();
+        assert!(check_auth(&None, &headers));
+    }
+
+    #[test]
+    fn check_auth_valid_bearer_token() {
+        let expected = Some("my-secret".to_string());
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer my-secret".parse().unwrap());
+        assert!(check_auth(&expected, &headers));
+    }
+
+    #[test]
+    fn check_auth_wrong_bearer_token() {
+        let expected = Some("my-secret".to_string());
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer wrong-token".parse().unwrap());
+        assert!(!check_auth(&expected, &headers));
+    }
+
+    #[test]
+    fn check_auth_missing_authorization_header() {
+        let expected = Some("my-secret".to_string());
+        let headers = HeaderMap::new();
+        assert!(!check_auth(&expected, &headers));
+    }
+
+    #[test]
+    fn check_auth_non_bearer_scheme() {
+        let expected = Some("my-secret".to_string());
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Basic dXNlcjpwYXNz".parse().unwrap());
+        assert!(!check_auth(&expected, &headers));
+    }
+
+    #[test]
+    fn check_auth_empty_bearer_value() {
+        let expected = Some("my-secret".to_string());
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer ".parse().unwrap());
+        assert!(!check_auth(&expected, &headers));
+    }
+
+    #[test]
+    fn check_auth_bearer_only_no_space() {
+        let expected = Some("my-secret".to_string());
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer".parse().unwrap());
+        assert!(!check_auth(&expected, &headers));
     }
 }

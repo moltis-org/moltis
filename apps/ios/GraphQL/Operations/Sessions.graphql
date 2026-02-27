@@ -3,6 +3,7 @@ fragment SessionFields on SessionEntry {
   key
   label
   model
+  preview
   createdAt
   updatedAt
   messageCount

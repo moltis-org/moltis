@@ -63,7 +63,7 @@ struct ChatSession: Identifiable, Equatable {
     let id: UUID
     let key: String
     var title: String
-    var messages: [ChatMessage]
+    var preview: String?
     var updatedAt: Date
     var messageCount: Int
     var model: String?
@@ -73,7 +73,7 @@ struct ChatSession: Identifiable, Equatable {
         id: UUID = UUID(),
         key: String = "main",
         title: String,
-        messages: [ChatMessage] = [],
+        preview: String? = nil,
         updatedAt: Date = Date(),
         messageCount: Int = 0,
         model: String? = nil,
@@ -82,29 +82,25 @@ struct ChatSession: Identifiable, Equatable {
         self.id = id
         self.key = key
         self.title = title
-        self.messages = messages
+        self.preview = preview
         self.updatedAt = updatedAt
         self.messageCount = messageCount
         self.model = model
         self.archived = archived
     }
 
-    var previewText: String {
-        guard let lastMessage = messages.last else {
-            return "No messages yet"
-        }
-        let text = lastMessage.text.replacingOccurrences(of: "\n", with: " ")
-        return text.count > 100 ? String(text.prefix(100)) + "..." : text
-    }
+    private static let dateFormatter: ISO8601DateFormatter = {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fmt
+    }()
 
     /// Create from a GraphQL session response.
     static func from(_ gql: GQLSession) -> ChatSession {
-        let dateFormatter = ISO8601DateFormatter()
-        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
         return ChatSession(
             key: gql.key,
-            title: gql.label ?? "Untitled",
+            title: gql.label ?? gql.key,
+            preview: gql.preview,
             updatedAt: gql.updatedAt.flatMap { dateFormatter.date(from: $0) } ?? Date(),
             messageCount: gql.messageCount ?? 0,
             model: gql.model,

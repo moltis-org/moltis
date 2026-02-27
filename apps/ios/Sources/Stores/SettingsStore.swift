@@ -16,17 +16,11 @@ final class SettingsStore: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
-        // Default to true for these settings
-        if defaults.object(forKey: "showToolCalls") == nil {
-            defaults.set(true, forKey: "showToolCalls")
-        }
-        if defaults.object(forKey: "enableLiveActivities") == nil {
-            defaults.set(true, forKey: "enableLiveActivities")
-        }
-        if defaults.object(forKey: "autoReconnect") == nil {
-            defaults.set(true, forKey: "autoReconnect")
-        }
-
+        defaults.register(defaults: [
+            "showToolCalls": true,
+            "enableLiveActivities": true,
+            "autoReconnect": true,
+        ])
         self.showToolCalls = defaults.bool(forKey: "showToolCalls")
         self.enableLiveActivities = defaults.bool(forKey: "enableLiveActivities")
         self.autoReconnect = defaults.bool(forKey: "autoReconnect")

@@ -26,13 +26,18 @@ struct ServerConnection: Identifiable, Codable, Equatable {
         KeychainHelper.delete(key: keychainKey)
     }
 
-    /// Base URL with trailing slash stripped.
-    var baseURL: URL {
+    /// Normalize a URL by stripping trailing slashes.
+    static func normalizedURL(_ url: URL) -> URL {
         var urlString = url.absoluteString
         while urlString.hasSuffix("/") {
             urlString.removeLast()
         }
         return URL(string: urlString) ?? url
+    }
+
+    /// Base URL with trailing slash stripped.
+    var baseURL: URL {
+        Self.normalizedURL(url)
     }
 
     /// WebSocket URL for the chat endpoint.

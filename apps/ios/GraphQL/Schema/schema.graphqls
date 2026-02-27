@@ -25,6 +25,7 @@ type SessionEntry {
   key: String!
   label: String
   model: String
+  preview: String
   createdAt: String
   updatedAt: String
   messageCount: Int

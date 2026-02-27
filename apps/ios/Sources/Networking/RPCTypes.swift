@@ -9,37 +9,40 @@ enum MoltisProtocol {
     static let handshakeTimeoutMs = 10_000
 }
 
-// MARK: - Outgoing frames
+// MARK: - Frame types
 
-struct RPCRequest: Encodable {
-    let type = "req"
-    let id: String
-    let method: String
-    let params: [String: AnyCodable]?
-
-    init(method: String, params: [String: AnyCodable]? = nil) {
-        self.id = UUID().uuidString
-        self.method = method
-        self.params = params
-    }
-}
-
-// MARK: - Incoming frames
-
-enum RPCFrameType: String, Decodable {
+enum RPCFrameType: String {
     case res
     case event
 }
 
 struct RPCResponse: Decodable {
-    let type: String
+    let type: RPCFrameType?
     let id: String?
     let ok: Bool?
     let payload: AnyCodable?
     let error: RPCError?
     // Event fields
     let event: String?
-    let seq: Int?
+    let seq: UInt64?
+
+    private enum CodingKeys: String, CodingKey {
+        case type, id, ok, payload, error, event, seq
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Decode type as String then map to RPCFrameType — unknown types become nil
+        // instead of throwing a decode error.
+        let typeString = try container.decodeIfPresent(String.self, forKey: .type)
+        self.type = typeString.flatMap { RPCFrameType(rawValue: $0) }
+        self.id = try container.decodeIfPresent(String.self, forKey: .id)
+        self.ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
+        self.payload = try container.decodeIfPresent(AnyCodable.self, forKey: .payload)
+        self.error = try container.decodeIfPresent(RPCError.self, forKey: .error)
+        self.event = try container.decodeIfPresent(String.self, forKey: .event)
+        self.seq = try container.decodeIfPresent(UInt64.self, forKey: .seq)
+    }
 }
 
 struct RPCError: Decodable {
