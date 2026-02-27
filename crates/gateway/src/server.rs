@@ -1103,6 +1103,7 @@ pub(crate) struct BannerMeta {
     pub method_count: usize,
     pub sandbox_backend_name: String,
     pub data_dir: PathBuf,
+    pub openclaw_status: String,
     pub setup_code_display: Option<String>,
     pub webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
     pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
@@ -3353,13 +3354,9 @@ pub async fn prepare_gateway(
         ),
     );
 
-    let addr: SocketAddr = format!("{bind}:{port}").parse()?;
-
     // Resolve TLS configuration (only when compiled with the `tls` feature).
     let tls_active = tls_enabled_for_gateway;
 
-    #[cfg(feature = "tls")]
-    let mut ca_cert_path: Option<PathBuf> = None;
     #[cfg(feature = "tls")]
     if tls_active {
         let tls_config = &config.tls;
@@ -3381,8 +3378,6 @@ pub async fn prepare_gateway(
                 "TLS is enabled but no certificates configured and auto_generate is false"
             );
         };
-
-        ca_cert_path = ca_path.clone();
 
         // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
         if let Some(ref ca) = ca_path {
@@ -3406,174 +3401,6 @@ pub async fn prepare_gateway(
                     }
                 }),
             );
-        }
-    }
-
-    // Count enabled skills and repos for startup banner.
-    let (skill_count, repo_count) = {
-        use moltis_skills::discover::{FsSkillDiscoverer, SkillDiscoverer};
-        let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
-        let sc = discoverer.discover().await.map(|s| s.len()).unwrap_or(0);
-        let rc = moltis_skills::manifest::ManifestStore::default_path()
-            .ok()
-            .map(|p| {
-                let store = moltis_skills::manifest::ManifestStore::new(p);
-                store.load().map(|m| m.repos.len()).unwrap_or(0)
-            })
-            .unwrap_or(0);
-        (sc, rc)
-    };
-
-    // Startup banner.
-    let scheme = if tls_active {
-        "https"
-    } else {
-        "http"
-    };
-    // When bound to an unspecified address (0.0.0.0 / ::), resolve the
-    // machine's outbound IP so the printed URL is clickable.
-    let display_ip = if addr.ip().is_unspecified() {
-        resolve_outbound_ip(addr.ip().is_ipv6())
-            .map(|ip| SocketAddr::new(ip, port))
-            .unwrap_or(addr)
-    } else {
-        addr
-    };
-    // Use plain localhost for display URLs when bound to loopback with TLS.
-    #[cfg(feature = "tls")]
-    let display_host = if is_localhost && tls_active {
-        format!("localhost:{port}")
-    } else {
-        display_ip.to_string()
-    };
-    #[cfg(not(feature = "tls"))]
-    let display_host = display_ip.to_string();
-    let passkey_origins = webauthn_registry
-        .as_ref()
-        .map(|registry| registry.get_all_origins())
-        .unwrap_or_default();
-    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
-    let mut lines = vec![
-        format!("moltis gateway v{}", state.version),
-        format!(
-            "protocol v{}, listening on {}://{} ({})",
-            moltis_protocol::PROTOCOL_VERSION,
-            scheme,
-            display_host,
-            if tls_active {
-                "HTTP/2 + HTTP/1.1"
-            } else {
-                "HTTP/1.1"
-            },
-        ),
-        startup_bind_line(addr),
-        format!("{} methods registered", methods.method_names().len()),
-        format!("llm: {}", provider_summary),
-        format!(
-            "skills: {} enabled, {} repo{}",
-            skill_count,
-            repo_count,
-            if repo_count == 1 {
-                ""
-            } else {
-                "s"
-            }
-        ),
-        format!(
-            "mcp: {} configured{}",
-            mcp_configured_count,
-            if mcp_configured_count > 0 {
-                " (starting in background)"
-            } else {
-                ""
-            }
-        ),
-        format!("sandbox: {} backend", sandbox_router.backend_name()),
-        format!(
-            "config: {}",
-            moltis_config::find_or_default_config_path().display()
-        ),
-        format!("data: {}", data_dir.display()),
-        format!("openclaw: {openclaw_startup_status}"),
-    ];
-    lines.extend(startup_passkey_origin_lines(&passkey_origins));
-    // Hint about Apple Container on macOS when using Docker.
-    #[cfg(target_os = "macos")]
-    if sandbox_router.backend_name() == "docker" {
-        lines.push(
-            "hint: install Apple Container for VM-isolated sandboxing (see docs/sandbox.md)".into(),
-        );
-    }
-    // Warn when no sandbox backend is available.
-    if sandbox_router.backend_name() == "none" {
-        if moltis_tools::sandbox::is_debian_host() && !sandbox_router.config().packages.is_empty() {
-            lines.push(
-                "⚠ no container runtime found; installing packages on host in background".into(),
-            );
-        } else {
-            lines.push("⚠ no container runtime found; commands run on host".into());
-        }
-    }
-    // Display setup code if one was generated.
-    if let Some(ref code) = setup_code_display {
-        lines.extend(startup_setup_code_lines(code));
-    }
-    #[cfg(feature = "tls")]
-    if tls_active {
-        if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
-            let ca_host = if is_localhost {
-                "localhost"
-            } else {
-                bind
-            };
-            lines.push(format!(
-                "CA cert: http://{}:{}/certs/ca.pem",
-                ca_host, http_port
-            ));
-            lines.push(format!("  or: {}", ca.display()));
-        }
-        lines.push("run `moltis trust-ca` to remove browser warnings".into());
-    }
-    // Tailscale: enable serve/funnel and show in banner.
-    #[cfg(feature = "tailscale")]
-    {
-        if tailscale_mode != TailscaleMode::Off {
-            let manager = CliTailscaleManager::new();
-            let ts_result = match tailscale_mode {
-                TailscaleMode::Serve => manager.enable_serve(port, tls_active).await,
-                TailscaleMode::Funnel => manager.enable_funnel(port, tls_active).await,
-                TailscaleMode::Off => unreachable!(),
-            };
-            match ts_result {
-                Ok(()) => {
-                    if let Ok(Some(hostname)) = manager.hostname().await {
-                        lines.push(format!("tailscale {tailscale_mode}: https://{hostname}"));
-                    } else {
-                        lines.push(format!("tailscale {tailscale_mode}: enabled"));
-                    }
-                },
-                Err(e) => {
-                    warn!("failed to enable tailscale {tailscale_mode}: {e}");
-                    lines.push(format!("tailscale {tailscale_mode}: FAILED ({e})"));
-                },
-            }
-        }
-    }
-    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0) + 4;
-    info!("┌{}┐", "─".repeat(width));
-    for line in &lines {
-        info!("│  {:<w$}│", line, w = width - 2);
-    }
-    info!("└{}┘", "─".repeat(width));
-
-    // Dispatch GatewayStart hook.
-    if let Some(ref hooks) = state.inner.read().await.hook_registry {
-        let payload = moltis_common::hooks::HookPayload::GatewayStart {
-            address: addr.to_string(),
-        };
-        if let Err(e) = hooks.dispatch(&payload).await {
-            tracing::warn!("GatewayStart hook dispatch failed: {e}");
         }
     }
 
@@ -4110,6 +3937,7 @@ pub async fn prepare_gateway(
             method_count: methods.method_names().len(),
             sandbox_backend_name: sandbox_router.backend_name().to_owned(),
             data_dir,
+            openclaw_status: openclaw_startup_status,
             setup_code_display,
             webauthn_registry,
             browser_for_lifecycle,
@@ -4320,6 +4148,7 @@ pub async fn start_gateway(
             moltis_config::find_or_default_config_path().display()
         ),
         format!("data: {}", banner.data_dir.display()),
+        format!("openclaw: {}", banner.openclaw_status),
     ];
     lines.extend(startup_passkey_origin_lines(&passkey_origins));
     // Hint about Apple Container on macOS when using Docker.
