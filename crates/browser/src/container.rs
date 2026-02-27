@@ -90,6 +90,59 @@ impl ContainerBackend {
     }
 }
 
+fn stop_container_by_id(backend: ContainerBackend, container_id: &str) {
+    let cli = backend.cli();
+    let result = Command::new(cli).args(["stop", container_id]).output();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            debug!(container_id, backend = cli, "browser container stopped");
+        },
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                container_id,
+                backend = cli,
+                error = %stderr.trim(),
+                "failed to stop browser container"
+            );
+        },
+        Err(e) => {
+            warn!(
+                container_id,
+                backend = cli,
+                error = %e,
+                "failed to run {} stop",
+                cli
+            );
+        },
+    }
+
+    // Apple Container requires explicit deletion after stop.
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer {
+        match Command::new("container")
+            .args(["rm", container_id])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                debug!(container_id, "browser container removed");
+            },
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(
+                    container_id,
+                    error = %stderr.trim(),
+                    "failed to remove browser container"
+                );
+            },
+            Err(e) => {
+                warn!(container_id, error = %e, "failed to run container rm");
+            },
+        }
+    }
+}
+
 /// A running browser container instance.
 pub struct BrowserContainer {
     /// Container ID or name.
@@ -190,7 +243,17 @@ impl BrowserContainer {
         );
 
         // Wait for the container to be ready
-        wait_for_ready(host_port)?;
+        if let Err(error) = wait_for_ready(host_port) {
+            warn!(
+                container_id,
+                host_port,
+                backend = backend.cli(),
+                error = %error,
+                "browser container failed readiness check, cleaning up"
+            );
+            stop_container_by_id(backend, &container_id);
+            return Err(error);
+        }
 
         info!(
             container_id,
@@ -228,41 +291,7 @@ impl BrowserContainer {
             backend = self.backend.cli(),
             "stopping browser container"
         );
-
-        let cli = self.backend.cli();
-        let result = Command::new(cli)
-            .args(["stop", &self.container_id])
-            .output();
-
-        match result {
-            Ok(output) if output.status.success() => {
-                debug!(container_id = %self.container_id, "browser container stopped");
-            },
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!(
-                    container_id = %self.container_id,
-                    error = %stderr.trim(),
-                    "failed to stop browser container"
-                );
-            },
-            Err(e) => {
-                warn!(
-                    container_id = %self.container_id,
-                    error = %e,
-                    "failed to run {} stop",
-                    cli
-                );
-            },
-        }
-
-        // For Apple Container, we also need to remove the container
-        #[cfg(target_os = "macos")]
-        if self.backend == ContainerBackend::AppleContainer {
-            let _ = Command::new("container")
-                .args(["rm", &self.container_id])
-                .output();
-        }
+        stop_container_by_id(self.backend, &self.container_id);
     }
 
     /// Get the container ID.
@@ -585,7 +614,7 @@ fn wait_for_ready(port: u16) -> Result<()> {
             },
             Ok(false) => {
                 // Log progress every 10 attempts (~5 seconds)
-                if attempts % 10 == 0 {
+                if attempts.is_multiple_of(10) {
                     info!(
                         attempts,
                         elapsed_ms = elapsed.as_millis() as u64,
@@ -597,7 +626,7 @@ fn wait_for_ready(port: u16) -> Result<()> {
             },
             Err(e) => {
                 // Log progress every 10 attempts (~5 seconds)
-                if attempts % 10 == 0 {
+                if attempts.is_multiple_of(10) {
                     info!(
                         attempts,
                         elapsed_ms = elapsed.as_millis() as u64,

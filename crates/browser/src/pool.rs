@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -332,7 +333,7 @@ impl BrowserPool {
         let vw = self.config.viewport_width;
         let vh = self.config.viewport_height;
         let low_mem = self.config.low_memory_threshold_mb;
-        let profile_dir = self.config.resolved_profile_dir();
+        let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
 
         let container = tokio::task::spawn_blocking(move || {
             // Check container runtime availability (Docker or Apple Container)
@@ -620,6 +621,31 @@ fn generate_session_id() -> String {
     format!("browser-{:016x}", id)
 }
 
+/// Sanitize a session identifier to a filesystem-safe single path segment.
+fn sanitize_session_component(session_id: &str) -> String {
+    let sanitized: String = session_id
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect();
+
+    if sanitized.is_empty() {
+        return "session".to_string();
+    }
+
+    sanitized
+}
+
+/// Derive a per-session sandbox profile directory from a configured profile root.
+fn sandbox_profile_dir(profile_root: Option<PathBuf>, session_id: &str) -> Option<PathBuf> {
+    profile_root.map(|root| {
+        root.join("sandbox")
+            .join(sanitize_session_component(session_id))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,6 +656,27 @@ mod tests {
         let id2 = generate_session_id();
         assert_ne!(id1, id2);
         assert!(id1.starts_with("browser-"));
+    }
+
+    #[test]
+    fn sanitize_session_component_replaces_unsafe_chars() {
+        let sanitized = sanitize_session_component("discord:moltis:1476434288646815864");
+        assert_eq!(sanitized, "discord_moltis_1476434288646815864");
+    }
+
+    #[test]
+    fn sandbox_profile_dir_is_namespaced_by_session() {
+        let base = PathBuf::from("/tmp/moltis-profile");
+        let path = sandbox_profile_dir(Some(base), "browser-abc123");
+        assert_eq!(
+            path,
+            Some(PathBuf::from("/tmp/moltis-profile/sandbox/browser-abc123"))
+        );
+    }
+
+    #[test]
+    fn sandbox_profile_dir_none_when_profile_disabled() {
+        assert!(sandbox_profile_dir(None, "browser-abc123").is_none());
     }
 
     fn test_config() -> BrowserConfig {
