@@ -6,6 +6,7 @@ version.workspace    = true
 
 [dependencies]
 axum           = { workspace = true }
+hostname       = { workspace = true }
 hyper-util     = { workspace = true }
 moltis-common  = { workspace = true }
 moltis-config  = { workspace = true }
