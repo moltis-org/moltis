@@ -112,12 +112,11 @@ impl WebFetchTool {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .redirect(reqwest::redirect::Policy::none()); // Manual redirect handling.
-        if let Some(ref url) = self.proxy_url {
-            if let Ok(proxy) = reqwest::Proxy::all(url) {
-                let proxy =
-                    proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
-                client_builder = client_builder.proxy(proxy);
-            }
+        if let Some(ref url) = self.proxy_url
+            && let Ok(proxy) = reqwest::Proxy::all(url)
+        {
+            let proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
+            client_builder = client_builder.proxy(proxy);
         }
         let client = client_builder.build()?;
 

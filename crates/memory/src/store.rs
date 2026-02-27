@@ -6,6 +6,15 @@ use crate::{
     search::SearchResult,
 };
 
+/// A single embedding cache entry for batch inserts.
+pub struct CacheEntry<'a> {
+    pub provider: &'a str,
+    pub model: &'a str,
+    pub provider_key: &'a str,
+    pub hash: &'a str,
+    pub embedding: &'a [f32],
+}
+
 #[async_trait]
 pub trait MemoryStore: Send + Sync {
     // ---- files ----
@@ -35,6 +44,12 @@ pub trait MemoryStore: Send + Sync {
         provider_key: &str,
         hash: &str,
         embedding: &[f32],
+    ) -> anyhow::Result<()>;
+
+    /// Batch-insert multiple embedding cache entries in a single transaction.
+    async fn put_cached_embeddings_batch(
+        &self,
+        entries: &[CacheEntry<'_>],
     ) -> anyhow::Result<()>;
 
     /// Count the number of rows in the embedding cache.

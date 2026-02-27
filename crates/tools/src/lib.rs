@@ -26,18 +26,17 @@ pub fn init_shared_http_client(proxy_url: Option<&str>) {
 /// Falls back to a plain client if [`init_shared_http_client`] was never
 /// called (e.g. in tests).
 pub fn shared_http_client() -> &'static reqwest::Client {
-    SHARED_CLIENT.get_or_init(|| reqwest::Client::new())
+    SHARED_CLIENT.get_or_init(reqwest::Client::new)
 }
 
 /// Build a `reqwest::Client` with optional proxy configuration.
 pub fn build_http_client(proxy_url: Option<&str>) -> reqwest::Client {
     let mut builder = reqwest::Client::builder();
-    if let Some(url) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(url) {
-            let proxy =
-                proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
-            builder = builder.proxy(proxy);
-        }
+    if let Some(url) = proxy_url
+        && let Ok(proxy) = reqwest::Proxy::all(url)
+    {
+        let proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
+        builder = builder.proxy(proxy);
     }
     builder.build().unwrap_or_else(|_| reqwest::Client::new())
 }
