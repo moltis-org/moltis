@@ -18,3 +18,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Session list with search, create, and delete
 - Model picker grouped by provider
 - Theme colors matching macOS app and web UI
+- Connect screen links each discovered server to CA PEM download (`/certs/ca.pem`) and includes in-app iOS trust-install steps

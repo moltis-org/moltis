@@ -15,6 +15,16 @@ struct DiscoveredServer: Identifiable, Hashable {
         components.port = Int(port)
         return components.url
     }
+
+    var caCertURL: URL? {
+        guard port < UInt16.max else { return nil }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = Int(port) + 1
+        components.path = "/certs/ca.pem"
+        return components.url
+    }
 }
 
 @MainActor

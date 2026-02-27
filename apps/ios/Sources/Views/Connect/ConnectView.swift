@@ -34,25 +34,43 @@ struct ConnectView: View {
                 if !bonjourBrowser.servers.isEmpty {
                     Section("Nearby Servers") {
                         ForEach(bonjourBrowser.servers) { server in
-                            Button {
-                                selectDiscovered(server)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text(server.name)
-                                        Text("\(server.host):\(server.port)")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Button {
+                                    selectDiscovered(server)
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading) {
+                                            Text(server.name)
+                                            Text("\(server.host):\(server.port)")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        if let version = server.version {
+                                            Text("v\(version)")
+                                                .font(.caption2)
+                                                .foregroundStyle(.tertiary)
+                                        }
                                     }
-                                    Spacer()
-                                    if let version = server.version {
-                                        Text("v\(version)")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
+                                }
+                                .buttonStyle(.plain)
+
+                                if let caCertURL = server.caCertURL {
+                                    Link(destination: caCertURL) {
+                                        Label("Download CA Certificate", systemImage: "arrow.down.doc")
+                                            .font(.caption)
                                     }
                                 }
                             }
                         }
+                    }
+
+                    Section("Trust This Certificate (iOS)") {
+                        Text("1. Tap “Download CA Certificate” for your server.")
+                        Text("2. In Safari, allow the profile download.")
+                        Text("3. Open Settings > General > VPN & Device Management, then install the downloaded profile.")
+                        Text("4. Open Settings > General > About > Certificate Trust Settings.")
+                        Text("5. Enable full trust for “Moltis Local CA”, then return and tap Check Connection.")
                     }
                 }
 
