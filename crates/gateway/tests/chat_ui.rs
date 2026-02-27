@@ -66,7 +66,7 @@ async fn health_endpoint_returns_json() {
     assert_eq!(resp.status(), 200);
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["status"], "ok");
-    assert_eq!(json["protocol"], 3);
+    assert_eq!(json["protocol"], 4);
 }
 
 #[tokio::test]
@@ -83,7 +83,7 @@ async fn ws_handshake_returns_hello_ok() {
         "method": "connect",
         "params": {
             "minProtocol": 3,
-            "maxProtocol": 3,
+            "maxProtocol": 4,
             "client": {
                 "id": "test-client",
                 "version": "0.0.1",
@@ -103,7 +103,7 @@ async fn ws_handshake_returns_hello_ok() {
     assert_eq!(frame["id"], "test-1");
     assert_eq!(frame["ok"], true);
     assert_eq!(frame["payload"]["type"], "hello-ok");
-    assert_eq!(frame["payload"]["protocol"], 3);
+    assert_eq!(frame["payload"]["protocol"], 4);
     assert!(frame["payload"]["server"]["version"].is_string());
     assert!(frame["payload"]["features"]["methods"].is_array());
 
@@ -124,7 +124,7 @@ async fn ws_health_method_after_handshake() {
         "method": "connect",
         "params": {
             "minProtocol": 3,
-            "maxProtocol": 3,
+            "maxProtocol": 4,
             "client": {
                 "id": "test-client-2",
                 "version": "0.0.1",
@@ -173,7 +173,7 @@ async fn ws_system_presence_shows_connected_client() {
         "method": "connect",
         "params": {
             "minProtocol": 3,
-            "maxProtocol": 3,
+            "maxProtocol": 4,
             "client": {
                 "id": "presence-test",
                 "version": "0.0.1",

@@ -141,4 +141,72 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             })
         }),
     );
+
+    // system.describe: protocol schema discovery (v4)
+    reg.register(
+        "system.describe",
+        Box::new(|_ctx| {
+            Box::pin(async move {
+                let methods: Vec<serde_json::Value> = reg_method_names()
+                    .iter()
+                    .map(|name| {
+                        serde_json::json!({
+                            "name": name,
+                        })
+                    })
+                    .collect();
+
+                let events = vec![
+                    "tick",
+                    "shutdown",
+                    "agent",
+                    "chat",
+                    "presence",
+                    "health",
+                    "exec.approval.requested",
+                    "exec.approval.resolved",
+                    "device.pair.requested",
+                    "device.pair.resolved",
+                    "node.pair.requested",
+                    "node.pair.resolved",
+                    "node.invoke.request",
+                ];
+                let event_descriptors: Vec<serde_json::Value> = events
+                    .iter()
+                    .map(|name| serde_json::json!({ "name": name }))
+                    .collect();
+
+                Ok(serde_json::json!({
+                    "protocol": moltis_protocol::PROTOCOL_VERSION,
+                    "methods": methods,
+                    "events": event_descriptors,
+                }))
+            })
+        }),
+    );
+}
+
+/// Return the list of known method names (for system.describe).
+/// This is a static list mirroring what `MethodRegistry::register_defaults` registers.
+fn reg_method_names() -> Vec<&'static str> {
+    vec![
+        "health",
+        "status",
+        "system-presence",
+        "system-event",
+        "last-heartbeat",
+        "set-heartbeats",
+        "system.describe",
+        "node.list",
+        "node.describe",
+        "node.rename",
+        "node.invoke",
+        "node.invoke.result",
+        "node.event",
+        "location.result",
+        "subscribe",
+        "unsubscribe",
+        "channel.join",
+        "channel.leave",
+    ]
 }
