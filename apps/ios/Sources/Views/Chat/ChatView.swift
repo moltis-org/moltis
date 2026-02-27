@@ -197,10 +197,14 @@ struct ChatView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    closeSessionDrawer()
+                    createSession()
                 } label: {
-                    Image(systemName: "xmark")
+                    Image(systemName: "plus")
                         .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 32, height: 32)
+                        .background(.quaternary.opacity(0.5))
+                        .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -208,38 +212,24 @@ struct ChatView: View {
             .padding(.top, 18)
             .padding(.bottom, 10)
 
-            HStack(spacing: 10) {
-                Button {
-                    createSession()
-                } label: {
-                    Label("New", systemImage: "plus")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.quaternary.opacity(0.4))
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    TextField("Search", text: $sessionSearchText)
-                        .font(.subheadline)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(.quaternary.opacity(0.25))
-                .clipShape(Capsule())
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextField("Search sessions", text: $sessionSearchText)
+                    .font(.subheadline)
+                    .textInputAutocapitalization(.never)
+                    .disableAutocorrection(true)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color(uiColor: .systemGray5))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.horizontal, 12)
             .padding(.bottom, 12)
 
             ScrollView {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 2) {
                     ForEach(visibleSessions) { session in
                         Button {
                             selectSession(session)
@@ -248,7 +238,6 @@ struct ChatView: View {
                                 session: session,
                                 isActive: session.key == chatStore.currentSessionKey
                             )
-                            .padding(.horizontal, 12)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -261,6 +250,7 @@ struct ChatView: View {
                         }
                     }
                 }
+                .padding(.horizontal, 8)
             }
 
             Spacer(minLength: 0)

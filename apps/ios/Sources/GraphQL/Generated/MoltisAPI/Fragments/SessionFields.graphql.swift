@@ -7,7 +7,7 @@
 extension MoltisAPI {
   struct SessionFields: MoltisAPI.SelectionSet, Fragment {
     static var fragmentDefinition: StaticString {
-      #"fragment SessionFields on SessionEntry { __typename id key label model createdAt updatedAt messageCount archived }"#
+      #"fragment SessionFields on SessionEntry { __typename id key label model preview createdAt updatedAt messageCount archived }"#
     }
 
     let __data: DataDict
@@ -20,6 +20,7 @@ extension MoltisAPI {
       .field("key", String.self),
       .field("label", String?.self),
       .field("model", String?.self),
+      .field("preview", String?.self),
       .field("createdAt", String?.self),
       .field("updatedAt", String?.self),
       .field("messageCount", Int?.self),
@@ -33,6 +34,7 @@ extension MoltisAPI {
     var key: String { __data["key"] }
     var label: String? { __data["label"] }
     var model: String? { __data["model"] }
+    var preview: String? { __data["preview"] }
     var createdAt: String? { __data["createdAt"] }
     var updatedAt: String? { __data["updatedAt"] }
     var messageCount: Int? { __data["messageCount"] }

@@ -68,6 +68,7 @@ extension MoltisAPI {
           var key: String { __data["key"] }
           var label: String? { __data["label"] }
           var model: String? { __data["model"] }
+          var preview: String? { __data["preview"] }
           var createdAt: String? { __data["createdAt"] }
           var updatedAt: String? { __data["updatedAt"] }
           var messageCount: Int? { __data["messageCount"] }

@@ -50,13 +50,6 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(alignment: .leading) {
-            Capsule()
-                .fill(bannerStyle.tint.opacity(0.85))
-                .frame(width: 4)
-                .padding(.vertical, 10)
-                .padding(.leading, 8)
-        }
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(bannerStyle.tint.opacity(0.35), lineWidth: 0.9)

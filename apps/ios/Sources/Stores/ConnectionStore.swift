@@ -100,6 +100,7 @@ final class ConnectionStore: ObservableObject {
     }
 
     private func applyWSState(_ wsState: MoltisWSClient.State) {
+        let wasConnected = state.isConnected
         switch wsState {
         case .disconnected:
             state = .disconnected
@@ -109,8 +110,22 @@ final class ConnectionStore: ObservableObject {
             state = .reconnecting(attempt: attempt, nextRetryIn: nextRetryIn)
         case .connected:
             state = .connected
+            if !wasConnected {
+                onReconnected()
+            }
         case .error(let message):
             state = .error(message)
+        }
+    }
+
+    /// Reload data after a successful reconnection.
+    private func onReconnected() {
+        Task {
+            await fetchIdentity()
+            await sessionStore.loadSessions()
+            await modelStore.loadModels()
+            // Location sharing reconnection is handled by MoltisApp via
+            // .onChange(of: connectionStore.state).
         }
     }
 
