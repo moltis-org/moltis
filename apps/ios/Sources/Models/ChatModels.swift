@@ -89,11 +89,18 @@ struct ChatSession: Identifiable, Equatable {
         self.archived = archived
     }
 
-    private static let dateFormatter: ISO8601DateFormatter = {
+    /// Parse a date that may be an ISO 8601 string or epoch milliseconds.
+    private static func parseDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        // Try epoch milliseconds first (server returns u64 ms timestamps).
+        if let ms = Double(value) {
+            return Date(timeIntervalSince1970: ms / 1000.0)
+        }
+        // Fall back to ISO 8601.
         let fmt = ISO8601DateFormatter()
         fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fmt
-    }()
+        return fmt.date(from: value)
+    }
 
     /// Create from a GraphQL session response.
     static func from(_ gql: GQLSession) -> ChatSession {
@@ -101,7 +108,7 @@ struct ChatSession: Identifiable, Equatable {
             key: gql.key,
             title: gql.label ?? gql.key,
             preview: gql.preview,
-            updatedAt: gql.updatedAt.flatMap { dateFormatter.date(from: $0) } ?? Date(),
+            updatedAt: parseDate(gql.updatedAt) ?? Date(),
             messageCount: gql.messageCount ?? 0,
             model: gql.model,
             archived: gql.archived ?? false

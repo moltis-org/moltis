@@ -230,9 +230,9 @@ final class ChatStore: ObservableObject {
             text: text,
             provider: dict["provider"] as? String,
             model: dict["model"] as? String,
-            inputTokens: dict["input_tokens"] as? Int,
-            outputTokens: dict["output_tokens"] as? Int,
-            durationMs: dict["duration_ms"] as? Int
+            inputTokens: dict["inputTokens"] as? Int,
+            outputTokens: dict["outputTokens"] as? Int,
+            durationMs: dict["durationMs"] as? Int
         )
     }
 }

@@ -63,19 +63,14 @@ struct SessionRow: View {
                 if session.messageCount > 0 {
                     Text("\(session.messageCount)")
                         .font(.caption2)
+                        .fontWeight(.medium)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
+                        .foregroundStyle(isActive ? Color.white : Color.white)
                         .background(
-                            isActive ? Color.white.opacity(0.2) : {
-                                #if canImport(UIKit)
-                                Color(uiColor: .quaternaryLabel)
-                                #else
-                                Color.secondary.opacity(0.2)
-                                #endif
-                            }()
+                            isActive ? Color.white.opacity(0.25) : Color.blue.opacity(0.7)
                         )
                         .clipShape(Capsule())
-                        .foregroundStyle(isActive ? Color.white : Color.primary)
                 }
             }
         }

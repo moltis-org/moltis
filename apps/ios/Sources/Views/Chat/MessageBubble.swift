@@ -107,19 +107,12 @@ struct MessageBubble: View {
     // MARK: - System badge
 
     private var systemBadge: some View {
-        HStack(spacing: 6) {
-            Text(message.text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(shortTimeFormatter.string(from: message.createdAt))
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(.quaternary.opacity(0.5), in: Capsule())
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 4)
+        Text(message.text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 4)
     }
 
     // MARK: - Error badge
