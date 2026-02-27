@@ -99,6 +99,8 @@ pub struct SessionEntry {
     #[serde(default)]
     pub message_count: Option<u64>,
     #[serde(default)]
+    pub last_seen_message_count: Option<u64>,
+    #[serde(default)]
     pub project_id: Option<String>,
     #[serde(default)]
     pub archived: Option<bool>,
