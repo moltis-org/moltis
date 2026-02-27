@@ -255,6 +255,10 @@ swift-open: swift-build-rust swift-generate
 ios-generate:
     ./scripts/generate-ios-project.sh
 
+# Generate Apollo GraphQL types for iOS.
+ios-graphql:
+    ./scripts/generate-ios-graphql.sh
+
 # Build iOS app (generic iOS destination, no signing).
 ios-build: ios-generate
     xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build

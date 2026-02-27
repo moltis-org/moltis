@@ -1682,11 +1682,16 @@ pub async fn prepare_gateway(
         tracing::warn!(error = %e, "failed to seed main agent workspace");
     }
 
+    // Deferred reference: populated once GatewayState is ready.
+    let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
+        Arc::new(tokio::sync::OnceCell::new());
+
     services =
         services.with_onboarding(Arc::new(crate::onboarding::GatewayOnboardingService::new(
             live_onboarding,
             Arc::clone(&session_metadata),
             Arc::clone(&agent_persona_store),
+            Arc::clone(&deferred_state),
         )));
 
     // Session service wired below after sandbox_router is created.
@@ -1705,10 +1710,6 @@ pub async fn prepare_gateway(
                 Arc::new(moltis_cron::store_memory::InMemoryStore::new())
             },
         };
-
-    // Deferred reference: populated once GatewayState is ready.
-    let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
-        Arc::new(tokio::sync::OnceCell::new());
 
     // System event: inject text into the main session and trigger an agent response.
     let sys_state = Arc::clone(&deferred_state);

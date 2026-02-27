@@ -15,7 +15,10 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 
-packages: {}
+packages:
+  Apollo:
+    url: https://github.com/apollographql/apollo-ios.git
+    from: 2.0.6
 
 targets:
   Moltis:
@@ -40,6 +43,12 @@ targets:
     dependencies:
       - target: MoltisWidgetExtension
         embed: true
+      - package: Apollo
+        product: Apollo
+      - package: Apollo
+        product: ApolloAPI
+      - package: Apollo
+        product: ApolloWebSocket
     scheme:
       testTargets: []
 

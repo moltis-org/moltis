@@ -1,8 +1,10 @@
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject var connectionStore: ConnectionStore
     @EnvironmentObject var settingsStore: SettingsStore
+    @EnvironmentObject var locationSharingStore: LocationSharingStore
     @EnvironmentObject var authManager: AuthManager
 
     var body: some View {
@@ -45,6 +47,45 @@ struct SettingsView: View {
 
                 Section("Connection") {
                     Toggle("Auto-Reconnect", isOn: $settingsStore.autoReconnect)
+                }
+
+                Section("Location") {
+                    Toggle("Share Location with Moltis", isOn: $locationSharingStore.isEnabled)
+
+                    LabeledContent(
+                        "Permission",
+                        value: locationSharingStore.authorizationDescription
+                    )
+
+                    if let lastSentAt = locationSharingStore.lastSentAt {
+                        LabeledContent(
+                            "Last Sent",
+                            value: lastSentAt.formatted(
+                                .relative(
+                                    presentation: .named,
+                                    unitsStyle: .wide
+                                )
+                            )
+                        )
+                    } else {
+                        LabeledContent("Last Sent", value: "Never")
+                    }
+
+                    if let lastError = locationSharingStore.lastError {
+                        Text(lastError)
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+
+                    if locationSharingStore.authorizationStatus == .denied
+                        || locationSharingStore.authorizationStatus == .restricted {
+                        Button("Open iOS Settings") {
+                            guard
+                                let url = URL(string: UIApplication.openSettingsURLString)
+                            else { return }
+                            UIApplication.shared.open(url)
+                        }
+                    }
                 }
 
                 // About

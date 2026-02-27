@@ -195,6 +195,34 @@ impl LiveOnboardingService {
             trimmed.parse::<moltis_config::Timezone>().ok().map(Some)
         }
 
+        /// Extract optional location field from either `user_location` or `location`.
+        ///
+        /// Accepted shape:
+        /// `{ latitude: f64, longitude: f64, place?: String }`.
+        /// - Missing key => None (no-op)
+        /// - null => Some(None) (clear location)
+        /// - invalid payload => None (ignore)
+        fn location_field(params: &Value) -> Option<Option<moltis_config::GeoLocation>> {
+            let raw = params
+                .get("user_location")
+                .or_else(|| params.get("location"))?;
+
+            if raw.is_null() {
+                return Some(None);
+            }
+
+            let latitude = raw.get("latitude").and_then(|v| v.as_f64())?;
+            let longitude = raw.get("longitude").and_then(|v| v.as_f64())?;
+            let place = raw
+                .get("place")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+
+            Some(Some(moltis_config::GeoLocation::now(
+                latitude, longitude, place,
+            )))
+        }
+
         if let Some(v) = str_field(&params, "name") {
             identity.name = v;
         }
@@ -232,6 +260,9 @@ impl LiveOnboardingService {
         {
             user.timezone = v;
         }
+        if let Some(v) = location_field(&params) {
+            user.location = v;
+        }
 
         config.identity = identity.clone();
         config.user = user.clone();
@@ -252,6 +283,12 @@ impl LiveOnboardingService {
             "soul": moltis_config::load_soul(),
             "user_name": user.name,
             "user_timezone": user.timezone.as_ref().map(|tz| tz.name()),
+            "user_location": user.location.as_ref().map(|loc| json!({
+                "latitude": loc.latitude,
+                "longitude": loc.longitude,
+                "place": loc.place,
+                "updated_at": loc.updated_at,
+            })),
         }))
     }
 
@@ -495,6 +532,63 @@ mod tests {
 
         // Reports as onboarded
         assert_eq!(svc.wizard_status()["onboarded"], true);
+
+        moltis_config::clear_data_dir();
+    }
+
+    #[test]
+    fn identity_update_location_fields() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
+        let svc = LiveOnboardingService::new(dir.path().join("moltis.toml"));
+
+        let res = svc
+            .identity_update(json!({
+                "user_location": {
+                    "latitude": 37.7749,
+                    "longitude": -122.4194,
+                    "place": "San Francisco",
+                }
+            }))
+            .unwrap();
+
+        assert_eq!(res["user_location"]["latitude"], 37.7749);
+        assert_eq!(res["user_location"]["longitude"], -122.4194);
+        assert_eq!(res["user_location"]["place"], "San Francisco");
+        assert!(res["user_location"]["updated_at"].is_number());
+
+        let user = moltis_config::load_user().expect("load user");
+        let location = user.location.expect("location should be persisted");
+        assert_eq!(location.latitude, 37.7749);
+        assert_eq!(location.longitude, -122.4194);
+        assert_eq!(location.place.as_deref(), Some("San Francisco"));
+
+        moltis_config::clear_data_dir();
+    }
+
+    #[test]
+    fn identity_update_location_null_clears_existing_value() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
+        let svc = LiveOnboardingService::new(dir.path().join("moltis.toml"));
+
+        svc.identity_update(json!({
+            "user_location": {
+                "latitude": 37.7749,
+                "longitude": -122.4194
+            }
+        }))
+        .unwrap();
+
+        let res = svc
+            .identity_update(json!({ "user_location": null }))
+            .unwrap();
+        assert!(res["user_location"].is_null());
+
+        let user = moltis_config::load_user();
+        assert!(user.as_ref().and_then(|u| u.location.as_ref()).is_none());
 
         moltis_config::clear_data_dir();
     }

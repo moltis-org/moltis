@@ -1,0 +1,57 @@
+schema {
+  query: QueryRoot
+  mutation: MutationRoot
+}
+
+scalar JSON
+
+type QueryRoot {
+  sessions: SessionQuery!
+  models: ModelQuery!
+  status: StatusInfo!
+}
+
+type SessionQuery {
+  list: [SessionEntry!]!
+  search(query: String!): [SessionEntry!]!
+}
+
+type ModelQuery {
+  list: [ModelInfo!]!
+}
+
+type SessionEntry {
+  id: ID
+  key: String!
+  label: String
+  model: String
+  createdAt: String
+  updatedAt: String
+  messageCount: Int
+  archived: Boolean
+}
+
+type ModelInfo {
+  id: String
+  name: String
+  provider: String
+}
+
+type StatusInfo {
+  hostname: String
+  version: String
+  connections: Int
+  uptimeMs: Int
+}
+
+type MutationRoot {
+  agents: AgentMutation!
+}
+
+type AgentMutation {
+  updateIdentity(input: JSON!): BoolResult!
+}
+
+type BoolResult {
+  ok: Boolean!
+}

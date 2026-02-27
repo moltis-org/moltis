@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Chat now has a ChatGPT-style top bar with large model/provider pill, top-right settings button, and a left slide-out sessions drawer
 - Removed the bottom tab bar so chat is the single root screen, with sessions/settings accessed from the top controls
 - Refined chat controls: larger send/stop action button and redesigned connection banner card with richer status details
+- Settings now includes optional location sharing, with iOS permission/status handling and real-time GraphQL mutation updates to `agents.updateIdentity`
 
 ### Fixed
 

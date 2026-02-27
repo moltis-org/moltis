@@ -4,6 +4,7 @@ struct ChatView: View {
     @EnvironmentObject var chatStore: ChatStore
     @EnvironmentObject var connectionStore: ConnectionStore
     @EnvironmentObject var settingsStore: SettingsStore
+    @EnvironmentObject var locationSharingStore: LocationSharingStore
     @EnvironmentObject var authManager: AuthManager
 
     @FocusState private var isInputFocused: Bool
@@ -56,6 +57,7 @@ struct ChatView: View {
                 SettingsView()
                     .environmentObject(connectionStore)
                     .environmentObject(settingsStore)
+                    .environmentObject(locationSharingStore)
                     .environmentObject(authManager)
             }
         }

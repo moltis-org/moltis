@@ -1,201 +1,201 @@
+import Apollo
+import ApolloAPI
 import Foundation
 import os
-
-// MARK: - GraphQL types
-
-struct GraphQLRequest: Encodable {
-    let query: String
-    let variables: [String: AnyCodable]?
-    let operationName: String?
-
-    init(query: String, variables: [String: AnyCodable]? = nil, operationName: String? = nil) {
-        self.query = query
-        self.variables = variables
-        self.operationName = operationName
-    }
-}
-
-struct GraphQLResponse<T: Decodable>: Decodable {
-    let data: T?
-    let errors: [GraphQLError]?
-}
-
-struct GraphQLError: Decodable, LocalizedError {
-    let message: String
-    let locations: [Location]?
-    let path: [String]?
-
-    struct Location: Decodable {
-        let line: Int
-        let column: Int
-    }
-
-    var errorDescription: String? { message }
-}
 
 // MARK: - GraphQL client
 
 actor MoltisGraphQLClient {
     private let logger = Logger(subsystem: "org.moltis.ios", category: "graphql")
     private var server: ServerConnection?
-    private let urlSession = URLSession.shared
+    private var apolloClient: ApolloClient?
 
     func configure(server: ServerConnection) {
         self.server = server
+
+        guard let apiKey = server.apiKey else {
+            apolloClient = nil
+            return
+        }
+
+        let store = ApolloStore(cache: InMemoryNormalizedCache())
+        let transport = RequestChainNetworkTransport(
+            urlSession: URLSession(configuration: .default),
+            interceptorProvider: DefaultInterceptorProvider.shared,
+            store: store,
+            endpointURL: server.graphqlURL,
+            additionalHeaders: [
+                "Authorization": "Bearer \(apiKey)",
+                "Content-Type": "application/json"
+            ]
+        )
+
+        apolloClient = ApolloClient(networkTransport: transport, store: store)
     }
 
     // MARK: - Queries
 
-    func query<T: Decodable>(
-        _ queryString: String,
-        variables: [String: AnyCodable]? = nil,
-        operationName: String? = nil,
-        as type: T.Type
-    ) async throws -> T {
-        guard let server else {
+    private func execute<Query: GraphQLQuery>(
+        _ query: Query,
+        operationName: String
+    ) async throws -> Query.Data where Query.ResponseFormat == SingleResponseFormat {
+        guard server != nil else {
             throw AuthError.serverError(0, "GraphQL client not configured")
         }
-        guard let apiKey = server.apiKey else {
+        guard let apolloClient else {
             throw AuthError.noApiKey
         }
 
-        var request = URLRequest(url: server.graphqlURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 30
+        logger.debug("GraphQL request started: \(operationName, privacy: .public)")
 
-        let opName = operationName ?? "anonymous"
-        logger.debug("GraphQL request started: \(opName, privacy: .public)")
-
-        let gqlRequest = GraphQLRequest(
-            query: queryString,
-            variables: variables,
-            operationName: operationName
-        )
-        request.httpBody = try JSONEncoder().encode(gqlRequest)
-
-        let (data, response) = try await urlSession.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AuthError.invalidURL
-        }
-        guard httpResponse.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
-            logger.error(
-                "GraphQL HTTP error op=\(opName, privacy: .public) status=\(httpResponse.statusCode) body=\(body, privacy: .public)"
+        do {
+            let response = try await apolloClient.fetch(
+                query: query,
+                cachePolicy: .networkOnly
             )
-            throw AuthError.serverError(httpResponse.statusCode, body)
+
+            if let errors = response.errors, !errors.isEmpty {
+                let joined = errors.compactMap(\.message).joined(separator: " | ")
+                logger.error(
+                    "GraphQL resolver error op=\(operationName, privacy: .public) messages=\(joined, privacy: .public)"
+                )
+                throw AuthError.serverError(
+                    0,
+                    joined.isEmpty ? "GraphQL request failed" : joined
+                )
+            }
+
+            guard let data = response.data else {
+                throw AuthError.serverError(0, "No data in GraphQL response")
+            }
+
+            logger.debug("GraphQL request succeeded: \(operationName, privacy: .public)")
+            return data
+        } catch {
+            logger.error(
+                "GraphQL request failed op=\(operationName, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+            throw error
+        }
+    }
+
+    private func execute<Mutation: GraphQLMutation>(
+        _ mutation: Mutation,
+        operationName: String
+    ) async throws -> Mutation.Data where Mutation.ResponseFormat == SingleResponseFormat {
+        guard server != nil else {
+            throw AuthError.serverError(0, "GraphQL client not configured")
+        }
+        guard let apolloClient else {
+            throw AuthError.noApiKey
         }
 
-        let gqlResponse = try JSONDecoder().decode(GraphQLResponse<T>.self, from: data)
-        if let errors = gqlResponse.errors, let first = errors.first {
-            let joined = errors.map(\.message).joined(separator: " | ")
+        logger.debug("GraphQL mutation started: \(operationName, privacy: .public)")
+
+        do {
+            let response = try await apolloClient.perform(mutation: mutation)
+
+            if let errors = response.errors, !errors.isEmpty {
+                let joined = errors.compactMap(\.message).joined(separator: " | ")
+                logger.error(
+                    "GraphQL resolver error op=\(operationName, privacy: .public) messages=\(joined, privacy: .public)"
+                )
+                throw AuthError.serverError(
+                    0,
+                    joined.isEmpty ? "GraphQL mutation failed" : joined
+                )
+            }
+
+            guard let data = response.data else {
+                throw AuthError.serverError(0, "No data in GraphQL response")
+            }
+
+            logger.debug("GraphQL mutation succeeded: \(operationName, privacy: .public)")
+            return data
+        } catch {
             logger.error(
-                "GraphQL resolver error op=\(opName, privacy: .public) messages=\(joined, privacy: .public)"
+                "GraphQL mutation failed op=\(operationName, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
-            throw first
+            throw error
         }
-        guard let result = gqlResponse.data else {
-            throw AuthError.serverError(0, "No data in GraphQL response")
-        }
-        logger.debug("GraphQL request succeeded: \(opName, privacy: .public)")
-        return result
     }
 
     // MARK: - Standard queries
 
     func fetchSessions() async throws -> [GQLSession] {
-        struct Response: Decodable {
-            let sessions: SessionsData
-            struct SessionsData: Decodable {
-                let list: [GQLSession]
-            }
+        let data = try await execute(MoltisAPI.FetchSessionsQuery(), operationName: "FetchSessions")
+        return data.sessions.list.map { session in
+            GQLSession(
+                id: session.id ?? session.key,
+                key: session.key,
+                label: session.label,
+                model: session.model,
+                createdAt: session.createdAt,
+                updatedAt: session.updatedAt,
+                messageCount: session.messageCount,
+                archived: session.archived
+            )
         }
-        let result: Response = try await query("""
-            query {
-                sessions {
-                    list {
-                        id
-                        key
-                        label
-                        model
-                        createdAt
-                        updatedAt
-                        messageCount
-                        archived
-                    }
-                }
-            }
-            """, operationName: "FetchSessions", as: Response.self)
-        return result.sessions.list
     }
 
     func searchSessions(query searchQuery: String) async throws -> [GQLSession] {
-        struct Response: Decodable {
-            let sessions: SessionsData
-            struct SessionsData: Decodable {
-                let search: [GQLSession]
-            }
-        }
-        let result: Response = try await query("""
-            query($query: String!) {
-                sessions {
-                    search(query: $query) {
-                        id
-                        key
-                        label
-                        model
-                        createdAt
-                        updatedAt
-                        messageCount
-                        archived
-                    }
-                }
-            }
-            """,
-            variables: ["query": AnyCodable(searchQuery)],
-            operationName: "SearchSessions",
-            as: Response.self
+        let data = try await execute(
+            MoltisAPI.SearchSessionsQuery(query: searchQuery),
+            operationName: "SearchSessions"
         )
-        return result.sessions.search
+        return data.sessions.search.map { session in
+            GQLSession(
+                id: session.id ?? session.key,
+                key: session.key,
+                label: session.label,
+                model: session.model,
+                createdAt: session.createdAt,
+                updatedAt: session.updatedAt,
+                messageCount: session.messageCount,
+                archived: session.archived
+            )
+        }
     }
 
     func fetchModels() async throws -> [GQLModel] {
-        struct Response: Decodable {
-            let models: ModelsData
-            struct ModelsData: Decodable {
-                let list: [GQLModel]
-            }
+        let data = try await execute(MoltisAPI.FetchModelsQuery(), operationName: "FetchModels")
+        return data.models.list.map { model in
+            GQLModel(
+                id: model.id,
+                name: model.name,
+                provider: model.provider,
+                tier: nil
+            )
         }
-        let result: Response = try await query("""
-            query {
-                models {
-                    list {
-                        id
-                        name
-                        provider
-                    }
-                }
-            }
-            """, operationName: "FetchModels", as: Response.self)
-        return result.models.list
     }
 
     func fetchStatus() async throws -> GQLStatus {
-        struct Response: Decodable {
-            let status: GQLStatus
+        let data = try await execute(MoltisAPI.FetchStatusQuery(), operationName: "FetchStatus")
+        return GQLStatus(
+            hostname: data.status.hostname,
+            version: data.status.version,
+            connections: data.status.connections,
+            uptimeMs: data.status.uptimeMs
+        )
+    }
+
+    func updateUserLocation(latitude: Double, longitude: Double) async throws -> Bool {
+        let payload: [String: Any] = [
+            "user_location": [
+                "latitude": latitude,
+                "longitude": longitude
+            ]
+        ]
+        let payloadData = try JSONSerialization.data(withJSONObject: payload)
+        guard let payloadString = String(data: payloadData, encoding: .utf8) else {
+            throw AuthError.serverError(0, "Failed to encode location payload")
         }
-        let result: Response = try await query("""
-            query {
-                status {
-                    hostname
-                    version
-                    connections
-                    uptimeMs
-                }
-            }
-            """, operationName: "FetchStatus", as: Response.self)
-        return result.status
+
+        let data = try await execute(
+            MoltisAPI.UpdateUserLocationMutation(input: payloadString),
+            operationName: "UpdateUserLocation"
+        )
+        return data.agents.updateIdentity.ok
     }
 }
 
