@@ -345,8 +345,13 @@ impl BrowserPool {
             }
 
             // Ensure the container image is available
+            let t_image = Instant::now();
             container::ensure_image(&image)
                 .map_err(|e| Error::LaunchFailed(format!("failed to ensure browser image: {e}")))?;
+            info!(
+                elapsed_ms = t_image.elapsed().as_millis() as u64,
+                "browser container image ready"
+            );
 
             // Create profile directory on host if needed
             if let Some(ref dir) = profile_dir

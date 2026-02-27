@@ -139,6 +139,8 @@ impl BrowserContainer {
         low_memory_threshold_mb: u64,
         profile_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
+        use std::time::Instant;
+
         if !backend.is_available() {
             return Err(Error::LaunchFailed(format!(
                 "{} is not available. Please install it to use sandboxed browser.",
@@ -156,6 +158,7 @@ impl BrowserContainer {
             "starting browser container"
         );
 
+        let t0 = Instant::now();
         let container_id = match backend {
             ContainerBackend::Docker => start_docker_container(
                 image,
@@ -178,11 +181,12 @@ impl BrowserContainer {
             )?,
         };
 
-        debug!(
+        info!(
             container_id,
             host_port,
             backend = backend.cli(),
-            "browser container started"
+            elapsed_ms = t0.elapsed().as_millis() as u64,
+            "browser container process started, waiting for Chrome readiness"
         );
 
         // Wait for the container to be ready
@@ -192,6 +196,7 @@ impl BrowserContainer {
             container_id,
             host_port,
             backend = backend.cli(),
+            total_startup_ms = t0.elapsed().as_millis() as u64,
             "browser container ready"
         );
 
@@ -526,28 +531,66 @@ fn wait_for_ready(port: u16) -> Result<()> {
     let url = format!("http://127.0.0.1:{}/json/version", port);
     let timeout = Duration::from_secs(60);
     let start = Instant::now();
+    let mut attempts: u32 = 0;
 
-    debug!(url, "waiting for browser container to be ready");
+    info!(
+        url,
+        timeout_secs = 60,
+        "waiting for browser container Chrome readiness"
+    );
 
     loop {
-        if start.elapsed() > timeout {
-            return Err(Error::LaunchFailed(format!(
+        let elapsed = start.elapsed();
+        if elapsed > timeout {
+            warn!(
+                attempts,
+                elapsed_ms = elapsed.as_millis() as u64,
                 "browser container failed to become ready within {}s",
                 timeout.as_secs()
+            );
+            return Err(Error::LaunchFailed(format!(
+                "browser container failed to become ready within {}s ({} probe attempts)",
+                timeout.as_secs(),
+                attempts
             )));
         }
+
+        attempts += 1;
 
         // Try HTTP GET /json/version - this endpoint returns 200 when Chrome is ready
         match probe_http_endpoint(port) {
             Ok(true) => {
-                debug!("browser container Chrome endpoint is ready");
+                info!(
+                    attempts,
+                    elapsed_ms = elapsed.as_millis() as u64,
+                    "browser container Chrome endpoint is ready"
+                );
                 return Ok(());
             },
             Ok(false) => {
-                debug!("Chrome endpoint not ready yet, retrying");
+                // Log progress every 10 attempts (~5 seconds)
+                if attempts % 10 == 0 {
+                    info!(
+                        attempts,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        "Chrome endpoint not ready yet, still probing"
+                    );
+                } else {
+                    debug!(attempts, "Chrome endpoint not ready yet, retrying");
+                }
             },
             Err(e) => {
-                debug!(error = %e, "probe failed, retrying");
+                // Log progress every 10 attempts (~5 seconds)
+                if attempts % 10 == 0 {
+                    info!(
+                        attempts,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        error = %e,
+                        "probe failed, still retrying"
+                    );
+                } else {
+                    debug!(attempts, error = %e, "probe failed, retrying");
+                }
             },
         }
 
@@ -580,8 +623,15 @@ fn probe_http_endpoint(port: u16) -> Result<bool> {
     let mut status_line = String::new();
     reader.read_line(&mut status_line)?;
 
-    // Check for HTTP 200 response
-    Ok(status_line.contains("200"))
+    let ready = status_line.contains("200");
+    debug!(
+        port,
+        status_line = status_line.trim(),
+        ready,
+        "probe response"
+    );
+
+    Ok(ready)
 }
 
 /// Check if Docker is available.
@@ -789,7 +839,7 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
         .context("failed to check for image")?;
 
     if output.success() {
-        debug!(
+        info!(
             image,
             backend = cli,
             "browser container image already present"
