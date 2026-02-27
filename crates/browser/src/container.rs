@@ -297,6 +297,7 @@ fn build_container_launch_args(
     viewport_height: u32,
     low_memory_threshold_mb: u64,
     container_profile_dir: Option<&str>,
+    backend: ContainerBackend,
 ) -> String {
     use crate::pool::low_memory_chrome_args;
 
@@ -305,6 +306,15 @@ fn build_container_launch_args(
     if let Some(profile_dir) = container_profile_dir {
         args.push(format!("--user-data-dir={profile_dir}"));
     }
+
+    // Apple Container VMs may not provide /dev/shm reliably; tell Chrome to
+    // write shared-memory segments to /tmp instead.
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer {
+        args.push("--disable-dev-shm-usage".to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = backend;
 
     if low_memory_threshold_mb > 0 {
         let mut sys = sysinfo::System::new();
@@ -341,6 +351,7 @@ fn start_docker_container(
         viewport_height,
         low_memory_threshold_mb,
         container_profile_dir,
+        ContainerBackend::Docker,
     );
 
     let mut docker_args = vec![
@@ -413,6 +424,7 @@ fn start_apple_container(
         viewport_height,
         low_memory_threshold_mb,
         container_profile_dir,
+        ContainerBackend::AppleContainer,
     );
 
     let mut container_args = vec![
@@ -957,20 +969,41 @@ mod tests {
 
     #[test]
     fn test_build_container_launch_args_without_low_memory() {
-        let args = build_container_launch_args(1920, 1080, 0, None);
+        let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
         assert_eq!(args, r#"DEFAULT_LAUNCH_ARGS=["--window-size=1920,1080"]"#);
     }
 
     #[test]
     fn test_build_container_launch_args_with_profile_dir() {
-        let args = build_container_launch_args(1920, 1080, 0, Some("/data/browser-profile"));
+        let args = build_container_launch_args(
+            1920,
+            1080,
+            0,
+            Some("/data/browser-profile"),
+            ContainerBackend::Docker,
+        );
         assert!(args.contains("--user-data-dir=/data/browser-profile"));
         assert!(args.contains("--window-size=1920,1080"));
     }
 
     #[test]
     fn test_build_container_launch_args_without_profile_dir() {
-        let args = build_container_launch_args(1920, 1080, 0, None);
+        let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
         assert!(!args.contains("--user-data-dir"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_build_container_launch_args_apple_container_has_disable_shm() {
+        let args =
+            build_container_launch_args(1920, 1080, 0, None, ContainerBackend::AppleContainer);
+        assert!(args.contains("--disable-dev-shm-usage"));
+        assert!(args.contains("--window-size=1920,1080"));
+    }
+
+    #[test]
+    fn test_build_container_launch_args_docker_no_disable_shm() {
+        let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
+        assert!(!args.contains("--disable-dev-shm-usage"));
     }
 }
