@@ -220,6 +220,8 @@ impl OnboardingService for GatewayOnboardingService {
                     skills = scan.skills_count,
                     memory = scan.memory_available,
                     channels = scan.channels_available,
+                    telegram_accounts = scan.telegram_accounts,
+                    discord_accounts = scan.discord_accounts,
                     sessions = scan.sessions_count,
                     "openclaw.scan: installation detected"
                 );
@@ -236,6 +238,7 @@ impl OnboardingService for GatewayOnboardingService {
                     "memory_files_count": scan.memory_files_count,
                     "channels_available": scan.channels_available,
                     "telegram_accounts": scan.telegram_accounts,
+                    "discord_accounts": scan.discord_accounts,
                     "sessions_count": scan.sessions_count,
                     "unsupported_channels": scan.unsupported_channels,
                     "agent_ids": scan.agent_ids,

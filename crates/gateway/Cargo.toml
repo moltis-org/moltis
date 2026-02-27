@@ -33,6 +33,7 @@ moltis-chat            = { workspace = true }
 moltis-common          = { workspace = true }
 moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
+moltis-discord         = { workspace = true }
 moltis-graphql         = { optional = true, workspace = true }
 moltis-mcp             = { workspace = true }
 moltis-media           = { workspace = true }

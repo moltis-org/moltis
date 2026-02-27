@@ -1731,6 +1731,16 @@ function OpenClawImportSection() {
 		</div>`;
 	}
 
+	var telegramAccounts = Number(scan.telegram_accounts) || 0;
+	var discordAccounts = Number(scan.discord_accounts) || 0;
+	var channelParts = [];
+	if (telegramAccounts > 0) channelParts.push(`${telegramAccounts} Telegram account(s)`);
+	if (discordAccounts > 0) channelParts.push(`${discordAccounts} Discord account(s)`);
+	var channelDetail = channelParts.length > 0 ? channelParts.join(", ") : null;
+	var unsupportedChannels = (scan.unsupported_channels || []).filter(
+		(channel) => String(channel).toLowerCase() !== "discord",
+	);
+
 	var categories = [
 		{ key: "identity", label: "Identity", available: scan.identity_available },
 		{ key: "providers", label: "Providers", available: scan.providers_available },
@@ -1745,7 +1755,7 @@ function OpenClawImportSection() {
 			key: "channels",
 			label: "Channels",
 			available: scan.channels_available,
-			detail: `${scan.telegram_accounts} Telegram account(s)`,
+			detail: channelDetail,
 		},
 		{
 			key: "sessions",
@@ -1810,9 +1820,9 @@ function OpenClawImportSection() {
 					)}
 				</div>
 				${
-					scan.unsupported_channels?.length > 0
+					unsupportedChannels.length > 0
 						? html`<p class="text-xs text-[var(--muted)]" style="max-width:600px;">
-							Unsupported channels (coming soon): ${scan.unsupported_channels.join(", ")}
+							Unsupported channels (coming soon): ${unsupportedChannels.join(", ")}
 						</p>`
 						: null
 				}

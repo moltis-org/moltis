@@ -90,6 +90,15 @@ Chat with your agent from anywhere:
 3. In Moltis: **Settings** → **Telegram** → Enter token → **Save**
 4. Message your bot!
 
+### Connect Discord
+
+1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Enable **Message Content Intent** and copy the bot token
+3. In Moltis: **Settings** → **Channels** → **Connect Discord** → Enter token → **Connect**
+4. Invite the bot to your server and @mention it!
+
+→ [Full Discord setup guide](discord.md)
+
 ### Add MCP Servers
 
 Extend capabilities with [MCP servers](mcp.md):

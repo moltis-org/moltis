@@ -1103,6 +1103,7 @@ pub(crate) struct BannerMeta {
     pub method_count: usize,
     pub sandbox_backend_name: String,
     pub data_dir: PathBuf,
+    pub openclaw_status: String,
     pub setup_code_display: Option<String>,
     pub webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
     pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
@@ -1440,10 +1441,21 @@ pub async fn prepare_gateway(
         buf.enable_persistence(data_dir.join("logs.jsonl"));
     }
     let db_path = data_dir.join("moltis.db");
-    let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
-    let db_pool = sqlx::SqlitePool::connect(&db_url)
-        .await
-        .expect("failed to open moltis.db");
+    let db_pool = {
+        use {
+            sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+            std::str::FromStr,
+        };
+        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+            .expect("invalid database path")
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        sqlx::SqlitePool::connect_with(options)
+            .await
+            .expect("failed to open moltis.db")
+    };
 
     // Run database migrations from each crate in dependency order.
     // Order matters: sessions depends on projects (FK reference).
@@ -2251,6 +2263,11 @@ pub async fn prepare_gateway(
                 .with_event_sink(Arc::clone(&channel_sink)),
         ));
         msteams_webhook_plugin = Arc::clone(&msteams_plugin);
+        let discord_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_discord::DiscordPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
 
         #[cfg(feature = "whatsapp")]
         let whatsapp_plugin = {
@@ -2288,6 +2305,17 @@ pub async fn prepare_gateway(
                     tracing::warn!(account_id, "failed to start microsoft teams account: {e}");
                 } else {
                     started.insert(("msteams".into(), account_id.clone()));
+                }
+            }
+        }
+
+        {
+            let mut dc = discord_plugin.write().await;
+            for (account_id, account_config) in &config.channels.discord {
+                if let Err(e) = dc.start_account(account_id, account_config.clone()).await {
+                    tracing::warn!(account_id, "failed to start discord account: {e}");
+                } else {
+                    started.insert(("discord".into(), account_id.clone()));
                 }
             }
         }
@@ -2334,6 +2362,10 @@ pub async fn prepare_gateway(
                             let mut ms = msteams_plugin.write().await;
                             ms.start_account(&ch.account_id, ch.config).await
                         },
+                        Ok(moltis_channels::ChannelType::Discord) => {
+                            let mut dc = discord_plugin.write().await;
+                            dc.start_account(&ch.account_id, ch.config).await
+                        },
                         #[cfg(feature = "whatsapp")]
                         Ok(moltis_channels::ChannelType::Whatsapp) => {
                             let mut wa = whatsapp_plugin.write().await;
@@ -2376,6 +2408,10 @@ pub async fn prepare_gateway(
             let ms = msteams_plugin.read().await;
             (ms.shared_outbound(), ms.shared_stream_outbound())
         };
+        let (dc_outbound, dc_stream_outbound) = {
+            let dc = discord_plugin.read().await;
+            (dc.shared_outbound(), dc.shared_stream_outbound())
+        };
         #[cfg(feature = "whatsapp")]
         let (wa_outbound, wa_stream_outbound) = {
             let wa = whatsapp_plugin.read().await;
@@ -2385,14 +2421,17 @@ pub async fn prepare_gateway(
         let multi_router = Arc::new(crate::channel_outbound::MultiChannelOutbound::new(
             Arc::clone(&tg_plugin),
             Arc::clone(&msteams_plugin),
+            Arc::clone(&discord_plugin),
             #[cfg(feature = "whatsapp")]
             Arc::clone(&whatsapp_plugin),
             tg_outbound,
             ms_outbound,
+            dc_outbound,
             #[cfg(feature = "whatsapp")]
             wa_outbound,
             tg_stream_outbound,
             ms_stream_outbound,
+            dc_stream_outbound,
             #[cfg(feature = "whatsapp")]
             wa_stream_outbound,
         ));
@@ -2407,6 +2446,7 @@ pub async fn prepare_gateway(
         services.channel = Arc::new(crate::channel::LiveChannelService::new(
             tg_plugin,
             msteams_plugin,
+            discord_plugin,
             #[cfg(feature = "whatsapp")]
             whatsapp_plugin,
             channel_store,
@@ -2619,8 +2659,21 @@ pub async fn prepare_gateway(
         };
 
         let memory_db_path = data_dir.join("memory.db");
-        let memory_db_url = format!("sqlite:{}?mode=rwc", memory_db_path.display());
-        match sqlx::SqlitePool::connect(&memory_db_url).await {
+        let memory_pool_result = {
+            use {
+                sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+                std::str::FromStr,
+            };
+            let options =
+                SqliteConnectOptions::from_str(&format!("sqlite:{}", memory_db_path.display()))
+                    .expect("invalid memory database path")
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .synchronous(SqliteSynchronous::Normal)
+                    .busy_timeout(std::time::Duration::from_secs(5));
+            sqlx::SqlitePool::connect_with(options).await
+        };
+        match memory_pool_result {
             Ok(memory_pool) => {
                 if let Err(e) = moltis_memory::schema::run_migrations(&memory_pool).await {
                     tracing::warn!("memory migration failed: {e}");
@@ -2964,7 +3017,10 @@ pub async fn prepare_gateway(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
-        tool_registry.register(Box::new(moltis_tools::send_image::SendImageTool::new()));
+        tool_registry.register(Box::new(
+            moltis_tools::send_image::SendImageTool::new()
+                .with_sandbox_router(Arc::clone(&sandbox_router)),
+        ));
         if let Some(t) = moltis_tools::web_search::WebSearchTool::from_config_with_env_overrides(
             &config.tools.web.search,
             &runtime_env_overrides,
@@ -3325,13 +3381,9 @@ pub async fn prepare_gateway(
         ),
     );
 
-    let addr: SocketAddr = format!("{bind}:{port}").parse()?;
-
     // Resolve TLS configuration (only when compiled with the `tls` feature).
     let tls_active = tls_enabled_for_gateway;
 
-    #[cfg(feature = "tls")]
-    let mut ca_cert_path: Option<PathBuf> = None;
     #[cfg(feature = "tls")]
     if tls_active {
         let tls_config = &config.tls;
@@ -3353,8 +3405,6 @@ pub async fn prepare_gateway(
                 "TLS is enabled but no certificates configured and auto_generate is false"
             );
         };
-
-        ca_cert_path = ca_path.clone();
 
         // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
         if let Some(ref ca) = ca_path {
@@ -3378,174 +3428,6 @@ pub async fn prepare_gateway(
                     }
                 }),
             );
-        }
-    }
-
-    // Count enabled skills and repos for startup banner.
-    let (skill_count, repo_count) = {
-        use moltis_skills::discover::{FsSkillDiscoverer, SkillDiscoverer};
-        let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
-        let sc = discoverer.discover().await.map(|s| s.len()).unwrap_or(0);
-        let rc = moltis_skills::manifest::ManifestStore::default_path()
-            .ok()
-            .map(|p| {
-                let store = moltis_skills::manifest::ManifestStore::new(p);
-                store.load().map(|m| m.repos.len()).unwrap_or(0)
-            })
-            .unwrap_or(0);
-        (sc, rc)
-    };
-
-    // Startup banner.
-    let scheme = if tls_active {
-        "https"
-    } else {
-        "http"
-    };
-    // When bound to an unspecified address (0.0.0.0 / ::), resolve the
-    // machine's outbound IP so the printed URL is clickable.
-    let display_ip = if addr.ip().is_unspecified() {
-        resolve_outbound_ip(addr.ip().is_ipv6())
-            .map(|ip| SocketAddr::new(ip, port))
-            .unwrap_or(addr)
-    } else {
-        addr
-    };
-    // Use plain localhost for display URLs when bound to loopback with TLS.
-    #[cfg(feature = "tls")]
-    let display_host = if is_localhost && tls_active {
-        format!("localhost:{port}")
-    } else {
-        display_ip.to_string()
-    };
-    #[cfg(not(feature = "tls"))]
-    let display_host = display_ip.to_string();
-    let passkey_origins = webauthn_registry
-        .as_ref()
-        .map(|registry| registry.get_all_origins())
-        .unwrap_or_default();
-    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
-    let mut lines = vec![
-        format!("moltis gateway v{}", state.version),
-        format!(
-            "protocol v{}, listening on {}://{} ({})",
-            moltis_protocol::PROTOCOL_VERSION,
-            scheme,
-            display_host,
-            if tls_active {
-                "HTTP/2 + HTTP/1.1"
-            } else {
-                "HTTP/1.1"
-            },
-        ),
-        startup_bind_line(addr),
-        format!("{} methods registered", methods.method_names().len()),
-        format!("llm: {}", provider_summary),
-        format!(
-            "skills: {} enabled, {} repo{}",
-            skill_count,
-            repo_count,
-            if repo_count == 1 {
-                ""
-            } else {
-                "s"
-            }
-        ),
-        format!(
-            "mcp: {} configured{}",
-            mcp_configured_count,
-            if mcp_configured_count > 0 {
-                " (starting in background)"
-            } else {
-                ""
-            }
-        ),
-        format!("sandbox: {} backend", sandbox_router.backend_name()),
-        format!(
-            "config: {}",
-            moltis_config::find_or_default_config_path().display()
-        ),
-        format!("data: {}", data_dir.display()),
-        format!("openclaw: {openclaw_startup_status}"),
-    ];
-    lines.extend(startup_passkey_origin_lines(&passkey_origins));
-    // Hint about Apple Container on macOS when using Docker.
-    #[cfg(target_os = "macos")]
-    if sandbox_router.backend_name() == "docker" {
-        lines.push(
-            "hint: install Apple Container for VM-isolated sandboxing (see docs/sandbox.md)".into(),
-        );
-    }
-    // Warn when no sandbox backend is available.
-    if sandbox_router.backend_name() == "none" {
-        if moltis_tools::sandbox::is_debian_host() && !sandbox_router.config().packages.is_empty() {
-            lines.push(
-                "⚠ no container runtime found; installing packages on host in background".into(),
-            );
-        } else {
-            lines.push("⚠ no container runtime found; commands run on host".into());
-        }
-    }
-    // Display setup code if one was generated.
-    if let Some(ref code) = setup_code_display {
-        lines.extend(startup_setup_code_lines(code));
-    }
-    #[cfg(feature = "tls")]
-    if tls_active {
-        if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
-            let ca_host = if is_localhost {
-                "localhost"
-            } else {
-                bind
-            };
-            lines.push(format!(
-                "CA cert: http://{}:{}/certs/ca.pem",
-                ca_host, http_port
-            ));
-            lines.push(format!("  or: {}", ca.display()));
-        }
-        lines.push("run `moltis trust-ca` to remove browser warnings".into());
-    }
-    // Tailscale: enable serve/funnel and show in banner.
-    #[cfg(feature = "tailscale")]
-    {
-        if tailscale_mode != TailscaleMode::Off {
-            let manager = CliTailscaleManager::new();
-            let ts_result = match tailscale_mode {
-                TailscaleMode::Serve => manager.enable_serve(port, tls_active).await,
-                TailscaleMode::Funnel => manager.enable_funnel(port, tls_active).await,
-                TailscaleMode::Off => unreachable!(),
-            };
-            match ts_result {
-                Ok(()) => {
-                    if let Ok(Some(hostname)) = manager.hostname().await {
-                        lines.push(format!("tailscale {tailscale_mode}: https://{hostname}"));
-                    } else {
-                        lines.push(format!("tailscale {tailscale_mode}: enabled"));
-                    }
-                },
-                Err(e) => {
-                    warn!("failed to enable tailscale {tailscale_mode}: {e}");
-                    lines.push(format!("tailscale {tailscale_mode}: FAILED ({e})"));
-                },
-            }
-        }
-    }
-    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0) + 4;
-    info!("┌{}┐", "─".repeat(width));
-    for line in &lines {
-        info!("│  {:<w$}│", line, w = width - 2);
-    }
-    info!("└{}┘", "─".repeat(width));
-
-    // Dispatch GatewayStart hook.
-    if let Some(ref hooks) = state.inner.read().await.hook_registry {
-        let payload = moltis_common::hooks::HookPayload::GatewayStart {
-            address: addr.to_string(),
-        };
-        if let Err(e) = hooks.dispatch(&payload).await {
-            tracing::warn!("GatewayStart hook dispatch failed: {e}");
         }
     }
 
@@ -3705,6 +3587,11 @@ pub async fn prepare_gateway(
         let metrics_state = Arc::clone(&state);
         let server_start = std::time::Instant::now();
         tokio::spawn(async move {
+            enum MetricsPersistJob {
+                Save(crate::state::MetricsHistoryPoint),
+                CleanupBefore(u64),
+            }
+
             // Load history from persistent store on startup.
             if let Some(ref store) = metrics_state.metrics_store {
                 let max_points = metrics_state.inner.read().await.metrics_history.capacity();
@@ -3730,6 +3617,35 @@ pub async fn prepare_gateway(
                     },
                 }
             }
+
+            // Serialize all metrics DB writes through one background writer task.
+            let metrics_persist_tx = metrics_state.metrics_store.as_ref().map(|store| {
+                let store = Arc::clone(store);
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MetricsPersistJob>();
+                tokio::spawn(async move {
+                    while let Some(job) = rx.recv().await {
+                        match job {
+                            MetricsPersistJob::Save(point) => {
+                                if let Err(e) = store.save_point(&point).await {
+                                    warn!("Failed to persist metrics point: {e}");
+                                }
+                            },
+                            MetricsPersistJob::CleanupBefore(cutoff) => {
+                                match store.cleanup_before(cutoff).await {
+                                    Ok(deleted) if deleted > 0 => {
+                                        info!("Cleaned up {} old metrics points", deleted);
+                                    },
+                                    Err(e) => {
+                                        warn!("Failed to cleanup old metrics: {e}");
+                                    },
+                                    _ => {},
+                                }
+                            },
+                        }
+                    }
+                });
+                tx
+            });
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             let mut cleanup_counter = 0u32;
@@ -3790,11 +3706,11 @@ pub async fn prepare_gateway(
                         .metrics_history
                         .push(point.clone());
 
-                    // Persist to store if available.
-                    if let Some(ref store) = metrics_state.metrics_store
-                        && let Err(e) = store.save_point(&point).await
+                    // Persist via the dedicated writer, without stalling collection.
+                    if let Some(tx) = metrics_persist_tx.as_ref()
+                        && tx.send(MetricsPersistJob::Save(point.clone())).is_err()
                     {
-                        warn!("Failed to persist metrics point: {e}");
+                        warn!("metrics persistence writer task is unavailable");
                     }
 
                     // Broadcast metrics update to all connected clients.
@@ -3816,21 +3732,15 @@ pub async fn prepare_gateway(
                     cleanup_counter += 1;
                     if cleanup_counter >= 360 {
                         cleanup_counter = 0;
-                        if let Some(ref store) = metrics_state.metrics_store {
+                        if let Some(tx) = metrics_persist_tx.as_ref() {
                             // Keep 7 days of history.
                             let cutoff = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_millis() as u64
                                 - (7 * 24 * 60 * 60 * 1000);
-                            match store.cleanup_before(cutoff).await {
-                                Ok(deleted) if deleted > 0 => {
-                                    info!("Cleaned up {} old metrics points", deleted);
-                                },
-                                Err(e) => {
-                                    warn!("Failed to cleanup old metrics: {e}");
-                                },
-                                _ => {},
+                            if tx.send(MetricsPersistJob::CleanupBefore(cutoff)).is_err() {
+                                warn!("metrics persistence writer task is unavailable");
                             }
                         }
                     }
@@ -4082,6 +3992,7 @@ pub async fn prepare_gateway(
             method_count: methods.method_names().len(),
             sandbox_backend_name: sandbox_router.backend_name().to_owned(),
             data_dir,
+            openclaw_status: openclaw_startup_status,
             setup_code_display,
             webauthn_registry,
             browser_for_lifecycle,
@@ -4204,7 +4115,6 @@ pub async fn start_gateway(
 
         let mgr = crate::tls::FsCertManager::new()?;
         rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
-
         // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
 
@@ -4294,6 +4204,7 @@ pub async fn start_gateway(
             moltis_config::find_or_default_config_path().display()
         ),
         format!("data: {}", banner.data_dir.display()),
+        format!("openclaw: {}", banner.openclaw_status),
     ];
     lines.extend(startup_passkey_origin_lines(&passkey_origins));
     // Hint about Apple Container on macOS when using Docker.

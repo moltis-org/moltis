@@ -535,6 +535,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_project_id(&self, key: &str, project_id: Option<String>) {
@@ -1032,6 +1035,34 @@ mod tests {
         let entry = meta.get("main").await.unwrap();
         assert_eq!(entry.message_count, 8);
         assert_eq!(entry.last_seen_message_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_mark_seen_emits_patched_event() {
+        let pool = sqlite_pool().await;
+        let bus = crate::session_events::SessionEventBus::new();
+        let meta = SqliteSessionMetadata::with_event_bus(pool, bus.clone());
+        let mut rx = bus.subscribe();
+
+        meta.upsert("main", None).await.unwrap();
+        let created = rx.recv().await.unwrap();
+        assert!(
+            matches!(
+                created,
+                crate::session_events::SessionEvent::Created { session_key } if session_key == "main"
+            ),
+            "expected created event after upsert"
+        );
+
+        meta.mark_seen("main").await;
+        let patched = rx.recv().await.unwrap();
+        assert!(
+            matches!(
+                patched,
+                crate::session_events::SessionEvent::Patched { session_key } if session_key == "main"
+            ),
+            "expected patched event after mark_seen"
+        );
     }
 
     #[test]

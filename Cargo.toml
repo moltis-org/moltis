@@ -13,6 +13,7 @@ members = [
   "crates/common",
   "crates/config",
   "crates/cron",
+  "crates/discord",
   "crates/gateway",
   "crates/graphql",
   "crates/mcp",
@@ -122,6 +123,7 @@ open               = "5.3"
 rand               = "0.9"
 regex              = "1"
 secrecy            = { features = ["serde"], version = "0.8" }
+serenity           = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
 sha2               = "0.10"
 sled               = "0.34"
 sysinfo            = "0.34"
@@ -182,6 +184,7 @@ json5                 = "0.4"
 notify-debouncer-full = "0.7"
 portable-pty          = "0.9"
 rstest                = "0.25"
+serial_test           = "3"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
@@ -206,6 +209,7 @@ moltis-chat            = { path = "crates/chat" }
 moltis-common          = { path = "crates/common" }
 moltis-config          = { path = "crates/config" }
 moltis-cron            = { path = "crates/cron" }
+moltis-discord         = { path = "crates/discord" }
 moltis-gateway         = { default-features = false, path = "crates/gateway" }
 moltis-graphql         = { path = "crates/graphql" }
 moltis-mcp             = { path = "crates/mcp" }
