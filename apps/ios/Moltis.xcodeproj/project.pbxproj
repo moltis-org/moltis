@@ -147,6 +147,7 @@
 		F4EE14BA5240BD907524E057 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		FC4424B219EFBC7A7F7D26E6 /* MoltisWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MoltisWidgetExtension.entitlements; sourceTree = "<group>"; };
 		FC7E35D562D39CE2FFA39ED0 /* ServerConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnection.swift; sourceTree = "<group>"; };
+		"TEMP_F9BCFF5B-E49C-40ED-8F98-E2863215D0FA" /* local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = local.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -409,6 +410,14 @@
 			path = MoltisAPI;
 			sourceTree = "<group>";
 		};
+		"TEMP_EC90A0FA-1053-40E6-B353-63BC2661625C" /* ios */ = {
+			isa = PBXGroup;
+			children = (
+				"TEMP_F9BCFF5B-E49C-40ED-8F98-E2863215D0FA" /* local.xcconfig */,
+			);
+			path = ios;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -462,6 +471,14 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					5E818DA0880F9A19F77D7E6B = {
+						DevelopmentTeam = 6ATT5T9L86;
+						ProvisioningStyle = Automatic;
+					};
+					CD2DD4BE52715046151C83D5 = {
+						DevelopmentTeam = 6ATT5T9L86;
+						ProvisioningStyle = Automatic;
+					};
 				};
 			};
 			buildConfigurationList = 05A5349E823228D1F723C88A /* Build configuration list for PBXProject "Moltis" */;
@@ -660,6 +677,7 @@
 		};
 		E9EDF5E282B8F2CBFAAAB2A5 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = "TEMP_F9BCFF5B-E49C-40ED-8F98-E2863215D0FA" /* local.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -691,6 +709,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -725,6 +744,7 @@
 		};
 		FC118811CB476F0DA9466057 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = "TEMP_F9BCFF5B-E49C-40ED-8F98-E2863215D0FA" /* local.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -756,6 +776,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";

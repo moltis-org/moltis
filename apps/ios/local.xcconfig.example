@@ -1,0 +1,6 @@
+// Copy this file to local.xcconfig and fill in your development team ID.
+// This file is gitignored and referenced by project.yml for code signing.
+//
+// Find your team ID: Xcode > Settings > Accounts > select team > Team ID
+// Or: https://developer.apple.com/account → Membership Details
+DEVELOPMENT_TEAM = XXXXXXXXXX

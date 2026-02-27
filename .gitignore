@@ -18,6 +18,7 @@ apps/ios/Moltis.xcodeproj/xcuserdata/
 apps/ios/Moltis.xcodeproj/project.xcworkspace/xcuserdata/
 apps/ios/.derivedData*/
 apps/ios/.tools/
+apps/ios/local.xcconfig
 crates/web/ui/node_modules/
 crates/web/ui/playwright-report/
 crates/web/ui/test-results/
