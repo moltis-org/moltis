@@ -4,6 +4,7 @@
 //! the serenity library. Handles inbound DMs and guild messages, applies
 //! access control policies, and dispatches messages to the chat session.
 
+pub mod access;
 pub mod commands;
 pub mod config;
 pub mod error;

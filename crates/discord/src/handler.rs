@@ -15,9 +15,11 @@ use crate::config::{
     ActivityType as CfgActivityType, DiscordAccountConfig, OnlineStatus as CfgOnlineStatus,
 };
 
+use crate::access;
+
 use moltis_channels::{
     ChannelEvent, ChannelType,
-    gating::{DmPolicy, GroupPolicy, MentionMode, is_allowed},
+    gating::DmPolicy,
     message_log::MessageLogEntry,
     otp::{OtpInitResult, OtpVerifyResult},
     plugin::{ChannelEventSink, ChannelMessageKind, ChannelMessageMeta, ChannelReplyTarget},
@@ -150,44 +152,23 @@ impl EventHandler for Handler {
             "discord inbound message received"
         );
 
-        // Apply guild allowlist.
-        if is_guild
-            && let Some(guild_id) = msg.guild_id
-            && !config.guild_allowlist.is_empty()
-            && !is_allowed(&guild_id.to_string(), &config.guild_allowlist)
-        {
-            debug!(
-                account_id = %self.account_id,
-                guild_id = %guild_id,
-                "Discord message from non-allowlisted guild"
-            );
-            return;
-        }
-
-        // Apply DM/group policy and mention mode.
-        let policy_allowed = if is_guild {
-            match config.group_policy {
-                GroupPolicy::Open => true,
-                GroupPolicy::Allowlist => is_allowed(&chat_id, &config.guild_allowlist),
-                GroupPolicy::Disabled => false,
-            }
+        // Check DM / guild / mention policy.
+        let chat_type = if is_guild {
+            moltis_common::types::ChatType::Group
         } else {
-            match config.dm_policy {
-                DmPolicy::Open => true,
-                DmPolicy::Allowlist => is_allowed(&peer_id, &config.allowlist),
-                DmPolicy::Disabled => false,
-            }
+            moltis_common::types::ChatType::Dm
         };
-        let mention_allowed = if is_guild {
-            match config.mention_mode {
-                MentionMode::Always => true,
-                MentionMode::Mention => bot_mentioned,
-                MentionMode::None => false,
-            }
-        } else {
-            true // DMs always pass mention check
-        };
-        let access_granted = policy_allowed && mention_allowed;
+        let guild_id_str = msg.guild_id.map(|g| g.to_string());
+        let policy_allowed = access::check_access(
+            &config,
+            &chat_type,
+            &peer_id,
+            username.as_deref(),
+            guild_id_str.as_deref(),
+            bot_mentioned,
+        )
+        .is_ok();
+        let access_granted = policy_allowed;
 
         // Log the message.
         if let Some(log) = message_log {
@@ -414,7 +395,7 @@ async fn handle_otp_flow(
         match result {
             OtpVerifyResult::Approved => {
                 // Auto-approve: add to allowlist via the event sink.
-                let identifier = username.unwrap_or(peer_id);
+                let identifier = peer_id;
                 if let Some(sink) = event_sink {
                     sink.request_sender_approval("discord", account_id, identifier)
                         .await;
