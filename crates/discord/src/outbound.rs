@@ -34,6 +34,10 @@ const STREAM_MIN_INITIAL_CHARS: usize = 30;
 /// Throttle interval between edit-in-place updates during streaming.
 const STREAM_EDIT_THROTTLE: Duration = Duration::from_millis(500);
 
+/// How often to re-send the typing indicator while waiting for stream events.
+/// Discord typing indicators expire after ~10 s; refresh well before that.
+const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(8);
+
 // ── HTML-to-Discord conversion ───────────────────────────────────────
 
 /// Convert the HTML activity-log suffix (Telegram-flavoured) into Discord
@@ -452,64 +456,76 @@ impl ChannelStreamOutbound for DiscordOutbound {
         let mut accumulated = String::new();
         let mut sent_message_id: Option<MessageId> = None;
         let mut last_edit = tokio::time::Instant::now();
+        let mut typing_interval = tokio::time::interval(TYPING_REFRESH_INTERVAL);
+        typing_interval.tick().await; // consume the immediate first tick
 
         info!(account_id, chat_id = to, "discord stream started");
 
-        while let Some(event) = stream.recv().await {
-            match event {
-                StreamEvent::Delta(delta) => {
-                    accumulated.push_str(&delta);
+        loop {
+            tokio::select! {
+                event = stream.recv() => {
+                    let Some(event) = event else { break };
+                    match event {
+                        StreamEvent::Delta(delta) => {
+                            accumulated.push_str(&delta);
 
-                    // Phase 1: initial send once we have enough text.
-                    if sent_message_id.is_none() {
-                        if accumulated.chars().count() >= STREAM_MIN_INITIAL_CHARS {
-                            let display =
-                                truncate_at_char_boundary(&accumulated, DISCORD_MAX_MESSAGE_LEN);
-                            match send_discord_message(&http, channel_id, display, reference).await
+                            // Phase 1: initial send once we have enough text.
+                            if sent_message_id.is_none() {
+                                if accumulated.chars().count() >= STREAM_MIN_INITIAL_CHARS {
+                                    let display =
+                                        truncate_at_char_boundary(&accumulated, DISCORD_MAX_MESSAGE_LEN);
+                                    match send_discord_message(&http, channel_id, display, reference).await
+                                    {
+                                        Ok(msg) => {
+                                            sent_message_id = Some(msg.id);
+                                            last_edit = tokio::time::Instant::now();
+                                        },
+                                        Err(e) => {
+                                            warn!(
+                                                account_id,
+                                                chat_id = to,
+                                                error = %e,
+                                                "discord stream initial send failed"
+                                            );
+                                        },
+                                    }
+                                }
+                                continue;
+                            }
+
+                            // Phase 2: throttled in-place edits.
+                            if last_edit.elapsed() >= STREAM_EDIT_THROTTLE
+                                && let Some(msg_id) = sent_message_id
                             {
-                                Ok(msg) => {
-                                    sent_message_id = Some(msg.id);
-                                    last_edit = tokio::time::Instant::now();
-                                },
-                                Err(e) => {
-                                    warn!(
+                                let display =
+                                    truncate_at_char_boundary(&accumulated, DISCORD_MAX_MESSAGE_LEN);
+                                let edit = EditMessage::new().content(display);
+                                if let Err(e) = channel_id.edit_message(&http, msg_id, edit).await {
+                                    debug!(
                                         account_id,
                                         chat_id = to,
                                         error = %e,
-                                        "discord stream initial send failed"
+                                        "discord stream edit failed (non-fatal)"
                                     );
-                                },
+                                }
+                                last_edit = tokio::time::Instant::now();
                             }
-                        }
-                        continue;
+                        },
+                        StreamEvent::Done => break,
+                        StreamEvent::Error(err) => {
+                            warn!(account_id, chat_id = to, error = %err, "discord stream error");
+                            if accumulated.is_empty() {
+                                accumulated = err;
+                            }
+                            break;
+                        },
                     }
-
-                    // Phase 2: throttled in-place edits.
-                    if last_edit.elapsed() >= STREAM_EDIT_THROTTLE
-                        && let Some(msg_id) = sent_message_id
-                    {
-                        let display =
-                            truncate_at_char_boundary(&accumulated, DISCORD_MAX_MESSAGE_LEN);
-                        let edit = EditMessage::new().content(display);
-                        if let Err(e) = channel_id.edit_message(&http, msg_id, edit).await {
-                            debug!(
-                                account_id,
-                                chat_id = to,
-                                error = %e,
-                                "discord stream edit failed (non-fatal)"
-                            );
-                        }
-                        last_edit = tokio::time::Instant::now();
-                    }
-                },
-                StreamEvent::Done => break,
-                StreamEvent::Error(err) => {
-                    warn!(account_id, chat_id = to, error = %err, "discord stream error");
-                    if accumulated.is_empty() {
-                        accumulated = err;
-                    }
-                    break;
-                },
+                }
+                _ = typing_interval.tick() => {
+                    // Re-send typing indicator to keep it visible during
+                    // long-running tool execution or pauses in the stream.
+                    let _ = channel_id.broadcast_typing(&http).await;
+                }
             }
         }
 
