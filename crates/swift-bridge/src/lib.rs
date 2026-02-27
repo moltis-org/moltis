@@ -67,10 +67,18 @@ impl BridgeState {
         let session_store = SessionStore::new(sessions_dir);
 
         // Open the shared SQLite database (same moltis.db used by the gateway).
+        // WAL mode + synchronous=NORMAL avoids multi-second write contention.
         let db_path = data_dir.join("moltis.db");
-        let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
         let db_pool = runtime.block_on(async {
-            let pool = sqlx::SqlitePool::connect(&db_url)
+            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+            use std::str::FromStr;
+            let opts =
+                SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+                    .expect("invalid moltis.db path")
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .synchronous(SqliteSynchronous::Normal);
+            let pool = sqlx::SqlitePool::connect_with(opts)
                 .await
                 .unwrap_or_else(|e| panic!("failed to open moltis.db: {e}"));
             // Run migrations so the sessions table exists even if the gateway

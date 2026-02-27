@@ -1445,10 +1445,18 @@ pub async fn prepare_gateway(
         buf.enable_persistence(data_dir.join("logs.jsonl"));
     }
     let db_path = data_dir.join("moltis.db");
-    let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
-    let db_pool = sqlx::SqlitePool::connect(&db_url)
-        .await
-        .expect("failed to open moltis.db");
+    let db_pool = {
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+        use std::str::FromStr;
+        let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+            .expect("invalid moltis.db path")
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal);
+        sqlx::SqlitePool::connect_with(opts)
+            .await
+            .expect("failed to open moltis.db")
+    };
 
     // Run database migrations from each crate in dependency order.
     // Order matters: sessions depends on projects (FK reference).
@@ -2688,8 +2696,18 @@ pub async fn prepare_gateway(
         };
 
         let memory_db_path = data_dir.join("memory.db");
-        let memory_db_url = format!("sqlite:{}?mode=rwc", memory_db_path.display());
-        match sqlx::SqlitePool::connect(&memory_db_url).await {
+        let memory_pool_result = {
+            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+            use std::str::FromStr;
+            let opts =
+                SqliteConnectOptions::from_str(&format!("sqlite:{}", memory_db_path.display()))
+                    .expect("invalid memory.db path")
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .synchronous(SqliteSynchronous::Normal);
+            sqlx::SqlitePool::connect_with(opts).await
+        };
+        match memory_pool_result {
             Ok(memory_pool) => {
                 if let Err(e) = moltis_memory::schema::run_migrations(&memory_pool).await {
                     tracing::warn!("memory migration failed: {e}");
