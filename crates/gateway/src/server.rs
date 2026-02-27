@@ -3587,6 +3587,11 @@ pub async fn prepare_gateway(
         let metrics_state = Arc::clone(&state);
         let server_start = std::time::Instant::now();
         tokio::spawn(async move {
+            enum MetricsPersistJob {
+                Save(crate::state::MetricsHistoryPoint),
+                CleanupBefore(u64),
+            }
+
             // Load history from persistent store on startup.
             if let Some(ref store) = metrics_state.metrics_store {
                 let max_points = metrics_state.inner.read().await.metrics_history.capacity();
@@ -3612,6 +3617,35 @@ pub async fn prepare_gateway(
                     },
                 }
             }
+
+            // Serialize all metrics DB writes through one background writer task.
+            let metrics_persist_tx = metrics_state.metrics_store.as_ref().map(|store| {
+                let store = Arc::clone(store);
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MetricsPersistJob>();
+                tokio::spawn(async move {
+                    while let Some(job) = rx.recv().await {
+                        match job {
+                            MetricsPersistJob::Save(point) => {
+                                if let Err(e) = store.save_point(&point).await {
+                                    warn!("Failed to persist metrics point: {e}");
+                                }
+                            },
+                            MetricsPersistJob::CleanupBefore(cutoff) => {
+                                match store.cleanup_before(cutoff).await {
+                                    Ok(deleted) if deleted > 0 => {
+                                        info!("Cleaned up {} old metrics points", deleted);
+                                    },
+                                    Err(e) => {
+                                        warn!("Failed to cleanup old metrics: {e}");
+                                    },
+                                    _ => {},
+                                }
+                            },
+                        }
+                    }
+                });
+                tx
+            });
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             let mut cleanup_counter = 0u32;
@@ -3672,11 +3706,11 @@ pub async fn prepare_gateway(
                         .metrics_history
                         .push(point.clone());
 
-                    // Persist to store if available.
-                    if let Some(ref store) = metrics_state.metrics_store
-                        && let Err(e) = store.save_point(&point).await
+                    // Persist via the dedicated writer, without stalling collection.
+                    if let Some(tx) = metrics_persist_tx.as_ref()
+                        && tx.send(MetricsPersistJob::Save(point.clone())).is_err()
                     {
-                        warn!("Failed to persist metrics point: {e}");
+                        warn!("metrics persistence writer task is unavailable");
                     }
 
                     // Broadcast metrics update to all connected clients.
@@ -3698,21 +3732,15 @@ pub async fn prepare_gateway(
                     cleanup_counter += 1;
                     if cleanup_counter >= 360 {
                         cleanup_counter = 0;
-                        if let Some(ref store) = metrics_state.metrics_store {
+                        if let Some(tx) = metrics_persist_tx.as_ref() {
                             // Keep 7 days of history.
                             let cutoff = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_millis() as u64
                                 - (7 * 24 * 60 * 60 * 1000);
-                            match store.cleanup_before(cutoff).await {
-                                Ok(deleted) if deleted > 0 => {
-                                    info!("Cleaned up {} old metrics points", deleted);
-                                },
-                                Err(e) => {
-                                    warn!("Failed to cleanup old metrics: {e}");
-                                },
-                                _ => {},
+                            if tx.send(MetricsPersistJob::CleanupBefore(cutoff)).is_err() {
+                                warn!("metrics persistence writer task is unavailable");
                             }
                         }
                     }
