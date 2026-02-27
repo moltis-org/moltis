@@ -30,8 +30,22 @@ final class ModelStore: ObservableObject {
         defer { isLoading = false }
 
         do {
+            logger.info("Loading models via GraphQL")
             let gqlModels = try await graphqlClient.fetchModels()
-            models = gqlModels.map { ModelInfo.from($0) }
+            let resolvedModels = gqlModels.compactMap(ModelInfo.from)
+            let droppedCount = gqlModels.count - resolvedModels.count
+            let providerCount = Set(resolvedModels.map(\.provider)).count
+            models = resolvedModels
+
+            if resolvedModels.isEmpty {
+                logger.warning(
+                    "Model list is empty (raw=\(gqlModels.count), dropped=\(droppedCount))"
+                )
+            } else {
+                logger.info(
+                    "Loaded \(resolvedModels.count) models from \(providerCount) providers (raw=\(gqlModels.count), dropped=\(droppedCount))"
+                )
+            }
         } catch {
             logger.error("Failed to load models: \(error.localizedDescription)")
         }

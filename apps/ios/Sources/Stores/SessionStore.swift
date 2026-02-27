@@ -52,19 +52,9 @@ final class SessionStore: ObservableObject {
     // MARK: - Create session
 
     func createSession() async -> String? {
-        guard let wsClient = connectionStore?.wsClient else { return nil }
-        do {
-            let response = try await wsClient.send(method: "sessions.create")
-            if let payload = response.payload,
-               let dict = payload.value as? [String: Any],
-               let key = dict["key"] as? String {
-                await loadSessions()
-                return key
-            }
-        } catch {
-            logger.error("Failed to create session: \(error.localizedDescription)")
-        }
-        return nil
+        let key = "session:\(UUID().uuidString.lowercased())"
+        logger.info("Prepared new session key: \(key, privacy: .public)")
+        return key
     }
 
     // MARK: - Delete session

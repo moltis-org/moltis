@@ -6,10 +6,12 @@ import os
 
 actor MoltisWSClient {
     typealias EventHandler = @Sendable (String, ChatEventPayload) -> Void
+    typealias StateHandler = @Sendable (State) -> Void
 
-    enum State: Sendable {
+    enum State: Sendable, Equatable {
         case disconnected
         case connecting
+        case reconnecting(attempt: Int, nextRetryIn: TimeInterval)
         case connected
         case error(String)
     }
@@ -23,7 +25,9 @@ actor MoltisWSClient {
 
     private(set) var state: State = .disconnected
     private var pendingRequests: [String: CheckedContinuation<RPCResponse, Error>] = [:]
+    private var pendingRequestMethods: [String: String] = [:]
     private var eventHandlers: [EventHandler] = []
+    private var stateHandlers: [StateHandler] = []
     private var receiveTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempts = 0
@@ -36,6 +40,11 @@ actor MoltisWSClient {
 
     func onEvent(_ handler: @escaping EventHandler) {
         eventHandlers.append(handler)
+    }
+
+    func onStateChange(_ handler: @escaping StateHandler) {
+        stateHandlers.append(handler)
+        handler(state)
     }
 
     func clearEventHandlers() {
@@ -51,10 +60,10 @@ actor MoltisWSClient {
         self.apiKey = server.apiKey
         self.shouldReconnect = true
         self.reconnectAttempts = 0
-        state = .connecting
+        updateState(.connecting)
 
         guard let apiKey = server.apiKey else {
-            state = .error("No API key")
+            updateState(.error("No API key"))
             throw AuthError.noApiKey
         }
 
@@ -108,7 +117,7 @@ actor MoltisWSClient {
 
         guard response.ok == true, let payload = response.payload else {
             let errorMsg = response.error?.message ?? "Connection rejected"
-            state = .error(errorMsg)
+            updateState(.error(errorMsg))
             throw AuthError.serverError(0, errorMsg)
         }
 
@@ -116,7 +125,7 @@ actor MoltisWSClient {
         let jsonData = try JSONEncoder().encode(payload)
         let hello = try JSONDecoder().decode(HelloOkPayload.self, from: jsonData)
         self.helloPayload = hello
-        state = .connected
+        updateState(.connected)
         reconnectAttempts = 0
 
         logger.info("Connected to \(server.url.absoluteString) (v\(hello.server?.version ?? "?"))")
@@ -136,13 +145,14 @@ actor MoltisWSClient {
         session?.invalidateAndCancel()
         session = nil
         helloPayload = nil
-        state = .disconnected
+        updateState(.disconnected)
 
         // Fail all pending requests
         for (_, continuation) in pendingRequests {
             continuation.resume(throwing: CancellationError())
         }
         pendingRequests.removeAll()
+        pendingRequestMethods.removeAll()
     }
 
     // MARK: - Send RPC
@@ -158,6 +168,8 @@ actor MoltisWSClient {
         guard let webSocketTask, webSocketTask.state == .running else {
             throw AuthError.serverError(0, "WebSocket not connected")
         }
+
+        logger.debug("RPC -> \(method, privacy: .public)")
 
         let requestId = UUID().uuidString
         var payload: [String: AnyCodable] = [
@@ -178,9 +190,18 @@ actor MoltisWSClient {
 
         try await webSocketTask.send(message)
 
-        return try await withCheckedThrowingContinuation { continuation in
+        let response = try await withCheckedThrowingContinuation { continuation in
             pendingRequests[requestId] = continuation
+            pendingRequestMethods[requestId] = method
         }
+
+        if response.ok == false || response.error != nil {
+            let code = response.error?.code ?? "unknown"
+            let message = response.error?.message ?? "Unknown RPC error"
+            throw AuthError.serverError(0, "[\(code)] \(message)")
+        }
+
+        return response
     }
 
     // MARK: - Receive loop
@@ -204,8 +225,11 @@ actor MoltisWSClient {
             } catch {
                 if !Task.isCancelled {
                     logger.warning("WebSocket receive error: \(error.localizedDescription)")
-                    state = .error(error.localizedDescription)
-                    scheduleReconnect()
+                    if shouldReconnect {
+                        scheduleReconnect()
+                    } else {
+                        updateState(.error(error.localizedDescription))
+                    }
                 }
                 return
             }
@@ -221,7 +245,20 @@ actor MoltisWSClient {
             switch frame.type {
             case "res":
                 // Match response to pending request
-                if let id = frame.id, let continuation = pendingRequests.removeValue(forKey: id) {
+                if let id = frame.id {
+                    let method = pendingRequestMethods.removeValue(forKey: id) ?? "unknown"
+                    guard let continuation = pendingRequests.removeValue(forKey: id) else {
+                        return
+                    }
+                    if frame.ok == false || frame.error != nil {
+                        let code = frame.error?.code ?? "unknown"
+                        let message = frame.error?.message ?? "Unknown RPC error"
+                        logger.error(
+                            "RPC <- error method=\(method, privacy: .public) code=\(code, privacy: .public) message=\(message, privacy: .public)"
+                        )
+                    } else {
+                        logger.debug("RPC <- ok \(method, privacy: .public)")
+                    }
                     continuation.resume(returning: frame)
                 }
 
@@ -255,11 +292,13 @@ actor MoltisWSClient {
     private func scheduleReconnect() {
         guard shouldReconnect, reconnectTask == nil else { return }
 
+        let nextAttempt = reconnectAttempts + 1
+        let delay = min(1.0 * pow(1.5, Double(reconnectAttempts)), 5.0)
+        updateState(.reconnecting(attempt: nextAttempt, nextRetryIn: delay))
+
         reconnectTask = Task { [weak self] in
             guard let self else { return }
 
-            let attempts = await self.reconnectAttempts
-            let delay = min(1.0 * pow(1.5, Double(attempts)), 5.0)
             try? await Task.sleep(for: .seconds(delay))
 
             guard !Task.isCancelled else { return }
@@ -272,7 +311,7 @@ actor MoltisWSClient {
 
         reconnectAttempts += 1
         reconnectTask = nil
-        state = .connecting
+        updateState(.connecting)
 
         let attempt = reconnectAttempts
         logger.info("Reconnecting (attempt \(attempt))...")
@@ -284,6 +323,13 @@ actor MoltisWSClient {
                 logger.warning("Reconnect failed: \(error.localizedDescription)")
                 scheduleReconnect()
             }
+        }
+    }
+
+    private func updateState(_ newState: State) {
+        state = newState
+        for handler in stateHandlers {
+            handler(newState)
         }
     }
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ConnectView: View {
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var connectionStore: ConnectionStore
     @StateObject private var bonjourBrowser = BonjourBrowser()
@@ -13,11 +14,20 @@ struct ConnectView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var authMode: AuthMode = .check
+    @State private var serverTrustStates: [String: ServerTrustState] = [:]
 
     enum AuthMode {
         case check
         case password
         case apiKey
+    }
+
+    enum ServerTrustState {
+        case unknown
+        case checking
+        case trusted
+        case needsCA
+        case unavailable
     }
 
     var body: some View {
@@ -55,22 +65,49 @@ struct ConnectView: View {
                                 }
                                 .buttonStyle(.plain)
 
-                                if let caCertURL = server.caCertURL {
-                                    Link(destination: caCertURL) {
-                                        Label("Download CA Certificate", systemImage: "arrow.down.doc")
+                                switch trustState(for: server) {
+                                case .checking:
+                                    HStack(spacing: 8) {
+                                        ProgressView()
+                                            .scaleEffect(0.8)
+                                        Text("Checking certificate trust...")
                                             .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
+                                case .needsCA:
+                                    if server.caCertURL != nil {
+                                        Button {
+                                            downloadCACertificate(for: server)
+                                        } label: {
+                                            Label("Download CA Certificate", systemImage: "arrow.down.doc.fill")
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                    }
+                                case .trusted, .unknown, .unavailable:
+                                    EmptyView()
                                 }
                             }
                         }
                     }
 
-                    Section("Trust This Certificate (iOS)") {
-                        Text("1. Tap “Download CA Certificate” for your server.")
-                        Text("2. In Safari, allow the profile download.")
-                        Text("3. Open Settings > General > VPN & Device Management, then install the downloaded profile.")
-                        Text("4. Open Settings > General > About > Certificate Trust Settings.")
-                        Text("5. Enable full trust for “Moltis Local CA”, then return and tap Check Connection.")
+                    if needsCertificateTrustHelp {
+                        Section("Trust This Certificate (iOS)") {
+                            Text("Only required when the app says Download CA Certificate.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Re-check Certificate Trust") {
+                                Task { await refreshNearbyServerTrustStates(force: true) }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Text("1. Tap Download CA Certificate for your server.")
+                            Text("2. In Safari, allow the profile download.")
+                            Text("3. Open Settings > General > VPN & Device Management, then install the downloaded profile.")
+                            Text("4. Open Settings > General > About > Certificate Trust Settings.")
+                            Text("5. Enable full trust for Moltis Local CA, then return and tap Check Connection.")
+                        }
                     }
                 }
 
@@ -86,19 +123,33 @@ struct ConnectView: View {
 
                     switch authMode {
                     case .check:
-                        Button("Check Connection") {
+                        Button {
                             Task { await checkServer() }
+                        } label: {
+                            Text("Check Connection")
+                                .frame(maxWidth: .infinity)
                         }
-                        .disabled(serverURL.isEmpty)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(serverURL.isEmpty || authManager.isAuthenticating)
+
+                        Text("Remote access needs two server settings: password auth configured and GraphQL enabled.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
                     case .password:
                         SecureField("Password", text: $password)
                             .textContentType(.password)
 
-                        Button("Login & Connect") {
+                        Button {
                             Task { await loginWithPassword() }
+                        } label: {
+                            Text("Login & Connect")
+                                .frame(maxWidth: .infinity)
                         }
-                        .disabled(password.isEmpty)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(password.isEmpty || authManager.isAuthenticating)
 
                         Button("Use API Key Instead") {
                             authMode = .apiKey
@@ -110,10 +161,15 @@ struct ConnectView: View {
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
 
-                        Button("Connect with API Key") {
+                        Button {
                             Task { await connectWithApiKey() }
+                        } label: {
+                            Text("Connect with API Key")
+                                .frame(maxWidth: .infinity)
                         }
-                        .disabled(apiKey.isEmpty)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(apiKey.isEmpty || authManager.isAuthenticating)
 
                         Button("Use Password Instead") {
                             authMode = .password
@@ -133,7 +189,13 @@ struct ConnectView: View {
                 }
             }
             .navigationTitle("Connect")
-            .onAppear { bonjourBrowser.start() }
+            .onAppear {
+                bonjourBrowser.start()
+                Task { await refreshNearbyServerTrustStates(force: true) }
+            }
+            .onChange(of: bonjourBrowser.servers.map(\.id)) { _, _ in
+                Task { await refreshNearbyServerTrustStates(force: false) }
+            }
             .onDisappear { bonjourBrowser.stop() }
             .alert("Connection Error", isPresented: $showError) {
                 Button("OK") {}
@@ -165,16 +227,37 @@ struct ConnectView: View {
         do {
             authStatus = try await authManager.checkStatus(url: url)
             if let status = authStatus {
-                if status.authDisabled {
+                let graphQLEnabled: Bool?
+                if let statusGraphQLEnabled = status.graphqlEnabled {
+                    graphQLEnabled = statusGraphQLEnabled
+                } else {
+                    graphQLEnabled = await authManager.checkGraphQLEnabled(url: url)
+                }
+                if graphQLEnabled == false {
+                    showError(
+                        message: "GraphQL is disabled on this server. Enable it in Moltis (Settings > GraphQL), then check connection again."
+                    )
+                } else if status.setupRequired || !status.setupComplete {
+                    showError(
+                        message: "Server auth is not fully configured for remote access. On the Moltis host, set a password first, then try again from iOS."
+                    )
+                } else if !status.authDisabled && !status.hasPassword {
+                    showError(
+                        message: "This server has no password configured. The iOS companion currently requires password auth. Set a password in Moltis, then reconnect."
+                    )
+                } else if status.authDisabled {
                     // No auth needed — connect directly with empty key
                     await connectWithApiKey()
-                } else if status.setupRequired {
-                    showError(message: "Server requires initial setup. Complete setup in the terminal first.")
                 } else {
                     authMode = .password
                 }
             }
         } catch {
+            if isCertificateTrustError(error) {
+                showError(message: "TLS certificate is not trusted yet. Download and trust the Moltis Local CA for this server.")
+                await refreshNearbyServerTrustStates(force: true)
+                return
+            }
             showError(message: error.localizedDescription)
         }
     }
@@ -224,5 +307,76 @@ struct ConnectView: View {
             url = "https://\(url)"
         }
         return url
+    }
+
+    private var needsCertificateTrustHelp: Bool {
+        bonjourBrowser.servers.contains { trustState(for: $0) == .needsCA }
+    }
+
+    private func trustState(for server: DiscoveredServer) -> ServerTrustState {
+        serverTrustStates[server.id] ?? .unknown
+    }
+
+    private func downloadCACertificate(for server: DiscoveredServer) {
+        guard let caCertURL = server.caCertURL else { return }
+        openURL(caCertURL)
+    }
+
+    private func refreshNearbyServerTrustStates(force: Bool) async {
+        let servers = bonjourBrowser.servers
+        let visibleIDs = Set(servers.map(\.id))
+        serverTrustStates = serverTrustStates.filter { visibleIDs.contains($0.key) }
+
+        for server in servers {
+            if !force {
+                let existing = trustState(for: server)
+                if existing == .trusted || existing == .needsCA || existing == .checking {
+                    continue
+                }
+            }
+
+            serverTrustStates[server.id] = .checking
+            serverTrustStates[server.id] = await detectTrustState(for: server)
+        }
+    }
+
+    private func detectTrustState(for server: DiscoveredServer) async -> ServerTrustState {
+        guard let serverURL = server.url else { return .unavailable }
+
+        var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false)
+        components?.path = "/api/auth/status"
+
+        guard let statusURL = components?.url else {
+            return .unavailable
+        }
+
+        var request = URLRequest(url: statusURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 4
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if response is HTTPURLResponse {
+                return .trusted
+            }
+            return .unavailable
+        } catch {
+            if isCertificateTrustError(error) {
+                return .needsCA
+            }
+            return .unavailable
+        }
+    }
+
+    private func isCertificateTrustError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return false }
+        return [
+            NSURLErrorServerCertificateHasBadDate,
+            NSURLErrorServerCertificateUntrusted,
+            NSURLErrorServerCertificateHasUnknownRoot,
+            NSURLErrorServerCertificateNotYetValid,
+            NSURLErrorSecureConnectionFailed,
+        ].contains(nsError.code)
     }
 }

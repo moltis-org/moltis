@@ -49,6 +49,7 @@ actor MoltisGraphQLClient {
     func query<T: Decodable>(
         _ queryString: String,
         variables: [String: AnyCodable]? = nil,
+        operationName: String? = nil,
         as type: T.Type
     ) async throws -> T {
         guard let server else {
@@ -64,7 +65,14 @@ actor MoltisGraphQLClient {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 30
 
-        let gqlRequest = GraphQLRequest(query: queryString, variables: variables)
+        let opName = operationName ?? "anonymous"
+        logger.debug("GraphQL request started: \(opName, privacy: .public)")
+
+        let gqlRequest = GraphQLRequest(
+            query: queryString,
+            variables: variables,
+            operationName: operationName
+        )
         request.httpBody = try JSONEncoder().encode(gqlRequest)
 
         let (data, response) = try await urlSession.data(for: request)
@@ -73,16 +81,24 @@ actor MoltisGraphQLClient {
         }
         guard httpResponse.statusCode == 200 else {
             let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+            logger.error(
+                "GraphQL HTTP error op=\(opName, privacy: .public) status=\(httpResponse.statusCode) body=\(body, privacy: .public)"
+            )
             throw AuthError.serverError(httpResponse.statusCode, body)
         }
 
         let gqlResponse = try JSONDecoder().decode(GraphQLResponse<T>.self, from: data)
         if let errors = gqlResponse.errors, let first = errors.first {
+            let joined = errors.map(\.message).joined(separator: " | ")
+            logger.error(
+                "GraphQL resolver error op=\(opName, privacy: .public) messages=\(joined, privacy: .public)"
+            )
             throw first
         }
         guard let result = gqlResponse.data else {
             throw AuthError.serverError(0, "No data in GraphQL response")
         }
+        logger.debug("GraphQL request succeeded: \(opName, privacy: .public)")
         return result
     }
 
@@ -110,7 +126,7 @@ actor MoltisGraphQLClient {
                     }
                 }
             }
-            """, as: Response.self)
+            """, operationName: "FetchSessions", as: Response.self)
         return result.sessions.list
     }
 
@@ -138,6 +154,7 @@ actor MoltisGraphQLClient {
             }
             """,
             variables: ["query": AnyCodable(searchQuery)],
+            operationName: "SearchSessions",
             as: Response.self
         )
         return result.sessions.search
@@ -157,11 +174,10 @@ actor MoltisGraphQLClient {
                         id
                         name
                         provider
-                        tier
                     }
                 }
             }
-            """, as: Response.self)
+            """, operationName: "FetchModels", as: Response.self)
         return result.models.list
     }
 
@@ -178,7 +194,7 @@ actor MoltisGraphQLClient {
                     uptimeMs
                 }
             }
-            """, as: Response.self)
+            """, operationName: "FetchStatus", as: Response.self)
         return result.status
     }
 }
@@ -197,8 +213,8 @@ struct GQLSession: Decodable, Identifiable, Equatable {
 }
 
 struct GQLModel: Decodable, Identifiable, Equatable {
-    let id: String
-    let name: String
+    let id: String?
+    let name: String?
     let provider: String?
     let tier: String?
 }

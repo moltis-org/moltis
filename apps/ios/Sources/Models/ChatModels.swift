@@ -121,10 +121,14 @@ struct ModelInfo: Identifiable, Equatable {
     let provider: String
     let tier: String?
 
-    static func from(_ gql: GQLModel) -> ModelInfo {
-        ModelInfo(
-            id: gql.id,
-            name: gql.name,
+    static func from(_ gql: GQLModel) -> ModelInfo? {
+        guard let id = gql.id, !id.isEmpty,
+              let name = gql.name, !name.isEmpty else {
+            return nil
+        }
+        return ModelInfo(
+            id: id,
+            name: name,
             provider: gql.provider ?? "unknown",
             tier: gql.tier
         )

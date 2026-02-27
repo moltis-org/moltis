@@ -6,6 +6,7 @@ import os
 enum ConnectionState: Equatable {
     case disconnected
     case connecting
+    case reconnecting(attempt: Int, nextRetryIn: TimeInterval)
     case connected
     case error(String)
 
@@ -18,6 +19,9 @@ enum ConnectionState: Equatable {
         switch self {
         case .disconnected: return "Disconnected"
         case .connecting: return "Connecting..."
+        case .reconnecting(let attempt, let nextRetryIn):
+            let seconds = max(1, Int(nextRetryIn.rounded(.up)))
+            return "Server unavailable. Retrying in \(seconds)s (attempt \(attempt))..."
         case .connected: return "Connected"
         case .error(let msg): return "Error: \(msg)"
         }
@@ -43,6 +47,16 @@ final class ConnectionStore: ObservableObject {
     lazy var sessionStore: SessionStore = SessionStore(connectionStore: self)
     lazy var modelStore: ModelStore = ModelStore(connectionStore: self)
 
+    init() {
+        Task { [weak self] in
+            await self?.wsClient.onStateChange { [weak self] wsState in
+                Task { @MainActor in
+                    self?.applyWSState(wsState)
+                }
+            }
+        }
+    }
+
     // MARK: - Connect
 
     func connect(to server: ServerConnection, authManager: AuthManager) async {
@@ -56,6 +70,7 @@ final class ConnectionStore: ObservableObject {
             state = .connected
 
             // Register event handlers
+            await wsClient.clearEventHandlers()
             await wsClient.onEvent { [weak self] event, payload in
                 Task { @MainActor in
                     self?.handleEvent(event: event, payload: payload)
@@ -82,6 +97,21 @@ final class ConnectionStore: ObservableObject {
         serverHost = nil
         agentName = nil
         agentEmoji = nil
+    }
+
+    private func applyWSState(_ wsState: MoltisWSClient.State) {
+        switch wsState {
+        case .disconnected:
+            state = .disconnected
+        case .connecting:
+            state = .connecting
+        case .reconnecting(let attempt, let nextRetryIn):
+            state = .reconnecting(attempt: attempt, nextRetryIn: nextRetryIn)
+        case .connected:
+            state = .connected
+        case .error(let message):
+            state = .error(message)
+        }
     }
 
     // MARK: - Event dispatch

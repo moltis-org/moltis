@@ -19,3 +19,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Model picker grouped by provider
 - Theme colors matching macOS app and web UI
 - Connect screen links each discovered server to CA PEM download (`/certs/ca.pem`) and includes in-app iOS trust-install steps
+- Nearby servers now auto-check TLS trust and show a prominent CA download button only when trust is missing
+- Connection checks now show explicit setup guidance when remote auth is incomplete, password auth is missing, or GraphQL is disabled
+- Chat now includes explicit keyboard dismissal controls (Done key, scroll-to-dismiss, tap-to-dismiss) so tab navigation remains reachable
+- Connection banner now reports server drop/retry state with automatic WebSocket reconnect attempts
+- Chat now has a ChatGPT-style top bar with large model/provider pill, top-right settings button, and a left slide-out sessions drawer
+- Removed the bottom tab bar so chat is the single root screen, with sessions/settings accessed from the top controls
+- Refined chat controls: larger send/stop action button and redesigned connection banner card with richer status details
+
+### Fixed
+
+- New session creation now uses a generated `session:<uuid>` key with `sessions.switch` flow (matching web) instead of calling removed RPC method `sessions.create`
+- Model loading query now matches current GraphQL schema (`models.list { id name provider }`) and logs detailed GraphQL/RPC diagnostics to Xcode console
+- Connect actions (`Check Connection`, `Login & Connect`, `Connect with API Key`) now render as standard prominent buttons
+- Removed the custom keyboard accessory dismiss button in chat to prevent overlap with the send control

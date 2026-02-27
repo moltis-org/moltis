@@ -11,6 +11,7 @@ struct AuthStatusResponse: Codable {
     let authDisabled: Bool
     let hasPassword: Bool
     let setupCodeRequired: Bool
+    let graphqlEnabled: Bool?
 
     enum CodingKeys: String, CodingKey {
         case setupRequired = "setup_required"
@@ -19,6 +20,15 @@ struct AuthStatusResponse: Codable {
         case authDisabled = "auth_disabled"
         case hasPassword = "has_password"
         case setupCodeRequired = "setup_code_required"
+        case graphqlEnabled = "graphql_enabled"
+    }
+}
+
+private struct GonStatusResponse: Codable {
+    let graphqlEnabled: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case graphqlEnabled = "graphql_enabled"
     }
 }
 
@@ -96,14 +106,7 @@ final class AuthManager: ObservableObject {
 
     /// Check the authentication status of a server.
     func checkStatus(url: URL) async throws -> AuthStatusResponse {
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        // Strip any existing path and add auth/status
-        let basePath = components?.path.hasSuffix("/") == true
-            ? String(components?.path.dropLast() ?? "")
-            : (components?.path ?? "")
-        components?.path = basePath + "/api/auth/status"
-
-        guard let statusURL = components?.url else {
+        guard let statusURL = endpointURL(baseURL: url, endpointPath: "/api/auth/status") else {
             throw AuthError.invalidURL
         }
 
@@ -121,6 +124,31 @@ final class AuthManager: ObservableObject {
         }
 
         return try JSONDecoder().decode(AuthStatusResponse.self, from: data)
+    }
+
+    /// Check whether GraphQL is enabled for this server.
+    /// Returns nil when this cannot be determined from server responses.
+    func checkGraphQLEnabled(url: URL) async -> Bool? {
+        guard let gonURL = endpointURL(baseURL: url, endpointPath: "/api/gon") else {
+            return nil
+        }
+
+        var request = URLRequest(url: gonURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return nil
+            }
+
+            let gon = try JSONDecoder().decode(GonStatusResponse.self, from: data)
+            return gon.graphqlEnabled
+        } catch {
+            return nil
+        }
     }
 
     /// Login with password, then create an API key for persistent access.
@@ -226,6 +254,15 @@ final class AuthManager: ObservableObject {
             urlString.removeLast()
         }
         return URL(string: urlString) ?? url
+    }
+
+    private func endpointURL(baseURL: URL, endpointPath: String) -> URL? {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        let normalizedBasePath = components?.path.hasSuffix("/") == true
+            ? String(components?.path.dropLast() ?? "")
+            : (components?.path ?? "")
+        components?.path = normalizedBasePath + endpointPath
+        return components?.url
     }
 
     private func login(baseURL: URL, password: String) async throws -> String {
