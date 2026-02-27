@@ -29,6 +29,7 @@ type SessionEntry {
   createdAt: String
   updatedAt: String
   messageCount: Int
+  lastSeenMessageCount: Int
   archived: Boolean
 }
 

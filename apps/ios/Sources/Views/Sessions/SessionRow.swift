@@ -61,14 +61,19 @@ struct SessionRow: View {
                 )
 
                 if session.messageCount > 0 {
+                    let hasUnread = !isActive && session.unreadCount > 0
                     Text("\(session.messageCount)")
                         .font(.caption2)
-                        .fontWeight(.medium)
+                        .fontWeight(hasUnread ? .semibold : .medium)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .foregroundStyle(isActive ? Color.white : Color.white)
+                        .foregroundStyle(
+                            isActive ? Color.white : (hasUnread ? Color.white : Color.secondary)
+                        )
                         .background(
-                            isActive ? Color.white.opacity(0.25) : Color.blue.opacity(0.7)
+                            isActive
+                                ? Color.white.opacity(0.25)
+                                : (hasUnread ? Color.blue : Color.secondary.opacity(0.15))
                         )
                         .clipShape(Capsule())
                 }

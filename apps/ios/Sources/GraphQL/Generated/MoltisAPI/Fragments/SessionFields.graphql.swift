@@ -7,7 +7,7 @@
 extension MoltisAPI {
   struct SessionFields: MoltisAPI.SelectionSet, Fragment {
     static var fragmentDefinition: StaticString {
-      #"fragment SessionFields on SessionEntry { __typename id key label model preview createdAt updatedAt messageCount archived }"#
+      #"fragment SessionFields on SessionEntry { __typename id key label model preview createdAt updatedAt messageCount lastSeenMessageCount archived }"#
     }
 
     let __data: DataDict
@@ -24,6 +24,7 @@ extension MoltisAPI {
       .field("createdAt", String?.self),
       .field("updatedAt", String?.self),
       .field("messageCount", Int?.self),
+      .field("lastSeenMessageCount", Int?.self),
       .field("archived", Bool?.self),
     ] }
     static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
@@ -38,6 +39,7 @@ extension MoltisAPI {
     var createdAt: String? { __data["createdAt"] }
     var updatedAt: String? { __data["updatedAt"] }
     var messageCount: Int? { __data["messageCount"] }
+    var lastSeenMessageCount: Int? { __data["lastSeenMessageCount"] }
     var archived: Bool? { __data["archived"] }
   }
 

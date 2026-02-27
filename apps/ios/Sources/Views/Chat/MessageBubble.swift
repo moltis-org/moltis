@@ -54,8 +54,15 @@ private let shortTimeFormatter: DateFormatter = {
 
 struct MessageBubble: View {
     let message: ChatMessage
+    var agentName: String?
 
     private var isUser: Bool { message.role == .user }
+
+    private var roleLabel: String {
+        if isUser { return message.role.title }
+        if let name = agentName, !name.isEmpty { return name }
+        return message.role.title
+    }
 
     private var metadataText: String? {
         guard message.role == .assistant, !message.isStreaming else { return nil }
@@ -142,7 +149,7 @@ struct MessageBubble: View {
             VStack(alignment: .leading, spacing: 6) {
                 // Role + time header
                 HStack {
-                    Text(message.role.title)
+                    Text(roleLabel)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()

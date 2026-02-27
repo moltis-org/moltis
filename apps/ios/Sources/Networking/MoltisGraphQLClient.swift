@@ -157,6 +157,7 @@ actor MoltisGraphQLClient {
             createdAt: s.createdAt,
             updatedAt: s.updatedAt,
             messageCount: s.messageCount,
+            lastSeenMessageCount: s.lastSeenMessageCount,
             archived: s.archived
         )
     }
@@ -202,6 +203,7 @@ struct GQLSession: Decodable, Identifiable, Equatable {
     let createdAt: String?
     let updatedAt: String?
     let messageCount: Int?
+    let lastSeenMessageCount: Int?
     let archived: Bool?
 }
 

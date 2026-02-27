@@ -78,6 +78,7 @@ extension MoltisAPI {
           var createdAt: String? { __data["createdAt"] }
           var updatedAt: String? { __data["updatedAt"] }
           var messageCount: Int? { __data["messageCount"] }
+          var lastSeenMessageCount: Int? { __data["lastSeenMessageCount"] }
           var archived: Bool? { __data["archived"] }
 
           struct Fragments: FragmentContainer {

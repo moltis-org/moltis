@@ -66,6 +66,7 @@ struct ChatSession: Identifiable, Equatable {
     var preview: String?
     var updatedAt: Date
     var messageCount: Int
+    var unreadCount: Int
     var model: String?
     var archived: Bool
 
@@ -76,6 +77,7 @@ struct ChatSession: Identifiable, Equatable {
         preview: String? = nil,
         updatedAt: Date = Date(),
         messageCount: Int = 0,
+        unreadCount: Int = 0,
         model: String? = nil,
         archived: Bool = false
     ) {
@@ -85,6 +87,7 @@ struct ChatSession: Identifiable, Equatable {
         self.preview = preview
         self.updatedAt = updatedAt
         self.messageCount = messageCount
+        self.unreadCount = unreadCount
         self.model = model
         self.archived = archived
     }
@@ -104,12 +107,15 @@ struct ChatSession: Identifiable, Equatable {
 
     /// Create from a GraphQL session response.
     static func from(_ gql: GQLSession) -> ChatSession {
+        let total = gql.messageCount ?? 0
+        let seen = gql.lastSeenMessageCount ?? 0
         return ChatSession(
             key: gql.key,
             title: gql.label ?? gql.key,
             preview: gql.preview,
             updatedAt: parseDate(gql.updatedAt) ?? Date(),
-            messageCount: gql.messageCount ?? 0,
+            messageCount: total,
+            unreadCount: max(0, total - seen),
             model: gql.model,
             archived: gql.archived ?? false
         )
