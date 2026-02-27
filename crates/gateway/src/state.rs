@@ -737,30 +737,36 @@ impl GatewayState {
 
         let (tx, rx) = oneshot::channel();
 
+        // Register the pending request BEFORE sending to avoid a race where
+        // the client responds before the entry exists (response would be dropped).
         {
-            let inner = self.inner.read().await;
-            let client = inner.clients.get(conn_id).ok_or_else(|| {
-                moltis_protocol::ErrorShape::new(
+            let mut inner = self.inner.write().await;
+            if !inner.clients.contains_key(conn_id) {
+                return Err(moltis_protocol::ErrorShape::new(
                     moltis_protocol::error_codes::UNAVAILABLE,
                     "client not connected",
-                )
-            })?;
-            if !client.send(&json) {
+                ));
+            }
+            inner
+                .pending_client_requests
+                .insert(request_id.clone(), PendingClientRequest {
+                    method: method.into(),
+                    sender: tx,
+                    created_at: Instant::now(),
+                });
+            let sent = inner
+                .clients
+                .get(conn_id)
+                .map(|c| c.send(&json))
+                .unwrap_or(false);
+            if !sent {
+                inner.pending_client_requests.remove(&request_id);
                 return Err(moltis_protocol::ErrorShape::new(
                     moltis_protocol::error_codes::UNAVAILABLE,
                     "client send failed",
                 ));
             }
         }
-
-        self.inner.write().await.pending_client_requests.insert(
-            request_id.clone(),
-            PendingClientRequest {
-                method: method.into(),
-                sender: tx,
-                created_at: Instant::now(),
-            },
-        );
 
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(result)) => result,

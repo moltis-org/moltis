@@ -156,22 +156,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     })
                     .collect();
 
-                let events = vec![
-                    "tick",
-                    "shutdown",
-                    "agent",
-                    "chat",
-                    "presence",
-                    "health",
-                    "exec.approval.requested",
-                    "exec.approval.resolved",
-                    "device.pair.requested",
-                    "device.pair.resolved",
-                    "node.pair.requested",
-                    "node.pair.resolved",
-                    "node.invoke.request",
-                ];
-                let event_descriptors: Vec<serde_json::Value> = events
+                let event_descriptors: Vec<serde_json::Value> = moltis_protocol::KNOWN_EVENTS
                     .iter()
                     .map(|name| serde_json::json!({ "name": name }))
                     .collect();
@@ -186,8 +171,14 @@ pub(super) fn register(reg: &mut MethodRegistry) {
     );
 }
 
-/// Return the list of known method names (for system.describe).
-/// This is a static list mirroring what `MethodRegistry::register_defaults` registers.
+/// Core protocol method names for `system.describe`.
+///
+/// This is a static subset of methods registered in `gateway.rs`, `node.rs`,
+/// `subscribe.rs`, and `channel_mux.rs`. The full method list (including all
+/// service methods) is already available in `HelloOk.features.methods`.
+///
+/// TODO: store Arc<MethodRegistry> on GatewayState so this handler can query
+/// the live registry instead of maintaining a static list.
 fn reg_method_names() -> Vec<&'static str> {
     vec![
         "health",

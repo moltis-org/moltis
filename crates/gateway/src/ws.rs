@@ -9,8 +9,8 @@ use {
 
 use moltis_protocol::{
     ConnectParams, ConnectParamsV4, ErrorShape, EventFrame, Extensions, Features, GatewayFrame,
-    HANDSHAKE_TIMEOUT_MS, HelloAuth, HelloOk, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION, Policy,
-    ResponseFrame, ServerInfo, error_codes,
+    HANDSHAKE_TIMEOUT_MS, HelloAuth, HelloOk, KNOWN_EVENTS, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    Policy, ResponseFrame, ServerInfo, error_codes,
 };
 
 use crate::{
@@ -260,21 +260,7 @@ pub async fn handle_connection(
         },
         features: Features {
             methods: methods.method_names(),
-            events: vec![
-                "tick".into(),
-                "shutdown".into(),
-                "agent".into(),
-                "chat".into(),
-                "presence".into(),
-                "health".into(),
-                "exec.approval.requested".into(),
-                "exec.approval.resolved".into(),
-                "device.pair.requested".into(),
-                "device.pair.resolved".into(),
-                "node.pair.requested".into(),
-                "node.pair.resolved".into(),
-                "node.invoke.request".into(),
-            ],
+            events: KNOWN_EVENTS.iter().map(|s| (*s).into()).collect(),
         },
         snapshot: serde_json::json!({}),
         canvas_host_url: None,

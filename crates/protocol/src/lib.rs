@@ -28,6 +28,25 @@ pub mod subscriptions {
     pub const WILDCARD: &str = "*";
 }
 
+// ── Well-known events ────────────────────────────────────────────────────────
+
+/// Canonical list of server-push events advertised in `HelloOk` and `system.describe`.
+pub const KNOWN_EVENTS: &[&str] = &[
+    "tick",
+    "shutdown",
+    "agent",
+    "chat",
+    "presence",
+    "health",
+    "exec.approval.requested",
+    "exec.approval.resolved",
+    "device.pair.requested",
+    "device.pair.resolved",
+    "node.pair.requested",
+    "node.pair.resolved",
+    "node.invoke.request",
+];
+
 // ── Error codes ──────────────────────────────────────────────────────────────
 
 pub mod error_codes {
