@@ -1165,6 +1165,14 @@ var connectOpts = {
 				"node.pair.requested",
 				"node.pair.resolved",
 				"node.invoke.request",
+				"session",
+				"update.available",
+				"hooks.status",
+				"push.subscriptions",
+				"channel",
+				"metrics.update",
+				"skills.install.progress",
+				"mcp.status",
 			]),
 		);
 		fetchModels();
