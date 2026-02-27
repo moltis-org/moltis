@@ -714,14 +714,20 @@ fn new_store(
 #[cfg(all(test, feature = "wasm"))]
 mod tests {
     use {
-        super::{CachingWasmToolRunner, ToolResult, WasmToolRunner},
+        super::{
+            CachingWasmToolRunner, ToolResult, WasmToolRunner, marshal_http_value,
+            marshal_pure_value,
+        },
         crate::{
             calc::CalcTool,
-            wasm_component::{PureToolError, PureToolResult, PureToolValue},
+            wasm_component::{
+                HttpToolError, HttpToolResult, HttpToolValue, PureToolError, PureToolResult,
+                PureToolValue,
+            },
             wasm_engine::WasmComponentEngine,
             wasm_limits::WasmToolLimits,
         },
-        moltis_agents::tool_registry::AgentTool,
+        moltis_agents::tool_registry::{AgentTool, ToolRegistry},
         std::{
             sync::{
                 Arc,
@@ -873,5 +879,176 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(cached.component_hash(), [7_u8; 32]);
+    }
+
+    // --- marshal_http_value tests ---
+
+    #[test]
+    fn marshal_http_value_text() {
+        let value = marshal_http_value(HttpToolValue::Text("hello".to_string()));
+        assert_eq!(value, serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn marshal_http_value_number() {
+        let value = marshal_http_value(HttpToolValue::Number(12.5));
+        assert_eq!(value, serde_json::json!(12.5));
+    }
+
+    #[test]
+    fn marshal_http_value_integer() {
+        let value = marshal_http_value(HttpToolValue::Integer(-99));
+        assert_eq!(value, serde_json::json!(-99));
+    }
+
+    #[test]
+    fn marshal_http_value_boolean() {
+        let value = marshal_http_value(HttpToolValue::Boolean(false));
+        assert_eq!(value, serde_json::json!(false));
+    }
+
+    #[test]
+    fn marshal_http_value_json() {
+        let value = marshal_http_value(HttpToolValue::Json(r#"{"a":1}"#.to_string()));
+        assert_eq!(value, serde_json::json!({"a": 1}));
+    }
+
+    #[test]
+    fn marshal_http_value_nan_becomes_null() {
+        let value = marshal_http_value(HttpToolValue::Number(f64::NAN));
+        assert_eq!(value, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn marshal_http_value_invalid_json_becomes_string() {
+        let value = marshal_http_value(HttpToolValue::Json("not json".to_string()));
+        assert_eq!(value, serde_json::json!("not json"));
+    }
+
+    // --- marshal_pure_value edge-case tests ---
+
+    #[test]
+    fn marshal_pure_value_nan_becomes_null() {
+        let value = marshal_pure_value(PureToolValue::Number(f64::NAN));
+        assert_eq!(value, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn marshal_pure_value_invalid_json_becomes_string() {
+        let value = marshal_pure_value(PureToolValue::Json("{bad".to_string()));
+        assert_eq!(value, serde_json::json!("{bad"));
+    }
+
+    // --- ToolResult::from_http tests ---
+
+    #[test]
+    fn decode_http_result_maps_ok() {
+        let result = ToolResult::from_http(HttpToolResult::Ok(HttpToolValue::Text(
+            "fetched".to_string(),
+        )));
+        let value = super::decode_tool_result("web_fetch", result).unwrap();
+        assert_eq!(value, serde_json::json!("fetched"));
+    }
+
+    #[test]
+    fn decode_http_result_maps_err() {
+        let result = ToolResult::from_http(HttpToolResult::Err(HttpToolError {
+            code: "network".to_string(),
+            message: "connection refused".to_string(),
+        }));
+        let err = super::decode_tool_result("web_fetch", result).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("wasm tool `web_fetch` failed [network]")
+        );
+    }
+
+    // --- register_wasm_tools test ---
+
+    #[test]
+    fn register_wasm_tools_succeeds_with_available_components() {
+        let mut registry = ToolRegistry::new();
+        let limits = WasmToolLimits::default();
+        let result = super::register_wasm_tools(&mut registry, &limits, 100, 30, 5, 15, 5, None);
+        // Should succeed regardless of whether wasm binaries are present.
+        // When binaries are missing, individual tools log warnings but the
+        // function itself returns Ok.
+        assert!(result.is_ok(), "register_wasm_tools failed: {result:?}");
+    }
+
+    // --- http runner integration test ---
+
+    #[tokio::test]
+    async fn web_fetch_http_runner_fetches_from_local_server() {
+        use {
+            crate::wasm_component::HttpHostImpl,
+            std::{
+                io::{Read, Write},
+                net::TcpListener,
+                thread,
+            },
+        };
+
+        let fetch_bytes = match crate::embedded_wasm::web_fetch_component_bytes() {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                eprintln!("skipping web_fetch http runner test: {err}");
+                return;
+            },
+        };
+
+        // Spin up a tiny HTTP server that returns a known body.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0_u8; 2048];
+                let _ = stream.read(&mut buf);
+                let body = b"web_fetch_test_ok";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len(),
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+
+        let ssrf_allowlist = vec!["127.0.0.1/32".parse().unwrap()];
+        let http_host = HttpHostImpl::new(
+            Duration::from_secs(5),
+            2_000_000,
+            ssrf_allowlist,
+            None,
+            std::collections::HashMap::new(),
+        )
+        .unwrap();
+
+        let engine = Arc::new(WasmComponentEngine::new(None).unwrap());
+        let limits = WasmToolLimits::default();
+        let (fuel, memory) = limits.resolve_store_limits("web_fetch");
+        let runner = WasmToolRunner::new_http(
+            engine,
+            fetch_bytes.as_ref(),
+            fuel,
+            memory,
+            Duration::from_secs(5),
+            100,
+            http_host,
+        )
+        .unwrap();
+
+        let url = format!("http://{addr}/test");
+        let result = runner.execute(serde_json::json!({ "url": url })).await;
+
+        // The runner should succeed and the result should contain our test body.
+        let value = result.unwrap();
+        let as_str = value.to_string();
+        assert!(
+            as_str.contains("web_fetch_test_ok"),
+            "expected response body in result, got: {as_str}"
+        );
+
+        server.join().unwrap();
     }
 }

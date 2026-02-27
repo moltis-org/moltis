@@ -421,4 +421,142 @@ mod tests {
         );
         assert!(host.is_ok());
     }
+
+    /// Spawn a tiny HTTP server that echoes back all request headers as the
+    /// response body (one `name: value` per line).
+    fn spawn_echo_headers_server() -> (String, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0_u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request_text = String::from_utf8_lossy(&buf[..n]);
+                // Collect all header lines (skip request line).
+                let body: String = request_text
+                    .lines()
+                    .skip(1)
+                    .take_while(|line| !line.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body,
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        (format!("http://{addr}/echo"), handle)
+    }
+
+    fn host_with_allowlist_and_secrets(
+        domain_allowlist: Option<Vec<String>>,
+        secret_headers: HashMap<String, Vec<(String, String)>>,
+    ) -> HttpHostImpl {
+        let allowlist = vec!["127.0.0.1/32".parse().unwrap()];
+        HttpHostImpl::new(
+            Duration::from_secs(2),
+            64 * 1024,
+            allowlist,
+            domain_allowlist,
+            secret_headers,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn http_host_injects_secret_headers() {
+        let (url, handle) = spawn_echo_headers_server();
+        let mut secrets = HashMap::new();
+        secrets.insert("127.0.0.1".to_string(), vec![(
+            "X-Subscription-Token".to_string(),
+            "my-secret-key".to_string(),
+        )]);
+        let host = host_with_allowlist_and_secrets(None, secrets);
+        let request = request_for_url(url);
+        let response = host.handle_request(request).unwrap();
+        let body = String::from_utf8(response.body).unwrap();
+        assert!(
+            body.contains("my-secret-key"),
+            "expected secret header in response body, got: {body}"
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn http_host_secret_headers_override_guest_headers() {
+        let (url, handle) = spawn_echo_headers_server();
+        let mut secrets = HashMap::new();
+        secrets.insert("127.0.0.1".to_string(), vec![(
+            "X-Subscription-Token".to_string(),
+            "host-value".to_string(),
+        )]);
+        let host = host_with_allowlist_and_secrets(None, secrets);
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            url,
+            headers: vec![(
+                "X-Subscription-Token".to_string(),
+                "guest-value".to_string(),
+            )],
+            body: None,
+            timeout_ms: None,
+            max_response_bytes: None,
+        };
+        let response = host.handle_request(request).unwrap();
+        let body = String::from_utf8(response.body).unwrap();
+        assert!(
+            body.contains("host-value"),
+            "host secret should win, got: {body}"
+        );
+        assert!(
+            !body.contains("guest-value"),
+            "guest value should be filtered out, got: {body}"
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn http_host_domain_allowlist_blocks_disallowed_host() {
+        let host = host_with_allowlist_and_secrets(
+            Some(vec!["allowed.example.com".to_string()]),
+            HashMap::new(),
+        );
+        let request = request_for_url("http://127.0.0.1:9999/blocked".to_string());
+        let result = host.handle_request(request);
+        assert!(
+            matches!(result, Err(HttpError::BlockedUrl(_))),
+            "expected BlockedUrl, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn http_host_rejects_non_http_scheme() {
+        let host = host_with_allowlist_and_secrets(None, HashMap::new());
+        let request = request_for_url("ftp://127.0.0.1/file".to_string());
+        let result = host.handle_request(request);
+        assert!(
+            matches!(result, Err(HttpError::InvalidUrl(ref msg)) if msg.contains("unsupported URL scheme")),
+            "expected InvalidUrl for ftp scheme, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn http_host_rejects_invalid_method() {
+        let host = host_with_allowlist_and_secrets(None, HashMap::new());
+        let request = HttpRequest {
+            method: "NOT A METHOD".to_string(),
+            url: "http://127.0.0.1/test".to_string(),
+            headers: Vec::new(),
+            body: None,
+            timeout_ms: None,
+            max_response_bytes: None,
+        };
+        let result = host.handle_request(request);
+        assert!(
+            matches!(result, Err(HttpError::InvalidUrl(ref msg)) if msg.contains("invalid HTTP method")),
+            "expected InvalidUrl for bad method, got: {result:?}"
+        );
+    }
 }
