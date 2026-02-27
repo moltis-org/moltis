@@ -1,4 +1,49 @@
 [workspace]
+default-members = [
+  "apps/courier",
+  "crates/agents",
+  "crates/auth",
+  "crates/auto-reply",
+  "crates/benchmarks",
+  "crates/browser",
+  "crates/caldav",
+  "crates/canvas",
+  "crates/channels",
+  "crates/chat",
+  "crates/cli",
+  "crates/common",
+  "crates/config",
+  "crates/cron",
+  "crates/gateway",
+  "crates/graphql",
+  "crates/mcp",
+  "crates/media",
+  "crates/memory",
+  "crates/metrics",
+  "crates/msteams",
+  "crates/oauth",
+  "crates/onboarding",
+  "crates/openclaw-import",
+  "crates/plugins",
+  "crates/projects",
+  "crates/protocol",
+  "crates/provider-setup",
+  "crates/providers",
+  "crates/qmd",
+  "crates/routing",
+  "crates/service-traits",
+  "crates/sessions",
+  "crates/skills",
+  "crates/swift-bridge",
+  "crates/tailscale",
+  "crates/telegram",
+  "crates/tls",
+  "crates/tools",
+  "crates/vault",
+  "crates/voice",
+  "crates/web",
+  "crates/whatsapp",
+]
 members = [
   "apps/courier",
   "crates/agents",
@@ -31,6 +76,7 @@ members = [
   "crates/providers",
   "crates/qmd",
   "crates/routing",
+  "crates/schema-export",
   "crates/service-traits",
   "crates/sessions",
   "crates/skills",
@@ -227,6 +273,7 @@ moltis-provider-setup  = { path = "crates/provider-setup" }
 moltis-providers       = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
 moltis-qmd             = { path = "crates/qmd" }
 moltis-routing         = { path = "crates/routing" }
+moltis-schema-export   = { path = "crates/schema-export" }
 moltis-service-traits  = { path = "crates/service-traits" }
 moltis-sessions        = { path = "crates/sessions" }
 moltis-skills          = { path = "crates/skills" }

@@ -26,6 +26,7 @@ extension MoltisAPI {
         FetchStatusQuery.Data.self
       ] }
 
+      /// Gateway status with hostname, version, connections, uptime.
       var status: Status { __data["status"] }
 
       /// Status

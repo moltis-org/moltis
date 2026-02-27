@@ -1,7 +1,5 @@
 import SwiftUI
-#if canImport(UIKit)
 import UIKit
-#endif
 
 struct SessionRow: View {
     let session: ChatSession
@@ -19,26 +17,18 @@ struct SessionRow: View {
                 Text(session.title)
                     .font(.body)
                     .fontWeight(isActive ? .semibold : .regular)
-                    .foregroundStyle(isActive ? Color.white : Color.primary)
+                    .foregroundStyle(isActive ? Color.white : Color(uiColor: .label))
                     .lineLimit(1)
 
                 if let preview = session.preview, !preview.isEmpty {
                     Text(preview)
                         .font(.caption)
-                        .foregroundStyle(isActive ? Color.white.opacity(0.7) : Color.secondary)
+                        .foregroundStyle(isActive ? Color.white.opacity(0.7) : Color(uiColor: .secondaryLabel))
                         .lineLimit(2)
                 } else if let model = session.model {
                     Text(model)
                         .font(.caption)
-                        .foregroundStyle(
-                            isActive ? Color.white.opacity(0.6) : {
-                                #if canImport(UIKit)
-                                Color(uiColor: .tertiaryLabel)
-                                #else
-                                Color.secondary.opacity(0.7)
-                                #endif
-                            }()
-                        )
+                        .foregroundStyle(isActive ? Color.white.opacity(0.6) : Color(uiColor: .tertiaryLabel))
                         .lineLimit(1)
                 }
             }
@@ -50,15 +40,7 @@ struct SessionRow: View {
                     for: session.updatedAt, relativeTo: Date()
                 ))
                 .font(.caption2)
-                .foregroundStyle(
-                    isActive ? Color.white.opacity(0.6) : {
-                        #if canImport(UIKit)
-                        Color(uiColor: .tertiaryLabel)
-                        #else
-                        Color.secondary.opacity(0.7)
-                        #endif
-                    }()
-                )
+                .foregroundStyle(isActive ? Color.white.opacity(0.6) : Color(uiColor: .tertiaryLabel))
 
                 if session.messageCount > 0 {
                     let hasUnread = !isActive && session.unreadCount > 0
@@ -68,12 +50,12 @@ struct SessionRow: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .foregroundStyle(
-                            isActive ? Color.white : (hasUnread ? Color.white : Color.secondary)
+                            isActive ? Color.white : (hasUnread ? Color.white : Color(uiColor: .secondaryLabel))
                         )
                         .background(
                             isActive
                                 ? Color.white.opacity(0.25)
-                                : (hasUnread ? Color.blue : Color.secondary.opacity(0.15))
+                                : (hasUnread ? Color.blue : Color(uiColor: .tertiarySystemFill))
                         )
                         .clipShape(Capsule())
                 }

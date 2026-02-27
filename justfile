@@ -257,10 +257,11 @@ ios-generate:
 
 # Generate Apollo GraphQL types for iOS.
 ios-graphql:
+    cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls
     ./scripts/generate-ios-graphql.sh
 
 # Build iOS app (generic iOS destination, no signing).
-ios-build: ios-generate
+ios-build: ios-graphql ios-generate
     xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
 
 # Lint iOS app sources with SwiftLint.

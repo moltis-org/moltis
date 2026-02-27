@@ -44,6 +44,8 @@ jobs:
             context: local/test
           - label: macos-app
             context: local/macos-app
+          - label: ios-app
+            context: local/ios-app
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

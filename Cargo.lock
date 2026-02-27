@@ -5709,6 +5709,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-schema-export"
+version = "0.9.10"
+dependencies = [
+ "moltis-graphql",
+ "moltis-service-traits",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "moltis-service-traits"
 version = "0.9.10"
 dependencies = [

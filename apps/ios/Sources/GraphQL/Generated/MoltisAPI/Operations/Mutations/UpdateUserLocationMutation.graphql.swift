@@ -50,6 +50,7 @@ extension MoltisAPI {
           UpdateUserLocationMutation.Data.Agents.self
         ] }
 
+        /// Update agent identity.
         var updateIdentity: UpdateIdentity { __data["updateIdentity"] }
 
         /// Agents.UpdateIdentity

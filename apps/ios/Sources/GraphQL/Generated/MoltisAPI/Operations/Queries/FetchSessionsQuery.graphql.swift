@@ -27,6 +27,7 @@ extension MoltisAPI {
         FetchSessionsQuery.Data.self
       ] }
 
+      /// Session queries.
       var sessions: Sessions { __data["sessions"] }
 
       /// Sessions
@@ -45,6 +46,7 @@ extension MoltisAPI {
           FetchSessionsQuery.Data.Sessions.self
         ] }
 
+        /// List all sessions.
         var list: [List] { __data["list"] }
 
         /// Sessions.List
@@ -64,13 +66,13 @@ extension MoltisAPI {
             SessionFields.self
           ] }
 
-          var id: MoltisAPI.ID? { __data["id"] }
-          var key: String { __data["key"] }
+          var id: String? { __data["id"] }
+          var key: String? { __data["key"] }
           var label: String? { __data["label"] }
           var model: String? { __data["model"] }
           var preview: String? { __data["preview"] }
-          var createdAt: String? { __data["createdAt"] }
-          var updatedAt: String? { __data["updatedAt"] }
+          var createdAt: Int? { __data["createdAt"] }
+          var updatedAt: Int? { __data["updatedAt"] }
           var messageCount: Int? { __data["messageCount"] }
           var lastSeenMessageCount: Int? { __data["lastSeenMessageCount"] }
           var archived: Bool? { __data["archived"] }

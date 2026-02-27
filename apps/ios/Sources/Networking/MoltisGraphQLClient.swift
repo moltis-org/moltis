@@ -148,9 +148,10 @@ actor MoltisGraphQLClient {
     }
 
     private func mapSession(_ s: MoltisAPI.SessionFields) -> GQLSession {
-        GQLSession(
-            id: s.id ?? s.key,
-            key: s.key,
+        let key = s.key ?? ""
+        return GQLSession(
+            id: s.id ?? key,
+            key: key,
             label: s.label,
             model: s.model,
             preview: s.preview,
@@ -200,8 +201,8 @@ struct GQLSession: Decodable, Identifiable, Equatable {
     let label: String?
     let model: String?
     let preview: String?
-    let createdAt: String?
-    let updatedAt: String?
+    let createdAt: Int?
+    let updatedAt: Int?
     let messageCount: Int?
     let lastSeenMessageCount: Int?
     let archived: Bool?

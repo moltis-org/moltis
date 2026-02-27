@@ -10,6 +10,7 @@ struct ChatView: View {
     @FocusState private var isInputFocused: Bool
     @State private var isSessionDrawerOpen = false
     @State private var sessionSearchText = ""
+    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var showModelPicker = false
     @State private var showSettings = false
 
@@ -151,22 +152,14 @@ struct ChatView: View {
     }
 
     private var visibleSessions: [ChatSession] {
-        let query = sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        // SessionStore already sorts by updatedAt descending.
-        let base = connectionStore.sessionStore.sessions.filter { !$0.archived }
-        guard !query.isEmpty else {
-            return base
-        }
-        return base.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || $0.key.localizedCaseInsensitiveContains(query)
-        }
+        connectionStore.sessionStore.sessions.filter { !$0.archived }
     }
 
     private func closeSessionDrawer() {
         withAnimation {
             isSessionDrawerOpen = false
         }
+        sessionSearchText = ""
     }
 
     private func selectSession(_ session: ChatSession) {
@@ -220,6 +213,16 @@ struct ChatView: View {
                     .font(.subheadline)
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
+                if !sessionSearchText.isEmpty {
+                    Button {
+                        sessionSearchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -227,6 +230,17 @@ struct ChatView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .padding(.horizontal, 12)
             .padding(.bottom, 12)
+            .onChange(of: sessionSearchText) { _, query in
+                searchDebounceTask?.cancel()
+                let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                searchDebounceTask = Task {
+                    if !trimmed.isEmpty {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        guard !Task.isCancelled else { return }
+                    }
+                    await connectionStore.sessionStore.searchSessions(query: trimmed)
+                }
+            }
 
             ScrollView {
                 LazyVStack(spacing: 2) {

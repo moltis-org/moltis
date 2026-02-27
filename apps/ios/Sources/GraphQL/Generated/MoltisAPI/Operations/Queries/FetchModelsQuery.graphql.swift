@@ -26,6 +26,7 @@ extension MoltisAPI {
         FetchModelsQuery.Data.self
       ] }
 
+      /// Model queries.
       var models: Models { __data["models"] }
 
       /// Models
@@ -44,6 +45,7 @@ extension MoltisAPI {
           FetchModelsQuery.Data.Models.self
         ] }
 
+        /// List enabled models.
         var list: [List] { __data["list"] }
 
         /// Models.List
