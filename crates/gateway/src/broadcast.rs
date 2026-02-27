@@ -107,10 +107,10 @@ pub async fn broadcast(
 
         // Channel filter (v4): if event is scoped to a channel, skip clients
         // that haven't joined it.
-        if let Some(ref ch) = opts.channel {
-            if !client.is_in_channel(ch) {
-                continue;
-            }
+        if let Some(ref ch) = opts.channel
+            && !client.is_in_channel(ch)
+        {
+            continue;
         }
 
         if !client.send(&json) && opts.drop_if_slow {

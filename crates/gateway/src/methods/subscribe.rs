@@ -62,11 +62,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 let mut inner = ctx.state.inner.write().await;
                 if let Some(client) = inner.clients.get_mut(&ctx.client_conn_id) {
-                    if let Some(ref events) = events {
-                        if let Some(ref mut subs) = client.subscriptions {
-                            for event in events {
-                                subs.remove(event);
-                            }
+                    if let Some(ref events) = events
+                        && let Some(ref mut subs) = client.subscriptions
+                    {
+                        for event in events {
+                            subs.remove(event);
                         }
                     }
                     // If subscriptionId is provided, clear all subscriptions
