@@ -34,3 +34,6 @@ tokio                 = { workspace = true }
 tokio-stream          = { workspace = true }
 tracing               = { optional = true, workspace = true }
 uuid                  = { workspace = true }
+
+[dev-dependencies]
+serial_test           = { workspace = true }

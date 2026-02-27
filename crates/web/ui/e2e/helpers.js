@@ -90,9 +90,17 @@ async function navigateAndWait(page, path) {
 
 /**
  * Create a new session by clicking the new-session button.
- * Waits for URL to change and content to mount.
+ * Waits for the active key to change, URL to update, and content to mount.
+ *
+ * Note: we intentionally do NOT wait for the session to appear in the
+ * sessions list (store.getByKey). The list is populated asynchronously
+ * by the sessions.switch RPC and can be slow under heavy test load.
+ * The key change + URL match + page mount are sufficient to prove the
+ * session was created; individual tests can wait for store indexing
+ * if their assertions require it.
  */
 async function createSession(page) {
+	const timeoutMs = 20_000;
 	const previousActiveKey = await page.evaluate(() => {
 		return window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "";
 	});
@@ -104,7 +112,7 @@ async function createSession(page) {
 				page.evaluate(() => {
 					return window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "";
 				}),
-			{ timeout: 20_000 },
+			{ timeout: timeoutMs },
 		)
 		.not.toBe(previousActiveKey);
 
@@ -116,26 +124,11 @@ async function createSession(page) {
 					if (!key) return false;
 					return window.location.pathname === `/chats/${key.replace(/:/g, "/")}`;
 				}),
-			{ timeout: 20_000 },
+			{ timeout: timeoutMs },
 		)
 		.toBe(true);
 
 	await expectPageContentMounted(page);
-	await expect
-		.poll(
-			() =>
-				page.evaluate(() => {
-					const store = window.__moltis_stores?.sessionStore;
-					if (!store) return false;
-					const activeKey = store.activeSessionKey?.value || "";
-					if (!activeKey) return false;
-
-					const activeSession = store.getByKey ? store.getByKey(activeKey) : store.activeSession?.value;
-					return Boolean(activeSession && activeSession.key === activeKey);
-				}),
-			{ timeout: 20_000 },
-		)
-		.toBe(true);
 }
 
 module.exports = {

@@ -1106,8 +1106,8 @@ pub(crate) struct BannerMeta {
     pub mcp_configured_count: usize,
     pub method_count: usize,
     pub sandbox_backend_name: String,
-    pub openclaw_startup_status: String,
     pub data_dir: PathBuf,
+    pub openclaw_status: String,
     pub setup_code_display: Option<String>,
     pub webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
     pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
@@ -1450,12 +1450,13 @@ pub async fn prepare_gateway(
             sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
             std::str::FromStr,
         };
-        let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
-            .expect("invalid moltis.db path")
+        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+            .expect("invalid database path")
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal);
-        sqlx::SqlitePool::connect_with(opts)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        sqlx::SqlitePool::connect_with(options)
             .await
             .expect("failed to open moltis.db")
     };
@@ -2330,6 +2331,11 @@ pub async fn prepare_gateway(
                 .with_event_sink(Arc::clone(&channel_sink)),
         ));
         msteams_webhook_plugin = Arc::clone(&msteams_plugin);
+        let discord_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_discord::DiscordPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
 
         #[cfg(feature = "whatsapp")]
         let whatsapp_plugin = {
@@ -2367,6 +2373,17 @@ pub async fn prepare_gateway(
                     tracing::warn!(account_id, "failed to start microsoft teams account: {e}");
                 } else {
                     started.insert(("msteams".into(), account_id.clone()));
+                }
+            }
+        }
+
+        {
+            let mut dc = discord_plugin.write().await;
+            for (account_id, account_config) in &config.channels.discord {
+                if let Err(e) = dc.start_account(account_id, account_config.clone()).await {
+                    tracing::warn!(account_id, "failed to start discord account: {e}");
+                } else {
+                    started.insert(("discord".into(), account_id.clone()));
                 }
             }
         }
@@ -2413,6 +2430,10 @@ pub async fn prepare_gateway(
                             let mut ms = msteams_plugin.write().await;
                             ms.start_account(&ch.account_id, ch.config).await
                         },
+                        Ok(moltis_channels::ChannelType::Discord) => {
+                            let mut dc = discord_plugin.write().await;
+                            dc.start_account(&ch.account_id, ch.config).await
+                        },
                         #[cfg(feature = "whatsapp")]
                         Ok(moltis_channels::ChannelType::Whatsapp) => {
                             let mut wa = whatsapp_plugin.write().await;
@@ -2455,6 +2476,10 @@ pub async fn prepare_gateway(
             let ms = msteams_plugin.read().await;
             (ms.shared_outbound(), ms.shared_stream_outbound())
         };
+        let (dc_outbound, dc_stream_outbound) = {
+            let dc = discord_plugin.read().await;
+            (dc.shared_outbound(), dc.shared_stream_outbound())
+        };
         #[cfg(feature = "whatsapp")]
         let (wa_outbound, wa_stream_outbound) = {
             let wa = whatsapp_plugin.read().await;
@@ -2464,14 +2489,17 @@ pub async fn prepare_gateway(
         let multi_router = Arc::new(crate::channel_outbound::MultiChannelOutbound::new(
             Arc::clone(&tg_plugin),
             Arc::clone(&msteams_plugin),
+            Arc::clone(&discord_plugin),
             #[cfg(feature = "whatsapp")]
             Arc::clone(&whatsapp_plugin),
             tg_outbound,
             ms_outbound,
+            dc_outbound,
             #[cfg(feature = "whatsapp")]
             wa_outbound,
             tg_stream_outbound,
             ms_stream_outbound,
+            dc_stream_outbound,
             #[cfg(feature = "whatsapp")]
             wa_stream_outbound,
         ));
@@ -2486,6 +2514,7 @@ pub async fn prepare_gateway(
         services.channel = Arc::new(crate::channel::LiveChannelService::new(
             tg_plugin,
             msteams_plugin,
+            discord_plugin,
             #[cfg(feature = "whatsapp")]
             whatsapp_plugin,
             channel_store,
@@ -2703,13 +2732,14 @@ pub async fn prepare_gateway(
                 sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
                 std::str::FromStr,
             };
-            let opts =
+            let options =
                 SqliteConnectOptions::from_str(&format!("sqlite:{}", memory_db_path.display()))
-                    .expect("invalid memory.db path")
+                    .expect("invalid memory database path")
                     .create_if_missing(true)
                     .journal_mode(SqliteJournalMode::Wal)
-                    .synchronous(SqliteSynchronous::Normal);
-            sqlx::SqlitePool::connect_with(opts).await
+                    .synchronous(SqliteSynchronous::Normal)
+                    .busy_timeout(std::time::Duration::from_secs(5));
+            sqlx::SqlitePool::connect_with(options).await
         };
         match memory_pool_result {
             Ok(memory_pool) => {
@@ -3055,7 +3085,10 @@ pub async fn prepare_gateway(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
-        tool_registry.register(Box::new(moltis_tools::send_image::SendImageTool::new()));
+        tool_registry.register(Box::new(
+            moltis_tools::send_image::SendImageTool::new()
+                .with_sandbox_router(Arc::clone(&sandbox_router)),
+        ));
         if let Some(t) = moltis_tools::web_search::WebSearchTool::from_config_with_env_overrides(
             &config.tools.web.search,
             &runtime_env_overrides,
@@ -3632,6 +3665,11 @@ pub async fn prepare_gateway(
         let metrics_state = Arc::clone(&state);
         let server_start = std::time::Instant::now();
         tokio::spawn(async move {
+            enum MetricsPersistJob {
+                Save(crate::state::MetricsHistoryPoint),
+                CleanupBefore(u64),
+            }
+
             // Load history from persistent store on startup.
             if let Some(ref store) = metrics_state.metrics_store {
                 let max_points = metrics_state.inner.read().await.metrics_history.capacity();
@@ -3657,6 +3695,35 @@ pub async fn prepare_gateway(
                     },
                 }
             }
+
+            // Serialize all metrics DB writes through one background writer task.
+            let metrics_persist_tx = metrics_state.metrics_store.as_ref().map(|store| {
+                let store = Arc::clone(store);
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MetricsPersistJob>();
+                tokio::spawn(async move {
+                    while let Some(job) = rx.recv().await {
+                        match job {
+                            MetricsPersistJob::Save(point) => {
+                                if let Err(e) = store.save_point(&point).await {
+                                    warn!("Failed to persist metrics point: {e}");
+                                }
+                            },
+                            MetricsPersistJob::CleanupBefore(cutoff) => {
+                                match store.cleanup_before(cutoff).await {
+                                    Ok(deleted) if deleted > 0 => {
+                                        info!("Cleaned up {} old metrics points", deleted);
+                                    },
+                                    Err(e) => {
+                                        warn!("Failed to cleanup old metrics: {e}");
+                                    },
+                                    _ => {},
+                                }
+                            },
+                        }
+                    }
+                });
+                tx
+            });
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             let mut cleanup_counter = 0u32;
@@ -3717,11 +3784,11 @@ pub async fn prepare_gateway(
                         .metrics_history
                         .push(point.clone());
 
-                    // Persist to store if available.
-                    if let Some(ref store) = metrics_state.metrics_store
-                        && let Err(e) = store.save_point(&point).await
+                    // Persist via the dedicated writer, without stalling collection.
+                    if let Some(tx) = metrics_persist_tx.as_ref()
+                        && tx.send(MetricsPersistJob::Save(point.clone())).is_err()
                     {
-                        warn!("Failed to persist metrics point: {e}");
+                        warn!("metrics persistence writer task is unavailable");
                     }
 
                     // Broadcast metrics update to all connected clients.
@@ -3743,21 +3810,15 @@ pub async fn prepare_gateway(
                     cleanup_counter += 1;
                     if cleanup_counter >= 360 {
                         cleanup_counter = 0;
-                        if let Some(ref store) = metrics_state.metrics_store {
+                        if let Some(tx) = metrics_persist_tx.as_ref() {
                             // Keep 7 days of history.
                             let cutoff = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_millis() as u64
                                 - (7 * 24 * 60 * 60 * 1000);
-                            match store.cleanup_before(cutoff).await {
-                                Ok(deleted) if deleted > 0 => {
-                                    info!("Cleaned up {} old metrics points", deleted);
-                                },
-                                Err(e) => {
-                                    warn!("Failed to cleanup old metrics: {e}");
-                                },
-                                _ => {},
+                            if tx.send(MetricsPersistJob::CleanupBefore(cutoff)).is_err() {
+                                warn!("metrics persistence writer task is unavailable");
                             }
                         }
                     }
@@ -4037,8 +4098,8 @@ pub async fn prepare_gateway(
             mcp_configured_count,
             method_count: methods.method_names().len(),
             sandbox_backend_name: sandbox_router.backend_name().to_owned(),
-            openclaw_startup_status,
             data_dir,
+            openclaw_status: openclaw_startup_status,
             setup_code_display,
             webauthn_registry,
             browser_for_lifecycle,
@@ -4163,7 +4224,6 @@ pub async fn start_gateway(
 
         let mgr = crate::tls::FsCertManager::new()?;
         rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
-
         // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
 
@@ -4253,7 +4313,7 @@ pub async fn start_gateway(
             moltis_config::find_or_default_config_path().display()
         ),
         format!("data: {}", banner.data_dir.display()),
-        format!("openclaw: {}", banner.openclaw_startup_status),
+        format!("openclaw: {}", banner.openclaw_status),
     ];
     lines.extend(startup_passkey_origin_lines(&passkey_origins));
     // Hint about Apple Container on macOS when using Docker.

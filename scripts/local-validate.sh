@@ -9,7 +9,7 @@ STATUS_PUBLISH_ENABLED=1
 
 remove_active_pid() {
   local target="$1"
-  local kept=()
+  local -a kept=()
   local pid
   for pid in "${ACTIVE_PIDS[@]}"; do
     if [[ "$pid" != "$target" ]]; then
@@ -452,15 +452,20 @@ fi
 # Verify Cargo.lock is in sync (same as CI's `cargo fetch --locked`).
 run_check "local/lockfile" "cargo fetch --locked"
 
-# Keep lint/test sequential to maximize incremental compile reuse.
+# Lint runs first to warm the cargo build cache (clippy compiles all targets).
 # These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"
-run_check "local/test" "$test_cmd"
 
-# Native macOS app validation (macOS hosts only).
+# After lint, run test / macOS app / e2e in parallel — they use independent
+# toolchains (cargo nextest, Xcode, Playwright) and don't contend on resources.
+run_check_async "local/test" "$test_cmd"
+test_pid="$RUN_CHECK_ASYNC_PID"
+
+macos_pid=""
 if [[ "${LOCAL_VALIDATE_SKIP_MACOS_APP:-0}" != "1" ]]; then
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    run_check "local/macos-app" "$macos_app_cmd"
+    run_check_async "local/macos-app" "$macos_app_cmd"
+    macos_pid="$RUN_CHECK_ASYNC_PID"
   else
     echo "Skipping macOS app checks (requires macOS host)."
     set_status success "local/macos-app" "Skipped on non-macOS host"
@@ -470,12 +475,33 @@ else
   set_status success "local/macos-app" "Skipped via LOCAL_VALIDATE_SKIP_MACOS_APP"
 fi
 
-# Gateway web UI e2e tests.
+e2e_pid=""
 if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" != "1" ]]; then
   cleanup_e2e_ports
-  run_check "local/e2e" "$e2e_cmd"
+  run_check_async "local/e2e" "$e2e_cmd"
+  e2e_pid="$RUN_CHECK_ASYNC_PID"
 else
   echo "Skipping E2E checks (LOCAL_VALIDATE_SKIP_E2E=1)."
+fi
+
+# Wait for the heavy parallel checks.
+heavy_failed=0
+if ! wait "$test_pid"; then heavy_failed=1; fi
+if ! report_async_result "local/test" "$test_pid"; then heavy_failed=1; fi
+
+if [[ -n "$macos_pid" ]]; then
+  if ! wait "$macos_pid"; then heavy_failed=1; fi
+  if ! report_async_result "local/macos-app" "$macos_pid"; then heavy_failed=1; fi
+fi
+
+if [[ -n "$e2e_pid" ]]; then
+  if ! wait "$e2e_pid"; then heavy_failed=1; fi
+  if ! report_async_result "local/e2e" "$e2e_pid"; then heavy_failed=1; fi
+fi
+
+if [[ "$heavy_failed" -ne 0 ]]; then
+  echo "One or more checks (test/macos-app/e2e) failed." >&2
+  exit 1
 fi
 
 # Coverage (optional — requires cargo-llvm-cov).

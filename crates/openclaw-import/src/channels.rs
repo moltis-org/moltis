@@ -1,4 +1,4 @@
-//! Import channel configuration from OpenClaw (currently Telegram only).
+//! Import channel configuration from OpenClaw (Telegram + Discord).
 
 use std::path::Path;
 
@@ -10,7 +10,7 @@ use {
 use crate::{
     detect::OpenClawDetection,
     report::{CategoryReport, ImportCategory, ImportStatus},
-    types::{OpenClawConfig, OpenClawTelegramAccount},
+    types::{OpenClawConfig, OpenClawDiscordAccount, OpenClawTelegramAccount},
 };
 
 /// Imported Telegram channel configuration.
@@ -26,10 +26,31 @@ pub struct ImportedTelegramChannel {
     pub allowed_users: Vec<i64>,
 }
 
+/// Imported Discord channel configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedDiscordChannel {
+    /// Account identifier (from OpenClaw's accounts map key).
+    pub account_id: String,
+    /// Bot token.
+    pub token: String,
+    /// DM policy.
+    pub dm_policy: Option<String>,
+    /// Group policy.
+    pub group_policy: Option<String>,
+    /// Mention mode.
+    pub mention_mode: Option<String>,
+    /// Allowed users (Discord IDs or usernames).
+    pub allowlist: Vec<String>,
+    /// Allowed guild/server IDs.
+    pub guild_allowlist: Vec<String>,
+}
+
 /// Import result for channels.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ImportedChannels {
     pub telegram: Vec<ImportedTelegramChannel>,
+    pub discord: Vec<ImportedDiscordChannel>,
 }
 
 /// Import channel configuration from OpenClaw.
@@ -64,6 +85,39 @@ pub fn import_channels(detection: &OpenClawDetection) -> (CategoryReport, Import
                 allowed_users,
             });
             imported += 1;
+        }
+    }
+
+    if let Some(dc) = &config.channels.discord {
+        // Try accounts map first
+        if let Some(accounts) = &dc.accounts {
+            for (id, account) in accounts {
+                if let Some(channel) = extract_discord_account(id, account) {
+                    debug!(account_id = %id, "imported Discord account");
+                    result.discord.push(channel);
+                    imported += 1;
+                }
+            }
+        }
+
+        // Fall back to flat top-level config
+        if result.discord.is_empty() {
+            if dc.enabled == Some(false) {
+                // disabled flat account
+            } else if let Some(token) = dc.token.as_ref().filter(|t| !t.is_empty()) {
+                let allowlist = parse_allowlist(&dc.allow_from);
+                let guild_allowlist = parse_allowlist(&dc.guild_allowlist);
+                result.discord.push(ImportedDiscordChannel {
+                    account_id: "default".to_string(),
+                    token: token.clone(),
+                    dm_policy: dc.dm_policy.clone(),
+                    group_policy: dc.group_policy.clone(),
+                    mention_mode: dc.mention_mode.clone(),
+                    allowlist,
+                    guild_allowlist,
+                });
+                imported += 1;
+            }
         }
     }
 
@@ -121,6 +175,34 @@ fn extract_telegram_account(
     })
 }
 
+fn extract_discord_account(
+    id: &str,
+    account: &OpenClawDiscordAccount,
+) -> Option<ImportedDiscordChannel> {
+    let token = account.token.as_ref()?;
+    if token.is_empty() {
+        return None;
+    }
+
+    // Skip disabled accounts
+    if account.enabled == Some(false) {
+        return None;
+    }
+
+    let allowlist = parse_allowlist(&account.allow_from);
+    let guild_allowlist = parse_allowlist(&account.guild_allowlist);
+
+    Some(ImportedDiscordChannel {
+        account_id: id.to_string(),
+        token: token.clone(),
+        dm_policy: account.dm_policy.clone(),
+        group_policy: account.group_policy.clone(),
+        mention_mode: account.mention_mode.clone(),
+        allowlist,
+        guild_allowlist,
+    })
+}
+
 /// Parse OpenClaw's `allowFrom` array into Telegram user IDs.
 ///
 /// OpenClaw allows both numbers and strings like `"tg:123456"`.
@@ -136,6 +218,20 @@ fn parse_allow_from(values: &[serde_json::Value]) -> Vec<i64> {
                 stripped.parse::<i64>().ok()
             } else {
                 None
+            }
+        })
+        .collect()
+}
+
+/// Parse OpenClaw `allowFrom`/`guildAllowlist` arrays into string IDs.
+fn parse_allowlist(values: &[serde_json::Value]) -> Vec<String> {
+    values
+        .iter()
+        .filter_map(|v| {
+            if let Some(s) = v.as_str() {
+                Some(s.to_string())
+            } else {
+                v.as_i64().map(|n| n.to_string())
             }
         })
         .collect()
@@ -220,6 +316,61 @@ mod tests {
     }
 
     #[test]
+    fn import_discord_accounts() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("openclaw.json"),
+            r#"{
+                "channels": {
+                    "discord": {
+                        "accounts": {
+                            "mybot": {
+                                "token": "Bot token-123",
+                                "dmPolicy": "pairing",
+                                "groupPolicy": "allowlist",
+                                "mentionMode": "always",
+                                "allowFrom": ["111", 222],
+                                "guildAllowlist": ["333", 444]
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let detection = make_detection(tmp.path());
+        let (report, result) = import_channels(&detection);
+
+        assert_eq!(report.status, ImportStatus::Success);
+        assert_eq!(result.discord.len(), 1);
+        assert_eq!(result.discord[0].token, "Bot token-123");
+        assert_eq!(result.discord[0].dm_policy.as_deref(), Some("pairing"));
+        assert_eq!(result.discord[0].group_policy.as_deref(), Some("allowlist"));
+        assert_eq!(result.discord[0].mention_mode.as_deref(), Some("always"));
+        assert_eq!(result.discord[0].allowlist, vec!["111", "222"]);
+        assert_eq!(result.discord[0].guild_allowlist, vec!["333", "444"]);
+    }
+
+    #[test]
+    fn import_discord_flat_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("openclaw.json"),
+            r#"{"channels":{"discord":{"token":"Bot xyz","allowFrom":["abc"]}}}"#,
+        )
+        .unwrap();
+
+        let detection = make_detection(tmp.path());
+        let (_, result) = import_channels(&detection);
+
+        assert_eq!(result.discord.len(), 1);
+        assert_eq!(result.discord[0].account_id, "default");
+        assert_eq!(result.discord[0].token, "Bot xyz");
+        assert_eq!(result.discord[0].allowlist, vec!["abc"]);
+    }
+
+    #[test]
     fn import_skips_disabled_accounts() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -233,6 +384,22 @@ mod tests {
 
         assert_eq!(report.status, ImportStatus::Skipped);
         assert!(result.telegram.is_empty());
+    }
+
+    #[test]
+    fn import_skips_disabled_discord_accounts() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("openclaw.json"),
+            r#"{"channels":{"discord":{"accounts":{"disabled-bot":{"token":"Bot abc","enabled":false}}}}}"#,
+        )
+        .unwrap();
+
+        let detection = make_detection(tmp.path());
+        let (report, result) = import_channels(&detection);
+
+        assert_eq!(report.status, ImportStatus::Skipped);
+        assert!(result.discord.is_empty());
     }
 
     #[test]

@@ -26,6 +26,7 @@
 - [Sandbox](sandbox.md)
   - [Trusted Network](trusted-network.md)
 - [Voice](voice.md)
+- [Discord](discord.md)
 - [WhatsApp](whatsapp.md)
 - [Browser Automation](browser-automation.md)
 - [CalDAV (Calendars)](caldav.md)
