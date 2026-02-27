@@ -4176,8 +4176,7 @@ pub async fn start_gateway(
     #[cfg(feature = "tls")]
     let mut rustls_config: Option<rustls::ServerConfig> = None;
 
-    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
-    let mut app = prepared.app;
+    let app = prepared.app;
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -4206,29 +4205,7 @@ pub async fn start_gateway(
         let mgr = crate::tls::FsCertManager::new()?;
         rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
 
-        // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
-        if let Some(ref ca) = ca_path {
-            let ca_bytes = Arc::new(std::fs::read(ca)?);
-            let ca_clone = Arc::clone(&ca_bytes);
-            app = app.route(
-                "/certs/ca.pem",
-                get(move || {
-                    let data = Arc::clone(&ca_clone);
-                    async move {
-                        (
-                            [
-                                ("content-type", "application/x-pem-file"),
-                                (
-                                    "content-disposition",
-                                    "attachment; filename=\"moltis-ca.pem\"",
-                                ),
-                            ],
-                            data.as_ref().clone(),
-                        )
-                    }
-                }),
-            );
-        }
+        // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
 
     // Count enabled skills and repos for startup banner.
