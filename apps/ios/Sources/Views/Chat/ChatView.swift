@@ -307,9 +307,7 @@ struct ChatView: View {
             )
             .onChange(of: chatStore.messages.count) {
                 if let lastId = chatStore.messages.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(lastId, anchor: .bottom)
-                    }
+                    proxy.scrollTo(lastId, anchor: .bottom)
                 }
             }
             .onChange(of: chatStore.messages.last?.text) {

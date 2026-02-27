@@ -16,6 +16,7 @@ enum ChatEventState: String, Decodable {
     case autoCompact = "auto_compact"
     case sessionCleared = "session_cleared"
     case queueCleared = "queue_cleared"
+    case aborted
     case voicePending = "voice_pending"
     case channelUser = "channel_user"
 }

@@ -147,7 +147,7 @@
 		F4EE14BA5240BD907524E057 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		FC4424B219EFBC7A7F7D26E6 /* MoltisWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MoltisWidgetExtension.entitlements; sourceTree = "<group>"; };
 		FC7E35D562D39CE2FFA39ED0 /* ServerConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnection.swift; sourceTree = "<group>"; };
-		"TEMP_F9BCFF5B-E49C-40ED-8F98-E2863215D0FA" /* local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = local.xcconfig; sourceTree = "<group>"; };
+		"TEMP_CA36886E-5CA3-4232-9B89-8A2A7E0F53F1" /* local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = local.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -410,10 +410,10 @@
 			path = MoltisAPI;
 			sourceTree = "<group>";
 		};
-		"TEMP_EC90A0FA-1053-40E6-B353-63BC2661625C" /* ios */ = {
+		"TEMP_9ABB467F-8C84-4F3F-9B6C-95D5EF60A624" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_F9BCFF5B-E49C-40ED-8F98-E2863215D0FA" /* local.xcconfig */,
+				"TEMP_CA36886E-5CA3-4232-9B89-8A2A7E0F53F1" /* local.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -677,7 +677,7 @@
 		};
 		E9EDF5E282B8F2CBFAAAB2A5 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_F9BCFF5B-E49C-40ED-8F98-E2863215D0FA" /* local.xcconfig */;
+			baseConfigurationReference = "TEMP_CA36886E-5CA3-4232-9B89-8A2A7E0F53F1" /* local.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -744,7 +744,7 @@
 		};
 		FC118811CB476F0DA9466057 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_F9BCFF5B-E49C-40ED-8F98-E2863215D0FA" /* local.xcconfig */;
+			baseConfigurationReference = "TEMP_CA36886E-5CA3-4232-9B89-8A2A7E0F53F1" /* local.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;

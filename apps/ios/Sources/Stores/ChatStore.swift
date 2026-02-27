@@ -59,10 +59,30 @@ final class ChatStore: ObservableObject {
             let params: [String: AnyCodable] = [
                 "sessionKey": AnyCodable(currentSessionKey)
             ]
-            _ = try await wsClient.send(method: "chat.abort", params: params)
+            let response = try await wsClient.send(method: "chat.abort", params: params)
+            if let payload = response.payload,
+               let dict = payload.value as? [String: Any],
+               dict["aborted"] as? Bool == true {
+                finalizeAbort()
+            }
         } catch {
             logger.error("Failed to abort: \(error.localizedDescription)")
         }
+    }
+
+    private func finalizeAbort() {
+        if let msgId = streamingMessageId,
+           let idx = messages.firstIndex(where: { $0.id == msgId }) {
+            messages[idx].isStreaming = false
+            if messages[idx].text.isEmpty {
+                messages.remove(at: idx)
+            }
+        }
+        isStreaming = false
+        streamingMessageId = nil
+        currentRunId = nil
+        activeToolCalls.removeAll()
+        liveActivityManager.endActivity(success: false)
     }
 
     // MARK: - Load history
@@ -191,6 +211,9 @@ final class ChatStore: ObservableObject {
 
         case .sessionCleared:
             messages.removeAll()
+
+        case .aborted:
+            finalizeAbort()
 
         case .autoCompact, .queueCleared, .voicePending, .channelUser:
             break
