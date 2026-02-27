@@ -178,10 +178,7 @@ impl MemoryStore for QmdStore {
         }
     }
 
-    async fn put_cached_embeddings_batch(
-        &self,
-        entries: &[CacheEntry<'_>],
-    ) -> anyhow::Result<()> {
+    async fn put_cached_embeddings_batch(&self, entries: &[CacheEntry<'_>]) -> anyhow::Result<()> {
         if let Some(ref fallback) = self.fallback {
             fallback.put_cached_embeddings_batch(entries).await
         } else {

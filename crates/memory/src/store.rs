@@ -47,10 +47,7 @@ pub trait MemoryStore: Send + Sync {
     ) -> anyhow::Result<()>;
 
     /// Batch-insert multiple embedding cache entries in a single transaction.
-    async fn put_cached_embeddings_batch(
-        &self,
-        entries: &[CacheEntry<'_>],
-    ) -> anyhow::Result<()>;
+    async fn put_cached_embeddings_batch(&self, entries: &[CacheEntry<'_>]) -> anyhow::Result<()>;
 
     /// Count the number of rows in the embedding cache.
     async fn count_cached_embeddings(&self) -> anyhow::Result<usize>;

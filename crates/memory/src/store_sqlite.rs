@@ -289,10 +289,7 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(())
     }
 
-    async fn put_cached_embeddings_batch(
-        &self,
-        entries: &[CacheEntry<'_>],
-    ) -> anyhow::Result<()> {
+    async fn put_cached_embeddings_batch(&self, entries: &[CacheEntry<'_>]) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
         for entry in entries {
             let blob = vec_to_blob(entry.embedding);

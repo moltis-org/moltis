@@ -1446,8 +1446,10 @@ pub async fn prepare_gateway(
     }
     let db_path = data_dir.join("moltis.db");
     let db_pool = {
-        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
-        use std::str::FromStr;
+        use {
+            sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+            std::str::FromStr,
+        };
         let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
             .expect("invalid moltis.db path")
             .create_if_missing(true)
@@ -2697,8 +2699,10 @@ pub async fn prepare_gateway(
 
         let memory_db_path = data_dir.join("memory.db");
         let memory_pool_result = {
-            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
-            use std::str::FromStr;
+            use {
+                sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+                std::str::FromStr,
+            };
             let opts =
                 SqliteConnectOptions::from_str(&format!("sqlite:{}", memory_db_path.display()))
                     .expect("invalid memory.db path")

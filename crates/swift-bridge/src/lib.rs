@@ -70,14 +70,15 @@ impl BridgeState {
         // WAL mode + synchronous=NORMAL avoids multi-second write contention.
         let db_path = data_dir.join("moltis.db");
         let db_pool = runtime.block_on(async {
-            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
-            use std::str::FromStr;
-            let opts =
-                SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
-                    .expect("invalid moltis.db path")
-                    .create_if_missing(true)
-                    .journal_mode(SqliteJournalMode::Wal)
-                    .synchronous(SqliteSynchronous::Normal);
+            use {
+                sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+                std::str::FromStr,
+            };
+            let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+                .expect("invalid moltis.db path")
+                .create_if_missing(true)
+                .journal_mode(SqliteJournalMode::Wal)
+                .synchronous(SqliteSynchronous::Normal);
             let pool = sqlx::SqlitePool::connect_with(opts)
                 .await
                 .unwrap_or_else(|e| panic!("failed to open moltis.db: {e}"));
