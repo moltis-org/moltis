@@ -44,7 +44,7 @@ import {
 } from "./sessions.js";
 import * as S from "./state.js";
 import { sessionStore } from "./stores/session-store.js";
-import { connectWs, forceReconnect } from "./ws-connect.js";
+import { connectWs, forceReconnect, subscribeEvents } from "./ws-connect.js";
 
 // ── Chat event handlers ──────────────────────────────────────
 
@@ -1126,12 +1126,16 @@ var eventHandlers = {
 
 function dispatchFrame(frame) {
 	if (frame.type !== "event") return;
+	var streamMeta =
+		frame.stream != null || frame.done != null
+			? { stream: frame.stream, done: frame.done, channel: frame.channel }
+			: null;
 	var listeners = eventListeners[frame.event] || [];
 	listeners.forEach((h) => {
-		h(frame.payload || {});
+		h(frame.payload || {}, streamMeta);
 	});
 	var handler = eventHandlers[frame.event];
-	if (handler) handler(frame.payload || {});
+	if (handler) handler(frame.payload || {}, streamMeta);
 }
 
 var connectOpts = {
@@ -1148,6 +1152,29 @@ var connectOpts = {
 		if (S.sandboxInfo?.image_building) {
 			chatAddMsg("system", "Building sandbox image (installing packages)\u2026");
 		}
+		// Subscribe to all needed events (v4 protocol).
+		subscribeEvents(
+			Object.keys(eventHandlers).concat([
+				"tick",
+				"shutdown",
+				"auth.credentials_changed",
+				"exec.approval.requested",
+				"exec.approval.resolved",
+				"device.pair.requested",
+				"device.pair.resolved",
+				"node.pair.requested",
+				"node.pair.resolved",
+				"node.invoke.request",
+				"session",
+				"update.available",
+				"hooks.status",
+				"push.subscriptions",
+				"channel",
+				"metrics.update",
+				"skills.install.progress",
+				"mcp.status",
+			]),
+		);
 		fetchModels();
 		fetchSessions();
 		fetchProjects();

@@ -116,6 +116,14 @@ pub struct ConnectedClient {
     /// The client's IANA timezone (e.g. `Europe/Lisbon`), sent by the browser
     /// via `Intl.DateTimeFormat().resolvedOptions().timeZone`.
     pub timezone: Option<String>,
+    /// Event subscriptions (v4).
+    /// `None` = wildcard (receive everything, v3 compat).
+    /// `Some(set)` = only events in the set (or `"*"` = wildcard).
+    pub subscriptions: Option<HashSet<String>>,
+    /// Channels this client has joined (v4 multiplexing).
+    pub joined_channels: HashSet<String>,
+    /// Negotiated protocol version for this connection.
+    pub negotiated_protocol: u32,
 }
 
 impl ConnectedClient {
@@ -135,6 +143,22 @@ impl ConnectedClient {
         self.scopes()
             .iter()
             .any(|s| *s == moltis_protocol::scopes::ADMIN || *s == scope)
+    }
+
+    /// Check whether this client is subscribed to the given event.
+    /// `None` subscriptions = wildcard (receive everything).
+    pub fn is_subscribed_to(&self, event: &str) -> bool {
+        match &self.subscriptions {
+            None => true,
+            Some(set) => {
+                set.contains(moltis_protocol::subscriptions::WILDCARD) || set.contains(event)
+            },
+        }
+    }
+
+    /// Check whether this client has joined the given channel.
+    pub fn is_in_channel(&self, channel: &str) -> bool {
+        self.joined_channels.contains(channel)
     }
 
     /// Send a serialized JSON frame to this client.
@@ -215,6 +239,15 @@ pub struct PendingInvoke {
     pub created_at: Instant,
 }
 
+// ── Pending client request (v4 bidir RPC) ───────────────────────────────────
+
+/// A server-initiated RPC request waiting for a client response.
+pub struct PendingClientRequest {
+    pub method: String,
+    pub sender: oneshot::Sender<Result<serde_json::Value, moltis_protocol::ErrorShape>>,
+    pub created_at: Instant,
+}
+
 // ── Discovered hook info ─────────────────────────────────────────────────────
 
 /// Metadata about a discovered hook, exposed to the web UI.
@@ -258,6 +291,8 @@ pub struct GatewayInner {
     pub pairing: PairingState,
     /// Pending node invoke requests awaiting results.
     pub pending_invokes: HashMap<String, PendingInvoke>,
+    /// Pending server → client RPC requests awaiting client responses (v4).
+    pub pending_client_requests: HashMap<String, PendingClientRequest>,
     /// Late-bound chat service override (for circular init).
     pub chat_override: Option<Arc<dyn crate::services::ChatService>>,
     /// Active session key per connection (conn_id → session key).
@@ -314,6 +349,7 @@ impl GatewayInner {
             nodes: NodeRegistry::new(),
             pairing: PairingState::new(),
             pending_invokes: HashMap::new(),
+            pending_client_requests: HashMap::new(),
             chat_override: None,
             active_sessions: HashMap::new(),
             active_projects: HashMap::new(),
@@ -679,6 +715,79 @@ impl GatewayState {
             .contains(session_key)
     }
 
+    /// Send an RPC request to a connected client and await its response (v4 bidirectional RPC).
+    pub async fn send_client_request(
+        &self,
+        conn_id: &str,
+        method: &str,
+        params: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, moltis_protocol::ErrorShape> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let req_frame = moltis_protocol::RequestFrame {
+            r#type: "req".into(),
+            id: request_id.clone(),
+            method: method.into(),
+            params: Some(params),
+            channel: None,
+        };
+        let json = serde_json::to_string(&req_frame).map_err(|e| {
+            moltis_protocol::ErrorShape::new(moltis_protocol::error_codes::INTERNAL, e.to_string())
+        })?;
+
+        let (tx, rx) = oneshot::channel();
+
+        // Register the pending request BEFORE sending to avoid a race where
+        // the client responds before the entry exists (response would be dropped).
+        {
+            let mut inner = self.inner.write().await;
+            if !inner.clients.contains_key(conn_id) {
+                return Err(moltis_protocol::ErrorShape::new(
+                    moltis_protocol::error_codes::UNAVAILABLE,
+                    "client not connected",
+                ));
+            }
+            inner
+                .pending_client_requests
+                .insert(request_id.clone(), PendingClientRequest {
+                    method: method.into(),
+                    sender: tx,
+                    created_at: Instant::now(),
+                });
+            let sent = inner
+                .clients
+                .get(conn_id)
+                .map(|c| c.send(&json))
+                .unwrap_or(false);
+            if !sent {
+                inner.pending_client_requests.remove(&request_id);
+                return Err(moltis_protocol::ErrorShape::new(
+                    moltis_protocol::error_codes::UNAVAILABLE,
+                    "client send failed",
+                ));
+            }
+        }
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(moltis_protocol::ErrorShape::new(
+                moltis_protocol::error_codes::UNAVAILABLE,
+                "client request cancelled",
+            )),
+            Err(_) => {
+                self.inner
+                    .write()
+                    .await
+                    .pending_client_requests
+                    .remove(&request_id);
+                Err(moltis_protocol::ErrorShape::new(
+                    moltis_protocol::error_codes::TIMEOUT,
+                    "client request timeout",
+                ))
+            },
+        }
+    }
+
     /// Close a client: remove from registry and unregister from nodes.
     pub async fn close_client(&self, conn_id: &str) -> Option<ConnectedClient> {
         let mut inner = self.inner.write().await;
@@ -788,6 +897,9 @@ mod tests {
             accept_language: None,
             remote_ip: None,
             timezone: None,
+            subscriptions: None,
+            joined_channels: HashSet::new(),
+            negotiated_protocol: moltis_protocol::PROTOCOL_VERSION,
         };
         (client, rx)
     }
@@ -849,5 +961,130 @@ mod tests {
         // Should not panic.
         state.disconnect_all_clients("noop").await;
         assert_eq!(state.client_count().await, 0);
+    }
+
+    // ── Subscription tests ──────────────────────────────────────────────
+
+    #[test]
+    fn is_subscribed_to_none_is_wildcard() {
+        let (mut client, _rx) = mock_client("c1");
+        client.subscriptions = None;
+        assert!(client.is_subscribed_to("chat"));
+        assert!(client.is_subscribed_to("presence"));
+        assert!(client.is_subscribed_to("anything"));
+    }
+
+    #[test]
+    fn is_subscribed_to_empty_set_blocks_all() {
+        let (mut client, _rx) = mock_client("c1");
+        client.subscriptions = Some(HashSet::new());
+        assert!(!client.is_subscribed_to("chat"));
+        assert!(!client.is_subscribed_to("presence"));
+    }
+
+    #[test]
+    fn is_subscribed_to_specific_events() {
+        let (mut client, _rx) = mock_client("c1");
+        let mut subs = HashSet::new();
+        subs.insert("chat".to_string());
+        subs.insert("presence".to_string());
+        client.subscriptions = Some(subs);
+        assert!(client.is_subscribed_to("chat"));
+        assert!(client.is_subscribed_to("presence"));
+        assert!(!client.is_subscribed_to("tick"));
+    }
+
+    #[test]
+    fn is_subscribed_to_wildcard_in_set() {
+        let (mut client, _rx) = mock_client("c1");
+        let mut subs = HashSet::new();
+        subs.insert("*".to_string());
+        client.subscriptions = Some(subs);
+        assert!(client.is_subscribed_to("chat"));
+        assert!(client.is_subscribed_to("anything"));
+    }
+
+    // ── Channel tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn is_in_channel_empty() {
+        let (client, _rx) = mock_client("c1");
+        assert!(!client.is_in_channel("session:abc"));
+    }
+
+    #[test]
+    fn is_in_channel_after_join() {
+        let (mut client, _rx) = mock_client("c1");
+        client.joined_channels.insert("session:abc".to_string());
+        assert!(client.is_in_channel("session:abc"));
+        assert!(!client.is_in_channel("session:xyz"));
+    }
+
+    // ── Broadcast subscription filtering ────────────────────────────────
+
+    #[tokio::test]
+    async fn broadcast_skips_unsubscribed_clients() {
+        let state = test_state();
+
+        // Client 1: subscribed to "chat" only
+        let (mut c1, mut rx1) = mock_client("conn-sub");
+        c1.subscriptions = Some(["chat".to_string()].into());
+        state.register_client(c1).await;
+
+        // Client 2: wildcard (None)
+        let (c2, mut rx2) = mock_client("conn-wild");
+        state.register_client(c2).await;
+
+        // Broadcast a "presence" event
+        crate::broadcast::broadcast(
+            &state,
+            "presence",
+            serde_json::json!({"type": "test"}),
+            crate::broadcast::BroadcastOpts::default(),
+        )
+        .await;
+
+        // Client 1 should NOT receive it (not subscribed to presence)
+        assert!(rx1.try_recv().is_err());
+
+        // Client 2 should receive it (wildcard)
+        let msg = rx2.try_recv().expect("wildcard should receive");
+        let frame: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        assert_eq!(frame["event"], "presence");
+    }
+
+    #[tokio::test]
+    async fn broadcast_channel_filter_skips_non_members() {
+        let state = test_state();
+
+        // Client 1: in channel "session:abc"
+        let (mut c1, mut rx1) = mock_client("conn-in");
+        c1.joined_channels.insert("session:abc".to_string());
+        state.register_client(c1).await;
+
+        // Client 2: not in channel
+        let (c2, mut rx2) = mock_client("conn-out");
+        state.register_client(c2).await;
+
+        // Broadcast scoped to channel
+        crate::broadcast::broadcast(
+            &state,
+            "chat",
+            serde_json::json!({"text": "hello"}),
+            crate::broadcast::BroadcastOpts {
+                channel: Some("session:abc".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        // Client 1 should receive it
+        let msg = rx1.try_recv().expect("channel member should receive");
+        let frame: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        assert_eq!(frame["event"], "chat");
+        assert_eq!(frame["channel"], "session:abc");
+
+        // Client 2 should NOT receive it
+        assert!(rx2.try_recv().is_err());
     }
 }

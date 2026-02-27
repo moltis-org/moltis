@@ -141,4 +141,63 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             })
         }),
     );
+
+    // system.describe: protocol schema discovery (v4)
+    reg.register(
+        "system.describe",
+        Box::new(|_ctx| {
+            Box::pin(async move {
+                let methods: Vec<serde_json::Value> = reg_method_names()
+                    .iter()
+                    .map(|name| {
+                        serde_json::json!({
+                            "name": name,
+                        })
+                    })
+                    .collect();
+
+                let event_descriptors: Vec<serde_json::Value> = moltis_protocol::KNOWN_EVENTS
+                    .iter()
+                    .map(|name| serde_json::json!({ "name": name }))
+                    .collect();
+
+                Ok(serde_json::json!({
+                    "protocol": moltis_protocol::PROTOCOL_VERSION,
+                    "methods": methods,
+                    "events": event_descriptors,
+                }))
+            })
+        }),
+    );
+}
+
+/// Core protocol method names for `system.describe`.
+///
+/// This is a static subset of methods registered in `gateway.rs`, `node.rs`,
+/// `subscribe.rs`, and `channel_mux.rs`. The full method list (including all
+/// service methods) is already available in `HelloOk.features.methods`.
+///
+/// TODO: store Arc<MethodRegistry> on GatewayState so this handler can query
+/// the live registry instead of maintaining a static list.
+fn reg_method_names() -> Vec<&'static str> {
+    vec![
+        "health",
+        "status",
+        "system-presence",
+        "system-event",
+        "last-heartbeat",
+        "set-heartbeats",
+        "system.describe",
+        "node.list",
+        "node.describe",
+        "node.rename",
+        "node.invoke",
+        "node.invoke.result",
+        "node.event",
+        "location.result",
+        "subscribe",
+        "unsubscribe",
+        "channel.join",
+        "channel.leave",
+    ]
 }
