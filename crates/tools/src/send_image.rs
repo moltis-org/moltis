@@ -182,6 +182,7 @@ fn mime_from_extension(ext: &str) -> Option<&'static str> {
         "jpg" | "jpeg" => Some("image/jpeg"),
         "gif" => Some("image/gif"),
         "webp" => Some("image/webp"),
+        "ppm" => Some("image/x-portable-pixmap"),
         _ => None,
     }
 }
@@ -194,7 +195,7 @@ impl AgentTool for SendImageTool {
 
     fn description(&self) -> &str {
         "Send a local image file to the current conversation's channel (e.g. Telegram). \
-         Supported formats: PNG, JPEG, GIF, WebP. Maximum size: 20 MB."
+         Supported formats: PNG, JPEG, GIF, WebP, PPM. Maximum size: 20 MB."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -231,12 +232,12 @@ impl AgentTool for SendImageTool {
             .extension()
             .and_then(|e| e.to_str())
             .ok_or_else(|| {
-                anyhow::anyhow!("file has no extension — supported: png, jpg, jpeg, gif, webp")
+                anyhow::anyhow!("file has no extension — supported: png, jpg, jpeg, gif, webp, ppm")
             })?;
 
         let mime = mime_from_extension(ext).ok_or_else(|| {
             anyhow::anyhow!(
-                "unsupported image format '.{ext}' — supported: png, jpg, jpeg, gif, webp"
+                "unsupported image format '.{ext}' — supported: png, jpg, jpeg, gif, webp, ppm"
             )
         })?;
 
@@ -329,6 +330,7 @@ mod tests {
         assert_eq!(mime_from_extension("jpeg"), Some("image/jpeg"));
         assert_eq!(mime_from_extension("gif"), Some("image/gif"));
         assert_eq!(mime_from_extension("webp"), Some("image/webp"));
+        assert_eq!(mime_from_extension("ppm"), Some("image/x-portable-pixmap"));
         assert_eq!(mime_from_extension("bmp"), None);
         assert_eq!(mime_from_extension("svg"), None);
     }
@@ -423,6 +425,21 @@ mod tests {
                 .starts_with("data:image/jpeg;base64,")
         );
         assert_eq!(result["caption"], "Hello");
+    }
+
+    #[tokio::test]
+    async fn encodes_ppm_as_data_uri() {
+        let mut tmp = tempfile::NamedTempFile::with_suffix(".ppm").unwrap();
+        tmp.write_all(b"P3\n1 1\n255\n255 0 0\n").unwrap();
+
+        let tool = SendImageTool::new();
+        let result = tool
+            .execute(json!({ "path": tmp.path().to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        let screenshot = result["screenshot"].as_str().unwrap_or_default();
+        assert!(screenshot.starts_with("data:image/x-portable-pixmap;base64,"));
     }
 
     #[tokio::test]

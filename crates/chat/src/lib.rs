@@ -4742,10 +4742,11 @@ struct ChannelStreamWorker {
     sender: moltis_channels::StreamSender,
 }
 
-/// Fan out model deltas to channel stream workers (Telegram edit-in-place).
+/// Fan out model deltas to channel stream workers (Telegram/Discord edit-in-place).
 ///
-/// Workers are lazily started on the first delta so sessions that do not emit
-/// any streaming text never create placeholder messages in Telegram.
+/// Workers are started eagerly so channel typing indicators remain active
+/// during long-running tool execution before the first text delta arrives.
+/// Stream-dedup only applies after at least one delta has been sent.
 struct ChannelStreamDispatcher {
     outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
@@ -4753,6 +4754,7 @@ struct ChannelStreamDispatcher {
     tasks: Vec<tokio::task::JoinHandle<()>>,
     completed: Arc<Mutex<HashSet<ChannelReplyTargetKey>>>,
     started: bool,
+    sent_delta: bool,
 }
 
 impl ChannelStreamDispatcher {
@@ -4766,14 +4768,17 @@ impl ChannelStreamDispatcher {
         if targets.is_empty() {
             return None;
         }
-        Some(Self {
+        let mut dispatcher = Self {
             outbound,
             targets,
             workers: Vec::new(),
             tasks: Vec::new(),
             completed: Arc::new(Mutex::new(HashSet::new())),
             started: false,
-        })
+            sent_delta: false,
+        };
+        dispatcher.ensure_started().await;
+        Some(dispatcher)
     }
 
     async fn ensure_started(&mut self) {
@@ -4828,6 +4833,7 @@ impl ChannelStreamDispatcher {
         if delta.is_empty() {
             return;
         }
+        self.sent_delta = true;
         self.ensure_started().await;
         let event = moltis_channels::StreamEvent::Delta(delta.to_string());
         for worker in &self.workers {
@@ -4864,6 +4870,9 @@ impl ChannelStreamDispatcher {
     }
 
     async fn completed_target_keys(&self) -> HashSet<ChannelReplyTargetKey> {
+        if !self.sent_delta {
+            return HashSet::new();
+        }
         self.completed.lock().await.clone()
     }
 }
@@ -8359,6 +8368,39 @@ mod tests {
         assert!(dispatcher.completed_target_keys().await.is_empty());
         assert_eq!(completions.load(Ordering::SeqCst), 0);
         assert!(deltas.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn channel_stream_dispatcher_no_deltas_do_not_dedup_targets() {
+        let stream_outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound> =
+            Arc::new(MockChannelStreamOutbound {
+                deltas: Arc::new(Mutex::new(Vec::new())),
+                reply_tos: Arc::new(Mutex::new(Vec::new())),
+                completions: Arc::new(AtomicUsize::new(0)),
+                fail: false,
+                stream_enabled: true,
+            });
+        let state: Arc<dyn ChatRuntime> =
+            Arc::new(MockChatRuntime::new().with_channel_stream_outbound(stream_outbound));
+        let target = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+            message_id: Some("55".to_string()),
+        };
+        let session_key = "telegram:acct:123";
+        state.push_channel_reply(session_key, target.clone()).await;
+
+        let mut dispatcher = ChannelStreamDispatcher::for_session(&state, session_key)
+            .await
+            .expect("stream dispatcher should be created");
+        dispatcher.finish().await;
+
+        let completed = dispatcher.completed_target_keys().await;
+        assert!(
+            !completed.contains(&ChannelReplyTargetKey::from(&target)),
+            "targets must not be stream-deduped when no deltas were sent"
+        );
     }
 
     /// Regression test for #173: voice reply medium must not suppress stream

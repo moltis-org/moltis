@@ -134,6 +134,7 @@ fn extension_for_mime(mime: &str) -> &'static str {
         "image/jpeg" | "image/jpg" => "jpg",
         "image/gif" => "gif",
         "image/webp" => "webp",
+        "image/x-portable-pixmap" => "ppm",
         "audio/ogg" => "ogg",
         "audio/mpeg" | "audio/mp3" => "mp3",
         "video/mp4" => "mp4",
@@ -674,6 +675,7 @@ mod tests {
     fn extension_for_common_mimes() {
         assert_eq!(extension_for_mime("image/png"), "png");
         assert_eq!(extension_for_mime("image/jpeg"), "jpg");
+        assert_eq!(extension_for_mime("image/x-portable-pixmap"), "ppm");
         assert_eq!(extension_for_mime("audio/ogg"), "ogg");
         assert_eq!(extension_for_mime("application/octet-stream"), "bin");
     }
