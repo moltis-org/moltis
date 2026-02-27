@@ -55,7 +55,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("chat.clear emits session patched event", async ({ page }) => {
+	test("chat.clear emits session_cleared chat event", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
@@ -67,12 +67,12 @@ test.describe("WebSocket connection lifecycle", () => {
 			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			const events = await import(`${prefix}js/events.js`);
 
-			window.__sessionWsEvents = [];
-			if (window.__sessionWsEventsOff) {
-				window.__sessionWsEventsOff();
+			window.__chatWsEvents = [];
+			if (window.__chatWsEventsOff) {
+				window.__chatWsEventsOff();
 			}
-			window.__sessionWsEventsOff = events.onEvent("session", (payload) => {
-				window.__sessionWsEvents.push(payload);
+			window.__chatWsEventsOff = events.onEvent("chat", (payload) => {
+				window.__chatWsEvents.push(payload);
 			});
 		});
 
@@ -83,8 +83,8 @@ test.describe("WebSocket connection lifecycle", () => {
 				() =>
 					page.evaluate(
 						() =>
-							window.__sessionWsEvents.filter(
-								(payload) => payload?.kind === "patched" && payload?.sessionKey === "main",
+							window.__chatWsEvents.filter(
+								(payload) => payload?.state === "session_cleared" && payload?.sessionKey === "main",
 							).length,
 					),
 				{ timeout: 10_000 },
@@ -92,9 +92,9 @@ test.describe("WebSocket connection lifecycle", () => {
 			.toBeGreaterThan(0);
 
 		await page.evaluate(() => {
-			if (window.__sessionWsEventsOff) {
-				window.__sessionWsEventsOff();
-				window.__sessionWsEventsOff = null;
+			if (window.__chatWsEventsOff) {
+				window.__chatWsEventsOff();
+				window.__chatWsEventsOff = null;
 			}
 		});
 		expect(pageErrors).toEqual([]);
