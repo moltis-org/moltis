@@ -27,6 +27,8 @@ use crate::{
 
 /// Discord enforces a 2 000-character limit per message.
 const DISCORD_MAX_MESSAGE_LEN: usize = 2000;
+/// Discord embed description character limit.
+const DISCORD_MAX_EMBED_DESCRIPTION_LEN: usize = 4096;
 
 /// Minimum chars before the first message is sent during streaming.
 const STREAM_MIN_INITIAL_CHARS: usize = 30;
@@ -112,6 +114,76 @@ fn html_suffix_to_discord(html: &str) -> String {
 fn peek_closing_blockquote(chars: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
     let rest: String = chars.clone().take(14).collect();
     rest.to_ascii_lowercase().starts_with("</blockquote>")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActivityLogRender {
+    description: String,
+    has_errors: bool,
+}
+
+fn render_activity_log_for_discord(html: &str) -> Option<ActivityLogRender> {
+    let converted = html_suffix_to_discord(html);
+    let mut lines: Vec<String> = converted
+        .lines()
+        .map(str::trim)
+        .map(|line| {
+            let no_quote = if let Some(stripped) = line.strip_prefix("> ") {
+                stripped
+            } else if let Some(stripped) = line.strip_prefix('>') {
+                stripped.trim_start()
+            } else {
+                line
+            };
+            no_quote.trim().to_string()
+        })
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    if lines
+        .first()
+        .is_some_and(|line| line.to_ascii_lowercase().contains("activity log"))
+    {
+        lines.remove(0);
+    }
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    let has_errors = lines.iter().any(|line| line.contains('\u{274C}'));
+    let mut entries = Vec::with_capacity(lines.len());
+    for line in lines {
+        let normalized = line
+            .strip_prefix('\u{2022}')
+            .map(str::trim_start)
+            .unwrap_or(line.trim());
+        if normalized.is_empty() {
+            continue;
+        }
+        entries.push(format!("\u{2022} {normalized}"));
+    }
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    let description = entries.join("\n");
+    let description = if description.len() > DISCORD_MAX_EMBED_DESCRIPTION_LEN {
+        let max = DISCORD_MAX_EMBED_DESCRIPTION_LEN.saturating_sub("\n...".len());
+        format!("{}\n...", truncate_at_char_boundary(&description, max))
+    } else {
+        description
+    };
+
+    Some(ActivityLogRender {
+        description,
+        has_errors,
+    })
 }
 
 // ── Media helpers ────────────────────────────────────────────────────
@@ -222,6 +294,38 @@ impl DiscordOutbound {
         }
     }
 
+    async fn send_activity_log_embed(
+        &self,
+        account_id: &str,
+        http: &serenity::http::Http,
+        channel_id: ChannelId,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        let Some(rendered) = render_activity_log_for_discord(suffix_html) else {
+            return Ok(());
+        };
+
+        let color: u32 = if rendered.has_errors {
+            0xED4245 // Discord red for error entries
+        } else {
+            0x5865F2 // Discord blurple for normal activity
+        };
+        let embed = CreateEmbed::new()
+            .title("Tool activity")
+            .description(rendered.description)
+            .color(color);
+        let mut msg = CreateMessage::new().embed(embed);
+        if let Some(reference) = self.resolve_reference(account_id, reply_to) {
+            msg = msg.reference_message((channel_id, reference));
+        }
+
+        channel_id.send_message(http, msg).await.map_err(|e| {
+            ChannelError::external("Discord send embed", std::io::Error::other(e.to_string()))
+        })?;
+        Ok(())
+    }
+
     /// Inner implementation for `send_text_with_suffix` that does not handle
     /// ack reaction removal -- the caller is responsible for that.
     async fn send_text_with_suffix_inner(
@@ -240,26 +344,8 @@ impl DiscordOutbound {
             .map_err(|e| ChannelError::external("Discord send", std::io::Error::other(e)))?;
 
         // Send the activity log as a separate embed message.
-        if !suffix_html.is_empty() {
-            let converted = html_suffix_to_discord(suffix_html);
-            let log_text = converted.trim();
-            if !log_text.is_empty() {
-                let color: u32 = if log_text.contains('\u{274C}') {
-                    0xD32F2F // red for errors
-                } else {
-                    0x4CAF50 // green for success
-                };
-                let embed = CreateEmbed::new().description(log_text).color(color);
-                let msg = CreateMessage::new().embed(embed);
-
-                channel_id.send_message(http, msg).await.map_err(|e| {
-                    ChannelError::external(
-                        "Discord send embed",
-                        std::io::Error::other(e.to_string()),
-                    )
-                })?;
-            }
-        }
+        self.send_activity_log_embed(account_id, http, channel_id, suffix_html, None)
+            .await?;
 
         Ok(())
     }
@@ -394,6 +480,19 @@ impl ChannelOutbound for DiscordOutbound {
             .await;
 
         result
+    }
+
+    async fn send_html(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        let http = self.resolve_http(account_id)?;
+        let channel_id = Self::parse_channel_id(to)?;
+        self.send_activity_log_embed(account_id, &http, channel_id, html, reply_to)
+            .await
     }
 
     async fn send_location(
@@ -655,6 +754,48 @@ mod tests {
     #[test]
     fn empty_string() {
         assert_eq!(html_suffix_to_discord(""), "");
+    }
+
+    #[test]
+    fn render_activity_log_strips_header_and_quotes() {
+        let html = "<blockquote expandable>\n\
+                     \u{1f4cb} <b>Activity log</b>\n\
+                     \u{2022} First entry\n\
+                     \u{2022} Second entry\n\
+                     </blockquote>";
+        let rendered = render_activity_log_for_discord(html)
+            .unwrap_or_else(|| panic!("expected rendered activity log"));
+        assert_eq!(
+            rendered.description,
+            "\u{2022} First entry\n\u{2022} Second entry"
+        );
+        assert!(!rendered.has_errors);
+    }
+
+    #[test]
+    fn render_activity_log_detects_error_entries() {
+        let html = "<blockquote expandable>\n\
+                     \u{1f4cb} <b>Activity log</b>\n\
+                     \u{2022} \u{274C} exit 1 - command failed\n\
+                     </blockquote>";
+        let rendered = render_activity_log_for_discord(html)
+            .unwrap_or_else(|| panic!("expected rendered activity log"));
+        assert!(rendered.has_errors);
+    }
+
+    #[test]
+    fn render_activity_log_truncates_long_descriptions() {
+        let long = "x".repeat(DISCORD_MAX_EMBED_DESCRIPTION_LEN + 200);
+        let html = format!(
+            "<blockquote expandable>\n\
+             \u{1f4cb} <b>Activity log</b>\n\
+             \u{2022} {long}\n\
+             </blockquote>"
+        );
+        let rendered = render_activity_log_for_discord(&html)
+            .unwrap_or_else(|| panic!("expected rendered activity log"));
+        assert!(rendered.description.len() <= DISCORD_MAX_EMBED_DESCRIPTION_LEN);
+        assert!(rendered.description.ends_with("\n..."));
     }
 
     #[test]

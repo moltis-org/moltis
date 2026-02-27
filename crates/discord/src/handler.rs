@@ -50,6 +50,20 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
+fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// Discord snowflake epoch (2015-01-01T00:00:00.000Z) in Unix milliseconds.
+const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
+
+fn discord_message_created_ms(message_id: MessageId) -> u64 {
+    (message_id.get() >> 22).saturating_add(DISCORD_EPOCH_MS)
+}
+
 /// Strip the bot mention (e.g. `<@123456789>`) from the beginning of a message.
 pub fn strip_bot_mention(text: &str, bot_id: u64) -> String {
     let mention = format!("<@{bot_id}>");
@@ -103,6 +117,7 @@ impl EventHandler for Handler {
             return;
         }
 
+        let accounts_lock_wait_start = std::time::Instant::now();
         let (config, event_sink, message_log, bot_user_id) = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             let Some(state) = accounts.get(&self.account_id) else {
@@ -116,8 +131,10 @@ impl EventHandler for Handler {
                 state.bot_user_id,
             )
         };
+        let accounts_lock_wait_ms = accounts_lock_wait_start.elapsed().as_millis() as u64;
 
         let is_guild = msg.guild_id.is_some();
+        let message_id = msg.id.get();
         let peer_id = msg.author.id.to_string();
         let username = Some(msg.author.name.clone());
         let sender_name = msg.author.global_name.clone().or_else(|| username.clone());
@@ -140,8 +157,12 @@ impl EventHandler for Handler {
             return;
         }
 
+        let created_ms = discord_message_created_ms(msg.id);
+        let ingress_lag_ms = unix_now_ms().saturating_sub(created_ms);
+
         info!(
             account_id = %self.account_id,
+            message_id,
             chat_id,
             peer_id,
             username = ?username,
@@ -149,8 +170,20 @@ impl EventHandler for Handler {
             is_guild,
             bot_mentioned,
             text_len = text.len(),
+            ingress_lag_ms,
+            accounts_lock_wait_ms,
             "discord inbound message received"
         );
+        if ingress_lag_ms > 2_000 {
+            warn!(
+                account_id = %self.account_id,
+                message_id,
+                chat_id,
+                peer_id,
+                ingress_lag_ms,
+                "discord inbound delivery lag exceeds 2s"
+            );
+        }
 
         // Check DM / guild / mention policy.
         let chat_type = if is_guild {
@@ -858,5 +891,12 @@ mod tests {
     fn strip_mention_only_mention() {
         // When the message is just the mention, result should be empty after trim.
         assert_eq!(strip_bot_mention("<@123>", 123), "");
+    }
+
+    #[test]
+    fn discord_message_created_ms_from_snowflake() {
+        // Example snowflake from Discord docs / Serenity tests.
+        let id = MessageId::new(175_928_847_299_117_063);
+        assert_eq!(discord_message_created_ms(id), 1_462_015_105_796);
     }
 }

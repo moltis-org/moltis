@@ -88,6 +88,30 @@ fn rewrite_for_shell_mode(text: &str) -> Option<String> {
     Some(format!("/sh {trimmed}"))
 }
 
+fn start_channel_typing_loop(
+    state: &Arc<GatewayState>,
+    reply_to: &ChannelReplyTarget,
+) -> Option<tokio::sync::oneshot::Sender<()>> {
+    let outbound = state.services.channel_outbound_arc()?;
+    let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
+    let account_id = reply_to.account_id.clone();
+    let chat_id = reply_to.chat_id.clone();
+
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = outbound.send_typing(&account_id, &chat_id).await {
+                debug!(account_id, chat_id, "typing indicator failed: {e}");
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {},
+                _ = &mut done_rx => break,
+            }
+        }
+    });
+
+    Some(done_tx)
+}
+
 /// Broadcasts channel events over the gateway WebSocket.
 ///
 /// Uses a deferred `OnceCell` reference so the sink can be created before
@@ -144,6 +168,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
         meta: ChannelMessageMeta,
     ) {
         if let Some(state) = self.state.get() {
+            // Start typing immediately so pre-run setup (session/model resolution)
+            // does not delay channel feedback.
+            let typing_done = start_channel_typing_loop(state, &reply_to);
+
             let session_key = if let Some(ref sm) = state.services.session_metadata {
                 resolve_channel_session(&reply_to, sm).await
             } else {
@@ -313,57 +341,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 }
             }
 
-            // Send a repeating "typing" indicator every 4s until chat.send()
-            // completes. Telegram's typing status expires after ~5s.
-            let send_result = if let Some(outbound) = state.services.channel_outbound_arc() {
-                let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
-                let account_id = reply_to.account_id.clone();
-                let chat_id = reply_to.chat_id.clone();
-                tokio::spawn(async move {
-                    debug!(
-                        account_id = account_id,
-                        chat_id = chat_id,
-                        "starting typing indicator loop"
-                    );
-                    loop {
-                        if let Err(e) = outbound.send_typing(&account_id, &chat_id).await {
-                            debug!(
-                                account_id = account_id,
-                                chat_id = chat_id,
-                                "typing indicator failed: {e}"
-                            );
-                        } else {
-                            debug!(
-                                account_id = account_id,
-                                chat_id = chat_id,
-                                "typing indicator sent"
-                            );
-                        }
-                        tokio::select! {
-                            _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {
-                                debug!(
-                                    account_id = account_id,
-                                    chat_id = chat_id,
-                                    "typing loop: 4s elapsed, sending again"
-                                );
-                            },
-                            _ = &mut done_rx => {
-                                debug!(
-                                    account_id = account_id,
-                                    chat_id = chat_id,
-                                    "typing loop: chat completed, stopping"
-                                );
-                                break;
-                            },
-                        }
-                    }
-                });
-                let result = chat.send(params).await;
+            let send_result = chat.send(params).await;
+            if let Some(done_tx) = typing_done {
                 let _ = done_tx.send(());
-                result
-            } else {
-                chat.send(params).await
-            };
+            }
 
             if let Err(e) = send_result {
                 error!("channel dispatch_to_chat failed: {e}");
@@ -601,6 +582,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
             return;
         };
 
+        // Start typing immediately so image preprocessing/session setup doesn't
+        // delay channel feedback.
+        let typing_done = start_channel_typing_loop(state, &reply_to);
+
         let session_key = if let Some(ref sm) = state.services.session_metadata {
             resolve_channel_session(&reply_to, sm).await
         } else {
@@ -776,28 +761,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
             }
         }
 
-        // Send typing indicator and dispatch to chat
-        let send_result = if let Some(outbound) = state.services.channel_outbound_arc() {
-            let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
-            let account_id = reply_to.account_id.clone();
-            let chat_id = reply_to.chat_id.clone();
-            tokio::spawn(async move {
-                loop {
-                    if let Err(e) = outbound.send_typing(&account_id, &chat_id).await {
-                        debug!(account_id, chat_id, "typing indicator failed: {e}");
-                    }
-                    tokio::select! {
-                        _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {},
-                        _ = &mut done_rx => break,
-                    }
-                }
-            });
-            let result = chat.send(params).await;
+        let send_result = chat.send(params).await;
+        if let Some(done_tx) = typing_done {
             let _ = done_tx.send(());
-            result
-        } else {
-            chat.send(params).await
-        };
+        }
 
         if let Err(e) = send_result {
             error!("channel dispatch_to_chat_with_attachments failed: {e}");
