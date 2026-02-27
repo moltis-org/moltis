@@ -6,8 +6,8 @@
 
 use {
     serenity::all::{
-        Command, CommandInteraction, Context, CreateCommand, CreateInteractionResponse,
-        CreateInteractionResponseMessage, Interaction,
+        Command, CommandInteraction, Context, CreateCommand, CreateInteractionResponseFollowup,
+        EditInteractionResponse, Interaction,
     },
     tracing::{debug, info, warn},
 };
@@ -64,6 +64,14 @@ pub async fn handle_interaction(
         "Discord slash command received"
     );
 
+    if let Err(e) = command.defer_ephemeral(ctx).await {
+        warn!(
+            command = %command.data.name,
+            "Failed to acknowledge slash command: {e}"
+        );
+        return;
+    }
+
     let event_sink = {
         let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts.get(account_id).and_then(|s| s.event_sink.clone())
@@ -91,16 +99,28 @@ pub async fn handle_interaction(
 
 /// Send an ephemeral response to a slash command (only visible to the invoker).
 async fn respond_ephemeral(ctx: &Context, command: &CommandInteraction, text: &str) {
-    let response = CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-            .content(text)
-            .ephemeral(true),
-    );
-    if let Err(e) = command.create_response(&ctx, response).await {
+    if let Err(e) = command
+        .edit_response(&ctx, EditInteractionResponse::new().content(text))
+        .await
+    {
         warn!(
             command = %command.data.name,
-            "Failed to respond to slash command: {e}"
+            "Failed to edit deferred slash response: {e}"
         );
+        if let Err(followup_err) = command
+            .create_followup(
+                &ctx,
+                CreateInteractionResponseFollowup::new()
+                    .content(text)
+                    .ephemeral(true),
+            )
+            .await
+        {
+            warn!(
+                command = %command.data.name,
+                "Failed to send slash follow-up response: {followup_err}"
+            );
+        }
     }
 }
 
