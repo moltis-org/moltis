@@ -13,6 +13,8 @@ docs/book/
 apps/macos/Generated/
 apps/macos/Moltis.xcodeproj/
 apps/macos/.derivedData*/
+apps/ios/MoltisCompanion.xcodeproj/
+apps/ios/.derivedData*/
 crates/web/ui/node_modules/
 crates/web/ui/playwright-report/
 crates/web/ui/test-results/

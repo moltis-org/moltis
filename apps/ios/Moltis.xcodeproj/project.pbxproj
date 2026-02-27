@@ -1,0 +1,643 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 63;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		00925A1A3D8F3B1060A9A4C2 /* StreamingIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 881A1665639F944665F2B124 /* StreamingIndicator.swift */; };
+		09C1AACD68D54710511D0BE4 /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6686ADFB8A2E415E4BCDC2D6 /* SessionListView.swift */; };
+		10E2002A54CF8BCACCBE36EA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACC1772D9D2487088436832 /* ContentView.swift */; };
+		136A91D63F6CCDCCDD79C7A3 /* SharedStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF246760EF3D4E4829B8D0DC /* SharedStorage.swift */; };
+		13F926DBBFBE06A285C300E6 /* ToolCallBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2BC4123F39217FD14202F3 /* ToolCallBanner.swift */; };
+		16EC85E110B3E4A08D613B41 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0AC8AC881F3FCFA9253ECC69 /* Assets.xcassets */; };
+		25F4ADEF8A3266E6304105FC /* BonjourBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E1534C12C36E1B570494D3A /* BonjourBrowser.swift */; };
+		264755264A42676468707F1D /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7361989857D7274F32936A59 /* ConnectView.swift */; };
+		278473BCECCE8A568B07F9AD /* MoltisWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86745A77364B3CDBC8C1296B /* MoltisWidgetBundle.swift */; };
+		29A8FEEA1BCD46BD00ADA11B /* MoltisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293AF8CC668534AFA0B183D2 /* MoltisApp.swift */; };
+		2AC44440EBC916A99AD2F408 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4EE14BA5240BD907524E057 /* SettingsView.swift */; };
+		3941DB59C831511038558234 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF7076FEEDD3E32C1CE66D67 /* ChatView.swift */; };
+		4F1A5903F8C7708B6ECD0E48 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D67563E8990EF1D4E93EE7 /* KeychainHelper.swift */; };
+		538C15B4CA270B56253A67D2 /* ServerConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC7E35D562D39CE2FFA39ED0 /* ServerConnection.swift */; };
+		58A537B809DE6C171D0661E2 /* ServerListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41AD3985FC7D7FFF7B91D8FD /* ServerListView.swift */; };
+		6485B96470854ACD71B8E1D3 /* MoltisWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6BE1F8172A34434BB04FE5AC /* MoltisWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		6C1FB052B879121636F2118A /* MoltisGraphQLClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35E6D7E004E9A43037EA3A75 /* MoltisGraphQLClient.swift */; };
+		79B61CA78E1C34B42CF1E4A2 /* MoltisWSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F6F7588626FC4F1A3CCF15C /* MoltisWSClient.swift */; };
+		8481C5926A05C01C12310F94 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C28816E54D9FADBE6BD73DD /* ChatModels.swift */; };
+		8ED98FF059DBBF64343F0D9D /* RPCTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9333F7EB32031166BF6C9988 /* RPCTypes.swift */; };
+		8FC59C6B723CB38BC0DDD4AF /* ModelStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4E633095462E7ACDD64264 /* ModelStore.swift */; };
+		903A29834938D1E2E9C3EA95 /* MoltisActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE7EBEA29576F8D4319FEC45 /* MoltisActivityAttributes.swift */; };
+		9782B891F8FC6FA2E82D8BCD /* ModelPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F036D0B679BB715C83FA4EF /* ModelPickerView.swift */; };
+		9B6486E2ACCDD95186A9FCDB /* ChatEventTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B41574B5E26A62A4624B7133 /* ChatEventTypes.swift */; };
+		ACFAC96F8FAFCFE1D4D94A52 /* MoltisActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE7EBEA29576F8D4319FEC45 /* MoltisActivityAttributes.swift */; };
+		B15A378B8683CD574EA52991 /* SessionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E14FF444B23995CFD4D3A45 /* SessionRow.swift */; };
+		C211F6AC3A20A468A2BF03EE /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0782EEFDE06401779DEA11 /* ChatStore.swift */; };
+		C343EA6798B01FBAC6E10C69 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 328E876898A047D297E6CB10 /* SettingsStore.swift */; };
+		C67E740900F307218D0FEB39 /* MoltisLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80CBA974CB37134346703C9E /* MoltisLiveActivity.swift */; };
+		CB39B5940248F4777141001A /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65519BB6415C8C7821CA8739 /* MessageBubble.swift */; };
+		D40DE7AA5411EEE4E3DA669F /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D44C4BBE9AFAD0B87C7B44CF /* LiveActivityManager.swift */; };
+		D750BAD9197C03194A3A4E74 /* IntentCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E0842D69007EBE2B544FE69 /* IntentCardView.swift */; };
+		DADF3B38BE7961B2FBF2D433 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE2C8DE66CB55FDAAF8FBEAC /* AuthManager.swift */; };
+		EB81E52FDC3E8277E67A636B /* ConnectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 022FC2C62996C740D3894EF0 /* ConnectionStore.swift */; };
+		F24F30A082C8B48746F4481B /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E03667ADE5E11638CB97B71F /* SessionStore.swift */; };
+		F52023F3D9BE371DC77E10A2 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F29861026D430F679865275 /* AboutView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A70A650D255A97F5EF3BA4DE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98114214F49C2790CC903E21 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CD2DD4BE52715046151C83D5;
+			remoteInfo = MoltisWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		159BC3B7E1A23C62A7F36B80 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				6485B96470854ACD71B8E1D3 /* MoltisWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		022FC2C62996C740D3894EF0 /* ConnectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStore.swift; sourceTree = "<group>"; };
+		0AC8AC881F3FCFA9253ECC69 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		293AF8CC668534AFA0B183D2 /* MoltisApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoltisApp.swift; sourceTree = "<group>"; };
+		2A4E633095462E7ACDD64264 /* ModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelStore.swift; sourceTree = "<group>"; };
+		2C28816E54D9FADBE6BD73DD /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
+		2F29861026D430F679865275 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
+		328E876898A047D297E6CB10 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		35E6D7E004E9A43037EA3A75 /* MoltisGraphQLClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoltisGraphQLClient.swift; sourceTree = "<group>"; };
+		41AD3985FC7D7FFF7B91D8FD /* ServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListView.swift; sourceTree = "<group>"; };
+		4E0842D69007EBE2B544FE69 /* IntentCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentCardView.swift; sourceTree = "<group>"; };
+		5ACC1772D9D2487088436832 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		65519BB6415C8C7821CA8739 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
+		6686ADFB8A2E415E4BCDC2D6 /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
+		6BE1F8172A34434BB04FE5AC /* MoltisWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MoltisWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		7361989857D7274F32936A59 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
+		7E14FF444B23995CFD4D3A45 /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
+		7E1534C12C36E1B570494D3A /* BonjourBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonjourBrowser.swift; sourceTree = "<group>"; };
+		80CBA974CB37134346703C9E /* MoltisLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoltisLiveActivity.swift; sourceTree = "<group>"; };
+		86745A77364B3CDBC8C1296B /* MoltisWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoltisWidgetBundle.swift; sourceTree = "<group>"; };
+		881A1665639F944665F2B124 /* StreamingIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingIndicator.swift; sourceTree = "<group>"; };
+		8D2BC4123F39217FD14202F3 /* ToolCallBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallBanner.swift; sourceTree = "<group>"; };
+		8F036D0B679BB715C83FA4EF /* ModelPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPickerView.swift; sourceTree = "<group>"; };
+		9333F7EB32031166BF6C9988 /* RPCTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RPCTypes.swift; sourceTree = "<group>"; };
+		9F6F7588626FC4F1A3CCF15C /* MoltisWSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoltisWSClient.swift; sourceTree = "<group>"; };
+		A0186649DD263747E78D70FA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		A970120FDF86A58491F33AB9 /* Moltis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Moltis.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B41574B5E26A62A4624B7133 /* ChatEventTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatEventTypes.swift; sourceTree = "<group>"; };
+		C4D67563E8990EF1D4E93EE7 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		CC0782EEFDE06401779DEA11 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
+		CF246760EF3D4E4829B8D0DC /* SharedStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedStorage.swift; sourceTree = "<group>"; };
+		D44C4BBE9AFAD0B87C7B44CF /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
+		DE2C8DE66CB55FDAAF8FBEAC /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
+		DE7EBEA29576F8D4319FEC45 /* MoltisActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoltisActivityAttributes.swift; sourceTree = "<group>"; };
+		E03667ADE5E11638CB97B71F /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		EF7076FEEDD3E32C1CE66D67 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		F4EE14BA5240BD907524E057 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		FC4424B219EFBC7A7F7D26E6 /* MoltisWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MoltisWidgetExtension.entitlements; sourceTree = "<group>"; };
+		FC7E35D562D39CE2FFA39ED0 /* ServerConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnection.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		040543CAE27D1C7D84E5ACBB /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				7E1534C12C36E1B570494D3A /* BonjourBrowser.swift */,
+				B41574B5E26A62A4624B7133 /* ChatEventTypes.swift */,
+				35E6D7E004E9A43037EA3A75 /* MoltisGraphQLClient.swift */,
+				9F6F7588626FC4F1A3CCF15C /* MoltisWSClient.swift */,
+				9333F7EB32031166BF6C9988 /* RPCTypes.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		05ADCB3662776C15C3A1695F /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				2C28816E54D9FADBE6BD73DD /* ChatModels.swift */,
+				CF246760EF3D4E4829B8D0DC /* SharedStorage.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		0989652C8E113AE011AEB668 /* Connect */ = {
+			isa = PBXGroup;
+			children = (
+				7361989857D7274F32936A59 /* ConnectView.swift */,
+				41AD3985FC7D7FFF7B91D8FD /* ServerListView.swift */,
+			);
+			path = Connect;
+			sourceTree = "<group>";
+		};
+		2CEA54470189508F8CE541F0 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				2F29861026D430F679865275 /* AboutView.swift */,
+				8F036D0B679BB715C83FA4EF /* ModelPickerView.swift */,
+				F4EE14BA5240BD907524E057 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		30B02F60263186BD5261E01E /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				DE2C8DE66CB55FDAAF8FBEAC /* AuthManager.swift */,
+				C4D67563E8990EF1D4E93EE7 /* KeychainHelper.swift */,
+				FC7E35D562D39CE2FFA39ED0 /* ServerConnection.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		56E1ADB843D5DF72A6908B3A /* Widget */ = {
+			isa = PBXGroup;
+			children = (
+				A0186649DD263747E78D70FA /* Info.plist */,
+				4E0842D69007EBE2B544FE69 /* IntentCardView.swift */,
+				80CBA974CB37134346703C9E /* MoltisLiveActivity.swift */,
+				86745A77364B3CDBC8C1296B /* MoltisWidgetBundle.swift */,
+				FC4424B219EFBC7A7F7D26E6 /* MoltisWidgetExtension.entitlements */,
+			);
+			path = Widget;
+			sourceTree = "<group>";
+		};
+		7A498C5B6B394BD9EE67DE61 = {
+			isa = PBXGroup;
+			children = (
+				0AC8AC881F3FCFA9253ECC69 /* Assets.xcassets */,
+				E1AF8A6A2CAF2DE96A7C2411 /* Sources */,
+				56E1ADB843D5DF72A6908B3A /* Widget */,
+				C81C00256BA1C8F223C1DEAF /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		8B685DBD92307F344E97A644 /* Stores */ = {
+			isa = PBXGroup;
+			children = (
+				CC0782EEFDE06401779DEA11 /* ChatStore.swift */,
+				022FC2C62996C740D3894EF0 /* ConnectionStore.swift */,
+				2A4E633095462E7ACDD64264 /* ModelStore.swift */,
+				E03667ADE5E11638CB97B71F /* SessionStore.swift */,
+				328E876898A047D297E6CB10 /* SettingsStore.swift */,
+			);
+			path = Stores;
+			sourceTree = "<group>";
+		};
+		90414D25A48FA33BAC701089 /* LiveActivity */ = {
+			isa = PBXGroup;
+			children = (
+				D44C4BBE9AFAD0B87C7B44CF /* LiveActivityManager.swift */,
+				DE7EBEA29576F8D4319FEC45 /* MoltisActivityAttributes.swift */,
+			);
+			path = LiveActivity;
+			sourceTree = "<group>";
+		};
+		A82F26BF245E66E062805A87 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				5ACC1772D9D2487088436832 /* ContentView.swift */,
+				B7ACB593327270D8234B960F /* Chat */,
+				0989652C8E113AE011AEB668 /* Connect */,
+				E5563C29B26B35B968F4880C /* Sessions */,
+				2CEA54470189508F8CE541F0 /* Settings */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		B7ACB593327270D8234B960F /* Chat */ = {
+			isa = PBXGroup;
+			children = (
+				EF7076FEEDD3E32C1CE66D67 /* ChatView.swift */,
+				65519BB6415C8C7821CA8739 /* MessageBubble.swift */,
+				881A1665639F944665F2B124 /* StreamingIndicator.swift */,
+				8D2BC4123F39217FD14202F3 /* ToolCallBanner.swift */,
+			);
+			path = Chat;
+			sourceTree = "<group>";
+		};
+		C81C00256BA1C8F223C1DEAF /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A970120FDF86A58491F33AB9 /* Moltis.app */,
+				6BE1F8172A34434BB04FE5AC /* MoltisWidgetExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E1AF8A6A2CAF2DE96A7C2411 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				293AF8CC668534AFA0B183D2 /* MoltisApp.swift */,
+				30B02F60263186BD5261E01E /* Auth */,
+				90414D25A48FA33BAC701089 /* LiveActivity */,
+				05ADCB3662776C15C3A1695F /* Models */,
+				040543CAE27D1C7D84E5ACBB /* Networking */,
+				8B685DBD92307F344E97A644 /* Stores */,
+				A82F26BF245E66E062805A87 /* Views */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		E5563C29B26B35B968F4880C /* Sessions */ = {
+			isa = PBXGroup;
+			children = (
+				6686ADFB8A2E415E4BCDC2D6 /* SessionListView.swift */,
+				7E14FF444B23995CFD4D3A45 /* SessionRow.swift */,
+			);
+			path = Sessions;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5E818DA0880F9A19F77D7E6B /* Moltis */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 90E12F31AF251005065C1068 /* Build configuration list for PBXNativeTarget "Moltis" */;
+			buildPhases = (
+				14DD8ABBF0740BFF94127D1C /* Sources */,
+				62246CB3A83F737343BF7CBE /* Resources */,
+				159BC3B7E1A23C62A7F36B80 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B10B51906789553657CF7A31 /* PBXTargetDependency */,
+			);
+			name = Moltis;
+			packageProductDependencies = (
+			);
+			productName = Moltis;
+			productReference = A970120FDF86A58491F33AB9 /* Moltis.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CD2DD4BE52715046151C83D5 /* MoltisWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DD2911A568D044E5B4DB23DA /* Build configuration list for PBXNativeTarget "MoltisWidgetExtension" */;
+			buildPhases = (
+				5A0DB3ED66D3300D5C02A36B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MoltisWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = MoltisWidgetExtension;
+			productReference = 6BE1F8172A34434BB04FE5AC /* MoltisWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		98114214F49C2790CC903E21 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+			};
+			buildConfigurationList = 05A5349E823228D1F723C88A /* Build configuration list for PBXProject "Moltis" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 7A498C5B6B394BD9EE67DE61;
+			minimizedProjectReferenceProxies = 1;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5E818DA0880F9A19F77D7E6B /* Moltis */,
+				CD2DD4BE52715046151C83D5 /* MoltisWidgetExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		62246CB3A83F737343BF7CBE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				16EC85E110B3E4A08D613B41 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		14DD8ABBF0740BFF94127D1C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F52023F3D9BE371DC77E10A2 /* AboutView.swift in Sources */,
+				DADF3B38BE7961B2FBF2D433 /* AuthManager.swift in Sources */,
+				25F4ADEF8A3266E6304105FC /* BonjourBrowser.swift in Sources */,
+				9B6486E2ACCDD95186A9FCDB /* ChatEventTypes.swift in Sources */,
+				8481C5926A05C01C12310F94 /* ChatModels.swift in Sources */,
+				C211F6AC3A20A468A2BF03EE /* ChatStore.swift in Sources */,
+				3941DB59C831511038558234 /* ChatView.swift in Sources */,
+				264755264A42676468707F1D /* ConnectView.swift in Sources */,
+				EB81E52FDC3E8277E67A636B /* ConnectionStore.swift in Sources */,
+				10E2002A54CF8BCACCBE36EA /* ContentView.swift in Sources */,
+				4F1A5903F8C7708B6ECD0E48 /* KeychainHelper.swift in Sources */,
+				D40DE7AA5411EEE4E3DA669F /* LiveActivityManager.swift in Sources */,
+				CB39B5940248F4777141001A /* MessageBubble.swift in Sources */,
+				9782B891F8FC6FA2E82D8BCD /* ModelPickerView.swift in Sources */,
+				8FC59C6B723CB38BC0DDD4AF /* ModelStore.swift in Sources */,
+				903A29834938D1E2E9C3EA95 /* MoltisActivityAttributes.swift in Sources */,
+				29A8FEEA1BCD46BD00ADA11B /* MoltisApp.swift in Sources */,
+				6C1FB052B879121636F2118A /* MoltisGraphQLClient.swift in Sources */,
+				79B61CA78E1C34B42CF1E4A2 /* MoltisWSClient.swift in Sources */,
+				8ED98FF059DBBF64343F0D9D /* RPCTypes.swift in Sources */,
+				538C15B4CA270B56253A67D2 /* ServerConnection.swift in Sources */,
+				58A537B809DE6C171D0661E2 /* ServerListView.swift in Sources */,
+				09C1AACD68D54710511D0BE4 /* SessionListView.swift in Sources */,
+				B15A378B8683CD574EA52991 /* SessionRow.swift in Sources */,
+				F24F30A082C8B48746F4481B /* SessionStore.swift in Sources */,
+				C343EA6798B01FBAC6E10C69 /* SettingsStore.swift in Sources */,
+				2AC44440EBC916A99AD2F408 /* SettingsView.swift in Sources */,
+				136A91D63F6CCDCCDD79C7A3 /* SharedStorage.swift in Sources */,
+				00925A1A3D8F3B1060A9A4C2 /* StreamingIndicator.swift in Sources */,
+				13F926DBBFBE06A285C300E6 /* ToolCallBanner.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A0DB3ED66D3300D5C02A36B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D750BAD9197C03194A3A4E74 /* IntentCardView.swift in Sources */,
+				ACFAC96F8FAFCFE1D4D94A52 /* MoltisActivityAttributes.swift in Sources */,
+				C67E740900F307218D0FEB39 /* MoltisLiveActivity.swift in Sources */,
+				278473BCECCE8A568B07F9AD /* MoltisWidgetBundle.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B10B51906789553657CF7A31 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CD2DD4BE52715046151C83D5 /* MoltisWidgetExtension */;
+			targetProxy = A70A650D255A97F5EF3BA4DE /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		085AC36127F6B1114FBECF34 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Moltis.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = VJAHQVZ96V;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.moltis.ios;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		17D7C580CF2CF20CCE2800EA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Widget/MoltisWidgetExtension.entitlements;
+				DEVELOPMENT_TEAM = VJAHQVZ96V;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Widget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.moltis.ios.widget;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		8584A0EEFD2EE4E93C838471 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Widget/MoltisWidgetExtension.entitlements;
+				DEVELOPMENT_TEAM = VJAHQVZ96V;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Widget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.moltis.ios.widget;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BD349268E4F43FB3D1C7A999 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Moltis.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = VJAHQVZ96V;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.moltis.ios;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E9EDF5E282B8F2CBFAAAB2A5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Debug;
+		};
+		FC118811CB476F0DA9466057 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		05A5349E823228D1F723C88A /* Build configuration list for PBXProject "Moltis" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E9EDF5E282B8F2CBFAAAB2A5 /* Debug */,
+				FC118811CB476F0DA9466057 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		90E12F31AF251005065C1068 /* Build configuration list for PBXNativeTarget "Moltis" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BD349268E4F43FB3D1C7A999 /* Debug */,
+				085AC36127F6B1114FBECF34 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DD2911A568D044E5B4DB23DA /* Build configuration list for PBXNativeTarget "MoltisWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				17D7C580CF2CF20CCE2800EA /* Debug */,
+				8584A0EEFD2EE4E93C838471 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 98114214F49C2790CC903E21 /* Project object */;
+}

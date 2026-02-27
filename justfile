@@ -250,3 +250,27 @@ swift-run: swift-build-rust swift-generate
 # Open generated project in Xcode.
 swift-open: swift-build-rust swift-generate
     open apps/macos/Moltis.xcodeproj
+
+# Generate iOS app Xcode project.
+ios-generate:
+    ./scripts/generate-ios-project.sh
+
+# Build iOS app (generic iOS destination, no signing).
+ios-build: ios-generate
+    xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
+
+# Lint iOS app sources with SwiftLint.
+ios-lint:
+    cd apps/ios && swiftlint
+
+# Open iOS project in Xcode.
+ios-open: ios-generate
+    open apps/ios/Moltis.xcodeproj
+
+# Build the APNS push relay.
+courier-build:
+    cargo build -p moltis-courier --release
+
+# Run the APNS push relay (dev).
+courier-run *ARGS:
+    cargo run -p moltis-courier -- {{ARGS}}

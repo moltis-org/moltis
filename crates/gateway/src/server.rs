@@ -4165,6 +4165,24 @@ pub async fn start_gateway(
     let is_localhost =
         matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
 
+    // Register the gateway as a Bonjour/mDNS service so LAN clients can
+    // discover it without typing the URL manually.
+    #[cfg(feature = "mdns")]
+    let _mdns_daemon = {
+        let host = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "moltis".to_string());
+        let instance = format!("Moltis on {host}");
+        match crate::mdns::register(&instance, port, env!("CARGO_PKG_VERSION")) {
+            Ok(daemon) => Some(daemon),
+            Err(e) => {
+                tracing::warn!("mDNS registration failed: {e}");
+                None
+            }
+        }
+    };
+
     // Resolve TLS configuration (only when compiled with the `tls` feature).
     #[cfg(feature = "tls")]
     let tls_active = config.tls.enabled;
@@ -4176,8 +4194,7 @@ pub async fn start_gateway(
     #[cfg(feature = "tls")]
     let mut rustls_config: Option<rustls::ServerConfig> = None;
 
-    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
-    let mut app = prepared.app;
+    let app = prepared.app;
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -4206,29 +4223,7 @@ pub async fn start_gateway(
         let mgr = crate::tls::FsCertManager::new()?;
         rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
 
-        // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
-        if let Some(ref ca) = ca_path {
-            let ca_bytes = Arc::new(std::fs::read(ca)?);
-            let ca_clone = Arc::clone(&ca_bytes);
-            app = app.route(
-                "/certs/ca.pem",
-                get(move || {
-                    let data = Arc::clone(&ca_clone);
-                    async move {
-                        (
-                            [
-                                ("content-type", "application/x-pem-file"),
-                                (
-                                    "content-disposition",
-                                    "attachment; filename=\"moltis-ca.pem\"",
-                                ),
-                            ],
-                            data.as_ref().clone(),
-                        )
-                    }
-                }),
-            );
-        }
+        // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
 
     // Count enabled skills and repos for startup banner.
@@ -4395,6 +4390,7 @@ pub async fn start_gateway(
     }
 
     // Spawn shutdown handler:
+    // - unregister mDNS service (when configured)
     // - reset tailscale state on exit (when configured)
     // - give browser pool 5s to shut down gracefully
     // - force process exit to avoid hanging after ctrl-c
@@ -4408,6 +4404,11 @@ pub async fn start_gateway(
         tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_err() {
                 return;
+            }
+
+            #[cfg(feature = "mdns")]
+            if let Some(ref daemon) = _mdns_daemon {
+                crate::mdns::shutdown(daemon);
             }
 
             #[cfg(feature = "tailscale")]
