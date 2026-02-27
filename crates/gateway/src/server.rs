@@ -1955,9 +1955,17 @@ pub async fn prepare_gateway(
     #[cfg(feature = "trusted-network")]
     let audit_buffer_for_broadcast: Option<crate::network_audit::NetworkAuditBuffer>;
     #[cfg(feature = "trusted-network")]
+    let proxy_url_for_tools: Option<String>;
+    #[cfg(feature = "trusted-network")]
     {
         let (audit_tx, audit_rx) =
             tokio::sync::mpsc::channel::<moltis_network_filter::NetworkAuditEntry>(1024);
+
+        info!(
+            network_policy = ?sandbox_config.network,
+            trusted_domains = ?sandbox_config.trusted_domains,
+            "trusted-network: evaluating network policy"
+        );
 
         if sandbox_config.network == moltis_network_filter::NetworkPolicy::Trusted {
             let domain_mgr = Arc::new(
@@ -1979,10 +1987,22 @@ pub async fn prepare_gateway(
                     tracing::warn!("network proxy exited: {e}");
                 }
             });
-            info!(
-                "trusted-network proxy started on port {}",
+            let url = format!(
+                "http://127.0.0.1:{}",
                 moltis_network_filter::DEFAULT_PROXY_PORT
             );
+            info!(
+                proxy_url = %url,
+                "trusted-network proxy started, routing all HTTP tools through proxy"
+            );
+            moltis_tools::init_shared_http_client(Some(&url));
+            proxy_url_for_tools = Some(url);
+        } else {
+            info!(
+                network_policy = ?sandbox_config.network,
+                "trusted-network proxy not started (policy is not Trusted)"
+            );
+            proxy_url_for_tools = None;
         }
 
         // Create the live network audit service from the receiver channel.
@@ -3022,6 +3042,12 @@ pub async fn prepare_gateway(
         }
         if let Some(t) = moltis_tools::web_fetch::WebFetchTool::from_config(&config.tools.web.fetch)
         {
+            #[cfg(feature = "trusted-network")]
+            let t = if let Some(ref url) = proxy_url_for_tools {
+                t.with_proxy(url.clone())
+            } else {
+                t
+            };
             tool_registry.register(Box::new(t));
         }
         if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
