@@ -14,6 +14,8 @@ apps/macos/Generated/
 apps/macos/Moltis.xcodeproj/
 apps/macos/.derivedData*/
 apps/ios/MoltisCompanion.xcodeproj/
+apps/ios/Moltis.xcodeproj/xcuserdata/
+apps/ios/Moltis.xcodeproj/project.xcworkspace/xcuserdata/
 apps/ios/.derivedData*/
 crates/web/ui/node_modules/
 crates/web/ui/playwright-report/

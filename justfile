@@ -271,6 +271,14 @@ ios-open: ios-generate
 courier-build:
     cargo build -p moltis-courier --release
 
+# Cross-compile courier for linux/x86_64.
+courier-cross:
+    cargo build -p moltis-courier --release --target x86_64-unknown-linux-gnu
+
+# Deploy courier to remote server(s) via Ansible.
+courier-deploy:
+    cd apps/courier/deploy && ansible-playbook playbook.yml
+
 # Run the APNS push relay (dev).
 courier-run *ARGS:
     cargo run -p moltis-courier -- {{ARGS}}

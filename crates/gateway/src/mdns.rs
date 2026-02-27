@@ -24,8 +24,15 @@ pub fn register(instance_name: &str, port: u16, version: &str) -> anyhow::Result
 
     let properties = [("version", version), ("hostname", &host)];
 
-    let service = ServiceInfo::new(SERVICE_TYPE, instance_name, &host_label, "", port, &properties[..])?
-        .enable_addr_auto();
+    let service = ServiceInfo::new(
+        SERVICE_TYPE,
+        instance_name,
+        &host_label,
+        "",
+        port,
+        &properties[..],
+    )?
+    .enable_addr_auto();
 
     daemon.register(service)?;
 

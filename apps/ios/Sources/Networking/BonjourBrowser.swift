@@ -9,7 +9,11 @@ struct DiscoveredServer: Identifiable, Hashable {
     let version: String?
 
     var url: URL? {
-        URL(string: "https://\(host):\(port)")
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = host
+        components.port = Int(port)
+        return components.url
     }
 }
 
@@ -74,21 +78,27 @@ final class BonjourBrowser: ObservableObject {
                 return nil
             }()
 
-            let version = txtRecord.flatMap { record in
-                record.getEntry(for: "version").flatMap { entry in
-                    if case .string(let v) = entry { return v }
-                    return nil
-                }
-            }
+            let version = Self.txtValue(for: "version", in: txtRecord)
+            let advertisedHostname = Self.txtValue(for: "hostname", in: txtRecord)
 
-            resolve(endpoint: result.endpoint, name: name, version: version)
+            resolve(
+                endpoint: result.endpoint,
+                name: name,
+                version: version,
+                advertisedHostname: advertisedHostname
+            )
         }
 
         // Remove servers that disappeared.
         servers.removeAll { !seen.contains($0.id) }
     }
 
-    private func resolve(endpoint: NWEndpoint, name: String, version: String?) {
+    private func resolve(
+        endpoint: NWEndpoint,
+        name: String,
+        version: String?,
+        advertisedHostname: String?
+    ) {
         let conn = NWConnection(to: endpoint, using: .tcp)
 
         conn.stateUpdateHandler = { [weak self] state in
@@ -96,14 +106,10 @@ final class BonjourBrowser: ObservableObject {
 
             if let innerEndpoint = conn.currentPath?.remoteEndpoint,
                case .hostPort(let host, let port) = innerEndpoint {
-                let hostString: String = {
-                    switch host {
-                    case .ipv4(let addr): return "\(addr)"
-                    case .ipv6(let addr): return "\(addr)"
-                    case .name(let h, _): return h
-                    @unknown default: return "\(host)"
-                    }
-                }()
+                let hostString = Self.preferredHost(
+                    advertisedHostname: advertisedHostname,
+                    resolvedHost: host
+                )
 
                 let server = DiscoveredServer(
                     id: name,
@@ -129,5 +135,66 @@ final class BonjourBrowser: ObservableObject {
 
         connections[name] = conn
         conn.start(queue: .main)
+    }
+
+    nonisolated private static func txtValue(for key: String, in record: NWTXTRecord?) -> String? {
+        guard let record, let entry = record.getEntry(for: key) else { return nil }
+        switch entry {
+        case .string(let value):
+            return value
+        case .data(let data):
+            return String(data: data, encoding: .utf8)
+        case .empty:
+            return nil
+        @unknown default:
+            return nil
+        }
+    }
+
+    nonisolated private static func preferredHost(
+        advertisedHostname: String?,
+        resolvedHost: NWEndpoint.Host
+    ) -> String {
+        if let host = normalizedAdvertisedHostname(advertisedHostname) {
+            return host
+        }
+        return normalizedResolvedHost(rawHostString(for: resolvedHost))
+    }
+
+    nonisolated private static func normalizedAdvertisedHostname(_ hostname: String?) -> String? {
+        guard var host = hostname?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !host.isEmpty else {
+            return nil
+        }
+
+        if host.hasSuffix(".") {
+            host.removeLast()
+        }
+
+        if !host.contains(".") {
+            host += ".local"
+        }
+
+        return host
+    }
+
+    nonisolated private static func rawHostString(for host: NWEndpoint.Host) -> String {
+        switch host {
+        case .ipv4(let addr): return "\(addr)"
+        case .ipv6(let addr): return "\(addr)"
+        case .name(let value, _): return value
+        @unknown default: return "\(host)"
+        }
+    }
+
+    nonisolated private static func normalizedResolvedHost(_ host: String) -> String {
+        var value = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let scopeIndex = value.firstIndex(of: "%") {
+            value = String(value[..<scopeIndex])
+        }
+        if value.hasSuffix(".") {
+            value.removeLast()
+        }
+        return value
     }
 }

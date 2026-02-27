@@ -128,7 +128,11 @@ struct ConnectView: View {
     // MARK: - Actions
 
     private func selectDiscovered(_ server: DiscoveredServer) {
-        serverURL = "https://\(server.host):\(server.port)"
+        if let discoveredURL = server.url {
+            serverURL = discoveredURL.absoluteString
+        } else {
+            serverURL = "https://\(server.host):\(server.port)"
+        }
         serverName = server.name
         authMode = .check
         Task { await checkServer() }

@@ -30,10 +30,10 @@ pub mod graphql_routes;
 #[cfg(feature = "local-llm")]
 pub mod local_llm_setup;
 pub mod logs;
-#[cfg(feature = "mdns")]
-pub mod mdns;
 pub mod mcp_health;
 pub mod mcp_service;
+#[cfg(feature = "mdns")]
+pub mod mdns;
 pub mod message_log_store;
 pub mod methods;
 #[cfg(feature = "metrics")]

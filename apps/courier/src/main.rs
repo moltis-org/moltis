@@ -1,19 +1,21 @@
 use std::{fs::File, net::SocketAddr, sync::Arc};
 
-use a2::{
-    client::ClientConfig, DefaultNotificationBuilder, Endpoint, NotificationBuilder,
-    NotificationOptions,
-    request::notification::{Priority, PushType},
+use {
+    a2::{
+        DefaultNotificationBuilder, Endpoint, NotificationBuilder, NotificationOptions,
+        client::ClientConfig,
+        request::notification::{Priority, PushType},
+    },
+    anyhow::{Context, Result},
+    axum::{
+        Json, Router,
+        extract::State,
+        http::{HeaderMap, StatusCode},
+        routing::{get, post},
+    },
+    clap::Parser,
+    serde::{Deserialize, Serialize},
 };
-use anyhow::{Context, Result};
-use axum::{
-    Json, Router,
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    routing::{get, post},
-};
-use clap::Parser;
-use serde::{Deserialize, Serialize};
 
 /// Privacy-preserving APNS push relay for Moltis gateways.
 ///
@@ -98,8 +100,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let mut key_file =
-        File::open(&args.key_path).context("failed to open .p8 key file")?;
+    let mut key_file = File::open(&args.key_path).context("failed to open .p8 key file")?;
 
     let client_config = ClientConfig::new(Endpoint::Production);
     let apns = a2::Client::token(&mut key_file, &args.key_id, &args.team_id, client_config)
@@ -145,7 +146,7 @@ async fn handle_push(
             .and_then(|v| v.strip_prefix("Bearer "));
 
         match provided {
-            Some(token) if token == expected => {}
+            Some(token) if token == expected => {},
             _ => {
                 return Err((
                     StatusCode::UNAUTHORIZED,
@@ -153,7 +154,7 @@ async fn handle_push(
                         error: "unauthorized".to_string(),
                     }),
                 ));
-            }
+            },
         }
     }
 
@@ -191,7 +192,7 @@ async fn handle_push(
             Ok(Json(PushResponse {
                 status: "sent".to_string(),
             }))
-        }
+        },
         Err(e) => {
             tracing::error!("apns error: {e}");
             Err((
@@ -200,7 +201,7 @@ async fn handle_push(
                     error: format!("apns rejected: {e}"),
                 }),
             ))
-        }
+        },
     }
 }
 
