@@ -47,6 +47,27 @@ struct ChatEventPayload: Decodable {
     }
 }
 
+extension ChatEventPayload {
+    static let empty = ChatEventPayload(
+        state: nil,
+        sessionKey: nil,
+        runId: nil,
+        text: nil,
+        name: nil,
+        input: nil,
+        output: nil,
+        toolCallId: nil,
+        message: nil,
+        title: nil,
+        error: nil,
+        inputTokens: nil,
+        outputTokens: nil,
+        durationMs: nil,
+        model: nil,
+        provider: nil
+    )
+}
+
 // MARK: - Tool call info
 
 struct ToolCallInfo: Identifiable, Equatable {

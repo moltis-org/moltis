@@ -268,8 +268,8 @@ actor MoltisWSClient {
                 // Handle tick (heartbeat)
                 if eventName == "tick" { return }
 
-                // Parse chat event payload
-                if let payloadValue = frame.payload {
+                if eventName == "chat" {
+                    guard let payloadValue = frame.payload else { return }
                     let payloadData = try JSONEncoder().encode(payloadValue)
                     let chatPayload = try JSONDecoder().decode(
                         ChatEventPayload.self, from: payloadData
@@ -277,6 +277,14 @@ actor MoltisWSClient {
                     for handler in eventHandlers {
                         handler(eventName, chatPayload)
                     }
+                    return
+                }
+
+                // Non-chat events observed by iOS (e.g. models.updated) do not
+                // necessarily match ChatEventPayload. Forward them with an empty
+                // payload so subscribers can still react on event name.
+                for handler in eventHandlers {
+                    handler(eventName, .empty)
                 }
 
             default:
