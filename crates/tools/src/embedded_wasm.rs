@@ -1,8 +1,12 @@
 #[cfg(feature = "wasm")]
-use std::{borrow::Cow, path::PathBuf};
+use std::borrow::Cow;
+#[cfg(all(feature = "wasm", debug_assertions))]
+use std::path::PathBuf;
 
+#[cfg(all(feature = "wasm", debug_assertions))]
+use anyhow::Context;
 #[cfg(feature = "wasm")]
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 #[cfg(all(feature = "wasm", not(debug_assertions)))]
 const CALC_COMPONENT_RELEASE_BYTES: &[u8] = include_bytes!(concat!(
@@ -20,13 +24,13 @@ const WEB_SEARCH_COMPONENT_RELEASE_BYTES: &[u8] = include_bytes!(concat!(
     "/../../target/wasm32-wasip2/release/moltis_wasm_web_search.wasm"
 ));
 
-#[cfg(feature = "wasm")]
+#[cfg(all(feature = "wasm", debug_assertions))]
 fn component_debug_path(file_name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(format!("../../target/wasm32-wasip2/release/{file_name}"))
 }
 
-#[cfg(feature = "wasm")]
+#[cfg(all(feature = "wasm", debug_assertions))]
 fn load_component_debug_bytes(file_name: &str, tool_name: &str) -> Result<Cow<'static, [u8]>> {
     let path = component_debug_path(file_name);
     let bytes = std::fs::read(&path).with_context(|| {
