@@ -51,7 +51,7 @@ impl WasmComponentEngine {
     }
 
     pub fn compile_component(&self, wasm_bytes: &[u8]) -> Result<wasmtime::component::Component> {
-        let hash = hash_wasm_bytes(wasm_bytes);
+        let hash = hash_component_bytes(wasm_bytes);
 
         if let Some(component) = self.read_cache().get(&hash) {
             return Ok(component.clone());
@@ -102,7 +102,7 @@ impl WasmComponentEngine {
 }
 
 #[cfg(feature = "wasm")]
-fn hash_wasm_bytes(wasm_bytes: &[u8]) -> [u8; 32] {
+pub fn hash_component_bytes(wasm_bytes: &[u8]) -> [u8; 32] {
     let digest = Sha256::digest(wasm_bytes);
     let mut hash = [0_u8; 32];
     hash.copy_from_slice(&digest);

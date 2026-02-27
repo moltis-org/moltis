@@ -1,5 +1,10 @@
 #[cfg(feature = "wasm")]
-use std::{collections::HashSet, io::Read, thread, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    io::Read,
+    thread,
+    time::Duration,
+};
 
 #[cfg(feature = "wasm")]
 use anyhow::Context;
@@ -42,6 +47,13 @@ pub type HttpToolResult = http_tool::moltis::tool::types::ToolResult;
 #[cfg(feature = "wasm")]
 pub type HttpToolError = http_tool::moltis::tool::types::ToolError;
 
+/// Host-injected headers keyed by lowercase domain.
+///
+/// For each matching domain the host silently adds (or overrides) headers on
+/// outgoing requests. This keeps secrets like API keys out of guest parameters.
+#[cfg(feature = "wasm")]
+pub type SecretHeaders = HashMap<String, Vec<(String, String)>>;
+
 #[cfg(feature = "wasm")]
 #[derive(Clone)]
 pub struct HttpHostImpl {
@@ -49,6 +61,7 @@ pub struct HttpHostImpl {
     ssrf_allowlist: Vec<ipnet::IpNet>,
     max_response_bytes: u64,
     domain_allowlist: Option<HashSet<String>>,
+    secret_headers: SecretHeaders,
 }
 
 #[cfg(feature = "wasm")]
@@ -58,6 +71,7 @@ impl HttpHostImpl {
         max_response_bytes: usize,
         ssrf_allowlist: Vec<ipnet::IpNet>,
         domain_allowlist: Option<Vec<String>>,
+        secret_headers: SecretHeaders,
     ) -> anyhow::Result<Self> {
         fn build_blocking_client(timeout: Duration) -> anyhow::Result<reqwest::blocking::Client> {
             reqwest::blocking::Client::builder()
@@ -91,6 +105,7 @@ impl HttpHostImpl {
             ssrf_allowlist,
             max_response_bytes,
             domain_allowlist,
+            secret_headers,
         })
     }
 
@@ -145,8 +160,23 @@ impl HttpHostImpl {
         ssrf_check_blocking(&parsed_url, &self.ssrf_allowlist)
             .map_err(|error| HttpError::BlockedUrl(error.to_string()))?;
 
+        // Collect host-injected header names so guest cannot override them.
+        let host_injected = self
+            .secret_headers
+            .get(&host.to_ascii_lowercase())
+            .cloned()
+            .unwrap_or_default();
+        let host_header_names: HashSet<String> = host_injected
+            .iter()
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect();
+
         let mut req = self.client.request(method, parsed_url.as_str());
-        for (header_name, header_value) in request.headers {
+        // Apply guest headers, filtering out any that collide with host-injected ones.
+        for (header_name, header_value) in &request.headers {
+            if host_header_names.contains(&header_name.to_ascii_lowercase()) {
+                continue;
+            }
             let parsed_name = reqwest::header::HeaderName::from_bytes(header_name.as_bytes())
                 .map_err(|error| {
                     HttpError::Other(format!(
@@ -154,9 +184,23 @@ impl HttpHostImpl {
                     ))
                 })?;
             let parsed_value =
-                reqwest::header::HeaderValue::from_str(&header_value).map_err(|error| {
+                reqwest::header::HeaderValue::from_str(header_value).map_err(|error| {
                     HttpError::Other(format!(
                         "invalid request header value for `{header_name}`: {error}"
+                    ))
+                })?;
+            req = req.header(parsed_name, parsed_value);
+        }
+        // Inject host-side secret headers (always win over guest headers).
+        for (header_name, header_value) in &host_injected {
+            let parsed_name = reqwest::header::HeaderName::from_bytes(header_name.as_bytes())
+                .map_err(|error| {
+                    HttpError::Other(format!("invalid host header name `{header_name}`: {error}"))
+                })?;
+            let parsed_value =
+                reqwest::header::HeaderValue::from_str(header_value).map_err(|error| {
+                    HttpError::Other(format!(
+                        "invalid host header value for `{header_name}`: {error}"
                     ))
                 })?;
             req = req.header(parsed_name, parsed_value);
@@ -250,6 +294,7 @@ mod tests {
     use {
         super::{HttpError, HttpHostImpl, HttpRequest, PureToolValue, marshal_tool_result},
         std::{
+            collections::HashMap,
             io::{Read, Write},
             net::TcpListener,
             thread::{self, JoinHandle},
@@ -321,7 +366,14 @@ mod tests {
 
     #[test]
     fn http_host_blocks_private_address_without_allowlist() {
-        let host = HttpHostImpl::new(Duration::from_secs(2), 64 * 1024, Vec::new(), None).unwrap();
+        let host = HttpHostImpl::new(
+            Duration::from_secs(2),
+            64 * 1024,
+            Vec::new(),
+            None,
+            HashMap::new(),
+        )
+        .unwrap();
         let request = request_for_url("http://127.0.0.1:80/secret".to_string());
         let result = host.handle_request(request);
         assert!(matches!(result, Err(HttpError::BlockedUrl(_))));
@@ -331,7 +383,8 @@ mod tests {
     fn http_host_enforces_max_response_bytes() {
         let (url, handle) = spawn_http_server(b"0123456789", None);
         let allowlist = vec!["127.0.0.1/32".parse().unwrap()];
-        let host = HttpHostImpl::new(Duration::from_secs(2), 8, allowlist, None).unwrap();
+        let host =
+            HttpHostImpl::new(Duration::from_secs(2), 8, allowlist, None, HashMap::new()).unwrap();
         let request = request_for_url(url);
         let result = host.handle_request(request);
         assert!(matches!(result, Err(HttpError::TooLarge(8))));
@@ -342,7 +395,14 @@ mod tests {
     fn http_host_maps_timeout_errors() {
         let (url, handle) = spawn_http_server(b"slow", Some(Duration::from_millis(200)));
         let allowlist = vec!["127.0.0.1/32".parse().unwrap()];
-        let host = HttpHostImpl::new(Duration::from_secs(2), 64 * 1024, allowlist, None).unwrap();
+        let host = HttpHostImpl::new(
+            Duration::from_secs(2),
+            64 * 1024,
+            allowlist,
+            None,
+            HashMap::new(),
+        )
+        .unwrap();
         let mut request = request_for_url(url);
         request.timeout_ms = Some(20);
         let result = host.handle_request(request);
@@ -352,7 +412,13 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn http_host_new_inside_tokio_runtime() {
-        let host = HttpHostImpl::new(Duration::from_secs(2), 64 * 1024, Vec::new(), None);
+        let host = HttpHostImpl::new(
+            Duration::from_secs(2),
+            64 * 1024,
+            Vec::new(),
+            None,
+            HashMap::new(),
+        );
         assert!(host.is_ok());
     }
 }

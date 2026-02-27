@@ -40,10 +40,6 @@ impl Guest for WebSearchWasm {
                     "minimum": 1,
                     "maximum": 10
                 },
-                "api_key": {
-                    "type": "string",
-                    "description": "Brave Search API key"
-                },
                 "country": {
                     "type": "string",
                     "description": "Country code for search results (e.g. 'US', 'GB')"
@@ -92,13 +88,6 @@ fn execute_impl(params_json: &str) -> Result<Value, ToolError> {
         .map(|n| n.clamp(1, 10))
         .and_then(|n| u8::try_from(n).ok())
         .unwrap_or(DEFAULT_RESULT_COUNT);
-    let api_key = params.get("api_key").and_then(Value::as_str).unwrap_or("");
-    if api_key.trim().is_empty() {
-        return Ok(json!({
-            "error": "Brave Search API key not configured",
-            "hint": "Pass api_key in tool params for web_search_wasm"
-        }));
-    }
     let accept_language = params.get("_accept_language").and_then(Value::as_str);
 
     let mut url = format!(
@@ -118,10 +107,7 @@ fn execute_impl(params_json: &str) -> Result<Value, ToolError> {
         url.push_str(&format!("&freshness={freshness}"));
     }
 
-    let mut headers = vec![
-        ("Accept".to_string(), "application/json".to_string()),
-        ("X-Subscription-Token".to_string(), api_key.to_string()),
-    ];
+    let mut headers = vec![("Accept".to_string(), "application/json".to_string())];
     if let Some(lang) = accept_language {
         headers.push(("Accept-Language".to_string(), lang.to_string()));
     }

@@ -124,6 +124,7 @@ impl WasmResourceLimiter {
         }
     }
 
+    #[cfg(test)]
     #[must_use]
     pub fn with_table_limit(max_memory_bytes: usize, max_table_elements: usize) -> Self {
         Self {
