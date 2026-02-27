@@ -47,7 +47,11 @@ pub async fn broadcast(
 ) {
     let seq = state.next_seq();
     let stream = opts.stream.clone();
-    let done = if opts.done { Some(true) } else { None };
+    let done = if opts.done {
+        Some(true)
+    } else {
+        None
+    };
     let channel = opts.channel.clone();
     let frame = EventFrame {
         r#type: "event".into(),

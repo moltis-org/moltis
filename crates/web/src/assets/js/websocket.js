@@ -1126,7 +1126,10 @@ var eventHandlers = {
 
 function dispatchFrame(frame) {
 	if (frame.type !== "event") return;
-	var streamMeta = frame.stream != null || frame.done != null ? { stream: frame.stream, done: frame.done, channel: frame.channel } : null;
+	var streamMeta =
+		frame.stream != null || frame.done != null
+			? { stream: frame.stream, done: frame.done, channel: frame.channel }
+			: null;
 	var listeners = eventListeners[frame.event] || [];
 	listeners.forEach((h) => {
 		h(frame.payload || {}, streamMeta);
@@ -1150,13 +1153,20 @@ var connectOpts = {
 			chatAddMsg("system", "Building sandbox image (installing packages)\u2026");
 		}
 		// Subscribe to all needed events (v4 protocol).
-		subscribeEvents(Object.keys(eventHandlers).concat([
-			"tick", "shutdown", "auth.credentials_changed",
-			"exec.approval.requested", "exec.approval.resolved",
-			"device.pair.requested", "device.pair.resolved",
-			"node.pair.requested", "node.pair.resolved",
-			"node.invoke.request",
-		]));
+		subscribeEvents(
+			Object.keys(eventHandlers).concat([
+				"tick",
+				"shutdown",
+				"auth.credentials_changed",
+				"exec.approval.requested",
+				"exec.approval.resolved",
+				"device.pair.requested",
+				"device.pair.resolved",
+				"node.pair.requested",
+				"node.pair.resolved",
+				"node.invoke.request",
+			]),
+		);
 		fetchModels();
 		fetchSessions();
 		fetchProjects();

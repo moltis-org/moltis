@@ -689,9 +689,7 @@ mod tests {
 
     #[test]
     fn subscribe_method_authorized_with_write() {
-        assert!(
-            authorize_method("subscribe", "operator", &scopes(&["operator.write"])).is_none()
-        );
+        assert!(authorize_method("subscribe", "operator", &scopes(&["operator.write"])).is_none());
     }
 
     #[test]
@@ -704,12 +702,7 @@ mod tests {
     #[test]
     fn system_describe_authorized_with_read() {
         assert!(
-            authorize_method(
-                "system.describe",
-                "operator",
-                &scopes(&["operator.read"])
-            )
-            .is_none()
+            authorize_method("system.describe", "operator", &scopes(&["operator.read"])).is_none()
         );
     }
 

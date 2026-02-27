@@ -127,7 +127,7 @@ function handleServerRequest(ws, frame) {
 				type: "res",
 				id: frame.id,
 				ok: false,
-				error: { code: "UNKNOWN_METHOD", message: "no handler for " + frame.method },
+				error: { code: "UNKNOWN_METHOD", message: `no handler for ${frame.method}` },
 			}),
 		);
 		return;

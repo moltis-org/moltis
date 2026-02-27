@@ -721,7 +721,8 @@ mod tests {
 
     #[test]
     fn gateway_frame_event_with_stream() {
-        let json = r#"{"type":"event","event":"chat","payload":{},"seq":1,"stream":"run-1","done":false}"#;
+        let json =
+            r#"{"type":"event","event":"chat","payload":{},"seq":1,"stream":"run-1","done":false}"#;
         let frame: GatewayFrame = serde_json::from_str(json).unwrap();
         match frame {
             GatewayFrame::Event(inner) => {
