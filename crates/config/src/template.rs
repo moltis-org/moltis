@@ -563,6 +563,22 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # webhook_secret = "..."          # Optional query secret for webhook URL (?secret=...)
 # allowlist = []                  # User IDs allowed to DM (empty = all unless dm_policy=allowlist)
 
+# Discord bots
+# [channels.discord.my-bot]
+# token = "..."                   # Bot token from Discord Developer Portal
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Discord user IDs allowed to DM
+# guild_allowlist = []            # Discord guild/server IDs (empty = all)
+# reply_to_message = false        # Send responses as Discord replies
+# ack_reaction = "👀"             # Emoji reaction while processing (omit to disable)
+# activity = "with AI"            # Bot activity status text
+# activity_type = "custom"        # "playing", "listening", "watching", "competing", or "custom"
+# status = "online"               # "online", "idle", "dnd", or "invisible"
+# otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS
 # ══════════════════════════════════════════════════════════════════════════════

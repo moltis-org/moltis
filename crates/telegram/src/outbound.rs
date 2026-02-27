@@ -32,6 +32,10 @@ pub struct TelegramOutbound {
 
 const TELEGRAM_RETRY_AFTER_MAX_RETRIES: usize = 4;
 
+/// How often to re-send the typing indicator while waiting for stream events.
+/// Telegram typing indicators expire after ~5 s; refresh well before that.
+const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
+
 #[derive(Debug, Clone, Copy)]
 struct StreamSendConfig {
     edit_throttle_ms: u64,
@@ -824,60 +828,72 @@ impl ChannelStreamOutbound for TelegramOutbound {
         let mut accumulated = String::new();
         let mut last_edit = tokio::time::Instant::now();
         let throttle = Duration::from_millis(stream_cfg.edit_throttle_ms);
+        let mut typing_interval = tokio::time::interval(TYPING_REFRESH_INTERVAL);
+        typing_interval.tick().await; // consume the immediate first tick
 
-        while let Some(event) = stream.recv().await {
-            match event {
-                StreamEvent::Delta(delta) => {
-                    accumulated.push_str(&delta);
-                    if stream_message_id.is_none() {
-                        if has_reached_stream_min_initial_chars(
-                            &accumulated,
-                            stream_cfg.min_initial_chars,
-                        ) {
-                            let html = markdown::markdown_to_telegram_html(&accumulated);
-                            let display = markdown::truncate_at_char_boundary(
-                                &html,
-                                TELEGRAM_MAX_MESSAGE_LEN,
-                            );
-                            let message_id = self
-                                .send_chunk_with_fallback(
-                                    &bot,
-                                    account_id,
-                                    to,
-                                    chat_id,
-                                    display,
-                                    rp.as_ref(),
-                                    false,
-                                )
-                                .await?;
-                            stream_message_id = Some(message_id);
-                            last_edit = tokio::time::Instant::now();
-                        }
-                        continue;
-                    }
+        loop {
+            tokio::select! {
+                event = stream.recv() => {
+                    let Some(event) = event else { break };
+                    match event {
+                        StreamEvent::Delta(delta) => {
+                            accumulated.push_str(&delta);
+                            if stream_message_id.is_none() {
+                                if has_reached_stream_min_initial_chars(
+                                    &accumulated,
+                                    stream_cfg.min_initial_chars,
+                                ) {
+                                    let html = markdown::markdown_to_telegram_html(&accumulated);
+                                    let display = markdown::truncate_at_char_boundary(
+                                        &html,
+                                        TELEGRAM_MAX_MESSAGE_LEN,
+                                    );
+                                    let message_id = self
+                                        .send_chunk_with_fallback(
+                                            &bot,
+                                            account_id,
+                                            to,
+                                            chat_id,
+                                            display,
+                                            rp.as_ref(),
+                                            false,
+                                        )
+                                        .await?;
+                                    stream_message_id = Some(message_id);
+                                    last_edit = tokio::time::Instant::now();
+                                }
+                                continue;
+                            }
 
-                    if last_edit.elapsed() >= throttle {
-                        let html = markdown::markdown_to_telegram_html(&accumulated);
-                        // Telegram rejects edits with identical content; truncate to limit.
-                        let display =
-                            markdown::truncate_at_char_boundary(&html, TELEGRAM_MAX_MESSAGE_LEN);
-                        if let Some(msg_id) = stream_message_id {
-                            let _ = self
-                                .edit_chunk_with_fallback(
-                                    &bot, account_id, to, chat_id, msg_id, display,
-                                )
-                                .await;
-                            last_edit = tokio::time::Instant::now();
-                        }
+                            if last_edit.elapsed() >= throttle {
+                                let html = markdown::markdown_to_telegram_html(&accumulated);
+                                // Telegram rejects edits with identical content; truncate to limit.
+                                let display =
+                                    markdown::truncate_at_char_boundary(&html, TELEGRAM_MAX_MESSAGE_LEN);
+                                if let Some(msg_id) = stream_message_id {
+                                    let _ = self
+                                        .edit_chunk_with_fallback(
+                                            &bot, account_id, to, chat_id, msg_id, display,
+                                        )
+                                        .await;
+                                    last_edit = tokio::time::Instant::now();
+                                }
+                            }
+                        },
+                        StreamEvent::Done => {
+                            break;
+                        },
+                        StreamEvent::Error(e) => {
+                            debug!("stream error: {e}");
+                            break;
+                        },
                     }
-                },
-                StreamEvent::Done => {
-                    break;
-                },
-                StreamEvent::Error(e) => {
-                    debug!("stream error: {e}");
-                    break;
-                },
+                }
+                _ = typing_interval.tick() => {
+                    // Re-send typing indicator to keep it visible during
+                    // long-running tool execution or pauses in the stream.
+                    let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+                }
             }
         }
 

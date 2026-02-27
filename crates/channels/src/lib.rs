@@ -7,6 +7,7 @@
 pub mod error;
 pub mod gating;
 pub mod message_log;
+pub mod otp;
 pub mod plugin;
 pub mod registry;
 pub mod store;

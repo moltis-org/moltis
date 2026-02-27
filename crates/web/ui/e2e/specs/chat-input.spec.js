@@ -74,6 +74,7 @@ async function openFullContextWithRetry(page) {
 		await waitForWsConnected(page);
 		const fullContextRpc = await sendRpcFromPage(page, "chat.full_context", {});
 		const noProvidersConfigured =
+			fullContextRpc?.error?.code === "UNAVAILABLE" ||
 			fullContextRpc?.error?.message?.includes("no LLM providers configured") ||
 			fullContextRpc?.error?.message?.includes("chat not configured");
 
@@ -92,7 +93,7 @@ async function openFullContextWithRetry(page) {
 					if (await failedMsg.isVisible().catch(() => false)) return "failed";
 					return "loading";
 				},
-				{ timeout: 4_000 },
+				{ timeout: 8_000 },
 			)
 			.toBe("copy")
 			.then(() => "copy")
