@@ -4164,7 +4164,7 @@ pub async fn start_gateway(
         let mgr = crate::tls::FsCertManager::new()?;
         rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
 
-        // NOTE: the /certs/ca.pem route is already registered in prepare_gateway.
+        // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
 
     // Count enabled skills and repos for startup banner.
