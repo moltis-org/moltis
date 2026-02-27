@@ -428,6 +428,10 @@ fn start_apple_container(
         "MAX_CONCURRENT_SESSIONS=1".to_string(),
         "-e".to_string(),
         "PREBOOT_CHROME=true".to_string(),
+        // Chrome requires shared memory for rendering; Docker uses --shm-size=2gb,
+        // Apple Container doesn't support --shm-size so mount tmpfs at /dev/shm.
+        "--tmpfs".to_string(),
+        "/dev/shm".to_string(),
     ];
 
     // Mount the profile directory if persistence is enabled
