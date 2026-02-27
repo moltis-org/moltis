@@ -254,6 +254,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 }
             }
 
+            // Channel platforms do not expose bot read receipts. Use inbound
+            // user activity as a heuristic and mark prior session history seen.
+            state.services.session.mark_seen(&session_key).await;
+
             let chat = state.chat().await;
             let mut params = serde_json::json!({
                 "text": effective_text,
@@ -739,6 +743,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     .await;
             }
         }
+
+        // Channel platforms do not expose bot read receipts. Use inbound
+        // user activity as a heuristic and mark prior session history seen.
+        state.services.session.mark_seen(&session_key).await;
 
         let chat = state.chat().await;
         let mut params = serde_json::json!({

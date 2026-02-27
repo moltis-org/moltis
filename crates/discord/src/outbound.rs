@@ -40,6 +40,13 @@ const STREAM_EDIT_THROTTLE: Duration = Duration::from_millis(500);
 /// Discord typing indicators expire after ~10 s; refresh well before that.
 const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(8);
 
+/// Send a lightweight preview first for larger images so users on slower
+/// links get visual feedback quickly while the full upload is still in flight.
+const DISCORD_IMAGE_PREVIEW_TRIGGER_BYTES: usize = 400 * 1024;
+const DISCORD_IMAGE_PREVIEW_MAX_WIDTH: u32 = 1024;
+const DISCORD_IMAGE_PREVIEW_MAX_HEIGHT: u32 = 1024;
+const DISCORD_IMAGE_PREVIEW_TEXT: &str = "Preview while full image uploads...";
+
 // ── HTML-to-Discord conversion ───────────────────────────────────────
 
 /// Convert the HTML activity-log suffix (Telegram-flavoured) into Discord
@@ -213,6 +220,30 @@ fn extension_for_mime(mime: &str) -> &'static str {
         "application/pdf" => "pdf",
         _ => "bin",
     }
+}
+
+fn is_image_mime(mime: &str) -> bool {
+    mime.starts_with("image/")
+}
+
+fn build_upload_preview(data: &[u8], mime: &str) -> Option<(Vec<u8>, String)> {
+    if !is_image_mime(mime) || data.len() < DISCORD_IMAGE_PREVIEW_TRIGGER_BYTES {
+        return None;
+    }
+
+    let resized = moltis_media::image_ops::resize_image(
+        data,
+        DISCORD_IMAGE_PREVIEW_MAX_WIDTH,
+        DISCORD_IMAGE_PREVIEW_MAX_HEIGHT,
+    )
+    .ok()?;
+
+    if resized == data || resized.len() >= data.len() {
+        return None;
+    }
+
+    // `resize_image` re-encodes resized outputs as JPEG.
+    Some((resized, "image/jpeg".to_string()))
 }
 
 // ── Outbound sender ──────────────────────────────────────────────────
@@ -402,6 +433,7 @@ impl ChannelOutbound for DiscordOutbound {
             let bytes = decode_data_url(&media.url)?;
             let ext = extension_for_mime(&media.mime_type);
             let filename = format!("attachment.{ext}");
+            let preview = build_upload_preview(&bytes, &media.mime_type);
 
             debug!(
                 account_id,
@@ -414,6 +446,41 @@ impl ChannelOutbound for DiscordOutbound {
             let http = self.resolve_http(account_id)?;
             let channel_id = Self::parse_channel_id(to)?;
             let reference = self.resolve_reference(account_id, reply_to);
+            if let Some((preview_bytes, preview_mime)) = preview {
+                let preview_filename = format!("preview.{}", extension_for_mime(&preview_mime));
+                info!(
+                    account_id,
+                    chat_id = to,
+                    preview_bytes = preview_bytes.len(),
+                    preview_mime = %preview_mime,
+                    "discord outbound media preview send"
+                );
+
+                let preview_attachment = CreateAttachment::bytes(preview_bytes, preview_filename);
+                let mut preview_msg = CreateMessage::new()
+                    .content(DISCORD_IMAGE_PREVIEW_TEXT)
+                    .add_file(preview_attachment);
+                if let Some(ref_id) = reference {
+                    preview_msg = preview_msg.reference_message((channel_id, ref_id));
+                }
+
+                if let Err(e) = channel_id.send_message(&http, preview_msg).await {
+                    warn!(
+                        account_id,
+                        chat_id = to,
+                        error = %e,
+                        "failed to send discord image preview (continuing with full image)"
+                    );
+                } else {
+                    info!(
+                        account_id,
+                        chat_id = to,
+                        preview_mime = %preview_mime,
+                        "discord outbound media preview sent"
+                    );
+                }
+            }
+
             let attachment = CreateAttachment::bytes(bytes, filename);
             let mut msg = CreateMessage::new().add_file(attachment);
             if !payload.text.is_empty() {
@@ -698,7 +765,7 @@ impl ChannelStreamOutbound for DiscordOutbound {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::io::Cursor};
 
     #[test]
     fn logbook_html_to_discord_blockquote() {
@@ -819,6 +886,49 @@ mod tests {
         assert_eq!(extension_for_mime("image/x-portable-pixmap"), "ppm");
         assert_eq!(extension_for_mime("audio/ogg"), "ogg");
         assert_eq!(extension_for_mime("application/octet-stream"), "bin");
+    }
+
+    #[test]
+    fn build_upload_preview_skips_non_images() {
+        let data = vec![0_u8; DISCORD_IMAGE_PREVIEW_TRIGGER_BYTES + 10];
+        assert!(build_upload_preview(&data, "application/pdf").is_none());
+    }
+
+    #[test]
+    fn build_upload_preview_skips_small_images() {
+        let b64 = base64::engine::general_purpose::STANDARD.encode([0x89, b'P', b'N', b'G']);
+        let url = format!("data:image/png;base64,{b64}");
+        let bytes = decode_data_url(&url).unwrap_or_else(|e| panic!("decode failed: {e}"));
+        assert!(build_upload_preview(&bytes, "image/png").is_none());
+    }
+
+    #[test]
+    fn build_upload_preview_resizes_large_png() {
+        let width = 2400_u32;
+        let height = 1400_u32;
+        let image = image::ImageBuffer::from_fn(width, height, |x, y| {
+            image::Rgb([
+                (x.wrapping_mul(31) as u8).wrapping_add(y as u8),
+                (y.wrapping_mul(17) as u8).wrapping_add(x as u8),
+                (x.wrapping_mul(7) as u8) ^ (y.wrapping_mul(13) as u8),
+            ])
+        });
+        let dynamic = image::DynamicImage::ImageRgb8(image);
+        let mut png = Vec::new();
+        dynamic
+            .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap_or_else(|e| panic!("failed to encode png fixture: {e}"));
+
+        assert!(
+            png.len() > DISCORD_IMAGE_PREVIEW_TRIGGER_BYTES,
+            "fixture must be large enough to trigger preview generation (size={})",
+            png.len()
+        );
+
+        let preview = build_upload_preview(&png, "image/png")
+            .unwrap_or_else(|| panic!("expected preview to be generated"));
+        assert_eq!(preview.1, "image/jpeg");
+        assert!(preview.0.len() < png.len());
     }
 
     #[test]
