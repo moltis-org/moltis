@@ -216,6 +216,7 @@ async fn handle_push(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
