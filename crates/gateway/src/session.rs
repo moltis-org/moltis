@@ -973,13 +973,14 @@ impl SessionService for LiveSessionService {
             };
 
             // Backfill preview for sessions that have messages but no preview yet.
-            if e.preview.is_none() && e.message_count > 0 {
-                if let Ok(history) = self.store.read(&e.key).await {
-                    let new_preview = extract_preview(&history);
-                    if let Some(ref preview) = new_preview {
-                        self.metadata.set_preview(&e.key, Some(preview)).await;
-                        e.preview = new_preview;
-                    }
+            if e.preview.is_none()
+                && e.message_count > 0
+                && let Ok(history) = self.store.read(&e.key).await
+            {
+                let new_preview = extract_preview(&history);
+                if let Some(ref preview) = new_preview {
+                    self.metadata.set_preview(&e.key, Some(preview)).await;
+                    e.preview = new_preview;
                 }
             }
 
