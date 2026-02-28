@@ -1921,10 +1921,8 @@ impl ProviderSetupService for LiveProviderSetupService {
         // For these providers we always use the local callback server.
         let has_registered_redirect = !oauth_config.redirect_uri.is_empty();
         let use_server_callback = redirect_uri.is_some() && !has_registered_redirect;
-        if !has_registered_redirect {
-            if let Some(uri) = redirect_uri {
-                oauth_config.redirect_uri = uri;
-            }
+        if !has_registered_redirect && let Some(uri) = redirect_uri {
+            oauth_config.redirect_uri = uri;
         }
 
         let port = callback_port(&oauth_config);

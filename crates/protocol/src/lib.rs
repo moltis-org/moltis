@@ -466,8 +466,8 @@ pub struct Policy {
     pub tick_interval_ms: u64,
 }
 
-impl Policy {
-    pub fn default_policy() -> Self {
+impl Default for Policy {
+    fn default() -> Self {
         Self {
             max_payload: MAX_PAYLOAD_BYTES,
             max_buffered_bytes: MAX_BUFFERED_BYTES,
@@ -674,7 +674,7 @@ mod tests {
             snapshot: serde_json::json!({}),
             canvas_host_url: None,
             auth: None,
-            policy: Policy::default_policy(),
+            policy: Policy::default(),
             extensions: Extensions::new(),
         };
         let json = serde_json::to_value(&hello).unwrap();
@@ -701,7 +701,7 @@ mod tests {
             snapshot: serde_json::json!({}),
             canvas_host_url: None,
             auth: None,
-            policy: Policy::default_policy(),
+            policy: Policy::default(),
             extensions,
         };
         let json = serde_json::to_value(&hello).unwrap();

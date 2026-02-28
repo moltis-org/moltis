@@ -14,7 +14,11 @@ impl CallbackServer {
     /// Listen on `{bind_addr}:{port}` for a GET `/auth/callback` with `code` and `state` params.
     /// Validates state matches `expected_state`, returns the authorization code.
     /// Times out after 60 seconds.
-    pub async fn wait_for_code(port: u16, expected_state: String, bind_addr: &str) -> Result<String> {
+    pub async fn wait_for_code(
+        port: u16,
+        expected_state: String,
+        bind_addr: &str,
+    ) -> Result<String> {
         let (tx, rx) = oneshot::channel::<Result<String>>();
         let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
