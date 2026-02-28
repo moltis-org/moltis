@@ -92,7 +92,7 @@ impl GatewayApprovalBroadcaster {
 
 #[async_trait]
 impl ApprovalBroadcaster for GatewayApprovalBroadcaster {
-    async fn broadcast_request(&self, request_id: &str, command: &str) -> anyhow::Result<()> {
+    async fn broadcast_request(&self, request_id: &str, command: &str) -> moltis_tools::Result<()> {
         broadcast(
             &self.state,
             "exec.approval.requested",

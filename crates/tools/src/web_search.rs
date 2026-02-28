@@ -5,12 +5,13 @@ use std::{
 };
 
 use {
-    anyhow::{Result, bail},
     async_trait::async_trait,
     secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
     tracing::{debug, warn},
 };
+
+use crate::error::Error;
 
 use {
     moltis_agents::tool_registry::AgentTool,
@@ -290,7 +291,7 @@ impl WebSearchTool {
         params: &serde_json::Value,
         accept_language: Option<&str>,
         api_key: &str,
-    ) -> Result<serde_json::Value> {
+    ) -> crate::Result<serde_json::Value> {
         if api_key.trim().is_empty() {
             return Ok(serde_json::json!({
                 "error": "Brave Search API key not configured",
@@ -331,16 +332,19 @@ impl WebSearchTool {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            bail!("Brave Search API returned {status}: {body}");
+            return Err(Error::message(format!(
+                "Brave Search API returned {status}: {body}"
+            )));
         }
 
-        let body_text = resp
-            .text()
-            .await
-            .map_err(|error| anyhow::anyhow!("failed to read Brave response body: {error}"))?;
+        let body_text = resp.text().await.map_err(|error| {
+            Error::message(format!("failed to read Brave response body: {error}"))
+        })?;
         let body: serde_json::Value = serde_json::from_str(&body_text).map_err(|error| {
             let snippet: String = body_text.chars().take(400).collect();
-            anyhow::anyhow!("failed to parse Brave JSON body: {error}; body starts with: {snippet}")
+            Error::message(format!(
+                "failed to parse Brave JSON body: {error}; body starts with: {snippet}"
+            ))
         })?;
         let results = parse_brave_results(&body);
 
@@ -357,7 +361,7 @@ impl WebSearchTool {
         api_key: &str,
         base_url: &str,
         model: &str,
-    ) -> Result<serde_json::Value> {
+    ) -> crate::Result<serde_json::Value> {
         if api_key.trim().is_empty() {
             return Ok(serde_json::json!({
                 "error": "Perplexity API key not configured",
@@ -385,7 +389,9 @@ impl WebSearchTool {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            bail!("Perplexity API returned {status}: {text}");
+            return Err(Error::message(format!(
+                "Perplexity API returned {status}: {text}"
+            )));
         }
 
         let pplx: PerplexityResponse = resp.json().await?;
@@ -420,13 +426,13 @@ impl WebSearchTool {
     }
 
     /// Fallback: search DuckDuckGo's HTML endpoint when no API key is configured.
-    async fn search_duckduckgo(&self, query: &str, count: u8) -> Result<serde_json::Value> {
+    async fn search_duckduckgo(&self, query: &str, count: u8) -> crate::Result<serde_json::Value> {
         // Fail fast if DDG recently returned a CAPTCHA.
         if self.is_ddg_blocked() {
-            bail!(
+            return Err(Error::message(
                 "Web search unavailable: DuckDuckGo is rate-limited (CAPTCHA) and no search \
-                 API key is configured. Set BRAVE_API_KEY or PERPLEXITY_API_KEY to enable search."
-            );
+                 API key is configured. Set BRAVE_API_KEY or PERPLEXITY_API_KEY to enable search.",
+            ));
         }
 
         let client = crate::shared_http_client();
@@ -442,7 +448,7 @@ impl WebSearchTool {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            bail!("DuckDuckGo returned HTTP {status}");
+            return Err(Error::message(format!("DuckDuckGo returned HTTP {status}")));
         }
 
         let html = resp.text().await?;
@@ -451,10 +457,10 @@ impl WebSearchTool {
             // Block DDG for 1 hour so subsequent calls fail instantly.
             self.block_ddg(Duration::from_secs(3600));
             warn!("DuckDuckGo CAPTCHA detected — blocking fallback for 1 hour");
-            bail!(
+            return Err(Error::message(
                 "Web search unavailable: DuckDuckGo returned a CAPTCHA challenge. \
-                 Configure BRAVE_API_KEY or PERPLEXITY_API_KEY for reliable search."
-            );
+                 Configure BRAVE_API_KEY or PERPLEXITY_API_KEY for reliable search.",
+            ));
         }
 
         let results = parse_duckduckgo_html(&html, count);
@@ -695,11 +701,11 @@ impl AgentTool for WebSearchTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let query = params
             .get("query")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'query' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'query' parameter"))?;
 
         let count = params
             .get("count")

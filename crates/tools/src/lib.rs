@@ -9,6 +9,9 @@
 pub mod approval;
 pub mod branch_session;
 
+pub mod error;
+pub use error::{Error, Result};
+
 /// Shared HTTP client for tools that don't need custom configuration.
 ///
 /// Reusing a single `reqwest::Client` avoids per-request connection pool,

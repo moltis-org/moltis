@@ -3,12 +3,13 @@
 use std::sync::Arc;
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
     serde_json::{Value, json},
 };
+
+use crate::error::Error;
 
 /// Agent tool that forks the current session at a given message index.
 pub struct BranchSessionTool {
@@ -52,16 +53,16 @@ impl AgentTool for BranchSessionTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let parent_key = params
             .get("_session_key")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing session context"))?;
+            .ok_or_else(|| Error::message("missing session context"))?;
 
         let label = params
             .get("label")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'label'"))?;
+            .ok_or_else(|| Error::message("missing 'label'"))?;
 
         let messages = self.store.read(parent_key).await?;
         let msg_count = messages.len();
@@ -73,7 +74,10 @@ impl AgentTool for BranchSessionTool {
             .unwrap_or(msg_count);
 
         if fork_point > msg_count {
-            anyhow::bail!("fork_point {fork_point} exceeds message count {msg_count}");
+            return Err(Error::message(format!(
+                "fork_point {fork_point} exceeds message count {msg_count}"
+            ))
+            .into());
         }
 
         let new_key = format!("session:{}", uuid::Uuid::new_v4());
@@ -87,7 +91,7 @@ impl AgentTool for BranchSessionTool {
             .metadata
             .upsert(&new_key, Some(label.to_string()))
             .await
-            .map_err(|e| anyhow::anyhow!("failed to create session: {e}"))?;
+            .map_err(|e| Error::message(format!("failed to create session: {e}")))?;
 
         self.metadata.touch(&new_key, fork_point as u32).await;
 
