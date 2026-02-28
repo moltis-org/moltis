@@ -708,6 +708,13 @@ pub struct HeartbeatConfig {
     pub ack_max_chars: usize,
     /// Active hours window — heartbeats only run during this window.
     pub active_hours: ActiveHoursConfig,
+    /// Whether heartbeat replies should be delivered to a channel account.
+    #[serde(default)]
+    pub deliver: bool,
+    /// Channel account identifier for heartbeat delivery (e.g. a Telegram bot account id).
+    pub channel: Option<String>,
+    /// Destination chat/recipient id for heartbeat delivery.
+    pub to: Option<String>,
     /// Whether heartbeat runs inside a sandbox. Defaults to true.
     #[serde(default = "default_true")]
     pub sandbox_enabled: bool,
@@ -724,6 +731,9 @@ impl Default for HeartbeatConfig {
             prompt: None,
             ack_max_chars: 300,
             active_hours: ActiveHoursConfig::default(),
+            deliver: false,
+            channel: None,
+            to: None,
             sandbox_enabled: true,
             sandbox_image: None,
         }

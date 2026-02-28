@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent `send_message` tool for proactive outbound channel delivery (`account_id` + `to` + `text`), backed by a live `channels.send` implementation in gateway channel services
+- Heartbeat channel routing config fields (`heartbeat.deliver`, `heartbeat.channel`, `heartbeat.to`) in schema/template/GraphQL, plus heartbeat settings UI controls for channel target selection
+- Prompt runtime context fields for channel/surface awareness (`surface`, `session_kind`, `channel_type`, `channel_account`, `channel_chat_id`, `channel_chat_type`)
+
 ### Changed
 
 ### Deprecated
@@ -16,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 ### Fixed
+
+- Heartbeat cron delivery now respects configured channel targets and no longer skips channel delivery for heartbeat turns when trimmed output is present
 
 ### Security
 

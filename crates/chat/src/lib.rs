@@ -1080,6 +1080,72 @@ fn load_prompt_persona_for_session(session_entry: Option<&SessionEntry>) -> Prom
     load_prompt_persona_for_agent(&agent_id)
 }
 
+#[derive(Default)]
+struct ChannelRuntimeContext {
+    surface: Option<String>,
+    session_kind: Option<String>,
+    channel_type: Option<String>,
+    channel_account_id: Option<String>,
+    channel_chat_id: Option<String>,
+    channel_chat_type: Option<String>,
+}
+
+fn infer_channel_chat_type(channel_type: &str, chat_id: &str) -> Option<String> {
+    if channel_type.eq_ignore_ascii_case("telegram") {
+        if chat_id.starts_with("-100") {
+            return Some("channel_or_supergroup".to_string());
+        }
+        if chat_id.starts_with('-') {
+            return Some("group".to_string());
+        }
+        return Some("private".to_string());
+    }
+    None
+}
+
+fn resolve_channel_runtime_context(
+    session_key: &str,
+    session_entry: Option<&SessionEntry>,
+) -> ChannelRuntimeContext {
+    if session_key == "cron:heartbeat" {
+        return ChannelRuntimeContext {
+            surface: Some("heartbeat".to_string()),
+            session_kind: Some("cron".to_string()),
+            ..Default::default()
+        };
+    }
+
+    if session_key.starts_with("cron:") {
+        return ChannelRuntimeContext {
+            surface: Some("cron".to_string()),
+            session_kind: Some("cron".to_string()),
+            ..Default::default()
+        };
+    }
+
+    if let Some(binding_json) = session_entry.and_then(|entry| entry.channel_binding.as_deref())
+        && let Ok(binding) =
+            serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
+    {
+        let channel_type = binding.channel_type.as_str().to_string();
+        let chat_id = binding.chat_id;
+        return ChannelRuntimeContext {
+            surface: Some(channel_type.clone()),
+            session_kind: Some("channel".to_string()),
+            channel_chat_type: infer_channel_chat_type(&channel_type, &chat_id),
+            channel_type: Some(channel_type),
+            channel_account_id: Some(binding.account_id),
+            channel_chat_id: Some(chat_id),
+        };
+    }
+
+    ChannelRuntimeContext {
+        surface: Some("web".to_string()),
+        session_kind: Some("web".to_string()),
+        ..Default::default()
+    }
+}
+
 async fn build_prompt_runtime_context(
     state: &Arc<dyn ChatRuntime>,
     provider: &Arc<dyn moltis_agents::model::LlmProvider>,
@@ -1137,6 +1203,7 @@ async fn build_prompt_runtime_context(
         .await
         .as_ref()
         .map(|loc| loc.to_string());
+    let channel_context = resolve_channel_runtime_context(session_key, session_entry);
 
     let mut host_ctx = PromptHostRuntimeContext {
         host: Some(state.hostname().to_string()),
@@ -1147,6 +1214,12 @@ async fn build_prompt_runtime_context(
         provider: Some(provider.name().to_string()),
         model: Some(provider.id().to_string()),
         session_key: Some(session_key.to_string()),
+        surface: channel_context.surface,
+        session_kind: channel_context.session_kind,
+        channel_type: channel_context.channel_type,
+        channel_account_id: channel_context.channel_account_id,
+        channel_chat_id: channel_context.channel_chat_id,
+        channel_chat_type: channel_context.channel_chat_type,
         data_dir: Some(data_dir_display),
         sudo_non_interactive,
         sudo_status,
@@ -8202,6 +8275,69 @@ mod tests {
     fn server_prompt_timezone_defaults_to_server_local() {
         assert_eq!(server_prompt_timezone(None), "server-local".to_string());
         assert_eq!(server_prompt_timezone(Some("")), "server-local".to_string());
+    }
+
+    fn make_session_entry_with_binding(binding: Option<String>) -> SessionEntry {
+        SessionEntry {
+            id: "sid-1".to_string(),
+            key: "session:key".to_string(),
+            label: None,
+            model: None,
+            created_at: 0,
+            updated_at: 0,
+            message_count: 0,
+            last_seen_message_count: 0,
+            project_id: None,
+            archived: false,
+            worktree_branch: None,
+            sandbox_enabled: None,
+            sandbox_image: None,
+            channel_binding: binding,
+            parent_session_key: None,
+            fork_point: None,
+            mcp_disabled: None,
+            preview: None,
+            agent_id: None,
+            version: 0,
+        }
+    }
+
+    #[test]
+    fn resolve_channel_runtime_context_sets_heartbeat_surface() {
+        let context = resolve_channel_runtime_context("cron:heartbeat", None);
+        assert_eq!(context.surface.as_deref(), Some("heartbeat"));
+        assert_eq!(context.session_kind.as_deref(), Some("cron"));
+        assert_eq!(context.channel_type, None);
+    }
+
+    #[test]
+    fn resolve_channel_runtime_context_extracts_channel_binding() {
+        let binding = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "bot-main".to_string(),
+            chat_id: "123456".to_string(),
+            message_id: Some("99".to_string()),
+        };
+        let binding_json = serde_json::to_string(&binding).expect("serialize binding");
+        let entry = make_session_entry_with_binding(Some(binding_json));
+
+        let context = resolve_channel_runtime_context("telegram:bot-main:123456", Some(&entry));
+        assert_eq!(context.surface.as_deref(), Some("telegram"));
+        assert_eq!(context.session_kind.as_deref(), Some("channel"));
+        assert_eq!(context.channel_type.as_deref(), Some("telegram"));
+        assert_eq!(context.channel_account_id.as_deref(), Some("bot-main"));
+        assert_eq!(context.channel_chat_id.as_deref(), Some("123456"));
+        assert_eq!(context.channel_chat_type.as_deref(), Some("private"));
+    }
+
+    #[test]
+    fn resolve_channel_runtime_context_falls_back_to_web_when_unbound() {
+        let context = resolve_channel_runtime_context("main", None);
+        assert_eq!(context.surface.as_deref(), Some("web"));
+        assert_eq!(context.session_kind.as_deref(), Some("web"));
+        assert_eq!(context.channel_type, None);
+        assert_eq!(context.channel_account_id, None);
+        assert_eq!(context.channel_chat_id, None);
     }
 
     #[test]

@@ -1525,9 +1525,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 message: prompt,
                                 model: patch.model.clone(),
                                 timeout_secs: None,
-                                deliver: false,
-                                channel: None,
-                                to: None,
+                                deliver: patch.deliver,
+                                channel: patch.channel.clone(),
+                                to: patch.to.clone(),
                             }),
                             enabled: Some(effective_enabled),
                             sandbox: Some(moltis_cron::types::CronSandboxConfig {

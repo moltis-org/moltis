@@ -1871,16 +1871,26 @@ pub async fn prepare_gateway(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let delivery_text = if is_heartbeat_turn {
+                let hb_cfg = state.inner.read().await.heartbeat_config.clone();
+                moltis_cron::heartbeat::strip_heartbeat_token(
+                    &text,
+                    moltis_cron::heartbeat::StripMode::Trim,
+                    hb_cfg.ack_max_chars,
+                )
+                .text
+            } else {
+                text.clone()
+            };
 
             // Deliver output to a channel if requested.
             if req.deliver
-                && !is_heartbeat_turn
-                && !text.is_empty()
+                && !delivery_text.trim().is_empty()
                 && let (Some(channel_account), Some(chat_id)) = (&req.channel, &req.to)
             {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     if let Err(e) = outbound
-                        .send_text(channel_account, chat_id, &text, None)
+                        .send_text(channel_account, chat_id, &delivery_text, None)
                         .await
                     {
                         tracing::warn!(
@@ -2508,9 +2518,9 @@ pub async fn prepare_gateway(
             wa_stream_outbound,
         ));
 
-        services = services.with_channel_outbound(
-            Arc::clone(&multi_router) as Arc<dyn moltis_channels::ChannelOutbound>
-        );
+        let outbound_router =
+            Arc::clone(&multi_router) as Arc<dyn moltis_channels::ChannelOutbound>;
+        services = services.with_channel_outbound(Arc::clone(&outbound_router));
         services = services.with_channel_stream_outbound(
             multi_router as Arc<dyn moltis_channels::ChannelStreamOutbound>,
         );
@@ -2521,6 +2531,7 @@ pub async fn prepare_gateway(
             discord_plugin,
             #[cfg(feature = "whatsapp")]
             whatsapp_plugin,
+            outbound_router,
             channel_store,
             Arc::clone(&message_log),
             Arc::clone(&session_metadata),
@@ -3122,6 +3133,9 @@ pub async fn prepare_gateway(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
+        tool_registry.register(Box::new(crate::channel_agent_tools::SendMessageTool::new(
+            Arc::clone(&state.services.channel),
+        )));
         tool_registry.register(Box::new(
             moltis_tools::send_image::SendImageTool::new()
                 .with_sandbox_router(Arc::clone(&sandbox_router)),
@@ -4066,9 +4080,9 @@ pub async fn prepare_gateway(
                         message: prompt,
                         model: hb.model.clone(),
                         timeout_secs: None,
-                        deliver: false,
-                        channel: None,
-                        to: None,
+                        deliver: hb.deliver,
+                        channel: hb.channel.clone(),
+                        to: hb.to.clone(),
                     }),
                     enabled: Some(true),
                     sandbox: Some(moltis_cron::types::CronSandboxConfig {
@@ -4094,9 +4108,9 @@ pub async fn prepare_gateway(
                         message: prompt,
                         model: hb.model.clone(),
                         timeout_secs: None,
-                        deliver: false,
-                        channel: None,
-                        to: None,
+                        deliver: hb.deliver,
+                        channel: hb.channel.clone(),
+                        to: hb.to.clone(),
                     },
                     session_target: SessionTarget::Named("heartbeat".into()),
                     delete_after_run: false,
