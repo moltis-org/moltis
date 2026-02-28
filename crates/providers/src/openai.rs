@@ -22,7 +22,9 @@ use {
         parse_openai_compat_usage_from_payload, parse_tool_calls, process_openai_sse_line,
         strip_think_tags, to_openai_tools, to_responses_api_tools, to_responses_input,
     },
-    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
+    moltis_agents::model::{
+        ChatMessage, CompletionResponse, LlmProvider, ModelMetadata, StreamEvent, Usage,
+    },
 };
 
 pub struct OpenAiProvider {
@@ -32,6 +34,7 @@ pub struct OpenAiProvider {
     provider_name: String,
     client: &'static reqwest::Client,
     stream_transport: ProviderStreamTransport,
+    metadata_cache: tokio::sync::OnceCell<ModelMetadata>,
 }
 
 const OPENAI_MODELS_ENDPOINT_PATH: &str = "/models";
@@ -422,6 +425,7 @@ impl OpenAiProvider {
             provider_name: "openai".into(),
             client: crate::shared_http_client(),
             stream_transport: ProviderStreamTransport::Sse,
+            metadata_cache: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -438,6 +442,7 @@ impl OpenAiProvider {
             provider_name,
             client: crate::shared_http_client(),
             stream_transport: ProviderStreamTransport::Sse,
+            metadata_cache: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -988,6 +993,53 @@ impl LlmProvider for OpenAiProvider {
 
     fn supports_vision(&self) -> bool {
         super::supports_vision_for_model(&self.model)
+    }
+
+    async fn model_metadata(&self) -> anyhow::Result<ModelMetadata> {
+        let meta = self
+            .metadata_cache
+            .get_or_try_init(|| async {
+                let url = format!("{}/models/{}", self.base_url, self.model);
+                debug!(url = %url, model = %self.model, "fetching model metadata");
+
+                let resp = self
+                    .client
+                    .get(&url)
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", self.api_key.expose_secret()),
+                    )
+                    .send()
+                    .await?;
+
+                if !resp.status().is_success() {
+                    anyhow::bail!(
+                        "model metadata API returned HTTP {}",
+                        resp.status().as_u16()
+                    );
+                }
+
+                let body: serde_json::Value = resp.json().await?;
+
+                // OpenAI uses "context_window", some compat providers use "context_length".
+                let context_length = body
+                    .get("context_window")
+                    .or_else(|| body.get("context_length"))
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+                    .unwrap_or_else(|| self.context_window());
+
+                Ok(ModelMetadata {
+                    id: body
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&self.model)
+                        .to_string(),
+                    context_length,
+                })
+            })
+            .await?;
+        Ok(meta.clone())
     }
 
     async fn complete(

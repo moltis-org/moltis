@@ -187,6 +187,7 @@ docker run -d \
   --name moltis \
   -p 13131:13131 \
   -p 13132:13132 \
+  -p 1455:1455 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \

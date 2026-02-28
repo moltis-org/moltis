@@ -36,4 +36,4 @@ tracing               = { optional = true, workspace = true }
 uuid                  = { workspace = true }
 
 [dev-dependencies]
-serial_test           = { workspace = true }
+serial_test = { workspace = true }

@@ -26,6 +26,17 @@ rustup target add wasm32-wasip2
 # moltis-tools includes these bytes at compile time in release mode.
 cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
+# The release build embeds WASM guest components via include_bytes!.
+# Build them first if they don't already exist.
+WASM_DIR="${REPO_ROOT}/target/wasm32-wasip2/release"
+if [ ! -f "${WASM_DIR}/moltis_wasm_calc.wasm" ] || \
+   [ ! -f "${WASM_DIR}/moltis_wasm_web_fetch.wasm" ] || \
+   [ ! -f "${WASM_DIR}/moltis_wasm_web_search.wasm" ]; then
+  echo "Building WASM tool components (required by release build)..."
+  rustup target add wasm32-wasip2
+  cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+fi
+
 # Keep Rust and C/C++ deps aligned with Xcode app link settings to avoid min-version mismatch.
 export MACOSX_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET}"
 export CMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET}"

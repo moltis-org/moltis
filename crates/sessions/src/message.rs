@@ -111,6 +111,9 @@ pub enum PersistedMessage {
         reasoning: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         created_at: Option<u64>,
+        /// Agent run ID linking this result to its parent run.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
 }
 
@@ -275,6 +278,7 @@ impl PersistedMessage {
             error,
             reasoning: None,
             created_at: Some(now_ms()),
+            run_id: None,
         }
     }
 
@@ -297,6 +301,30 @@ impl PersistedMessage {
             error,
             reasoning,
             created_at: Some(now_ms()),
+            run_id: None,
+        }
+    }
+
+    /// Create a tool result message with a run ID linking it to its agent run.
+    pub fn tool_result_with_run_id(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        arguments: Option<serde_json::Value>,
+        success: bool,
+        result: Option<serde_json::Value>,
+        error: Option<String>,
+        run_id: impl Into<String>,
+    ) -> Self {
+        Self::ToolResult {
+            tool_call_id: tool_call_id.into(),
+            tool_name: tool_name.into(),
+            arguments,
+            success,
+            result,
+            error,
+            reasoning: None,
+            created_at: Some(now_ms()),
+            run_id: Some(run_id.into()),
         }
     }
 
@@ -617,6 +645,7 @@ mod tests {
             error: None,
             reasoning: None,
             created_at: Some(12345),
+            run_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "tool_result");
@@ -639,6 +668,7 @@ mod tests {
             error: Some("command not found".to_string()),
             reasoning: None,
             created_at: Some(12345),
+            run_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "tool_result");

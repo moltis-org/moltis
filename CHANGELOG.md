@@ -100,6 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tailscale, voice, notifications, and config sections.
 - Deduplicated `parse_optional_trimmed_string_param` between chat.rs and
   methods.rs (single `pub` copy in chat.rs).
+- **OpenAI Codex OAuth in Docker**: the web UI no longer overrides the provider's pre-registered `redirect_uri`, which caused OpenAI to reject the authorization request with `unknown_error`. The OAuth callback server now also respects the gateway bind address (`0.0.0.0` in Docker) so the callback port (1455) is reachable from the host. Docker image now exposes port 1455 for OAuth callbacks (#207)
 - **Slow SQLite writes**: `moltis.db` and `memory.db` now use `journal_mode=WAL` and `synchronous=NORMAL` (matching `metrics.db`), eliminating multi-second write contention that caused 3–10 s INSERT times under concurrent access
 - Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
 - Docker image now installs Docker CLI from Docker’s official Debian repository (`docker-ce-cli`), avoiding API mismatches with newer host daemons during sandbox builds/exec
@@ -968,6 +969,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release workflow gates E2E tests**: Build Packages workflow now runs E2E
   tests and blocks all package builds (deb, rpm, arch, AppImage, snap,
   Homebrew, Docker) if they fail.
+
+### Added
+
+- **XML tag stripping**: Strip internal XML tags from LLM responses to prevent
+  tag leakage in chat (thinking, reasoning, scratchpad, etc.)
+- **Runtime model metadata**: Fetch model metadata from provider APIs for
+  accurate context window detection during auto-compaction
+- **Run detail UI**: Panel showing tool calls and message flow for agent runs,
+  accessible via expandable button on assistant messages
 
 ### Fixed
 

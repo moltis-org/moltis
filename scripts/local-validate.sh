@@ -457,6 +457,14 @@ run_check "local/lockfile" "cargo fetch --locked"
 # These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"
 
+# Build WASM guest components if the target is installed — required by
+# release-profile builds (macOS app, swift-bridge) that embed the artifacts
+# via include_bytes!.
+if rustup target list --installed 2>/dev/null | grep -q wasm32-wasip2; then
+  echo "Building WASM tool components..."
+  cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+fi
+
 # Build the gateway binary so e2e startup scripts find a fresh binary and
 # skip recompilation. Clippy (lint) compiled dependencies but may not produce
 # a runnable binary with matching fingerprints.

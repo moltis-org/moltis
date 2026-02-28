@@ -127,7 +127,6 @@ file-watcher = [
 ]
 graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 local-embeddings = ["moltis-memory/local-embeddings"]
-mdns = ["dep:mdns-sd"]
 local-llm = [
   "moltis-chat/local-llm",
   "moltis-provider-setup/local-llm",
@@ -135,6 +134,7 @@ local-llm = [
 ]
 local-llm-cuda = ["moltis-providers/local-llm-cuda"]
 local-llm-metal = ["moltis-providers/local-llm-metal"]
+mdns = ["dep:mdns-sd"]
 metrics = ["dep:moltis-metrics", "moltis-chat/metrics", "moltis-metrics/sqlite"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]

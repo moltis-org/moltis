@@ -1755,6 +1755,47 @@ impl SessionService for LiveSessionService {
 
         Ok(serde_json::json!({ "deleted": deleted }))
     }
+
+    async fn run_detail(&self, params: Value) -> ServiceResult {
+        let session_key = params
+            .get("sessionKey")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'sessionKey' parameter".to_string())?;
+        let run_id = params
+            .get("runId")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'runId' parameter".to_string())?;
+
+        let messages = self
+            .store
+            .read_by_run_id(session_key, run_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Build summary counts.
+        let mut user_messages = 0u32;
+        let mut tool_calls = 0u32;
+        let mut assistant_messages = 0u32;
+
+        for msg in &messages {
+            match msg.get("role").and_then(|v| v.as_str()) {
+                Some("user") => user_messages += 1,
+                Some("assistant") => assistant_messages += 1,
+                Some("tool_result") => tool_calls += 1,
+                _ => {},
+            }
+        }
+
+        Ok(serde_json::json!({
+            "runId": run_id,
+            "messages": messages,
+            "summary": {
+                "userMessages": user_messages,
+                "toolCalls": tool_calls,
+                "assistantMessages": assistant_messages,
+            }
+        }))
+    }
 }
 
 #[cfg(test)]

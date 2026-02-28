@@ -1361,7 +1361,8 @@ pub async fn prepare_gateway(
         deploy_platform.clone(),
     )
     .with_env_overrides(config_env_overrides.clone())
-    .with_error_parser(crate::chat_error::parse_chat_error);
+    .with_error_parser(crate::chat_error::parse_chat_error)
+    .with_callback_bind_addr(bind.to_string());
     provider_setup.set_priority_models(live_model_service.priority_models_handle());
     let provider_setup_service = Arc::new(provider_setup);
     services.provider_setup =

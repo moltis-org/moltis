@@ -370,6 +370,18 @@ pub trait LlmProvider: Send + Sync {
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream(messages)
     }
+
+    /// Fetch runtime model metadata from the provider API.
+    ///
+    /// The default implementation returns a `ModelMetadata` derived from the
+    /// static `context_window()` value. Providers that support a `/models`
+    /// endpoint can override this to fetch the actual context length at runtime.
+    async fn model_metadata(&self) -> anyhow::Result<ModelMetadata> {
+        Ok(ModelMetadata {
+            id: self.id().to_string(),
+            context_length: self.context_window(),
+        })
+    }
 }
 
 /// Response from an LLM completion call.
@@ -393,6 +405,13 @@ pub struct Usage {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_write_tokens: u32,
+}
+
+/// Runtime model metadata fetched from provider APIs.
+#[derive(Debug, Clone)]
+pub struct ModelMetadata {
+    pub id: String,
+    pub context_length: u32,
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -672,5 +691,48 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert!(matches!(&msgs[0], ChatMessage::User { .. }));
         assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+    }
+
+    // ── ModelMetadata default trait impl ────────────────────────────
+
+    /// Minimal provider to test default `model_metadata()` behavior.
+    struct StubProvider;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for StubProvider {
+        fn name(&self) -> &str {
+            "stub"
+        }
+
+        fn id(&self) -> &str {
+            "stub-model"
+        }
+
+        fn context_window(&self) -> u32 {
+            42_000
+        }
+
+        async fn complete(
+            &self,
+            _: &[ChatMessage],
+            _: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            anyhow::bail!("not implemented")
+        }
+
+        fn stream(
+            &self,
+            _: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn default_model_metadata_returns_context_window() {
+        let provider = StubProvider;
+        let meta = provider.model_metadata().await.unwrap();
+        assert_eq!(meta.id, "stub-model");
+        assert_eq!(meta.context_length, 42_000);
     }
 }

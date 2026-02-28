@@ -98,8 +98,8 @@ jemalloc     = ["dep:tikv-jemallocator"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
 lightweight        = ["jemalloc", "tls", "web-ui"]
-mdns               = ["moltis-gateway/mdns"]
 local-llm          = ["moltis-gateway/local-llm"]
+mdns               = ["moltis-gateway/mdns"]
 metrics            = ["moltis-gateway/metrics", "moltis-web?/metrics"]
 openclaw-import    = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
 prometheus         = ["moltis-gateway/prometheus"]
