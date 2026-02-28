@@ -84,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenAI Codex OAuth in Docker**: the web UI no longer overrides the provider's pre-registered `redirect_uri`, which caused OpenAI to reject the authorization request with `unknown_error`. The OAuth callback server now also respects the gateway bind address (`0.0.0.0` in Docker) so the callback port (1455) is reachable from the host. Docker image now exposes port 1455 for OAuth callbacks (#207)
 - **Slow SQLite writes**: `moltis.db` and `memory.db` now use `journal_mode=WAL` and `synchronous=NORMAL` (matching `metrics.db`), eliminating multi-second write contention that caused 3–10 s INSERT times under concurrent access
 - Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
 - Docker image now installs Docker CLI from Docker’s official Debian repository (`docker-ce-cli`), avoiding API mismatches with newer host daemons during sandbox builds/exec

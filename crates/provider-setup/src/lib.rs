@@ -1218,6 +1218,10 @@ pub struct LiveProviderSetupService {
     env_overrides: HashMap<String, String>,
     /// Injected error parser for interpreting provider API errors.
     error_parser: ErrorParser,
+    /// Address the OAuth callback server binds to. Defaults to `127.0.0.1`
+    /// for local development; set to `0.0.0.0` in Docker / remote
+    /// deployments so the callback port is reachable from the host.
+    callback_bind_addr: String,
 }
 
 #[derive(Clone)]
@@ -1245,6 +1249,7 @@ impl LiveProviderSetupService {
             registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
             env_overrides: HashMap::new(),
             error_parser: default_error_parser,
+            callback_bind_addr: "127.0.0.1".to_string(),
         }
     }
 
@@ -1256,6 +1261,16 @@ impl LiveProviderSetupService {
     /// Set a custom error parser for interpreting provider API errors.
     pub fn with_error_parser(mut self, parser: ErrorParser) -> Self {
         self.error_parser = parser;
+        self
+    }
+
+    /// Set the bind address for the OAuth callback server.
+    ///
+    /// Defaults to `127.0.0.1`. Pass `0.0.0.0` when the gateway is
+    /// bound to all interfaces (e.g. Docker) so the OAuth callback port
+    /// is reachable from the host.
+    pub fn with_callback_bind_addr(mut self, addr: String) -> Self {
+        self.callback_bind_addr = addr;
         self
     }
 
@@ -1898,8 +1913,15 @@ impl ProviderSetupService for LiveProviderSetupService {
                 .await;
         }
 
-        let use_server_callback = redirect_uri.is_some();
-        if let Some(uri) = redirect_uri {
+        // Providers with a pre-registered redirect_uri (e.g. openai-codex
+        // registered as http://localhost:1455/auth/callback with OpenAI)
+        // must always use that URI in the authorization request.
+        // Overriding it with the gateway URL causes OAuth providers to
+        // reject the request with "unknown_error".
+        // For these providers we always use the local callback server.
+        let has_registered_redirect = !oauth_config.redirect_uri.is_empty();
+        let use_server_callback = redirect_uri.is_some() && !has_registered_redirect;
+        if !has_registered_redirect && let Some(uri) = redirect_uri {
             oauth_config.redirect_uri = uri;
         }
 
@@ -1934,8 +1956,9 @@ impl ProviderSetupService for LiveProviderSetupService {
         let registry = Arc::clone(&self.registry);
         let config = self.effective_config();
         let env_overrides = self.env_overrides.clone();
+        let bind_addr = self.callback_bind_addr.clone();
         tokio::spawn(async move {
-            match CallbackServer::wait_for_code(port, expected_state).await {
+            match CallbackServer::wait_for_code(port, expected_state, &bind_addr).await {
                 Ok(code) => {
                     match flow.exchange(&code, &verifier).await {
                         Ok(tokens) => {
@@ -3392,6 +3415,7 @@ mod tests {
             registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
             env_overrides: HashMap::new(),
             error_parser: default_error_parser,
+            callback_bind_addr: "127.0.0.1".to_string(),
         };
 
         let result = svc.available().await.unwrap();
@@ -3448,6 +3472,7 @@ mod tests {
             registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
             env_overrides: HashMap::new(),
             error_parser: default_error_parser,
+            callback_bind_addr: "127.0.0.1".to_string(),
         };
 
         let result = svc.available().await.expect("providers.available");
@@ -3551,17 +3576,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_start_uses_redirect_uri_override() {
+    async fn oauth_start_ignores_redirect_uri_override_for_registered_provider() {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
         let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
-        let redirect_uri = "https://example.com/auth/callback";
 
         let result = svc
             .oauth_start(serde_json::json!({
                 "provider": "openai-codex",
-                "redirectUri": redirect_uri,
+                "redirectUri": "https://example.com/auth/callback",
             }))
             .await
             .expect("oauth start should succeed");
@@ -3583,7 +3607,11 @@ mod tests {
             .find(|(k, _)| k == "redirect_uri")
             .map(|(_, v)| v.into_owned());
 
-        assert_eq!(redirect.as_deref(), Some(redirect_uri));
+        // openai-codex has a pre-registered redirect_uri; client override is ignored.
+        assert_eq!(
+            redirect.as_deref(),
+            Some("http://localhost:1455/auth/callback")
+        );
     }
 
     #[tokio::test]

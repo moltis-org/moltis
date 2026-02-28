@@ -11,6 +11,7 @@ docker run -d \
   --name moltis \
   -p 13131:13131 \
   -p 13132:13132 \
+  -p 1455:1455 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -18,6 +19,14 @@ docker run -d \
 ```
 
 Open https://localhost:13131 in your browser and configure your LLM provider to start chatting.
+
+### Ports
+
+| Port | Purpose |
+|------|---------|
+| 13131 | Gateway (HTTPS) — web UI, API, WebSocket |
+| 13132 | HTTP — CA certificate download for TLS trust |
+| 1455 | OAuth callback — required for OpenAI Codex and other providers with pre-registered redirect URIs |
 
 ### Trusting the TLS certificate
 
@@ -44,9 +53,9 @@ After trusting the CA, restart your browser. The warning will not appear again
 ```admonish note
 When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup:
 
-\`\`\`bash
+~~~bash
 docker logs moltis
-\`\`\`
+~~~
 ```
 
 ## Volume Mounts
@@ -66,6 +75,7 @@ docker run -d \
   --name moltis \
   -p 13131:13131 \
   -p 13132:13132 \
+  -p 1455:1455 \
   -v ./config:/home/moltis/.config/moltis \
   -v ./data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -114,6 +124,7 @@ services:
     ports:
       - "13131:13131"
       - "13132:13132"
+      - "1455:1455"   # OAuth callback (OpenAI Codex, etc.)
     volumes:
       - ./config:/home/moltis/.config/moltis
       - ./data:/home/moltis/.moltis
@@ -154,6 +165,7 @@ podman run -d \
   --name moltis \
   -p 13131:13131 \
   -p 13132:13132 \
+  -p 1455:1455 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock \
@@ -164,6 +176,7 @@ podman run -d \
   --name moltis \
   -p 13131:13131 \
   -p 13132:13132 \
+  -p 1455:1455 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/podman/podman.sock:/var/run/docker.sock \
@@ -194,6 +207,7 @@ docker run -d \
   --name moltis \
   -p 13131:13131 \
   -p 13132:13132 \
+  -p 1455:1455 \
   -e MOLTIS_CONFIG_DIR=/config \
   -e MOLTIS_DATA_DIR=/data \
   -v ./config:/config \
@@ -281,6 +295,27 @@ The setup code only appears when accessing from a non-localhost address. If you'
 ```bash
 docker logs moltis 2>&1 | grep -i setup
 ```
+
+### OAuth authentication error (OpenAI Codex)
+
+If clicking **Connect** for OpenAI Codex shows "unknown_error" on OpenAI's
+page, port 1455 is not reachable from your browser. Make sure you published it:
+
+```bash
+-p 1455:1455
+```
+
+If you're running Moltis on a remote server (cloud VM, VPS) and accessing it
+over the network, `localhost:1455` on the browser side points to your local
+machine — not the server. In that case, authenticate via the CLI instead:
+
+```bash
+docker exec -it moltis moltis auth login --provider openai-codex
+```
+
+The CLI opens a browser on the machine where you run the command and handles
+the OAuth callback locally. Tokens are saved to the config volume and picked
+up by the running gateway automatically.
 
 ### Permission denied on bind mounts
 

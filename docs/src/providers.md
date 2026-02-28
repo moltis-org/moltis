@@ -59,6 +59,23 @@ OpenAI Codex uses OAuth token import and OAuth-based access.
 2. Click **Connect** and complete the auth flow.
 3. Choose a Codex model.
 
+```admonish note title="Docker and cloud deployments"
+The OAuth flow redirects your browser to `localhost:1455`. In Docker, make sure
+port 1455 is published (`-p 1455:1455`). On cloud platforms where `localhost`
+cannot reach the server, authenticate via the CLI instead:
+
+~~~bash
+# Docker
+docker exec -it moltis moltis auth login --provider openai-codex
+
+# Fly.io
+fly ssh console -C "moltis auth login --provider openai-codex"
+~~~
+
+The CLI opens a browser on your machine and handles the callback locally.
+Tokens are saved to the config volume and picked up by the gateway automatically.
+```
+
 ### GitHub Copilot
 
 GitHub Copilot uses OAuth authentication.
@@ -66,6 +83,16 @@ GitHub Copilot uses OAuth authentication.
 1. Go to **Settings** -> **Providers** -> **GitHub Copilot**.
 2. Click **Connect**.
 3. Complete the GitHub OAuth flow.
+
+```admonish note title="Docker and cloud deployments"
+GitHub Copilot uses device-flow authentication (a code you enter on github.com),
+so it works from the web UI without extra port configuration. If you prefer the
+CLI:
+
+~~~bash
+docker exec -it moltis moltis auth login --provider github-copilot
+~~~
+```
 
 ```admonish info
 Requires an active GitHub Copilot subscription.
