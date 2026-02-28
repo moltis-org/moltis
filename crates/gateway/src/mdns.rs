@@ -68,15 +68,15 @@ mod tests {
 
     #[test]
     fn register_and_shutdown_smoke() {
-        let daemon = register("test-instance", 0, "0.0.0-test")
-            .expect("mDNS register should succeed");
+        let daemon =
+            register("test-instance", 0, "0.0.0-test").expect("mDNS register should succeed");
         shutdown(&daemon);
     }
 
     #[test]
     fn register_with_unicode_instance_name() {
-        let daemon = register("moltis-тест", 0, "0.0.0-test")
-            .expect("mDNS register should handle unicode");
+        let daemon =
+            register("moltis-тест", 0, "0.0.0-test").expect("mDNS register should handle unicode");
         shutdown(&daemon);
     }
 }

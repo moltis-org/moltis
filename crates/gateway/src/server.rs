@@ -1442,8 +1442,10 @@ pub async fn prepare_gateway(
     }
     let db_path = data_dir.join("moltis.db");
     let db_pool = {
-        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
-        use std::str::FromStr;
+        use {
+            sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+            std::str::FromStr,
+        };
         let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
             .expect("invalid db path")
             .create_if_missing(true)

@@ -29,6 +29,19 @@ struct ChatView: View {
                             ToolCallBanner(toolCall: toolCall)
                         }
 
+                        // Thinking text
+                        if let thinkingText = chatStore.currentThinkingText,
+                           chatStore.isStreaming {
+                            Text(thinkingText)
+                                .font(.caption)
+                                .italic()
+                                .foregroundStyle(.orange)
+                                .lineLimit(2)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
                         // Input bar
                         inputBar
                     }

@@ -1653,6 +1653,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
     reg.register(
+        "chat.peek",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .chat()
+                    .await
+                    .peek(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
         "chat.cancel_queued",
         Box::new(|ctx| {
             Box::pin(async move {

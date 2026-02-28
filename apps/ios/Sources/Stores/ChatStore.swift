@@ -8,6 +8,8 @@ final class ChatStore: ObservableObject {
     @Published var activeToolCalls: [ToolCallInfo] = []
     @Published var currentSessionKey: String = "main"
     @Published var draftMessage = ""
+    @Published var currentThinkingText: String?
+    @Published var peekResult: PeekResult?
 
     private weak var connectionStore: ConnectionStore?
     private let logger = Logger(subsystem: "org.moltis.ios", category: "chat")
@@ -81,6 +83,7 @@ final class ChatStore: ObservableObject {
         isStreaming = false
         streamingMessageId = nil
         currentRunId = nil
+        currentThinkingText = nil
         activeToolCalls.removeAll()
         liveActivityManager.endActivity(success: false)
     }
@@ -124,6 +127,7 @@ final class ChatStore: ObservableObject {
             )
 
         case .thinkingText:
+            currentThinkingText = payload.text
             liveActivityManager.updateStep(
                 label: "Reasoning...", icon: "brain", stepNumber: 1
             )
@@ -180,6 +184,7 @@ final class ChatStore: ObservableObject {
             isStreaming = false
             streamingMessageId = nil
             currentRunId = nil
+            currentThinkingText = nil
             activeToolCalls.removeAll()
             liveActivityManager.endActivity(success: true)
 
@@ -196,6 +201,7 @@ final class ChatStore: ObservableObject {
             isStreaming = false
             streamingMessageId = nil
             currentRunId = nil
+            currentThinkingText = nil
             activeToolCalls.removeAll()
             liveActivityManager.endActivity(success: false)
 
@@ -240,6 +246,39 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: - Peek
+
+    func peekSession() async {
+        guard let wsClient = connectionStore?.wsClient else { return }
+        do {
+            let params: [String: AnyCodable] = [
+                "sessionKey": AnyCodable(currentSessionKey)
+            ]
+            let response = try await wsClient.send(method: "chat.peek", params: params)
+            if let payload = response.payload,
+               let dict = payload.value as? [String: Any] {
+                let active = dict["active"] as? Bool ?? false
+                if active {
+                    let thinking = dict["thinkingText"] as? String
+                    var toolNames: [String] = []
+                    if let tools = dict["toolCalls"] as? [[String: Any]] {
+                        toolNames = tools.compactMap { $0["name"] as? String }
+                    }
+                    peekResult = PeekResult(
+                        active: true,
+                        thinkingText: thinking,
+                        toolCallNames: toolNames
+                    )
+                } else {
+                    peekResult = PeekResult(active: false)
+                }
+            }
+        } catch {
+            logger.error("Failed to peek: \(error.localizedDescription)")
+            peekResult = nil
+        }
+    }
+
     // MARK: - Private
 
     private func parseHistoryMessage(_ dict: [String: Any]) -> ChatMessage? {
@@ -258,4 +297,10 @@ final class ChatStore: ObservableObject {
             durationMs: dict["durationMs"] as? Int
         )
     }
+}
+
+struct PeekResult {
+    let active: Bool
+    var thinkingText: String?
+    var toolCallNames: [String] = []
 }

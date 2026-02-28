@@ -27,6 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Removed the bottom tab bar so chat is the single root screen, with sessions/settings accessed from the top controls
 - Refined chat controls: larger send/stop action button and redesigned connection banner card with richer status details
 - Settings now includes optional location sharing, with iOS permission/status handling and real-time GraphQL mutation updates to `agents.updateIdentity`
+- Thinking text display (italic orange caption) shown below tool call banner while streaming
+- Peek session support via `chat.peek` RPC with `PeekResult` model (active state, thinking text, tool call names)
+- Abort broadcast handler (`aborted` event) that cleans up streaming state and Live Activity
 
 ### Fixed
 

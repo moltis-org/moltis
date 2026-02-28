@@ -113,6 +113,20 @@ function moveFirstQueuedToChat() {
 	if (!tray.querySelector(".msg")) tray.classList.add("hidden");
 }
 
+function makeThinkingStopBtn(sessionKey) {
+	var btn = document.createElement("button");
+	btn.className = "thinking-stop-btn";
+	btn.type = "button";
+	btn.title = "Stop generation";
+	btn.textContent = "Stop";
+	btn.addEventListener("click", () => {
+		btn.disabled = true;
+		btn.textContent = "Stopping…";
+		sendRpc("chat.abort", { sessionKey }).catch(() => {});
+	});
+	return btn;
+}
+
 function handleChatThinking(p, isActive, isChatPage, eventSession) {
 	updateSessionRunId(eventSession, p.runId);
 	setSessionReplying(eventSession, true);
@@ -124,6 +138,7 @@ function handleChatThinking(p, isActive, isChatPage, eventSession) {
 	thinkEl.className = "msg assistant thinking";
 	thinkEl.id = "thinkingIndicator";
 	thinkEl.appendChild(makeThinkingDots());
+	thinkEl.appendChild(makeThinkingStopBtn(eventSession));
 	S.chatMsgBox.appendChild(thinkEl);
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
@@ -134,11 +149,13 @@ function handleChatThinkingText(p, isActive, isChatPage, eventSession) {
 	if (!(isActive && isChatPage)) return;
 	var indicator = document.getElementById("thinkingIndicator");
 	if (indicator) {
+		var existingBtn = indicator.querySelector(".thinking-stop-btn");
 		while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
 		var textEl = document.createElement("span");
 		textEl.className = "thinking-text";
 		textEl.textContent = p.text;
 		indicator.appendChild(textEl);
+		indicator.appendChild(existingBtn || makeThinkingStopBtn(eventSession));
 		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	}
 }
@@ -742,6 +759,24 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	moveFirstQueuedToChat();
 }
 
+function handleChatAborted(p, isActive, isChatPage, eventSession) {
+	clearPendingToolCallEndsForSession(eventSession);
+	setSessionReplying(eventSession, false);
+	setSessionActiveRunId(eventSession, null);
+	var abortSession = sessionStore.getByKey(eventSession);
+	if (abortSession) abortSession.resetStreamState();
+	if (!(isActive && isChatPage)) {
+		S.setVoicePending(false);
+		return;
+	}
+	removeThinking();
+	clearStaleRunningToolCards();
+	S.setStreamEl(null);
+	S.setStreamText("");
+	S.setVoicePending(false);
+	moveFirstQueuedToChat();
+}
+
 function handleChatNotice(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	// Render titled notices as markdown so emphasis is visible.
@@ -805,6 +840,7 @@ var chatHandlers = {
 	auto_compact: handleChatAutoCompact,
 	retrying: handleChatRetrying,
 	error: handleChatError,
+	aborted: handleChatAborted,
 	notice: handleChatNotice,
 	queue_cleared: handleChatQueueCleared,
 	session_cleared: handleChatSessionCleared,

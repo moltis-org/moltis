@@ -197,7 +197,10 @@ pub async fn handle_connection(
         return;
     }
 
-    let role = params.role.clone().unwrap_or_else(|| roles::OPERATOR.into());
+    let role = params
+        .role
+        .clone()
+        .unwrap_or_else(|| roles::OPERATOR.into());
 
     // Determine scopes based on auth method.
     // API keys MUST declare scopes explicitly — empty scopes means no access.

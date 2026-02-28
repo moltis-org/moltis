@@ -9,7 +9,7 @@ fn main() {
             }
             std::fs::write(&p, sdl).expect("failed to write schema file");
             eprintln!("Wrote GraphQL schema to {p}");
-        }
+        },
         None => print!("{sdl}"),
     }
 }

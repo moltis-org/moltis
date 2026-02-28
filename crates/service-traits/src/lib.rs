@@ -340,6 +340,11 @@ pub trait ChatService: Send + Sync {
     async fn active_voice_pending(&self, _session_key: &str) -> bool {
         false
     }
+    /// Return a snapshot of the current activity for a session: thinking text,
+    /// active tool calls, and whether the session is actively generating.
+    async fn peek(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "active": false }))
+    }
 }
 
 pub struct NoopChatService;
