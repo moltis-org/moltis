@@ -1964,8 +1964,7 @@ impl Sandbox for CgroupSandbox {
             _ => {
                 return Err(Error::message(
                     "systemd-run not found; cgroup sandbox requires systemd",
-                )
-                .into());
+                ));
             },
         }
     }
@@ -2019,8 +2018,7 @@ impl Sandbox for CgroupSandbox {
                 return Err(Error::message(format!(
                     "systemd-run exec timed out after {}s",
                     opts.timeout.as_secs()
-                ))
-                .into());
+                )));
             },
         }
     }
