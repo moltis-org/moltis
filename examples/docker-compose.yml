@@ -21,6 +21,7 @@ services:
     ports:
       - "13131:13131"
       - "13132:13132"
+      - "1455:1455"   # OAuth callback (OpenAI Codex, etc.)
     volumes:
       # Configuration files (editable from host)
       - ./config:/home/moltis/.config/moltis

@@ -67,7 +67,7 @@ async fn login(provider: &str) -> Result<()> {
     }
 
     println!("Waiting for callback on http://127.0.0.1:{port}/auth/callback ...");
-    let code = CallbackServer::wait_for_code(port, req.state).await?;
+    let code = CallbackServer::wait_for_code(port, req.state, "127.0.0.1").await?;
 
     println!("Exchanging code for tokens...");
     let tokens = flow.exchange(&code, &req.pkce.verifier).await?;

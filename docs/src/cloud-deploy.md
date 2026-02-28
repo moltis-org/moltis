@@ -151,6 +151,34 @@ Railway supports persistent volumes. Add one in the service settings and mount
 it at `/data`.
 -->
 
+## OAuth Providers (OpenAI Codex, GitHub Copilot)
+
+OAuth providers that redirect to `localhost` (like OpenAI Codex) cannot
+complete the browser flow when Moltis runs on a remote server — `localhost`
+on the user's browser points to their own machine, not the cloud instance.
+
+**Use the CLI to authenticate instead:**
+
+```bash
+# Fly.io
+fly ssh console -C "moltis auth login --provider openai-codex"
+
+# DigitalOcean (Droplet with Docker)
+docker exec -it moltis moltis auth login --provider openai-codex
+
+# Generic container
+docker exec -it <container> moltis auth login --provider openai-codex
+```
+
+The CLI opens a browser on the machine where you run the command. After you
+log in, tokens are saved to the config volume and the running gateway picks
+them up automatically — no restart needed.
+
+```admonish tip
+GitHub Copilot uses device-flow authentication (a code you enter on
+github.com), so it works from the web UI without this workaround.
+```
+
 ## Authentication
 
 On first launch, Moltis requires a password or passkey to be set. In cloud
