@@ -58,6 +58,7 @@ pub fn shutdown(daemon: &ServiceDaemon) {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
