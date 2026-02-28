@@ -4,7 +4,7 @@ name              = "moltis-wasm-web-search"
 version.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 serde_json     = { workspace = true }

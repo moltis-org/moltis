@@ -1,22 +1,28 @@
+// Pure functions are used by the WASM Guest impl; allow dead_code on non-wasm targets.
+#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+
+#[cfg(target_arch = "wasm32")]
 wit_bindgen::generate!({
     path: "../../../wit",
     world: "http-tool",
 });
 
-use {
-    crate::moltis::tool::{
-        outgoing_handler::{self, HttpError, HttpRequest},
-        types::{ToolError, ToolValue},
-    },
-    serde_json::{Value, json},
+#[cfg(target_arch = "wasm32")]
+use crate::moltis::tool::{
+    outgoing_handler::{self, HttpError, HttpRequest},
+    types::{ToolError, ToolValue},
 };
+
+use serde_json::{Value, json};
 
 const DEFAULT_TIMEOUT_MS: u32 = 12_000;
 const DEFAULT_MAX_RESPONSE_BYTES: u64 = 2_000_000;
 const DEFAULT_RESULT_COUNT: u8 = 5;
 
+#[cfg(target_arch = "wasm32")]
 struct WebSearchWasm;
 
+#[cfg(target_arch = "wasm32")]
 impl Guest for WebSearchWasm {
     fn name() -> String {
         "web_search_wasm".to_string()
@@ -70,6 +76,7 @@ impl Guest for WebSearchWasm {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn execute_impl(params_json: &str) -> Result<Value, ToolError> {
     let params: Value = serde_json::from_str(params_json).map_err(|error| ToolError {
         code: "invalid_params_json".to_string(),
@@ -177,6 +184,7 @@ fn parse_brave_results(body: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+#[cfg(target_arch = "wasm32")]
 fn map_http_error(error: HttpError) -> ToolError {
     match error {
         HttpError::InvalidUrl(message) => ToolError {
@@ -225,4 +233,135 @@ fn url_encode(s: &str) -> String {
     out
 }
 
+#[cfg(target_arch = "wasm32")]
 export!(WebSearchWasm);
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- url_encode ---
+
+    #[test]
+    fn encodes_spaces() {
+        assert_eq!(url_encode("hello world"), "hello%20world");
+    }
+
+    #[test]
+    fn preserves_unreserved_chars() {
+        assert_eq!(url_encode("abc-123_XYZ.~"), "abc-123_XYZ.~");
+    }
+
+    #[test]
+    fn encodes_special_chars() {
+        assert_eq!(url_encode("a+b&c=d"), "a%2Bb%26c%3Dd");
+    }
+
+    #[test]
+    fn encodes_unicode() {
+        // "é" = [0xC3, 0xA9] in UTF-8
+        assert_eq!(url_encode("é"), "%C3%A9");
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(url_encode(""), "");
+    }
+
+    // --- parse_brave_results ---
+
+    #[test]
+    fn parses_normal_results() {
+        let body = json!({
+            "web": {
+                "results": [
+                    {
+                        "title": "Example",
+                        "url": "https://example.com",
+                        "description": "An example site"
+                    },
+                    {
+                        "title": "Rust Lang",
+                        "url": "https://rust-lang.org",
+                        "description": "The Rust programming language"
+                    }
+                ]
+            }
+        });
+        let results = parse_brave_results(&body);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["title"], "Example");
+        assert_eq!(results[0]["url"], "https://example.com");
+        assert_eq!(results[1]["title"], "Rust Lang");
+    }
+
+    #[test]
+    fn skips_results_missing_title() {
+        let body = json!({
+            "web": {
+                "results": [
+                    { "url": "https://example.com", "description": "no title" },
+                    { "title": "Has title", "url": "https://example.com" }
+                ]
+            }
+        });
+        let results = parse_brave_results(&body);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["title"], "Has title");
+    }
+
+    #[test]
+    fn skips_results_missing_url() {
+        let body = json!({
+            "web": {
+                "results": [
+                    { "title": "No URL" }
+                ]
+            }
+        });
+        let results = parse_brave_results(&body);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn skips_empty_title_and_url() {
+        let body = json!({
+            "web": {
+                "results": [
+                    { "title": "  ", "url": "https://example.com" },
+                    { "title": "Good", "url": "  " }
+                ]
+            }
+        });
+        let results = parse_brave_results(&body);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn handles_missing_web_key() {
+        let body = json!({ "other": "data" });
+        let results = parse_brave_results(&body);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn handles_empty_results_array() {
+        let body = json!({ "web": { "results": [] } });
+        let results = parse_brave_results(&body);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn description_defaults_to_empty() {
+        let body = json!({
+            "web": {
+                "results": [
+                    { "title": "No desc", "url": "https://example.com" }
+                ]
+            }
+        });
+        let results = parse_brave_results(&body);
+        assert_eq!(results[0]["description"], "");
+    }
+}

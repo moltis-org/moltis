@@ -173,7 +173,7 @@ async fn clean() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::image_build_not_supported_notice;
+    use super::{image_build_not_supported_notice, sanitize_instance_slug};
 
     #[test]
     fn wasm_backends_skip_image_build() {
@@ -198,5 +198,31 @@ mod tests {
     fn container_backends_require_image_build() {
         assert_eq!(image_build_not_supported_notice("docker"), None);
         assert_eq!(image_build_not_supported_notice("apple-container"), None);
+    }
+
+    #[test]
+    fn slug_lowercases_and_replaces_non_alnum() {
+        assert_eq!(sanitize_instance_slug("My Server"), "my-server");
+    }
+
+    #[test]
+    fn slug_collapses_consecutive_dashes() {
+        assert_eq!(sanitize_instance_slug("a--b___c"), "a-b-c");
+    }
+
+    #[test]
+    fn slug_trims_leading_trailing_dashes() {
+        assert_eq!(sanitize_instance_slug("--hello--"), "hello");
+    }
+
+    #[test]
+    fn slug_empty_falls_back_to_moltis() {
+        assert_eq!(sanitize_instance_slug(""), "moltis");
+        assert_eq!(sanitize_instance_slug("---"), "moltis");
+    }
+
+    #[test]
+    fn slug_preserves_alphanumeric() {
+        assert_eq!(sanitize_instance_slug("abc123"), "abc123");
     }
 }

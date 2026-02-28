@@ -4,7 +4,7 @@ name              = "moltis-wasm-calc"
 version.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow         = { workspace = true }

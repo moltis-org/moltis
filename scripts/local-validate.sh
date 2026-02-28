@@ -456,6 +456,12 @@ run_check "local/lockfile" "cargo fetch --locked"
 # These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"
 
+# Build the gateway binary so e2e startup scripts find a fresh binary and
+# skip recompilation. Clippy (lint) compiled dependencies but may not produce
+# a runnable binary with matching fingerprints.
+echo "Building moltis binary for e2e tests..."
+cargo +"${nightly_toolchain}" build --bin moltis
+
 # After lint, run test / macOS app / e2e in parallel — they use independent
 # toolchains (cargo nextest, Xcode, Playwright) and don't contend on resources.
 run_check_async "local/test" "$test_cmd"

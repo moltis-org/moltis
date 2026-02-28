@@ -1,13 +1,16 @@
-use {
-    crate::moltis::tool::types::{ToolError, ToolValue},
-    anyhow::{Result, bail},
-    serde_json::{Value, json},
-};
+// Pure functions are used by the WASM Guest impl; allow dead_code on non-wasm targets.
+#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
+#[cfg(target_arch = "wasm32")]
 wit_bindgen::generate!({
     path: "../../../wit",
     world: "pure-tool",
 });
+
+use {
+    anyhow::{Result, bail},
+    serde_json::{Value, json},
+};
 
 const MAX_EXPRESSION_CHARS: usize = 512;
 const MAX_TOKENS: usize = 256;
@@ -16,8 +19,10 @@ const MAX_OPERATIONS: usize = 512;
 const MAX_ABS_EXPONENT: f64 = 1024.0;
 const MAX_ABS_RESULT: f64 = 1.0e308;
 
+#[cfg(target_arch = "wasm32")]
 struct CalcComponent;
 
+#[cfg(target_arch = "wasm32")]
 impl Guest for CalcComponent {
     fn name() -> String {
         "calc".to_string()
@@ -495,4 +500,236 @@ fn evaluate_expression(expression: &str) -> Result<(f64, String)> {
     Ok((result, normalized))
 }
 
+#[cfg(target_arch = "wasm32")]
 export!(CalcComponent);
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compute(expr: &str) -> f64 {
+        evaluate_expression(expr).unwrap().0
+    }
+
+    fn compute_err(expr: &str) -> String {
+        evaluate_expression(expr).unwrap_err().to_string()
+    }
+
+    // --- Basic arithmetic ---
+
+    #[test]
+    fn addition() {
+        assert_eq!(compute("2 + 3"), 5.0);
+    }
+
+    #[test]
+    fn subtraction() {
+        assert_eq!(compute("10 - 4"), 6.0);
+    }
+
+    #[test]
+    fn multiplication() {
+        assert_eq!(compute("6 * 7"), 42.0);
+    }
+
+    #[test]
+    fn division() {
+        assert_eq!(compute("15 / 3"), 5.0);
+    }
+
+    #[test]
+    fn modulo() {
+        assert_eq!(compute("17 % 5"), 2.0);
+    }
+
+    #[test]
+    fn power() {
+        assert_eq!(compute("2 ^ 8"), 256.0);
+    }
+
+    // --- Operator precedence ---
+
+    #[test]
+    fn mul_before_add() {
+        assert_eq!(compute("2 + 3 * 4"), 14.0);
+    }
+
+    #[test]
+    fn parentheses_override_precedence() {
+        assert_eq!(compute("(2 + 3) * 4"), 20.0);
+    }
+
+    #[test]
+    fn power_right_associative() {
+        // 2^3^2 = 2^(3^2) = 2^9 = 512
+        assert_eq!(compute("2 ^ 3 ^ 2"), 512.0);
+    }
+
+    #[test]
+    fn mixed_precedence() {
+        // 1 + 2 * 3 ^ 2 = 1 + 2*9 = 1 + 18 = 19
+        assert_eq!(compute("1 + 2 * 3 ^ 2"), 19.0);
+    }
+
+    // --- Unary operators ---
+
+    #[test]
+    fn unary_minus() {
+        assert_eq!(compute("-5"), -5.0);
+    }
+
+    #[test]
+    fn unary_plus() {
+        assert_eq!(compute("+3"), 3.0);
+    }
+
+    #[test]
+    fn unary_minus_in_expression() {
+        assert_eq!(compute("-(2 + 3)"), -5.0);
+    }
+
+    #[test]
+    fn double_negative() {
+        assert_eq!(compute("--5"), 5.0);
+    }
+
+    // --- Decimal and scientific notation ---
+
+    #[test]
+    fn decimal_numbers() {
+        assert_eq!(compute("1.5 * 4"), 6.0);
+    }
+
+    #[test]
+    fn leading_decimal() {
+        assert_eq!(compute(".5 + .5"), 1.0);
+    }
+
+    #[test]
+    fn scientific_notation() {
+        assert_eq!(compute("1e3"), 1000.0);
+    }
+
+    #[test]
+    fn scientific_negative_exponent() {
+        assert_eq!(compute("2.5E-2"), 0.025);
+    }
+
+    #[test]
+    fn scientific_positive_exponent() {
+        assert_eq!(compute("1.5e+2"), 150.0);
+    }
+
+    // --- Error cases ---
+
+    #[test]
+    fn division_by_zero() {
+        assert!(compute_err("1 / 0").contains("division by zero"));
+    }
+
+    #[test]
+    fn modulo_by_zero() {
+        assert!(compute_err("5 % 0").contains("modulo by zero"));
+    }
+
+    #[test]
+    fn empty_expression() {
+        assert!(compute_err("").contains("empty"));
+    }
+
+    #[test]
+    fn whitespace_only() {
+        assert!(compute_err("   ").contains("empty"));
+    }
+
+    #[test]
+    fn unsupported_character() {
+        assert!(compute_err("2 + x").contains("unsupported character"));
+    }
+
+    #[test]
+    fn missing_closing_paren() {
+        assert!(compute_err("(2 + 3").contains("missing closing ')'"));
+    }
+
+    #[test]
+    fn unexpected_token() {
+        assert!(compute_err("2 3").contains("unexpected token"));
+    }
+
+    #[test]
+    fn expression_too_long() {
+        let long = "1+".repeat(300);
+        assert!(compute_err(&long).contains("too long"));
+    }
+
+    #[test]
+    fn exponent_too_large() {
+        assert!(compute_err("2 ^ 2000").contains("exponent out of allowed range"));
+    }
+
+    #[test]
+    fn invalid_exponent_literal() {
+        assert!(compute_err("1e").contains("invalid exponent"));
+    }
+
+    #[test]
+    fn lone_dot_is_error() {
+        assert!(compute_err(".").contains("invalid number literal"));
+    }
+
+    // --- Normalization ---
+
+    #[test]
+    fn normalized_expression_strips_spaces() {
+        let (_, normalized) = evaluate_expression("2 + 3 * 4").unwrap();
+        assert_eq!(normalized, "2+3*4");
+    }
+
+    #[test]
+    fn negative_zero_normalised() {
+        assert_eq!(normalize_negative_zero(-0.0).to_bits(), 0.0_f64.to_bits());
+    }
+
+    // --- result_to_json ---
+
+    #[test]
+    fn integer_result_serialized_as_integer() {
+        let v = result_to_json(42.0).unwrap();
+        assert_eq!(v, json!(42));
+        assert!(v.is_i64());
+    }
+
+    #[test]
+    fn float_result_serialized_as_float() {
+        let v = result_to_json(1.5).unwrap();
+        assert!(v.is_f64());
+    }
+
+    // --- execute_impl (JSON round-trip) ---
+
+    #[test]
+    fn execute_impl_basic() {
+        let result = execute_impl(r#"{"expression": "2 + 2"}"#).unwrap();
+        assert_eq!(result["result"], json!(4));
+        assert_eq!(result["normalized_expr"], "2+2");
+    }
+
+    #[test]
+    fn execute_impl_expr_alias() {
+        let result = execute_impl(r#"{"expr": "3 * 3"}"#).unwrap();
+        assert_eq!(result["result"], json!(9));
+    }
+
+    #[test]
+    fn execute_impl_missing_param() {
+        let err = execute_impl(r#"{"foo": "bar"}"#).unwrap_err();
+        assert!(err.to_string().contains("missing 'expression' parameter"));
+    }
+
+    #[test]
+    fn execute_impl_invalid_json() {
+        assert!(execute_impl("not json").is_err());
+    }
+}
