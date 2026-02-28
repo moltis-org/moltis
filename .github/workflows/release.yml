@@ -652,7 +652,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           targets: ${{ matrix.target }}, wasm32-wasip2
 
       - name: Install cosign

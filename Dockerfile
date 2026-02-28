@@ -18,6 +18,7 @@ WORKDIR /build
 # Copy manifests first for better caching
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY apps/courier ./apps/courier
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Install build dependencies for llama-cpp-sys-2
