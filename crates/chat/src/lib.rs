@@ -3772,23 +3772,21 @@ impl ChatService for LiveChatService {
             "chat.abort"
         );
 
-        if aborted {
-            if let Some(key) = session_key {
-                self.active_thinking_text.write().await.remove(key);
-                self.active_tool_calls.write().await.remove(key);
-                self.active_reply_medium.write().await.remove(key);
-                broadcast(
-                    &self.state,
-                    "chat",
-                    serde_json::json!({
-                        "state": "aborted",
-                        "runId": resolved_run_id,
-                        "sessionKey": key,
-                    }),
-                    BroadcastOpts::default(),
-                )
-                .await;
-            }
+        if aborted && let Some(key) = session_key {
+            self.active_thinking_text.write().await.remove(key);
+            self.active_tool_calls.write().await.remove(key);
+            self.active_reply_medium.write().await.remove(key);
+            broadcast(
+                &self.state,
+                "chat",
+                serde_json::json!({
+                    "state": "aborted",
+                    "runId": resolved_run_id,
+                    "sessionKey": key,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
         }
 
         Ok(serde_json::json!({ "aborted": aborted, "runId": resolved_run_id }))
