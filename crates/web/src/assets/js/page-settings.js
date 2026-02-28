@@ -341,9 +341,12 @@ function IdentitySection() {
 		setSoul(id.soul || "");
 	}, [id]);
 
+	var savedTimerRef = useRef(null);
 	function flashSaved() {
+		if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
 		setSaved(true);
-		setTimeout(() => {
+		savedTimerRef.current = setTimeout(() => {
+			savedTimerRef.current = null;
 			setSaved(false);
 			rerender();
 		}, 2000);
@@ -455,12 +458,12 @@ function IdentitySection() {
 		});
 	}
 
-	function onNameBlur() {
-		autoSaveNameField("name", name);
+	function onNameBlur(e) {
+		autoSaveNameField("name", e.target.value);
 	}
 
-	function onUserNameBlur() {
-		autoSaveNameField("user_name", userName);
+	function onUserNameBlur(e) {
+		autoSaveNameField("user_name", e.target.value);
 	}
 
 	function onResetSoul() {
