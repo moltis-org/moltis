@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- macOS local LLM Metal detection now requires both compile-time Metal backend support and a runtime Metal device probe (`MTLCreateSystemDefaultDevice`), and default CLI/gateway builds now enable `local-llm-metal` so Metal-capable systems correctly report `has_metal=true`.
+
 ### Security
 
 ## [0.10.2] - 2026-02-28

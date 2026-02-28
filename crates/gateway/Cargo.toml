@@ -105,6 +105,7 @@ default = [
   "file-watcher",
   "graphql",
   "local-llm",
+  "local-llm-metal",
   "mdns",
   "metrics",
   "openclaw-import",
@@ -132,8 +133,8 @@ local-llm = [
   "moltis-provider-setup/local-llm",
   "moltis-providers/local-llm",
 ]
-local-llm-cuda = ["moltis-providers/local-llm-cuda"]
-local-llm-metal = ["moltis-providers/local-llm-metal"]
+local-llm-cuda = ["local-llm", "moltis-providers/local-llm-cuda"]
+local-llm-metal = ["local-llm", "moltis-providers/local-llm-metal"]
 mdns = ["dep:mdns-sd"]
 metrics = ["dep:moltis-metrics", "moltis-chat/metrics", "moltis-metrics/sqlite"]
 openclaw-import = ["dep:moltis-openclaw-import"]
