@@ -55,6 +55,7 @@ export default {
 		languageAuto: "Browser default",
 		languageEnglish: "English",
 		languageFrench: "French",
+		languageChinese: "Chinese (Simplified)",
 		applyLanguage: "Apply language",
 		languageUpdated: "Language updated.",
 		failedToSave: "Failed to save",
