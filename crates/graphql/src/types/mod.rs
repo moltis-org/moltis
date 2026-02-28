@@ -99,6 +99,8 @@ pub struct SessionEntry {
     #[serde(default)]
     pub message_count: Option<u64>,
     #[serde(default)]
+    pub last_seen_message_count: Option<u64>,
+    #[serde(default)]
     pub project_id: Option<String>,
     #[serde(default)]
     pub archived: Option<bool>,
@@ -114,6 +116,8 @@ pub struct SessionEntry {
     pub parent_session_key: Option<String>,
     #[serde(default)]
     pub fork_point: Option<u64>,
+    #[serde(default)]
+    pub preview: Option<String>,
     #[serde(default)]
     pub mcp_disabled: Option<bool>,
     #[serde(default)]
@@ -414,7 +418,7 @@ pub struct ProviderInfo {
 pub struct ModelInfo {
     #[serde(default)]
     pub id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "displayName")]
     pub name: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,

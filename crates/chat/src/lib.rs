@@ -2182,6 +2182,16 @@ struct QueuedMessage {
     params: Value,
 }
 
+/// A tool call currently executing within an active agent run.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+    #[serde(rename = "startedAt")]
+    pub started_at: u64,
+}
+
 pub struct LiveChatService {
     providers: Arc<RwLock<ProviderRegistry>>,
     model_store: Arc<RwLock<DisabledModelsStore>>,
@@ -2201,6 +2211,8 @@ pub struct LiveChatService {
     /// Per-session accumulated thinking text for active runs, so it can be
     /// returned in `sessions.switch` after a page reload.
     active_thinking_text: Arc<RwLock<HashMap<String, String>>>,
+    /// Per-session active tool calls for `chat.peek` snapshot.
+    active_tool_calls: Arc<RwLock<HashMap<String, Vec<ActiveToolCall>>>>,
     /// Per-session reply medium for active runs, so the frontend can restore
     /// `voicePending` state after a page reload.
     active_reply_medium: Arc<RwLock<HashMap<String, ReplyMedium>>>,
@@ -2230,6 +2242,7 @@ impl LiveChatService {
             message_queue: Arc::new(RwLock::new(HashMap::new())),
             last_client_seq: Arc::new(RwLock::new(HashMap::new())),
             active_thinking_text: Arc::new(RwLock::new(HashMap::new())),
+            active_tool_calls: Arc::new(RwLock::new(HashMap::new())),
             active_reply_medium: Arc::new(RwLock::new(HashMap::new())),
             failover_config: moltis_config::schema::FailoverConfig::default(),
         }
@@ -2718,6 +2731,7 @@ impl ChatService for LiveChatService {
             let active_runs = Arc::clone(&self.active_runs);
             let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
             let active_thinking_text = Arc::clone(&self.active_thinking_text);
+            let active_tool_calls = Arc::clone(&self.active_tool_calls);
             let active_reply_medium = Arc::clone(&self.active_reply_medium);
             let session_store = Arc::clone(&self.session_store);
             let session_metadata = Arc::clone(&self.session_metadata);
@@ -2792,6 +2806,7 @@ impl ChatService for LiveChatService {
                     .write()
                     .await
                     .remove(&session_key_clone);
+                active_tool_calls.write().await.remove(&session_key_clone);
                 active_reply_medium.write().await.remove(&session_key_clone);
 
                 drop(permit);
@@ -3077,6 +3092,7 @@ impl ChatService for LiveChatService {
         let active_runs = Arc::clone(&self.active_runs);
         let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
         let active_thinking_text = Arc::clone(&self.active_thinking_text);
+        let active_tool_calls = Arc::clone(&self.active_tool_calls);
         let active_reply_medium = Arc::clone(&self.active_reply_medium);
         let run_id_clone = run_id.clone();
         let tool_registry = Arc::clone(&self.tool_registry);
@@ -3345,6 +3361,7 @@ impl ChatService for LiveChatService {
                         mcp_disabled,
                         client_seq,
                         Some(Arc::clone(&active_thinking_text)),
+                        Some(Arc::clone(&active_tool_calls)),
                     )
                     .await
                 }
@@ -3428,6 +3445,7 @@ impl ChatService for LiveChatService {
                 .write()
                 .await
                 .remove(&session_key_clone);
+            active_tool_calls.write().await.remove(&session_key_clone);
             active_reply_medium.write().await.remove(&session_key_clone);
 
             // Release the semaphore *before* draining so replayed sends can
@@ -3663,6 +3681,7 @@ impl ChatService for LiveChatService {
                 false, // send_sync: MCP tools always enabled for API calls
                 None,  // send_sync: no client seq
                 None,  // send_sync: no thinking text tracking
+                None,  // send_sync: no tool call tracking
             )
             .await
         };
@@ -3752,6 +3771,24 @@ impl ChatService for LiveChatService {
             aborted,
             "chat.abort"
         );
+
+        if aborted && let Some(key) = session_key {
+            self.active_thinking_text.write().await.remove(key);
+            self.active_tool_calls.write().await.remove(key);
+            self.active_reply_medium.write().await.remove(key);
+            broadcast(
+                &self.state,
+                "chat",
+                serde_json::json!({
+                    "state": "aborted",
+                    "runId": resolved_run_id,
+                    "sessionKey": key,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+        }
+
         Ok(serde_json::json!({ "aborted": aborted, "runId": resolved_run_id }))
     }
 
@@ -4613,6 +4650,45 @@ impl ChatService for LiveChatService {
             .get(session_key)
             .is_some_and(|m| *m == ReplyMedium::Voice)
     }
+
+    async fn peek(&self, params: Value) -> ServiceResult {
+        let session_key = params
+            .get("sessionKey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main");
+
+        let active = self
+            .active_runs_by_session
+            .read()
+            .await
+            .contains_key(session_key);
+
+        if !active {
+            return Ok(serde_json::json!({ "active": false }));
+        }
+
+        let thinking_text = self
+            .active_thinking_text
+            .read()
+            .await
+            .get(session_key)
+            .cloned();
+
+        let tool_calls: Vec<ActiveToolCall> = self
+            .active_tool_calls
+            .read()
+            .await
+            .get(session_key)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(serde_json::json!({
+            "active": true,
+            "sessionKey": session_key,
+            "thinkingText": thinking_text,
+            "toolCalls": tool_calls,
+        }))
+    }
 }
 
 // ── Agent loop mode ─────────────────────────────────────────────────────────
@@ -5461,6 +5537,7 @@ async fn run_with_tools(
     mcp_disabled: bool,
     client_seq: Option<u64>,
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
+    active_tool_calls: Option<Arc<RwLock<HashMap<String, Vec<ActiveToolCall>>>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
@@ -5564,6 +5641,20 @@ async fn run_with_tools(
                 } => {
                     tool_args_map.insert(id.clone(), arguments.clone());
 
+                    // Track active tool call for chat.peek.
+                    if let Some(ref map) = active_tool_calls {
+                        map.write()
+                            .await
+                            .entry(sk.clone())
+                            .or_default()
+                            .push(ActiveToolCall {
+                                id: id.clone(),
+                                name: name.clone(),
+                                arguments: arguments.clone(),
+                                started_at: now_ms(),
+                            });
+                    }
+
                     // Attach reasoning to the first tool call after thinking.
                     if !latest_reasoning.is_empty() {
                         tool_reasoning_map
@@ -5611,6 +5702,17 @@ async fn run_with_tools(
                     error,
                     result,
                 } => {
+                    // Remove from active tool calls tracking.
+                    if let Some(ref map) = active_tool_calls {
+                        let mut guard = map.write().await;
+                        if let Some(calls) = guard.get_mut(&sk) {
+                            calls.retain(|tc| tc.id != id);
+                            if calls.is_empty() {
+                                guard.remove(&sk);
+                            }
+                        }
+                    }
+
                     let mut payload = serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
@@ -10411,5 +10513,100 @@ mod tests {
             .collect();
         keys.sort();
         assert_eq!(keys, vec!["session-a", "session-b"]);
+    }
+
+    #[test]
+    fn active_tool_call_serializes_with_camel_case() {
+        let tc = ActiveToolCall {
+            id: "tc_1".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "ls"}),
+            started_at: 1700000000000,
+        };
+        let json = serde_json::to_value(&tc).unwrap();
+        assert_eq!(json["id"], "tc_1");
+        assert_eq!(json["name"], "bash");
+        assert_eq!(json["startedAt"], 1700000000000_u64);
+        assert!(json.get("started_at").is_none());
+    }
+
+    #[tokio::test]
+    async fn peek_returns_inactive_when_no_run() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(dir.path().to_path_buf());
+        let pool = sqlite_pool().await;
+        let metadata = SqliteSessionMetadata::new(pool);
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(ProviderRegistry::empty())),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new()),
+            Arc::new(store),
+            Arc::new(metadata),
+        );
+
+        let result = service
+            .peek(serde_json::json!({ "sessionKey": "main" }))
+            .await
+            .unwrap();
+        assert_eq!(result["active"], false);
+    }
+
+    #[tokio::test]
+    async fn abort_clears_active_tool_calls() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(dir.path().to_path_buf());
+        let pool = sqlite_pool().await;
+        let metadata = SqliteSessionMetadata::new(pool);
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(ProviderRegistry::empty())),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new()),
+            Arc::new(store),
+            Arc::new(metadata),
+        );
+
+        // Pre-populate active tool calls for a session.
+        service
+            .active_tool_calls
+            .write()
+            .await
+            .insert("test-session".into(), vec![ActiveToolCall {
+                id: "tc_1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({}),
+                started_at: 0,
+            }]);
+        // Pre-populate active_runs_by_session so abort can find the session.
+        let run_id = "test-run".to_string();
+        service
+            .active_runs_by_session
+            .write()
+            .await
+            .insert("test-session".into(), run_id.clone());
+        // Pre-populate active_runs with a dummy task handle.
+        let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        service
+            .active_runs
+            .write()
+            .await
+            .insert(run_id.clone(), handle.abort_handle());
+
+        let result = service
+            .abort(serde_json::json!({ "sessionKey": "test-session" }))
+            .await
+            .unwrap();
+        assert_eq!(result["aborted"], true);
+
+        // Tool calls should be cleaned up.
+        assert!(
+            service
+                .active_tool_calls
+                .read()
+                .await
+                .get("test-session")
+                .is_none()
+        );
     }
 }

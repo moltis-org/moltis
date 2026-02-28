@@ -320,6 +320,47 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: - Abort / Peek
+
+    func abortGeneration() {
+        guard isSending, let sessionKey = selectedSessionKey else { return }
+        do {
+            let result = try client.abortSession(key: sessionKey)
+            if result.aborted {
+                // Remove the streaming placeholder if it has no content.
+                if let key = selectedSessionKey,
+                   let sIdx = sessions.firstIndex(where: { $0.key == key }),
+                   let placeholderID = streamingMessageID,
+                   let mIdx = sessions[sIdx].messages.firstIndex(where: { $0.id == placeholderID }) {
+                    let msg = sessions[sIdx].messages[mIdx]
+                    if msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        sessions[sIdx].messages.remove(at: mIdx)
+                    } else {
+                        sessions[sIdx].messages[mIdx].isStreaming = false
+                    }
+                }
+                streamingMessageID = nil
+                isSending = false
+                statusText = "Stopped."
+            }
+        } catch {
+            logStore?.log(.error, target: "ChatStore", message: "Abort failed: \(error)")
+        }
+    }
+
+    @Published var peekResult: BridgePeekResult?
+
+    func peekCurrentSession() {
+        guard let sessionKey = selectedSessionKey else { return }
+        do {
+            let result = try client.peekSession(key: sessionKey)
+            peekResult = result
+        } catch {
+            logStore?.log(.error, target: "ChatStore", message: "Peek failed: \(error)")
+            peekResult = nil
+        }
+    }
+
     // MARK: - Helpers
 
     private func appendMessage(

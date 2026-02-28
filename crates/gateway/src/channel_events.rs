@@ -70,6 +70,8 @@ fn is_channel_control_command_name(cmd: &str) -> bool {
             | "agent"
             | "help"
             | "sh"
+            | "peek"
+            | "stop"
     )
 }
 
@@ -1584,6 +1586,49 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     )),
                 }
             },
+            "stop" => {
+                let params = serde_json::json!({ "sessionKey": session_key });
+                match chat.abort(params).await {
+                    Ok(res) => {
+                        let aborted = res
+                            .get("aborted")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if aborted {
+                            Ok("Stopped.".to_string())
+                        } else {
+                            Ok("Nothing to stop.".to_string())
+                        }
+                    },
+                    Err(e) => Err(ChannelError::external("abort", e)),
+                }
+            },
+            "peek" => {
+                let params = serde_json::json!({ "sessionKey": session_key });
+                match chat.peek(params).await {
+                    Ok(res) => {
+                        let active = res.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if !active {
+                            return Ok("Idle — nothing running.".to_string());
+                        }
+                        let mut lines = Vec::new();
+                        if let Some(text) = res.get("thinkingText").and_then(|v| v.as_str()) {
+                            lines.push(format!("Thinking: {text}"));
+                        }
+                        if let Some(tools) = res.get("toolCalls").and_then(|v| v.as_array()) {
+                            for tc in tools {
+                                let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                                lines.push(format!("  Running: {name}"));
+                            }
+                        }
+                        if lines.is_empty() {
+                            lines.push("Active (thinking…)".to_string());
+                        }
+                        Ok(lines.join("\n"))
+                    },
+                    Err(e) => Err(ChannelError::external("peek", e)),
+                }
+            },
             _ => Err(ChannelError::invalid_input(format!(
                 "unknown command: /{cmd}"
             ))),
@@ -1702,5 +1747,17 @@ mod tests {
     fn shell_mode_rewrite_skips_control_commands() {
         assert!(rewrite_for_shell_mode("/context").is_none());
         assert!(rewrite_for_shell_mode("/sh uname -a").is_none());
+    }
+
+    #[test]
+    fn peek_and_stop_are_control_commands() {
+        assert!(is_channel_control_command_name("peek"));
+        assert!(is_channel_control_command_name("stop"));
+    }
+
+    #[test]
+    fn shell_mode_rewrite_skips_peek_and_stop() {
+        assert!(rewrite_for_shell_mode("/peek").is_none());
+        assert!(rewrite_for_shell_mode("/stop").is_none());
     }
 }

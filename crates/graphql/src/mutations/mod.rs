@@ -6,7 +6,7 @@
 use async_graphql::{Context, Object, Result};
 
 use crate::{
-    error::{from_service, from_service_json},
+    error::{from_service, from_service_json, gql_err, parse_err},
     scalars::Json,
     services,
     types::{
@@ -978,7 +978,19 @@ impl AgentMutation {
     /// Update agent identity.
     async fn update_identity(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
         let s = services!(ctx);
-        from_service(s.onboarding.identity_update(input.0).await)
+
+        let payload = match input.0 {
+            serde_json::Value::String(raw) => {
+                serde_json::from_str::<serde_json::Value>(&raw).map_err(parse_err)?
+            },
+            value => value,
+        };
+
+        s.onboarding
+            .identity_update(payload)
+            .await
+            .map_err(gql_err)?;
+        Ok(BoolResult { ok: true })
     }
 
     /// Update agent soul/personality.

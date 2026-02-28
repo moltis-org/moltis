@@ -121,8 +121,9 @@ static BRIDGE: LazyLock<BridgeState> = LazyLock::new(BridgeState::new);
 struct HttpdHandle {
     shutdown_tx: tokio::sync::oneshot::Sender<()>,
     addr: SocketAddr,
-    /// Keep the gateway state alive while the server is running.
-    _state: std::sync::Arc<moltis_gateway::state::GatewayState>,
+    /// Gateway state — used for abort/peek FFI calls and kept alive while
+    /// the server is running.
+    state: std::sync::Arc<moltis_gateway::state::GatewayState>,
 }
 
 /// Global server handle — `None` when stopped, `Some` when running.
@@ -1296,7 +1297,7 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
         *guard = Some(HttpdHandle {
             shutdown_tx,
             addr,
-            _state: gateway_state,
+            state: gateway_state,
         });
 
         encode_json(&HttpdStatusResponse {
@@ -1352,6 +1353,68 @@ pub extern "C" fn moltis_httpd_status() -> *mut c_char {
                 running: false,
                 addr: None,
             }),
+        }
+    })
+}
+
+// ── Abort / Peek FFI ────────────────────────────────────────────────────
+
+/// Abort the active generation for a session. Requires the gateway to be
+/// running (via `moltis_start_httpd`). Returns JSON with `{"aborted": bool}`.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_abort_session(session_key: *const c_char) -> *mut c_char {
+    record_call("moltis_abort_session");
+    trace_call("moltis_abort_session");
+
+    with_ffi_boundary(|| {
+        let key = match read_c_string(session_key) {
+            Ok(k) => k,
+            Err(msg) => return encode_error("invalid_session_key", &msg),
+        };
+        let guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(handle) = guard.as_ref() else {
+            return encode_error("gateway_not_running", "start the gateway first");
+        };
+        let state = std::sync::Arc::clone(&handle.state);
+        drop(guard);
+
+        let params = serde_json::json!({ "sessionKey": key });
+        match BRIDGE
+            .runtime
+            .block_on(async { state.chat().await.abort(params).await })
+        {
+            Ok(res) => encode_json(&res),
+            Err(e) => encode_error("abort_failed", &e.to_string()),
+        }
+    })
+}
+
+/// Peek at the current activity for a session. Requires the gateway to be
+/// running. Returns JSON with `{"active": bool, ...}`.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_peek_session(session_key: *const c_char) -> *mut c_char {
+    record_call("moltis_peek_session");
+    trace_call("moltis_peek_session");
+
+    with_ffi_boundary(|| {
+        let key = match read_c_string(session_key) {
+            Ok(k) => k,
+            Err(msg) => return encode_error("invalid_session_key", &msg),
+        };
+        let guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(handle) = guard.as_ref() else {
+            return encode_error("gateway_not_running", "start the gateway first");
+        };
+        let state = std::sync::Arc::clone(&handle.state);
+        drop(guard);
+
+        let params = serde_json::json!({ "sessionKey": key });
+        match BRIDGE
+            .runtime
+            .block_on(async { state.chat().await.peek(params).await })
+        {
+            Ok(res) => encode_json(&res),
+            Err(e) => encode_error("peek_failed", &e.to_string()),
         }
     })
 }

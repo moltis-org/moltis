@@ -949,7 +949,7 @@ impl SessionService for LiveSessionService {
         let all = self.metadata.list().await;
 
         let mut entries: Vec<Value> = Vec::with_capacity(all.len());
-        for e in all {
+        for mut e in all {
             let agent_id = self.resolve_agent_id_for_entry(&e, false).await;
             // Check if this session is the active one for its channel binding.
             let active_channel = if let Some(ref binding_json) = e.channel_binding {
@@ -971,6 +971,18 @@ impl SessionService for LiveSessionService {
             } else {
                 false
             };
+
+            // Backfill preview for sessions that have messages but no preview yet.
+            if e.preview.is_none()
+                && e.message_count > 0
+                && let Ok(history) = self.store.read(&e.key).await
+            {
+                let new_preview = extract_preview(&history);
+                if let Some(ref preview) = new_preview {
+                    self.metadata.set_preview(&e.key, Some(preview)).await;
+                    e.preview = new_preview;
+                }
+            }
 
             entries.push(serde_json::json!({
                 "id": e.id,

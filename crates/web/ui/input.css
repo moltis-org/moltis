@@ -304,6 +304,26 @@
     0%, 100% { opacity: 0.6; }
     50% { opacity: 1; }
   }
+  .thinking-stop-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #fff;
+    background: #ef4444;
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .thinking-stop-btn:hover {
+    opacity: 0.85;
+  }
+  .thinking-stop-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
   .msg-reasoning {
     margin-top: 8px;
     border: 1px solid var(--border);

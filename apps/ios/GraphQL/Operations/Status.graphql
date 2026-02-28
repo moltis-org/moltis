@@ -1,0 +1,8 @@
+query FetchStatus {
+  status {
+    hostname
+    version
+    connections
+    uptimeMs
+  }
+}

@@ -260,7 +260,7 @@ test.describe("Session management", () => {
 		const sessionPath = new URL(page.url()).pathname;
 		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
 
-		const stopBtn = page.locator('button[title="Stop generation"]');
+		const stopBtn = page.locator('#sessionHeaderMount button[title="Stop generation"]');
 		await expect(stopBtn).toHaveCount(0);
 		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
 

@@ -17,7 +17,7 @@ enum ScalarError {
 /// (e.g. config values, dynamic params).
 pub struct Json(pub serde_json::Value);
 
-#[Scalar]
+#[Scalar(name = "JSON")]
 impl ScalarType for Json {
     fn parse(value: Value) -> InputValueResult<Self> {
         let json = gql_value_to_json(value).map_err(InputValueError::custom)?;
