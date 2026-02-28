@@ -99,6 +99,7 @@ pub fn build_system_prompt(
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -115,6 +116,7 @@ pub fn build_system_prompt_with_session_runtime(
     tools_text: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
     memory_text: Option<&str>,
+    profile_text: Option<&str>,
 ) -> String {
     build_system_prompt_full(
         tools,
@@ -129,6 +131,7 @@ pub fn build_system_prompt_with_session_runtime(
         runtime_context,
         true, // include_tools
         memory_text,
+        profile_text,
     )
 }
 
@@ -142,6 +145,7 @@ pub fn build_system_prompt_minimal_runtime(
     tools_text: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
     memory_text: Option<&str>,
+    profile_text: Option<&str>,
 ) -> String {
     build_system_prompt_full(
         &ToolRegistry::new(),
@@ -156,12 +160,18 @@ pub fn build_system_prompt_minimal_runtime(
         runtime_context,
         false, // include_tools
         memory_text,
+        profile_text,
     )
 }
 
+/// Maximum number of characters from `profile.md` injected into the system
+/// prompt. Profile holds stable identity facts and is always shown in full
+/// (no truncation expected); this cap is a safety net only.
+const PROFILE_MAX_CHARS: usize = 2_000;
 /// Maximum number of characters from `MEMORY.md` injected into the system
 /// prompt to keep the context window manageable.
-const MEMORY_BOOTSTRAP_MAX_CHARS: usize = 8_000;
+/// Together with PROFILE_MAX_CHARS the total memory budget stays at ~8 000 chars.
+const MEMORY_BOOTSTRAP_MAX_CHARS: usize = 6_000;
 /// Maximum number of characters from project context files (`CLAUDE.md`,
 /// project docs, etc.) injected into the prompt.
 const PROJECT_CONTEXT_MAX_CHARS: usize = 8_000;
@@ -222,6 +232,7 @@ fn build_system_prompt_full(
     runtime_context: Option<&PromptRuntimeContext>,
     include_tools: bool,
     memory_text: Option<&str>,
+    profile_text: Option<&str>,
 ) -> String {
     let tool_schemas = if include_tools {
         tools.list_schemas()
@@ -239,6 +250,7 @@ fn build_system_prompt_full(
     append_runtime_section(&mut prompt, runtime_context, include_tools);
     append_skills_section(&mut prompt, include_tools, skills);
     append_workspace_files_section(&mut prompt, agents_text, tools_text);
+    append_profile_section(&mut prompt, profile_text);
     append_memory_section(&mut prompt, memory_text, &tool_schemas);
     append_available_tools_section(&mut prompt, native_tools, &tool_schemas);
     append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas);
@@ -362,6 +374,23 @@ fn append_workspace_files_section(
     }
 }
 
+fn append_profile_section(prompt: &mut String, profile_text: Option<&str>) {
+    let Some(text) = profile_text.filter(|t| !t.is_empty()) else {
+        return;
+    };
+    prompt.push_str("## Profile\n\n");
+    append_truncated_text_block(
+        prompt,
+        text,
+        PROFILE_MAX_CHARS,
+        "\n\n*(profile.md truncated)*\n",
+    );
+    prompt.push_str(concat!(
+        "\n\n**The facts above are stable and always current. ",
+        "Treat them as ground truth in every response.**\n\n",
+    ));
+}
+
 fn append_memory_section(
     prompt: &mut String,
     memory_text: Option<&str>,
@@ -405,12 +434,13 @@ fn append_memory_section(
             "Do not just acknowledge verbally — without calling the tool, ",
             "the information will be lost after the session.\n",
             "\nChoose the right target to keep context lean:\n",
-            "- **MEMORY.md** — only core identity facts (name, age, location, ",
-            "language, key preferences). This is loaded into every conversation, ",
-            "so keep it short.\n",
-            "- **memory/&lt;topic&gt;.md** — everything else (detailed notes, project ",
-            "context, decisions, session summaries). These are only retrieved via ",
-            "`memory_search` and do not consume prompt space.\n",
+            "- **profile.md** — stable identity facts only (name, age, location, ",
+            "language, domain, key long-term preferences). Always fully visible. ",
+            "Overwrite with a merged version when updating.\n",
+            "- **MEMORY.md** — recent memories, decisions, project context. ",
+            "Prepend new entries; older entries naturally age out of the visible window.\n",
+            "- **memory/&lt;topic&gt;.md** — detailed notes and session summaries. ",
+            "Only retrieved via `memory_search`, do not consume prompt space.\n",
         ));
     }
     prompt.push('\n');
@@ -688,7 +718,7 @@ mod tests {
             source: None,
         }];
         let prompt = build_system_prompt_with_session_runtime(
-            &tools, true, None, &skills, None, None, None, None, None, None, None,
+            &tools, true, None, &skills, None, None, None, None, None, None, None, None,
         );
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("commit"));
@@ -702,6 +732,7 @@ mod tests {
             true,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -738,6 +769,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(prompt.contains("Your name is Momo 🦜."));
         assert!(prompt.contains("Your theme: cheerful parrot."));
@@ -766,6 +798,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(prompt.contains("## Soul"));
         assert!(prompt.contains("loyal companion who loves fetch"));
@@ -780,6 +813,7 @@ mod tests {
             true,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -806,6 +840,7 @@ mod tests {
             None,
             Some("Follow workspace agent instructions."),
             Some("Prefer read-only tools first."),
+            None,
             None,
             None,
         );
@@ -864,6 +899,7 @@ mod tests {
             None,
             Some(&runtime),
             None,
+            None,
         );
 
         assert!(prompt.contains("## Runtime"));
@@ -913,6 +949,7 @@ mod tests {
             None,
             Some(&runtime),
             None,
+            None,
         );
 
         assert!(prompt.contains("location=48.8566,2.3522"));
@@ -942,6 +979,7 @@ mod tests {
             None,
             Some(&runtime),
             None,
+            None,
         );
 
         assert!(!prompt.contains("location="));
@@ -969,6 +1007,7 @@ mod tests {
             None,
             Some(&runtime),
             None,
+            None,
         );
 
         assert!(prompt.contains("## Runtime"));
@@ -993,7 +1032,7 @@ mod tests {
     #[test]
     fn test_silent_replies_not_in_minimal_prompt() {
         let prompt =
-            build_system_prompt_minimal_runtime(None, None, None, None, None, None, None, None);
+            build_system_prompt_minimal_runtime(None, None, None, None, None, None, None, None, None);
         assert!(!prompt.contains("## Silent Replies"));
     }
 
@@ -1013,6 +1052,7 @@ mod tests {
             None,
             None,
             Some(memory),
+            None,
         );
         assert!(prompt.contains("## Long-Term Memory"));
         assert!(prompt.contains("Lives in Paris"));
@@ -1039,6 +1079,7 @@ mod tests {
             None,
             None,
             Some(&large_memory),
+            None,
         );
         assert!(prompt.contains("## Long-Term Memory"));
         assert!(prompt.contains("MEMORY.md truncated"));
@@ -1054,6 +1095,7 @@ mod tests {
             true,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -1077,6 +1119,7 @@ mod tests {
             None,
             None,
             Some(memory),
+            None,
         );
         assert!(prompt.contains("## Long-Term Memory"));
         assert!(prompt.contains("Important fact"));
@@ -1127,6 +1170,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(prompt.contains("## Long-Term Memory"));
         assert!(prompt.contains("MUST call `memory_save`"));
@@ -1140,6 +1184,7 @@ mod tests {
             true,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -1167,6 +1212,7 @@ mod tests {
             None,
             None,
             Some(memory),
+            None,
         );
         assert!(prompt.contains("## Long-Term Memory"));
         assert!(prompt.contains("Likes coffee"));
@@ -1196,6 +1242,7 @@ mod tests {
             None,
             None,
             Some(&runtime),
+            None,
             None,
         );
 
@@ -1227,6 +1274,7 @@ mod tests {
             None,
             Some(&runtime),
             None,
+            None,
         );
 
         assert!(prompt.contains("The current user date is 2026-02-17."));
@@ -1257,9 +1305,61 @@ mod tests {
             None,
             Some(&runtime),
             None,
+            None,
         );
 
         assert!(!prompt.contains("The current user datetime is "));
         assert!(!prompt.contains("The current user date is "));
+    }
+
+    #[test]
+    fn test_profile_text_injected_before_memory() {
+        let tools = ToolRegistry::new();
+        let profile = "- name: Alice\n- language: Chinese\n- domain: fintech";
+        let memory = "## 2026-02\n- Switched to TypeScript";
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(memory),
+            Some(profile),
+        );
+        assert!(prompt.contains("## Profile"));
+        assert!(prompt.contains("Alice"));
+        assert!(prompt.contains("## Long-Term Memory"));
+        assert!(prompt.contains("TypeScript"));
+        // Profile must appear before Long-Term Memory in the prompt.
+        let profile_pos = prompt.find("## Profile").unwrap();
+        let memory_pos = prompt.find("## Long-Term Memory").unwrap();
+        assert!(profile_pos < memory_pos, "## Profile should precede ## Long-Term Memory");
+        // Ground-truth label should be present.
+        assert!(prompt.contains("stable and always current"));
+    }
+
+    #[test]
+    fn test_profile_text_not_injected_when_none() {
+        let tools = ToolRegistry::new();
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(!prompt.contains("## Profile"));
     }
 }

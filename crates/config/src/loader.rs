@@ -522,6 +522,24 @@ pub fn load_memory_md_for_agent(agent_id: &str) -> Option<String> {
     load_workspace_markdown(agent_workspace_dir(agent_id).join("MEMORY.md"))
 }
 
+/// Load profile.md for a specific agent workspace.
+///
+/// `profile.md` holds stable identity facts (name, language, domain, key preferences)
+/// and is always injected in full, independently of `MEMORY.md`.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/profile.md` first and
+/// falls back to the root `profile.md`.
+pub fn load_profile_md_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("profile.md");
+        if let Some(profile) = load_workspace_markdown(main_path) {
+            return Some(profile);
+        }
+        return load_workspace_markdown(data_dir().join("profile.md"));
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("profile.md"))
+}
+
 /// Persist SOUL.md in the workspace root (`data_dir`).
 ///
 /// - `Some(non-empty)` writes `SOUL.md` with the given content

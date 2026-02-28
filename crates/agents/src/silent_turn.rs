@@ -18,7 +18,7 @@ use crate::{
     tool_registry::{AgentTool, ToolRegistry},
 };
 
-const MEMORY_FLUSH_SYSTEM_PROMPT: &str = r#"You are a memory management agent. Your job is to review the conversation below and save any important information to memory files using the write_file tool.
+const MEMORY_FLUSH_SYSTEM_PROMPT: &str = r###"You are a memory management agent. Your job is to review the conversation below and save any important information to memory files using the write_file tool.
 
 Save information that would be useful in future conversations:
 - User preferences and working style
@@ -29,11 +29,18 @@ Save information that would be useful in future conversations:
 - Technical setup details (tools, languages, frameworks)
 
 Write to these paths:
-- `MEMORY.md` — Long-term facts and preferences (append new content, don't overwrite existing)
-- `memory/YYYY-MM-DD.md` — Daily session log with what was done and decided today
+- `profile.md` — Stable identity facts only: name, age, location, language, domain,
+  and key long-term preferences that never change. Write the COMPLETE merged content
+  with append=false (overwrite). The current profile is visible in the system message
+  above under the "## Profile" heading — merge any new stable facts with existing ones
+  and rewrite the full file. Keep it under 400 words. Only write this file if there
+  are new stable facts to add or existing ones to correct.
+- `MEMORY.md` — Recent memories, decisions, and project context (append=true).
+  New content is prepended at the top automatically; keep entries dated and concise.
+- `memory/YYYY-MM-DD.md` — Daily session log with what was done and decided today.
 
 Format files as clean Markdown. Be concise but preserve important context.
-Do NOT respond to the user. Only use the write_file tool to save memories."#;
+Do NOT respond to the user. Only use the write_file tool to save memories."###;
 
 #[must_use]
 fn truncate_at_char_boundary(content: &str, max_bytes: usize) -> &str {
@@ -301,7 +308,7 @@ mod tests {
             }
             if append && path.exists() {
                 let existing = tokio::fs::read_to_string(&path).await.unwrap_or_default();
-                let combined = format!("{existing}\n\n{content}");
+                let combined = format!("{content}\n\n{existing}");
                 tokio::fs::write(&path, &combined).await?;
             } else {
                 tokio::fs::write(&path, content).await?;

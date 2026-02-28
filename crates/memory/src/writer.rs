@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-const ROOT_MEMORY_FILES: [&str; 2] = ["MEMORY.md", "memory.md"];
+const ROOT_MEMORY_FILES: [&str; 3] = ["MEMORY.md", "memory.md", "profile.md"];
 const MEMORY_DIR_PREFIX: &str = "memory/";
 
 /// Validate and resolve a memory write path relative to `data_dir`.
@@ -31,13 +31,13 @@ pub fn validate_memory_path(data_dir: &Path, file: &str) -> anyhow::Result<PathB
 
     let Some(name) = path.strip_prefix(MEMORY_DIR_PREFIX) else {
         anyhow::bail!(
-            "invalid memory path '{path}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
+            "invalid memory path '{path}': allowed targets are MEMORY.md, memory.md, profile.md, or memory/<name>.md"
         );
     };
 
     if !is_valid_memory_file_name(name) {
         anyhow::bail!(
-            "invalid memory path '{path}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
+            "invalid memory path '{path}': allowed targets are MEMORY.md, memory.md, profile.md, or memory/<name>.md"
         );
     }
 

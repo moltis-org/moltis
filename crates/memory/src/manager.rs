@@ -416,7 +416,7 @@ impl MemoryWriter for MemoryManager {
 
         let final_content = if append && path.exists() {
             let existing = tokio::fs::read_to_string(&path).await?;
-            format!("{existing}\n\n{content}")
+            format!("{content}\n\n{existing}")
         } else {
             content.to_string()
         };

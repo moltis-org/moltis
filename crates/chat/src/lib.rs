@@ -1009,6 +1009,7 @@ struct PromptPersona {
     agents_text: Option<String>,
     tools_text: Option<String>,
     memory_text: Option<String>,
+    profile_text: Option<String>,
 }
 
 fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> String {
@@ -1072,6 +1073,7 @@ fn load_prompt_persona_for_agent(agent_id: &str) -> PromptPersona {
         agents_text: moltis_config::load_agents_md_for_agent(agent_id),
         tools_text: moltis_config::load_tools_md_for_agent(agent_id),
         memory_text: moltis_config::load_memory_md_for_agent(agent_id),
+        profile_text: moltis_config::load_profile_md_for_agent(agent_id),
     }
 }
 
@@ -4385,6 +4387,7 @@ impl ChatService for LiveChatService {
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
                 persona.memory_text.as_deref(),
+                persona.profile_text.as_deref(),
             )
         } else {
             build_system_prompt_minimal_runtime(
@@ -4396,6 +4399,7 @@ impl ChatService for LiveChatService {
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
                 persona.memory_text.as_deref(),
+                persona.profile_text.as_deref(),
             )
         };
 
@@ -4502,6 +4506,7 @@ impl ChatService for LiveChatService {
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
                 persona.memory_text.as_deref(),
+                persona.profile_text.as_deref(),
             )
         } else {
             build_system_prompt_minimal_runtime(
@@ -4513,6 +4518,7 @@ impl ChatService for LiveChatService {
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
                 persona.memory_text.as_deref(),
+                persona.profile_text.as_deref(),
             )
         };
 
@@ -5088,15 +5094,18 @@ fn resolve_agent_memory_target_path(agent_id: &str, file: &str) -> anyhow::Resul
     if trimmed == "MEMORY.md" || trimmed == "memory.md" {
         return Ok(workspace.join("MEMORY.md"));
     }
+    if trimmed == "profile.md" {
+        return Ok(workspace.join("profile.md"));
+    }
 
     let Some(name) = trimmed.strip_prefix("memory/") else {
         anyhow::bail!(
-            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
+            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, profile.md, or memory/<name>.md"
         );
     };
     if !is_valid_agent_memory_leaf_name(name) {
         anyhow::bail!(
-            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
+            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, profile.md, or memory/<name>.md"
         );
     }
     Ok(workspace.join("memory").join(name))
@@ -5107,6 +5116,7 @@ fn is_path_in_agent_memory_scope(path: &Path, agent_id: &str) -> bool {
     let workspace_memory_dir = workspace.join("memory");
     if path == workspace.join("MEMORY.md")
         || path == workspace.join("memory.md")
+        || path == workspace.join("profile.md")
         || path.starts_with(&workspace_memory_dir)
     {
         return true;
@@ -5157,7 +5167,7 @@ impl moltis_agents::memory_writer::MemoryWriter for AgentScopedMemoryWriter {
 
         let final_content = if append && tokio::fs::try_exists(&path).await? {
             let existing = tokio::fs::read_to_string(&path).await?;
-            format!("{existing}\n\n{content}")
+            format!("{content}\n\n{existing}")
         } else {
             content.to_string()
         };
@@ -5485,6 +5495,7 @@ async fn run_with_tools(
             persona.tools_text.as_deref(),
             runtime_context,
             persona.memory_text.as_deref(),
+            persona.profile_text.as_deref(),
         )
     } else {
         // Minimal prompt without tools for local LLMs
@@ -5497,6 +5508,7 @@ async fn run_with_tools(
             persona.tools_text.as_deref(),
             runtime_context,
             persona.memory_text.as_deref(),
+            persona.profile_text.as_deref(),
         )
     };
 
@@ -6330,6 +6342,7 @@ async fn run_streaming(
         persona.tools_text.as_deref(),
         runtime_context,
         persona.memory_text.as_deref(),
+        persona.profile_text.as_deref(),
     );
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
