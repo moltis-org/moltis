@@ -875,6 +875,7 @@ function SecuritySection() {
 	var [editingPk, setEditingPk] = useState(null);
 	var [editingPkName, setEditingPkName] = useState("");
 	var [passkeyOrigins, setPasskeyOrigins] = useState([]);
+	var [passkeyHostUpdateHosts, setPasskeyHostUpdateHosts] = useState([]);
 
 	var [apiKeys, setApiKeys] = useState([]);
 	var [akLabel, setAkLabel] = useState("");
@@ -921,12 +922,13 @@ function SecuritySection() {
 		fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
 			.then((d) => {
-				if (d?.auth_disabled) setAuthDisabled(true);
-				if (d?.localhost_only) setLocalhostOnly(true);
-				if (d?.has_password === false) setHasPassword(false);
-				if (d?.has_passkeys === true) setHasPasskeys(true);
-				if (d?.setup_complete) setSetupComplete(true);
-				if (d?.passkey_origins) setPasskeyOrigins(d.passkey_origins);
+				if (typeof d?.auth_disabled === "boolean") setAuthDisabled(d.auth_disabled);
+				if (typeof d?.localhost_only === "boolean") setLocalhostOnly(d.localhost_only);
+				if (typeof d?.has_password === "boolean") setHasPassword(d.has_password);
+				if (typeof d?.has_passkeys === "boolean") setHasPasskeys(d.has_passkeys);
+				if (typeof d?.setup_complete === "boolean") setSetupComplete(d.setup_complete);
+				if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d.passkey_origins);
+				if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d.passkey_host_update_hosts);
 				setAuthLoading(false);
 				rerender();
 			})
@@ -1079,9 +1081,19 @@ function SecuritySection() {
 								setHasPasskeys((d.passkeys || []).length > 0);
 								setSetupComplete(true);
 								setAuthDisabled(false);
-								setPkMsg("Passkey added.");
-								notifyAuthStatusChanged();
-								rerender();
+								return fetch("/api/auth/status")
+									.then((statusRes) => (statusRes.ok ? statusRes.json() : null))
+									.then((status) => {
+										if (Array.isArray(status?.passkey_host_update_hosts)) {
+											setPasskeyHostUpdateHosts(status.passkey_host_update_hosts);
+										}
+										if (Array.isArray(status?.passkey_origins)) {
+											setPasskeyOrigins(status.passkey_origins);
+										}
+										setPkMsg("Passkey added.");
+										notifyAuthStatusChanged();
+										rerender();
+									});
 							});
 					});
 				} else
@@ -1135,8 +1147,15 @@ function SecuritySection() {
 			.then((d) => {
 				setPasskeys(d.passkeys || []);
 				setHasPasskeys((d.passkeys || []).length > 0);
-				notifyAuthStatusChanged();
-				rerender();
+				return fetch("/api/auth/status")
+					.then((statusRes) => (statusRes.ok ? statusRes.json() : null))
+					.then((status) => {
+						if (Array.isArray(status?.passkey_host_update_hosts)) {
+							setPasskeyHostUpdateHosts(status.passkey_host_update_hosts);
+						}
+						notifyAuthStatusChanged();
+						rerender();
+					});
 			});
 	}
 
@@ -1343,6 +1362,14 @@ function SecuritySection() {
 		<div style="max-width:600px;border-top:1px solid var(--border);padding-top:16px;">
 			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Passkeys</h3>
 			${passkeyOrigins.length > 1 && html`<div class="text-xs text-[var(--muted)]" style="margin-bottom:8px;">Passkeys will work when visiting: ${passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", ")}</div>`}
+			${
+				hasPasskeys && passkeyHostUpdateHosts.length > 0
+					? html`<div class="alert-warning-text max-w-form" style="margin-bottom:8px;">
+						<span class="alert-label-warning">Passkey update needed: </span>
+						New host detected (${passkeyHostUpdateHosts.join(", ")}). Sign in with your password on that host, then register a new passkey there.
+					</div>`
+					: null
+			}
 			${
 				pkLoading
 					? html`<div class="text-xs text-[var(--muted)]">Loading\u2026</div>`
@@ -2338,6 +2365,7 @@ function TailscaleSection() {
 	var ref = useRef(null);
 	var [tsStatus, setTsStatus] = useState(null);
 	var [tsError, setTsError] = useState(null);
+	var [tsWarning, setTsWarning] = useState(null);
 	var [tsLoading, setTsLoading] = useState(true);
 	var [configuring, setConfiguring] = useState(false);
 	var [configuringMode, setConfiguringMode] = useState(null);
@@ -2364,6 +2392,7 @@ function TailscaleSection() {
 				} else {
 					setTsStatus(data);
 					setTsError(null);
+					setTsWarning(data.passkey_warning || null);
 				}
 				setTsLoading(false);
 				rerender();
@@ -2378,6 +2407,7 @@ function TailscaleSection() {
 	function setMode(mode) {
 		setConfiguring(true);
 		setTsError(null);
+		setTsWarning(null);
 		setConfiguringMode(mode);
 		rerender();
 		fetch("/api/tailscale/configure", {
@@ -2390,6 +2420,7 @@ function TailscaleSection() {
 				if (data.error) {
 					setTsError(data.error);
 				} else {
+					setTsWarning(data.passkey_warning || null);
 					fetchTsStatus();
 				}
 				setConfiguring(false);
@@ -2539,6 +2570,13 @@ function TailscaleSection() {
 		}
 	}
 
+	function renderTsWarning(container) {
+		var warningEl = document.createElement("div");
+		warningEl.className = "alert-warning-text max-w-form";
+		warningEl.textContent = tsWarning;
+		container.appendChild(warningEl);
+	}
+
 	function renderNotInstalled(container) {
 		var notInst = cloneHidden("ts-not-installed");
 		if (notInst) {
@@ -2562,6 +2600,7 @@ function TailscaleSection() {
 		}
 		if (tsStatus?.installed) renderInstalledBar(container, tsStatus);
 		if (tsError) renderTsError(container);
+		if (tsWarning) renderTsWarning(container);
 		if (tsStatus?.installed === false) {
 			if (!tsError) renderNotInstalled(container);
 			return;

@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- WebAuthn passkey host detection now auto-registers newly discovered Tailscale hostnames at runtime (no restart needed), and Settings now shows a passkey-update warning banner when an existing passkey setup encounters a newly added host.
+
 ### Security
 
 ## [0.10.1] - 2026-02-28
