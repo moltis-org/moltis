@@ -73,7 +73,7 @@ impl EnabledLogLevels {
 
 // ── LogBuffer ───────────────────────────────────────────────────────────────
 
-const DEFAULT_CAPACITY: usize = 10_000;
+const DEFAULT_CAPACITY: usize = 1_000;
 const DEFAULT_BROADCAST_CAPACITY: usize = 512;
 
 #[derive(Clone)]

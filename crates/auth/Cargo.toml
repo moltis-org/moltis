@@ -1,0 +1,40 @@
+[package]
+edition.workspace    = true
+name                 = "moltis-auth"
+repository.workspace = true
+version.workspace    = true
+
+[features]
+default = []
+vault   = ["dep:moltis-vault"]
+
+[dependencies]
+anyhow            = { workspace = true }
+argon2            = { workspace = true }
+async-trait       = { workspace = true }
+axum              = { workspace = true }
+base64            = { workspace = true }
+dashmap           = { workspace = true }
+moltis-config     = { workspace = true }
+moltis-tools      = { workspace = true }
+moltis-vault      = { optional = true, workspace = true }
+password-hash     = { workspace = true }
+rand              = { workspace = true }
+secrecy           = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+sha2              = { workspace = true }
+sqlx              = { workspace = true }
+tokio             = { workspace = true }
+tracing           = { workspace = true }
+webauthn-rs       = { features = ["danger-allow-state-serialisation"], workspace = true }
+webauthn-rs-proto = { workspace = true }
+# Required by webauthn-rs
+openssl = { workspace = true }
+
+[dev-dependencies]
+moltis-vault = { workspace = true }
+tempfile     = { workspace = true }
+
+[lints]
+workspace = true

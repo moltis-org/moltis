@@ -19,6 +19,15 @@ HTTP mode. The key settings are:
 | `MOLTIS_DEPLOY_PLATFORM` | Deploy platform | Hides local-only providers (see below) |
 | `MOLTIS_PASSWORD` | Initial password | Set auth password via environment variable |
 
+```admonish tip
+If requests to your domain are redirected to `:13131`, Moltis TLS is still
+enabled behind a TLS-terminating proxy. Use `--no-tls` (or
+`MOLTIS_NO_TLS=true`).
+
+Only keep Moltis TLS enabled when your proxy talks HTTPS to Moltis (or uses
+TCP TLS passthrough). In that case, set `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`.
+```
+
 ```admonish warning
 **Sandbox limitation**: Most cloud providers do not support Docker-in-Docker.
 The sandboxed command execution feature (where the LLM runs shell commands
@@ -34,6 +43,19 @@ Set this to the name of your cloud provider (e.g. `flyio`, `digitalocean`,
 (local-llm and Ollama) from the provider setup page since they cannot run
 on cloud VMs. The included deploy templates for Fly.io, DigitalOcean, and
 Render already set this variable.
+
+## Coolify (self-hosted, e.g. Hetzner)
+
+Coolify deployments can run Moltis with sandboxed exec tools, as long as the
+service mounts the host Docker socket.
+
+- Use [`examples/docker-compose.coolify.yml`](../examples/docker-compose.coolify.yml)
+  as a starting point.
+- Run Moltis with `--no-tls` (Coolify terminates HTTPS at the proxy).
+- Set `MOLTIS_BEHIND_PROXY=true` so client IP/auth behavior is correct behind
+  reverse proxying.
+- Mount `/var/run/docker.sock:/var/run/docker.sock` to enable container-backed
+  sandbox execution.
 
 ## Fly.io
 

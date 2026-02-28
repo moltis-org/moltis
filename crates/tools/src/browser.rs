@@ -8,6 +8,7 @@
 //! - JavaScript evaluation
 
 use {
+    crate::sandbox::SandboxRouter,
     anyhow::Result,
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
@@ -29,6 +30,7 @@ use {
 /// exhaustion from creating new browser instances on every call.
 pub struct BrowserTool {
     manager: Arc<BrowserManager>,
+    sandbox_router: Option<Arc<SandboxRouter>>,
     /// Track the most recent session ID for automatic reuse.
     /// This prevents pool exhaustion when the LLM forgets to pass session_id.
     last_session_id: RwLock<Option<String>>,
@@ -39,8 +41,15 @@ impl BrowserTool {
     pub fn new(manager: Arc<BrowserManager>) -> Self {
         Self {
             manager,
+            sandbox_router: None,
             last_session_id: RwLock::new(None),
         }
+    }
+
+    /// Attach a sandbox router for per-session sandbox mode resolution.
+    pub fn with_sandbox_router(mut self, router: Arc<SandboxRouter>) -> Self {
+        self.sandbox_router = Some(router);
+        self
     }
 
     /// Create from config; returns `None` if browser is disabled.
@@ -87,6 +96,9 @@ impl AgentTool for BrowserTool {
          REQUIRED: You MUST specify an 'action' parameter. Example:\n\
          {\"action\": \"navigate\", \"url\": \"https://example.com\"}\n\n\
          Actions: navigate, screenshot, snapshot, click, type, scroll, evaluate, wait, close\n\n\
+         BROWSER CHOICE: optionally set \"browser\" to choose one (auto, chrome, chromium, \
+         edge, brave, opera, vivaldi, arc). If no browser is installed, Moltis will try \
+         to auto-install one.\n\n\
          SESSION: The browser session is automatically tracked. After 'navigate', \
          subsequent actions will reuse the same browser. No need to pass session_id.\n\n\
          WORKFLOW:\n\
@@ -110,6 +122,11 @@ impl AgentTool for BrowserTool {
                 "session_id": {
                     "type": "string",
                     "description": "Browser session ID (omit to create new session, or reuse existing)"
+                },
+                "browser": {
+                    "type": "string",
+                    "enum": ["auto", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "arc"],
+                    "description": "Browser to use for host mode. Default: auto (first installed browser)."
                 },
                 "url": {
                     "type": "string",
@@ -154,12 +171,20 @@ impl AgentTool for BrowserTool {
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
         let mut params = params;
 
-        // Extract sandbox mode from context (injected by gateway based on session sandbox mode).
-        // The browser should be sandboxed when the chat session is sandboxed.
-        let sandbox_mode = params
-            .get("_sandbox")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        // Browser sandbox mode follows the session sandbox mode from the shared router.
+        let session_key = params
+            .get("_session_key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main");
+        let sandbox_mode = if let Some(ref router) = self.sandbox_router {
+            router.is_sandboxed(session_key).await
+        } else {
+            debug!(
+                session_key,
+                "browser running in host mode (no container backend)"
+            );
+            false
+        };
 
         // Inject saved session_id if LLM didn't provide one (or provided empty string)
         if let Some(obj) = params.as_object_mut() {

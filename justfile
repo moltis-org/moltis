@@ -13,8 +13,12 @@ format:
 format-check:
     cargo +{{nightly_toolchain}} fmt --all -- --check
 
+# Verify Cargo.lock is in sync with workspace manifests.
+lockfile-check:
+    cargo fetch --locked
+
 # Lint Rust code using clippy
-lint:
+lint: lockfile-check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
 # Build the project
@@ -24,6 +28,10 @@ build:
 # Build in release mode
 build-release:
     cargo build --release
+
+# Build embedded WASM guest tools for component execution.
+wasm-tools:
+    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
 # Run local dev server with workspace-local config/data dirs.
 dev-server:
@@ -182,10 +190,10 @@ flatpak:
     cd flatpak && flatpak-builder --repo=repo --force-clean builddir org.moltbot.Moltis.yml
 
 # Run all CI checks (format, lint, build, test)
-ci: format-check lint build test
+ci: format-check lint i18n-check build test
 
 # Run the same Rust preflight gates used before release packaging.
-release-preflight:
+release-preflight: lockfile-check
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
@@ -196,19 +204,90 @@ ship commit_message='' pr_title='' pr_body='':
 
 # Run all tests
 test:
-    cargo test --all-features
+    cargo nextest run --all-features
+
+# Verify locale key parity across frontend i18n bundles.
+i18n-check:
+    ./scripts/i18n-check.sh
 
 # Install browser tooling for gateway web UI e2e tests.
 ui-e2e-install:
-    cd crates/gateway/ui && npm install && npm run e2e:install
+    cd crates/web/ui && npm install && npm run e2e:install
 
 # Run gateway web UI e2e tests (Playwright).
 ui-e2e:
-    cd crates/gateway/ui && npm run e2e
+    cargo build --bin moltis
+    cd crates/web/ui && npm run e2e
 
 # Run gateway web UI e2e tests with headed browser.
 ui-e2e-headed:
-    cd crates/gateway/ui && npm run e2e:headed
+    cargo build --bin moltis
+    cd crates/web/ui && npm run e2e:headed
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
 packages-all: deb-all rpm-all arch-pkg-all
+
+# Build Rust static library and generated C header for the macOS app.
+swift-build-rust:
+    ./scripts/build-swift-bridge.sh
+
+# Generate Xcode project from YAML spec in apps/macos.
+swift-generate:
+    ./scripts/generate-swift-project.sh
+
+# Lint macOS app sources with SwiftLint.
+swift-lint:
+    ./scripts/lint-swift.sh
+
+# Build Swift macOS app.
+swift-build: swift-build-rust swift-generate
+    ./scripts/build-swift.sh
+
+# Run Swift app unit tests.
+swift-test: swift-build-rust swift-generate
+    ./scripts/test-swift.sh
+
+# Build and launch the Swift macOS app locally.
+swift-run: swift-build-rust swift-generate
+    ./scripts/run-swift.sh
+
+# Open generated project in Xcode.
+swift-open: swift-build-rust swift-generate
+    open apps/macos/Moltis.xcodeproj
+
+# Generate iOS app Xcode project.
+ios-generate:
+    ./scripts/generate-ios-project.sh
+
+# Generate Apollo GraphQL types for iOS.
+ios-graphql:
+    cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls
+    ./scripts/generate-ios-graphql.sh
+
+# Build iOS app (generic iOS destination, no signing).
+ios-build: ios-graphql ios-generate
+    xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
+
+# Lint iOS app sources with SwiftLint.
+ios-lint:
+    cd apps/ios && swiftlint
+
+# Open iOS project in Xcode (regenerates GraphQL types and project first).
+ios-open: ios-graphql ios-generate
+    open apps/ios/Moltis.xcodeproj
+
+# Build the APNS push relay.
+courier-build:
+    cargo build -p moltis-courier --release
+
+# Cross-compile courier for linux/x86_64.
+courier-cross:
+    cargo build -p moltis-courier --release --target x86_64-unknown-linux-gnu
+
+# Deploy courier to remote server(s) via Ansible.
+courier-deploy:
+    cd apps/courier/deploy && ansible-playbook playbook.yml
+
+# Run the APNS push relay (dev).
+courier-run *ARGS:
+    cargo run -p moltis-courier -- {{ARGS}}

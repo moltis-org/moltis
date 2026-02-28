@@ -154,7 +154,7 @@ struct PlaceName {
 /// Returns `None` on any failure (network, parse, timeout) so the caller can
 /// fall back to raw coordinates.
 async fn reverse_geocode(lat: f64, lon: f64) -> Option<PlaceName> {
-    reverse_geocode_with_client(&reqwest::Client::new(), lat, lon).await
+    reverse_geocode_with_client(crate::shared_http_client(), lat, lon).await
 }
 
 /// Inner implementation that accepts a `reqwest::Client` for testability.
@@ -366,7 +366,9 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
 
         // No browser connection — try channel-based location request.
         if let Some(session_key) = params.get("_session_key").and_then(|v| v.as_str())
-            && (session_key.starts_with("telegram:") || session_key.starts_with("discord:"))
+            && (session_key.starts_with("telegram:")
+                || session_key.starts_with("msteams:")
+                || session_key.starts_with("discord:"))
         {
             let result = self.requester.request_channel_location(session_key).await?;
             return match result.location {

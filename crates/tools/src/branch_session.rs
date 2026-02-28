@@ -130,14 +130,16 @@ mod tests {
         moltis_sessions::{MessageContent, PersistedMessage},
     };
 
-    fn user_message(text: impl Into<String>) -> PersistedMessage {
+    fn user_message(text: impl Into<String>) -> Value {
         PersistedMessage::User {
             content: MessageContent::Text(text.into()),
             created_at: None,
             channel: None,
             seq: None,
             run_id: None,
+            audio: None,
         }
+        .to_value()
     }
 
     async fn setup() -> (

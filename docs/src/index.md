@@ -31,7 +31,7 @@ curl -fsSL https://www.moltis.org/install.sh | sh
 - **Streaming-First** — Responses appear as tokens arrive, not after completion
 - **Sandboxed Execution** — Commands run in isolated containers (Docker or Apple Container)
 - **MCP Support** — Connect to Model Context Protocol servers for extended capabilities
-- **Multi-Channel** — Web UI, Telegram, API access with synchronized responses
+- **Multi-Channel** — Web UI, Telegram, Discord, API access with synchronized responses
 - **Built-in Throttling** — Per-IP endpoint limits with strict login protection
 - **Long-Term Memory** — Embeddings-powered knowledge base with hybrid search
 - **Hook System** — Observe, modify, or block actions at any lifecycle point
@@ -63,13 +63,13 @@ Authentication is only required when accessing Moltis from a non-localhost addre
 ## How It Works
 
 ```
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│   Web UI    │  │  Telegram   │  │     API     │
-└──────┬──────┘  └──────┬──────┘  └──────┬──────┘
-       │                │                │
-       └────────────────┴────────────────┘
-                        │
-                        ▼
+┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+│  Web UI  │  │ Telegram │  │ Discord  │  │   API    │
+└────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘
+     │             │             │             │
+     └─────────────┴─────────┬───┴─────────────┘
+                             │
+                             ▼
         ┌───────────────────────────────┐
         │       Moltis Gateway          │
         │   ┌─────────┐ ┌───────────┐   │

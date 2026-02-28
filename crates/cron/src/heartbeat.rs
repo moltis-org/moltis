@@ -203,6 +203,40 @@ pub fn parse_interval_ms(s: &str) -> Option<u64> {
     num_str.trim().parse::<u64>().ok().map(|n| n * multiplier)
 }
 
+// ── Event enrichment ─────────────────────────────────────────────────────────
+
+/// Prefix prepended to the heartbeat prompt when system events are pending.
+pub const EVENTS_PROMPT_PREFIX: &str = "Events occurred since your last check. \
+    Review them and relay anything noteworthy to the user.\n\n";
+
+/// Build a heartbeat prompt that incorporates pending system events.
+///
+/// If `events` is empty, returns `base_prompt` unchanged.
+#[must_use]
+pub fn build_event_enriched_prompt(
+    events: &[crate::system_events::SystemEvent],
+    base_prompt: &str,
+) -> String {
+    if events.is_empty() {
+        return base_prompt.to_string();
+    }
+
+    let mut buf = String::with_capacity(
+        EVENTS_PROMPT_PREFIX.len() + events.len() * 80 + base_prompt.len() + 4,
+    );
+    buf.push_str(EVENTS_PROMPT_PREFIX);
+    for event in events {
+        buf.push_str("- ");
+        buf.push_str(&event.text);
+        buf.push_str(" [");
+        buf.push_str(&event.reason);
+        buf.push_str("]\n");
+    }
+    buf.push('\n');
+    buf.push_str(base_prompt);
+    buf
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn unwrap_bold(s: &str) -> &str {
@@ -412,5 +446,34 @@ mod tests {
     #[test]
     fn parse_invalid() {
         assert_eq!(parse_interval_ms("abc"), None);
+    }
+
+    // ── build_event_enriched_prompt ──────────────────────────────────────
+
+    #[test]
+    fn enriched_prompt_with_no_events() {
+        let prompt = build_event_enriched_prompt(&[], "base prompt");
+        assert_eq!(prompt, "base prompt");
+    }
+
+    #[test]
+    fn enriched_prompt_with_events() {
+        let events = vec![
+            crate::system_events::SystemEvent {
+                text: "Command `ls` exited 0".into(),
+                reason: "exec-event".into(),
+                enqueued_at_ms: 1000,
+            },
+            crate::system_events::SystemEvent {
+                text: "Cron job fired".into(),
+                reason: "cron:abc".into(),
+                enqueued_at_ms: 2000,
+            },
+        ];
+        let prompt = build_event_enriched_prompt(&events, "check inbox");
+        assert!(prompt.starts_with(EVENTS_PROMPT_PREFIX));
+        assert!(prompt.contains("Command `ls` exited 0 [exec-event]"));
+        assert!(prompt.contains("Cron job fired [cron:abc]"));
+        assert!(prompt.ends_with("check inbox"));
     }
 }

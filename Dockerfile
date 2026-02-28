@@ -19,9 +19,10 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
+ENV DEBIAN_FRONTEND=noninteractive
 # Install build dependencies for llama-cpp-sys-2
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
+RUN apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
     rm -rf /var/lib/apt/lists/*
 
 # Build release binary
@@ -33,20 +34,39 @@ FROM debian:bookworm-slim
 # Install runtime dependencies:
 # - ca-certificates: for HTTPS connections to LLM providers
 # - chromium: headless browser for the browser tool (web search/fetch)
+# - curl: makes it possible to run healthchecks from docker
 # - sudo: allows moltis user to install packages at runtime (passwordless)
-# - docker.io: Docker CLI for sandbox execution (talks to mounted socket)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# - docker-ce-cli + docker-buildx-plugin: Docker CLI for sandbox execution
+#   (talks to mounted socket, no daemon in-container)
+# - tmux: terminal multiplexer available in deployed container
+# - vim-tiny: lightweight terminal text editor
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends \
         ca-certificates \
         chromium \
+        curl \
+        gnupg \
         libgomp1 \
         sudo \
-        docker.io && \
+        tmux \
+        vim-tiny && \
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    chmod a+r /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" \
+        > /etc/apt/sources.list.d/docker.list && \
+    apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends \
+        docker-buildx-plugin \
+        docker-ce-cli && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user and add to docker group for socket access.
 # Grant passwordless sudo so moltis can install host packages at startup.
-RUN useradd --create-home --user-group moltis && \
+RUN groupadd -f docker && \
+    useradd --create-home --user-group moltis && \
     usermod -aG docker moltis && \
     echo "moltis ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/moltis
 

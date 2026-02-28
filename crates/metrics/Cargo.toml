@@ -5,7 +5,6 @@ name              = "moltis-metrics"
 version.workspace = true
 
 [dependencies]
-anyhow                      = { workspace = true }
 async-trait                 = { workspace = true }
 metrics                     = { workspace = true }
 metrics-exporter-prometheus = { optional = true, workspace = true }
@@ -14,6 +13,7 @@ once_cell                   = { workspace = true }
 serde                       = { workspace = true }
 serde_json                  = { workspace = true }
 sqlx                        = { optional = true, workspace = true }
+thiserror                   = { workspace = true }
 tokio                       = { workspace = true }
 tracing                     = { workspace = true }
 tracing-subscriber          = { features = ["env-filter"], optional = true, workspace = true }

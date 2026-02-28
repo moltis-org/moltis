@@ -1,6 +1,6 @@
-use {
-    anyhow::Result, async_trait::async_trait, moltis_common::types::ReplyPayload, tokio::sync::mpsc,
-};
+use {async_trait::async_trait, moltis_common::types::ReplyPayload, tokio::sync::mpsc};
+
+use crate::{Error, Result};
 
 // ── Channel type enum ───────────────────────────────────────────────────────
 
@@ -9,7 +9,10 @@ use {
 #[serde(rename_all = "lowercase")]
 pub enum ChannelType {
     Telegram,
-    // Future: Discord, Slack, WhatsApp, etc.
+    Whatsapp,
+    #[serde(rename = "msteams")]
+    MsTeams,
+    Discord,
 }
 
 impl ChannelType {
@@ -17,6 +20,19 @@ impl ChannelType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Telegram => "telegram",
+            Self::Whatsapp => "whatsapp",
+            Self::MsTeams => "msteams",
+            Self::Discord => "discord",
+        }
+    }
+
+    /// Human-readable display name for UI labels.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Telegram => "Telegram",
+            Self::Whatsapp => "WhatsApp",
+            Self::MsTeams => "Microsoft Teams",
+            Self::Discord => "Discord",
         }
     }
 }
@@ -28,12 +44,17 @@ impl std::fmt::Display for ChannelType {
 }
 
 impl std::str::FromStr for ChannelType {
-    type Err = String;
+    type Err = Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "telegram" => Ok(Self::Telegram),
-            other => Err(format!("unknown channel type: {other}")),
+            "whatsapp" => Ok(Self::Whatsapp),
+            "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
+            "discord" => Ok(Self::Discord),
+            other => Err(Error::invalid_input(format!(
+                "unknown channel type: {other}"
+            ))),
         }
     }
 }
@@ -77,6 +98,26 @@ pub enum ChannelEvent {
         username: Option<String>,
         resolution: String,
     },
+    /// A QR code was generated for device pairing (e.g. WhatsApp Linked Devices).
+    PairingQrCode {
+        channel_type: ChannelType,
+        account_id: String,
+        /// Raw QR data string to be rendered as a QR code image.
+        qr_data: String,
+    },
+    /// Device pairing completed successfully.
+    PairingComplete {
+        channel_type: ChannelType,
+        account_id: String,
+        /// Display name of the paired device/account.
+        display_name: Option<String>,
+    },
+    /// Device pairing failed.
+    PairingFailed {
+        channel_type: ChannelType,
+        account_id: String,
+        reason: String,
+    },
 }
 
 /// Sink for channel events — the gateway provides the concrete implementation.
@@ -97,11 +138,8 @@ pub trait ChannelEventSink: Send + Sync {
 
     /// Dispatch a slash command (e.g. "new", "clear", "compact", "context")
     /// and return a text result to send back to the channel.
-    async fn dispatch_command(
-        &self,
-        command: &str,
-        reply_to: ChannelReplyTarget,
-    ) -> anyhow::Result<String>;
+    async fn dispatch_command(&self, command: &str, reply_to: ChannelReplyTarget)
+    -> Result<String>;
 
     /// Request disabling a channel account due to a runtime error.
     ///
@@ -121,13 +159,27 @@ pub trait ChannelEventSink: Send + Sync {
     ) {
     }
 
+    /// Save voice audio bytes to the session's media directory.
+    ///
+    /// Returns the saved filename on success, or `None` if saving is not
+    /// available or fails. The gateway implementation resolves the session
+    /// key from the reply target and delegates to `SessionStore::save_media`.
+    async fn save_channel_voice(
+        &self,
+        _audio_data: &[u8],
+        _filename: &str,
+        _reply_to: &ChannelReplyTarget,
+    ) -> Option<String> {
+        None
+    }
+
     /// Transcribe voice audio to text using the configured STT provider.
     ///
     /// Returns the transcribed text, or an error if transcription fails.
     /// The audio format is specified (e.g., "ogg", "mp3", "webm").
     async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> Result<String> {
         let _ = (audio_data, format);
-        Err(anyhow::anyhow!("voice transcription not available"))
+        Err(Error::unavailable("voice transcription not available"))
     }
 
     /// Whether voice STT is configured and available for channel audio messages.
@@ -139,6 +191,20 @@ pub trait ChannelEventSink: Send + Sync {
     ///
     /// Returns `true` if a pending tool-triggered location request was resolved.
     async fn update_location(
+        &self,
+        _reply_to: &ChannelReplyTarget,
+        _latitude: f64,
+        _longitude: f64,
+    ) -> bool {
+        false
+    }
+
+    /// Resolve a pending tool-triggered location request from channel text/link input.
+    ///
+    /// Unlike `update_location`, this should not update cached location state
+    /// when there is no pending request. Returns `true` only when a pending
+    /// request was found and resolved.
+    async fn resolve_pending_location(
         &self,
         _reply_to: &ChannelReplyTarget,
         _latitude: f64,
@@ -177,6 +243,9 @@ pub struct ChannelMessageMeta {
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Filename of saved voice audio (set by `save_channel_voice`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_filename: Option<String>,
 }
 
 /// Inbound channel message media kind.
@@ -275,6 +344,19 @@ pub trait ChannelOutbound: Send + Sync {
         let _ = suffix_html;
         self.send_text(account_id, to, text, reply_to).await
     }
+    /// Send pre-formatted HTML without markdown conversion.
+    ///
+    /// Used for content that is already valid Telegram HTML (e.g. the activity
+    /// logbook with `<blockquote>` tags).  Default falls back to `send_text`.
+    async fn send_html(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        self.send_text(account_id, to, html, reply_to).await
+    }
     /// Send a text message without notification (silent). Falls back to send_text by default.
     async fn send_text_silent(
         &self,
@@ -342,10 +424,22 @@ pub type StreamSender = mpsc::Sender<StreamEvent>;
 #[async_trait]
 pub trait ChannelStreamOutbound: Send + Sync {
     /// Send a streaming response that updates a message in place.
-    async fn send_stream(&self, account_id: &str, to: &str, stream: StreamReceiver) -> Result<()>;
+    async fn send_stream(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<()>;
+
+    /// Whether streaming is enabled for this account.
+    async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -367,7 +461,7 @@ mod tests {
             &self,
             _command: &str,
             _reply_to: ChannelReplyTarget,
-        ) -> anyhow::Result<String> {
+        ) -> Result<String> {
             Ok(String::new())
         }
 
@@ -396,6 +490,74 @@ mod tests {
             message_id: None,
         };
         assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
+    }
+
+    #[test]
+    fn channel_type_whatsapp_roundtrip() {
+        let ct = ChannelType::Whatsapp;
+        assert_eq!(ct.as_str(), "whatsapp");
+        assert_eq!(ct.to_string(), "whatsapp");
+        assert_eq!("whatsapp".parse::<ChannelType>().unwrap(), ct);
+    }
+
+    #[test]
+    fn channel_type_serde_roundtrip() {
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::Whatsapp,
+            ChannelType::MsTeams,
+            ChannelType::Discord,
+        ] {
+            let json = serde_json::to_string(&ct).unwrap();
+            let parsed: ChannelType = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, ct);
+        }
+    }
+
+    #[test]
+    fn channel_type_discord_roundtrip() {
+        let ct = ChannelType::Discord;
+        assert_eq!(ct.as_str(), "discord");
+        assert_eq!(ct.to_string(), "discord");
+        assert_eq!("discord".parse::<ChannelType>().unwrap(), ct);
+    }
+
+    #[test]
+    fn pairing_qr_code_event_serialization() {
+        let event = ChannelEvent::PairingQrCode {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            qr_data: "2@abc123".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_qr_code");
+        assert_eq!(json["channel_type"], "whatsapp");
+        assert_eq!(json["account_id"], "wa1");
+        assert_eq!(json["qr_data"], "2@abc123");
+    }
+
+    #[test]
+    fn pairing_complete_event_serialization() {
+        let event = ChannelEvent::PairingComplete {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            display_name: Some("My Phone".into()),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_complete");
+        assert_eq!(json["display_name"], "My Phone");
+    }
+
+    #[test]
+    fn pairing_failed_event_serialization() {
+        let event = ChannelEvent::PairingFailed {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            reason: "timeout".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_failed");
+        assert_eq!(json["reason"], "timeout");
     }
 
     struct DummyOutbound;
@@ -430,5 +592,39 @@ mod tests {
             .send_location("acct", "42", 48.8566, 2.3522, Some("Eiffel Tower"), None)
             .await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn channel_type_round_trip() {
+        for (s, expected) in [
+            ("telegram", ChannelType::Telegram),
+            ("msteams", ChannelType::MsTeams),
+            ("discord", ChannelType::Discord),
+        ] {
+            let parsed: ChannelType = s.parse().unwrap_or_else(|e| panic!("parse {s}: {e}"));
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.as_str(), s);
+            assert_eq!(parsed.to_string(), s);
+        }
+    }
+
+    #[test]
+    fn channel_type_from_str_invalid() {
+        assert!("slack".parse::<ChannelType>().is_err());
+        assert!("".parse::<ChannelType>().is_err());
+    }
+
+    #[test]
+    fn channel_type_serde_round_trip() {
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::MsTeams,
+            ChannelType::Discord,
+        ] {
+            let json = serde_json::to_string(&ct).unwrap_or_else(|e| panic!("serialize: {e}"));
+            let back: ChannelType =
+                serde_json::from_str(&json).unwrap_or_else(|e| panic!("deserialize: {e}"));
+            assert_eq!(ct, back);
+        }
     }
 }

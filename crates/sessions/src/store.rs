@@ -5,7 +5,7 @@ use std::{
 };
 
 use {
-    anyhow::Result,
+    crate::{Error, Result},
     fd_lock::RwLock,
     serde::{Deserialize, Serialize},
 };
@@ -22,6 +22,16 @@ pub struct SearchResult {
 /// Append-only JSONL session storage with file locking.
 pub struct SessionStore {
     pub base_dir: PathBuf,
+}
+
+#[must_use]
+fn slice_on_char_boundaries(content: &str, start: usize, end: usize) -> &str {
+    let bounded_start = content.floor_char_boundary(start.min(content.len()));
+    let bounded_end = content.floor_char_boundary(end.min(content.len()));
+    if bounded_start >= bounded_end {
+        return "";
+    }
+    &content[bounded_start..bounded_end]
 }
 
 impl SessionStore {
@@ -72,8 +82,8 @@ impl SessionStore {
         .await?
     }
 
-    /// Append a message as a single line to the session file.
-    pub async fn append<T: Serialize + ?Sized>(&self, key: &str, message: &T) -> Result<()> {
+    /// Append a message (JSON value) as a single line to the session file.
+    pub async fn append(&self, key: &str, message: &serde_json::Value) -> Result<()> {
         let path = self.path_for(key);
         let line = serde_json::to_string(message)?;
 
@@ -85,7 +95,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             writeln!(*guard, "{line}")?;
             Ok(())
         })
@@ -123,6 +133,16 @@ impl SessionStore {
         .await?
     }
 
+    /// Read all messages from a session that match a given `run_id`.
+    pub async fn read_by_run_id(&self, key: &str, run_id: &str) -> Result<Vec<serde_json::Value>> {
+        let all = self.read(key).await?;
+        let run_id = run_id.to_string();
+        Ok(all
+            .into_iter()
+            .filter(|msg| msg.get("run_id").and_then(|v| v.as_str()) == Some(&run_id))
+            .collect())
+    }
+
     /// Read the last N messages from a session file.
     pub async fn read_last_n(&self, key: &str, n: usize) -> Result<Vec<serde_json::Value>> {
         let path = self.path_for(key);
@@ -146,46 +166,6 @@ impl SessionStore {
             }
             let start = all.len().saturating_sub(n);
             Ok(all[start..].to_vec())
-        })
-        .await?
-    }
-
-    /// Read all messages belonging to a specific agent run.
-    ///
-    /// Returns messages that have a matching `run_id` field, plus adjacent
-    /// `tool_result` messages that sit between the matching user and assistant
-    /// messages (these don't carry `run_id` themselves but belong to the run).
-    pub async fn read_by_run_id(&self, key: &str, run_id: &str) -> Result<Vec<serde_json::Value>> {
-        let all = self.read(key).await?;
-        let run_id = run_id.to_string();
-
-        tokio::task::spawn_blocking(move || -> Result<Vec<serde_json::Value>> {
-            let mut result = Vec::new();
-            let mut in_run = false;
-
-            for msg in &all {
-                let msg_run_id = msg.get("run_id").and_then(|v| v.as_str());
-
-                if msg_run_id == Some(&run_id) {
-                    in_run = true;
-                    result.push(msg.clone());
-                    continue;
-                }
-
-                // Collect tool_result messages between the run's user and assistant messages.
-                let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
-                if in_run && role == "tool_result" {
-                    result.push(msg.clone());
-                    continue;
-                }
-
-                // Any non-tool_result message without matching run_id ends the run scope.
-                if in_run {
-                    in_run = false;
-                }
-            }
-
-            Ok(result)
         })
         .await?
     }
@@ -273,8 +253,8 @@ impl SessionStore {
                         let lower = content.to_lowercase();
                         let pos = lower.find(&query).unwrap_or(0);
                         let start = pos.saturating_sub(40);
-                        let end = (pos + query.len() + 60).min(content.len());
-                        let snippet = content[start..end].to_string();
+                        let end = pos.saturating_add(query.len()).saturating_add(60);
+                        let snippet = slice_on_char_boundaries(content, start, end).to_string();
 
                         results.push(SearchResult {
                             session_key: session_key.clone(),
@@ -309,7 +289,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             for msg in &messages {
                 let line = serde_json::to_string(msg)?;
                 writeln!(*guard, "{line}")?;
@@ -319,6 +299,111 @@ impl SessionStore {
         .await??;
 
         Ok(())
+    }
+
+    /// Read all messages as typed [`PersistedMessage`] values.
+    ///
+    /// Lines that fail to deserialize into `PersistedMessage` are skipped
+    /// (with a warning), matching the behavior of [`read`].
+    pub async fn read_typed(&self, key: &str) -> Result<Vec<crate::message::PersistedMessage>> {
+        let path = self.path_for(key);
+
+        tokio::task::spawn_blocking(move || -> Result<Vec<crate::message::PersistedMessage>> {
+            if !path.exists() {
+                return Ok(vec![]);
+            }
+            let file = File::open(&path)?;
+            let reader = BufReader::new(file);
+            let mut messages = Vec::new();
+            for line in reader.lines() {
+                let line = line?;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str(trimmed) {
+                    Ok(msg) => messages.push(msg),
+                    Err(e) => {
+                        tracing::warn!("skipping malformed JSONL line (typed): {e}");
+                    },
+                }
+            }
+            Ok(messages)
+        })
+        .await?
+    }
+
+    /// Read the last N messages as typed [`PersistedMessage`] values.
+    pub async fn read_last_n_typed(
+        &self,
+        key: &str,
+        n: usize,
+    ) -> Result<Vec<crate::message::PersistedMessage>> {
+        let path = self.path_for(key);
+
+        tokio::task::spawn_blocking(move || -> Result<Vec<crate::message::PersistedMessage>> {
+            if !path.exists() {
+                return Ok(vec![]);
+            }
+            let file = File::open(&path)?;
+            let reader = BufReader::new(file);
+            let mut all: Vec<crate::message::PersistedMessage> = Vec::new();
+            for line in reader.lines() {
+                let line = line?;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Ok(msg) = serde_json::from_str(trimmed) {
+                    all.push(msg);
+                }
+            }
+            let start = all.len().saturating_sub(n);
+            Ok(all[start..].to_vec())
+        })
+        .await?
+    }
+
+    /// Replace the entire session history with typed messages.
+    pub async fn replace_history_typed(
+        &self,
+        key: &str,
+        messages: &[crate::message::PersistedMessage],
+    ) -> Result<()> {
+        let path = self.path_for(key);
+        let values: Vec<serde_json::Value> = messages.iter().map(|m| m.to_value()).collect();
+
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)?;
+            let mut lock = RwLock::new(file);
+            let mut guard = lock
+                .write()
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
+            for msg in &values {
+                let line = serde_json::to_string(msg)?;
+                writeln!(*guard, "{line}")?;
+            }
+            Ok(())
+        })
+        .await??;
+
+        Ok(())
+    }
+
+    /// Append a typed message to the session file.
+    pub async fn append_typed(
+        &self,
+        key: &str,
+        message: &crate::message::PersistedMessage,
+    ) -> Result<()> {
+        self.append(key, &message.to_value()).await
     }
 
     /// Count messages in a session file without parsing them.
@@ -333,7 +418,7 @@ impl SessionStore {
             let reader = BufReader::new(file);
             let count = reader
                 .lines()
-                .map_while(Result::ok)
+                .map_while(std::result::Result::ok)
                 .filter(|l| !l.trim().is_empty())
                 .count();
             Ok(count as u32)
@@ -345,11 +430,7 @@ impl SessionStore {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::{MessageContent, PersistedMessage},
-        serde_json::json,
-    };
+    use {super::*, serde_json::json};
 
     fn temp_store() -> (SessionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -357,69 +438,24 @@ mod tests {
         (store, dir)
     }
 
-    fn user_message(text: impl Into<String>) -> PersistedMessage {
-        PersistedMessage::User {
-            content: MessageContent::Text(text.into()),
-            created_at: None,
-            channel: None,
-            seq: None,
-            run_id: None,
-        }
-    }
-
-    fn user_message_with_run_id(
-        text: impl Into<String>,
-        run_id: impl Into<String>,
-    ) -> PersistedMessage {
-        PersistedMessage::User {
-            content: MessageContent::Text(text.into()),
-            created_at: None,
-            channel: None,
-            seq: None,
-            run_id: Some(run_id.into()),
-        }
-    }
-
-    fn assistant_message(text: impl Into<String>) -> PersistedMessage {
-        PersistedMessage::Assistant {
-            content: text.into(),
-            created_at: None,
-            model: None,
-            provider: None,
-            input_tokens: None,
-            output_tokens: None,
-            tool_calls: None,
-            audio: None,
-            seq: None,
-            run_id: None,
-        }
-    }
-
-    fn assistant_message_with_run_id(
-        text: impl Into<String>,
-        run_id: impl Into<String>,
-    ) -> PersistedMessage {
-        PersistedMessage::Assistant {
-            content: text.into(),
-            created_at: None,
-            model: None,
-            provider: None,
-            input_tokens: None,
-            output_tokens: None,
-            tool_calls: None,
-            audio: None,
-            seq: None,
-            run_id: Some(run_id.into()),
-        }
+    #[test]
+    fn slice_on_char_boundaries_handles_multibyte_boundary() {
+        let content = format!("{}л{}", "a".repeat(39), "z".repeat(20));
+        let snippet = slice_on_char_boundaries(&content, 0, 40);
+        assert_eq!(snippet.len(), 39);
+        assert!(snippet.chars().all(|c| c == 'a'));
     }
 
     #[tokio::test]
     async fn test_append_and_read() {
         let (store, _dir) = temp_store();
 
-        store.append("main", &user_message("hello")).await.unwrap();
         store
-            .append("main", &assistant_message("hi"))
+            .append("main", &json!({"role": "user", "content": "hello"}))
+            .await
+            .unwrap();
+        store
+            .append("main", &json!({"role": "assistant", "content": "hi"}))
             .await
             .unwrap();
 
@@ -454,7 +490,10 @@ mod tests {
     async fn test_clear() {
         let (store, _dir) = temp_store();
 
-        store.append("main", &user_message("hello")).await.unwrap();
+        store
+            .append("main", &json!({"role": "user", "content": "hello"}))
+            .await
+            .unwrap();
         assert_eq!(store.read("main").await.unwrap().len(), 1);
 
         store.clear("main").await.unwrap();
@@ -466,8 +505,14 @@ mod tests {
         let (store, _dir) = temp_store();
 
         assert_eq!(store.count("main").await.unwrap(), 0);
-        store.append("main", &user_message("")).await.unwrap();
-        store.append("main", &assistant_message("")).await.unwrap();
+        store
+            .append("main", &json!({"role": "user"}))
+            .await
+            .unwrap();
+        store
+            .append("main", &json!({"role": "assistant"}))
+            .await
+            .unwrap();
         assert_eq!(store.count("main").await.unwrap(), 2);
     }
 
@@ -476,15 +521,15 @@ mod tests {
         let (store, _dir) = temp_store();
 
         store
-            .append("s1", &user_message("hello world"))
+            .append("s1", &json!({"role": "user", "content": "hello world"}))
             .await
             .unwrap();
         store
-            .append("s1", &assistant_message("hi there"))
+            .append("s1", &json!({"role": "assistant", "content": "hi there"}))
             .await
             .unwrap();
         store
-            .append("s2", &user_message("goodbye world"))
+            .append("s2", &json!({"role": "user", "content": "goodbye world"}))
             .await
             .unwrap();
 
@@ -500,7 +545,7 @@ mod tests {
         let (store, _dir) = temp_store();
 
         store
-            .append("s1", &user_message("Hello World"))
+            .append("s1", &json!({"role": "user", "content": "Hello World"}))
             .await
             .unwrap();
 
@@ -513,7 +558,10 @@ mod tests {
     async fn test_search_no_match() {
         let (store, _dir) = temp_store();
 
-        store.append("s1", &user_message("hello")).await.unwrap();
+        store
+            .append("s1", &json!({"role": "user", "content": "hello"}))
+            .await
+            .unwrap();
 
         let results = store.search("xyz", 10).await.unwrap();
         assert!(results.is_empty());
@@ -523,7 +571,10 @@ mod tests {
     async fn test_search_empty_query() {
         let (store, _dir) = temp_store();
 
-        store.append("s1", &user_message("hello")).await.unwrap();
+        store
+            .append("s1", &json!({"role": "user", "content": "hello"}))
+            .await
+            .unwrap();
 
         // Empty query should match nothing (caller should guard against this)
         let results = store.search("", 10).await.unwrap();
@@ -537,15 +588,18 @@ mod tests {
         let (store, _dir) = temp_store();
 
         store
-            .append("s1", &user_message("rust is great"))
+            .append("s1", &json!({"role": "user", "content": "rust is great"}))
             .await
             .unwrap();
         store
-            .append("s2", &assistant_message("rust is awesome"))
+            .append(
+                "s2",
+                &json!({"role": "assistant", "content": "rust is awesome"}),
+            )
             .await
             .unwrap();
         store
-            .append("s3", &user_message("python is nice"))
+            .append("s3", &json!({"role": "user", "content": "python is nice"}))
             .await
             .unwrap();
 
@@ -563,7 +617,7 @@ mod tests {
         for i in 0..10 {
             let key = format!("s{i}");
             store
-                .append(&key, &user_message("common term"))
+                .append(&key, &json!({"role": "user", "content": "common term"}))
                 .await
                 .unwrap();
         }
@@ -576,9 +630,12 @@ mod tests {
     async fn test_replace_history() {
         let (store, _dir) = temp_store();
 
-        store.append("main", &user_message("hello")).await.unwrap();
         store
-            .append("main", &assistant_message("hi"))
+            .append("main", &json!({"role": "user", "content": "hello"}))
+            .await
+            .unwrap();
+        store
+            .append("main", &json!({"role": "assistant", "content": "hi"}))
             .await
             .unwrap();
         assert_eq!(store.read("main").await.unwrap().len(), 2);
@@ -595,7 +652,10 @@ mod tests {
     async fn test_replace_history_empty() {
         let (store, _dir) = temp_store();
 
-        store.append("main", &user_message("hello")).await.unwrap();
+        store
+            .append("main", &json!({"role": "user", "content": "hello"}))
+            .await
+            .unwrap();
 
         store.replace_history("main", vec![]).await.unwrap();
         assert!(store.read("main").await.unwrap().is_empty());
@@ -606,7 +666,7 @@ mod tests {
         let (store, _dir) = temp_store();
 
         store
-            .append("session:abc-123", &user_message(""))
+            .append("session:abc-123", &json!({"role": "user"}))
             .await
             .unwrap();
         let msgs = store.read("session:abc-123").await.unwrap();
@@ -652,7 +712,10 @@ mod tests {
         let (store, dir) = temp_store();
 
         // Create a session and media.
-        store.append("main", &user_message("hello")).await.unwrap();
+        store
+            .append("main", &json!({"role": "user", "content": "hello"}))
+            .await
+            .unwrap();
         store
             .save_media("main", "shot.png", b"img data")
             .await
@@ -667,57 +730,141 @@ mod tests {
         assert!(store.read("main").await.unwrap().is_empty());
     }
 
+    // --- Typed API tests ---
+
     #[tokio::test]
-    async fn test_read_by_run_id() {
+    async fn test_append_typed_and_read_typed() {
+        use crate::message::PersistedMessage;
+
         let (store, _dir) = temp_store();
 
-        // Simulate a session with two runs.
         store
-            .append("main", &user_message_with_run_id("hello", "run-1"))
+            .append_typed("main", &PersistedMessage::user("hello"))
             .await
             .unwrap();
         store
-            .append(
+            .append_typed(
                 "main",
-                &PersistedMessage::tool_result("call-1", "exec", None, true, None, None),
+                &PersistedMessage::assistant("hi", "gpt-4o", "openai", 10, 5, None),
             )
             .await
             .unwrap();
-        store
-            .append("main", &assistant_message_with_run_id("done", "run-1"))
-            .await
-            .unwrap();
-        store
-            .append("main", &user_message_with_run_id("another", "run-2"))
-            .await
-            .unwrap();
-        store
-            .append("main", &assistant_message_with_run_id("ok", "run-2"))
-            .await
-            .unwrap();
 
-        let run1 = store.read_by_run_id("main", "run-1").await.unwrap();
-        assert_eq!(run1.len(), 3);
-        assert_eq!(run1[0]["role"], "user");
-        assert_eq!(run1[1]["role"], "tool_result");
-        assert_eq!(run1[2]["role"], "assistant");
-
-        let run2 = store.read_by_run_id("main", "run-2").await.unwrap();
-        assert_eq!(run2.len(), 2);
-        assert_eq!(run2[0]["role"], "user");
-        assert_eq!(run2[1]["role"], "assistant");
+        let msgs = store.read_typed("main").await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        match &msgs[0] {
+            PersistedMessage::User { content, .. } => {
+                assert!(matches!(content, crate::message::MessageContent::Text(t) if t == "hello"));
+            },
+            _ => panic!("expected User message"),
+        }
+        match &msgs[1] {
+            PersistedMessage::Assistant { content, model, .. } => {
+                assert_eq!(content, "hi");
+                assert_eq!(model.as_deref(), Some("gpt-4o"));
+            },
+            _ => panic!("expected Assistant message"),
+        }
     }
 
     #[tokio::test]
-    async fn test_read_by_run_id_nonexistent() {
+    async fn test_read_typed_empty() {
+        let (store, _dir) = temp_store();
+        let msgs = store.read_typed("nonexistent").await.unwrap();
+        assert!(msgs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_read_last_n_typed() {
+        use crate::message::PersistedMessage;
+
+        let (store, _dir) = temp_store();
+
+        for i in 0..5 {
+            store
+                .append_typed("test", &PersistedMessage::user(format!("msg-{i}")))
+                .await
+                .unwrap();
+        }
+
+        let last2 = store.read_last_n_typed("test", 2).await.unwrap();
+        assert_eq!(last2.len(), 2);
+        match &last2[0] {
+            PersistedMessage::User { content, .. } => {
+                assert!(matches!(content, crate::message::MessageContent::Text(t) if t == "msg-3"));
+            },
+            _ => panic!("expected User message"),
+        }
+        match &last2[1] {
+            PersistedMessage::User { content, .. } => {
+                assert!(matches!(content, crate::message::MessageContent::Text(t) if t == "msg-4"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_replace_history_typed() {
+        use crate::message::PersistedMessage;
+
         let (store, _dir) = temp_store();
 
         store
-            .append("main", &user_message_with_run_id("hi", "run-1"))
+            .append_typed("main", &PersistedMessage::user("old"))
+            .await
+            .unwrap();
+        assert_eq!(store.count("main").await.unwrap(), 1);
+
+        let new_history = vec![
+            PersistedMessage::user("new1"),
+            PersistedMessage::assistant("new2", "gpt-4o", "openai", 10, 5, None),
+        ];
+        store
+            .replace_history_typed("main", &new_history)
             .await
             .unwrap();
 
-        let result = store.read_by_run_id("main", "no-such-run").await.unwrap();
-        assert!(result.is_empty());
+        let msgs = store.read_typed("main").await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        match &msgs[0] {
+            PersistedMessage::User { content, .. } => {
+                assert!(matches!(content, crate::message::MessageContent::Text(t) if t == "new1"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_typed_roundtrip_with_value_api() {
+        use crate::message::PersistedMessage;
+
+        let (store, _dir) = temp_store();
+
+        // Write with typed API, read with Value API.
+        store
+            .append_typed("main", &PersistedMessage::user("typed write"))
+            .await
+            .unwrap();
+        let values = store.read("main").await.unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["role"], "user");
+        assert_eq!(values[0]["content"], "typed write");
+
+        // Write with Value API, read with typed API.
+        store
+            .append(
+                "main",
+                &json!({"role": "assistant", "content": "value write"}),
+            )
+            .await
+            .unwrap();
+        let typed = store.read_typed("main").await.unwrap();
+        assert_eq!(typed.len(), 2);
+        match &typed[1] {
+            PersistedMessage::Assistant { content, .. } => {
+                assert_eq!(content, "value write");
+            },
+            _ => panic!("expected Assistant message"),
+        }
     }
 }

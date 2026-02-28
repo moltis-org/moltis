@@ -7,7 +7,7 @@ use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Duration};
 use {
     serde::{Deserialize, Serialize},
     tokio::{process::Command, sync::RwLock, time::timeout},
-    tracing::{debug, info, warn},
+    tracing::{debug, info},
 };
 
 /// Configuration for the QMD manager.
@@ -142,7 +142,7 @@ impl QmdManager {
                     info!(version = %version.trim(), "QMD is available");
                     true
                 } else {
-                    warn!("QMD command failed with non-zero exit code");
+                    info!("QMD command failed with non-zero exit code");
                     false
                 }
             },

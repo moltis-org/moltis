@@ -17,6 +17,18 @@ use crate::{
     tailscale::{CliTailscaleManager, TailscaleManager, TailscaleMode, validate_tailscale_config},
 };
 
+const TAILSCALE_STATUS_FAILED: &str = "TAILSCALE_STATUS_FAILED";
+const TAILSCALE_MODE_INVALID: &str = "TAILSCALE_MODE_INVALID";
+const TAILSCALE_CONFIG_INVALID: &str = "TAILSCALE_CONFIG_INVALID";
+const TAILSCALE_CONFIGURE_FAILED: &str = "TAILSCALE_CONFIGURE_FAILED";
+
+fn tailscale_error(code: &str, error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
+        "error": error.into(),
+    })
+}
+
 #[derive(Deserialize)]
 struct ConfigureRequest {
     mode: String,
@@ -59,7 +71,7 @@ async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
             error!("tailscale status failed: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
+                Json(tailscale_error(TAILSCALE_STATUS_FAILED, e.to_string())),
             )
                 .into_response()
         },
@@ -78,7 +90,7 @@ async fn configure_handler(
             warn!(mode = %body.mode, "invalid tailscale mode: {e}");
             return (
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": e.to_string() })),
+                Json(tailscale_error(TAILSCALE_MODE_INVALID, e.to_string())),
             )
                 .into_response();
         },
@@ -102,7 +114,7 @@ async fn configure_handler(
         warn!(mode = %mode, "tailscale config validation failed: {e}");
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(tailscale_error(TAILSCALE_CONFIG_INVALID, e.to_string())),
         )
             .into_response();
     }
@@ -150,7 +162,7 @@ async fn configure_handler(
             error!(mode = %mode, "tailscale configure failed: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
+                Json(tailscale_error(TAILSCALE_CONFIGURE_FAILED, e.to_string())),
             )
                 .into_response()
         },

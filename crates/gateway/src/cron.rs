@@ -9,7 +9,7 @@ use moltis_cron::{
     types::{CronJobCreate, CronJobPatch},
 };
 
-use crate::services::{CronService as CronServiceTrait, ServiceResult};
+use crate::services::{CronService as CronServiceTrait, ServiceError, ServiceResult};
 
 /// Gateway-facing cron service backed by the real [`moltis_cron::service::CronService`].
 pub struct LiveCronService {
@@ -30,22 +30,22 @@ impl LiveCronService {
 impl CronServiceTrait for LiveCronService {
     async fn list(&self) -> ServiceResult {
         let jobs = self.inner.list().await;
-        serde_json::to_value(jobs).map_err(|e| e.to_string())
+        Ok(serde_json::to_value(jobs)?)
     }
 
     async fn status(&self) -> ServiceResult {
         let status = self.inner.status().await;
-        serde_json::to_value(status).map_err(|e| e.to_string())
+        Ok(serde_json::to_value(status)?)
     }
 
     async fn add(&self, params: Value) -> ServiceResult {
-        let create: CronJobCreate =
-            serde_json::from_value(params).map_err(|e| format!("invalid job spec: {e}"))?;
+        let create: CronJobCreate = serde_json::from_value(params)
+            .map_err(|e| ServiceError::message(format!("invalid job spec: {e}")))?;
         let job = self.inner.add(create).await.map_err(|e| {
             error!(error = %e, "cron add failed");
-            e.to_string()
+            ServiceError::message(e)
         })?;
-        serde_json::to_value(job).map_err(|e| e.to_string())
+        Ok(serde_json::to_value(job)?)
     }
 
     async fn update(&self, params: Value) -> ServiceResult {
@@ -59,13 +59,13 @@ impl CronServiceTrait for LiveCronService {
                 .cloned()
                 .unwrap_or(Value::Object(Default::default())),
         )
-        .map_err(|e| format!("invalid patch: {e}"))?;
+        .map_err(|e| ServiceError::message(format!("invalid patch: {e}")))?;
         let job = self
             .inner
             .update(id, patch)
             .await
-            .map_err(|e| e.to_string())?;
-        serde_json::to_value(job).map_err(|e| e.to_string())
+            .map_err(ServiceError::message)?;
+        Ok(serde_json::to_value(job)?)
     }
 
     async fn remove(&self, params: Value) -> ServiceResult {
@@ -73,7 +73,7 @@ impl CronServiceTrait for LiveCronService {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'id'".to_string())?;
-        self.inner.remove(id).await.map_err(|e| e.to_string())?;
+        self.inner.remove(id).await.map_err(ServiceError::message)?;
         Ok(serde_json::json!({ "removed": id }))
     }
 
@@ -86,7 +86,10 @@ impl CronServiceTrait for LiveCronService {
             .get("force")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        self.inner.run(id, force).await.map_err(|e| e.to_string())?;
+        self.inner
+            .run(id, force)
+            .await
+            .map_err(ServiceError::message)?;
         Ok(serde_json::json!({ "ran": id }))
     }
 
@@ -100,7 +103,7 @@ impl CronServiceTrait for LiveCronService {
             .inner
             .runs(id, limit)
             .await
-            .map_err(|e| e.to_string())?;
-        serde_json::to_value(runs).map_err(|e| e.to_string())
+            .map_err(ServiceError::message)?;
+        Ok(serde_json::to_value(runs)?)
     }
 }
