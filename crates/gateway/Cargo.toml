@@ -112,6 +112,7 @@ default = [
   "tls",
   "vault",
   "voice",
+  "wasm",
   "web-ui",
   "whatsapp",
 ]
@@ -149,6 +150,7 @@ tls = [
 ]
 vault = ["dep:moltis-vault", "moltis-auth/vault"]
 voice = ["dep:moltis-voice"]
+wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
 whatsapp = ["dep:moltis-whatsapp", "dep:qrcode"]
 

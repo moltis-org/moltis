@@ -3014,6 +3014,39 @@ pub async fn prepare_gateway(
 
         tool_registry.register(Box::new(exec_tool));
         tool_registry.register(Box::new(moltis_tools::calc::CalcTool::new()));
+        #[cfg(feature = "wasm")]
+        {
+            let wasm_limits = sandbox_router
+                .config()
+                .wasm_tool_limits
+                .clone()
+                .unwrap_or_default();
+            let epoch_interval_ms = sandbox_router
+                .config()
+                .wasm_epoch_interval_ms
+                .unwrap_or(100);
+            let brave_api_key = config
+                .tools
+                .web
+                .search
+                .api_key
+                .as_ref()
+                .map(|s| s.expose_secret().clone())
+                .or_else(|| env_value_with_overrides(&runtime_env_overrides, "BRAVE_API_KEY"))
+                .filter(|k| !k.trim().is_empty());
+            if let Err(e) = moltis_tools::wasm_tool_runner::register_wasm_tools(
+                &mut tool_registry,
+                &wasm_limits,
+                epoch_interval_ms,
+                config.tools.web.fetch.timeout_seconds,
+                config.tools.web.fetch.cache_ttl_minutes,
+                config.tools.web.search.timeout_seconds,
+                config.tools.web.search.cache_ttl_minutes,
+                brave_api_key.as_deref(),
+            ) {
+                warn!(%e, "wasm tool registration failed");
+            }
+        }
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));

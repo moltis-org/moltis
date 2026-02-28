@@ -13,7 +13,12 @@ use {
     tracing::{debug, info, warn},
 };
 
-use crate::exec::{ExecOpts, ExecResult};
+#[cfg(feature = "wasm")]
+use crate::wasm_engine::WasmComponentEngine;
+use crate::{
+    exec::{ExecOpts, ExecResult},
+    wasm_limits::WasmToolLimits,
+};
 
 fn truncate_output_for_display(output: &mut String, max_output_bytes: usize) {
     if output.len() <= max_output_bytes {
@@ -452,8 +457,9 @@ pub struct SandboxConfig {
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
-    /// Backend: `"auto"` (default), `"docker"`, or `"apple-container"`.
-    /// `"auto"` prefers Apple Container on macOS when available.
+    /// Backend: `"auto"` (default), `"docker"`, `"apple-container"`,
+    /// `"restricted-host"`, or `"wasm"`.
+    /// `"auto"` prefers Apple Container on macOS, then Docker, then restricted-host.
     pub backend: String,
     pub resource_limits: ResourceLimits,
     /// Packages to install via `apt-get` after container creation.
@@ -461,6 +467,12 @@ pub struct SandboxConfig {
     pub packages: Vec<String>,
     /// IANA timezone (e.g. "Europe/Paris") injected as `TZ` env var into containers.
     pub timezone: Option<String>,
+    /// Fuel limit for WASM sandbox execution (default: 1 billion instructions).
+    pub wasm_fuel_limit: Option<u64>,
+    /// Epoch interruption interval in milliseconds for WASM sandbox (default: 100ms).
+    pub wasm_epoch_interval_ms: Option<u64>,
+    /// Per-tool WASM limits (fuel/memory). Falls back to built-in defaults when absent.
+    pub wasm_tool_limits: Option<WasmToolLimits>,
 }
 
 impl Default for SandboxConfig {
@@ -478,6 +490,9 @@ impl Default for SandboxConfig {
             resource_limits: ResourceLimits::default(),
             packages: Vec::new(),
             timezone: None,
+            wasm_fuel_limit: None,
+            wasm_epoch_interval_ms: None,
+            wasm_tool_limits: None,
         }
     }
 }
@@ -518,6 +533,9 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             },
             packages: cfg.packages.clone(),
             timezone: None, // Set by gateway from user profile
+            wasm_fuel_limit: cfg.wasm_fuel_limit,
+            wasm_epoch_interval_ms: cfg.wasm_epoch_interval_ms,
+            wasm_tool_limits: cfg.wasm_tool_limits.as_ref().map(WasmToolLimits::from),
         }
     }
 }
@@ -1464,6 +1482,28 @@ impl DockerSandbox {
         args
     }
 
+    /// Security hardening flags for `docker run`.
+    ///
+    /// `is_prebuilt` controls whether `--read-only` is applied: prebuilt images
+    /// already have packages baked in so the root FS can be read-only, while
+    /// non-prebuilt images need a writable root for `apt-get` provisioning.
+    fn hardening_args(is_prebuilt: bool) -> Vec<String> {
+        let mut args = vec![
+            "--cap-drop".to_string(),
+            "ALL".to_string(),
+            "--security-opt".to_string(),
+            "no-new-privileges".to_string(),
+            "--tmpfs".to_string(),
+            "/tmp:rw,nosuid,size=256m".to_string(),
+            "--tmpfs".to_string(),
+            "/run:rw,nosuid,size=64m".to_string(),
+        ];
+        if is_prebuilt {
+            args.push("--read-only".to_string());
+        }
+        args
+    }
+
     fn workspace_args(&self) -> Vec<String> {
         let workspace_dir = moltis_config::data_dir();
         let workspace_dir_str = workspace_dir.display().to_string();
@@ -1546,6 +1586,11 @@ impl Sandbox for DockerSandbox {
             }
         }
 
+        // Resolve image first so we know whether it's prebuilt (affects hardening).
+        let requested_image = image_override.unwrap_or_else(|| self.image());
+        let image = self.resolve_local_image(requested_image).await?;
+        let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
+
         // Start a new container.
         let mut args = vec![
             "run".to_string(),
@@ -1563,11 +1608,10 @@ impl Sandbox for DockerSandbox {
         }
 
         args.extend(self.resource_args());
+        args.extend(Self::hardening_args(is_prebuilt));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
 
-        let requested_image = image_override.unwrap_or_else(|| self.image());
-        let image = self.resolve_local_image(requested_image).await?;
         args.push(image.clone());
         args.extend(["sleep".to_string(), "infinity".to_string()]);
 
@@ -1583,7 +1627,6 @@ impl Sandbox for DockerSandbox {
 
         // Skip provisioning if the image is a pre-built instance sandbox image
         // (packages are already baked in — including /home/sandbox from the Dockerfile).
-        let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
         if !is_prebuilt {
             provision_packages("docker", &name, &self.config.packages).await?;
         }
@@ -1841,6 +1884,1426 @@ impl Sandbox for CgroupSandbox {
             .output()
             .await;
         Ok(())
+    }
+}
+
+/// Restricted host sandbox providing OS-level isolation (env clearing,
+/// restricted PATH, rlimits) without containers or WASM. Commands run on the
+/// host via `sh -c` with sanitised environment and ulimit wrappers.
+pub struct RestrictedHostSandbox {
+    config: SandboxConfig,
+}
+
+impl RestrictedHostSandbox {
+    pub fn new(config: SandboxConfig) -> Self {
+        Self { config }
+    }
+
+    /// Wrap a command with shell `ulimit` calls for resource isolation.
+    fn build_ulimit_wrapped_command(&self, command: &str) -> String {
+        let limits = &self.config.resource_limits;
+        let mut preamble = Vec::new();
+
+        // Max user processes.
+        let nproc = limits.pids_max.map(u64::from).unwrap_or(256);
+        preamble.push(format!("ulimit -u {nproc} 2>/dev/null"));
+
+        // Max open file descriptors.
+        preamble.push("ulimit -n 1024 2>/dev/null".to_string());
+
+        // CPU time in seconds.
+        let cpu_secs = limits
+            .cpu_quota
+            .map(|q| q.ceil() as u64 * 60)
+            .unwrap_or(300);
+        preamble.push(format!("ulimit -t {cpu_secs} 2>/dev/null"));
+
+        // Virtual memory (in KB for ulimit -v).
+        let mem_bytes = limits
+            .memory_limit
+            .as_deref()
+            .and_then(parse_memory_limit)
+            .unwrap_or(512 * 1024 * 1024);
+        let mem_kb = mem_bytes / 1024;
+        preamble.push(format!("ulimit -v {mem_kb} 2>/dev/null"));
+
+        format!("{}; {command}", preamble.join("; "))
+    }
+}
+
+/// Parse a human-readable memory limit like "512M" or "1G" into bytes.
+fn parse_memory_limit(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (num_part, multiplier) =
+        if let Some(n) = s.strip_suffix('G').or_else(|| s.strip_suffix('g')) {
+            (n, 1024 * 1024 * 1024)
+        } else if let Some(n) = s.strip_suffix('M').or_else(|| s.strip_suffix('m')) {
+            (n, 1024 * 1024)
+        } else if let Some(n) = s.strip_suffix('K').or_else(|| s.strip_suffix('k')) {
+            (n, 1024)
+        } else {
+            (s, 1)
+        };
+    num_part.trim().parse::<u64>().ok().map(|n| n * multiplier)
+}
+
+#[async_trait]
+impl Sandbox for RestrictedHostSandbox {
+    fn backend_name(&self) -> &'static str {
+        "restricted-host"
+    }
+
+    fn is_real(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+
+    async fn exec(&self, _id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
+        // Wrap the command with shell ulimit calls for resource isolation.
+        let wrapped = self.build_ulimit_wrapped_command(command);
+
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.args(["-c", &wrapped]);
+
+        // Scrub all inherited env vars for isolation.
+        cmd.env_clear();
+
+        // Set minimal safe environment.
+        cmd.env("PATH", "/usr/local/bin:/usr/bin:/bin");
+        cmd.env("HOME", "/tmp");
+        cmd.env("LANG", "C.UTF-8");
+
+        // Apply user-specified env vars.
+        for (k, v) in &opts.env {
+            cmd.env(k, v);
+        }
+
+        if let Some(ref dir) = opts.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null());
+
+        let child = cmd.spawn()?;
+        let result = tokio::time::timeout(opts.timeout, child.wait_with_output()).await;
+
+        match result {
+            Ok(Ok(output)) => {
+                let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+                truncate_output_for_display(&mut stdout, opts.max_output_bytes);
+                truncate_output_for_display(&mut stderr, opts.max_output_bytes);
+
+                Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code: output.status.code().unwrap_or(-1),
+                })
+            },
+            Ok(Err(e)) => anyhow::bail!("restricted-host sandbox exec failed: {e}"),
+            Err(_) => anyhow::bail!(
+                "restricted-host sandbox exec timed out after {}s",
+                opts.timeout.as_secs()
+            ),
+        }
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Returns `true` when the WASM sandbox feature is compiled in.
+#[cfg(feature = "wasm")]
+pub fn is_wasm_sandbox_available() -> bool {
+    true
+}
+
+#[cfg(not(feature = "wasm"))]
+pub fn is_wasm_sandbox_available() -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// WASM sandbox (real Wasmtime + WASI isolation)
+// ---------------------------------------------------------------------------
+
+/// Real WASM sandbox that uses Wasmtime + WASI for isolated execution.
+///
+/// Two execution tiers:
+/// - **Built-in commands** (~20 common coreutils): echo, cat, ls, mkdir, rm,
+///   cp, mv, pwd, env, head, tail, wc, sort, touch, which, true, false,
+///   test/[, basename, dirname.  These operate on a sandboxed directory tree.
+/// - **WASM module execution**: `.wasm` files run via Wasmtime + WASI with
+///   preopened dirs, fuel metering, epoch interruption, and captured I/O.
+///
+/// Unknown commands return exit code 127.
+#[cfg(feature = "wasm")]
+pub struct WasmSandbox {
+    config: SandboxConfig,
+    wasm_engine: Arc<WasmComponentEngine>,
+}
+
+#[cfg(feature = "wasm")]
+impl WasmSandbox {
+    pub fn new(config: SandboxConfig) -> Result<Self> {
+        let memory_reservation = config
+            .resource_limits
+            .memory_limit
+            .as_deref()
+            .and_then(parse_memory_limit);
+        let wasm_engine = Arc::new(WasmComponentEngine::new(memory_reservation)?);
+        Ok(Self {
+            config,
+            wasm_engine,
+        })
+    }
+
+    /// Default fuel limit: 1 billion instructions.
+    fn fuel_limit(&self) -> u64 {
+        self.config.wasm_fuel_limit.unwrap_or(1_000_000_000)
+    }
+
+    /// Default epoch interval: 100ms.
+    fn epoch_interval_ms(&self) -> u64 {
+        self.config.wasm_epoch_interval_ms.unwrap_or(100)
+    }
+
+    /// Root directory for this sandbox instance's isolated filesystem.
+    fn sandbox_root(&self, id: &SandboxId) -> PathBuf {
+        match self.config.home_persistence {
+            HomePersistence::Shared => {
+                let base = self.config.shared_home_dir.clone().unwrap_or_else(|| {
+                    moltis_config::data_dir()
+                        .join("sandbox")
+                        .join("home")
+                        .join("shared")
+                });
+                base.join("wasm")
+            },
+            HomePersistence::Session => moltis_config::data_dir()
+                .join("sandbox")
+                .join("wasm")
+                .join(sanitize_path_component(&id.key)),
+            HomePersistence::Off => moltis_config::data_dir()
+                .join("sandbox")
+                .join("wasm")
+                .join(sanitize_path_component(&id.key)),
+        }
+    }
+
+    /// Guest home directory inside the sandboxed filesystem.
+    fn home_dir(&self, id: &SandboxId) -> PathBuf {
+        self.sandbox_root(id).join("home")
+    }
+
+    /// Guest tmp directory inside the sandboxed filesystem.
+    fn tmp_dir(&self, id: &SandboxId) -> PathBuf {
+        self.sandbox_root(id).join("tmp")
+    }
+
+    /// Execute a `.wasm` module via Wasmtime + WASI with full isolation.
+    async fn exec_wasm_module(
+        &self,
+        wasm_path: &std::path::Path,
+        args: &[String],
+        id: &SandboxId,
+        opts: &ExecOpts,
+    ) -> Result<ExecResult> {
+        let wasm_engine = Arc::clone(&self.wasm_engine);
+        let fuel_limit = self.fuel_limit();
+        let epoch_interval_ms = self.epoch_interval_ms();
+        let home_dir = self.home_dir(id);
+        let tmp_dir = self.tmp_dir(id);
+        let wasm_bytes = tokio::fs::read(wasm_path).await?;
+        let args = args.to_vec();
+        let timeout = opts.timeout;
+        let max_output_bytes = opts.max_output_bytes;
+        let env_vars: Vec<(String, String)> = opts.env.clone().into_iter().collect();
+
+        let result = tokio::task::spawn_blocking(move || -> Result<ExecResult> {
+            use wasmtime_wasi::pipe::MemoryOutputPipe;
+
+            let engine = wasm_engine.engine().clone();
+            let stdout_pipe = MemoryOutputPipe::new(max_output_bytes);
+            let stderr_pipe = MemoryOutputPipe::new(max_output_bytes);
+
+            let mut wasi_builder = wasmtime_wasi::WasiCtxBuilder::new();
+            wasi_builder.stdout(stdout_pipe.clone());
+            wasi_builder.stderr(stderr_pipe.clone());
+            wasi_builder.args(&args);
+
+            // Minimal safe environment.
+            wasi_builder.env("PATH", "/usr/local/bin:/usr/bin:/bin");
+            wasi_builder.env("HOME", "/home/sandbox");
+            wasi_builder.env("LANG", "C.UTF-8");
+            for (k, v) in &env_vars {
+                wasi_builder.env(k, v);
+            }
+
+            // Preopened directories for filesystem isolation.
+            wasi_builder
+                .preopened_dir(
+                    &home_dir,
+                    "/home/sandbox",
+                    wasmtime_wasi::DirPerms::all(),
+                    wasmtime_wasi::FilePerms::all(),
+                )
+                .map_err(|e| anyhow::anyhow!("failed to preopen /home/sandbox: {e}"))?;
+            wasi_builder
+                .preopened_dir(
+                    &tmp_dir,
+                    "/tmp",
+                    wasmtime_wasi::DirPerms::all(),
+                    wasmtime_wasi::FilePerms::all(),
+                )
+                .map_err(|e| anyhow::anyhow!("failed to preopen /tmp: {e}"))?;
+
+            // Build preview1-compatible context for core WASM modules.
+            let wasi_p1 = wasi_builder.build_p1();
+
+            let mut store = wasmtime::Store::new(&engine, wasi_p1);
+            store.set_fuel(fuel_limit)?;
+            store.set_epoch_deadline(1);
+
+            // Background epoch ticker for timeout enforcement.
+            let engine_clone = engine.clone();
+            let epoch_handle = std::thread::spawn(move || {
+                let interval = std::time::Duration::from_millis(epoch_interval_ms);
+                let deadline = std::time::Instant::now() + timeout;
+                while std::time::Instant::now() < deadline {
+                    std::thread::sleep(interval);
+                    engine_clone.increment_epoch();
+                }
+            });
+
+            let module = wasm_engine.compile_module(&wasm_bytes)?;
+            let mut linker = wasmtime::Linker::new(&engine);
+            wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |ctx| ctx)?;
+
+            let instance = linker.instantiate(&mut store, &module)?;
+            let func = instance
+                .get_typed_func::<(), ()>(&mut store, "_start")
+                .map_err(|e| anyhow::anyhow!("WASM module missing _start: {e}"))?;
+
+            let collect_pipe = |pipe: MemoryOutputPipe| -> String {
+                let b: bytes::Bytes = pipe.try_into_inner().unwrap_or_default().into();
+                String::from_utf8_lossy(&b).into_owned()
+            };
+
+            let exit_code: i32 = match func.call(&mut store, ()) {
+                Ok(()) => 0,
+                Err(e) => {
+                    if let Some(exit) = e.downcast_ref::<wasmtime_wasi::I32Exit>() {
+                        exit.0
+                    } else {
+                        let msg = format!("{e:#}");
+                        let mut stdout_str = collect_pipe(stdout_pipe);
+                        let mut stderr_str = collect_pipe(stderr_pipe);
+                        truncate_output_for_display(&mut stdout_str, max_output_bytes);
+
+                        if msg.contains("fuel") || msg.contains("epoch") {
+                            stderr_str.push_str(&format!("\nWASM execution limit exceeded: {msg}"));
+                            truncate_output_for_display(&mut stderr_str, max_output_bytes);
+                            drop(epoch_handle);
+                            return Ok(ExecResult {
+                                stdout: stdout_str,
+                                stderr: stderr_str,
+                                exit_code: 137,
+                            });
+                        }
+
+                        stderr_str.push_str(&format!("\nWASM error: {msg}"));
+                        truncate_output_for_display(&mut stderr_str, max_output_bytes);
+                        drop(epoch_handle);
+                        return Ok(ExecResult {
+                            stdout: stdout_str,
+                            stderr: stderr_str,
+                            exit_code: 1,
+                        });
+                    }
+                },
+            };
+
+            drop(epoch_handle);
+            let mut stdout = collect_pipe(stdout_pipe);
+            let mut stderr = collect_pipe(stderr_pipe);
+            truncate_output_for_display(&mut stdout, max_output_bytes);
+            truncate_output_for_display(&mut stderr, max_output_bytes);
+
+            Ok(ExecResult {
+                stdout,
+                stderr,
+                exit_code,
+            })
+        })
+        .await??;
+
+        Ok(result)
+    }
+}
+
+#[cfg(feature = "wasm")]
+#[async_trait]
+impl Sandbox for WasmSandbox {
+    fn backend_name(&self) -> &'static str {
+        "wasm"
+    }
+
+    fn is_real(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        let home = self.home_dir(id);
+        let tmp = self.tmp_dir(id);
+        tokio::fs::create_dir_all(&home).await?;
+        tokio::fs::create_dir_all(&tmp).await?;
+        Ok(())
+    }
+
+    async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
+        let sandbox_root = self.sandbox_root(id);
+        let env_map: HashMap<String, String> = opts.env.iter().cloned().collect();
+
+        // Parse the command string.
+        let segments = WasmBuiltins::parse_command_line(command);
+
+        let mut last_result = ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+
+        for segment in &segments {
+            let should_run = match segment.connector {
+                CommandConnector::First | CommandConnector::Sequence => true,
+                CommandConnector::And => last_result.exit_code == 0,
+                CommandConnector::Or => last_result.exit_code != 0,
+            };
+
+            if !should_run {
+                continue;
+            }
+
+            let expanded = WasmBuiltins::expand_vars(&segment.args, &env_map);
+            if expanded.is_empty() {
+                continue;
+            }
+
+            let empty = String::new();
+            let (cmd_name, cmd_args) = expanded.split_first().unwrap_or((&empty, &[]));
+
+            // Check for output redirect.
+            let (cmd_args, redirect) = WasmBuiltins::extract_redirect(cmd_args);
+
+            // Check if this is a .wasm file reference.
+            if cmd_name.ends_with(".wasm") {
+                let wasm_path =
+                    WasmBuiltins::resolve_guest_path(&sandbox_root, cmd_name, "/home/sandbox");
+                if let Some(wasm_path) = wasm_path {
+                    last_result = self
+                        .exec_wasm_module(&wasm_path, &cmd_args, id, opts)
+                        .await?;
+                } else {
+                    last_result = ExecResult {
+                        stdout: String::new(),
+                        stderr: format!("{cmd_name}: path outside sandbox or not found\n"),
+                        exit_code: 1,
+                    };
+                }
+            } else {
+                // Try built-in commands.
+                last_result = WasmBuiltins::execute(cmd_name, &cmd_args, &sandbox_root, &env_map);
+            }
+
+            // Handle redirects.
+            if let Some(ref redir) = redirect {
+                let resolved =
+                    WasmBuiltins::resolve_guest_path(&sandbox_root, &redir.target, "/home/sandbox");
+                if let Some(host_path) = resolved {
+                    if let Some(parent) = host_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let write_result = if redir.append {
+                        use std::io::Write;
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&host_path)
+                            .and_then(|mut f| f.write_all(last_result.stdout.as_bytes()))
+                    } else {
+                        std::fs::write(&host_path, &last_result.stdout)
+                    };
+                    if let Err(e) = write_result {
+                        last_result.stderr.push_str(&format!("redirect: {e}\n"));
+                        last_result.exit_code = 1;
+                    } else {
+                        last_result.stdout.clear();
+                    }
+                } else {
+                    last_result.stderr.push_str(&format!(
+                        "redirect: path outside sandbox: {}\n",
+                        redir.target
+                    ));
+                    last_result.exit_code = 1;
+                }
+            }
+        }
+
+        Ok(last_result)
+    }
+
+    async fn cleanup(&self, id: &SandboxId) -> Result<()> {
+        if self.config.home_persistence == HomePersistence::Off {
+            let root = self.sandbox_root(id);
+            if root.exists() {
+                tokio::fs::remove_dir_all(&root).await.ok();
+            }
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WASM built-in command interpreter
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "wasm")]
+#[derive(Debug)]
+enum CommandConnector {
+    First,
+    Sequence, // ;
+    And,      // &&
+    Or,       // ||
+}
+
+#[cfg(feature = "wasm")]
+#[derive(Debug)]
+struct CommandSegment {
+    connector: CommandConnector,
+    args: Vec<String>,
+}
+
+#[cfg(feature = "wasm")]
+struct OutputRedirect {
+    target: String,
+    append: bool,
+}
+
+#[cfg(feature = "wasm")]
+struct WasmBuiltins;
+
+#[cfg(feature = "wasm")]
+impl WasmBuiltins {
+    /// Parse a command line into segments separated by `&&`, `||`, and `;`.
+    fn parse_command_line(input: &str) -> Vec<CommandSegment> {
+        let mut segments = Vec::new();
+        let mut current = String::new();
+        let mut connector = CommandConnector::First;
+        let chars: Vec<char> = input.chars().collect();
+        let mut i = 0;
+
+        while i < chars.len() {
+            if chars[i] == '&' && i + 1 < chars.len() && chars[i + 1] == '&' {
+                if !current.trim().is_empty()
+                    && let Ok(args) = shell_words::split(current.trim())
+                {
+                    segments.push(CommandSegment { connector, args });
+                }
+                connector = CommandConnector::And;
+                current.clear();
+                i += 2;
+                continue;
+            }
+            if chars[i] == '|' && i + 1 < chars.len() && chars[i + 1] == '|' {
+                if !current.trim().is_empty()
+                    && let Ok(args) = shell_words::split(current.trim())
+                {
+                    segments.push(CommandSegment { connector, args });
+                }
+                connector = CommandConnector::Or;
+                current.clear();
+                i += 2;
+                continue;
+            }
+            if chars[i] == ';' {
+                if !current.trim().is_empty()
+                    && let Ok(args) = shell_words::split(current.trim())
+                {
+                    segments.push(CommandSegment { connector, args });
+                }
+                connector = CommandConnector::Sequence;
+                current.clear();
+                i += 1;
+                continue;
+            }
+            current.push(chars[i]);
+            i += 1;
+        }
+
+        if !current.trim().is_empty()
+            && let Ok(args) = shell_words::split(current.trim())
+        {
+            segments.push(CommandSegment { connector, args });
+        }
+
+        segments
+    }
+
+    /// Expand `$VAR` references in arguments.
+    fn expand_vars(args: &[String], env: &HashMap<String, String>) -> Vec<String> {
+        args.iter()
+            .map(|arg| {
+                let mut result = arg.clone();
+                for (key, val) in env {
+                    result = result.replace(&format!("${key}"), val);
+                    result = result.replace(&format!("${{{key}}}"), val);
+                }
+                // Expand well-known vars.
+                result = result.replace("$HOME", "/home/sandbox");
+                result = result.replace("${HOME}", "/home/sandbox");
+                result
+            })
+            .collect()
+    }
+
+    /// Extract `>` or `>>` redirect from args, returning remaining args + redirect info.
+    fn extract_redirect(args: &[String]) -> (Vec<String>, Option<OutputRedirect>) {
+        let mut remaining = Vec::new();
+        let mut redirect = None;
+
+        let mut i = 0;
+        while i < args.len() {
+            if args[i] == ">>" && i + 1 < args.len() {
+                redirect = Some(OutputRedirect {
+                    target: args[i + 1].clone(),
+                    append: true,
+                });
+                i += 2;
+            } else if args[i] == ">" && i + 1 < args.len() {
+                redirect = Some(OutputRedirect {
+                    target: args[i + 1].clone(),
+                    append: false,
+                });
+                i += 2;
+            } else if args[i].starts_with(">>") {
+                redirect = Some(OutputRedirect {
+                    target: args[i][2..].to_string(),
+                    append: true,
+                });
+                i += 1;
+            } else if args[i].starts_with('>') && args[i].len() > 1 {
+                redirect = Some(OutputRedirect {
+                    target: args[i][1..].to_string(),
+                    append: false,
+                });
+                i += 1;
+            } else {
+                remaining.push(args[i].clone());
+                i += 1;
+            }
+        }
+
+        (remaining, redirect)
+    }
+
+    /// Resolve a guest path to a host path within the sandbox root.
+    /// Returns `None` if the path escapes the sandbox.
+    fn resolve_guest_path(
+        sandbox_root: &std::path::Path,
+        guest_path: &str,
+        guest_cwd: &str,
+    ) -> Option<PathBuf> {
+        let logical = if guest_path.starts_with('/') {
+            PathBuf::from(guest_path)
+        } else {
+            PathBuf::from(guest_cwd).join(guest_path)
+        };
+
+        // Map guest paths to host sandbox paths.
+        let host_path = if let Ok(rest) = logical.strip_prefix("/home/sandbox") {
+            sandbox_root.join("home").join(rest)
+        } else if let Ok(rest) = logical.strip_prefix("/tmp") {
+            sandbox_root.join("tmp").join(rest)
+        } else {
+            // Path outside known sandbox mounts.
+            return None;
+        };
+
+        // Canonicalize the parent to check for symlink escapes.
+        // The file itself may not exist yet (e.g. for write targets).
+        let check_path = if host_path.exists() {
+            host_path.canonicalize().ok()?
+        } else if let Some(parent) = host_path.parent() {
+            if parent.exists() {
+                let canonical_parent = parent.canonicalize().ok()?;
+                canonical_parent.join(host_path.file_name()?)
+            } else {
+                host_path.clone()
+            }
+        } else {
+            host_path.clone()
+        };
+
+        let canonical_root = if sandbox_root.exists() {
+            sandbox_root.canonicalize().ok()?
+        } else {
+            sandbox_root.to_path_buf()
+        };
+
+        if check_path.starts_with(&canonical_root) {
+            Some(host_path)
+        } else {
+            None
+        }
+    }
+
+    /// Execute a built-in command. Returns exit code 127 for unknown commands.
+    fn execute(
+        name: &str,
+        args: &[String],
+        sandbox_root: &std::path::Path,
+        env: &HashMap<String, String>,
+    ) -> ExecResult {
+        match name {
+            "echo" => Self::cmd_echo(args),
+            "cat" => Self::cmd_cat(args, sandbox_root),
+            "ls" => Self::cmd_ls(args, sandbox_root),
+            "mkdir" => Self::cmd_mkdir(args, sandbox_root),
+            "rm" => Self::cmd_rm(args, sandbox_root),
+            "cp" => Self::cmd_cp(args, sandbox_root),
+            "mv" => Self::cmd_mv(args, sandbox_root),
+            "pwd" => ExecResult {
+                stdout: "/home/sandbox\n".into(),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+            "env" => Self::cmd_env(env),
+            "head" => Self::cmd_head(args, sandbox_root),
+            "tail" => Self::cmd_tail(args, sandbox_root),
+            "wc" => Self::cmd_wc(args, sandbox_root),
+            "sort" => Self::cmd_sort(args, sandbox_root),
+            "touch" => Self::cmd_touch(args, sandbox_root),
+            "which" => Self::cmd_which(args),
+            "true" => ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+            "false" => ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+            },
+            "test" | "[" => Self::cmd_test(args, sandbox_root),
+            "basename" => Self::cmd_basename(args),
+            "dirname" => Self::cmd_dirname(args),
+            _ => ExecResult {
+                stdout: String::new(),
+                stderr: format!("{name}: command not found in WASM sandbox\n"),
+                exit_code: 127,
+            },
+        }
+    }
+
+    // --- Built-in command implementations ---
+
+    fn cmd_echo(args: &[String]) -> ExecResult {
+        // Handle -n flag.
+        let (no_newline, text_args) = if args.first().is_some_and(|a| a == "-n") {
+            (true, &args[1..])
+        } else {
+            (false, args)
+        };
+        let text = text_args.join(" ");
+        let stdout = if no_newline {
+            text
+        } else {
+            format!("{text}\n")
+        };
+        ExecResult {
+            stdout,
+            stderr: String::new(),
+            exit_code: 0,
+        }
+    }
+
+    fn cmd_cat(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for arg in args {
+            match Self::resolve_guest_path(sandbox_root, arg, "/home/sandbox") {
+                Some(path) => match std::fs::read_to_string(&path) {
+                    Ok(content) => stdout.push_str(&content),
+                    Err(e) => {
+                        stderr.push_str(&format!("cat: {arg}: {e}\n"));
+                        exit_code = 1;
+                    },
+                },
+                None => {
+                    stderr.push_str(&format!("cat: {arg}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_ls(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let mut show_long = false;
+        let mut show_all = false;
+        let mut paths = Vec::new();
+
+        for arg in args {
+            if arg.starts_with('-') {
+                if arg.contains('l') {
+                    show_long = true;
+                }
+                if arg.contains('a') {
+                    show_all = true;
+                }
+            } else {
+                paths.push(arg.as_str());
+            }
+        }
+
+        if paths.is_empty() {
+            paths.push("/home/sandbox");
+        }
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for path in &paths {
+            match Self::resolve_guest_path(sandbox_root, path, "/home/sandbox") {
+                Some(host_path) => {
+                    if !host_path.exists() {
+                        stderr.push_str(&format!("ls: {path}: No such file or directory\n"));
+                        exit_code = 1;
+                        continue;
+                    }
+                    if host_path.is_file() {
+                        if let Some(name) = host_path.file_name() {
+                            stdout.push_str(&format!("{}\n", name.to_string_lossy()));
+                        }
+                        continue;
+                    }
+                    match std::fs::read_dir(&host_path) {
+                        Ok(entries) => {
+                            let mut names: Vec<String> = entries
+                                .filter_map(|e| e.ok())
+                                .filter_map(|e| {
+                                    let name = e.file_name().to_string_lossy().into_owned();
+                                    if !show_all && name.starts_with('.') {
+                                        None
+                                    } else {
+                                        Some(name)
+                                    }
+                                })
+                                .collect();
+                            names.sort();
+                            if show_long {
+                                for name in &names {
+                                    let full = host_path.join(name);
+                                    let meta = std::fs::metadata(&full);
+                                    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                                    let kind = if full.is_dir() {
+                                        "d"
+                                    } else {
+                                        "-"
+                                    };
+                                    stdout.push_str(&format!("{kind}rw-r--r-- {size:>8} {name}\n"));
+                                }
+                            } else {
+                                for name in &names {
+                                    stdout.push_str(&format!("{name}\n"));
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            stderr.push_str(&format!("ls: {path}: {e}\n"));
+                            exit_code = 1;
+                        },
+                    }
+                },
+                None => {
+                    stderr.push_str(&format!("ls: {path}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_mkdir(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+        let create_parents = args.iter().any(|a| a == "-p");
+
+        for arg in args.iter().filter(|a| !a.starts_with('-')) {
+            match Self::resolve_guest_path(sandbox_root, arg, "/home/sandbox") {
+                Some(path) => {
+                    let result = if create_parents {
+                        std::fs::create_dir_all(&path)
+                    } else {
+                        std::fs::create_dir(&path)
+                    };
+                    if let Err(e) = result {
+                        stderr.push_str(&format!("mkdir: {arg}: {e}\n"));
+                        exit_code = 1;
+                    }
+                },
+                None => {
+                    stderr.push_str(&format!("mkdir: {arg}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        ExecResult {
+            stdout: String::new(),
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_rm(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+        let recursive = args.iter().any(|a| a == "-r" || a == "-rf" || a == "-fr");
+        let force = args.iter().any(|a| a.contains('f'));
+
+        for arg in args.iter().filter(|a| !a.starts_with('-')) {
+            match Self::resolve_guest_path(sandbox_root, arg, "/home/sandbox") {
+                Some(path) => {
+                    if !path.exists() {
+                        if !force {
+                            stderr.push_str(&format!("rm: {arg}: No such file or directory\n"));
+                            exit_code = 1;
+                        }
+                        continue;
+                    }
+                    let result = if path.is_dir() && recursive {
+                        std::fs::remove_dir_all(&path)
+                    } else if path.is_dir() {
+                        stderr.push_str(&format!("rm: {arg}: is a directory\n"));
+                        exit_code = 1;
+                        continue;
+                    } else {
+                        std::fs::remove_file(&path)
+                    };
+                    if let Err(e) = result {
+                        stderr.push_str(&format!("rm: {arg}: {e}\n"));
+                        exit_code = 1;
+                    }
+                },
+                None => {
+                    stderr.push_str(&format!("rm: {arg}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        ExecResult {
+            stdout: String::new(),
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_cp(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let non_flag_args: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+        if non_flag_args.len() < 2 {
+            return ExecResult {
+                stdout: String::new(),
+                stderr: "cp: missing operand\n".into(),
+                exit_code: 1,
+            };
+        }
+
+        let src_path = non_flag_args[0];
+        let dst_path = non_flag_args[1];
+
+        let src = match Self::resolve_guest_path(sandbox_root, src_path, "/home/sandbox") {
+            Some(p) => p,
+            None => {
+                return ExecResult {
+                    stdout: String::new(),
+                    stderr: format!("cp: {src_path}: path outside sandbox\n"),
+                    exit_code: 1,
+                };
+            },
+        };
+        let dst = match Self::resolve_guest_path(sandbox_root, dst_path, "/home/sandbox") {
+            Some(p) => p,
+            None => {
+                return ExecResult {
+                    stdout: String::new(),
+                    stderr: format!("cp: {dst_path}: path outside sandbox\n"),
+                    exit_code: 1,
+                };
+            },
+        };
+
+        let actual_dst = if dst.is_dir() {
+            if let Some(name) = src.file_name() {
+                dst.join(name)
+            } else {
+                dst
+            }
+        } else {
+            dst
+        };
+
+        match std::fs::copy(&src, &actual_dst) {
+            Ok(_) => ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+            Err(e) => ExecResult {
+                stdout: String::new(),
+                stderr: format!("cp: {e}\n"),
+                exit_code: 1,
+            },
+        }
+    }
+
+    fn cmd_mv(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let non_flag_args: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+        if non_flag_args.len() < 2 {
+            return ExecResult {
+                stdout: String::new(),
+                stderr: "mv: missing operand\n".into(),
+                exit_code: 1,
+            };
+        }
+
+        let src_path = non_flag_args[0];
+        let dst_path = non_flag_args[1];
+
+        let src = match Self::resolve_guest_path(sandbox_root, src_path, "/home/sandbox") {
+            Some(p) => p,
+            None => {
+                return ExecResult {
+                    stdout: String::new(),
+                    stderr: format!("mv: {src_path}: path outside sandbox\n"),
+                    exit_code: 1,
+                };
+            },
+        };
+        let dst = match Self::resolve_guest_path(sandbox_root, dst_path, "/home/sandbox") {
+            Some(p) => p,
+            None => {
+                return ExecResult {
+                    stdout: String::new(),
+                    stderr: format!("mv: {dst_path}: path outside sandbox\n"),
+                    exit_code: 1,
+                };
+            },
+        };
+
+        let actual_dst = if dst.is_dir() {
+            if let Some(name) = src.file_name() {
+                dst.join(name)
+            } else {
+                dst
+            }
+        } else {
+            dst
+        };
+
+        match std::fs::rename(&src, &actual_dst) {
+            Ok(()) => ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+            Err(e) => ExecResult {
+                stdout: String::new(),
+                stderr: format!("mv: {e}\n"),
+                exit_code: 1,
+            },
+        }
+    }
+
+    fn cmd_env(env: &HashMap<String, String>) -> ExecResult {
+        let mut stdout = String::new();
+        stdout.push_str("PATH=/usr/local/bin:/usr/bin:/bin\n");
+        stdout.push_str("HOME=/home/sandbox\n");
+        stdout.push_str("LANG=C.UTF-8\n");
+        let mut keys: Vec<&String> = env.keys().collect();
+        keys.sort();
+        for key in keys {
+            if let Some(val) = env.get(key) {
+                stdout.push_str(&format!("{key}={val}\n"));
+            }
+        }
+        ExecResult {
+            stdout,
+            stderr: String::new(),
+            exit_code: 0,
+        }
+    }
+
+    fn cmd_head(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let mut lines = 10usize;
+        let mut files = Vec::new();
+
+        let mut i = 0;
+        while i < args.len() {
+            if args[i] == "-n" && i + 1 < args.len() {
+                lines = args[i + 1].parse().unwrap_or(10);
+                i += 2;
+            } else if args[i].starts_with('-') && args[i][1..].parse::<usize>().is_ok() {
+                lines = args[i][1..].parse().unwrap_or(10);
+                i += 1;
+            } else {
+                files.push(&args[i]);
+                i += 1;
+            }
+        }
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for file in &files {
+            match Self::resolve_guest_path(sandbox_root, file, "/home/sandbox") {
+                Some(path) => match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        for line in content.lines().take(lines) {
+                            stdout.push_str(line);
+                            stdout.push('\n');
+                        }
+                    },
+                    Err(e) => {
+                        stderr.push_str(&format!("head: {file}: {e}\n"));
+                        exit_code = 1;
+                    },
+                },
+                None => {
+                    stderr.push_str(&format!("head: {file}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_tail(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let mut lines = 10usize;
+        let mut files = Vec::new();
+
+        let mut i = 0;
+        while i < args.len() {
+            if args[i] == "-n" && i + 1 < args.len() {
+                lines = args[i + 1].parse().unwrap_or(10);
+                i += 2;
+            } else if args[i].starts_with('-') && args[i][1..].parse::<usize>().is_ok() {
+                lines = args[i][1..].parse().unwrap_or(10);
+                i += 1;
+            } else {
+                files.push(&args[i]);
+                i += 1;
+            }
+        }
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for file in &files {
+            match Self::resolve_guest_path(sandbox_root, file, "/home/sandbox") {
+                Some(path) => match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let all_lines: Vec<&str> = content.lines().collect();
+                        let start = all_lines.len().saturating_sub(lines);
+                        for line in &all_lines[start..] {
+                            stdout.push_str(line);
+                            stdout.push('\n');
+                        }
+                    },
+                    Err(e) => {
+                        stderr.push_str(&format!("tail: {file}: {e}\n"));
+                        exit_code = 1;
+                    },
+                },
+                None => {
+                    stderr.push_str(&format!("tail: {file}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_wc(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let files: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for file in &files {
+            match Self::resolve_guest_path(sandbox_root, file, "/home/sandbox") {
+                Some(path) => match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let line_count = content.lines().count();
+                        let word_count = content.split_whitespace().count();
+                        let byte_count = content.len();
+                        stdout.push_str(&format!(
+                            "{line_count:>8} {word_count:>8} {byte_count:>8} {file}\n"
+                        ));
+                    },
+                    Err(e) => {
+                        stderr.push_str(&format!("wc: {file}: {e}\n"));
+                        exit_code = 1;
+                    },
+                },
+                None => {
+                    stderr.push_str(&format!("wc: {file}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_sort(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let files: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+        let reverse = args.iter().any(|a| a == "-r");
+        let mut all_lines = Vec::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for file in &files {
+            match Self::resolve_guest_path(sandbox_root, file, "/home/sandbox") {
+                Some(path) => match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        all_lines.extend(content.lines().map(ToOwned::to_owned));
+                    },
+                    Err(e) => {
+                        stderr.push_str(&format!("sort: {file}: {e}\n"));
+                        exit_code = 1;
+                    },
+                },
+                None => {
+                    stderr.push_str(&format!("sort: {file}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        all_lines.sort();
+        if reverse {
+            all_lines.reverse();
+        }
+
+        let mut stdout = String::new();
+        for line in &all_lines {
+            stdout.push_str(line);
+            stdout.push('\n');
+        }
+
+        ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_touch(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for arg in args.iter().filter(|a| !a.starts_with('-')) {
+            match Self::resolve_guest_path(sandbox_root, arg, "/home/sandbox") {
+                Some(path) => {
+                    if !path.exists() {
+                        if let Some(parent) = path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if let Err(e) = std::fs::write(&path, "") {
+                            stderr.push_str(&format!("touch: {arg}: {e}\n"));
+                            exit_code = 1;
+                        }
+                    }
+                    // If file exists, we'd update mtime but that's not critical.
+                },
+                None => {
+                    stderr.push_str(&format!("touch: {arg}: path outside sandbox\n"));
+                    exit_code = 1;
+                },
+            }
+        }
+
+        ExecResult {
+            stdout: String::new(),
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_which(args: &[String]) -> ExecResult {
+        let builtins = [
+            "echo", "cat", "ls", "mkdir", "rm", "cp", "mv", "pwd", "env", "head", "tail", "wc",
+            "sort", "touch", "which", "true", "false", "test", "[", "basename", "dirname",
+        ];
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for arg in args {
+            if builtins.contains(&arg.as_str()) {
+                stdout.push_str(&format!("{arg}: WASM sandbox built-in\n"));
+            } else {
+                stderr.push_str(&format!("{arg} not found\n"));
+                exit_code = 1;
+            }
+        }
+
+        ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn cmd_test(args: &[String], sandbox_root: &std::path::Path) -> ExecResult {
+        // Strip trailing ] if present (for [ ... ] syntax).
+        let args: Vec<&String> = if args.last().is_some_and(|a| a == "]") {
+            args[..args.len() - 1].iter().collect()
+        } else {
+            args.iter().collect()
+        };
+
+        let result = match args.len() {
+            0 => false,
+            1 => !args[0].is_empty(),
+            2 => {
+                let op = args[0].as_str();
+                let operand = args[1].as_str();
+                match op {
+                    "-f" => Self::resolve_guest_path(sandbox_root, operand, "/home/sandbox")
+                        .is_some_and(|p| p.is_file()),
+                    "-d" => Self::resolve_guest_path(sandbox_root, operand, "/home/sandbox")
+                        .is_some_and(|p| p.is_dir()),
+                    "-e" => Self::resolve_guest_path(sandbox_root, operand, "/home/sandbox")
+                        .is_some_and(|p| p.exists()),
+                    "-z" => operand.is_empty(),
+                    "-n" => !operand.is_empty(),
+                    _ => false,
+                }
+            },
+            3 => {
+                let left = args[0].as_str();
+                let op = args[1].as_str();
+                let right = args[2].as_str();
+                match op {
+                    "=" | "==" => left == right,
+                    "!=" => left != right,
+                    "-eq" => left.parse::<i64>().ok() == right.parse::<i64>().ok(),
+                    "-ne" => left.parse::<i64>().ok() != right.parse::<i64>().ok(),
+                    "-lt" => left
+                        .parse::<i64>()
+                        .ok()
+                        .zip(right.parse::<i64>().ok())
+                        .is_some_and(|(l, r)| l < r),
+                    "-gt" => left
+                        .parse::<i64>()
+                        .ok()
+                        .zip(right.parse::<i64>().ok())
+                        .is_some_and(|(l, r)| l > r),
+                    _ => false,
+                }
+            },
+            _ => false,
+        };
+
+        ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: if result {
+                0
+            } else {
+                1
+            },
+        }
+    }
+
+    fn cmd_basename(args: &[String]) -> ExecResult {
+        if args.is_empty() {
+            return ExecResult {
+                stdout: String::new(),
+                stderr: "basename: missing operand\n".into(),
+                exit_code: 1,
+            };
+        }
+        let path = std::path::Path::new(&args[0]);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        ExecResult {
+            stdout: format!("{name}\n"),
+            stderr: String::new(),
+            exit_code: 0,
+        }
+    }
+
+    fn cmd_dirname(args: &[String]) -> ExecResult {
+        if args.is_empty() {
+            return ExecResult {
+                stdout: String::new(),
+                stderr: "dirname: missing operand\n".into(),
+                exit_code: 1,
+            };
+        }
+        let path = std::path::Path::new(&args[0]);
+        let parent = path
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| ".".into());
+        ExecResult {
+            stdout: format!("{parent}\n"),
+            stderr: String::new(),
+            exit_code: 0,
+        }
     }
 }
 
@@ -2526,11 +3989,12 @@ impl FailoverSandbox {
     }
 
     fn should_failover(&self, error: &anyhow::Error) -> bool {
-        if self.primary_name != "apple-container" {
-            return false;
-        }
         let message = format!("{error:#}");
-        is_apple_container_corruption_error(&message)
+        match self.primary_name {
+            "apple-container" => is_apple_container_corruption_error(&message),
+            "docker" => is_docker_failover_error(&message),
+            _ => false,
+        }
     }
 }
 
@@ -3104,32 +4568,77 @@ fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
             }
             let apple_backend: Arc<dyn Sandbox> =
                 Arc::new(AppleContainerSandbox::new(config.clone()));
-            maybe_wrap_with_docker_failover(apple_backend, &config)
+            maybe_wrap_with_failover(apple_backend, &config)
         },
+        "restricted-host" => {
+            tracing::info!("sandbox backend: restricted-host (env clearing, rlimits)");
+            Arc::new(RestrictedHostSandbox::new(config))
+        },
+        "wasm" | "wasmtime" => create_wasm_backend(config),
         _ => auto_detect_backend(config),
     }
 }
 
-#[cfg(target_os = "macos")]
-fn maybe_wrap_with_docker_failover(
-    primary: Arc<dyn Sandbox>,
-    config: &SandboxConfig,
-) -> Arc<dyn Sandbox> {
-    let docker_usable =
-        should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available());
-    if !docker_usable {
-        return primary;
+/// Create a WASM sandbox backend, falling back to `RestrictedHostSandbox` if
+/// the feature is disabled or initialisation fails.
+fn create_wasm_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    #[cfg(feature = "wasm")]
+    {
+        match WasmSandbox::new(config.clone()) {
+            Ok(sandbox) => {
+                tracing::info!("sandbox backend: wasm (WASI-isolated execution)");
+                Arc::new(sandbox)
+            },
+            Err(e) => {
+                tracing::warn!(%e, "failed to initialize wasmtime engine, falling back to restricted-host");
+                Arc::new(RestrictedHostSandbox::new(config))
+            },
+        }
+    }
+    #[cfg(not(feature = "wasm"))]
+    {
+        tracing::warn!("wasm sandbox requested but feature not compiled in; using restricted-host");
+        Arc::new(RestrictedHostSandbox::new(config))
+    }
+}
+
+/// Wrap a primary sandbox backend with a failover chain.
+///
+/// Tries Docker first as fallback, then WASM, returning the primary unwrapped
+/// if no fallback runtime is available.
+fn maybe_wrap_with_failover(primary: Arc<dyn Sandbox>, config: &SandboxConfig) -> Arc<dyn Sandbox> {
+    // Try Docker as fallback first.
+    if should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available()) {
+        tracing::info!(
+            primary = primary.backend_name(),
+            fallback = "docker",
+            "sandbox backend failover enabled"
+        );
+        return Arc::new(FailoverSandbox::new(
+            primary,
+            Arc::new(DockerSandbox::new(config.clone())),
+        ));
     }
 
+    // Use restricted-host as fallback if Docker is unavailable.
     tracing::info!(
         primary = primary.backend_name(),
-        fallback = "docker",
-        "sandbox backend failover enabled"
+        fallback = "restricted-host",
+        "sandbox backend failover enabled (restricted-host)"
     );
     Arc::new(FailoverSandbox::new(
         primary,
-        Arc::new(DockerSandbox::new(config.clone())),
+        Arc::new(RestrictedHostSandbox::new(config.clone())),
     ))
+}
+
+/// Check whether an error message indicates a Docker daemon connectivity issue.
+fn is_docker_failover_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("cannot connect to the docker daemon")
+        || lower.contains("is the docker daemon running")
+        || lower.contains("error during connect")
+        || lower.contains("connection refused")
 }
 
 fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
@@ -3140,7 +4649,7 @@ fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
                 tracing::info!("sandbox backend: apple-container (VM-isolated, preferred)");
                 let apple_backend: Arc<dyn Sandbox> =
                     Arc::new(AppleContainerSandbox::new(config.clone()));
-                return maybe_wrap_with_docker_failover(apple_backend, &config);
+                return maybe_wrap_with_failover(apple_backend, &config);
             }
             tracing::warn!(
                 "apple container CLI found but service could not be started; \
@@ -3156,14 +4665,16 @@ fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 
     if is_cli_available("docker") {
         tracing::warn!(
-            "docker CLI detected but daemon is not accessible; sandboxed execution will use direct host access"
+            "docker CLI detected but daemon is not accessible; \
+             falling back to restricted-host sandbox"
         );
     }
 
-    tracing::warn!(
-        "no usable container runtime found; sandboxed execution will use direct host access"
+    // Use restricted-host sandbox before falling back to NoSandbox.
+    tracing::info!(
+        "sandbox backend: restricted-host (env clearing, rlimits; no container runtime available)"
     );
-    Arc::new(NoSandbox)
+    Arc::new(RestrictedHostSandbox::new(config))
 }
 
 fn should_use_docker_backend(docker_cli_available: bool, docker_daemon_available: bool) -> bool {
@@ -3525,6 +5036,32 @@ mod tests {
         assert_eq!(SandboxScope::Session.to_string(), "session");
         assert_eq!(SandboxScope::Agent.to_string(), "agent");
         assert_eq!(SandboxScope::Shared.to_string(), "shared");
+    }
+
+    #[test]
+    fn test_docker_hardening_args_prebuilt() {
+        let args = DockerSandbox::hardening_args(true);
+        assert!(args.contains(&"--cap-drop".to_string()));
+        assert!(args.contains(&"ALL".to_string()));
+        assert!(args.contains(&"--security-opt".to_string()));
+        assert!(args.contains(&"no-new-privileges".to_string()));
+        assert!(args.contains(&"--read-only".to_string()));
+        // Verify tmpfs mounts are present
+        assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
+        assert!(args.contains(&"/run:rw,nosuid,size=64m".to_string()));
+    }
+
+    #[test]
+    fn test_docker_hardening_args_not_prebuilt() {
+        let args = DockerSandbox::hardening_args(false);
+        assert!(args.contains(&"--cap-drop".to_string()));
+        assert!(args.contains(&"ALL".to_string()));
+        assert!(args.contains(&"--security-opt".to_string()));
+        assert!(args.contains(&"no-new-privileges".to_string()));
+        // --read-only must NOT be present for non-prebuilt (needs apt-get)
+        assert!(!args.contains(&"--read-only".to_string()));
+        // tmpfs mounts still present
+        assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
     }
 
     #[test]
@@ -4542,6 +6079,80 @@ mod tests {
         assert_eq!(fallback.ensure_ready_calls(), 2);
     }
 
+    #[tokio::test]
+    async fn test_failover_sandbox_docker_to_wasm() {
+        let primary = Arc::new(TestSandbox::new(
+            "docker",
+            Some("cannot connect to the docker daemon"),
+            None,
+        ));
+        let fallback = Arc::new(TestSandbox::new("wasm", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-docker-wasm".into(),
+        };
+
+        sandbox.ensure_ready(&id, None).await.unwrap();
+
+        assert_eq!(primary.ensure_ready_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_failover_docker_does_not_switch_on_unrelated_error() {
+        let primary = Arc::new(TestSandbox::new("docker", Some("image not found"), None));
+        let fallback = Arc::new(TestSandbox::new("wasm", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-docker-no-failover".into(),
+        };
+
+        let error = sandbox.ensure_ready(&id, None).await.unwrap_err();
+        assert!(format!("{error:#}").contains("image not found"));
+        assert_eq!(primary.ensure_ready_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 0);
+    }
+
+    #[test]
+    fn test_is_docker_failover_error() {
+        assert!(is_docker_failover_error(
+            "Cannot connect to the Docker daemon at unix:///var/run/docker.sock"
+        ));
+        assert!(is_docker_failover_error("Is the docker daemon running?"));
+        assert!(is_docker_failover_error(
+            "error during connect: connection refused"
+        ));
+        assert!(!is_docker_failover_error("image not found"));
+        assert!(!is_docker_failover_error("permission denied"));
+    }
+
+    #[test]
+    fn test_select_backend_wasm() {
+        let config = SandboxConfig {
+            backend: "wasm".into(),
+            ..Default::default()
+        };
+        let backend = select_backend(config);
+        if is_wasm_sandbox_available() {
+            assert_eq!(backend.backend_name(), "wasm");
+        } else {
+            // Falls back to restricted-host when wasm feature is disabled.
+            assert_eq!(backend.backend_name(), "restricted-host");
+        }
+    }
+
+    #[test]
+    fn test_select_backend_restricted_host() {
+        let config = SandboxConfig {
+            backend: "restricted-host".into(),
+            ..Default::default()
+        };
+        let backend = select_backend(config);
+        assert_eq!(backend.backend_name(), "restricted-host");
+    }
+
     #[test]
     fn test_is_debian_host() {
         let result = is_debian_host();
@@ -4707,6 +6318,507 @@ mod tests {
         clear_zombies();
         assert!(!is_zombie("ghost-a"));
         assert!(!is_zombie("ghost-b"));
+    }
+
+    mod restricted_host_tests {
+        use super::*;
+
+        #[test]
+        fn test_restricted_host_sandbox_backend_name() {
+            let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+            assert_eq!(sandbox.backend_name(), "restricted-host");
+        }
+
+        #[test]
+        fn test_restricted_host_sandbox_is_real() {
+            let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+            assert!(sandbox.is_real());
+        }
+
+        #[tokio::test]
+        async fn test_restricted_host_sandbox_ensure_ready_noop() {
+            let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-rh".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_restricted_host_sandbox_exec_simple_echo() {
+            let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-rh-echo".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let result = sandbox
+                .exec(&id, "echo hello", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "hello");
+        }
+
+        #[tokio::test]
+        async fn test_restricted_host_sandbox_restricted_env() {
+            let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-rh-env".into(),
+            };
+            let result = sandbox
+                .exec(&id, "echo $HOME", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "/tmp");
+        }
+
+        #[tokio::test]
+        async fn test_restricted_host_sandbox_build_image_returns_none() {
+            let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+            let result = sandbox
+                .build_image("ubuntu:latest", &["curl".to_string()])
+                .await
+                .unwrap();
+            assert!(result.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_restricted_host_sandbox_cleanup_noop() {
+            let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-rh-cleanup".into(),
+            };
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[test]
+        fn test_parse_memory_limit() {
+            assert_eq!(parse_memory_limit("512M"), Some(512 * 1024 * 1024));
+            assert_eq!(parse_memory_limit("1G"), Some(1024 * 1024 * 1024));
+            assert_eq!(parse_memory_limit("256k"), Some(256 * 1024));
+            assert_eq!(parse_memory_limit("1024"), Some(1024));
+            assert_eq!(parse_memory_limit("invalid"), None);
+        }
+
+        #[test]
+        fn test_wasm_sandbox_available() {
+            assert!(is_wasm_sandbox_available());
+        }
+    }
+
+    #[cfg(feature = "wasm")]
+    mod wasm_sandbox_tests {
+        use super::*;
+
+        fn test_config() -> SandboxConfig {
+            SandboxConfig {
+                home_persistence: HomePersistence::Off,
+                ..Default::default()
+            }
+        }
+
+        #[test]
+        fn test_wasm_sandbox_backend_name() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            assert_eq!(sandbox.backend_name(), "wasm");
+        }
+
+        #[test]
+        fn test_wasm_sandbox_is_real() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            assert!(sandbox.is_real());
+        }
+
+        #[test]
+        fn test_wasm_sandbox_fuel_limit_default() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            assert_eq!(sandbox.fuel_limit(), 1_000_000_000);
+        }
+
+        #[test]
+        fn test_wasm_sandbox_fuel_limit_custom() {
+            let mut config = test_config();
+            config.wasm_fuel_limit = Some(500_000);
+            let sandbox = WasmSandbox::new(config).unwrap();
+            assert_eq!(sandbox.fuel_limit(), 500_000);
+        }
+
+        #[test]
+        fn test_wasm_sandbox_epoch_interval_default() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            assert_eq!(sandbox.epoch_interval_ms(), 100);
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_ensure_ready_creates_dirs() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-ready".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            assert!(sandbox.home_dir(&id).exists());
+            assert!(sandbox.tmp_dir(&id).exists());
+            // Cleanup.
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_cleanup_removes_dirs() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-cleanup".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let root = sandbox.sandbox_root(&id);
+            assert!(root.exists());
+            sandbox.cleanup(&id).await.unwrap();
+            assert!(!root.exists());
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_echo() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-echo".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let result = sandbox
+                .exec(&id, "echo hello world", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "hello world");
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_echo_no_newline() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-echo-n".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let result = sandbox
+                .exec(&id, "echo -n hello", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout, "hello");
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_pwd() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-pwd".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let result = sandbox
+                .exec(&id, "pwd", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "/home/sandbox");
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_true_false() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-tf".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+
+            let result = sandbox
+                .exec(&id, "true", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+
+            let result = sandbox
+                .exec(&id, "false", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 1);
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_mkdir_ls() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-mkdir-ls".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+
+            let result = sandbox
+                .exec(&id, "mkdir /home/sandbox/testdir", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+
+            let result = sandbox
+                .exec(&id, "ls /home/sandbox", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert!(result.stdout.contains("testdir"));
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_touch_cat() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-touch-cat".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+
+            // Write a file using echo with redirect.
+            let result = sandbox
+                .exec(
+                    &id,
+                    "echo hello > /home/sandbox/test.txt",
+                    &ExecOpts::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+
+            // Read it back.
+            let result = sandbox
+                .exec(&id, "cat /home/sandbox/test.txt", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "hello");
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_rm() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-rm".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+
+            sandbox
+                .exec(
+                    &id,
+                    "echo data > /home/sandbox/to_delete.txt",
+                    &ExecOpts::default(),
+                )
+                .await
+                .unwrap();
+
+            let result = sandbox
+                .exec(&id, "rm /home/sandbox/to_delete.txt", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+
+            let result = sandbox
+                .exec(&id, "cat /home/sandbox/to_delete.txt", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 1);
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_unknown_command_127() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-unknown".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let result = sandbox
+                .exec(&id, "nonexistent_cmd", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 127);
+            assert!(result.stderr.contains("command not found"));
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_path_escape_blocked() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-escape".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+
+            // Try to cat a file outside sandbox.
+            let result = sandbox
+                .exec(&id, "cat /etc/passwd", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 1);
+            assert!(result.stderr.contains("outside sandbox"));
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_and_connector() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-and".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let result = sandbox
+                .exec(&id, "true && echo yes", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "yes");
+
+            let result = sandbox
+                .exec(&id, "false && echo no", &ExecOpts::default())
+                .await
+                .unwrap();
+            // The echo shouldn't run, so stdout should be empty.
+            assert!(result.stdout.is_empty());
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_or_connector() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-or".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+            let result = sandbox
+                .exec(&id, "false || echo fallback", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.trim(), "fallback");
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_test_file() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-testcmd".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+
+            sandbox
+                .exec(
+                    &id,
+                    "echo x > /home/sandbox/exists.txt",
+                    &ExecOpts::default(),
+                )
+                .await
+                .unwrap();
+
+            let result = sandbox
+                .exec(
+                    &id,
+                    "test -f /home/sandbox/exists.txt",
+                    &ExecOpts::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+
+            let result = sandbox
+                .exec(&id, "test -f /home/sandbox/nope.txt", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 1);
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_basename_dirname() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-pathops".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+
+            let result = sandbox
+                .exec(
+                    &id,
+                    "basename /home/sandbox/foo/bar.txt",
+                    &ExecOpts::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.stdout.trim(), "bar.txt");
+
+            let result = sandbox
+                .exec(
+                    &id,
+                    "dirname /home/sandbox/foo/bar.txt",
+                    &ExecOpts::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.stdout.trim(), "/home/sandbox/foo");
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_builtin_which() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let id = SandboxId {
+                scope: SandboxScope::Session,
+                key: "test-wasm-which".into(),
+            };
+            sandbox.ensure_ready(&id, None).await.unwrap();
+
+            let result = sandbox
+                .exec(&id, "which echo", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert!(result.stdout.contains("built-in"));
+
+            let result = sandbox
+                .exec(&id, "which nonexistent", &ExecOpts::default())
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 1);
+            sandbox.cleanup(&id).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_wasm_sandbox_build_image_returns_none() {
+            let sandbox = WasmSandbox::new(test_config()).unwrap();
+            let result = sandbox
+                .build_image("ubuntu:latest", &["curl".to_string()])
+                .await
+                .unwrap();
+            assert!(result.is_none());
+        }
     }
 
     #[cfg(target_os = "linux")]
