@@ -156,7 +156,7 @@ final class BonjourBrowser: ObservableObject {
             return value
         case .data(let data):
             return String(data: data, encoding: .utf8)
-        case .empty:
+        case .none, .empty:
             return nil
         @unknown default:
             return nil
