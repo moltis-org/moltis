@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 54;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -112,7 +112,7 @@
 		4E0842D69007EBE2B544FE69 /* IntentCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentCardView.swift; sourceTree = "<group>"; };
 		5ACC1772D9D2487088436832 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		65519BB6415C8C7821CA8739 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
-		6BE1F8172A34434BB04FE5AC /* MoltisWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MoltisWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		6BE1F8172A34434BB04FE5AC /* MoltisWidgetExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MoltisWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		700DDFBD8B9B6AE3FEB8EFDC /* StatusInfo.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusInfo.graphql.swift; sourceTree = "<group>"; };
 		7361989857D7274F32936A59 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		7E14FF444B23995CFD4D3A45 /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
@@ -133,7 +133,7 @@
 		A0186649DD263747E78D70FA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A0CE48BAE678CD726739E73A /* MutationRoot.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MutationRoot.graphql.swift; sourceTree = "<group>"; };
 		A7CD401781C2F2C05548F186 /* BoolResult.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoolResult.graphql.swift; sourceTree = "<group>"; };
-		A970120FDF86A58491F33AB9 /* Moltis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Moltis.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A970120FDF86A58491F33AB9 /* Moltis.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Moltis.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B41574B5E26A62A4624B7133 /* ChatEventTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatEventTypes.swift; sourceTree = "<group>"; };
 		BE93EB28C35A219E6587B87C /* AgentMutation.graphql.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMutation.graphql.swift; sourceTree = "<group>"; };
 		C4D67563E8990EF1D4E93EE7 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
@@ -147,7 +147,7 @@
 		F4EE14BA5240BD907524E057 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		FC4424B219EFBC7A7F7D26E6 /* MoltisWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MoltisWidgetExtension.entitlements; sourceTree = "<group>"; };
 		FC7E35D562D39CE2FFA39ED0 /* ServerConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnection.swift; sourceTree = "<group>"; };
-		"TEMP_7764D353-DAD3-4EF4-BBEF-A874FFEE1657" /* local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = local.xcconfig; sourceTree = "<group>"; };
+		"TEMP_0AF86EC0-59C6-475F-BA0A-80B37EDAC648" /* local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = local.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -240,14 +240,6 @@
 			path = Auth;
 			sourceTree = "<group>";
 		};
-		524495692F525DAD00CEFC21 /* Recovered References */ = {
-			isa = PBXGroup;
-			children = (
-				"TEMP_7764D353-DAD3-4EF4-BBEF-A874FFEE1657" /* local.xcconfig */,
-			);
-			name = "Recovered References";
-			sourceTree = "<group>";
-		};
 		53934D6D67E0DBC14A603508 /* Operations */ = {
 			isa = PBXGroup;
 			children = (
@@ -287,7 +279,6 @@
 				E1AF8A6A2CAF2DE96A7C2411 /* Sources */,
 				56E1ADB843D5DF72A6908B3A /* Widget */,
 				C81C00256BA1C8F223C1DEAF /* Products */,
-				524495692F525DAD00CEFC21 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -419,6 +410,14 @@
 			path = MoltisAPI;
 			sourceTree = "<group>";
 		};
+		"TEMP_3A8839B5-B64D-4DBE-BCB1-B5A53B419C89" /* ios */ = {
+			isa = PBXGroup;
+			children = (
+				"TEMP_0AF86EC0-59C6-475F-BA0A-80B37EDAC648" /* local.xcconfig */,
+			);
+			path = ios;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -473,9 +472,11 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					5E818DA0880F9A19F77D7E6B = {
+						DevelopmentTeam = 6ATT5T9L86;
 						ProvisioningStyle = Automatic;
 					};
 					CD2DD4BE52715046151C83D5 = {
+						DevelopmentTeam = 6ATT5T9L86;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -493,6 +494,7 @@
 			packageReferences = (
 				9C3F735C5904C9B0CE27FD10 /* XCRemoteSwiftPackageReference "apollo-ios" */,
 			);
+			preferredProjectObjectVersion = 54;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -597,7 +599,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Moltis.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = VJAHQVZ96V;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -619,7 +620,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Widget/MoltisWidgetExtension.entitlements;
-				DEVELOPMENT_TEAM = VJAHQVZ96V;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -638,7 +638,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Widget/MoltisWidgetExtension.entitlements;
-				DEVELOPMENT_TEAM = VJAHQVZ96V;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -659,7 +658,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Moltis.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = VJAHQVZ96V;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -679,7 +677,7 @@
 		};
 		E9EDF5E282B8F2CBFAAAB2A5 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_7764D353-DAD3-4EF4-BBEF-A874FFEE1657" /* local.xcconfig */;
+			baseConfigurationReference = "TEMP_0AF86EC0-59C6-475F-BA0A-80B37EDAC648" /* local.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -715,7 +713,6 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 6ATT5T9L86;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -747,7 +744,7 @@
 		};
 		FC118811CB476F0DA9466057 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_7764D353-DAD3-4EF4-BBEF-A874FFEE1657" /* local.xcconfig */;
+			baseConfigurationReference = "TEMP_0AF86EC0-59C6-475F-BA0A-80B37EDAC648" /* local.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -783,7 +780,6 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 6ATT5T9L86;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
