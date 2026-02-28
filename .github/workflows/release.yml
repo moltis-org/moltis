@@ -230,13 +230,16 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target }}, wasm32-wasip2
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Build WASM components
+        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
       - name: Build release binary
         env:
@@ -326,13 +329,16 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target }}, wasm32-wasip2
 
       - name: Install cargo-generate-rpm
         run: cargo install cargo-generate-rpm
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Build WASM components
+        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
       - name: Build release binary
         env:
@@ -388,13 +394,16 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target }}, wasm32-wasip2
 
       - name: Install packaging tools
         run: sudo apt-get update && sudo apt-get install -y fakeroot zstd
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Build WASM components
+        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
       - name: Build release binary
         env:
@@ -479,10 +488,13 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target }}, wasm32-wasip2
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Build WASM components
+        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
       - name: Build release binary
         env:
@@ -641,10 +653,13 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target }}, wasm32-wasip2
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Build WASM components
+        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
       - name: Build release binary
         env:
@@ -782,7 +797,7 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
-          targets: ${{ env.BUILD_TARGET }}
+          targets: ${{ env.BUILD_TARGET }}, wasm32-wasip2
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
@@ -797,6 +812,10 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_SRC_PERL=$strawberryPerl"
           Add-Content -Path $env:GITHUB_ENV -Value "PERL=$strawberryPerl"
           & $strawberryPerl -v
+
+      - name: Build WASM components
+        shell: bash
+        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
       - name: Build release binary
         shell: bash
