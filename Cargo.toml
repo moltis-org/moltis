@@ -21,6 +21,7 @@ members = [
   "crates/memory",
   "crates/metrics",
   "crates/msteams",
+  "crates/network-filter",
   "crates/oauth",
   "crates/onboarding",
   "crates/openclaw-import",
@@ -146,7 +147,7 @@ axum-server    = { features = ["tls-rustls"], version = "0.7" }
 rcgen          = "0.13"
 rustls         = { features = ["ring"], version = "0.23" }
 rustls-pemfile = "2"
-time           = "0.3"
+time           = { features = ["serde-human-readable"], version = "0.3" }
 tokio-rustls   = "0.26"
 # Cryptography / authentication
 argon2            = "0.5"
@@ -225,6 +226,7 @@ moltis-media           = { path = "crates/media" }
 moltis-memory          = { path = "crates/memory" }
 moltis-metrics         = { path = "crates/metrics" }
 moltis-msteams         = { path = "crates/msteams" }
+moltis-network-filter  = { default-features = false, path = "crates/network-filter" }
 moltis-oauth           = { path = "crates/oauth" }
 moltis-onboarding      = { path = "crates/onboarding" }
 moltis-openclaw-import = { path = "crates/openclaw-import" }

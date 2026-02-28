@@ -82,6 +82,7 @@ default = [
   "qmd",
   "tailscale",
   "tls",
+  "trusted-network",
   "vault",
   "voice",
   "wasm",
@@ -104,6 +105,7 @@ push-notifications = ["moltis-gateway/push-notifications", "moltis-web?/push-not
 qmd                = ["moltis-gateway/qmd"]
 tailscale          = ["moltis-gateway/tailscale", "moltis-web?/tailscale"]
 tls                = ["moltis-gateway/tls"]
+trusted-network    = ["moltis-gateway/trusted-network"]
 vault              = ["moltis-gateway/vault", "moltis-web?/vault"]
 voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
 wasm               = ["moltis-tools/wasm"]

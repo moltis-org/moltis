@@ -16,7 +16,7 @@ use crate::{
     embeddings::EmbeddingProvider,
     schema::{ChunkRow, FileRow},
     search::{self, SearchResult},
-    store::MemoryStore,
+    store::{CacheEntry, MemoryStore},
     writer::validate_memory_path,
 };
 
@@ -281,24 +281,26 @@ impl MemoryManager {
             let mut all_embeddings: Vec<Vec<f32>> =
                 cached.into_iter().map(|c| c.unwrap_or_default()).collect();
 
-            // Embed cache misses and store them
+            // Embed cache misses and store them in a single transaction.
             if !miss_indices.is_empty() {
                 let miss_texts: Vec<String> =
                     miss_indices.iter().map(|&i| texts[i].clone()).collect();
                 let new_embs = embedder.embed_batch(&miss_texts).await?;
 
-                for (idx, emb) in miss_indices.iter().zip(new_embs) {
-                    self.store
-                        .put_cached_embedding(
-                            provider_key,
-                            model,
-                            provider_key,
-                            &chunk_hashes[*idx],
-                            &emb,
-                        )
-                        .await?;
-                    all_embeddings[*idx] = emb;
+                let mut cache_entries = Vec::with_capacity(new_embs.len());
+                for (idx, emb) in miss_indices.iter().zip(&new_embs) {
+                    all_embeddings[*idx] = emb.clone();
+                    cache_entries.push(CacheEntry {
+                        provider: provider_key,
+                        model,
+                        provider_key,
+                        hash: &chunk_hashes[*idx],
+                        embedding: emb,
+                    });
                 }
+                self.store
+                    .put_cached_embeddings_batch(&cache_entries)
+                    .await?;
             }
 
             (Some(all_embeddings), model.to_string())

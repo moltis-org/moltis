@@ -20,6 +20,7 @@ import { initImages, teardownImages } from "./page-images.js";
 import { initLogs, teardownLogs } from "./page-logs.js";
 import { initMcp, teardownMcp } from "./page-mcp.js";
 import { initMonitoring, teardownMonitoring } from "./page-metrics.js";
+import { initNetworkAudit, teardownNetworkAudit } from "./page-network-audit.js";
 import { initProviders, teardownProviders } from "./page-providers.js";
 import { initSkills, teardownSkills } from "./page-skills.js";
 import { initTerminal, teardownTerminal } from "./page-terminal.js";
@@ -153,6 +154,12 @@ var sections = [
 		id: "tailscale",
 		label: "Tailscale",
 		icon: html`<span class="icon icon-globe"></span>`,
+	},
+	{
+		id: "network-audit",
+		label: "Network Audit",
+		icon: html`<span class="icon icon-globe"></span>`,
+		page: true,
 	},
 	{
 		id: "sandboxes",
@@ -3896,6 +3903,7 @@ var pageSectionHandlers = {
 		teardown: teardownMonitoring,
 	},
 	logs: { init: initLogs, teardown: teardownLogs },
+	"network-audit": { init: initNetworkAudit, teardown: teardownNetworkAudit },
 };
 
 /** Wrapper that mounts a page init/teardown pair into a ref div. */

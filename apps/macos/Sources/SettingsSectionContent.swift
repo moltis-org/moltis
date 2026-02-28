@@ -25,6 +25,7 @@ struct SettingsSectionContent: View {
         case .skills: skillsPane
         case .voice: voicePane
         case .sandboxes: sandboxesPane
+        case .networkAudit: networkAuditPane
         case .monitoring: monitoringPane
         case .logs: logsPane
         case .graphql: graphqlPane
@@ -258,6 +259,14 @@ private extension SettingsSectionContent {
             }
             TextField("Default image", text: $settings.sandboxImage)
         }
+    }
+
+    var networkAuditPane: some View {
+        SettingsEmptyState(
+            icon: "network.badge.shield.half.filled",
+            title: "Network Audit",
+            subtitle: "Select this section to view the full network audit log"
+        )
     }
 
     var monitoringPane: some View {
