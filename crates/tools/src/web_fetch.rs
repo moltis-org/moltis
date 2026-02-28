@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    net::IpAddr,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -12,7 +11,10 @@ use {
     url::Url,
 };
 
-use {moltis_agents::tool_registry::AgentTool, moltis_config::schema::WebFetchConfig};
+use {
+    crate::ssrf::ssrf_check, moltis_agents::tool_registry::AgentTool,
+    moltis_config::schema::WebFetchConfig,
+};
 
 /// Cached fetch result with expiry.
 struct CacheEntry {
@@ -181,69 +183,6 @@ impl WebFetchTool {
                 "original_length": body.len(),
             }));
         }
-    }
-}
-
-/// Check if an IP is covered by an SSRF allowlist entry.
-fn is_ssrf_allowed(ip: &IpAddr, allowlist: &[ipnet::IpNet]) -> bool {
-    allowlist.iter().any(|net| net.contains(ip))
-}
-
-/// SSRF protection: resolve the URL host and reject private/loopback/link-local IPs.
-async fn ssrf_check(url: &Url, allowlist: &[ipnet::IpNet]) -> Result<()> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
-
-    // Try parsing as IP directly.
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) && !is_ssrf_allowed(&ip, allowlist) {
-            bail!("SSRF blocked: {host} resolves to private IP {ip}");
-        }
-        return Ok(());
-    }
-
-    // DNS resolution.
-    let port = url.port_or_known_default().unwrap_or(443);
-    let addrs: Vec<_> = tokio::net::lookup_host(format!("{host}:{port}"))
-        .await?
-        .collect();
-
-    if addrs.is_empty() {
-        bail!("DNS resolution failed for {host}");
-    }
-
-    for addr in &addrs {
-        if is_private_ip(&addr.ip()) && !is_ssrf_allowed(&addr.ip(), allowlist) {
-            bail!("SSRF blocked: {host} resolves to private IP {}", addr.ip());
-        }
-    }
-
-    Ok(())
-}
-
-/// Check if an IP address is private, loopback, or link-local.
-fn is_private_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_unspecified()
-                // 100.64.0.0/10 (CGNAT)
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
-                // 192.0.0.0/24
-                || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0)
-        },
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                // fc00::/7 (unique local)
-                || (v6.segments()[0] & 0xFE00) == 0xFC00
-                // fe80::/10 (link-local)
-                || (v6.segments()[0] & 0xFFC0) == 0xFE80
-        },
     }
 }
 
@@ -473,7 +412,11 @@ impl AgentTool for WebFetchTool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::ssrf::{is_private_ip, is_ssrf_allowed, ssrf_check},
+        std::net::IpAddr,
+    };
 
     fn default_tool() -> WebFetchTool {
         WebFetchTool {

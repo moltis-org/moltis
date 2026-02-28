@@ -4,13 +4,15 @@ name              = "moltis-tools"
 version.workspace = true
 
 [features]
-default = ["metrics"]
+default = ["metrics", "wasm"]
 metrics = ["dep:moltis-metrics"]
+wasm    = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
 [dependencies]
 anyhow           = { workspace = true }
 async-trait      = { workspace = true }
 base64           = { workspace = true }
+bytes            = { workspace = true }
 futures          = { workspace = true }
 image            = { workspace = true }
 ipnet            = { workspace = true }
@@ -24,16 +26,19 @@ moltis-providers = { workspace = true }
 moltis-sessions  = { workspace = true }
 moltis-skills    = { workspace = true }
 regex            = { workspace = true }
-reqwest          = { workspace = true }
+reqwest          = { features = ["blocking"], workspace = true }
 secrecy          = { workspace = true }
 serde            = { workspace = true }
 serde_json       = { workspace = true }
 sha2             = { workspace = true }
+shell-words      = { optional = true, workspace = true }
 sqlx             = { workspace = true }
 tokio            = { workspace = true }
 tracing          = { workspace = true }
 url              = { workspace = true }
 uuid             = { workspace = true }
+wasmtime         = { optional = true, workspace = true }
+wasmtime-wasi    = { optional = true, workspace = true }
 
 [dev-dependencies]
 mockito      = { workspace = true }

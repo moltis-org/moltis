@@ -127,6 +127,16 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let wasm_tool_limit_override = || Struct(HashMap::from([("fuel", Leaf), ("memory", Leaf)]));
+
+    let wasm_tool_limits = || {
+        Struct(HashMap::from([
+            ("default_memory", Leaf),
+            ("default_fuel", Leaf),
+            ("tool_overrides", Map(Box::new(wasm_tool_limit_override()))),
+        ]))
+    };
+
     let sandbox = || {
         Struct(HashMap::from([
             ("mode", Leaf),
@@ -140,6 +150,9 @@ fn build_schema_map() -> KnownKeys {
             ("backend", Leaf),
             ("resource_limits", resource_limits()),
             ("packages", Leaf),
+            ("wasm_fuel_limit", Leaf),
+            ("wasm_epoch_interval_ms", Leaf),
+            ("wasm_tool_limits", wasm_tool_limits()),
         ]))
     };
 
@@ -943,7 +956,13 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     }
 
     // Unknown sandbox backend
-    let valid_sandbox_backends = ["auto", "docker", "apple-container"];
+    let valid_sandbox_backends = [
+        "auto",
+        "docker",
+        "apple-container",
+        "restricted-host",
+        "wasm",
+    ];
     if !valid_sandbox_backends.contains(&config.tools.exec.sandbox.backend.as_str()) {
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,
