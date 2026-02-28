@@ -9,7 +9,6 @@
 
 use {
     crate::sandbox::SandboxRouter,
-    anyhow::Result,
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     moltis_browser::{BrowserManager, BrowserRequest},
@@ -17,6 +16,8 @@ use {
     tokio::sync::RwLock,
     tracing::debug,
 };
+
+use crate::error::Error;
 
 /// Browser automation tool for interacting with web pages.
 ///
@@ -168,7 +169,7 @@ impl AgentTool for BrowserTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let mut params = params;
 
         // Browser sandbox mode follows the session sandbox mode from the shared router.
@@ -224,10 +225,11 @@ impl AgentTool for BrowserTool {
                         serde_json::from_value(params)?
                     } else {
                         // No URL either - return helpful error
-                        anyhow::bail!(
+                        return Err(Error::message(
                             "Missing required 'action' field. Use: \
-                             {{\"action\": \"navigate\", \"url\": \"https://...\"}} to open a page"
-                        );
+                             {\"action\": \"navigate\", \"url\": \"https://...\"} to open a page",
+                        )
+                        .into());
                     }
                 } else {
                     return Err(e.into());

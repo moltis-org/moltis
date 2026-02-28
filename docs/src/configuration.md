@@ -64,6 +64,7 @@ mode = "all"                    # "off", "non-main", or "all"
 scope = "session"               # "command", "session", or "global"
 workspace_mount = "ro"          # "ro", "rw", or "none"
 home_persistence = "shared"     # "off", "session", or "shared" (default: "shared")
+# shared_home_dir = "/path/to/shared-home"  # Optional path for shared mode
 backend = "auto"                # "auto", "docker", or "apple-container"
 no_network = true
 
@@ -195,6 +196,21 @@ token = "123456:ABC..."
 allowed_users = [123456789]     # Telegram user IDs allowed to chat
 ```
 
+## Discord Integration
+
+```toml
+[channels]
+offered = ["telegram", "discord"]
+
+[channels.discord.my-bot]
+token = "MTIzNDU2Nzg5.example.bot-token"
+dm_policy = "allowlist"
+mention_mode = "mention"
+allowlist = ["your_username"]
+```
+
+See [Discord](discord.md) for full configuration reference and setup instructions.
+
 ## TLS / HTTPS
 
 ```toml
@@ -294,6 +310,7 @@ mode = "all"
 scope = "session"
 workspace_mount = "ro"
 home_persistence = "session"
+# shared_home_dir = "/path/to/shared-home"
 backend = "auto"
 no_network = true
 packages = ["curl", "git", "jq", "python3", "nodejs", "golang-go"]

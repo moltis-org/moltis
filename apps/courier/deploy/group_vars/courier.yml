@@ -1,0 +1,22 @@
+# Domain name for the courier service (Caddy will provision TLS automatically).
+courier_domain: courier.example.com
+
+# iOS app bundle identifier (apns-topic).
+courier_bundle_id: com.example.Moltis
+
+# Apple .p8 key settings (from App Store Connect).
+courier_key_id: XXXXXXXXXX
+courier_team_id: XXXXXXXXXX
+
+# Path to the .p8 key file on the Ansible controller (local machine).
+courier_p8_key_path: ~/path/to/AuthKey.p8
+
+# Shared secret that gateways must send in the Authorization header.
+# Generate one with: openssl rand -hex 32
+courier_auth_token: CHANGE_ME
+
+# Port the courier binary listens on (Caddy reverse-proxies to this).
+courier_port: 8090
+
+# Path to the cross-compiled binary on the controller.
+courier_binary_path: "{{ playbook_dir }}/../../../target/x86_64-unknown-linux-gnu/release/moltis-courier"

@@ -29,6 +29,10 @@ build:
 build-release:
     cargo build --release
 
+# Build embedded WASM guest tools for component execution.
+wasm-tools:
+    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+
 # Run local dev server with workspace-local config/data dirs.
 dev-server:
     MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
@@ -222,3 +226,68 @@ ui-e2e-headed:
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
 packages-all: deb-all rpm-all arch-pkg-all
+
+# Build Rust static library and generated C header for the macOS app.
+swift-build-rust:
+    ./scripts/build-swift-bridge.sh
+
+# Generate Xcode project from YAML spec in apps/macos.
+swift-generate:
+    ./scripts/generate-swift-project.sh
+
+# Lint macOS app sources with SwiftLint.
+swift-lint:
+    ./scripts/lint-swift.sh
+
+# Build Swift macOS app.
+swift-build: swift-build-rust swift-generate
+    ./scripts/build-swift.sh
+
+# Run Swift app unit tests.
+swift-test: swift-build-rust swift-generate
+    ./scripts/test-swift.sh
+
+# Build and launch the Swift macOS app locally.
+swift-run: swift-build-rust swift-generate
+    ./scripts/run-swift.sh
+
+# Open generated project in Xcode.
+swift-open: swift-build-rust swift-generate
+    open apps/macos/Moltis.xcodeproj
+
+# Generate iOS app Xcode project.
+ios-generate:
+    ./scripts/generate-ios-project.sh
+
+# Generate Apollo GraphQL types for iOS.
+ios-graphql:
+    cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls
+    ./scripts/generate-ios-graphql.sh
+
+# Build iOS app (generic iOS destination, no signing).
+ios-build: ios-graphql ios-generate
+    xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
+
+# Lint iOS app sources with SwiftLint.
+ios-lint:
+    cd apps/ios && swiftlint
+
+# Open iOS project in Xcode (regenerates GraphQL types and project first).
+ios-open: ios-graphql ios-generate
+    open apps/ios/Moltis.xcodeproj
+
+# Build the APNS push relay.
+courier-build:
+    cargo build -p moltis-courier --release
+
+# Cross-compile courier for linux/x86_64.
+courier-cross:
+    cargo build -p moltis-courier --release --target x86_64-unknown-linux-gnu
+
+# Deploy courier to remote server(s) via Ansible.
+courier-deploy:
+    cd apps/courier/deploy && ansible-playbook playbook.yml
+
+# Run the APNS push relay (dev).
+courier-run *ARGS:
+    cargo run -p moltis-courier -- {{ARGS}}

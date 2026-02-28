@@ -1,12 +1,14 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use {
-    anyhow::{Result, bail},
+    crate::error::Error,
     regex::RegexSet,
     serde::{Deserialize, Serialize},
     tokio::sync::{RwLock, oneshot},
     tracing::{debug, warn},
 };
+
+use crate::Result;
 
 /// Outcome of an approval request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,7 +279,9 @@ impl ApprovalManager {
         }
 
         match self.security_level {
-            SecurityLevel::Deny => bail!("exec denied: security level is 'deny'"),
+            SecurityLevel::Deny => {
+                return Err(Error::message("exec denied: security level is 'deny'"));
+            },
             SecurityLevel::Full => return Ok(ApprovalAction::Proceed),
             SecurityLevel::Allowlist => {},
         }

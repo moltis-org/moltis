@@ -42,6 +42,10 @@ jobs:
             context: local/lint
           - label: test
             context: local/test
+          - label: macos-app
+            context: local/macos-app
+          - label: ios-app
+            context: local/ios-app
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -205,7 +209,7 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: Generate coverage
-        run: cargo llvm-cov --workspace --exclude moltis-tools --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --exclude moltis-tools --exclude moltis-swift-bridge --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
@@ -261,6 +265,50 @@ jobs:
             crates/web/ui/test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  macos-app:
+    name: macOS App
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: [fmt, biome]
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        with:
+          toolchain: stable
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: macos-app-v1
+          cache-all-crates: true
+
+      - name: Install Swift build dependencies
+        run: brew install xcodegen cbindgen swiftlint
+
+      - name: Build Swift bridge and generate Xcode project
+        run: |
+          ./scripts/build-swift-bridge.sh
+          ./scripts/generate-swift-project.sh
+
+      - name: Lint Swift
+        run: ./scripts/lint-swift.sh
+
+      - name: Build macOS app
+        run: |
+          xcodebuild \
+            -project apps/macos/Moltis.xcodeproj \
+            -scheme Moltis \
+            -configuration Release \
+            -destination "platform=macOS" \
+            -derivedDataPath apps/macos/.derivedData-ci \
+            build
 
   rust-full-targets:
     name: Rust Full Targets (scheduled)

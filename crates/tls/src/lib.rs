@@ -33,6 +33,44 @@ use {
 /// Subdomains of `.localhost` resolve to loopback per RFC 6761.
 pub const LOCALHOST_DOMAIN: &str = "moltis.localhost";
 
+/// DNS SAN names that must always exist on generated server certificates.
+fn required_dns_san_names() -> Vec<String> {
+    let mut names = vec![
+        LOCALHOST_DOMAIN.to_string(),
+        format!("*.{LOCALHOST_DOMAIN}"),
+        "localhost".to_string(),
+    ];
+
+    if let Some(hostname) = hostname::get()
+        .ok()
+        .and_then(|host| host.into_string().ok())
+    {
+        append_system_host_sans(&mut names, &hostname);
+    }
+
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+fn append_system_host_sans(names: &mut Vec<String>, hostname: &str) {
+    let normalized = hostname.trim().trim_end_matches('.').to_ascii_lowercase();
+
+    if normalized.is_empty() || normalized == "localhost" || normalized == LOCALHOST_DOMAIN {
+        return;
+    }
+
+    names.push(normalized.clone());
+    if !normalized.contains('.') {
+        names.push(format!("{normalized}.local"));
+    }
+}
+
+fn der_contains_ascii(der: &[u8], needle: &str) -> bool {
+    der.windows(needle.len())
+        .any(|window| window == needle.as_bytes())
+}
+
 /// Trait for TLS certificate management, allowing alternative implementations.
 pub trait CertManager: Send + Sync {
     /// Returns (ca_cert_path, server_cert_path, server_key_path).
@@ -103,8 +141,8 @@ impl CertManager for FsCertManager {
 /// Check if a PEM cert file needs regeneration.
 ///
 /// Returns `true` when the file is older than `days` days (proxy for
-/// approaching expiry) **or** when it was generated before the
-/// `moltis.localhost` SAN was added. The DER-encoded cert contains
+/// approaching expiry) **or** when it was generated before required DNS SANs
+/// were added. The DER-encoded cert contains
 /// DNS names as raw ASCII (IA5String), so a byte search on the decoded
 /// DER is sufficient to detect the missing SAN.
 fn is_expired(path: &Path, days: u64) -> bool {
@@ -124,8 +162,8 @@ fn is_expired(path: &Path, days: u64) -> bool {
     needs_san_update(path)
 }
 
-/// Returns `true` if the cert at `path` does not contain the
-/// `moltis.localhost` SAN (i.e. was generated before the migration).
+/// Returns `true` if the cert at `path` does not contain the currently
+/// required DNS SANs (i.e. was generated before the latest SAN migration).
 fn needs_san_update(path: &Path) -> bool {
     let Ok(pem_bytes) = std::fs::read(path) else {
         return true;
@@ -137,8 +175,11 @@ fn needs_san_update(path: &Path) -> bool {
         return true;
     }
     let der = certs[0].as_ref();
-    !der.windows(LOCALHOST_DOMAIN.len())
-        .any(|w| w == LOCALHOST_DOMAIN.as_bytes())
+    required_dns_san_names()
+        .into_iter()
+        // Wildcard entries are not required for compatibility checks.
+        .filter(|name| !name.starts_with("*."))
+        .any(|name| !der_contains_ascii(der, &name))
 }
 
 /// Generate CA + server certificates. Returns (ca_cert, ca_key, server_cert, server_key) PEM strings.
@@ -167,13 +208,17 @@ fn generate_all() -> Result<(String, String, String, String)> {
     server_params
         .distinguished_name
         .push(DnType::CommonName, LOCALHOST_DOMAIN);
-    server_params.subject_alt_names = vec![
-        SanType::DnsName(LOCALHOST_DOMAIN.try_into()?),
-        SanType::DnsName(format!("*.{LOCALHOST_DOMAIN}").as_str().try_into()?),
-        SanType::DnsName("localhost".try_into()?),
-        SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
-        SanType::IpAddress(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)),
-    ];
+    let mut subject_alt_names: Vec<SanType> = required_dns_san_names()
+        .into_iter()
+        .filter_map(|name| name.as_str().try_into().ok().map(SanType::DnsName))
+        .collect();
+    subject_alt_names.push(SanType::IpAddress(std::net::IpAddr::V4(
+        std::net::Ipv4Addr::LOCALHOST,
+    )));
+    subject_alt_names.push(SanType::IpAddress(std::net::IpAddr::V6(
+        std::net::Ipv6Addr::LOCALHOST,
+    )));
+    server_params.subject_alt_names = subject_alt_names;
     // 1-year validity from today.
     server_params.not_before = now;
     server_params.not_after = now + time::Duration::days(365);
@@ -513,6 +558,29 @@ mod tests {
     #[test]
     fn test_is_expired_missing_file() {
         assert!(is_expired(Path::new("/nonexistent/file.pem"), 30));
+    }
+
+    #[test]
+    fn required_dns_sans_always_include_loopback_defaults() {
+        let names = required_dns_san_names();
+        assert!(names.contains(&LOCALHOST_DOMAIN.to_string()));
+        assert!(names.contains(&format!("*.{LOCALHOST_DOMAIN}")));
+        assert!(names.contains(&"localhost".to_string()));
+    }
+
+    #[test]
+    fn append_system_host_sans_adds_local_suffix_for_plain_hostname() {
+        let mut names = Vec::new();
+        append_system_host_sans(&mut names, "m4max");
+        assert_eq!(names, vec!["m4max".to_string(), "m4max.local".to_string()]);
+    }
+
+    #[test]
+    fn append_system_host_sans_skips_localhost_aliases() {
+        let mut names = Vec::new();
+        append_system_host_sans(&mut names, "localhost");
+        append_system_host_sans(&mut names, LOCALHOST_DOMAIN);
+        assert!(names.is_empty());
     }
 
     #[test]

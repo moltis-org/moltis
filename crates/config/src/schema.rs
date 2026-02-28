@@ -1086,7 +1086,7 @@ pub struct McpOAuthOverrideEntry {
 #[serde(default)]
 pub struct ChannelsConfig {
     /// Which channel types are offered in the web UI (onboarding + channels page).
-    /// Defaults to `["telegram"]`. Set to `["telegram", "msteams"]` to opt in to Teams.
+    /// Defaults to `["telegram", "discord"]`. Set to `["telegram", "discord", "msteams"]` to opt in to Teams.
     #[serde(
         default = "default_channels_offered",
         skip_serializing_if = "Vec::is_empty"
@@ -1101,10 +1101,13 @@ pub struct ChannelsConfig {
     /// Microsoft Teams bot accounts, keyed by account ID.
     #[serde(default)]
     pub msteams: HashMap<String, serde_json::Value>,
+    /// Discord bot accounts, keyed by account ID.
+    #[serde(default)]
+    pub discord: HashMap<String, serde_json::Value>,
 }
 
 fn default_channels_offered() -> Vec<String> {
-    vec!["telegram".into()]
+    vec!["telegram".into(), "discord".into()]
 }
 
 impl Default for ChannelsConfig {
@@ -1114,6 +1117,7 @@ impl Default for ChannelsConfig {
             telegram: HashMap::new(),
             whatsapp: HashMap::new(),
             msteams: HashMap::new(),
+            discord: HashMap::new(),
         }
     }
 }
@@ -1745,6 +1749,59 @@ pub struct ResourceLimitsConfig {
     pub pids_max: Option<u32>,
 }
 
+/// Optional per-tool overrides for WASM fuel and memory.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolLimitOverrideConfig {
+    pub fuel: Option<u64>,
+    pub memory: Option<u64>,
+}
+
+/// Configurable WASM tool limits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WasmToolLimitsConfig {
+    pub default_memory: u64,
+    pub default_fuel: u64,
+    pub tool_overrides: HashMap<String, ToolLimitOverrideConfig>,
+}
+
+fn default_wasm_tool_overrides() -> HashMap<String, ToolLimitOverrideConfig> {
+    let mb = 1024_u64 * 1024_u64;
+    HashMap::from([
+        ("calc".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(100_000),
+            memory: Some(2 * mb),
+        }),
+        ("web_fetch".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(10_000_000),
+            memory: Some(32 * mb),
+        }),
+        ("web_search".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(10_000_000),
+            memory: Some(32 * mb),
+        }),
+        ("show_map".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(10_000_000),
+            memory: Some(64 * mb),
+        }),
+        ("location".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(5_000_000),
+            memory: Some(16 * mb),
+        }),
+    ])
+}
+
+impl Default for WasmToolLimitsConfig {
+    fn default() -> Self {
+        Self {
+            default_memory: 16 * 1024 * 1024,
+            default_fuel: 1_000_000,
+            tool_overrides: default_wasm_tool_overrides(),
+        }
+    }
+}
+
 /// Persistence strategy for `/home/sandbox` in sandbox containers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -1764,17 +1821,35 @@ pub struct SandboxConfig {
     pub workspace_mount: String,
     /// Persistence strategy for `/home/sandbox`: off, session, or shared.
     pub home_persistence: HomePersistenceConfig,
+    /// Optional host directory for shared `/home/sandbox` persistence.
+    /// Relative paths are resolved against `data_dir()`.
+    pub shared_home_dir: Option<String>,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
-    /// Backend: "auto" (default), "docker", or "apple-container".
-    /// "auto" prefers Apple Container on macOS when available, falls back to Docker.
+    /// Network policy: "blocked" (no network), "trusted" (proxy-filtered), "bypass" (unrestricted, no audit).
+    #[serde(default)]
+    pub network: String,
+    /// Domains allowed through the proxy in `trusted` mode.
+    #[serde(default)]
+    pub trusted_domains: Vec<String>,
+    /// Backend: "auto" (default), "docker", "podman", "apple-container",
+    /// "restricted-host", or "wasm".
+    /// "auto" prefers Apple Container on macOS, then Podman, then Docker,
+    /// then restricted-host. "wasm" uses Wasmtime + WASI for real sandboxed
+    /// execution.
     pub backend: String,
     pub resource_limits: ResourceLimitsConfig,
     /// Packages to install via `apt-get` in the sandbox image.
     /// Set to an empty list to skip provisioning.
     #[serde(default = "default_sandbox_packages")]
     pub packages: Vec<String>,
+    /// Fuel limit for WASM sandbox execution (default: 1 billion instructions).
+    pub wasm_fuel_limit: Option<u64>,
+    /// Epoch interruption interval in milliseconds for WASM sandbox (default: 100ms).
+    pub wasm_epoch_interval_ms: Option<u64>,
+    /// Optional per-tool WASM limits (fuel + memory).
+    pub wasm_tool_limits: Option<WasmToolLimitsConfig>,
 }
 
 /// Default packages installed in sandbox containers.
@@ -1941,12 +2016,18 @@ impl Default for SandboxConfig {
             scope: "session".into(),
             workspace_mount: "ro".into(),
             home_persistence: HomePersistenceConfig::default(),
+            shared_home_dir: None,
             image: None,
             container_prefix: None,
-            no_network: true,
+            no_network: false,
+            network: "trusted".into(),
+            trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimitsConfig::default(),
             packages: default_sandbox_packages(),
+            wasm_fuel_limit: None,
+            wasm_epoch_interval_ms: None,
+            wasm_tool_limits: None,
         }
     }
 }
@@ -2316,15 +2397,21 @@ OPENROUTER_API_KEY = "sk-or-test"
     }
 
     #[test]
-    fn channels_config_defaults_to_telegram_offered() {
+    fn channels_config_defaults_to_telegram_and_discord_offered() {
         let config = ChannelsConfig::default();
-        assert_eq!(config.offered, vec!["telegram".to_string()]);
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "discord".to_string()
+        ]);
     }
 
     #[test]
     fn channels_config_empty_toml_defaults_offered() {
         let config: ChannelsConfig = toml::from_str("").unwrap();
-        assert_eq!(config.offered, vec!["telegram".to_string()]);
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "discord".to_string()
+        ]);
     }
 
     #[test]
@@ -2342,5 +2429,45 @@ OPENROUTER_API_KEY = "sk-or-test"
         let sandbox = SandboxConfig::default();
         assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
         assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
+        assert!(sandbox.wasm_tool_limits.is_none());
+    }
+
+    #[test]
+    fn wasm_tool_limits_config_defaults() {
+        let limits = WasmToolLimitsConfig::default();
+        assert_eq!(limits.default_memory, 16 * 1024 * 1024);
+        assert_eq!(limits.default_fuel, 1_000_000);
+        assert!(limits.tool_overrides.contains_key("calc"));
+    }
+
+    #[test]
+    fn sandbox_wasm_tool_limits_deserialize() {
+        let config: SandboxConfig = toml::from_str(
+            r#"
+mode = "all"
+scope = "session"
+workspace_mount = "ro"
+
+[wasm_tool_limits]
+default_memory = 2048
+default_fuel = 5000
+
+[wasm_tool_limits.tool_overrides.calc]
+fuel = 100
+memory = 300
+"#,
+        )
+        .unwrap();
+
+        let limits = config.wasm_tool_limits.unwrap();
+        assert_eq!(limits.default_memory, 2048);
+        assert_eq!(limits.default_fuel, 5000);
+        assert_eq!(
+            limits
+                .tool_overrides
+                .get("calc")
+                .and_then(|override_cfg| override_cfg.fuel),
+            Some(100)
+        );
     }
 }

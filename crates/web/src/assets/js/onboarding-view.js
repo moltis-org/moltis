@@ -2144,6 +2144,13 @@ function ChannelTypeSelector({ onSelect, offered }) {
 			<span class="text-sm font-medium text-[var(--text-strong)]">Microsoft Teams</span>
 		</button>`
 		}
+		${
+			offered.has("discord") &&
+			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("discord")}>
+			<span class="icon icon-xl icon-discord"></span>
+			<span class="text-sm font-medium text-[var(--text-strong)]">Discord</span>
+		</button>`
+		}
 	</div>`;
 }
 
@@ -2346,6 +2353,117 @@ function TeamsForm({ onConnected, error, setError }) {
 	</form>`;
 }
 
+function discordInviteUrl(token) {
+	if (!token) return "";
+	var parts = token.split(".");
+	if (parts.length < 3) return "";
+	try {
+		var id = atob(parts[0]);
+		if (!/^\d+$/.test(id)) return "";
+		return `https://discord.com/oauth2/authorize?client_id=${id}&scope=bot&permissions=100352`;
+	} catch {
+		return "";
+	}
+}
+
+function DiscordForm({ onConnected, error, setError }) {
+	var [accountId, setAccountId] = useState("");
+	var [token, setToken] = useState("");
+	var [dmPolicy, setDmPolicy] = useState("allowlist");
+	var [allowlist, setAllowlist] = useState("");
+	var [saving, setSaving] = useState(false);
+
+	function onSubmit(e) {
+		e.preventDefault();
+		var v = validateChannelFields("discord", accountId, token);
+		if (!v.valid) {
+			setError(v.error);
+			return;
+		}
+		setError(null);
+		setSaving(true);
+		var allowlistEntries = allowlist
+			.trim()
+			.split(/\n/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		addChannel("discord", accountId.trim(), {
+			token: token.trim(),
+			dm_policy: dmPolicy,
+			mention_mode: "mention",
+			allowlist: allowlistEntries,
+		}).then((res) => {
+			setSaving(false);
+			if (res?.ok) {
+				onConnected(accountId.trim(), "discord");
+			} else {
+				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect bot.");
+			}
+		});
+	}
+
+	var inviteUrl = discordInviteUrl(token);
+
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">How to set up a Discord bot</span>
+			<span>1. Go to the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Discord Developer Portal</a></span>
+			<span>2. Create a new Application \u2192 Bot tab \u2192 copy the bot token</span>
+			<span>3. Enable <strong>Message Content Intent</strong> under Privileged Gateway Intents</span>
+			<span>4. Paste the token below \u2014 an invite link will be generated automatically</span>
+			<span>5. You can also DM the bot directly without adding it to a server</span>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Account ID</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
+				placeholder="e.g. my_discord_bot"
+				autocomplete="off"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="discord_account_id"
+				autofocus />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Bot token</label>
+			<input type="password" class="provider-key-input w-full"
+				value=${token} onInput=${(e) => setToken(e.target.value)}
+				placeholder="Bot token from Developer Portal"
+				autocomplete="new-password"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="discord_bot_token" />
+		</div>
+		${
+			inviteUrl &&
+			html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2.5 text-xs flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">Invite bot to a server</span>
+			<span class="text-[var(--muted)]">Open this link to add the bot (Send Messages, Attach Files, Read Message History):</span>
+			<a href=${inviteUrl} target="_blank" class="text-[var(--accent)] underline break-all">${inviteUrl}</a>
+		</div>`
+		}
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+				<option value="allowlist">Allowlist only (recommended)</option>
+				<option value="open">Open (anyone)</option>
+				<option value="disabled">Disabled</option>
+			</select>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Allowed Discord username(s)</label>
+			<textarea class="provider-key-input w-full" rows="2"
+				value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+				placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
+			<div class="text-xs text-[var(--muted)] mt-1">One username per line. These users can DM your bot.</div>
+		</div>
+		${error && html`<${ErrorPanel} message=${error} />`}
+		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
+	</form>`;
+}
+
 function WhatsAppForm({ onConnected, error, setError }) {
 	var [accountId, setAccountId] = useState("");
 	var [dmPolicy, setDmPolicy] = useState("allowlist");
@@ -2475,6 +2593,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 
 function channelDisplayLabel(type) {
 	if (type === "msteams") return "Microsoft Teams";
+	if (type === "discord") return "Discord";
 	if (type === "whatsapp") return "WhatsApp";
 	return "Telegram";
 }
@@ -2489,6 +2608,15 @@ function ChannelSuccess({ channelName, channelType: type, onAnother }) {
 				<div class="text-xs text-[var(--muted)] mt-0.5">${channelName} (${label}) is now linked to your agent.</div>
 			</div>
 		</div>
+		${
+			type === "discord" &&
+			html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1.5">
+			<span class="font-medium text-[var(--text-strong)]">Next steps</span>
+			<span>\u2022 <strong>Invite to a server:</strong> the invite link was shown on the previous screen. You can also generate one in the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Developer Portal</a> \u2192 OAuth2 \u2192 URL Generator (scope: bot, permissions: Send Messages, Attach Files, Read Message History).</span>
+			<span>\u2022 <strong>DM the bot:</strong> search for the bot\u2019s username in Discord and click Message. Make sure your username is in the DM allowlist.</span>
+			<span>\u2022 <strong>In a server:</strong> @mention the bot to get a response.</span>
+		</div>`
+		}
 		<button type="button" class="text-xs text-[var(--accent)] cursor-pointer bg-transparent border-none underline self-start" onClick=${onAnother}>Connect another channel</button>
 	</div>`;
 }
@@ -2537,6 +2665,7 @@ function ChannelStep({ onNext, onBack }) {
 		${phase === "form" && selectedType === "telegram" && html`<${TelegramForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "whatsapp" && html`<${WhatsAppForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "msteams" && html`<${TeamsForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
+		${phase === "form" && selectedType === "discord" && html`<${DiscordForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "success" && html`<${ChannelSuccess} channelName=${connectedName} channelType=${connectedType} onAnother=${onAnother} />`}
 		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button type="button" class="provider-btn provider-btn-secondary" onClick=${showBackSelector ? () => setPhase("select") : onBack}>${t("common:actions.back")}</button>
@@ -2688,6 +2817,16 @@ function OpenClawImportStep({ onNext, onBack }) {
 		</div>`;
 	}
 
+	var telegramAccounts = Number(scan.telegram_accounts) || 0;
+	var discordAccounts = Number(scan.discord_accounts) || 0;
+	var channelParts = [];
+	if (telegramAccounts > 0) channelParts.push(`${telegramAccounts} Telegram account(s)`);
+	if (discordAccounts > 0) channelParts.push(`${discordAccounts} Discord account(s)`);
+	var channelDetail = channelParts.length > 0 ? channelParts.join(", ") : null;
+	var unsupportedChannels = (scan.unsupported_channels || []).filter(
+		(channel) => String(channel).toLowerCase() !== "discord",
+	);
+
 	var categories = [
 		{
 			key: "identity",
@@ -2707,7 +2846,7 @@ function OpenClawImportStep({ onNext, onBack }) {
 			key: "channels",
 			label: "Channels",
 			available: scan.channels_available,
-			detail: `${scan.telegram_accounts} Telegram account(s)`,
+			detail: channelDetail,
 		},
 		{
 			key: "sessions",
@@ -2770,9 +2909,9 @@ function OpenClawImportStep({ onNext, onBack }) {
 				: null
 		}
 		${
-			scan.unsupported_channels?.length > 0
+			unsupportedChannels.length > 0
 				? html`<p class="text-xs text-[var(--muted)]">
-					Unsupported channels (coming soon): ${scan.unsupported_channels.join(", ")}
+					Unsupported channels (coming soon): ${unsupportedChannels.join(", ")}
 				</p>`
 				: null
 		}

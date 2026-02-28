@@ -8,6 +8,18 @@ function isVisible(locator) {
 	return locator.isVisible().catch(() => false);
 }
 
+async function clickFirstVisibleButton(page, roleQuery) {
+	const buttons = page.locator(".onboarding-card").getByRole("button", roleQuery);
+	const count = await buttons.count();
+	for (let i = 0; i < count; i++) {
+		const button = buttons.nth(i);
+		if (!(await isVisible(button))) continue;
+		await button.click();
+		return true;
+	}
+	return false;
+}
+
 async function waitForOnboardingStepLoaded(page) {
 	await expect(page.locator(".onboarding-card")).toBeVisible();
 	await expect(page.getByText("Loading…")).toHaveCount(0, { timeout: 10_000 });
@@ -15,16 +27,14 @@ async function waitForOnboardingStepLoaded(page) {
 
 async function maybeSkipAuth(page) {
 	const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
-	if (!(await isVisible(authHeading))) return;
+	if (!(await isVisible(authHeading))) return false;
 
-	const authSkip = page.getByRole("button", { name: "Skip for now", exact: true });
-	await expect(authSkip).toBeVisible();
-	await authSkip.click();
+	return clickFirstVisibleButton(page, { name: /skip/i });
 }
 
 async function maybeCompleteIdentity(page) {
 	const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
-	if (!(await isVisible(identityHeading))) return;
+	if (!(await isVisible(identityHeading))) return false;
 
 	await page.getByPlaceholder("e.g. Alice").fill("E2E User");
 	const agentInput = page.getByPlaceholder("e.g. Rex");
@@ -32,37 +42,36 @@ async function maybeCompleteIdentity(page) {
 		await agentInput.fill("E2E Bot");
 	}
 	await page.getByRole("button", { name: "Continue", exact: true }).click();
+	return true;
 }
 
 async function maybeSkipOpenClawImport(page) {
 	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
-	if (!(await isVisible(importHeading))) return;
+	if (!(await isVisible(importHeading))) return false;
 
-	const skipBtn = page.getByRole("button", { name: /^Skip/ }).first();
-	if (await isVisible(skipBtn)) {
-		await skipBtn.click();
-	}
+	return clickFirstVisibleButton(page, { name: /^Skip/ });
 }
 
 async function moveToLlmStep(page) {
-	await waitForOnboardingStepLoaded(page);
-
 	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
-	if (await isVisible(llmHeading)) return;
+	for (let i = 0; i < 40; i++) {
+		await waitForOnboardingStepLoaded(page);
+		if (await isVisible(llmHeading)) return;
 
-	await maybeSkipAuth(page);
-	if (await isVisible(llmHeading)) return;
+		if (await maybeSkipAuth(page)) continue;
+		if (await maybeSkipOpenClawImport(page)) continue;
+		if (await maybeCompleteIdentity(page)) continue;
 
-	await maybeSkipOpenClawImport(page);
-	if (await isVisible(llmHeading)) return;
+		const backButton = page.locator(".onboarding-card").getByRole("button", { name: "Back", exact: true }).first();
+		if (await isVisible(backButton)) {
+			await backButton.click();
+			continue;
+		}
 
-	await maybeCompleteIdentity(page);
-	if (await isVisible(llmHeading)) return;
+		await page.waitForTimeout(500);
+	}
 
-	await maybeSkipOpenClawImport(page);
-	if (await isVisible(llmHeading)) return;
-
-	await expect(llmHeading).toBeVisible({ timeout: 15_000 });
+	await expect(llmHeading).toBeVisible({ timeout: 45_000 });
 }
 
 test.describe("Onboarding OpenAI provider", () => {

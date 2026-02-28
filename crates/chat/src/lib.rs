@@ -2489,6 +2489,16 @@ struct QueuedMessage {
     params: Value,
 }
 
+/// A tool call currently executing within an active agent run.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+    #[serde(rename = "startedAt")]
+    pub started_at: u64,
+}
+
 pub struct LiveChatService {
     providers: Arc<RwLock<ProviderRegistry>>,
     model_store: Arc<RwLock<DisabledModelsStore>>,
@@ -2508,6 +2518,8 @@ pub struct LiveChatService {
     /// Per-session accumulated thinking text for active runs, so it can be
     /// returned in `sessions.switch` after a page reload.
     active_thinking_text: Arc<RwLock<HashMap<String, String>>>,
+    /// Per-session active tool calls for `chat.peek` snapshot.
+    active_tool_calls: Arc<RwLock<HashMap<String, Vec<ActiveToolCall>>>>,
     /// Per-session reply medium for active runs, so the frontend can restore
     /// `voicePending` state after a page reload.
     active_reply_medium: Arc<RwLock<HashMap<String, ReplyMedium>>>,
@@ -2537,6 +2549,7 @@ impl LiveChatService {
             message_queue: Arc::new(RwLock::new(HashMap::new())),
             last_client_seq: Arc::new(RwLock::new(HashMap::new())),
             active_thinking_text: Arc::new(RwLock::new(HashMap::new())),
+            active_tool_calls: Arc::new(RwLock::new(HashMap::new())),
             active_reply_medium: Arc::new(RwLock::new(HashMap::new())),
             failover_config: moltis_config::schema::FailoverConfig::default(),
         }
@@ -3025,6 +3038,7 @@ impl ChatService for LiveChatService {
             let active_runs = Arc::clone(&self.active_runs);
             let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
             let active_thinking_text = Arc::clone(&self.active_thinking_text);
+            let active_tool_calls = Arc::clone(&self.active_tool_calls);
             let active_reply_medium = Arc::clone(&self.active_reply_medium);
             let session_store = Arc::clone(&self.session_store);
             let session_metadata = Arc::clone(&self.session_metadata);
@@ -3099,6 +3113,7 @@ impl ChatService for LiveChatService {
                     .write()
                     .await
                     .remove(&session_key_clone);
+                active_tool_calls.write().await.remove(&session_key_clone);
                 active_reply_medium.write().await.remove(&session_key_clone);
 
                 drop(permit);
@@ -3384,6 +3399,7 @@ impl ChatService for LiveChatService {
         let active_runs = Arc::clone(&self.active_runs);
         let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
         let active_thinking_text = Arc::clone(&self.active_thinking_text);
+        let active_tool_calls = Arc::clone(&self.active_tool_calls);
         let active_reply_medium = Arc::clone(&self.active_reply_medium);
         let run_id_clone = run_id.clone();
         let tool_registry = Arc::clone(&self.tool_registry);
@@ -3652,6 +3668,7 @@ impl ChatService for LiveChatService {
                         mcp_disabled,
                         client_seq,
                         Some(Arc::clone(&active_thinking_text)),
+                        Some(Arc::clone(&active_tool_calls)),
                     )
                     .await
                 }
@@ -3735,6 +3752,7 @@ impl ChatService for LiveChatService {
                 .write()
                 .await
                 .remove(&session_key_clone);
+            active_tool_calls.write().await.remove(&session_key_clone);
             active_reply_medium.write().await.remove(&session_key_clone);
 
             // Release the semaphore *before* draining so replayed sends can
@@ -3867,6 +3885,7 @@ impl ChatService for LiveChatService {
         // Ensure this session appears in the sessions list.
         let _ = self.session_metadata.upsert(&session_key, None).await;
         self.session_metadata.touch(&session_key, 1).await;
+
         let session_entry = self.session_metadata.get(&session_key).await;
         let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         let mut runtime_context = build_prompt_runtime_context(
@@ -3969,6 +3988,7 @@ impl ChatService for LiveChatService {
                 false, // send_sync: MCP tools always enabled for API calls
                 None,  // send_sync: no client seq
                 None,  // send_sync: no thinking text tracking
+                None,  // send_sync: no tool call tracking
             )
             .await
         };
@@ -4058,6 +4078,24 @@ impl ChatService for LiveChatService {
             aborted,
             "chat.abort"
         );
+
+        if aborted && let Some(key) = session_key {
+            self.active_thinking_text.write().await.remove(key);
+            self.active_tool_calls.write().await.remove(key);
+            self.active_reply_medium.write().await.remove(key);
+            broadcast(
+                &self.state,
+                "chat",
+                serde_json::json!({
+                    "state": "aborted",
+                    "runId": resolved_run_id,
+                    "sessionKey": key,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+        }
+
         Ok(serde_json::json!({ "aborted": aborted, "runId": resolved_run_id }))
     }
 
@@ -4971,6 +5009,45 @@ impl ChatService for LiveChatService {
             .get(session_key)
             .is_some_and(|m| *m == ReplyMedium::Voice)
     }
+
+    async fn peek(&self, params: Value) -> ServiceResult {
+        let session_key = params
+            .get("sessionKey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main");
+
+        let active = self
+            .active_runs_by_session
+            .read()
+            .await
+            .contains_key(session_key);
+
+        if !active {
+            return Ok(serde_json::json!({ "active": false }));
+        }
+
+        let thinking_text = self
+            .active_thinking_text
+            .read()
+            .await
+            .get(session_key)
+            .cloned();
+
+        let tool_calls: Vec<ActiveToolCall> = self
+            .active_tool_calls
+            .read()
+            .await
+            .get(session_key)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(serde_json::json!({
+            "active": true,
+            "sessionKey": session_key,
+            "thinkingText": thinking_text,
+            "toolCalls": tool_calls,
+        }))
+    }
 }
 
 // ── Agent loop mode ─────────────────────────────────────────────────────────
@@ -5100,10 +5177,11 @@ struct ChannelStreamWorker {
     sender: moltis_channels::StreamSender,
 }
 
-/// Fan out model deltas to channel stream workers (Telegram edit-in-place).
+/// Fan out model deltas to channel stream workers (Telegram/Discord edit-in-place).
 ///
-/// Workers are lazily started on the first delta so sessions that do not emit
-/// any streaming text never create placeholder messages in Telegram.
+/// Workers are started eagerly so channel typing indicators remain active
+/// during long-running tool execution before the first text delta arrives.
+/// Stream-dedup only applies after at least one delta has been sent.
 struct ChannelStreamDispatcher {
     outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
@@ -5111,6 +5189,7 @@ struct ChannelStreamDispatcher {
     tasks: Vec<tokio::task::JoinHandle<()>>,
     completed: Arc<Mutex<HashSet<ChannelReplyTargetKey>>>,
     started: bool,
+    sent_delta: bool,
 }
 
 impl ChannelStreamDispatcher {
@@ -5124,14 +5203,17 @@ impl ChannelStreamDispatcher {
         if targets.is_empty() {
             return None;
         }
-        Some(Self {
+        let mut dispatcher = Self {
             outbound,
             targets,
             workers: Vec::new(),
             tasks: Vec::new(),
             completed: Arc::new(Mutex::new(HashSet::new())),
             started: false,
-        })
+            sent_delta: false,
+        };
+        dispatcher.ensure_started().await;
+        Some(dispatcher)
     }
 
     async fn ensure_started(&mut self) {
@@ -5186,6 +5268,7 @@ impl ChannelStreamDispatcher {
         if delta.is_empty() {
             return;
         }
+        self.sent_delta = true;
         self.ensure_started().await;
         let event = moltis_channels::StreamEvent::Delta(delta.to_string());
         for worker in &self.workers {
@@ -5222,6 +5305,9 @@ impl ChannelStreamDispatcher {
     }
 
     async fn completed_target_keys(&self) -> HashSet<ChannelReplyTargetKey> {
+        if !self.sent_delta {
+            return HashSet::new();
+        }
         self.completed.lock().await.clone()
     }
 }
@@ -5810,6 +5896,7 @@ async fn run_with_tools(
     mcp_disabled: bool,
     client_seq: Option<u64>,
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
+    active_tool_calls: Option<Arc<RwLock<HashMap<String, Vec<ActiveToolCall>>>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
@@ -5910,6 +5997,20 @@ async fn run_with_tools(
                 } => {
                     tool_args_map.insert(id.clone(), arguments.clone());
 
+                    // Track active tool call for chat.peek.
+                    if let Some(ref map) = active_tool_calls {
+                        map.write()
+                            .await
+                            .entry(sk.clone())
+                            .or_default()
+                            .push(ActiveToolCall {
+                                id: id.clone(),
+                                name: name.clone(),
+                                arguments: arguments.clone(),
+                                started_at: now_ms(),
+                            });
+                    }
+
                     // Attach reasoning to the first tool call after thinking.
                     if !latest_reasoning.is_empty() {
                         tool_reasoning_map
@@ -5957,6 +6058,17 @@ async fn run_with_tools(
                     error,
                     result,
                 } => {
+                    // Remove from active tool calls tracking.
+                    if let Some(ref map) = active_tool_calls {
+                        let mut guard = map.write().await;
+                        if let Some(calls) = guard.get_mut(&sk) {
+                            calls.retain(|tc| tc.id != id);
+                            if calls.is_empty() {
+                                guard.remove(&sk);
+                            }
+                        }
+                    }
+
                     let mut payload = serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
@@ -6042,6 +6154,12 @@ async fn run_with_tools(
                             )
                             .await;
                         });
+                    }
+
+                    // Buffer tool error result for the channel logbook.
+                    if !success {
+                        send_tool_result_to_channels(&state, &sk, &name, success, &error, &result)
+                            .await;
                     }
 
                     // Persist tool result to the session JSONL file.
@@ -7034,18 +7152,27 @@ async fn deliver_channel_replies(
     desired_reply_medium: ReplyMedium,
     streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
 ) {
-    let mut targets = state.drain_channel_replies(session_key).await;
+    let drained_targets = state.drain_channel_replies(session_key).await;
+    let mut targets = Vec::with_capacity(drained_targets.len());
+    let mut streamed_targets = Vec::new();
     // When the reply medium is voice we must still deliver TTS audio even if
     // the text was already streamed — skip the stream dedupe entirely.
     if desired_reply_medium != ReplyMedium::Voice && !streamed_target_keys.is_empty() {
-        targets.retain(|target| {
-            let key = ChannelReplyTargetKey::from(target);
-            !streamed_target_keys.contains(&key)
-        });
+        for target in drained_targets {
+            let key = ChannelReplyTargetKey::from(&target);
+            if streamed_target_keys.contains(&key) {
+                streamed_targets.push(target);
+            } else {
+                targets.push(target);
+            }
+        }
+    } else {
+        targets = drained_targets;
     }
-    let is_channel_session =
-        session_key.starts_with("telegram:") || session_key.starts_with("msteams:");
-    if targets.is_empty() {
+    let is_channel_session = session_key.starts_with("telegram:")
+        || session_key.starts_with("msteams:")
+        || session_key.starts_with("discord:");
+    if targets.is_empty() && streamed_targets.is_empty() {
         let _ = state.drain_channel_status_log(session_key).await;
         if is_channel_session {
             info!(
@@ -7062,7 +7189,7 @@ async fn deliver_channel_replies(
         if is_channel_session {
             info!(
                 session_key,
-                target_count = targets.len(),
+                target_count = targets.len() + streamed_targets.len(),
                 "channel reply delivery skipped: empty response text"
             );
         }
@@ -7092,6 +7219,26 @@ async fn deliver_channel_replies(
     };
     // Drain buffered status log entries to build a logbook suffix.
     let status_log = state.drain_channel_status_log(session_key).await;
+    let logbook_html = format_logbook_html(&status_log);
+    if !streamed_targets.is_empty() && !logbook_html.is_empty() {
+        send_channel_logbook_follow_up_to_targets(
+            Arc::clone(&outbound),
+            streamed_targets,
+            &logbook_html,
+        )
+        .await;
+    }
+    if targets.is_empty() {
+        if is_channel_session {
+            info!(
+                session_key,
+                text_len = text.len(),
+                streamed_count = streamed_target_keys.len(),
+                "channel reply delivery completed via stream-only targets"
+            );
+        }
+        return;
+    }
     deliver_channel_replies_to_targets(
         outbound,
         targets,
@@ -7122,6 +7269,41 @@ fn format_logbook_html(entries: &[String]) -> String {
     }
     html.push_str("</blockquote>");
     html
+}
+
+async fn send_channel_logbook_follow_up_to_targets(
+    outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
+    targets: Vec<moltis_channels::ChannelReplyTarget>,
+    logbook_html: &str,
+) {
+    if targets.is_empty() || logbook_html.is_empty() {
+        return;
+    }
+
+    let html = logbook_html.to_string();
+    let mut tasks = Vec::with_capacity(targets.len());
+    for target in targets {
+        let outbound = Arc::clone(&outbound);
+        let html = html.clone();
+        tasks.push(tokio::spawn(async move {
+            if let Err(e) = outbound
+                .send_html(&target.account_id, &target.chat_id, &html, None)
+                .await
+            {
+                warn!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "failed to send logbook follow-up: {e}"
+                );
+            }
+        }));
+    }
+
+    for task in tasks {
+        if let Err(e) = task.await {
+            warn!(error = %e, "channel logbook follow-up task join failed");
+        }
+    }
 }
 
 fn format_channel_retry_message(error_obj: &Value, retry_after: Duration) -> String {
@@ -7407,45 +7589,45 @@ async fn deliver_channel_replies_to_targets(
                         }
                     },
                 },
-                moltis_channels::ChannelType::MsTeams | moltis_channels::ChannelType::Whatsapp => {
-                    match tts_payload {
-                        Some(payload) => {
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
+                moltis_channels::ChannelType::MsTeams
+                | moltis_channels::ChannelType::Discord
+                | moltis_channels::ChannelType::Whatsapp => match tts_payload {
+                    Some(payload) => {
+                        if let Err(e) = outbound
+                            .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
+                            .await
+                        {
+                            warn!(
+                                account_id = target.account_id,
+                                chat_id = target.chat_id,
+                                "failed to send channel voice reply: {e}"
+                            );
+                        }
+                    },
+                    None => {
+                        let result = if logbook_html.is_empty() {
+                            outbound
+                                .send_text(&target.account_id, &target.chat_id, &text, reply_to)
                                 .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
-                        },
-                        None => {
-                            let result = if logbook_html.is_empty() {
-                                outbound
-                                    .send_text(&target.account_id, &target.chat_id, &text, reply_to)
-                                    .await
-                            } else {
-                                outbound
-                                    .send_text_with_suffix(
-                                        &target.account_id,
-                                        &target.chat_id,
-                                        &text,
-                                        &logbook_html,
-                                        reply_to,
-                                    )
-                                    .await
-                            };
-                            if let Err(e) = result {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    "failed to send channel reply: {e}"
-                                );
-                            }
-                        },
-                    }
+                        } else {
+                            outbound
+                                .send_text_with_suffix(
+                                    &target.account_id,
+                                    &target.chat_id,
+                                    &text,
+                                    &logbook_html,
+                                    reply_to,
+                                )
+                                .await
+                        };
+                        if let Err(e) = result {
+                            warn!(
+                                account_id = target.account_id,
+                                chat_id = target.chat_id,
+                                "failed to send channel reply: {e}"
+                            );
+                        }
+                    },
                 },
             }
         }));
@@ -7610,6 +7792,82 @@ async fn send_tool_status_to_channels(
     state.push_channel_status_log(session_key, message).await;
 }
 
+/// Buffer a tool error result into the channel status log for a session.
+/// Called from `ToolCallEnd` for failed tool calls only — success is implicit
+/// and does not need a separate log entry.
+async fn send_tool_result_to_channels(
+    state: &Arc<dyn ChatRuntime>,
+    session_key: &str,
+    tool_name: &str,
+    success: bool,
+    error: &Option<String>,
+    result: &Option<Value>,
+) {
+    if success {
+        return;
+    }
+    let targets = state.peek_channel_replies(session_key).await;
+    if targets.is_empty() {
+        return;
+    }
+
+    let message = format_tool_result_message(tool_name, error, result);
+    state.push_channel_status_log(session_key, message).await;
+}
+
+/// Format a human-readable error summary for a failed tool call.
+fn format_tool_result_message(
+    tool_name: &str,
+    error: &Option<String>,
+    result: &Option<Value>,
+) -> String {
+    let detail = match tool_name {
+        "exec" => {
+            let exit_code = result
+                .as_ref()
+                .and_then(|r| r.get("exitCode"))
+                .and_then(|v| v.as_i64());
+            let stderr = result
+                .as_ref()
+                .and_then(|r| r.get("stderr"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let first_line = stderr.lines().next().unwrap_or_default();
+            let truncated = truncate_at_char_boundary(first_line, 120);
+            match exit_code {
+                Some(code) => {
+                    if truncated.is_empty() {
+                        format!("exit {code}")
+                    } else {
+                        format!("exit {code} — {truncated}")
+                    }
+                },
+                None => {
+                    if truncated.is_empty() {
+                        error
+                            .as_deref()
+                            .map(|e| truncate_at_char_boundary(e, 120).to_string())
+                            .unwrap_or_else(|| "failed".to_string())
+                    } else {
+                        truncated.to_string()
+                    }
+                },
+            }
+        },
+        _ => {
+            // Browser, web_fetch, web_search, and other tools: use error string.
+            error
+                .as_deref()
+                .map(|e| {
+                    let first_line = e.lines().next().unwrap_or_default();
+                    truncate_at_char_boundary(first_line, 120).to_string()
+                })
+                .unwrap_or_else(|| "failed".to_string())
+        },
+    };
+    format!("  ❌ {detail}")
+}
+
 /// Format a human-readable tool execution message.
 fn format_tool_status_message(tool_name: &str, arguments: &Value) -> String {
     match tool_name {
@@ -7765,6 +8023,7 @@ async fn send_screenshot_to_channels(
             match target.channel_type {
                 moltis_channels::ChannelType::Telegram
                 | moltis_channels::ChannelType::MsTeams
+                | moltis_channels::ChannelType::Discord
                 | moltis_channels::ChannelType::Whatsapp => {
                     let reply_to = target.message_id.as_deref();
                     if let Err(e) = outbound
@@ -7974,6 +8233,12 @@ mod tests {
         delay: Duration,
     }
 
+    struct RecordingChannelOutbound {
+        text_calls: Arc<AtomicUsize>,
+        suffix_calls: Arc<AtomicUsize>,
+        html_payloads: Arc<Mutex<Vec<String>>>,
+    }
+
     struct MockChannelStreamOutbound {
         deltas: Arc<Mutex<Vec<String>>>,
         reply_tos: Arc<Mutex<Vec<Option<String>>>>,
@@ -7984,6 +8249,7 @@ mod tests {
 
     struct MockChatRuntime {
         channel_replies: Mutex<HashMap<String, Vec<moltis_channels::ChannelReplyTarget>>>,
+        channel_status_log: Mutex<HashMap<String, Vec<String>>>,
         channel_outbound: Option<Arc<dyn moltis_channels::ChannelOutbound>>,
         channel_stream_outbound: Option<Arc<dyn moltis_channels::ChannelStreamOutbound>>,
         tts: moltis_service_traits::NoopTtsService,
@@ -7995,6 +8261,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 channel_replies: Mutex::new(HashMap::new()),
+                channel_status_log: Mutex::new(HashMap::new()),
                 channel_outbound: None,
                 channel_stream_outbound: None,
                 tts: moltis_service_traits::NoopTtsService,
@@ -8060,10 +8327,21 @@ mod tests {
                 .unwrap_or_default()
         }
 
-        async fn push_channel_status_log(&self, _session_key: &str, _message: String) {}
+        async fn push_channel_status_log(&self, session_key: &str, message: String) {
+            self.channel_status_log
+                .lock()
+                .await
+                .entry(session_key.to_string())
+                .or_default()
+                .push(message);
+        }
 
-        async fn drain_channel_status_log(&self, _session_key: &str) -> Vec<String> {
-            Vec::new()
+        async fn drain_channel_status_log(&self, session_key: &str) -> Vec<String> {
+            self.channel_status_log
+                .lock()
+                .await
+                .remove(session_key)
+                .unwrap_or_default()
         }
 
         async fn set_run_error(&self, _run_id: &str, _error: String) {}
@@ -8399,6 +8677,53 @@ mod tests {
     }
 
     #[async_trait]
+    impl moltis_channels::plugin::ChannelOutbound for RecordingChannelOutbound {
+        async fn send_text(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _text: &str,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            self.text_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn send_media(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _payload: &ReplyPayload,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            Ok(())
+        }
+
+        async fn send_text_with_suffix(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _text: &str,
+            _suffix_html: &str,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            self.suffix_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn send_html(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            html: &str,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            self.html_payloads.lock().await.push(html.to_string());
+            Ok(())
+        }
+    }
+
+    #[async_trait]
     impl moltis_channels::plugin::ChannelStreamOutbound for MockChannelStreamOutbound {
         async fn send_stream(
             &self,
@@ -8525,6 +8850,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deliver_channel_replies_streamed_targets_get_logbook_follow_up() {
+        let text_calls = Arc::new(AtomicUsize::new(0));
+        let suffix_calls = Arc::new(AtomicUsize::new(0));
+        let html_payloads = Arc::new(Mutex::new(Vec::new()));
+        let outbound_impl = Arc::new(RecordingChannelOutbound {
+            text_calls: Arc::clone(&text_calls),
+            suffix_calls: Arc::clone(&suffix_calls),
+            html_payloads: Arc::clone(&html_payloads),
+        });
+        let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> = outbound_impl;
+        let state: Arc<dyn ChatRuntime> =
+            Arc::new(MockChatRuntime::new().with_channel_outbound(outbound));
+
+        let target = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Discord,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+            message_id: Some("42".to_string()),
+        };
+        let session_key = "discord:acct:123";
+        state.push_channel_reply(session_key, target.clone()).await;
+        state
+            .push_channel_status_log(session_key, "🌐 Browsing: https://example.com".to_string())
+            .await;
+
+        let mut streamed = HashSet::new();
+        streamed.insert(ChannelReplyTargetKey::from(&target));
+        deliver_channel_replies(&state, session_key, "hello", ReplyMedium::Text, &streamed).await;
+
+        assert_eq!(
+            text_calls.load(Ordering::SeqCst),
+            0,
+            "streamed targets should not receive duplicate text sends"
+        );
+        assert_eq!(
+            suffix_calls.load(Ordering::SeqCst),
+            0,
+            "streamed targets should receive logbook via follow-up html, not text+suffix"
+        );
+        let payloads = html_payloads.lock().await.clone();
+        assert_eq!(payloads.len(), 1, "expected one logbook follow-up");
+        assert!(payloads[0].contains("Activity log"));
+        assert!(payloads[0].contains("Browsing: https://example.com"));
+    }
+
+    #[tokio::test]
     async fn channel_stream_dispatcher_records_completed_targets() {
         let deltas = Arc::new(Mutex::new(Vec::new()));
         let reply_tos = Arc::new(Mutex::new(Vec::new()));
@@ -8631,6 +9002,39 @@ mod tests {
         assert!(deltas.lock().await.is_empty());
     }
 
+    #[tokio::test]
+    async fn channel_stream_dispatcher_no_deltas_do_not_dedup_targets() {
+        let stream_outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound> =
+            Arc::new(MockChannelStreamOutbound {
+                deltas: Arc::new(Mutex::new(Vec::new())),
+                reply_tos: Arc::new(Mutex::new(Vec::new())),
+                completions: Arc::new(AtomicUsize::new(0)),
+                fail: false,
+                stream_enabled: true,
+            });
+        let state: Arc<dyn ChatRuntime> =
+            Arc::new(MockChatRuntime::new().with_channel_stream_outbound(stream_outbound));
+        let target = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+            message_id: Some("55".to_string()),
+        };
+        let session_key = "telegram:acct:123";
+        state.push_channel_reply(session_key, target.clone()).await;
+
+        let mut dispatcher = ChannelStreamDispatcher::for_session(&state, session_key)
+            .await
+            .expect("stream dispatcher should be created");
+        dispatcher.finish().await;
+
+        let completed = dispatcher.completed_target_keys().await;
+        assert!(
+            !completed.contains(&ChannelReplyTargetKey::from(&target)),
+            "targets must not be stream-deduped when no deltas were sent"
+        );
+    }
+
     /// Regression test for #173: voice reply medium must not suppress stream
     /// dedup. When a dispatcher successfully streams to a target, the target
     /// key must appear in the completed set regardless of `ReplyMedium`.
@@ -8683,7 +9087,8 @@ mod tests {
         let pool = sqlite_pool().await;
         let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
-        let state = mock_runtime();
+        let runtime = Arc::new(MockChatRuntime::new());
+        let state: Arc<dyn ChatRuntime> = runtime.clone();
 
         let providers = Arc::new(RwLock::new(ProviderRegistry::empty()));
         let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
@@ -10435,6 +10840,45 @@ mod tests {
         assert!(html.contains("&lt;script&gt;"));
     }
 
+    // ── Tool result formatting tests ────────────────────────────────────
+
+    #[test]
+    fn format_tool_result_exec_with_exit_code_and_stderr() {
+        let result = Some(serde_json::json!({
+            "exitCode": 1,
+            "stderr": "error: file not found\nsecond line"
+        }));
+        let msg = format_tool_result_message("exec", &None, &result);
+        assert_eq!(msg, "  ❌ exit 1 — error: file not found");
+    }
+
+    #[test]
+    fn format_tool_result_exec_exit_code_no_stderr() {
+        let result = Some(serde_json::json!({ "exitCode": 127 }));
+        let msg = format_tool_result_message("exec", &None, &result);
+        assert_eq!(msg, "  ❌ exit 127");
+    }
+
+    #[test]
+    fn format_tool_result_exec_no_exit_code_uses_error() {
+        let error = Some("command timed out".to_string());
+        let msg = format_tool_result_message("exec", &error, &None);
+        assert_eq!(msg, "  ❌ command timed out");
+    }
+
+    #[test]
+    fn format_tool_result_browser_error() {
+        let error = Some("Navigation failed: net::ERR_NAME_NOT_RESOLVED".to_string());
+        let msg = format_tool_result_message("browser", &error, &None);
+        assert_eq!(msg, "  ❌ Navigation failed: net::ERR_NAME_NOT_RESOLVED");
+    }
+
+    #[test]
+    fn format_tool_result_no_error_fallback() {
+        let msg = format_tool_result_message("web_fetch", &None, &None);
+        assert_eq!(msg, "  ❌ failed");
+    }
+
     #[test]
     fn extract_location_from_show_map_result() {
         let result = serde_json::json!({
@@ -10574,5 +11018,100 @@ mod tests {
             .collect();
         keys.sort();
         assert_eq!(keys, vec!["session-a", "session-b"]);
+    }
+
+    #[test]
+    fn active_tool_call_serializes_with_camel_case() {
+        let tc = ActiveToolCall {
+            id: "tc_1".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "ls"}),
+            started_at: 1700000000000,
+        };
+        let json = serde_json::to_value(&tc).unwrap();
+        assert_eq!(json["id"], "tc_1");
+        assert_eq!(json["name"], "bash");
+        assert_eq!(json["startedAt"], 1700000000000_u64);
+        assert!(json.get("started_at").is_none());
+    }
+
+    #[tokio::test]
+    async fn peek_returns_inactive_when_no_run() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(dir.path().to_path_buf());
+        let pool = sqlite_pool().await;
+        let metadata = SqliteSessionMetadata::new(pool);
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(ProviderRegistry::empty())),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new()),
+            Arc::new(store),
+            Arc::new(metadata),
+        );
+
+        let result = service
+            .peek(serde_json::json!({ "sessionKey": "main" }))
+            .await
+            .unwrap();
+        assert_eq!(result["active"], false);
+    }
+
+    #[tokio::test]
+    async fn abort_clears_active_tool_calls() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(dir.path().to_path_buf());
+        let pool = sqlite_pool().await;
+        let metadata = SqliteSessionMetadata::new(pool);
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(ProviderRegistry::empty())),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new()),
+            Arc::new(store),
+            Arc::new(metadata),
+        );
+
+        // Pre-populate active tool calls for a session.
+        service
+            .active_tool_calls
+            .write()
+            .await
+            .insert("test-session".into(), vec![ActiveToolCall {
+                id: "tc_1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({}),
+                started_at: 0,
+            }]);
+        // Pre-populate active_runs_by_session so abort can find the session.
+        let run_id = "test-run".to_string();
+        service
+            .active_runs_by_session
+            .write()
+            .await
+            .insert("test-session".into(), run_id.clone());
+        // Pre-populate active_runs with a dummy task handle.
+        let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        service
+            .active_runs
+            .write()
+            .await
+            .insert(run_id.clone(), handle.abort_handle());
+
+        let result = service
+            .abort(serde_json::json!({ "sessionKey": "test-session" }))
+            .await
+            .unwrap();
+        assert_eq!(result["aborted"], true);
+
+        // Tool calls should be cleaned up.
+        assert!(
+            service
+                .active_tool_calls
+                .read()
+                .await
+                .get("test-session")
+                .is_none()
+        );
     }
 }

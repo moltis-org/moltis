@@ -1,0 +1,30 @@
+[Unit]
+Description=Moltis Courier – APNS push relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=moltis-courier
+Group=moltis-courier
+EnvironmentFile=/etc/moltis-courier/env
+ExecStart=/usr/local/bin/moltis-courier \
+    --bind 127.0.0.1 \
+    --port {{ courier_port }} \
+    --key-path /etc/moltis-courier/AuthKey.p8 \
+    --key-id ${COURIER_KEY_ID} \
+    --team-id ${COURIER_TEAM_ID} \
+    --bundle-id ${COURIER_BUNDLE_ID} \
+    --auth-token ${COURIER_AUTH_TOKEN}
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/etc/moltis-courier
+
+[Install]
+WantedBy=multi-user.target

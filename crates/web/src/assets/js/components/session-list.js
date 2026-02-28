@@ -9,6 +9,7 @@ import {
 	makeBranchIcon,
 	makeChatIcon,
 	makeCronIcon,
+	makeDiscordIcon,
 	makeProjectIcon,
 	makeTeamsIcon,
 	makeTelegramIcon,
@@ -38,6 +39,7 @@ function channelSessionType(s) {
 	var key = s.key || "";
 	if (key.startsWith("telegram:")) return "telegram";
 	if (key.startsWith("msteams:")) return "msteams";
+	if (key.startsWith("discord:")) return "discord";
 	var binding = s.channelBinding || null;
 	if (!binding) return null;
 	try {
@@ -64,6 +66,7 @@ function SessionIcon({ session, isBranch }) {
 		else if (key.startsWith("cron:")) icon = makeCronIcon();
 		else if (channelType === "telegram") icon = makeTelegramIcon();
 		else if (channelType === "msteams") icon = makeTeamsIcon();
+		else if (channelType === "discord") icon = makeDiscordIcon();
 		else icon = makeChatIcon();
 		iconRef.current.appendChild(icon);
 	}, [session.key, isBranch]);
@@ -77,7 +80,7 @@ function SessionIcon({ session, isBranch }) {
 	} else {
 		iconStyle.color = "var(--muted)";
 	}
-	var channelLabel = channelType === "msteams" ? "Microsoft Teams" : "Telegram";
+	var channelLabel = channelType === "msteams" ? "Microsoft Teams" : channelType === "discord" ? "Discord" : "Telegram";
 	var title = channelBound
 		? session.activeChannel
 			? `Active ${channelLabel} session`

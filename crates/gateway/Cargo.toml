@@ -23,6 +23,7 @@ hostname               = { workspace = true }
 hyper                  = { optional = true, workspace = true }
 hyper-util             = { optional = true, workspace = true }
 include_dir            = { optional = true, workspace = true }
+mdns-sd                = { optional = true, workspace = true }
 moltis-agents          = { workspace = true }
 moltis-auth            = { workspace = true }
 moltis-browser         = { workspace = true }
@@ -33,12 +34,14 @@ moltis-chat            = { workspace = true }
 moltis-common          = { workspace = true }
 moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
+moltis-discord         = { workspace = true }
 moltis-graphql         = { optional = true, workspace = true }
 moltis-mcp             = { workspace = true }
 moltis-media           = { workspace = true }
 moltis-memory          = { workspace = true }
 moltis-metrics         = { optional = true, workspace = true }
 moltis-msteams         = { workspace = true }
+moltis-network-filter  = { features = ["proxy", "service"], optional = true, workspace = true }
 moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
@@ -102,6 +105,7 @@ default = [
   "file-watcher",
   "graphql",
   "local-llm",
+  "mdns",
   "metrics",
   "openclaw-import",
   "prometheus",
@@ -109,8 +113,10 @@ default = [
   "qmd",
   "tailscale",
   "tls",
+  "trusted-network",
   "vault",
   "voice",
+  "wasm",
   "web-ui",
   "whatsapp",
 ]
@@ -121,6 +127,7 @@ file-watcher = [
 ]
 graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 local-embeddings = ["moltis-memory/local-embeddings"]
+mdns = ["dep:mdns-sd"]
 local-llm = [
   "moltis-chat/local-llm",
   "moltis-provider-setup/local-llm",
@@ -146,8 +153,10 @@ tls = [
   "dep:tokio-rustls",
   "dep:tower",
 ]
+trusted-network = ["dep:moltis-network-filter"]
 vault = ["dep:moltis-vault", "moltis-auth/vault"]
 voice = ["dep:moltis-voice"]
+wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
 whatsapp = ["dep:moltis-whatsapp", "dep:qrcode"]
 

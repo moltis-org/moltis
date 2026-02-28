@@ -42,6 +42,7 @@ use {
     moltis_projects::ProjectStore,
     moltis_sessions::{
         metadata::{SessionMetadata, SqliteSessionMetadata},
+        session_events::{SessionEvent, SessionEventBus},
         store::SessionStore,
     },
 };
@@ -95,7 +96,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         &self,
         conn_id: &str,
         precision: moltis_tools::location::LocationPrecision,
-    ) -> anyhow::Result<moltis_tools::location::LocationResult> {
+    ) -> moltis_tools::Result<moltis_tools::location::LocationResult> {
         use moltis_tools::location::{LocationError, LocationResult};
 
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -112,11 +113,13 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let inner = self.state.inner.read().await;
             let clients = &inner.clients;
-            let client = clients
-                .get(conn_id)
-                .ok_or_else(|| anyhow::anyhow!("no client connection for conn_id {conn_id}"))?;
+            let client = clients.get(conn_id).ok_or_else(|| {
+                moltis_tools::Error::message(format!("no client connection for conn_id {conn_id}"))
+            })?;
             if !client.send(&event_json) {
-                anyhow::bail!("failed to send location request to client {conn_id}");
+                return Err(moltis_tools::Error::message(format!(
+                    "failed to send location request to client {conn_id}"
+                )));
             }
         }
 
@@ -203,7 +206,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
     async fn request_channel_location(
         &self,
         session_key: &str,
-    ) -> anyhow::Result<moltis_tools::location::LocationResult> {
+    ) -> moltis_tools::Result<moltis_tools::location::LocationResult> {
         use moltis_tools::location::{LocationError, LocationResult};
 
         // Look up channel binding from session metadata.
@@ -212,14 +215,13 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             .services
             .session_metadata
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("session metadata not available"))?;
-        let entry = session_meta
-            .get(session_key)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("no session metadata for key {session_key}"))?;
-        let binding_json = entry
-            .channel_binding
-            .ok_or_else(|| anyhow::anyhow!("no channel binding for session {session_key}"))?;
+            .ok_or_else(|| moltis_tools::Error::message("session metadata not available"))?;
+        let entry = session_meta.get(session_key).await.ok_or_else(|| {
+            moltis_tools::Error::message(format!("no session metadata for key {session_key}"))
+        })?;
+        let binding_json = entry.channel_binding.ok_or_else(|| {
+            moltis_tools::Error::message(format!("no channel binding for session {session_key}"))
+        })?;
         let reply_target: moltis_channels::ChannelReplyTarget =
             serde_json::from_str(&binding_json)?;
 
@@ -228,7 +230,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             .state
             .services
             .channel_outbound_arc()
-            .ok_or_else(|| anyhow::anyhow!("no channel outbound available"))?;
+            .ok_or_else(|| moltis_tools::Error::message("no channel outbound available"))?;
         outbound
             .send_text(
                 &reply_target.account_id,
@@ -236,7 +238,8 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
                 "Please share your location in this chat.",
                 None,
             )
-            .await?;
+            .await
+            .map_err(|e| moltis_tools::Error::external("send location request", e))?;
 
         // Create a pending invoke keyed by session.
         let pending_key = format!("channel_location:{session_key}");
@@ -1078,12 +1081,55 @@ fn log_startup_config_storage_diagnostics() {
     }
 }
 
-/// Start the gateway HTTP + WebSocket server.
+/// A fully wired gateway (app router + shared state), ready to be served.
+///
+/// Created by [`prepare_gateway`]. Callers bind their own TCP listener and
+/// feed `app` to `axum::serve` (or an equivalent). Background tasks (metrics,
+/// MCP health, cron, etc.) are already spawned on the current tokio runtime.
+pub struct PreparedGateway {
+    /// The composed application router.
+    pub app: Router,
+    /// Shared gateway state (sessions, services, config, etc.).
+    pub state: Arc<GatewayState>,
+    /// The port the gateway was configured for.
+    pub port: u16,
+    /// Metadata collected during setup, used by [`start_gateway`] for the
+    /// startup banner. Not relevant for bridge callers.
+    pub(crate) banner: BannerMeta,
+    /// Network audit buffer for real-time streaming (present when
+    /// the `trusted-network` feature is enabled and the proxy is active).
+    #[cfg(feature = "trusted-network")]
+    pub audit_buffer: Option<crate::network_audit::NetworkAuditBuffer>,
+}
+
+/// Internal metadata for the startup banner printed by [`start_gateway`].
+pub(crate) struct BannerMeta {
+    pub provider_summary: String,
+    pub mcp_configured_count: usize,
+    pub method_count: usize,
+    pub sandbox_backend_name: String,
+    pub data_dir: PathBuf,
+    pub openclaw_status: String,
+    pub setup_code_display: Option<String>,
+    pub webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
+    pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
+    pub config: moltis_config::schema::MoltisConfig,
+    #[cfg(feature = "tailscale")]
+    pub tailscale_mode: TailscaleMode,
+    #[cfg(feature = "tailscale")]
+    pub tailscale_reset_on_exit: bool,
+}
+
+/// Prepare the full gateway: load config, run migrations, wire services,
+/// spawn background tasks, and return the composed axum application.
+///
+/// This is the core setup extracted from [`start_gateway`]. The swift-bridge
+/// calls this directly and manages its own TCP listener + graceful shutdown.
 ///
 /// `extra_routes` is an optional callback that returns additional routes
 /// (e.g. the web-UI) to merge before finalization.
 #[allow(clippy::expect_used)] // Startup fail-fast: DB, migrations, credential store must succeed.
-pub async fn start_gateway(
+pub async fn prepare_gateway(
     bind: &str,
     port: u16,
     no_tls: bool,
@@ -1092,7 +1138,10 @@ pub async fn start_gateway(
     data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
-) -> anyhow::Result<()> {
+    session_event_bus: Option<SessionEventBus>,
+) -> anyhow::Result<PreparedGateway> {
+    let session_event_bus = session_event_bus.unwrap_or_default();
+
     // Apply directory overrides before loading config.
     if let Some(dir) = config_dir {
         moltis_config::set_config_dir(dir);
@@ -1398,10 +1447,21 @@ pub async fn start_gateway(
         buf.enable_persistence(data_dir.join("logs.jsonl"));
     }
     let db_path = data_dir.join("moltis.db");
-    let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
-    let db_pool = sqlx::SqlitePool::connect(&db_url)
-        .await
-        .expect("failed to open moltis.db");
+    let db_pool = {
+        use {
+            sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+            std::str::FromStr,
+        };
+        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+            .expect("invalid database path")
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        sqlx::SqlitePool::connect_with(options)
+            .await
+            .expect("failed to open moltis.db")
+    };
 
     // Run database migrations from each crate in dependency order.
     // Order matters: sessions depends on projects (FK reference).
@@ -1621,7 +1681,11 @@ pub async fn start_gateway(
     let project_store: Arc<dyn ProjectStore> =
         Arc::new(moltis_projects::SqliteProjectStore::new(db_pool.clone()));
     let session_store = Arc::new(SessionStore::new(sessions_dir));
-    let session_metadata = Arc::new(SqliteSessionMetadata::new(db_pool.clone()));
+    let event_bus_for_metadata = session_event_bus.clone();
+    let session_metadata = Arc::new(SqliteSessionMetadata::with_event_bus(
+        db_pool.clone(),
+        event_bus_for_metadata,
+    ));
     let session_share_store = Arc::new(crate::share_store::ShareStore::new(db_pool.clone()));
     let session_state_store = Arc::new(moltis_sessions::state_store::SessionStateStore::new(
         db_pool.clone(),
@@ -1635,11 +1699,16 @@ pub async fn start_gateway(
         tracing::warn!(error = %e, "failed to seed main agent workspace");
     }
 
+    // Deferred reference: populated once GatewayState is ready.
+    let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
+        Arc::new(tokio::sync::OnceCell::new());
+
     services =
         services.with_onboarding(Arc::new(crate::onboarding::GatewayOnboardingService::new(
             live_onboarding,
             Arc::clone(&session_metadata),
             Arc::clone(&agent_persona_store),
+            Arc::clone(&deferred_state),
         )));
 
     // Session service wired below after sandbox_router is created.
@@ -1658,10 +1727,6 @@ pub async fn start_gateway(
                 Arc::new(moltis_cron::store_memory::InMemoryStore::new())
             },
         };
-
-    // Deferred reference: populated once GatewayState is ready.
-    let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
-        Arc::new(tokio::sync::OnceCell::new());
 
     // System event: inject text into the main session and trigger an agent response.
     let sys_state = Arc::clone(&deferred_state);
@@ -1896,7 +1961,71 @@ pub async fn start_gateway(
         .timezone
         .as_ref()
         .map(|tz| tz.name().to_string());
-    let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(sandbox_config));
+    let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(
+        sandbox_config.clone(),
+    ));
+
+    // ── Trusted-network proxy + audit ────────────────────────────────────
+    #[cfg(feature = "trusted-network")]
+    let audit_buffer_for_broadcast: Option<crate::network_audit::NetworkAuditBuffer>;
+    #[cfg(feature = "trusted-network")]
+    let proxy_url_for_tools: Option<String>;
+    #[cfg(feature = "trusted-network")]
+    {
+        let (audit_tx, audit_rx) =
+            tokio::sync::mpsc::channel::<moltis_network_filter::NetworkAuditEntry>(1024);
+
+        info!(
+            network_policy = ?sandbox_config.network,
+            trusted_domains = ?sandbox_config.trusted_domains,
+            "trusted-network: evaluating network policy"
+        );
+
+        if sandbox_config.network == moltis_network_filter::NetworkPolicy::Trusted {
+            let domain_mgr = Arc::new(
+                moltis_network_filter::domain_approval::DomainApprovalManager::new(
+                    &sandbox_config.trusted_domains,
+                    std::time::Duration::from_secs(30),
+                ),
+            );
+            let proxy_addr: SocketAddr =
+                ([0, 0, 0, 0], moltis_network_filter::DEFAULT_PROXY_PORT).into();
+            let proxy = moltis_network_filter::proxy::NetworkProxyServer::new(
+                proxy_addr,
+                Arc::clone(&domain_mgr),
+                Some(audit_tx.clone()),
+            );
+            let (_proxy_shutdown_tx, proxy_shutdown_rx) = tokio::sync::watch::channel(false);
+            tokio::spawn(async move {
+                if let Err(e) = proxy.run(proxy_shutdown_rx).await {
+                    tracing::warn!("network proxy exited: {e}");
+                }
+            });
+            let url = format!(
+                "http://127.0.0.1:{}",
+                moltis_network_filter::DEFAULT_PROXY_PORT
+            );
+            info!(
+                proxy_url = %url,
+                "trusted-network proxy started, routing all HTTP tools through proxy"
+            );
+            moltis_tools::init_shared_http_client(Some(&url));
+            proxy_url_for_tools = Some(url);
+        } else {
+            info!(
+                network_policy = ?sandbox_config.network,
+                "trusted-network proxy not started (policy is not Trusted)"
+            );
+            proxy_url_for_tools = None;
+        }
+
+        // Create the live network audit service from the receiver channel.
+        let audit_log_path = data_dir.join("network-audit.jsonl");
+        let audit_service =
+            crate::network_audit::LiveNetworkAuditService::new(audit_rx, audit_log_path, 2048);
+        audit_buffer_for_broadcast = Some(audit_service.buffer().clone());
+        services = services.with_network_audit(Arc::new(audit_service));
+    }
 
     // Spawn background image pre-build. This bakes configured packages into a
     // container image so container creation is instant. Backends that don't
@@ -2205,6 +2334,11 @@ pub async fn start_gateway(
                 .with_event_sink(Arc::clone(&channel_sink)),
         ));
         msteams_webhook_plugin = Arc::clone(&msteams_plugin);
+        let discord_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_discord::DiscordPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
 
         #[cfg(feature = "whatsapp")]
         let whatsapp_plugin = {
@@ -2242,6 +2376,17 @@ pub async fn start_gateway(
                     tracing::warn!(account_id, "failed to start microsoft teams account: {e}");
                 } else {
                     started.insert(("msteams".into(), account_id.clone()));
+                }
+            }
+        }
+
+        {
+            let mut dc = discord_plugin.write().await;
+            for (account_id, account_config) in &config.channels.discord {
+                if let Err(e) = dc.start_account(account_id, account_config.clone()).await {
+                    tracing::warn!(account_id, "failed to start discord account: {e}");
+                } else {
+                    started.insert(("discord".into(), account_id.clone()));
                 }
             }
         }
@@ -2288,6 +2433,10 @@ pub async fn start_gateway(
                             let mut ms = msteams_plugin.write().await;
                             ms.start_account(&ch.account_id, ch.config).await
                         },
+                        Ok(moltis_channels::ChannelType::Discord) => {
+                            let mut dc = discord_plugin.write().await;
+                            dc.start_account(&ch.account_id, ch.config).await
+                        },
                         #[cfg(feature = "whatsapp")]
                         Ok(moltis_channels::ChannelType::Whatsapp) => {
                             let mut wa = whatsapp_plugin.write().await;
@@ -2330,6 +2479,10 @@ pub async fn start_gateway(
             let ms = msteams_plugin.read().await;
             (ms.shared_outbound(), ms.shared_stream_outbound())
         };
+        let (dc_outbound, dc_stream_outbound) = {
+            let dc = discord_plugin.read().await;
+            (dc.shared_outbound(), dc.shared_stream_outbound())
+        };
         #[cfg(feature = "whatsapp")]
         let (wa_outbound, wa_stream_outbound) = {
             let wa = whatsapp_plugin.read().await;
@@ -2339,14 +2492,17 @@ pub async fn start_gateway(
         let multi_router = Arc::new(crate::channel_outbound::MultiChannelOutbound::new(
             Arc::clone(&tg_plugin),
             Arc::clone(&msteams_plugin),
+            Arc::clone(&discord_plugin),
             #[cfg(feature = "whatsapp")]
             Arc::clone(&whatsapp_plugin),
             tg_outbound,
             ms_outbound,
+            dc_outbound,
             #[cfg(feature = "whatsapp")]
             wa_outbound,
             tg_stream_outbound,
             ms_stream_outbound,
+            dc_stream_outbound,
             #[cfg(feature = "whatsapp")]
             wa_stream_outbound,
         ));
@@ -2361,6 +2517,7 @@ pub async fn start_gateway(
         services.channel = Arc::new(crate::channel::LiveChannelService::new(
             tg_plugin,
             msteams_plugin,
+            discord_plugin,
             #[cfg(feature = "whatsapp")]
             whatsapp_plugin,
             channel_store,
@@ -2573,8 +2730,21 @@ pub async fn start_gateway(
         };
 
         let memory_db_path = data_dir.join("memory.db");
-        let memory_db_url = format!("sqlite:{}?mode=rwc", memory_db_path.display());
-        match sqlx::SqlitePool::connect(&memory_db_url).await {
+        let memory_pool_result = {
+            use {
+                sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+                std::str::FromStr,
+            };
+            let options =
+                SqliteConnectOptions::from_str(&format!("sqlite:{}", memory_db_path.display()))
+                    .expect("invalid memory database path")
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .synchronous(SqliteSynchronous::Normal)
+                    .busy_timeout(std::time::Duration::from_secs(5));
+            sqlx::SqlitePool::connect_with(options).await
+        };
+        match memory_pool_result {
             Ok(memory_pool) => {
                 if let Err(e) = moltis_memory::schema::run_migrations(&memory_pool).await {
                     tracing::warn!("memory migration failed: {e}");
@@ -2793,6 +2963,7 @@ pub async fn start_gateway(
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),
+        Some(session_event_bus),
         #[cfg(feature = "metrics")]
         metrics_handle,
         #[cfg(feature = "metrics")]
@@ -2914,10 +3085,46 @@ pub async fn start_gateway(
 
         tool_registry.register(Box::new(exec_tool));
         tool_registry.register(Box::new(moltis_tools::calc::CalcTool::new()));
+        #[cfg(feature = "wasm")]
+        {
+            let wasm_limits = sandbox_router
+                .config()
+                .wasm_tool_limits
+                .clone()
+                .unwrap_or_default();
+            let epoch_interval_ms = sandbox_router
+                .config()
+                .wasm_epoch_interval_ms
+                .unwrap_or(100);
+            let brave_api_key = config
+                .tools
+                .web
+                .search
+                .api_key
+                .as_ref()
+                .map(|s| s.expose_secret().clone())
+                .or_else(|| env_value_with_overrides(&runtime_env_overrides, "BRAVE_API_KEY"))
+                .filter(|k| !k.trim().is_empty());
+            if let Err(e) = moltis_tools::wasm_tool_runner::register_wasm_tools(
+                &mut tool_registry,
+                &wasm_limits,
+                epoch_interval_ms,
+                config.tools.web.fetch.timeout_seconds,
+                config.tools.web.fetch.cache_ttl_minutes,
+                config.tools.web.search.timeout_seconds,
+                config.tools.web.search.cache_ttl_minutes,
+                brave_api_key.as_deref(),
+            ) {
+                warn!(%e, "wasm tool registration failed");
+            }
+        }
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
-        tool_registry.register(Box::new(moltis_tools::send_image::SendImageTool::new()));
+        tool_registry.register(Box::new(
+            moltis_tools::send_image::SendImageTool::new()
+                .with_sandbox_router(Arc::clone(&sandbox_router)),
+        ));
         if let Some(t) = moltis_tools::web_search::WebSearchTool::from_config_with_env_overrides(
             &config.tools.web.search,
             &runtime_env_overrides,
@@ -2926,6 +3133,12 @@ pub async fn start_gateway(
         }
         if let Some(t) = moltis_tools::web_fetch::WebFetchTool::from_config(&config.tools.web.fetch)
         {
+            #[cfg(feature = "trusted-network")]
+            let t = if let Some(ref url) = proxy_url_for_tools {
+                t.with_proxy(url.clone())
+            } else {
+                t
+            };
             tool_registry.register(Box::new(t));
         }
         if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
@@ -3236,7 +3449,6 @@ pub async fn start_gateway(
         router
     };
 
-    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     let mut app = finalize_gateway_app(router, app_state, config.server.http_request_logs);
 
     app = app.route(
@@ -3279,20 +3491,13 @@ pub async fn start_gateway(
         ),
     );
 
-    let addr: SocketAddr = format!("{bind}:{port}").parse()?;
-
     // Resolve TLS configuration (only when compiled with the `tls` feature).
     let tls_active = tls_enabled_for_gateway;
 
     #[cfg(feature = "tls")]
-    let mut ca_cert_path: Option<PathBuf> = None;
-    #[cfg(feature = "tls")]
-    let mut rustls_config: Option<rustls::ServerConfig> = None;
-
-    #[cfg(feature = "tls")]
     if tls_active {
         let tls_config = &config.tls;
-        let (ca_path, cert_path, key_path) = if let (Some(cert_str), Some(key_str)) =
+        let (ca_path, _cert_path, _key_path) = if let (Some(cert_str), Some(key_str)) =
             (&tls_config.cert_path, &tls_config.key_path)
         {
             // User-provided certs.
@@ -3310,11 +3515,6 @@ pub async fn start_gateway(
                 "TLS is enabled but no certificates configured and auto_generate is false"
             );
         };
-
-        ca_cert_path = ca_path.clone();
-
-        let mgr = crate::tls::FsCertManager::new()?;
-        rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
 
         // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
         if let Some(ref ca) = ca_path {
@@ -3341,173 +3541,9 @@ pub async fn start_gateway(
         }
     }
 
-    // Count enabled skills and repos for startup banner.
-    let (skill_count, repo_count) = {
-        use moltis_skills::discover::{FsSkillDiscoverer, SkillDiscoverer};
-        let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
-        let sc = discoverer.discover().await.map(|s| s.len()).unwrap_or(0);
-        let rc = moltis_skills::manifest::ManifestStore::default_path()
-            .ok()
-            .map(|p| {
-                let store = moltis_skills::manifest::ManifestStore::new(p);
-                store.load().map(|m| m.repos.len()).unwrap_or(0)
-            })
-            .unwrap_or(0);
-        (sc, rc)
-    };
-
-    // Startup banner.
-    let scheme = if tls_active {
-        "https"
-    } else {
-        "http"
-    };
-    // When bound to an unspecified address (0.0.0.0 / ::), resolve the
-    // machine's outbound IP so the printed URL is clickable.
-    let display_ip = if addr.ip().is_unspecified() {
-        resolve_outbound_ip(addr.ip().is_ipv6())
-            .map(|ip| SocketAddr::new(ip, port))
-            .unwrap_or(addr)
-    } else {
-        addr
-    };
-    // Use plain localhost for display URLs when bound to loopback with TLS.
-    #[cfg(feature = "tls")]
-    let display_host = if is_localhost && tls_active {
-        format!("localhost:{port}")
-    } else {
-        display_ip.to_string()
-    };
-    #[cfg(not(feature = "tls"))]
-    let display_host = display_ip.to_string();
-    let passkey_origins = webauthn_registry
-        .as_ref()
-        .map(|registry| registry.get_all_origins())
-        .unwrap_or_default();
-    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
-    let mut lines = vec![
-        format!("moltis gateway v{}", state.version),
-        format!(
-            "protocol v{}, listening on {}://{} ({})",
-            moltis_protocol::PROTOCOL_VERSION,
-            scheme,
-            display_host,
-            if tls_active {
-                "HTTP/2 + HTTP/1.1"
-            } else {
-                "HTTP/1.1"
-            },
-        ),
-        startup_bind_line(addr),
-        format!("{} methods registered", methods.method_names().len()),
-        format!("llm: {}", provider_summary),
-        format!(
-            "skills: {} enabled, {} repo{}",
-            skill_count,
-            repo_count,
-            if repo_count == 1 {
-                ""
-            } else {
-                "s"
-            }
-        ),
-        format!(
-            "mcp: {} configured{}",
-            mcp_configured_count,
-            if mcp_configured_count > 0 {
-                " (starting in background)"
-            } else {
-                ""
-            }
-        ),
-        format!("sandbox: {} backend", sandbox_router.backend_name()),
-        format!(
-            "config: {}",
-            moltis_config::find_or_default_config_path().display()
-        ),
-        format!("data: {}", data_dir.display()),
-        format!("openclaw: {openclaw_startup_status}"),
-    ];
-    lines.extend(startup_passkey_origin_lines(&passkey_origins));
-    // Hint about Apple Container on macOS when using Docker.
-    #[cfg(target_os = "macos")]
-    if sandbox_router.backend_name() == "docker" {
-        lines.push(
-            "hint: install Apple Container for VM-isolated sandboxing (see docs/sandbox.md)".into(),
-        );
-    }
-    // Warn when no sandbox backend is available.
-    if sandbox_router.backend_name() == "none" {
-        if moltis_tools::sandbox::is_debian_host() && !sandbox_router.config().packages.is_empty() {
-            lines.push(
-                "⚠ no container runtime found; installing packages on host in background".into(),
-            );
-        } else {
-            lines.push("⚠ no container runtime found; commands run on host".into());
-        }
-    }
-    // Display setup code if one was generated.
-    if let Some(ref code) = setup_code_display {
-        lines.extend(startup_setup_code_lines(code));
-    }
-    #[cfg(feature = "tls")]
-    if tls_active {
-        if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
-            let ca_host = if is_localhost {
-                "localhost"
-            } else {
-                bind
-            };
-            lines.push(format!(
-                "CA cert: http://{}:{}/certs/ca.pem",
-                ca_host, http_port
-            ));
-            lines.push(format!("  or: {}", ca.display()));
-        }
-        lines.push("run `moltis trust-ca` to remove browser warnings".into());
-    }
-    // Tailscale: enable serve/funnel and show in banner.
-    #[cfg(feature = "tailscale")]
-    {
-        if tailscale_mode != TailscaleMode::Off {
-            let manager = CliTailscaleManager::new();
-            let ts_result = match tailscale_mode {
-                TailscaleMode::Serve => manager.enable_serve(port, tls_active).await,
-                TailscaleMode::Funnel => manager.enable_funnel(port, tls_active).await,
-                TailscaleMode::Off => unreachable!(),
-            };
-            match ts_result {
-                Ok(()) => {
-                    if let Ok(Some(hostname)) = manager.hostname().await {
-                        lines.push(format!("tailscale {tailscale_mode}: https://{hostname}"));
-                    } else {
-                        lines.push(format!("tailscale {tailscale_mode}: enabled"));
-                    }
-                },
-                Err(e) => {
-                    warn!("failed to enable tailscale {tailscale_mode}: {e}");
-                    lines.push(format!("tailscale {tailscale_mode}: FAILED ({e})"));
-                },
-            }
-        }
-    }
-    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0) + 4;
-    info!("┌{}┐", "─".repeat(width));
-    for line in &lines {
-        info!("│  {:<w$}│", line, w = width - 2);
-    }
-    info!("└{}┘", "─".repeat(width));
-
-    // Dispatch GatewayStart hook.
-    if let Some(ref hooks) = state.inner.read().await.hook_registry {
-        let payload = moltis_common::hooks::HookPayload::GatewayStart {
-            address: addr.to_string(),
-        };
-        if let Err(e) = hooks.dispatch(&payload).await {
-            tracing::warn!("GatewayStart hook dispatch failed: {e}");
-        }
-    }
+    // NOTE: the startup banner and GatewayStart hook dispatch are handled
+    // by start_gateway (the CLI entry point) after prepare_gateway returns.
+    // prepare_gateway only spawns background tasks and returns PreparedGateway.
 
     // Spawn periodic browser cleanup task (every 30s, removes idle instances).
     {
@@ -3519,55 +3555,6 @@ pub async fn start_gateway(
                 interval.tick().await;
                 browser_for_cleanup.cleanup_idle().await;
             }
-        });
-    }
-
-    // Spawn shutdown handler:
-    // - reset tailscale state on exit (when configured)
-    // - give browser pool 5s to shut down gracefully
-    // - force process exit to avoid hanging after ctrl-c
-    {
-        let browser_for_shutdown = Arc::clone(&browser_for_lifecycle);
-        #[cfg(feature = "tailscale")]
-        let reset_tailscale_on_exit =
-            tailscale_mode != TailscaleMode::Off && tailscale_reset_on_exit;
-        #[cfg(feature = "tailscale")]
-        let ts_mode = tailscale_mode;
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_err() {
-                return;
-            }
-
-            #[cfg(feature = "tailscale")]
-            if reset_tailscale_on_exit {
-                info!("shutting down tailscale {ts_mode}");
-                let manager = CliTailscaleManager::new();
-                if let Err(e) = manager.disable().await {
-                    warn!("failed to reset tailscale on exit: {e}");
-                }
-            }
-
-            let shutdown_grace = std::time::Duration::from_secs(5);
-            info!(
-                grace_secs = shutdown_grace.as_secs(),
-                "shutting down browser pool"
-            );
-            if browser_for_shutdown
-                .shutdown_with_grace(shutdown_grace)
-                .await
-            {
-                info!(
-                    grace_secs = shutdown_grace.as_secs(),
-                    "browser pool shut down"
-                );
-            } else {
-                warn!(
-                    grace_secs = shutdown_grace.as_secs(),
-                    "browser pool shutdown exceeded grace period, forcing process exit"
-                );
-            }
-
-            std::process::exit(0);
         });
     }
 
@@ -3600,6 +3587,50 @@ pub async fn start_gateway(
             broadcast_tick(&tick_state, process_mem, available, total).await;
         }
     });
+
+    // Spawn session event → WebSocket forwarder.
+    // Events published by the swift-bridge (or any other bus producer) are
+    // relayed to all connected WebSocket clients as `"session"` events.
+    {
+        let ws_state = Arc::clone(&state);
+        let mut rx = state.session_event_bus.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let (kind, session_key) = match &event {
+                            SessionEvent::Created { session_key } => {
+                                ("created", session_key.as_str())
+                            },
+                            SessionEvent::Deleted { session_key } => {
+                                ("deleted", session_key.as_str())
+                            },
+                            SessionEvent::Patched { session_key } => {
+                                ("patched", session_key.as_str())
+                            },
+                        };
+                        broadcast(
+                            &ws_state,
+                            "session",
+                            serde_json::json!({
+                                "kind": kind,
+                                "sessionKey": session_key,
+                            }),
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("session event WS forwarder lagged, skipped {n} events");
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
 
     // Spawn periodic update check against latest GitHub release.
     let update_state = Arc::clone(&state);
@@ -3670,6 +3701,11 @@ pub async fn start_gateway(
         let metrics_state = Arc::clone(&state);
         let server_start = std::time::Instant::now();
         tokio::spawn(async move {
+            enum MetricsPersistJob {
+                Save(crate::state::MetricsHistoryPoint),
+                CleanupBefore(u64),
+            }
+
             // Load history from persistent store on startup.
             if let Some(ref store) = metrics_state.metrics_store {
                 let max_points = metrics_state.inner.read().await.metrics_history.capacity();
@@ -3695,6 +3731,35 @@ pub async fn start_gateway(
                     },
                 }
             }
+
+            // Serialize all metrics DB writes through one background writer task.
+            let metrics_persist_tx = metrics_state.metrics_store.as_ref().map(|store| {
+                let store = Arc::clone(store);
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MetricsPersistJob>();
+                tokio::spawn(async move {
+                    while let Some(job) = rx.recv().await {
+                        match job {
+                            MetricsPersistJob::Save(point) => {
+                                if let Err(e) = store.save_point(&point).await {
+                                    warn!("Failed to persist metrics point: {e}");
+                                }
+                            },
+                            MetricsPersistJob::CleanupBefore(cutoff) => {
+                                match store.cleanup_before(cutoff).await {
+                                    Ok(deleted) if deleted > 0 => {
+                                        info!("Cleaned up {} old metrics points", deleted);
+                                    },
+                                    Err(e) => {
+                                        warn!("Failed to cleanup old metrics: {e}");
+                                    },
+                                    _ => {},
+                                }
+                            },
+                        }
+                    }
+                });
+                tx
+            });
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             let mut cleanup_counter = 0u32;
@@ -3755,11 +3820,11 @@ pub async fn start_gateway(
                         .metrics_history
                         .push(point.clone());
 
-                    // Persist to store if available.
-                    if let Some(ref store) = metrics_state.metrics_store
-                        && let Err(e) = store.save_point(&point).await
+                    // Persist via the dedicated writer, without stalling collection.
+                    if let Some(tx) = metrics_persist_tx.as_ref()
+                        && tx.send(MetricsPersistJob::Save(point.clone())).is_err()
                     {
-                        warn!("Failed to persist metrics point: {e}");
+                        warn!("metrics persistence writer task is unavailable");
                     }
 
                     // Broadcast metrics update to all connected clients.
@@ -3781,21 +3846,15 @@ pub async fn start_gateway(
                     cleanup_counter += 1;
                     if cleanup_counter >= 360 {
                         cleanup_counter = 0;
-                        if let Some(ref store) = metrics_state.metrics_store {
+                        if let Some(tx) = metrics_persist_tx.as_ref() {
                             // Keep 7 days of history.
                             let cutoff = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_millis() as u64
                                 - (7 * 24 * 60 * 60 * 1000);
-                            match store.cleanup_before(cutoff).await {
-                                Ok(deleted) if deleted > 0 => {
-                                    info!("Cleaned up {} old metrics points", deleted);
-                                },
-                                Err(e) => {
-                                    warn!("Failed to cleanup old metrics: {e}");
-                                },
-                                _ => {},
+                            if tx.send(MetricsPersistJob::CleanupBefore(cutoff)).is_err() {
+                                warn!("metrics persistence writer task is unavailable");
                             }
                         }
                     }
@@ -3804,7 +3863,7 @@ pub async fn start_gateway(
         });
     }
 
-    // Spawn sandbox event broadcast task: forwards provision events to WS clients.
+    // Spawn sandbox event broadcast task: forwards sandbox lifecycle events to WS clients.
     {
         let event_state = Arc::clone(&state);
         let mut event_rx = sandbox_router.subscribe_events();
@@ -3813,6 +3872,47 @@ pub async fn start_gateway(
                 match event_rx.recv().await {
                     Ok(event) => {
                         let (event_name, payload) = match event {
+                            moltis_tools::sandbox::SandboxEvent::Preparing {
+                                session_key,
+                                backend,
+                                image,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "start",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                }),
+                            ),
+                            moltis_tools::sandbox::SandboxEvent::Prepared {
+                                session_key,
+                                backend,
+                                image,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "done",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                }),
+                            ),
+                            moltis_tools::sandbox::SandboxEvent::PrepareFailed {
+                                session_key,
+                                backend,
+                                image,
+                                error,
+                            } => (
+                                "sandbox.prepare",
+                                serde_json::json!({
+                                    "phase": "error",
+                                    "session_key": session_key,
+                                    "backend": backend,
+                                    "image": image,
+                                    "error": error,
+                                }),
+                            ),
                             moltis_tools::sandbox::SandboxEvent::Provisioning {
                                 container,
                                 packages,
@@ -3848,6 +3948,35 @@ pub async fn start_gateway(
                             ..Default::default()
                         })
                         .await;
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    // Spawn network audit broadcast task: forwards audit entries to WS clients.
+    #[cfg(feature = "trusted-network")]
+    if let Some(ref audit_buf) = audit_buffer_for_broadcast {
+        let audit_state = Arc::clone(&state);
+        let mut audit_rx = audit_buf.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match audit_rx.recv().await {
+                    Ok(entry) => {
+                        if let Ok(payload) = serde_json::to_value(&entry) {
+                            broadcast(
+                                &audit_state,
+                                "network.audit.entry",
+                                payload,
+                                BroadcastOpts {
+                                    drop_if_slow: true,
+                                    ..Default::default()
+                                },
+                            )
+                            .await;
+                        }
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(_) => break,
@@ -3994,6 +4123,381 @@ pub async fn start_gateway(
         } else if hb.enabled && !has_prompt {
             tracing::info!("heartbeat skipped: no prompt in config and HEARTBEAT.md is empty");
         }
+    }
+
+    Ok(PreparedGateway {
+        app,
+        state: Arc::clone(&state),
+        port,
+        banner: BannerMeta {
+            provider_summary,
+            mcp_configured_count,
+            method_count: methods.method_names().len(),
+            sandbox_backend_name: sandbox_router.backend_name().to_owned(),
+            data_dir,
+            openclaw_status: openclaw_startup_status,
+            setup_code_display,
+            webauthn_registry,
+            browser_for_lifecycle,
+            config,
+            #[cfg(feature = "tailscale")]
+            tailscale_mode,
+            #[cfg(feature = "tailscale")]
+            tailscale_reset_on_exit,
+        },
+        #[cfg(feature = "trusted-network")]
+        audit_buffer: audit_buffer_for_broadcast,
+    })
+}
+
+/// Prepare the full gateway for embedded callers (for example swift-bridge)
+/// using a feature-stable argument list.
+///
+/// This wrapper intentionally hides `tailscale_opts`, which only exists when
+/// the `tailscale` feature is enabled on `moltis-gateway`.
+#[allow(clippy::expect_used)]
+pub async fn prepare_gateway_embedded(
+    bind: &str,
+    port: u16,
+    no_tls: bool,
+    log_buffer: Option<crate::logs::LogBuffer>,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    extra_routes: Option<RouteEnhancer>,
+    session_event_bus: Option<SessionEventBus>,
+) -> anyhow::Result<PreparedGateway> {
+    prepare_gateway(
+        bind,
+        port,
+        no_tls,
+        log_buffer,
+        config_dir,
+        data_dir,
+        #[cfg(feature = "tailscale")]
+        None,
+        extra_routes,
+        session_event_bus,
+    )
+    .await
+}
+
+/// Start the gateway HTTP + WebSocket server.
+///
+/// Thin wrapper around [`prepare_gateway`] that adds the startup banner,
+/// ctrl-c handler, TLS termination, and blocks on `axum::serve`.
+#[allow(clippy::expect_used)]
+pub async fn start_gateway(
+    bind: &str,
+    port: u16,
+    no_tls: bool,
+    log_buffer: Option<crate::logs::LogBuffer>,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
+    extra_routes: Option<RouteEnhancer>,
+) -> anyhow::Result<()> {
+    let prepared = prepare_gateway(
+        bind,
+        port,
+        no_tls,
+        log_buffer,
+        config_dir,
+        data_dir,
+        #[cfg(feature = "tailscale")]
+        tailscale_opts,
+        extra_routes,
+        None, // session_event_bus — CLI creates its own
+    )
+    .await?;
+
+    let state = &prepared.state;
+    let banner = &prepared.banner;
+    #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
+    let config = &banner.config;
+
+    let addr: SocketAddr = format!("{bind}:{port}").parse()?;
+
+    #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
+    let is_localhost =
+        matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
+
+    // Register the gateway as a Bonjour/mDNS service so LAN clients can
+    // discover it without typing the URL manually.
+    #[cfg(feature = "mdns")]
+    let _mdns_daemon = {
+        let host = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "moltis".to_string());
+        let instance = format!("Moltis on {host}");
+        match crate::mdns::register(&instance, port, env!("CARGO_PKG_VERSION")) {
+            Ok(daemon) => Some(daemon),
+            Err(e) => {
+                tracing::warn!("mDNS registration failed: {e}");
+                None
+            },
+        }
+    };
+
+    // Resolve TLS configuration (only when compiled with the `tls` feature).
+    #[cfg(feature = "tls")]
+    let tls_active = config.tls.enabled;
+    #[cfg(not(feature = "tls"))]
+    let tls_active = false;
+
+    #[cfg(feature = "tls")]
+    let mut ca_cert_path: Option<PathBuf> = None;
+    #[cfg(feature = "tls")]
+    let mut rustls_config: Option<rustls::ServerConfig> = None;
+
+    let app = prepared.app;
+
+    #[cfg(feature = "tls")]
+    if tls_active {
+        let tls_config = &config.tls;
+        let (ca_path, cert_path, key_path) = if let (Some(cert_str), Some(key_str)) =
+            (&tls_config.cert_path, &tls_config.key_path)
+        {
+            // User-provided certs.
+            let cert = PathBuf::from(cert_str);
+            let key = PathBuf::from(key_str);
+            let ca = tls_config.ca_cert_path.as_ref().map(PathBuf::from);
+            (ca, cert, key)
+        } else if tls_config.auto_generate {
+            // Auto-generate certificates.
+            let mgr = crate::tls::FsCertManager::new()?;
+            let (ca, cert, key) = mgr.ensure_certs()?;
+            (Some(ca), cert, key)
+        } else {
+            anyhow::bail!(
+                "TLS is enabled but no certificates configured and auto_generate is false"
+            );
+        };
+
+        ca_cert_path = ca_path.clone();
+
+        let mgr = crate::tls::FsCertManager::new()?;
+        rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
+        // Note: /certs/ca.pem route is already registered by prepare_gateway.
+    }
+
+    // Count enabled skills and repos for startup banner.
+    let (skill_count, repo_count) = {
+        use moltis_skills::discover::{FsSkillDiscoverer, SkillDiscoverer};
+        let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
+        let sc = discoverer.discover().await.map(|s| s.len()).unwrap_or(0);
+        let rc = moltis_skills::manifest::ManifestStore::default_path()
+            .ok()
+            .map(|p| {
+                let store = moltis_skills::manifest::ManifestStore::new(p);
+                store.load().map(|m| m.repos.len()).unwrap_or(0)
+            })
+            .unwrap_or(0);
+        (sc, rc)
+    };
+
+    // Startup banner.
+    let scheme = if tls_active {
+        "https"
+    } else {
+        "http"
+    };
+    // When bound to an unspecified address (0.0.0.0 / ::), resolve the
+    // machine's outbound IP so the printed URL is clickable.
+    let display_ip = if addr.ip().is_unspecified() {
+        resolve_outbound_ip(addr.ip().is_ipv6())
+            .map(|ip| SocketAddr::new(ip, port))
+            .unwrap_or(addr)
+    } else {
+        addr
+    };
+    // Use plain localhost for display URLs when bound to loopback with TLS.
+    #[cfg(feature = "tls")]
+    let display_host = if is_localhost && tls_active {
+        format!("localhost:{port}")
+    } else {
+        display_ip.to_string()
+    };
+    #[cfg(not(feature = "tls"))]
+    let display_host = display_ip.to_string();
+    let passkey_origins = banner
+        .webauthn_registry
+        .as_ref()
+        .map(|registry| registry.get_all_origins())
+        .unwrap_or_default();
+    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
+    let mut lines = vec![
+        format!("moltis gateway v{}", state.version),
+        format!(
+            "protocol v{}, listening on {}://{} ({})",
+            moltis_protocol::PROTOCOL_VERSION,
+            scheme,
+            display_host,
+            if tls_active {
+                "HTTP/2 + HTTP/1.1"
+            } else {
+                "HTTP/1.1"
+            },
+        ),
+        startup_bind_line(addr),
+        format!("{} methods registered", banner.method_count),
+        format!("llm: {}", banner.provider_summary),
+        format!(
+            "skills: {} enabled, {} repo{}",
+            skill_count,
+            repo_count,
+            if repo_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ),
+        format!(
+            "mcp: {} configured{}",
+            banner.mcp_configured_count,
+            if banner.mcp_configured_count > 0 {
+                " (starting in background)"
+            } else {
+                ""
+            }
+        ),
+        format!("sandbox: {} backend", banner.sandbox_backend_name),
+        format!(
+            "config: {}",
+            moltis_config::find_or_default_config_path().display()
+        ),
+        format!("data: {}", banner.data_dir.display()),
+        format!("openclaw: {}", banner.openclaw_status),
+    ];
+    lines.extend(startup_passkey_origin_lines(&passkey_origins));
+    // Hint about Apple Container on macOS when using Docker or Podman.
+    #[cfg(target_os = "macos")]
+    if banner.sandbox_backend_name == "docker" || banner.sandbox_backend_name == "podman" {
+        lines.push(
+            "hint: install Apple Container for VM-isolated sandboxing (see docs/sandbox.md)".into(),
+        );
+    }
+    // Warn when no sandbox backend is available.
+    if banner.sandbox_backend_name == "none" {
+        lines.push("⚠ no container runtime found; commands run on host".into());
+    }
+    // Display setup code if one was generated.
+    if let Some(ref code) = banner.setup_code_display {
+        lines.extend(startup_setup_code_lines(code));
+    }
+    #[cfg(feature = "tls")]
+    if tls_active {
+        if let Some(ref ca) = ca_cert_path {
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
+            let ca_host = if is_localhost {
+                "localhost"
+            } else {
+                bind
+            };
+            lines.push(format!(
+                "CA cert: http://{}:{}/certs/ca.pem",
+                ca_host, http_port
+            ));
+            lines.push(format!("  or: {}", ca.display()));
+        }
+        lines.push("run `moltis trust-ca` to remove browser warnings".into());
+    }
+    // Tailscale: enable serve/funnel and show in banner.
+    #[cfg(feature = "tailscale")]
+    {
+        let tailscale_mode = banner.tailscale_mode;
+        if tailscale_mode != TailscaleMode::Off {
+            let manager = CliTailscaleManager::new();
+            let ts_result = match tailscale_mode {
+                TailscaleMode::Serve => manager.enable_serve(port, tls_active).await,
+                TailscaleMode::Funnel => manager.enable_funnel(port, tls_active).await,
+                TailscaleMode::Off => unreachable!(),
+            };
+            match ts_result {
+                Ok(()) => {
+                    if let Ok(Some(hostname)) = manager.hostname().await {
+                        lines.push(format!("tailscale {tailscale_mode}: https://{hostname}"));
+                    } else {
+                        lines.push(format!("tailscale {tailscale_mode}: enabled"));
+                    }
+                },
+                Err(e) => {
+                    warn!("failed to enable tailscale {tailscale_mode}: {e}");
+                    lines.push(format!("tailscale {tailscale_mode}: FAILED ({e})"));
+                },
+            }
+        }
+    }
+    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0) + 4;
+    info!("┌{}┐", "─".repeat(width));
+    for line in &lines {
+        info!("│  {:<w$}│", line, w = width - 2);
+    }
+    info!("└{}┘", "─".repeat(width));
+
+    // Dispatch GatewayStart hook.
+    if let Some(ref hooks) = state.inner.read().await.hook_registry {
+        let payload = moltis_common::hooks::HookPayload::GatewayStart {
+            address: addr.to_string(),
+        };
+        if let Err(e) = hooks.dispatch(&payload).await {
+            tracing::warn!("GatewayStart hook dispatch failed: {e}");
+        }
+    }
+
+    // Spawn shutdown handler:
+    // - unregister mDNS service (when configured)
+    // - reset tailscale state on exit (when configured)
+    // - give browser pool 5s to shut down gracefully
+    // - force process exit to avoid hanging after ctrl-c
+    {
+        let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
+        #[cfg(feature = "tailscale")]
+        let reset_tailscale_on_exit =
+            banner.tailscale_mode != TailscaleMode::Off && banner.tailscale_reset_on_exit;
+        #[cfg(feature = "tailscale")]
+        let ts_mode = banner.tailscale_mode;
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_err() {
+                return;
+            }
+
+            #[cfg(feature = "mdns")]
+            if let Some(ref daemon) = _mdns_daemon {
+                crate::mdns::shutdown(daemon);
+            }
+
+            #[cfg(feature = "tailscale")]
+            if reset_tailscale_on_exit {
+                info!("shutting down tailscale {ts_mode}");
+                let manager = CliTailscaleManager::new();
+                if let Err(e) = manager.disable().await {
+                    warn!("failed to reset tailscale on exit: {e}");
+                }
+            }
+
+            let shutdown_grace = std::time::Duration::from_secs(5);
+            info!(
+                grace_secs = shutdown_grace.as_secs(),
+                "shutting down browser pool"
+            );
+            if browser_for_shutdown
+                .shutdown_with_grace(shutdown_grace)
+                .await
+            {
+                info!(
+                    grace_secs = shutdown_grace.as_secs(),
+                    "browser pool shut down"
+                );
+            } else {
+                warn!(
+                    grace_secs = shutdown_grace.as_secs(),
+                    "browser pool shutdown exceeded grace period, forcing process exit"
+                );
+            }
+
+            std::process::exit(0);
+        });
     }
 
     #[cfg(feature = "tls")]

@@ -266,6 +266,7 @@ impl SessionMetadata {
 /// SQLite-backed session metadata store.
 pub struct SqliteSessionMetadata {
     pool: sqlx::SqlitePool,
+    event_bus: Option<crate::session_events::SessionEventBus>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -321,7 +322,33 @@ impl From<SessionRow> for SessionEntry {
 
 impl SqliteSessionMetadata {
     pub fn new(pool: sqlx::SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            event_bus: None,
+        }
+    }
+
+    /// Create with an event bus that auto-publishes on mutations.
+    pub fn with_event_bus(
+        pool: sqlx::SqlitePool,
+        bus: crate::session_events::SessionEventBus,
+    ) -> Self {
+        Self {
+            pool,
+            event_bus: Some(bus),
+        }
+    }
+
+    /// Accessor for the event bus (subscribers call `.subscribe()` on it).
+    pub fn event_bus(&self) -> Option<&crate::session_events::SessionEventBus> {
+        self.event_bus.as_ref()
+    }
+
+    /// Publish an event if a bus is configured.
+    fn emit(&self, event: crate::session_events::SessionEvent) {
+        if let Some(bus) = &self.event_bus {
+            bus.publish(event);
+        }
     }
 
     /// Initialize the sessions table schema.
@@ -414,7 +441,21 @@ impl SqliteSessionMetadata {
         .bind(now)
         .execute(&self.pool)
         .await?;
-        self.get(key).await.ok_or_else(|| sqlx::Error::RowNotFound)
+        let entry = self
+            .get(key)
+            .await
+            .ok_or_else(|| sqlx::Error::RowNotFound)?;
+        // version == 0 means freshly inserted; > 0 means conflict-updated.
+        if entry.version == 0 {
+            self.emit(crate::session_events::SessionEvent::Created {
+                session_key: key.to_string(),
+            });
+        } else {
+            self.emit(crate::session_events::SessionEvent::Patched {
+                session_key: key.to_string(),
+            });
+        }
+        Ok(entry)
     }
 
     pub async fn set_model(&self, key: &str, model: Option<String>) {
@@ -428,6 +469,9 @@ impl SqliteSessionMetadata {
         .execute(&self.pool)
         .await
         .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn touch(&self, key: &str, message_count: u32) {
@@ -441,6 +485,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     /// Set imported timestamps and message counters without replacing them with "now".
@@ -473,6 +520,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     /// Mark a session as "seen" by setting `last_seen_message_count` to the
@@ -485,6 +535,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_project_id(&self, key: &str, project_id: Option<String>) {
@@ -498,6 +551,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_sandbox_image(&self, key: &str, image: Option<String>) {
@@ -511,6 +567,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_sandbox_enabled(&self, key: &str, enabled: Option<bool>) {
@@ -525,6 +584,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_worktree_branch(&self, key: &str, branch: Option<String>) {
@@ -538,6 +600,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_mcp_disabled(&self, key: &str, disabled: Option<bool>) {
@@ -552,6 +617,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_channel_binding(&self, key: &str, binding: Option<String>) {
@@ -565,6 +633,9 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     /// Assign (or unassign) a session to an agent persona.
@@ -578,6 +649,9 @@ impl SqliteSessionMetadata {
         .bind(key)
         .execute(&self.pool)
         .await?;
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
         Ok(())
     }
 
@@ -615,6 +689,9 @@ impl SqliteSessionMetadata {
         .execute(&self.pool)
         .await
         .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     /// List all sessions that are children of the given parent key.
@@ -638,6 +715,11 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        if entry.is_some() {
+            self.emit(crate::session_events::SessionEvent::Deleted {
+                session_key: key.to_string(),
+            });
+        }
         entry
     }
 
@@ -953,6 +1035,34 @@ mod tests {
         let entry = meta.get("main").await.unwrap();
         assert_eq!(entry.message_count, 8);
         assert_eq!(entry.last_seen_message_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_mark_seen_emits_patched_event() {
+        let pool = sqlite_pool().await;
+        let bus = crate::session_events::SessionEventBus::new();
+        let meta = SqliteSessionMetadata::with_event_bus(pool, bus.clone());
+        let mut rx = bus.subscribe();
+
+        meta.upsert("main", None).await.unwrap();
+        let created = rx.recv().await.unwrap();
+        assert!(
+            matches!(
+                created,
+                crate::session_events::SessionEvent::Created { session_key } if session_key == "main"
+            ),
+            "expected created event after upsert"
+        );
+
+        meta.mark_seen("main").await;
+        let patched = rx.recv().await.unwrap();
+        assert!(
+            matches!(
+                patched,
+                crate::session_events::SessionEvent::Patched { session_key } if session_key == "main"
+            ),
+            "expected patched event after mark_seen"
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@ use {
         plugin::ChannelHealthSnapshot,
         store::{ChannelStore, StoredChannel},
     },
+    moltis_discord::DiscordPlugin,
     moltis_msteams::MsTeamsPlugin,
     moltis_sessions::metadata::SqliteSessionMetadata,
     moltis_telegram::TelegramPlugin,
@@ -31,10 +32,11 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
-/// Live channel service backed by Telegram, Microsoft Teams, and WhatsApp plugins.
+/// Live channel service backed by Telegram, Microsoft Teams, Discord, and WhatsApp plugins.
 pub struct LiveChannelService {
     telegram: Arc<RwLock<TelegramPlugin>>,
     msteams: Arc<RwLock<MsTeamsPlugin>>,
+    discord: Arc<RwLock<DiscordPlugin>>,
     #[cfg(feature = "whatsapp")]
     whatsapp: Arc<RwLock<WhatsAppPlugin>>,
     store: Arc<dyn ChannelStore>,
@@ -46,6 +48,7 @@ impl LiveChannelService {
     pub fn new(
         telegram: Arc<RwLock<TelegramPlugin>>,
         msteams: Arc<RwLock<MsTeamsPlugin>>,
+        discord: Arc<RwLock<DiscordPlugin>>,
         #[cfg(feature = "whatsapp")] whatsapp: Arc<RwLock<WhatsAppPlugin>>,
         store: Arc<dyn ChannelStore>,
         message_log: Arc<dyn MessageLog>,
@@ -54,6 +57,7 @@ impl LiveChannelService {
         Self {
             telegram,
             msteams,
+            discord,
             #[cfg(feature = "whatsapp")]
             whatsapp,
             store,
@@ -86,6 +90,12 @@ impl LiveChannelService {
                 matches.push(ChannelType::MsTeams);
             }
         }
+        {
+            let dc = self.discord.read().await;
+            if dc.has_account(account_id) {
+                matches.push(ChannelType::Discord);
+            }
+        }
         #[cfg(feature = "whatsapp")]
         {
             let wa = self.whatsapp.read().await;
@@ -108,6 +118,7 @@ impl LiveChannelService {
         for ct in [
             ChannelType::Telegram,
             ChannelType::MsTeams,
+            ChannelType::Discord,
             ChannelType::Whatsapp,
         ] {
             if self
@@ -192,6 +203,10 @@ impl LiveChannelService {
                 let mut ms = self.msteams.write().await;
                 ms.start_account(account_id, config).await
             },
+            ChannelType::Discord => {
+                let mut dc = self.discord.write().await;
+                dc.start_account(account_id, config).await
+            },
             #[cfg(feature = "whatsapp")]
             ChannelType::Whatsapp => {
                 let mut wa = self.whatsapp.write().await;
@@ -223,6 +238,10 @@ impl LiveChannelService {
                 let mut ms = self.msteams.write().await;
                 ms.stop_account(account_id).await
             },
+            ChannelType::Discord => {
+                let mut dc = self.discord.write().await;
+                dc.stop_account(account_id).await
+            },
             #[cfg(feature = "whatsapp")]
             ChannelType::Whatsapp => {
                 let mut wa = self.whatsapp.write().await;
@@ -250,6 +269,10 @@ impl LiveChannelService {
                 let ms = self.msteams.read().await;
                 ms.update_account_config(account_id, config)
             },
+            ChannelType::Discord => {
+                let dc = self.discord.read().await;
+                dc.update_account_config(account_id, config)
+            },
             #[cfg(feature = "whatsapp")]
             ChannelType::Whatsapp => {
                 let wa = self.whatsapp.read().await;
@@ -273,6 +296,10 @@ impl LiveChannelService {
             ChannelType::MsTeams => {
                 let ms = self.msteams.read().await;
                 ms.account_config(account_id)
+            },
+            ChannelType::Discord => {
+                let dc = self.discord.read().await;
+                dc.account_config(account_id)
             },
             #[cfg(feature = "whatsapp")]
             ChannelType::Whatsapp => {
@@ -344,6 +371,36 @@ impl ChannelService for LiveChannelService {
                         Err(e) => channels.push(serde_json::json!({
                             "type": "msteams",
                             "name": format!("Microsoft Teams ({aid})"),
+                            "account_id": aid,
+                            "status": "error",
+                            "details": e.to_string(),
+                        })),
+                    }
+                }
+            }
+        }
+
+        {
+            let dc = self.discord.read().await;
+            let account_ids = dc.account_ids();
+            if let Some(status) = dc.status() {
+                for aid in &account_ids {
+                    match status.probe(aid).await {
+                        Ok(snap) => {
+                            let entry = self
+                                .channel_status_entry(
+                                    ChannelType::Discord,
+                                    "Discord",
+                                    aid,
+                                    snap,
+                                    dc.account_config(aid),
+                                )
+                                .await;
+                            channels.push(entry);
+                        },
+                        Err(e) => channels.push(serde_json::json!({
+                            "type": ChannelType::Discord.as_str(),
+                            "name": format!("Discord ({aid})"),
                             "account_id": aid,
                             "status": "error",
                             "details": e.to_string(),

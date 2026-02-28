@@ -160,8 +160,21 @@ test.describe("Agents settings page", () => {
 		await createSession(page);
 
 		const agentSelect = page.locator('select[title="Session agent"]');
-		await expect(agentSelect).toBeVisible();
+		await expect(agentSelect).toBeEnabled({ timeout: 10_000 });
+		await expect(agentSelect.locator('option[value="selector-test"]')).toBeAttached({ timeout: 10_000 });
 		await agentSelect.selectOption("selector-test");
+		// The controlled Preact select resets value on re-render; wait for
+		// the session store to reflect the agent switch (RPC round-trip)
+		// before asserting the DOM value.
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(
+						() => window.__moltis_stores?.sessionStore?.activeSession?.value?.agent_id,
+					),
+				{ timeout: 15_000 },
+			)
+			.toBe("selector-test");
 		await expect(agentSelect).toHaveValue("selector-test");
 		await expect
 			.poll(async () => {

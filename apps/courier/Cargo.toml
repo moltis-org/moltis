@@ -1,0 +1,27 @@
+[package]
+name        = "moltis-courier"
+description = "Privacy-preserving APNS push relay for Moltis gateways"
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+version.workspace     = true
+
+[[bin]]
+name = "moltis-courier"
+path = "src/main.rs"
+
+[dependencies]
+a2                  = { workspace = true }
+anyhow              = { workspace = true }
+axum                = { workspace = true }
+clap                = { workspace = true }
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+sha2                = { workspace = true }
+tokio               = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+
+[lints]
+workspace = true

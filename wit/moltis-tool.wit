@@ -1,0 +1,30 @@
+package moltis:tool@0.1.0;
+
+interface types {
+  variant tool-value {
+    text(string),
+    number(f64),
+    integer(s64),
+    boolean(bool),
+    json(string),
+  }
+
+  record tool-error {
+    code: string,
+    message: string,
+  }
+
+  variant tool-result {
+    ok(tool-value),
+    err(tool-error),
+  }
+}
+
+world pure-tool {
+  use types.{tool-result};
+
+  export name: func() -> string;
+  export description: func() -> string;
+  export parameters-schema: func() -> string;
+  export execute: func(params-json: string) -> tool-result;
+}

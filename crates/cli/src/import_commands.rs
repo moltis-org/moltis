@@ -91,7 +91,7 @@ fn handle_detect(json_output: bool) -> anyhow::Result<()> {
     print_scan_item(
         "Channels",
         scan.channels_available,
-        Some(format!("{} Telegram account(s)", scan.telegram_accounts)),
+        format_channel_scan_detail(&scan),
     );
     print_scan_item(
         "Sessions",
@@ -284,7 +284,7 @@ fn print_scan_summary(scan: &moltis_openclaw_import::ImportScan) {
     print_scan_item(
         "Channels",
         scan.channels_available,
-        Some(format!("{} Telegram account(s)", scan.telegram_accounts)),
+        format_channel_scan_detail(scan),
     );
     print_scan_item(
         "Sessions",
@@ -309,6 +309,21 @@ fn print_selection(sel: &moltis_openclaw_import::ImportSelection) {
             " "
         };
         println!("  [{mark}] {name}");
+    }
+}
+
+fn format_channel_scan_detail(scan: &moltis_openclaw_import::ImportScan) -> Option<String> {
+    let mut parts = Vec::new();
+    if scan.telegram_accounts > 0 {
+        parts.push(format!("{} Telegram account(s)", scan.telegram_accounts));
+    }
+    if scan.discord_accounts > 0 {
+        parts.push(format!("{} Discord account(s)", scan.discord_accounts));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
     }
 }
 

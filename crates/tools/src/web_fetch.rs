@@ -1,18 +1,17 @@
 use std::{
     collections::HashMap,
-    net::IpAddr,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
-use {
-    anyhow::{Result, bail},
-    async_trait::async_trait,
-    tracing::debug,
-    url::Url,
-};
+use {async_trait::async_trait, tracing::debug, url::Url};
 
-use {moltis_agents::tool_registry::AgentTool, moltis_config::schema::WebFetchConfig};
+use crate::error::Error;
+
+use {
+    crate::ssrf::ssrf_check, moltis_agents::tool_registry::AgentTool,
+    moltis_config::schema::WebFetchConfig,
+};
 
 /// Cached fetch result with expiry.
 struct CacheEntry {
@@ -29,6 +28,7 @@ pub struct WebFetchTool {
     readability: bool,
     ssrf_allowlist: Vec<ipnet::IpNet>,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    proxy_url: Option<String>,
 }
 
 impl WebFetchTool {
@@ -56,7 +56,15 @@ impl WebFetchTool {
             readability: config.readability,
             ssrf_allowlist,
             cache: Mutex::new(HashMap::new()),
+            proxy_url: None,
         })
+    }
+
+    /// Route HTTP traffic through a proxy (e.g. the trusted-network proxy).
+    #[must_use]
+    pub fn with_proxy(mut self, url: String) -> Self {
+        self.proxy_url = Some(url);
+        self
     }
 
     fn cache_get(&self, key: &str) -> Option<serde_json::Value> {
@@ -91,19 +99,25 @@ impl WebFetchTool {
         extract_mode: &str,
         max_chars: usize,
         accept_language: Option<&str>,
-    ) -> Result<serde_json::Value> {
+    ) -> crate::Result<serde_json::Value> {
         let mut current_url = Url::parse(url_str)?;
 
         // Validate scheme.
         match current_url.scheme() {
             "http" | "https" => {},
-            s => bail!("unsupported URL scheme: {s}"),
+            s => return Err(Error::message(format!("unsupported URL scheme: {s}"))),
         }
 
-        let client = reqwest::Client::builder()
+        let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
-            .redirect(reqwest::redirect::Policy::none()) // Manual redirect handling.
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none()); // Manual redirect handling.
+        if let Some(ref url) = self.proxy_url
+            && let Ok(proxy) = reqwest::Proxy::all(url)
+        {
+            let proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
+            client_builder = client_builder.proxy(proxy);
+        }
+        let client = client_builder.build()?;
 
         let mut visited: Vec<String> = Vec::new();
         let mut hops = 0u8;
@@ -122,23 +136,26 @@ impl WebFetchTool {
 
             if status.is_redirection() {
                 if hops >= self.max_redirects {
-                    bail!(
+                    return Err(Error::message(format!(
                         "too many redirects ({} hops, max {})",
                         hops + 1,
                         self.max_redirects
-                    );
+                    )));
                 }
                 let location = resp
                     .headers()
                     .get("location")
                     .and_then(|v| v.to_str().ok())
-                    .ok_or_else(|| anyhow::anyhow!("redirect without Location header"))?;
+                    .ok_or_else(|| Error::message("redirect without Location header"))?;
 
                 let next = current_url.join(location)?;
 
                 // Loop detection.
                 if visited.contains(&next.to_string()) {
-                    bail!("redirect loop detected: {} → {}", current_url, next);
+                    return Err(Error::message(format!(
+                        "redirect loop detected: {} → {}",
+                        current_url, next
+                    )));
                 }
 
                 current_url = next;
@@ -181,69 +198,6 @@ impl WebFetchTool {
                 "original_length": body.len(),
             }));
         }
-    }
-}
-
-/// Check if an IP is covered by an SSRF allowlist entry.
-fn is_ssrf_allowed(ip: &IpAddr, allowlist: &[ipnet::IpNet]) -> bool {
-    allowlist.iter().any(|net| net.contains(ip))
-}
-
-/// SSRF protection: resolve the URL host and reject private/loopback/link-local IPs.
-async fn ssrf_check(url: &Url, allowlist: &[ipnet::IpNet]) -> Result<()> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
-
-    // Try parsing as IP directly.
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) && !is_ssrf_allowed(&ip, allowlist) {
-            bail!("SSRF blocked: {host} resolves to private IP {ip}");
-        }
-        return Ok(());
-    }
-
-    // DNS resolution.
-    let port = url.port_or_known_default().unwrap_or(443);
-    let addrs: Vec<_> = tokio::net::lookup_host(format!("{host}:{port}"))
-        .await?
-        .collect();
-
-    if addrs.is_empty() {
-        bail!("DNS resolution failed for {host}");
-    }
-
-    for addr in &addrs {
-        if is_private_ip(&addr.ip()) && !is_ssrf_allowed(&addr.ip(), allowlist) {
-            bail!("SSRF blocked: {host} resolves to private IP {}", addr.ip());
-        }
-    }
-
-    Ok(())
-}
-
-/// Check if an IP address is private, loopback, or link-local.
-fn is_private_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_unspecified()
-                // 100.64.0.0/10 (CGNAT)
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
-                // 192.0.0.0/24
-                || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0)
-        },
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                // fc00::/7 (unique local)
-                || (v6.segments()[0] & 0xFE00) == 0xFC00
-                // fe80::/10 (link-local)
-                || (v6.segments()[0] & 0xFFC0) == 0xFE80
-        },
     }
 }
 
@@ -434,11 +388,11 @@ impl AgentTool for WebFetchTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let url = params
             .get("url")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'url' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'url' parameter"))?;
 
         let extract_mode = params
             .get("extract_mode")
@@ -464,7 +418,6 @@ impl AgentTool for WebFetchTool {
         let result = self
             .fetch_url(url, extract_mode, max_chars, accept_language)
             .await?;
-
         self.cache_set(cache_key, result.clone());
         Ok(result)
     }
@@ -473,7 +426,11 @@ impl AgentTool for WebFetchTool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::ssrf::{is_private_ip, is_ssrf_allowed, ssrf_check},
+        std::net::IpAddr,
+    };
 
     fn default_tool() -> WebFetchTool {
         WebFetchTool {
@@ -484,6 +441,7 @@ mod tests {
             readability: true,
             ssrf_allowlist: vec![],
             cache: Mutex::new(HashMap::new()),
+            proxy_url: None,
         }
     }
 
@@ -740,5 +698,20 @@ mod tests {
         };
         let tool = WebFetchTool::from_config(&cfg).unwrap();
         assert_eq!(tool.ssrf_allowlist.len(), 2);
+    }
+
+    #[test]
+    fn test_with_proxy() {
+        let tool = default_tool();
+        assert!(tool.proxy_url.is_none());
+        let tool = tool.with_proxy("http://127.0.0.1:18791".into());
+        assert_eq!(tool.proxy_url.as_deref(), Some("http://127.0.0.1:18791"));
+    }
+
+    #[test]
+    fn test_from_config_has_no_proxy_by_default() {
+        let cfg = WebFetchConfig::default();
+        let tool = WebFetchTool::from_config(&cfg).unwrap();
+        assert!(tool.proxy_url.is_none());
     }
 }

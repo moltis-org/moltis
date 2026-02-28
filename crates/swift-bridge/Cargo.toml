@@ -1,0 +1,39 @@
+[package]
+edition.workspace      = true
+license.workspace      = true
+name                   = "moltis-swift-bridge"
+repository.workspace   = true
+rust-version.workspace = true
+version.workspace      = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+default = ["metrics", "tracing"]
+metrics = ["dep:metrics"]
+tracing = ["dep:tracing"]
+
+[dependencies]
+anyhow                = { workspace = true }
+axum                  = { workspace = true }
+metrics               = { optional = true, workspace = true }
+moltis-agents         = { workspace = true }
+moltis-config         = { workspace = true }
+moltis-gateway        = { default-features = true, features = ["file-watcher", "metrics", "voice", "web-ui"], workspace = true }
+moltis-network-filter = { features = ["proxy", "service"], workspace = true }
+moltis-projects       = { workspace = true }
+moltis-provider-setup = { workspace = true }
+moltis-providers      = { workspace = true }
+moltis-sessions       = { workspace = true }
+moltis-web            = { workspace = true }
+serde                 = { features = ["derive"], workspace = true }
+serde_json            = { workspace = true }
+sqlx                  = { workspace = true }
+tokio                 = { workspace = true }
+tokio-stream          = { workspace = true }
+tracing               = { optional = true, workspace = true }
+uuid                  = { workspace = true }
+
+[dev-dependencies]
+serial_test           = { workspace = true }

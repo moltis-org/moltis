@@ -9,7 +9,6 @@
 use std::io::Cursor;
 
 use {
-    anyhow::{Result, bail},
     async_trait::async_trait,
     base64::{Engine as _, engine::general_purpose::STANDARD as BASE64},
     image::{ImageFormat, RgbaImage, imageops},
@@ -17,6 +16,8 @@ use {
     serde::Deserialize,
     tracing::{debug, warn},
 };
+
+use crate::{Result, error::Error};
 
 // ── Parameters ──────────────────────────────────────────────────────────────
 
@@ -55,14 +56,18 @@ struct DestinationPoint {
 
 fn validate_latitude(value: f64, field: &str) -> Result<()> {
     if !(-90.0..=90.0).contains(&value) {
-        bail!("{field} must be between -90 and 90, got {value}");
+        return Err(Error::message(format!(
+            "{field} must be between -90 and 90, got {value}"
+        )));
     }
     Ok(())
 }
 
 fn validate_longitude(value: f64, field: &str) -> Result<()> {
     if !(-180.0..=180.0).contains(&value) {
-        bail!("{field} must be between -180 and 180, got {value}");
+        return Err(Error::message(format!(
+            "{field} must be between -180 and 180, got {value}"
+        )));
     }
     Ok(())
 }
@@ -92,9 +97,15 @@ fn normalize_destination_points(params: &ShowMapParams) -> Result<Vec<Destinatio
                 label: params.label.clone(),
             }])
         },
-        (Some(_), None) => bail!("longitude is required when latitude is provided"),
-        (None, Some(_)) => bail!("latitude is required when longitude is provided"),
-        (None, None) => bail!("provide either `points` or `latitude`/`longitude`"),
+        (Some(_), None) => Err(Error::message(
+            "longitude is required when latitude is provided",
+        )),
+        (None, Some(_)) => Err(Error::message(
+            "latitude is required when longitude is provided",
+        )),
+        (None, None) => Err(Error::message(
+            "provide either `points` or `latitude`/`longitude`",
+        )),
     }
 }
 
@@ -706,11 +717,11 @@ impl AgentTool for ShowMapTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let p: ShowMapParams = serde_json::from_value(params)?;
         let destinations = normalize_destination_points(&p)?;
         let Some(primary) = destinations.first() else {
-            bail!("at least one destination is required");
+            return Err(Error::message("at least one destination is required").into());
         };
         let primary_lat = primary.latitude;
         let primary_lon = primary.longitude;

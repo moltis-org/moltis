@@ -1,0 +1,28 @@
+fragment SessionFields on SessionEntry {
+  id
+  key
+  label
+  model
+  preview
+  createdAt
+  updatedAt
+  messageCount
+  lastSeenMessageCount
+  archived
+}
+
+query FetchSessions {
+  sessions {
+    list {
+      ...SessionFields
+    }
+  }
+}
+
+query SearchSessions($query: String!) {
+  sessions {
+    search(query: $query) {
+      ...SessionFields
+    }
+  }
+}

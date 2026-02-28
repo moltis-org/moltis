@@ -127,18 +127,34 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let wasm_tool_limit_override = || Struct(HashMap::from([("fuel", Leaf), ("memory", Leaf)]));
+
+    let wasm_tool_limits = || {
+        Struct(HashMap::from([
+            ("default_memory", Leaf),
+            ("default_fuel", Leaf),
+            ("tool_overrides", Map(Box::new(wasm_tool_limit_override()))),
+        ]))
+    };
+
     let sandbox = || {
         Struct(HashMap::from([
             ("mode", Leaf),
             ("scope", Leaf),
             ("workspace_mount", Leaf),
             ("home_persistence", Leaf),
+            ("shared_home_dir", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
+            ("network", Leaf),
+            ("trusted_domains", Array(Box::new(Leaf))),
             ("backend", Leaf),
             ("resource_limits", resource_limits()),
             ("packages", Leaf),
+            ("wasm_fuel_limit", Leaf),
+            ("wasm_epoch_interval_ms", Leaf),
+            ("wasm_tool_limits", wasm_tool_limits()),
         ]))
     };
 
@@ -390,6 +406,7 @@ fn build_schema_map() -> KnownKeys {
                 ("telegram", Map(Box::new(Leaf))),
                 ("whatsapp", Map(Box::new(Leaf))),
                 ("msteams", Map(Box::new(Leaf))),
+                ("discord", Map(Box::new(Leaf))),
             ])),
         ),
         (
@@ -968,7 +985,7 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     }
 
     // Unknown channel types in channels.offered
-    let valid_channel_types = ["telegram", "msteams"];
+    let valid_channel_types = ["telegram", "msteams", "discord"];
     for (idx, entry) in config.channels.offered.iter().enumerate() {
         if !valid_channel_types.contains(&entry.as_str()) {
             diagnostics.push(Diagnostic {
@@ -999,7 +1016,14 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     }
 
     // Unknown sandbox backend
-    let valid_sandbox_backends = ["auto", "docker", "apple-container"];
+    let valid_sandbox_backends = [
+        "auto",
+        "docker",
+        "podman",
+        "apple-container",
+        "restricted-host",
+        "wasm",
+    ];
     if !valid_sandbox_backends.contains(&config.tools.exec.sandbox.backend.as_str()) {
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,
@@ -1011,6 +1035,23 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 valid_sandbox_backends.join(", ")
             ),
         });
+    }
+
+    // Unknown sandbox network policy
+    if !config.tools.exec.sandbox.network.is_empty() {
+        let valid_network_policies = ["blocked", "trusted", "bypass"];
+        if !valid_network_policies.contains(&config.tools.exec.sandbox.network.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "tools.exec.sandbox.network".into(),
+                message: format!(
+                    "unknown sandbox network policy \"{}\"; expected one of: {}",
+                    config.tools.exec.sandbox.network,
+                    valid_network_policies.join(", ")
+                ),
+            });
+        }
     }
 
     // Unknown memory backend
@@ -1621,7 +1662,7 @@ disable_rag = true
     fn unknown_sandbox_backend_warned() {
         let toml = r#"
 [tools.exec.sandbox]
-backend = "podman"
+backend = "lxc"
 "#;
         let result = validate_toml_str(toml);
         let warning = result
@@ -1631,6 +1672,23 @@ backend = "podman"
         assert!(
             warning.is_some(),
             "expected warning for unknown sandbox backend"
+        );
+    }
+
+    #[test]
+    fn podman_sandbox_backend_accepted() {
+        let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "tools.exec.sandbox.backend");
+        assert!(
+            warning.is_none(),
+            "podman should be accepted as a valid sandbox backend"
         );
     }
 
@@ -1988,6 +2046,43 @@ offered = ["telegram"]
         assert!(
             warning.is_none(),
             "valid channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_discord_accepted() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "discord"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered") && d.category == "unknown-field");
+        assert!(
+            warning.is_none(),
+            "discord in channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_discord_config_accepted() {
+        let toml = r#"
+[channels.discord.my_bot]
+token = "test-token"
+dm_policy = "allowlist"
+"#;
+        let result = validate_toml_str(toml);
+        let error = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.discord") && d.severity == Severity::Error);
+        assert!(
+            error.is_none(),
+            "discord channel config should be accepted, got: {:?}",
             result.diagnostics
         );
     }
