@@ -27,7 +27,7 @@ Moltis recently hit [the front page of Hacker News](https://news.ycombinator.com
 
 **Full-featured** — Voice, memory, scheduling, Telegram, Discord, browser automation, MCP servers — all built-in. No plugin marketplace to get supply-chain attacked through.
 
-**Auditable** — The agent loop + provider model fits in ~5K lines. The core (excluding the optional web UI) is ~121K lines across modular crates you can audit independently, with 2,300+ tests and zero `unsafe` code\*.
+**Auditable** — The agent loop + provider model fits in ~5K lines. The core (excluding the optional web UI) is ~196K lines across 46 modular crates you can audit independently, with 3,100+ tests and zero `unsafe` code\*.
 
 ## Installation
 
@@ -72,30 +72,38 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 
 | Crate | LoC | Role |
 |-------|-----|------|
-| `moltis` (cli) | 2.4K | Entry point, CLI commands |
-| `moltis-agents` | 20.1K | LLM providers, agent loop, streaming |
-| `moltis-gateway` | 29.2K | HTTP/WS server, RPC, auth |
-| `moltis-chat` | 10.2K | Chat engine, agent orchestration |
-| `moltis-tools` | 13.4K | Tool execution, sandbox |
-| `moltis-config` | 5.1K | Configuration, validation |
-| `moltis-sessions` | 2.7K | Session persistence |
-| `moltis-plugins` | 1.4K | Hook dispatch, plugin formats |
-| `moltis-common` | 0.8K | Shared utilities |
+| `moltis` (cli) | 4.0K | Entry point, CLI commands |
+| `moltis-agents` | 9.6K | Agent loop, streaming, prompt assembly |
+| `moltis-providers` | 17.6K | LLM provider implementations |
+| `moltis-gateway` | 36.1K | HTTP/WS server, RPC, auth |
+| `moltis-chat` | 11.5K | Chat engine, agent orchestration |
+| `moltis-tools` | 21.9K | Tool execution, sandbox |
+| `moltis-config` | 7.0K | Configuration, validation |
+| `moltis-sessions` | 3.8K | Session persistence |
+| `moltis-plugins` | 1.9K | Hook dispatch, plugin formats |
+| `moltis-service-traits` | 1.3K | Shared service interfaces |
+| `moltis-common` | 1.1K | Shared utilities |
+| `moltis-protocol` | 0.8K | Wire protocol types |
 
 **Optional** (feature-gated or additive):
 
 | Category | Crates | Combined LoC |
 |----------|--------|-------------|
-| Web UI | `moltis-web` | 4.3K |
-| Voice | `moltis-voice` | 4.7K |
-| Memory | `moltis-memory`, `moltis-qmd` | 5.8K |
-| Channels | `moltis-telegram`, `moltis-msteams`, `moltis-discord`, `moltis-channels` | 6.4K |
-| Browser | `moltis-browser` | 4.8K |
-| Scheduling | `moltis-cron` | 3.8K |
-| Extensibility | `moltis-mcp`, `moltis-skills` | 7.4K |
-| Auth/OAuth | `moltis-oauth`, `moltis-onboarding`, `moltis-vault` | 2.8K |
+| Web UI | `moltis-web` | 4.5K |
+| GraphQL | `moltis-graphql` | 4.8K |
+| Voice | `moltis-voice` | 6.0K |
+| Memory | `moltis-memory`, `moltis-qmd` | 5.9K |
+| Channels | `moltis-telegram`, `moltis-whatsapp`, `moltis-discord`, `moltis-msteams`, `moltis-channels` | 14.9K |
+| Browser | `moltis-browser` | 5.1K |
+| Scheduling | `moltis-cron`, `moltis-caldav` | 5.2K |
+| Extensibility | `moltis-mcp`, `moltis-skills`, `moltis-wasm-tools` | 9.1K |
+| Auth & Security | `moltis-auth`, `moltis-oauth`, `moltis-onboarding`, `moltis-vault` | 6.6K |
+| Networking | `moltis-network-filter`, `moltis-tls`, `moltis-tailscale` | 3.5K |
+| Provider setup | `moltis-provider-setup` | 4.3K |
+| Import | `moltis-openclaw-import` | 7.6K |
+| Apple native | `moltis-swift-bridge` | 2.1K |
 | Metrics | `moltis-metrics` | 1.7K |
-| Other | `moltis-projects`, `moltis-routing`, `moltis-protocol`, `moltis-media`, `moltis-canvas`, `moltis-auto-reply` | 2.4K |
+| Other | `moltis-projects`, `moltis-media`, `moltis-routing`, `moltis-canvas`, `moltis-auto-reply`, `moltis-schema-export`, `moltis-benchmarks` | 2.5K |
 
 Use `--no-default-features --features lightweight` for constrained devices (Raspberry Pi, etc.).
 

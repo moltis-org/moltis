@@ -12,7 +12,7 @@ How Moltis compares to other open-source AI agent frameworks.
 |---|---|---|---|---|---|
 | Language | TypeScript | Go | TypeScript | Rust | **Rust** |
 | Agent loop | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~5K LoC** |
-| Full codebase | — | — | — | 1,000+ tests | **~124K LoC** (2,300+ tests) |
+| Full codebase | — | — | — | 1,000+ tests | **~200K LoC** (3,100+ tests) |
 | Runtime | Node.js + npm | Single binary | Node.js | Single binary (3.4 MB) | **Single binary (44 MB)** |
 | Sandbox | App-level | — | Docker | Docker | **Docker + Apple Container** |
 | Memory safety | GC | GC | GC | Ownership | **Ownership, zero `unsafe`\*** |
@@ -61,7 +61,7 @@ FTS search. The focus is on minimal footprint and broad platform support.
 
 Moltis prioritizes auditability and defense in depth. The core agent engine
 (runner + provider model) is ~5K lines; the core (excluding the optional web UI)
-is ~121K lines across modular crates, each independently auditable. Key
+is ~196K lines across 46 modular crates, each independently auditable. Key
 differences from ZeroClaw:
 
 - **Larger binary (44 MB)** in exchange for built-in voice I/O, browser
