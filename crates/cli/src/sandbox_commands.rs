@@ -65,6 +65,20 @@ pub async fn handle_sandbox(action: SandboxAction) -> Result<()> {
     }
 }
 
+fn image_build_not_supported_notice(backend: &str) -> Option<(&'static str, &'static str)> {
+    match backend {
+        "restricted-host" => Some((
+            "Restricted-host sandbox does not use container images — nothing to build.",
+            "This backend provides env clearing + rlimit isolation without containers.",
+        )),
+        "wasm" | "wasmtime" => Some((
+            "WASM sandbox does not use container images — nothing to build.",
+            "The WASM backend uses Wasmtime + WASI for sandboxed execution.",
+        )),
+        _ => None,
+    }
+}
+
 async fn list() -> Result<()> {
     let images = sandbox::list_sandbox_images().await?;
     if images.is_empty() {
@@ -82,6 +96,12 @@ async fn build() -> Result<()> {
     let config = moltis_config::discover_and_load();
     let mut sandbox_config = sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
     sandbox_config.container_prefix = Some(instance_sandbox_prefix(&config));
+
+    if let Some((line_one, line_two)) = image_build_not_supported_notice(&sandbox_config.backend) {
+        println!("{line_one}");
+        println!("{line_two}");
+        return Ok(());
+    }
 
     let packages = sandbox_config.packages.clone();
     if packages.is_empty() {
@@ -149,4 +169,60 @@ async fn clean() -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{image_build_not_supported_notice, sanitize_instance_slug};
+
+    #[test]
+    fn wasm_backends_skip_image_build() {
+        let notice = image_build_not_supported_notice("wasm");
+        assert!(notice.is_some());
+
+        let notice_alias = image_build_not_supported_notice("wasmtime");
+        assert_eq!(notice, notice_alias);
+    }
+
+    #[test]
+    fn restricted_host_skips_image_build() {
+        let notice = image_build_not_supported_notice("restricted-host");
+        assert!(notice.is_some());
+        if let Some((line_one, line_two)) = notice {
+            assert!(line_one.contains("does not use container images"));
+            assert!(line_two.contains("rlimit isolation"));
+        }
+    }
+
+    #[test]
+    fn container_backends_require_image_build() {
+        assert_eq!(image_build_not_supported_notice("docker"), None);
+        assert_eq!(image_build_not_supported_notice("apple-container"), None);
+    }
+
+    #[test]
+    fn slug_lowercases_and_replaces_non_alnum() {
+        assert_eq!(sanitize_instance_slug("My Server"), "my-server");
+    }
+
+    #[test]
+    fn slug_collapses_consecutive_dashes() {
+        assert_eq!(sanitize_instance_slug("a--b___c"), "a-b-c");
+    }
+
+    #[test]
+    fn slug_trims_leading_trailing_dashes() {
+        assert_eq!(sanitize_instance_slug("--hello--"), "hello");
+    }
+
+    #[test]
+    fn slug_empty_falls_back_to_moltis() {
+        assert_eq!(sanitize_instance_slug(""), "moltis");
+        assert_eq!(sanitize_instance_slug("---"), "moltis");
+    }
+
+    #[test]
+    fn slug_preserves_alphanumeric() {
+        assert_eq!(sanitize_instance_slug("abc123"), "abc123");
+    }
 }

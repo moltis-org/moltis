@@ -44,24 +44,30 @@ export default {
 
 	// ── Backend labels ─────────────────────────────────────
 	backend: {
-		appleContainer: "Apple Container (VM-isolated)",
+		appleContainer: "Apple Container (isolé par VM)",
 		docker: "Docker",
 		cgroup: "cgroup (systemd-run)",
-		none: "None (host execution)",
-		containerBackendLabel: "Container backend:",
+		restrictedHost: "Hôte restreint (env + rlimits)",
+		wasm: "Wasmtime (isolé par WASM)",
+		none: "Aucun (exécution sur l'hôte)",
+		containerBackendLabel: "Backend de conteneur :",
 	},
 
 	// ── Recommendations ────────────────────────────────────
 	recommendation: {
 		noRuntimeMacos:
-			"No container runtime detected. Install Apple Container (macOS 26+) for VM-isolated sandboxing, or install Docker as an alternative.",
+			"Aucun runtime de conteneur détecté. Installez Apple Container (macOS 26+) pour une isolation par VM, ou installez Docker comme alternative.",
 		noRuntimeLinux:
-			"No container runtime detected. Install Docker for sandboxed execution, or ensure systemd is available for cgroup isolation.",
-		noRuntimeGeneric: "No container runtime detected. Install Docker for sandboxed execution.",
+			"Aucun runtime de conteneur détecté. Installez Docker pour l'exécution en sandbox, ou assurez-vous que systemd est disponible pour l'isolation cgroup.",
+		noRuntimeGeneric: "Aucun runtime de conteneur détecté. Installez Docker pour l'exécution en sandbox.",
 		macosDockerTip:
-			"Apple Container provides stronger VM-level isolation on macOS 26+. Install it for automatic use (moltis prefers it over Docker). Run: brew install container",
+			"Apple Container offre une isolation VM plus forte sur macOS 26+. Installez-le pour une utilisation automatique (moltis le préfère à Docker). Exécutez : brew install container",
 		linuxDockerTip:
-			"Docker is a good choice on Linux. For lighter-weight isolation without Docker overhead, systemd cgroup sandboxing is also supported.",
+			"Docker est un bon choix sous Linux. Pour une isolation plus légère sans la surcharge de Docker, le sandboxing cgroup systemd est également supporté.",
+		restrictedHostTip:
+			"Exécution en hôte restreint (nettoyage d'environnement, rlimits). Pour une isolation plus forte, installez Docker ou Apple Container.",
+		wasmTip:
+			"Utilisation du bac à sable WASM avec isolation du système de fichiers. Pour une isolation conteneur, installez Docker ou Apple Container.",
 	},
 
 	// ── Alert labels ───────────────────────────────────────

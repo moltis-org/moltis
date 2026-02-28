@@ -1,0 +1,41 @@
+package moltis:tool@0.1.0;
+
+interface outgoing-handler {
+  record http-request {
+    method: string,
+    url: string,
+    headers: list<tuple<string, string>>,
+    body: option<list<u8>>,
+    timeout-ms: option<u32>,
+    max-response-bytes: option<u64>,
+  }
+
+  record http-response {
+    status: u16,
+    headers: list<tuple<string, string>>,
+    body: list<u8>,
+    content-type: option<string>,
+  }
+
+  variant http-error {
+    invalid-url(string),
+    blocked-url(string),
+    timeout(string),
+    network(string),
+    status(u16),
+    too-large(u64),
+    other(string),
+  }
+
+  handle: func(request: http-request) -> result<http-response, http-error>;
+}
+
+world http-tool {
+  use types.{tool-result};
+  import outgoing-handler;
+
+  export name: func() -> string;
+  export description: func() -> string;
+  export parameters-schema: func() -> string;
+  export execute: func(params-json: string) -> tool-result;
+}

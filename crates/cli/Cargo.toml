@@ -85,6 +85,7 @@ default = [
   "trusted-network",
   "vault",
   "voice",
+  "wasm",
   "web-ui",
   "whatsapp",
 ]
@@ -107,6 +108,7 @@ tls                = ["moltis-gateway/tls"]
 trusted-network    = ["moltis-gateway/trusted-network"]
 vault              = ["moltis-gateway/vault", "moltis-web?/vault"]
 voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
+wasm               = ["moltis-tools/wasm"]
 web-ui             = ["dep:moltis-web", "moltis-gateway/web-ui"]
 whatsapp           = ["moltis-gateway/whatsapp"]
 

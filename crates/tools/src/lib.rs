@@ -43,6 +43,8 @@ pub fn build_http_client(proxy_url: Option<&str>) -> reqwest::Client {
 pub mod browser;
 pub mod calc;
 pub mod cron_tool;
+#[cfg(feature = "wasm")]
+pub mod embedded_wasm;
 pub mod exec;
 pub mod image_cache;
 pub mod location;
@@ -55,5 +57,13 @@ pub mod send_image;
 pub mod session_state;
 pub mod skill_tools;
 pub mod spawn_agent;
+pub mod ssrf;
+#[cfg(feature = "wasm")]
+pub mod wasm_component;
+#[cfg(feature = "wasm")]
+pub mod wasm_engine;
+pub mod wasm_limits;
+#[cfg(feature = "wasm")]
+pub mod wasm_tool_runner;
 pub mod web_fetch;
 pub mod web_search;
