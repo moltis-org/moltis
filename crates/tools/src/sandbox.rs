@@ -4724,6 +4724,7 @@ fn create_wasm_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 ///
 /// Tries Docker first as fallback, then WASM, returning the primary unwrapped
 /// if no fallback runtime is available.
+#[cfg(target_os = "macos")]
 fn maybe_wrap_with_failover(primary: Arc<dyn Sandbox>, config: &SandboxConfig) -> Arc<dyn Sandbox> {
     // Try Docker as fallback first.
     if should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available()) {

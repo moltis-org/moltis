@@ -20,6 +20,11 @@ if ! command -v lipo >/dev/null 2>&1; then
 fi
 
 rustup target add x86_64-apple-darwin aarch64-apple-darwin
+rustup target add wasm32-wasip2
+
+# Build embedded WASM guest components before release host builds.
+# moltis-tools includes these bytes at compile time in release mode.
+cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
 # Keep Rust and C/C++ deps aligned with Xcode app link settings to avoid min-version mismatch.
 export MACOSX_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET}"
