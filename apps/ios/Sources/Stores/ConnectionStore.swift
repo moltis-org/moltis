@@ -15,6 +15,11 @@ enum ConnectionState: Equatable {
         return false
     }
 
+    var isDisconnected: Bool {
+        if case .disconnected = self { return true }
+        return false
+    }
+
     var statusText: String {
         switch self {
         case .disconnected: return "Disconnected"

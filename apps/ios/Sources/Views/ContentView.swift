@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var connectionStore: ConnectionStore
+    @EnvironmentObject var authManager: AuthManager
 
     var body: some View {
         ChatView()
@@ -19,17 +20,6 @@ struct ContentView: View {
 
     private var connectionBanner: some View {
         HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(.white.opacity(0.07))
-                Circle()
-                    .stroke(bannerStyle.tint.opacity(0.55), lineWidth: 1)
-                Image(systemName: bannerStyle.symbol)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(bannerStyle.tint)
-            }
-            .frame(width: 42, height: 42)
-
             VStack(alignment: .leading, spacing: 4) {
                 Text(bannerStyle.title)
                     .font(.headline.weight(.semibold))
@@ -42,10 +32,18 @@ struct ContentView: View {
 
             Spacer(minLength: 10)
 
-            if bannerStyle.showSpinner {
-                ProgressView()
-                    .tint(bannerStyle.tint)
+            Button {
+                authManager.disconnect()
+                Task { await connectionStore.disconnect() }
+            } label: {
+                Text("Cancel")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(bannerStyle.tint)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(bannerStyle.tint.opacity(0.12), in: Capsule())
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -57,51 +55,19 @@ struct ContentView: View {
         .shadow(color: .black.opacity(0.22), radius: 14, x: 0, y: 6)
     }
 
-    private var bannerStyle: (
-        title: String, subtitle: String, symbol: String, tint: Color, showSpinner: Bool
-    ) {
+    private var bannerStyle: (title: String, subtitle: String, tint: Color) {
         switch connectionStore.state {
         case .connecting:
-            return (
-                "Connecting to server",
-                "Establishing secure session...",
-                "bolt.horizontal.circle.fill",
-                .blue,
-                true
-            )
+            return ("Connecting to server", "Establishing secure session...", .blue)
         case .reconnecting(let attempt, let nextRetryIn):
             let seconds = max(1, Int(nextRetryIn.rounded(.up)))
-            return (
-                "Server unavailable",
-                "Retrying in \(seconds)s (attempt \(attempt))...",
-                "arrow.clockwise.circle.fill",
-                .orange,
-                true
-            )
+            return ("Server unavailable", "Retrying in \(seconds)s (attempt \(attempt))...", .orange)
         case .error(let message):
-            return (
-                "Connection error",
-                message,
-                "exclamationmark.triangle.fill",
-                .red,
-                false
-            )
+            return ("Connection error", message, .red)
         case .disconnected:
-            return (
-                "Disconnected",
-                "Reconnect from Settings or restart Moltis.",
-                "wifi.slash",
-                .secondary,
-                false
-            )
+            return ("Disconnected", "Reconnect from Settings or restart Moltis.", .secondary)
         case .connected:
-            return (
-                "Connected",
-                "Connected to server.",
-                "checkmark.circle.fill",
-                .green,
-                false
-            )
+            return ("Connected", "Connected to server.", .green)
         }
     }
 }
