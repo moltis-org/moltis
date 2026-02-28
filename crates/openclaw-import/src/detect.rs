@@ -27,6 +27,10 @@ pub struct OpenClawDetection {
     pub session_count: usize,
     /// Names of configured but unsupported channels.
     pub unsupported_channels: Vec<String>,
+    /// Whether the workspace has any personality files (SOUL.md, IDENTITY.md, etc.).
+    pub has_workspace_files: bool,
+    /// Names of workspace personality files found.
+    pub workspace_files_found: Vec<String>,
 }
 
 /// Detect an OpenClaw installation.
@@ -71,6 +75,22 @@ pub fn detect_at(home_dir: PathBuf) -> Option<OpenClawDetection> {
         Vec::new()
     };
 
+    let workspace_file_names = [
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "TOOLS.md",
+        "AGENTS.md",
+        "HEARTBEAT.md",
+        "BOOT.md",
+    ];
+    let workspace_files_found: Vec<String> = workspace_file_names
+        .iter()
+        .filter(|name| workspace_dir.join(name).is_file())
+        .map(|name| (*name).to_string())
+        .collect();
+    let has_workspace_files = !workspace_files_found.is_empty();
+
     info!(
         path = %home_dir.display(),
         workspace = %workspace_dir.display(),
@@ -80,6 +100,8 @@ pub fn detect_at(home_dir: PathBuf) -> Option<OpenClawDetection> {
         has_mcp_servers,
         has_memory,
         has_skills,
+        has_workspace_files,
+        workspace_files = ?workspace_files_found,
         agent_count = agent_ids.len(),
         session_count,
         "openclaw detect: scan complete"
@@ -96,6 +118,8 @@ pub fn detect_at(home_dir: PathBuf) -> Option<OpenClawDetection> {
         agent_ids,
         session_count,
         unsupported_channels,
+        has_workspace_files,
+        workspace_files_found,
     })
 }
 
@@ -545,5 +569,39 @@ mod tests {
         let detection = detect_at(home).expect("should detect");
         assert_eq!(detection.workspace_dir, ws_dir);
         assert!(detection.has_memory);
+    }
+
+    #[test]
+    fn detect_workspace_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(home.join("workspace")).unwrap();
+        std::fs::write(home.join("workspace").join("SOUL.md"), "# My custom soul").unwrap();
+        std::fs::write(home.join("workspace").join("TOOLS.md"), "# Tool guidance").unwrap();
+
+        let detection = detect_at(home).expect("should detect");
+        assert!(detection.has_workspace_files);
+        assert_eq!(detection.workspace_files_found.len(), 2);
+        assert!(
+            detection
+                .workspace_files_found
+                .contains(&"SOUL.md".to_string())
+        );
+        assert!(
+            detection
+                .workspace_files_found
+                .contains(&"TOOLS.md".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_no_workspace_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(home.join("workspace")).unwrap();
+
+        let detection = detect_at(home).expect("should detect");
+        assert!(!detection.has_workspace_files);
+        assert!(detection.workspace_files_found.is_empty());
     }
 }

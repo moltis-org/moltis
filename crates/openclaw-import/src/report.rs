@@ -15,6 +15,7 @@ pub enum ImportCategory {
     Channels,
     Sessions,
     McpServers,
+    WorkspaceFiles,
 }
 
 impl std::fmt::Display for ImportCategory {
@@ -27,6 +28,7 @@ impl std::fmt::Display for ImportCategory {
             Self::Channels => write!(f, "Channels"),
             Self::Sessions => write!(f, "Sessions"),
             Self::McpServers => write!(f, "MCP Servers"),
+            Self::WorkspaceFiles => write!(f, "Workspace Files"),
         }
     }
 }

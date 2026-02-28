@@ -403,6 +403,8 @@ mod tests {
             agent_ids: vec!["main".to_string()],
             session_count: 0,
             unsupported_channels: Vec::new(),
+            has_workspace_files: false,
+            workspace_files_found: Vec::new(),
         };
 
         let (report, result) = import_providers(&detection);
@@ -499,6 +501,8 @@ mod tests {
             agent_ids: vec!["main".to_string()],
             session_count: 0,
             unsupported_channels: Vec::new(),
+            has_workspace_files: false,
+            workspace_files_found: Vec::new(),
         };
 
         let (report, result) = import_providers(&detection);

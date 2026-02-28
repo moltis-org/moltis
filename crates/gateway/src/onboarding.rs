@@ -260,6 +260,9 @@ impl OnboardingService for GatewayOnboardingService {
                     "unsupported_channels": scan.unsupported_channels,
                     "agent_ids": scan.agent_ids,
                     "agents": scan.agents,
+                    "workspace_files_available": scan.workspace_files_available,
+                    "workspace_files_count": scan.workspace_files_count,
+                    "workspace_files_found": scan.workspace_files_found,
                 }))
             },
             None => {
@@ -312,6 +315,10 @@ impl OnboardingService for GatewayOnboardingService {
                 .unwrap_or(false),
             sessions: params
                 .get("sessions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            workspace_files: params
+                .get("workspace_files")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
         };

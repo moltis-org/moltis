@@ -22,7 +22,7 @@ pub enum ImportAction {
     /// Import specific categories from OpenClaw.
     Select {
         /// Comma-separated list of categories to import.
-        /// Valid: identity, providers, skills, memory, channels, sessions
+        /// Valid: identity, providers, skills, memory, channels, sessions, workspace-files
         #[arg(short, long, value_delimiter = ',')]
         categories: Vec<String>,
         /// Dry-run: show what would be imported without writing anything.
@@ -98,6 +98,15 @@ fn handle_detect(json_output: bool) -> anyhow::Result<()> {
         scan.sessions_count > 0,
         Some(format!("{} session(s)", scan.sessions_count)),
     );
+    print_scan_item(
+        "Workspace Files",
+        scan.workspace_files_available,
+        if scan.workspace_files_count > 0 {
+            Some(scan.workspace_files_found.join(", "))
+        } else {
+            None
+        },
+    );
 
     if !scan.unsupported_channels.is_empty() {
         println!();
@@ -141,6 +150,14 @@ fn handle_import_all(dry_run: bool, json_output: bool) -> anyhow::Result<()> {
         println!();
         print_scan_summary(&scan);
         return Ok(());
+    }
+
+    if !json_output {
+        println!(
+            "Importing from {} (read-only \u{2014} OpenClaw will not be modified)\u{2026}",
+            detection.home_dir.display()
+        );
+        println!();
     }
 
     let config_dir = moltis_config::config_dir()
@@ -198,6 +215,14 @@ fn handle_import_select(
         return Ok(());
     }
 
+    if !json_output {
+        println!(
+            "Importing from {} (read-only \u{2014} OpenClaw will not be modified)\u{2026}",
+            detection.home_dir.display()
+        );
+        println!();
+    }
+
     let config_dir = moltis_config::config_dir()
         .ok_or_else(|| anyhow::anyhow!("could not determine config directory"))?;
     let data_dir = moltis_config::data_dir();
@@ -237,6 +262,7 @@ fn parse_selection(categories: &[String], warn_unknown: bool) -> ParsedSelection
             "memory" => sel.memory = true,
             "channels" => sel.channels = true,
             "sessions" => sel.sessions = true,
+            "workspace_files" | "workspace-files" => sel.workspace_files = true,
             other => {
                 unknown_categories.push(other.to_string());
                 if warn_unknown {
@@ -291,6 +317,15 @@ fn print_scan_summary(scan: &moltis_openclaw_import::ImportScan) {
         scan.sessions_count > 0,
         Some(format!("{} session(s)", scan.sessions_count)),
     );
+    print_scan_item(
+        "Workspace Files",
+        scan.workspace_files_available,
+        if scan.workspace_files_count > 0 {
+            Some(scan.workspace_files_found.join(", "))
+        } else {
+            None
+        },
+    );
 }
 
 fn print_selection(sel: &moltis_openclaw_import::ImportSelection) {
@@ -301,6 +336,7 @@ fn print_selection(sel: &moltis_openclaw_import::ImportSelection) {
         ("Memory", sel.memory),
         ("Channels", sel.channels),
         ("Sessions", sel.sessions),
+        ("Workspace Files", sel.workspace_files),
     ];
     for (name, enabled) in items {
         let mark = if enabled {
@@ -330,7 +366,7 @@ fn format_channel_scan_detail(scan: &moltis_openclaw_import::ImportScan) -> Opti
 fn print_report(report: &moltis_openclaw_import::report::ImportReport) {
     use moltis_openclaw_import::report::ImportStatus;
 
-    println!("Import complete!");
+    println!("Import complete! Your OpenClaw installation was not modified.");
     println!();
 
     for cat in &report.categories {

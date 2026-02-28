@@ -1780,6 +1780,8 @@ function OpenClawImportSection() {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
 			Import data from your OpenClaw installation at <code class="text-[var(--text)]">${scan.home_dir}</code>.
+			This is a read-only copy \u2014 your OpenClaw files will not be modified or removed.
+			You can keep using both side by side and re-import whenever you like.
 		</p>
 		${
 			error
