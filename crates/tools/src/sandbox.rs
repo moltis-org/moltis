@@ -973,8 +973,7 @@ pub async fn remove_sandbox_image(tag: &str) -> Result<()> {
                 return Err(Error::message(format!(
                     "{cli} image {subcmd} failed for {tag}: {}",
                     stderr.trim()
-                ))
-                .into());
+                )));
             }
         }
     }
@@ -1317,7 +1316,7 @@ pub async fn container_disk_usage() -> Result<ContainerDiskUsage> {
         }
     }
 
-    return Err(Error::message("no container CLI available for disk usage"));
+    Err(Error::message("no container CLI available for disk usage"))
 }
 
 /// Remove all containers whose name starts with `container_prefix`.
@@ -1375,9 +1374,9 @@ pub async fn stop_container(name: &str) -> Result<()> {
         }
         return Ok(());
     }
-    return Err(Error::message(format!(
+    Err(Error::message(format!(
         "no container CLI available to stop {name}"
-    )));
+    )))
 }
 
 /// Remove a container by name (force). Detects the backend from available CLIs.
@@ -1416,8 +1415,7 @@ pub async fn remove_container(name: &str) -> Result<()> {
                     return Err(Error::message(format!(
                         "container rm failed for running container {name}: {}",
                         stderr.trim()
-                    ))
-                    .into());
+                    )));
                 }
                 // Stopped/exited/unknown — ghost container, mark as zombie.
                 tracing::warn!(
@@ -1454,9 +1452,9 @@ pub async fn remove_container(name: &str) -> Result<()> {
         unmark_zombie(name);
         return Ok(());
     }
-    return Err(Error::message(format!(
+    Err(Error::message(format!(
         "no container CLI available to remove {name}"
-    )));
+    )))
 }
 
 /// Restart the container daemon. For Apple Container this runs
@@ -1487,8 +1485,7 @@ pub async fn restart_container_daemon() -> Result<()> {
             return Err(Error::message(format!(
                 "container system start failed: {}",
                 stderr.trim()
-            ))
-            .into());
+            )));
         }
         clear_zombies();
         return Ok(());
@@ -1504,9 +1501,9 @@ pub async fn restart_container_daemon() -> Result<()> {
             .await;
         return Ok(());
     }
-    return Err(Error::message(
+    Err(Error::message(
         "no container CLI available to restart daemon",
-    ));
+    ))
 }
 
 /// Docker/Podman-based sandbox implementation.
@@ -1810,8 +1807,7 @@ impl Sandbox for DockerSandbox {
                 "{} build failed for {tag}: {}",
                 self.cli,
                 stderr.trim()
-            ))
-            .into());
+            )));
         }
 
         info!(tag, "pre-built sandbox image ready");
@@ -1869,8 +1865,7 @@ impl Sandbox for DockerSandbox {
                     "{} exec timed out after {}s",
                     self.cli,
                     opts.timeout.as_secs()
-                ))
-                .into());
+                )));
             },
         }
     }
@@ -2168,8 +2163,7 @@ impl Sandbox for RestrictedHostSandbox {
                 return Err(Error::message(format!(
                     "restricted-host sandbox exec timed out after {}s",
                     opts.timeout.as_secs()
-                ))
-                .into());
+                )));
             },
         }
     }
@@ -3710,8 +3704,7 @@ impl AppleContainerSandbox {
                         Some("stopped") => {
                             return Err(Error::message(format!(
                                 "container {name} failed to stay running after startup"
-                            ))
-                            .into());
+                            )));
                         },
                         _ => {},
                     }
@@ -3725,8 +3718,7 @@ impl AppleContainerSandbox {
 
                     return Err(Error::message(format!(
                         "container {name} did not report running state after startup"
-                    ))
-                    .into());
+                    )));
                 },
                 Ok(output) => {
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3743,8 +3735,7 @@ impl AppleContainerSandbox {
                     return Err(Error::message(format!(
                         "container inspect failed for {name} while waiting for running state: {}",
                         stderr.trim()
-                    ))
-                    .into());
+                    )));
                 },
                 Err(e) => {
                     if attempt + 1 < MAX_WAIT_ITERS {
@@ -3762,10 +3753,9 @@ impl AppleContainerSandbox {
             }
         }
 
-        return Err(Error::message(format!(
+        Err(Error::message(format!(
             "container {name} did not become running after startup"
-        ))
-        .into());
+        )))
     }
 
     async fn probe_container_exec_ready(name: &str) -> Result<()> {
@@ -3780,11 +3770,10 @@ impl AppleContainerSandbox {
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::message(format!(
+        Err(Error::message(format!(
             "container {name} failed exec readiness probe: {}",
             stderr.trim()
-        ))
-        .into());
+        )))
     }
 
     async fn wait_for_container_exec_ready(name: &str) -> Result<()> {
@@ -3815,10 +3804,9 @@ impl AppleContainerSandbox {
             }
         }
 
-        return Err(Error::message(format!(
+        Err(Error::message(format!(
             "container {name} did not become exec-ready after startup"
-        ))
-        .into());
+        )))
     }
 
     async fn force_remove_and_wait(name: &str) {
@@ -4423,8 +4411,7 @@ impl Sandbox for AppleContainerSandbox {
                     return Err(Error::message(
                         "apple container service is not running. \
                          Start it with `container system start` and restart moltis",
-                    )
-                    .into());
+                    ));
                 },
                 Err(CreateError::Other(stderr)) => {
                     // Daemon-stale errors mean the VM subsystem is broken.
@@ -4441,13 +4428,13 @@ impl Sandbox for AppleContainerSandbox {
                             "apple container daemon has stale Virtualization.framework state \
                              and automatic restart failed (create error: {stderr}). \
                              Restart manually with `container system stop && container system start`"
-                        )).into());
+                        )));
                     }
                     if is_last {
                         let diag = Self::diagnose_container_failure(&name).await;
                         return Err(Error::message(format!(
                             "container run failed for {name} (image={image}): {stderr}; diagnostics: {diag}"
-                        )).into());
+                        )));
                     }
                     warn!(
                         name,
@@ -4544,7 +4531,7 @@ impl Sandbox for AppleContainerSandbox {
                             "apple container daemon has stale Virtualization.framework state \
                              and automatic restart failed (container logs: {log_text}). \
                              Restart manually with `container system stop && container system start`"
-                        )).into());
+                        )));
                     }
 
                     // Boot failure: container immediately stopped with no output.
@@ -4583,8 +4570,7 @@ impl Sandbox for AppleContainerSandbox {
                         return Err(Error::message(format!(
                             "apple container {name} did not become exec-ready{boot_note}: \
                              {error:#}; diagnostics: {diag}"
-                        ))
-                        .into());
+                        )));
                     }
                     warn!(
                         name,
@@ -4602,8 +4588,7 @@ impl Sandbox for AppleContainerSandbox {
         let diag = Self::diagnose_container_failure(&name).await;
         return Err(Error::message(format!(
             "apple container {name} failed after {MAX_ATTEMPTS} attempts; diagnostics: {diag}"
-        ))
-        .into());
+        )));
     }
 
     async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
@@ -4693,8 +4678,7 @@ impl Sandbox for AppleContainerSandbox {
                 return Err(Error::message(format!(
                     "container exec timed out for {name} after {}s",
                     opts.timeout.as_secs()
-                ))
-                .into());
+                )));
             },
         }
     }
@@ -4747,14 +4731,12 @@ impl Sandbox for AppleContainerSandbox {
                 return Err(Error::message(
                     "apple container service is not running. \
                      Start it with `container system start` and restart moltis",
-                )
-                .into());
+                ));
             }
             return Err(Error::message(format!(
                 "container build failed for {tag}: {}",
                 stderr.trim()
-            ))
-            .into());
+            )));
         }
 
         info!(tag, "pre-built sandbox image ready (apple container)");

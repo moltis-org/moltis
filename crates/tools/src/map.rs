@@ -98,19 +98,19 @@ fn normalize_destination_points(params: &ShowMapParams) -> Result<Vec<Destinatio
             }])
         },
         (Some(_), None) => {
-            return Err(Error::message(
+            Err(Error::message(
                 "longitude is required when latitude is provided",
-            ));
+            ))
         },
         (None, Some(_)) => {
-            return Err(Error::message(
+            Err(Error::message(
                 "latitude is required when longitude is provided",
-            ));
+            ))
         },
         (None, None) => {
-            return Err(Error::message(
+            Err(Error::message(
                 "provide either `points` or `latitude`/`longitude`",
-            ));
+            ))
         },
     }
 }

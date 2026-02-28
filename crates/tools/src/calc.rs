@@ -363,16 +363,14 @@ impl<'a> Evaluator<'a> {
                         self.pos = self.pos.saturating_add(1);
                         Ok(value)
                     },
-                    _ => return Err(Error::message("missing closing `)` ")),
+                    _ => Err(Error::message("missing closing `)` ")),
                 }
             },
-            Some(other) => {
-                return Err(Error::message(format!(
-                    "unexpected token `{}`",
-                    other.repr()
-                )));
-            },
-            None => return Err(Error::message("unexpected end of expression")),
+            Some(other) => Err(Error::message(format!(
+                "unexpected token `{}`",
+                other.repr()
+            ))),
+            None => Err(Error::message("unexpected end of expression")),
         }
     }
 

@@ -151,13 +151,13 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
                 exit_code,
             })
         },
-        Ok(Err(e)) => return Err(Error::message(format!("failed to run command: {e}"))),
+        Ok(Err(e)) => Err(Error::message(format!("failed to run command: {e}"))),
         Err(_) => {
             warn!(command, "exec timeout");
-            return Err(Error::message(format!(
+            Err(Error::message(format!(
                 "command timed out after {}s",
                 opts.timeout.as_secs()
-            )));
+            )))
         },
     }
 }

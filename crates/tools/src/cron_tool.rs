@@ -235,11 +235,9 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
             }
             Ok(())
         },
-        _ => {
-            return Err(Error::message(
-                "schedule must be an object, cron expression string, or epoch milliseconds",
-            ));
-        },
+        _ => Err(Error::message(
+            "schedule must be an object, cron expression string, or epoch milliseconds",
+        )),
     }
 }
 
@@ -356,11 +354,9 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
             }
             Ok(())
         },
-        _ => {
-            return Err(Error::message(
-                "payload must be an object or message string",
-            ));
-        },
+        _ => Err(Error::message(
+            "payload must be an object or message string",
+        )),
     }
 }
 
@@ -487,11 +483,9 @@ fn normalize_sandbox_value(sandbox: &mut Value, field: &str) -> Result<()> {
             }
             Ok(())
         },
-        _ => {
-            return Err(Error::message(format!(
-                "{field} must be an object, boolean, or execution target string"
-            )));
-        },
+        _ => Err(Error::message(format!(
+            "{field} must be an object, boolean, or execution target string"
+        ))),
     }
 }
 
