@@ -1076,6 +1076,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
     reg.register(
+        "sessions.run_detail",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .session
+                    .run_detail(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
         "sessions.share.create",
         Box::new(|ctx| {
             Box::pin(async move {

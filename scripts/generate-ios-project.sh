@@ -11,6 +11,14 @@ if ! command -v xcodegen >/dev/null 2>&1; then
 fi
 
 cd "${IOS_APP_DIR}"
+
+# Create a stub local.xcconfig if missing (gitignored; needed by project.yml).
+if [[ ! -f local.xcconfig ]]; then
+  echo "// Auto-generated stub — fill in your DEVELOPMENT_TEAM for code signing." > local.xcconfig
+  echo "DEVELOPMENT_TEAM =" >> local.xcconfig
+  echo "Created stub local.xcconfig (edit with your team ID for signing)."
+fi
+
 xcodegen generate --spec project.yml
 
 echo "Generated ${IOS_APP_DIR}/Moltis.xcodeproj"

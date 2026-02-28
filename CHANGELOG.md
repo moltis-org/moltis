@@ -954,6 +954,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests and blocks all package builds (deb, rpm, arch, AppImage, snap,
   Homebrew, Docker) if they fail.
 
+### Added
+
+- **XML tag stripping**: Strip internal XML tags from LLM responses to prevent
+  tag leakage in chat (thinking, reasoning, scratchpad, etc.)
+- **Runtime model metadata**: Fetch model metadata from provider APIs for
+  accurate context window detection during auto-compaction
+- **Run detail UI**: Panel showing tool calls and message flow for agent runs,
+  accessible via expandable button on assistant messages
+
 ### Fixed
 
 - **Docker TLS setup**: All Docker examples now expose port 13132 for CA

@@ -14,6 +14,7 @@ use crate::{
     model::{
         ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
     },
+    response_sanitizer::{clean_response, recover_tool_calls_from_content},
     tool_registry::ToolRegistry,
 };
 
@@ -943,6 +944,26 @@ pub async fn run_agent_loop_with_context(
             response.tool_calls = vec![tc];
         }
 
+        // Fallback: recover tool calls from XML blocks (<function_call>, <tool_call>).
+        if !native_tools
+            && response.tool_calls.is_empty()
+            && let Some(ref text) = response.text
+        {
+            let (cleaned, recovered) = recover_tool_calls_from_content(text);
+            if !recovered.is_empty() {
+                info!(
+                    count = recovered.len(),
+                    "recovered tool calls from XML blocks in response text"
+                );
+                response.text = if cleaned.is_empty() {
+                    None
+                } else {
+                    Some(cleaned)
+                };
+                response.tool_calls = recovered;
+            }
+        }
+
         // Final fallback: if the user turn is an explicit `/sh ...` command and
         // the model returned plain text, force one exec tool call so this path
         // is deterministic in the UI.
@@ -1014,10 +1035,12 @@ pub async fn run_agent_loop_with_context(
 
         // If no tool calls, return the text response.
         if response.tool_calls.is_empty() {
-            let text = response
-                .text
-                .filter(|t| !t.is_empty())
-                .unwrap_or(std::mem::take(&mut last_answer_text));
+            let text = clean_response(
+                &response
+                    .text
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or(std::mem::take(&mut last_answer_text)),
+            );
 
             info!(
                 iterations,
@@ -1562,6 +1585,19 @@ pub async fn run_agent_loop_streaming(
             tool_calls = vec![tc];
         }
 
+        // Fallback: recover tool calls from XML blocks (<function_call>, <tool_call>).
+        if !native_tools && tool_calls.is_empty() && !accumulated_text.is_empty() {
+            let (cleaned, recovered) = recover_tool_calls_from_content(&accumulated_text);
+            if !recovered.is_empty() {
+                info!(
+                    count = recovered.len(),
+                    "recovered tool calls from XML blocks in streamed text"
+                );
+                accumulated_text = cleaned;
+                tool_calls = recovered;
+            }
+        }
+
         // Final fallback: if the user turn is an explicit `/sh ...` command and
         // the model returned plain text, force one exec tool call so this path
         // is deterministic in the UI.
@@ -1640,7 +1676,7 @@ pub async fn run_agent_loop_streaming(
                 "streaming agent loop complete — returning text"
             );
             return Ok(AgentRunResult {
-                text: final_text,
+                text: clean_response(&final_text),
                 iterations,
                 tool_calls_made: total_tool_calls,
                 usage: Usage {

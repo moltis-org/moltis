@@ -78,6 +78,7 @@ const READ_METHODS: &[&str] = &[
     "sessions.preview",
     "sessions.search",
     "sessions.branches",
+    "sessions.run_detail",
     "sessions.share.list",
     "projects.list",
     "projects.get",

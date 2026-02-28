@@ -179,6 +179,10 @@ impl moltis_service_traits::SessionService for MockSession {
         self.0.call("sessions.branches", p)
     }
 
+    async fn run_detail(&self, p: Value) -> ServiceResult {
+        self.0.call("sessions.run_detail", p)
+    }
+
     async fn clear_all(&self) -> ServiceResult {
         self.0.call("sessions.clear_all", json!({}))
     }
