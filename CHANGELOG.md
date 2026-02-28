@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Teams channel management in the web UI (add/edit/remove accounts, sender review, session/channel badges)
 - Guided Teams bootstrap tooling via `moltis channels teams bootstrap` plus an in-UI endpoint generator in Settings → Channels
 - Multi-agent personas with per-agent workspaces (`data_dir()/agents/<id>/`), `agents.*` RPC methods, and session-level `agent_id` binding/switching across web + Telegram flows
+- `chat.peek` RPC method returning real-time session state (active flag, thinking text, active tool calls) for any session key
+- Active tool call tracking per-session in `LiveChatService` with camelCase-serialized `ActiveToolCall` structs
+- Web UI: inline red "Stop" button inside thinking indicator, `aborted` broadcast handler that cleans up streaming state
+- Channel commands: `/peek` (shows thinking text and active tool calls) and `/stop` (aborts active generation)
 ### Changed
 
 - **Crate restructure**: gateway crate reduced from ~42K to ~29K lines by extracting `moltis-chat` (chat engine, agent orchestration), `moltis-auth` (password + passkey auth), `moltis-tls` (TLS/HTTPS termination), `moltis-service-traits` (shared service interfaces), and moving share rendering into `moltis-web`

@@ -1082,6 +1082,53 @@ async fn chat_send_mutation() {
 }
 
 #[tokio::test]
+async fn agents_update_identity_mutation_returns_ok_on_success() {
+    let mock = MockDispatch::new();
+    mock.set_response(
+        "agent.identity.update",
+        json!({
+            "name": "Rex",
+            "user_name": "Alice",
+        }),
+    );
+    let (schema, _) = build_test_schema(mock.clone());
+
+    let res = schema
+        .execute(Request::new(
+            r#"mutation { agents { updateIdentity(input: { user_location: { latitude: 37.7749, longitude: -122.4194 } }) { ok } } }"#,
+        ))
+        .await;
+
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    let data = res.data.into_json().expect("json");
+    assert_eq!(data["agents"]["updateIdentity"]["ok"], true);
+
+    let (method, params) = mock.last_call().expect("should have called");
+    assert_eq!(method, "agent.identity.update");
+    assert_eq!(params["user_location"]["latitude"], 37.7749);
+    assert_eq!(params["user_location"]["longitude"], -122.4194);
+}
+
+#[tokio::test]
+async fn agents_update_identity_accepts_json_string_payload() {
+    let mock = MockDispatch::new();
+    mock.set_response("agent.identity.update", json!({ "name": "Rex" }));
+    let (schema, _) = build_test_schema(mock.clone());
+
+    let res = schema
+        .execute(Request::new(
+            "mutation { agents { updateIdentity(input: \"{\\\"user_location\\\":{\\\"latitude\\\":37.0,\\\"longitude\\\":-122.0}}\") { ok } } }",
+        ))
+        .await;
+
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    let (method, params) = mock.last_call().expect("should have called");
+    assert_eq!(method, "agent.identity.update");
+    assert_eq!(params["user_location"]["latitude"], 37.0);
+    assert_eq!(params["user_location"]["longitude"], -122.0);
+}
+
+#[tokio::test]
 async fn providers_oauth_start_mutation_returns_typed_shape() {
     let mock = MockDispatch::new();
     mock.set_response(

@@ -1,0 +1,11 @@
+---
+- name: Restart courier
+  ansible.builtin.systemd:
+    name: moltis-courier
+    state: restarted
+    daemon_reload: true
+
+- name: Reload Caddy
+  ansible.builtin.systemd:
+    name: caddy
+    state: reloaded

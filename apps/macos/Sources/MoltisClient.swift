@@ -217,6 +217,26 @@ struct BridgeHttpdStatus: Decodable {
     let addr: String?
 }
 
+// MARK: - Abort / Peek types
+
+struct BridgeAbortResult: Decodable {
+    let aborted: Bool
+    let runId: String?
+}
+
+struct BridgePeekResult: Decodable {
+    let active: Bool
+    let sessionKey: String?
+    let thinkingText: String?
+    let toolCalls: [BridgePeekToolCall]?
+}
+
+struct BridgePeekToolCall: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let startedAt: UInt64?
+}
+
 // MARK: - Session types
 
 struct BridgeSessionEntry: Decodable {
@@ -532,6 +552,22 @@ struct MoltisClient {
     func httpdStatus() throws -> BridgeHttpdStatus {
         let payload = try consumeCStringPointer(moltis_httpd_status())
         return try decode(payload, as: BridgeHttpdStatus.self)
+    }
+
+    // MARK: - Abort / Peek
+
+    func abortSession(key: String) throws -> BridgeAbortResult {
+        let payload = try key.withCString { ptr in
+            try consumeCStringPointer(moltis_abort_session(ptr))
+        }
+        return try decode(payload, as: BridgeAbortResult.self)
+    }
+
+    func peekSession(key: String) throws -> BridgePeekResult {
+        let payload = try key.withCString { ptr in
+            try consumeCStringPointer(moltis_peek_session(ptr))
+        }
+        return try decode(payload, as: BridgePeekResult.self)
     }
 
     // MARK: - Session operations

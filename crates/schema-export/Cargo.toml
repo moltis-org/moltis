@@ -1,0 +1,11 @@
+[package]
+edition.workspace    = true
+name                 = "moltis-schema-export"
+repository.workspace = true
+version.workspace    = true
+
+[build-dependencies]
+moltis-graphql        = { workspace = true }
+moltis-service-traits = { workspace = true }
+serde_json            = { workspace = true }
+tokio                 = { workspace = true }

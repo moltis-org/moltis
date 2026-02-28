@@ -9,6 +9,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe438c63458706e03479442743baae6c88256498e6431708f6dfc520a26515d3"
 
 [[package]]
+name = "a2"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f279fc8b1f1a64138f0f4b9cda9be488ae35bc2f8556c7ffe60730f1c07d005a"
+dependencies = [
+ "base64 0.21.7",
+ "erased-serde",
+ "http 1.4.0",
+ "http-body-util",
+ "hyper 1.8.1",
+ "hyper-rustls 0.26.0",
+ "hyper-util",
+ "parking_lot 0.12.5",
+ "pem 3.0.6",
+ "ring",
+ "rustls 0.22.4",
+ "rustls-pemfile 2.2.0",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2576,6 +2600,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "erased-serde"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c138974f9d5e7fe373eb04df7cae98833802ae4b11c24ac7039a21d5af4b26c"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4364,6 +4397,24 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0bea761b46ae2b24eb4aef630d8d1c398157b6fc29e6350ecf090a0b70c952c"
+dependencies = [
+ "futures-util",
+ "http 1.4.0",
+ "hyper 1.8.1",
+ "hyper-util",
+ "rustls 0.22.4",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.25.0",
+ "tower-service",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "hyper-rustls"
 version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3c93eb611681b207e1fe55d5a71ecf91572ec8a6705cdb6857f7d8d5242cf58"
@@ -4584,6 +4635,16 @@ checksum = "3acae9609540aa318d1bc588455225fb2085b9ed0c4f6bd0d9d5bcd86f1a0344"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5277,6 +5338,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
+name = "mdns-sd"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c23fd301a08742925d79fd29bba538c9cb0408d67907905f8f9d4e5cd8bc816"
+dependencies = [
+ "fastrand 2.3.0",
+ "flume",
+ "if-addrs",
+ "log",
+ "mio",
+ "socket-pktinfo",
+ "socket2 0.6.2",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5329,7 +5405,7 @@ dependencies = [
  "base64 0.22.1",
  "http-body-util",
  "hyper 1.8.1",
- "hyper-rustls",
+ "hyper-rustls 0.27.7",
  "hyper-util",
  "indexmap 2.13.0",
  "ipnet",
@@ -5636,7 +5712,7 @@ dependencies = [
  "async-trait",
  "http 1.4.0",
  "hyper 1.8.1",
- "hyper-rustls",
+ "hyper-rustls 0.27.7",
  "hyper-util",
  "icalendar",
  "libdav",
@@ -5752,6 +5828,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-courier"
+version = "0.9.10"
+dependencies = [
+ "a2",
+ "anyhow",
+ "axum",
+ "clap",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "moltis-cron"
 version = "0.9.10"
 dependencies = [
@@ -5818,6 +5910,7 @@ dependencies = [
  "hyper 1.8.1",
  "hyper-util",
  "include_dir",
+ "mdns-sd",
  "moltis-agents",
  "moltis-auth",
  "moltis-browser",
@@ -6216,6 +6309,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-schema-export"
+version = "0.9.10"
+dependencies = [
+ "moltis-graphql",
+ "moltis-service-traits",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "moltis-service-traits"
 version = "0.9.10"
 dependencies = [
@@ -6334,6 +6437,7 @@ name = "moltis-tls"
 version = "0.9.10"
 dependencies = [
  "axum",
+ "hostname",
  "hyper-util",
  "moltis-common",
  "moltis-config",
@@ -8037,7 +8141,7 @@ dependencies = [
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.8.1",
- "hyper-rustls",
+ "hyper-rustls 0.27.7",
  "hyper-tls 0.6.0",
  "hyper-util",
  "js-sys",
@@ -8086,7 +8190,7 @@ dependencies = [
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.8.1",
- "hyper-rustls",
+ "hyper-rustls 0.27.7",
  "hyper-util",
  "js-sys",
  "log",
@@ -9031,6 +9135,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "socket-pktinfo"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "927136cc2ae6a1b0e66ac6b1210902b75c3f726db004a73bc18686dcd0dcd22f"
+dependencies = [
+ "libc",
+ "socket2 0.6.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

@@ -28,25 +28,6 @@ pub mod subscriptions {
     pub const WILDCARD: &str = "*";
 }
 
-// ── Well-known events ────────────────────────────────────────────────────────
-
-/// Canonical list of server-push events advertised in `HelloOk` and `system.describe`.
-pub const KNOWN_EVENTS: &[&str] = &[
-    "tick",
-    "shutdown",
-    "agent",
-    "chat",
-    "presence",
-    "health",
-    "exec.approval.requested",
-    "exec.approval.resolved",
-    "device.pair.requested",
-    "device.pair.resolved",
-    "node.pair.requested",
-    "node.pair.resolved",
-    "node.invoke.request",
-];
-
 // ── Error codes ──────────────────────────────────────────────────────────────
 
 pub mod error_codes {
@@ -466,8 +447,8 @@ pub struct Policy {
     pub tick_interval_ms: u64,
 }
 
-impl Policy {
-    pub fn default_policy() -> Self {
+impl Default for Policy {
+    fn default() -> Self {
         Self {
             max_payload: MAX_PAYLOAD_BYTES,
             max_buffered_bytes: MAX_BUFFERED_BYTES,
@@ -475,6 +456,24 @@ impl Policy {
         }
     }
 }
+
+// ── Known events ─────────────────────────────────────────────────────────────
+
+pub const KNOWN_EVENTS: &[&str] = &[
+    "tick",
+    "shutdown",
+    "agent",
+    "chat",
+    "presence",
+    "health",
+    "exec.approval.requested",
+    "exec.approval.resolved",
+    "device.pair.requested",
+    "device.pair.resolved",
+    "node.pair.requested",
+    "node.pair.resolved",
+    "node.invoke.request",
+];
 
 // ── Roles and scopes ─────────────────────────────────────────────────────────
 
@@ -674,7 +673,7 @@ mod tests {
             snapshot: serde_json::json!({}),
             canvas_host_url: None,
             auth: None,
-            policy: Policy::default_policy(),
+            policy: Policy::default(),
             extensions: Extensions::new(),
         };
         let json = serde_json::to_value(&hello).unwrap();
@@ -701,7 +700,7 @@ mod tests {
             snapshot: serde_json::json!({}),
             canvas_host_url: None,
             auth: None,
-            policy: Policy::default_policy(),
+            policy: Policy::default(),
             extensions,
         };
         let json = serde_json::to_value(&hello).unwrap();

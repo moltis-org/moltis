@@ -28,6 +28,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Session CRUD FFI functions: `moltis_list_sessions`, `moltis_switch_session`,
   `moltis_create_session`, `moltis_session_chat_stream`
 - Session sidebar now loads from disk and shows message counts
+- Abort generation button (red stop circle) replaces the send button while streaming
+- Peek popover on session toolbar (eye icon) showing thinking text, active tool calls, or idle state
+- `abortSession(key:)` and `peekSession(key:)` FFI bindings via `moltis_abort_session` and `moltis_peek_session`
 - Chat messages are persisted to `~/.moltis/data/sessions/<key>.jsonl`
 - "Open in Browser" button in HTTP Server pane when the gateway is running
 

@@ -1697,11 +1697,16 @@ pub async fn prepare_gateway(
         tracing::warn!(error = %e, "failed to seed main agent workspace");
     }
 
+    // Deferred reference: populated once GatewayState is ready.
+    let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
+        Arc::new(tokio::sync::OnceCell::new());
+
     services =
         services.with_onboarding(Arc::new(crate::onboarding::GatewayOnboardingService::new(
             live_onboarding,
             Arc::clone(&session_metadata),
             Arc::clone(&agent_persona_store),
+            Arc::clone(&deferred_state),
         )));
 
     // Session service wired below after sandbox_router is created.
@@ -1720,10 +1725,6 @@ pub async fn prepare_gateway(
                 Arc::new(moltis_cron::store_memory::InMemoryStore::new())
             },
         };
-
-    // Deferred reference: populated once GatewayState is ready.
-    let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
-        Arc::new(tokio::sync::OnceCell::new());
 
     // System event: inject text into the main session and trigger an agent response.
     let sys_state = Arc::clone(&deferred_state);
@@ -4218,6 +4219,24 @@ pub async fn start_gateway(
     let is_localhost =
         matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
 
+    // Register the gateway as a Bonjour/mDNS service so LAN clients can
+    // discover it without typing the URL manually.
+    #[cfg(feature = "mdns")]
+    let _mdns_daemon = {
+        let host = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "moltis".to_string());
+        let instance = format!("Moltis on {host}");
+        match crate::mdns::register(&instance, port, env!("CARGO_PKG_VERSION")) {
+            Ok(daemon) => Some(daemon),
+            Err(e) => {
+                tracing::warn!("mDNS registration failed: {e}");
+                None
+            },
+        }
+    };
+
     // Resolve TLS configuration (only when compiled with the `tls` feature).
     #[cfg(feature = "tls")]
     let tls_active = config.tls.enabled;
@@ -4425,6 +4444,7 @@ pub async fn start_gateway(
     }
 
     // Spawn shutdown handler:
+    // - unregister mDNS service (when configured)
     // - reset tailscale state on exit (when configured)
     // - give browser pool 5s to shut down gracefully
     // - force process exit to avoid hanging after ctrl-c
@@ -4438,6 +4458,11 @@ pub async fn start_gateway(
         tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_err() {
                 return;
+            }
+
+            #[cfg(feature = "mdns")]
+            if let Some(ref daemon) = _mdns_daemon {
+                crate::mdns::shutdown(daemon);
             }
 
             #[cfg(feature = "tailscale")]

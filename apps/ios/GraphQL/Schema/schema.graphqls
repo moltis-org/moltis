@@ -1,0 +1,1410 @@
+type AgentIdentity {
+	name: String
+	emoji: String
+	theme: String
+}
+
+type AgentMutation {
+	"""
+	Run agent with parameters.
+	"""
+	run(input: JSON!): JSON!
+	"""
+	Run agent and wait for completion.
+	"""
+	runWait(input: JSON!): JSON!
+	"""
+	Update agent identity.
+	"""
+	updateIdentity(input: JSON!): BoolResult!
+	"""
+	Update agent soul/personality.
+	"""
+	updateSoul(soul: String!): BoolResult!
+}
+
+type AgentQuery {
+	"""
+	List available agents.
+	"""
+	list: JSON!
+	"""
+	Get agent identity.
+	"""
+	identity: AgentIdentity!
+}
+
+"""
+Generic boolean result for mutations that return `{ "ok": true }`.
+"""
+type BoolResult {
+	ok: Boolean!
+}
+
+type BrowserMutation {
+	request(input: JSON!): JSON!
+}
+
+type ChannelInfo {
+	name: String
+	type: String
+	status: String
+	accountId: String
+}
+
+type ChannelMutation {
+	add(input: JSON!): BoolResult!
+	remove(name: String!): BoolResult!
+	update(input: JSON!): BoolResult!
+	logout(name: String!): BoolResult!
+	approveSender(input: JSON!): BoolResult!
+	denySender(input: JSON!): BoolResult!
+}
+
+type ChannelOtpPending {
+	code: String
+	expiresAt: Int
+}
+
+type ChannelQuery {
+	"""
+	Get channel status.
+	"""
+	status: BoolResult!
+	"""
+	List all channels.
+	"""
+	list: [ChannelInfo!]!
+	"""
+	List pending channel senders.
+	"""
+	senders: ChannelSendersResult!
+}
+
+type ChannelSender {
+	peerId: String
+	senderName: String
+	username: String
+	messageCount: Int
+	lastSeen: Int
+	allowed: Boolean
+	otpPending: ChannelOtpPending
+}
+
+type ChannelSendersResult {
+	senders: [ChannelSender!]!
+}
+
+type ChatMutation {
+	"""
+	Send a chat message.
+	"""
+	send(message: String!, sessionKey: String, model: String): BoolResult!
+	"""
+	Abort active chat response.
+	"""
+	abort(sessionKey: String): BoolResult!
+	"""
+	Cancel queued chat messages.
+	"""
+	cancelQueued(sessionKey: String): BoolResult!
+	"""
+	Clear chat history for session.
+	"""
+	clear(sessionKey: String): BoolResult!
+	"""
+	Compact chat messages.
+	"""
+	compact(sessionKey: String): BoolResult!
+	"""
+	Inject a message into chat history.
+	"""
+	inject(input: JSON!): BoolResult!
+}
+
+type ChatQuery {
+	"""
+	Get chat history for a session.
+	"""
+	history(sessionKey: String): JSON!
+	"""
+	Get chat context data.
+	"""
+	context(sessionKey: String): JSON!
+	"""
+	Get rendered system prompt.
+	"""
+	rawPrompt(sessionKey: String): ChatRawPrompt!
+	"""
+	Get full context with rendering (OpenAI messages format).
+	"""
+	fullContext(sessionKey: String): JSON!
+}
+
+type ChatRawPrompt {
+	prompt: String
+	charCount: Int
+	nativeTools: Boolean
+	toolCount: Int
+}
+
+type ClientInfo {
+	connId: String
+	role: String
+	connectedAt: Int
+}
+
+type ConfigMutation {
+	"""
+	Set a config value.
+	"""
+	set(path: String!, value: JSON!): BoolResult!
+	"""
+	Apply full config.
+	"""
+	apply(config: JSON!): BoolResult!
+	"""
+	Patch config.
+	"""
+	patch(patch: JSON!): BoolResult!
+}
+
+type ConfigQuery {
+	"""
+	Get config value at a path. Returns dynamic user-defined config data.
+	"""
+	get(path: String): JSON!
+	"""
+	Get config schema definition. Returns dynamic JSON schema.
+	"""
+	schema: JSON!
+}
+
+type ContextFile {
+	path: String
+	content: String
+}
+
+type CronJob {
+	id: String
+	name: String
+	enabled: Boolean
+	deleteAfterRun: Boolean
+	schedule: JSON
+	payload: JSON
+	sessionTarget: String
+	state: JSON
+	createdAtMs: Int
+	updatedAtMs: Int
+}
+
+type CronMutation {
+	add(input: JSON!): BoolResult!
+	update(input: JSON!): BoolResult!
+	remove(id: String!): BoolResult!
+	"""
+	Trigger a cron job immediately.
+	"""
+	run(id: String!): BoolResult!
+}
+
+type CronQuery {
+	"""
+	List all cron jobs.
+	"""
+	list: [CronJob!]!
+	"""
+	Get cron status.
+	"""
+	status: CronStatus!
+	"""
+	Get run history for a cron job.
+	"""
+	runs(jobId: String!): [CronRunRecord!]!
+}
+
+type CronRunRecord {
+	jobId: String
+	startedAtMs: Int
+	finishedAtMs: Int
+	status: String
+	error: String
+	durationMs: Int
+	output: String
+	inputTokens: Int
+	outputTokens: Int
+}
+
+type CronStatus {
+	running: Boolean
+	jobCount: Int
+	enabledCount: Int
+	nextRunAtMs: Int
+}
+
+type DeviceMutation {
+	pairApprove(deviceId: String!): BoolResult!
+	pairReject(deviceId: String!): BoolResult!
+	tokenRotate(deviceId: String!): BoolResult!
+	tokenRevoke(deviceId: String!): BoolResult!
+}
+
+type DeviceQuery {
+	"""
+	List paired devices.
+	"""
+	pairRequests: JSON!
+}
+
+type ExecApprovalConfig {
+	mode: String
+	securityLevel: String
+}
+
+type ExecApprovalMutation {
+	set(input: JSON!): BoolResult!
+	setNodeConfig(input: JSON!): BoolResult!
+	request(input: JSON!): BoolResult!
+	resolve(input: JSON!): BoolResult!
+}
+
+type ExecApprovalQuery {
+	"""
+	Get execution approval settings.
+	"""
+	get: ExecApprovalConfig!
+	"""
+	Get node-specific approval settings.
+	"""
+	nodeConfig: ExecNodeConfig!
+}
+
+type ExecNodeConfig {
+	mode: String
+}
+
+type GenericEvent {
+	data: JSON!
+}
+
+type HealthInfo {
+	ok: Boolean!
+	connections: Int
+}
+
+type HeartbeatActiveHours {
+	start: String
+	end: String
+	timezone: String
+}
+
+type HeartbeatConfig {
+	enabled: Boolean
+	every: String
+	model: String
+	prompt: String
+	ackMaxChars: Int
+	activeHours: HeartbeatActiveHours
+	sandboxEnabled: Boolean
+	sandboxImage: String
+}
+
+type HeartbeatMutation {
+	update(input: JSON!): BoolResult!
+	run: BoolResult!
+}
+
+type HeartbeatQuery {
+	"""
+	Get heartbeat configuration and status.
+	"""
+	status: HeartbeatStatus!
+	"""
+	Get heartbeat run history.
+	"""
+	runs(limit: Int): [CronRunRecord!]!
+}
+
+type HeartbeatStatus {
+	config: HeartbeatConfig
+	job: CronJob
+	promptSource: String
+	heartbeatFileExists: Boolean
+	hasPrompt: Boolean
+}
+
+type HookInfo {
+	name: String
+	description: String
+	emoji: String
+	events: [String!]
+	command: String
+	timeout: Int
+	priority: Int
+	source: String
+	enabled: Boolean
+	eligible: Boolean
+	callCount: Int
+	failureCount: Int
+}
+
+type HooksMutation {
+	enable(name: String!): BoolResult!
+	disable(name: String!): BoolResult!
+	save(input: JSON!): BoolResult!
+	reload: BoolResult!
+}
+
+type HooksQuery {
+	"""
+	List discovered hooks with stats.
+	"""
+	list: [HookInfo!]!
+}
+
+scalar JSON
+
+type LocalBackendInfo {
+	id: String
+	name: String
+	description: String
+	available: Boolean
+	installCommands: [String!]
+}
+
+type LocalLlmMutation {
+	configure(input: JSON!): BoolResult!
+	configureCustom(input: JSON!): BoolResult!
+	removeModel(input: JSON!): BoolResult!
+}
+
+type LocalLlmQuery {
+	"""
+	Get system information for local LLM.
+	"""
+	systemInfo: LocalSystemInfo!
+	"""
+	List available local models.
+	"""
+	models: [ModelInfo!]!
+	"""
+	Get local LLM status.
+	"""
+	status: BoolResult!
+	"""
+	Search HuggingFace models.
+	"""
+	searchHf(query: String!): JSON!
+}
+
+type LocalSystemInfo {
+	totalRamGb: Float
+	availableRamGb: Float
+	hasMetal: Boolean
+	hasCuda: Boolean
+	hasGpu: Boolean
+	isAppleSilicon: Boolean
+	memoryTier: String
+	recommendedBackend: String
+	availableBackends: [LocalBackendInfo!]
+	backendNote: String
+	mlxAvailable: Boolean
+}
+
+type LogEnabledLevels {
+	debug: Boolean
+	trace: Boolean
+}
+
+type LogEntry {
+	ts: Int
+	level: String
+	target: String
+	message: String
+	fields: JSON
+}
+
+type LogListResult {
+	entries: [LogEntry!]!
+}
+
+type LogStatus {
+	unseenWarns: Int
+	unseenErrors: Int
+	enabledLevels: LogEnabledLevels
+}
+
+type LogTailResult {
+	entries: [LogEntry!]!
+	subscribed: Boolean
+}
+
+type LogsMutation {
+	ack: BoolResult!
+}
+
+type LogsQuery {
+	"""
+	Stream log tail.
+	"""
+	tail(lines: Int): LogTailResult!
+	"""
+	List logs.
+	"""
+	list: LogListResult!
+	"""
+	Get log status.
+	"""
+	status: LogStatus!
+}
+
+type McpMutation {
+	add(input: JSON!): BoolResult!
+	remove(name: String!): BoolResult!
+	enable(name: String!): BoolResult!
+	disable(name: String!): BoolResult!
+	restart(name: String!): BoolResult!
+	reauth(name: String!): BoolResult!
+	update(input: JSON!): BoolResult!
+	oauthStart(name: String!): McpOAuthStartResult!
+	oauthComplete(input: JSON!): BoolResult!
+}
+
+type McpOAuthStartResult {
+	ok: Boolean
+	oauthPending: Boolean
+	authUrl: String
+}
+
+type McpQuery {
+	"""
+	List MCP servers.
+	"""
+	list: [McpServer!]!
+	"""
+	Get MCP system status.
+	"""
+	status: BoolResult!
+	"""
+	Get MCP server tools.
+	"""
+	tools(name: String): [McpTool!]!
+}
+
+type McpServer {
+	name: String
+	command: String
+	enabled: Boolean
+	status: String
+	transport: String
+	url: String
+	toolCount: Int
+}
+
+type McpTool {
+	name: String
+	description: String
+	server: String
+}
+
+type MemoryConfig {
+	backend: String
+	citations: String
+	disableRag: Boolean
+	llmReranking: Boolean
+	sessionExport: Boolean
+	qmdFeatureEnabled: Boolean
+}
+
+type MemoryMutation {
+	updateConfig(input: JSON!): BoolResult!
+}
+
+type MemoryQuery {
+	"""
+	Get memory system status.
+	"""
+	status: MemoryStatus!
+	"""
+	Get memory configuration.
+	"""
+	config: MemoryConfig!
+	"""
+	Get QMD status.
+	"""
+	qmdStatus: BoolResult!
+}
+
+"""
+Memory usage breakdown.
+"""
+type MemoryStats {
+	"""
+	Process RSS in bytes.
+	"""
+	process: Int!
+	"""
+	System available memory in bytes.
+	"""
+	available: Int!
+	"""
+	System total memory in bytes.
+	"""
+	total: Int!
+}
+
+type MemoryStatus {
+	enabled: Boolean
+	fileCount: Int
+	chunkCount: Int
+	backend: String
+}
+
+type ModelInfo {
+	id: String
+	name: String
+	provider: String
+	enabled: Boolean
+	supportsTools: Boolean
+	supportsVision: Boolean
+	supportsStreaming: Boolean
+	contextWindow: Int
+	maxOutputTokens: Int
+}
+
+type ModelMutation {
+	enable(input: JSON!): BoolResult!
+	disable(input: JSON!): BoolResult!
+	detectSupported: BoolResult!
+	test(input: JSON!): ModelTestResult!
+}
+
+type ModelQuery {
+	"""
+	List enabled models.
+	"""
+	list: [ModelInfo!]!
+	"""
+	List all available models.
+	"""
+	listAll: [ModelInfo!]!
+}
+
+type ModelTestResult {
+	ok: Boolean!
+	modelId: String
+}
+
+type MutationRoot {
+	system: SystemMutation!
+	node: NodeMutation!
+	device: DeviceMutation!
+	chat: ChatMutation!
+	sessions: SessionMutation!
+	channels: ChannelMutation!
+	config: ConfigMutation!
+	cron: CronMutation!
+	heartbeat: HeartbeatMutation!
+	tts: TtsMutation!
+	stt: SttMutation!
+	voice: VoiceMutation!
+	skills: SkillsMutation!
+	models: ModelMutation!
+	providers: ProviderMutation!
+	mcp: McpMutation!
+	projects: ProjectMutation!
+	execApprovals: ExecApprovalMutation!
+	logs: LogsMutation!
+	memory: MemoryMutation!
+	hooks: HooksMutation!
+	agents: AgentMutation!
+	voicewake: VoicewakeMutation!
+	browser: BrowserMutation!
+}
+
+type NodeDescription {
+	nodeId: String
+	displayName: String
+	platform: String
+	version: String
+	capabilities: [String!]
+	commands: [String!]
+	permissions: JSON
+	pathEnv: String
+	remoteIp: String
+	connectedAt: Int
+}
+
+type NodeInfo {
+	nodeId: String
+	connId: String
+	displayName: String
+	platform: String
+	version: String
+}
+
+type NodeMutation {
+	"""
+	Forward RPC request to a node.
+	"""
+	invoke(input: JSON!): JSON!
+	"""
+	Rename a connected node.
+	"""
+	rename(nodeId: String!, displayName: String!): BoolResult!
+	"""
+	Request pairing with a new node.
+	"""
+	pairRequest(input: JSON!): BoolResult!
+	"""
+	Approve node pairing.
+	"""
+	pairApprove(requestId: String!): BoolResult!
+	"""
+	Reject node pairing.
+	"""
+	pairReject(requestId: String!): BoolResult!
+	"""
+	Verify node pairing signature.
+	"""
+	pairVerify(input: JSON!): BoolResult!
+}
+
+type NodeQuery {
+	"""
+	List all connected nodes.
+	"""
+	list: [NodeInfo!]!
+	"""
+	Get detailed info for a specific node.
+	"""
+	describe(nodeId: String!): NodeDescription!
+	"""
+	List pending pairing requests.
+	"""
+	pairRequests: JSON!
+}
+
+type Project {
+	id: String
+	label: String
+	directory: String
+	systemPrompt: String
+	autoWorktree: Boolean
+	setupCommand: String
+	teardownCommand: String
+	branchPrefix: String
+	sandboxImage: String
+	detected: Boolean
+	createdAt: String
+	updatedAt: String
+}
+
+type ProjectContext {
+	project: Project
+	contextFiles: [ContextFile!]
+}
+
+type ProjectMutation {
+	upsert(input: JSON!): BoolResult!
+	delete(id: String!): BoolResult!
+	detect: BoolResult!
+}
+
+type ProjectQuery {
+	"""
+	List all projects.
+	"""
+	list: [Project!]!
+	"""
+	Get a project by ID.
+	"""
+	get(id: String!): Project!
+	"""
+	Get project context.
+	"""
+	context(id: String!): ProjectContext!
+	"""
+	Path completion for projects.
+	"""
+	completePath(prefix: String!): [String!]!
+}
+
+type ProviderInfo {
+	name: String
+	displayName: String
+	configured: Boolean
+	authMethod: String
+	models: [String!]
+}
+
+type ProviderMutation {
+	saveKey(input: JSON!): BoolResult!
+	validateKey(input: JSON!): BoolResult!
+	saveModel(input: JSON!): BoolResult!
+	saveModels(input: JSON!): BoolResult!
+	removeKey(provider: String!): BoolResult!
+	addCustom(input: JSON!): BoolResult!
+	oauthStart(provider: String!): ProviderOAuthStartResult!
+	oauthComplete(input: JSON!): BoolResult!
+	"""
+	Local LLM mutations.
+	"""
+	local: LocalLlmMutation!
+}
+
+type ProviderOAuthStartResult {
+	authUrl: String
+	deviceFlow: Boolean
+	alreadyAuthenticated: Boolean
+	userCode: String
+	verificationUri: String
+	verificationUriComplete: String
+}
+
+type ProviderQuery {
+	"""
+	List available provider integrations.
+	"""
+	available: [ProviderInfo!]!
+	"""
+	Get OAuth status.
+	"""
+	oauthStatus: BoolResult!
+	"""
+	Local LLM queries.
+	"""
+	local: LocalLlmQuery!
+}
+
+type QueryRoot {
+	"""
+	Gateway health check.
+	"""
+	health: HealthInfo!
+	"""
+	Gateway status with hostname, version, connections, uptime.
+	"""
+	status: StatusInfo!
+	"""
+	System queries (presence, heartbeat).
+	"""
+	system: SystemQuery!
+	"""
+	Node management queries.
+	"""
+	node: NodeQuery!
+	"""
+	Chat queries (history, context).
+	"""
+	chat: ChatQuery!
+	"""
+	Session queries.
+	"""
+	sessions: SessionQuery!
+	"""
+	Channel queries.
+	"""
+	channels: ChannelQuery!
+	"""
+	Configuration queries.
+	"""
+	config: ConfigQuery!
+	"""
+	Cron job queries.
+	"""
+	cron: CronQuery!
+	"""
+	Heartbeat queries.
+	"""
+	heartbeat: HeartbeatQuery!
+	"""
+	Log queries.
+	"""
+	logs: LogsQuery!
+	"""
+	TTS queries.
+	"""
+	tts: TtsQuery!
+	"""
+	STT queries.
+	"""
+	stt: SttQuery!
+	"""
+	Voice configuration queries.
+	"""
+	voice: VoiceQuery!
+	"""
+	Skills queries.
+	"""
+	skills: SkillsQuery!
+	"""
+	Model queries.
+	"""
+	models: ModelQuery!
+	"""
+	Provider queries.
+	"""
+	providers: ProviderQuery!
+	"""
+	MCP server queries.
+	"""
+	mcp: McpQuery!
+	"""
+	Usage and cost queries.
+	"""
+	usage: UsageQuery!
+	"""
+	Execution approval queries.
+	"""
+	execApprovals: ExecApprovalQuery!
+	"""
+	Project queries.
+	"""
+	projects: ProjectQuery!
+	"""
+	Memory system queries.
+	"""
+	memory: MemoryQuery!
+	"""
+	Hook queries.
+	"""
+	hooks: HooksQuery!
+	"""
+	Agent queries.
+	"""
+	agents: AgentQuery!
+	"""
+	Voicewake configuration.
+	"""
+	voicewake: VoicewakeQuery!
+	"""
+	Device pairing queries.
+	"""
+	device: DeviceQuery!
+}
+
+type SecurityScanResult {
+	ok: Boolean
+	message: String
+	"""
+	Raw mcp-scan output (external tool, variable shape).
+	"""
+	results: JSON
+	installedSkillsDir: String
+}
+
+type SecurityStatus {
+	mcpScanAvailable: Boolean
+	uvxAvailable: Boolean
+	supported: Boolean
+	installedSkillsDir: String
+	installHint: String
+}
+
+"""
+Whether a session currently has an active LLM run (waiting for response).
+"""
+type SessionActiveResult {
+	active: Boolean!
+}
+
+type SessionBranch {
+	key: String
+	label: String
+	forkPoint: Int
+	messageCount: Int
+	createdAt: Int
+}
+
+type SessionEntry {
+	id: String
+	key: String
+	label: String
+	model: String
+	createdAt: Int
+	updatedAt: Int
+	messageCount: Int
+	lastSeenMessageCount: Int
+	projectId: String
+	archived: Boolean
+	worktreeBranch: String
+	sandboxEnabled: Boolean
+	sandboxImage: String
+	channelBinding: String
+	parentSessionKey: String
+	forkPoint: Int
+	preview: String
+	mcpDisabled: Boolean
+	replying: Boolean
+}
+
+type SessionMutation {
+	"""
+	Switch active session.
+	"""
+	switch(key: String!): BoolResult!
+	"""
+	Fork session to new session.
+	"""
+	fork(input: JSON!): BoolResult!
+	"""
+	Patch session metadata.
+	"""
+	patch(input: JSON!): BoolResult!
+	"""
+	Reset session history.
+	"""
+	reset(key: String!): BoolResult!
+	"""
+	Delete a session.
+	"""
+	delete(key: String!): BoolResult!
+	"""
+	Clear all sessions.
+	"""
+	clearAll: BoolResult!
+	"""
+	Compact all sessions.
+	"""
+	compact(key: String): BoolResult!
+	"""
+	Create a shareable session link.
+	"""
+	shareCreate(input: JSON!): SessionShareResult!
+	"""
+	Revoke a shared session link.
+	"""
+	shareRevoke(shareId: String!): BoolResult!
+}
+
+type SessionQuery {
+	"""
+	List all sessions.
+	"""
+	list: [SessionEntry!]!
+	"""
+	Preview a session without switching.
+	"""
+	preview(key: String!): SessionEntry!
+	"""
+	Search sessions by query.
+	"""
+	search(query: String!): [SessionEntry!]!
+	"""
+	Resolve or auto-create a session.
+	"""
+	resolve(key: String!): SessionEntry!
+	"""
+	Get session branches.
+	"""
+	branches(key: String): [SessionBranch!]!
+	"""
+	List shared session links.
+	"""
+	shares(key: String): [SessionShareResult!]!
+	"""
+	Whether this session has an active run (LLM is responding).
+	"""
+	active(sessionKey: String!): SessionActiveResult!
+}
+
+type SessionShareResult {
+	id: String
+	sessionKey: String
+	visibility: String
+	path: String
+	views: Int
+	createdAt: Int
+	revokedAt: Int
+	snapshotMessageCount: Int
+	accessKey: String
+	notice: String
+}
+
+type SkillInfo {
+	name: String
+	description: String
+	license: String
+	path: String
+	source: JSON
+	protected: Boolean
+	eligible: Boolean
+	missingBins: [String!]
+}
+
+type SkillRepo {
+	source: String
+	repoName: String
+	installedAtMs: Int
+	commitSha: String
+	skillCount: Int
+	enabledCount: Int
+	format: String
+}
+
+type SkillsMutation {
+	install(input: JSON!): BoolResult!
+	remove(source: String!): BoolResult!
+	update(name: String!): BoolResult!
+	reposRemove(source: String!): BoolResult!
+	emergencyDisable: BoolResult!
+	trust(name: String!): BoolResult!
+	enable(name: String!): BoolResult!
+	disable(name: String!): BoolResult!
+	installDep(input: JSON!): BoolResult!
+}
+
+type SkillsQuery {
+	"""
+	List installed skills.
+	"""
+	list: [SkillInfo!]!
+	"""
+	Get skills system status.
+	"""
+	status: BoolResult!
+	"""
+	Get skills binaries.
+	"""
+	bins: JSON!
+	"""
+	List skill repositories.
+	"""
+	repos: [SkillRepo!]!
+	"""
+	Get skill details.
+	"""
+	detail(name: String!): SkillInfo!
+	"""
+	Get security status.
+	"""
+	securityStatus: SecurityStatus!
+	"""
+	Run security scan.
+	"""
+	securityScan: SecurityScanResult!
+}
+
+type StatusInfo {
+	hostname: String
+	version: String
+	connections: Int
+	uptimeMs: Int
+}
+
+type SttMutation {
+	transcribe(input: JSON!): TranscriptionResult!
+	setProvider(provider: String!): BoolResult!
+}
+
+type SttQuery {
+	"""
+	Get STT status.
+	"""
+	status: SttStatus!
+	"""
+	Get available STT providers.
+	"""
+	providers: [ProviderInfo!]!
+}
+
+type SttStatus {
+	enabled: Boolean
+	provider: String
+}
+
+type SubscriptionRoot {
+	"""
+	Chat events (streaming tokens, completion, abort).
+	"""
+	chatEvent(sessionKey: String): GenericEvent!
+	"""
+	Session change events (patch, switch, delete).
+	"""
+	sessionChanged: GenericEvent!
+	"""
+	Cron job notifications (created, updated, removed, run complete).
+	"""
+	cronNotification: GenericEvent!
+	"""
+	Channel events.
+	"""
+	channelEvent: GenericEvent!
+	"""
+	Node connect/disconnect events.
+	"""
+	nodeEvent: GenericEvent!
+	"""
+	System tick events (periodic heartbeat with stats).
+	"""
+	tick: TickEvent!
+	"""
+	Log entry events.
+	"""
+	logEntry: GenericEvent!
+	"""
+	MCP server status change events.
+	"""
+	mcpStatusChanged: GenericEvent!
+	"""
+	Execution approval events.
+	"""
+	approvalEvent: GenericEvent!
+	"""
+	Config change events.
+	"""
+	configChanged: GenericEvent!
+	"""
+	System presence change events.
+	"""
+	presenceChanged: GenericEvent!
+	"""
+	Metrics update events.
+	"""
+	metricsUpdate: GenericEvent!
+	"""
+	Update availability events.
+	"""
+	updateAvailable: GenericEvent!
+	"""
+	Voice config changed events.
+	"""
+	voiceConfigChanged: GenericEvent!
+	"""
+	Skills install progress events.
+	"""
+	skillsInstallProgress: GenericEvent!
+	"""
+	All events (unfiltered, for debugging).
+	"""
+	allEvents: GenericEvent!
+}
+
+type SystemMutation {
+	"""
+	Broadcast a system event.
+	"""
+	event(event: String!, payload: JSON): BoolResult!
+	"""
+	Touch activity timestamp.
+	"""
+	setHeartbeats: BoolResult!
+	"""
+	Trigger wake functionality.
+	"""
+	wake: BoolResult!
+	"""
+	Set talk mode.
+	"""
+	talkMode(mode: String!): BoolResult!
+	"""
+	Check for and run updates.
+	"""
+	updateRun: BoolResult!
+}
+
+type SystemPresence {
+	clients: [ClientInfo!]!
+	nodes: [NodeInfo!]!
+}
+
+type SystemQuery {
+	"""
+	Detailed client and node presence information.
+	"""
+	presence: SystemPresence!
+	"""
+	Last activity duration for the current client.
+	"""
+	lastHeartbeat: BoolResult!
+}
+
+"""
+System heartbeat tick event with timestamp and memory stats.
+"""
+type TickEvent {
+	"""
+	Unix timestamp in milliseconds.
+	"""
+	ts: Int!
+	"""
+	Memory usage statistics.
+	"""
+	mem: MemoryStats!
+}
+
+type TranscriptionResult {
+	text: String
+	language: String
+	confidence: Float
+	durationSeconds: Float
+	words: [TranscriptionWord!]
+}
+
+type TranscriptionWord {
+	word: String
+	start: Float
+	end: Float
+}
+
+type TtsConvertResult {
+	audio: String
+	format: String
+	mimeType: String
+	durationMs: Int
+	size: Int
+}
+
+type TtsMutation {
+	enable(input: JSON!): BoolResult!
+	disable: BoolResult!
+	convert(audio: String!): TtsConvertResult!
+	setProvider(provider: String!): BoolResult!
+}
+
+type TtsQuery {
+	"""
+	Get TTS status.
+	"""
+	status: TtsStatus!
+	"""
+	Get available TTS providers.
+	"""
+	providers: [ProviderInfo!]!
+	"""
+	Generate a TTS test phrase.
+	"""
+	generatePhrase: String!
+}
+
+type TtsStatus {
+	enabled: Boolean
+	provider: String
+}
+
+type UsageCost {
+	cost: Float
+}
+
+type UsageQuery {
+	"""
+	Get usage statistics.
+	"""
+	status: UsageStatus!
+	"""
+	Calculate cost for a usage period.
+	"""
+	cost: UsageCost!
+}
+
+type UsageStatus {
+	totalInputTokens: Int
+	totalOutputTokens: Int
+	sessionCount: Int
+}
+
+type VoiceConfig {
+	tts: VoiceTtsConfig
+	stt: VoiceSttConfig
+}
+
+type VoiceMutation {
+	saveKey(input: JSON!): BoolResult!
+	saveSettings(settings: JSON!): BoolResult!
+	removeKey(provider: String!): BoolResult!
+	toggleProvider(input: JSON!): BoolResult!
+	sessionOverrideSet(input: JSON!): BoolResult!
+	sessionOverrideClear(sessionKey: String!): BoolResult!
+	channelOverrideSet(input: JSON!): BoolResult!
+	channelOverrideClear(channelKey: String!): BoolResult!
+}
+
+type VoiceQuery {
+	"""
+	Get voice configuration.
+	"""
+	config: VoiceConfig!
+	"""
+	Get all voice providers with availability detection.
+	"""
+	providers: [ProviderInfo!]!
+	"""
+	Fetch ElevenLabs voice catalog.
+	"""
+	elevenlabsCatalog: JSON!
+	"""
+	Check Voxtral local setup requirements.
+	"""
+	voxtralRequirements: VoxtralRequirements!
+}
+
+type VoiceSttConfig {
+	enabled: Boolean
+	provider: String
+	whisperConfigured: Boolean
+	groqConfigured: Boolean
+	deepgramConfigured: Boolean
+	googleConfigured: Boolean
+	elevenlabsConfigured: Boolean
+	whisperCliConfigured: Boolean
+	sherpaOnnxConfigured: Boolean
+}
+
+type VoiceTtsConfig {
+	enabled: Boolean
+	provider: String
+	elevenlabsConfigured: Boolean
+	openaiConfigured: Boolean
+}
+
+type VoicewakeConfig {
+	enabled: Boolean
+}
+
+type VoicewakeMutation {
+	set(input: JSON!): BoolResult!
+}
+
+type VoicewakeQuery {
+	"""
+	Get wake word configuration.
+	"""
+	get: VoicewakeConfig!
+}
+
+type VoxtralCudaStatus {
+	available: Boolean
+	gpuName: String
+	memoryMb: Int
+	sufficient: Boolean
+}
+
+type VoxtralPythonStatus {
+	available: Boolean
+	version: String
+	sufficient: Boolean
+}
+
+type VoxtralRequirements {
+	os: String
+	arch: String
+	python: VoxtralPythonStatus
+	cuda: VoxtralCudaStatus
+	compatible: Boolean
+	reasons: [String!]
+}
+
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+schema {
+	query: QueryRoot
+	mutation: MutationRoot
+	subscription: SubscriptionRoot
+}

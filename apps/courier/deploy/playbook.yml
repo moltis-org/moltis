@@ -1,0 +1,7 @@
+---
+- name: Deploy moltis-courier push relay
+  hosts: courier
+  become: true
+
+  roles:
+    - courier

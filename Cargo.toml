@@ -1,5 +1,6 @@
 [workspace]
-members = [
+default-members = [
+  "apps/courier",
   "crates/agents",
   "crates/auth",
   "crates/auto-reply",
@@ -48,6 +49,55 @@ members = [
   "crates/web",
   "crates/whatsapp",
 ]
+members = [
+  "apps/courier",
+  "crates/agents",
+  "crates/auth",
+  "crates/auto-reply",
+  "crates/benchmarks",
+  "crates/browser",
+  "crates/caldav",
+  "crates/canvas",
+  "crates/channels",
+  "crates/chat",
+  "crates/cli",
+  "crates/common",
+  "crates/config",
+  "crates/cron",
+  "crates/gateway",
+  "crates/graphql",
+  "crates/mcp",
+  "crates/media",
+  "crates/memory",
+  "crates/metrics",
+  "crates/msteams",
+  "crates/oauth",
+  "crates/onboarding",
+  "crates/openclaw-import",
+  "crates/plugins",
+  "crates/projects",
+  "crates/protocol",
+  "crates/provider-setup",
+  "crates/providers",
+  "crates/qmd",
+  "crates/routing",
+  "crates/schema-export",
+  "crates/service-traits",
+  "crates/sessions",
+  "crates/skills",
+  "crates/swift-bridge",
+  "crates/tailscale",
+  "crates/telegram",
+  "crates/tls",
+  "crates/tools",
+  "crates/vault",
+  "crates/voice",
+  "crates/wasm-tools/calc",
+  "crates/wasm-tools/web-fetch",
+  "crates/wasm-tools/web-search",
+  "crates/web",
+  "crates/whatsapp",
+]
 resolver = "2"
 
 [workspace.lints.rust]
@@ -66,6 +116,8 @@ rust-version = "1.91"
 version      = "0.9.10"
 
 [workspace.dependencies]
+# APNS
+a2 = { default-features = false, features = ["ring"], version = "0.10" }
 # Async runtime
 tokio = { features = ["full"], version = "1" }
 # HTTP/WS server
@@ -174,6 +226,7 @@ metrics-tracing-context     = "0.16"
 # Content processing
 image          = { default-features = false, features = ["jpeg", "png", "webp"], version = "0.25" }
 ipnet          = "2"
+mdns-sd        = "0.18"
 pulldown-cmark = { default-features = false, version = "0.12" }
 # Allocator
 tikv-jemallocator = "0.6"
@@ -237,6 +290,7 @@ moltis-provider-setup  = { path = "crates/provider-setup" }
 moltis-providers       = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
 moltis-qmd             = { path = "crates/qmd" }
 moltis-routing         = { path = "crates/routing" }
+moltis-schema-export   = { path = "crates/schema-export" }
 moltis-service-traits  = { path = "crates/service-traits" }
 moltis-sessions        = { path = "crates/sessions" }
 moltis-skills          = { path = "crates/skills" }

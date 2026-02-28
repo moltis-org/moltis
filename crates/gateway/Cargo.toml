@@ -23,6 +23,7 @@ hostname               = { workspace = true }
 hyper                  = { optional = true, workspace = true }
 hyper-util             = { optional = true, workspace = true }
 include_dir            = { optional = true, workspace = true }
+mdns-sd                = { optional = true, workspace = true }
 moltis-agents          = { workspace = true }
 moltis-auth            = { workspace = true }
 moltis-browser         = { workspace = true }
@@ -104,6 +105,7 @@ default = [
   "file-watcher",
   "graphql",
   "local-llm",
+  "mdns",
   "metrics",
   "openclaw-import",
   "prometheus",
@@ -125,6 +127,7 @@ file-watcher = [
 ]
 graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 local-embeddings = ["moltis-memory/local-embeddings"]
+mdns = ["dep:mdns-sd"]
 local-llm = [
   "moltis-chat/local-llm",
   "moltis-provider-setup/local-llm",

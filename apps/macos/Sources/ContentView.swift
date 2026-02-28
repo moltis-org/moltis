@@ -335,16 +335,31 @@ private struct ChatDetailView: View {
                     .stroke(.quaternary, lineWidth: 1)
             }
 
-            Button {
-                chatStore.sendDraftMessage()
-            } label: {
-                Image(systemName: chatStore.isSending ? "ellipsis.circle.fill" : "arrow.up.circle.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(canSendMessage ? .blue : .secondary.opacity(0.4))
+            if chatStore.isSending {
+                Button {
+                    chatStore.abortGeneration()
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(Color.red)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.borderless)
+                .help("Stop generation")
+            } else {
+                Button {
+                    chatStore.sendDraftMessage()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(canSendMessage ? .blue : .secondary.opacity(0.4))
+                }
+                .buttonStyle(.borderless)
+                .disabled(!canSendMessage)
+                .help("Send message")
             }
-            .buttonStyle(.borderless)
-            .disabled(!canSendMessage)
-            .help("Send message")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -356,6 +371,7 @@ private struct SessionToolbarView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var chatStore: ChatStore
     @State private var showContextPopover = false
+    @State private var showPeekPopover = false
 
     private var modelOptions: [SearchableOption] {
         providerStore.models.map {
@@ -370,6 +386,8 @@ private struct SessionToolbarView: View {
             sandboxControls
             Divider().frame(height: 16)
             debugAndContext
+            Divider().frame(height: 16)
+            peekButton
             Spacer()
         }
         .padding(.horizontal, 16)
@@ -402,6 +420,21 @@ private struct SessionToolbarView: View {
                     .controlSize(.small)
                     .frame(maxWidth: 160)
             }
+        }
+    }
+
+    private var peekButton: some View {
+        Button {
+            chatStore.peekCurrentSession()
+            showPeekPopover.toggle()
+        } label: {
+            Image(systemName: "eye")
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .help("Peek at activity")
+        .popover(isPresented: $showPeekPopover) {
+            PeekPopoverView(peekResult: chatStore.peekResult)
         }
     }
 
@@ -456,5 +489,48 @@ private struct SessionContextPopover: View {
         }
         .padding()
         .frame(minWidth: 280)
+    }
+}
+
+private struct PeekPopoverView: View {
+    let peekResult: BridgePeekResult?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Activity")
+                .font(.headline)
+
+            if let result = peekResult, result.active {
+                if let text = result.thinkingText {
+                    Text(text)
+                        .font(.subheadline)
+                        .italic()
+                        .foregroundStyle(.orange)
+                        .lineLimit(3)
+                }
+                if let toolCalls = result.toolCalls, !toolCalls.isEmpty {
+                    ForEach(toolCalls) { tc in
+                        HStack(spacing: 4) {
+                            Image(systemName: "gearshape")
+                                .foregroundStyle(.secondary)
+                            Text(tc.name)
+                                .font(.subheadline.monospaced())
+                        }
+                    }
+                }
+                if result.thinkingText == nil
+                    && (result.toolCalls ?? []).isEmpty {
+                    Text("Active (thinking…)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Idle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(minWidth: 220)
     }
 }

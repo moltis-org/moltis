@@ -1,0 +1,9 @@
+query FetchModels {
+  models {
+    list {
+      id
+      name
+      provider
+    }
+  }
+}
