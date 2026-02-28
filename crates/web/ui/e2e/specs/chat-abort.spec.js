@@ -46,7 +46,7 @@ test.describe("Chat abort", () => {
 
 		// Inject a fake thinking indicator to verify the stop button is rendered.
 		await page.evaluate(() => {
-			var chatMsgBox = document.getElementById("chatMsgBox");
+			var chatMsgBox = document.getElementById("messages");
 			if (!chatMsgBox) return;
 			var thinkEl = document.createElement("div");
 			thinkEl.className = "msg assistant thinking";
@@ -81,7 +81,7 @@ test.describe("Chat abort", () => {
 
 		// Inject a fake thinking indicator.
 		await page.evaluate(() => {
-			var chatMsgBox = document.getElementById("chatMsgBox");
+			var chatMsgBox = document.getElementById("messages");
 			if (!chatMsgBox) return;
 			var thinkEl = document.createElement("div");
 			thinkEl.className = "msg assistant thinking";
