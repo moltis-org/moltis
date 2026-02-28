@@ -16,8 +16,8 @@ import i18next from "i18next";
 
 var STORAGE_KEY = "moltis-locale";
 var initPromise = null;
-var SUPPORTED_LOCALES = new Set(["en", "fr"]);
-export var supportedLocales = Object.freeze(["en", "fr"]);
+var SUPPORTED_LOCALES = new Set(["en", "fr", "zh"]);
+export var supportedLocales = Object.freeze(["en", "fr", "zh"]);
 
 function normalizeLocaleTag(value) {
 	if (!value) return "en";

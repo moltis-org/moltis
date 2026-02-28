@@ -575,6 +575,7 @@ function IdentitySection() {
 						<option value="auto">Browser default</option>
 						<option value="en">English</option>
 						<option value="fr">French</option>
+						<option value="zh">简体中文</option>
 					</select>
 					<button
 						type="button"
