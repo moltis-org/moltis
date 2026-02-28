@@ -604,6 +604,10 @@ pub fn is_chat_capable_model(model_id: &str) -> bool {
         "omni-moderation",
         "moderation-",
         "sora",
+        // Google Gemini non-chat models
+        "imagen-",
+        "gemini-embedding",
+        "learnlm-",
         // Z.AI non-chat models
         "glm-image",
         "glm-asr",
@@ -766,6 +770,15 @@ const DEEPSEEK_MODELS: &[(&str, &str)] = &[
 /// Known Moonshot models.
 const MOONSHOT_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5")];
 
+/// Known Google Gemini models.
+/// See: <https://ai.google.dev/gemini-api/docs/models>
+const GEMINI_MODELS: &[(&str, &str)] = &[
+    ("gemini-2.5-flash-preview-05-20", "Gemini 2.5 Flash Preview"),
+    ("gemini-2.5-pro-preview-05-06", "Gemini 2.5 Pro Preview"),
+    ("gemini-2.0-flash", "Gemini 2.0 Flash"),
+    ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite"),
+];
+
 /// OpenAI-compatible provider definition for table-driven registration.
 struct OpenAiCompatDef {
     config_name: &'static str,
@@ -852,6 +865,14 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "OLLAMA_BASE_URL",
         default_base_url: "http://127.0.0.1:11434/v1",
         models: &[],
+        supports_model_discovery: true,
+    },
+    OpenAiCompatDef {
+        config_name: "gemini",
+        env_key: "GEMINI_API_KEY",
+        env_base_url_key: "GEMINI_BASE_URL",
+        default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+        models: GEMINI_MODELS,
         supports_model_discovery: true,
     },
 ];
@@ -1232,12 +1253,6 @@ impl ProviderRegistry {
                 "Claude Sonnet 4 (genai)",
             ),
             ("OPENAI_API_KEY", "openai", "gpt-4o", "GPT-4o (genai)"),
-            (
-                "GEMINI_API_KEY",
-                "gemini",
-                "gemini-2.0-flash",
-                "Gemini 2.0 Flash (genai)",
-            ),
             (
                 "GROQ_API_KEY",
                 "groq",
@@ -1664,8 +1679,11 @@ impl ProviderRegistry {
             let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
 
             // Ollama doesn't require an API key — use a dummy value.
+            // Gemini accepts both GEMINI_API_KEY and GOOGLE_API_KEY.
             let key = if def.config_name == "ollama" {
                 key.or_else(|| Some(secrecy::Secret::new("ollama".into())))
+            } else if def.config_name == "gemini" {
+                key.or_else(|| env_value(env_overrides, "GOOGLE_API_KEY").map(secrecy::Secret::new))
             } else {
                 key
             };
@@ -2221,6 +2239,14 @@ mod tests {
         assert!(!is_chat_capable_model("gpt-4o-mini-transcribe"));
         assert!(!is_chat_capable_model("sora"));
 
+        // Google Gemini non-chat models
+        assert!(!is_chat_capable_model("imagen-3.0-generate-002"));
+        assert!(!is_chat_capable_model("gemini-embedding-exp"));
+        assert!(!is_chat_capable_model("learnlm-1.5-pro-experimental"));
+        // Gemini chat models pass
+        assert!(is_chat_capable_model("gemini-2.0-flash"));
+        assert!(is_chat_capable_model("gemini-2.5-flash-preview-05-20"));
+
         // Z.AI non-chat models
         assert!(!is_chat_capable_model("glm-image"));
         assert!(!is_chat_capable_model("glm-asr-2512"));
@@ -2338,6 +2364,7 @@ mod tests {
         assert!(!MINIMAX_MODELS.is_empty());
         assert!(!ZAI_MODELS.is_empty());
         assert!(!MOONSHOT_MODELS.is_empty());
+        assert!(!GEMINI_MODELS.is_empty());
     }
 
     #[test]
@@ -2359,6 +2386,7 @@ mod tests {
             MINIMAX_MODELS,
             ZAI_MODELS,
             MOONSHOT_MODELS,
+            GEMINI_MODELS,
         ] {
             let mut ids: Vec<&str> = models.iter().map(|(id, _)| *id).collect();
             ids.sort();
@@ -3218,7 +3246,10 @@ mod tests {
             "llama3.3:70b-instruct",
             &details
         ));
-        assert!(!ollama_model_supports_native_tools("codellama:13b", &details));
+        assert!(!ollama_model_supports_native_tools(
+            "codellama:13b",
+            &details
+        ));
     }
 
     #[test]

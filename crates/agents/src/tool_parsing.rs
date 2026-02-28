@@ -251,7 +251,10 @@ fn collect_bare_json_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
         };
 
         // Check this range isn't already covered by a fenced/XML block.
-        if blocks.iter().any(|b| obj_start >= b.start && obj_start < b.end) {
+        if blocks
+            .iter()
+            .any(|b| obj_start >= b.start && obj_start < b.end)
+        {
             search_from = abs_hit + needle.len();
             continue;
         }

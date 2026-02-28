@@ -390,13 +390,8 @@ pub mod gguf {
             let mut samplers: Vec<LlamaSampler> = Vec::new();
 
             if let Some(grammar_str) = tool_grammar::build_tool_call_grammar(tool_names) {
-                match LlamaSampler::grammar_lazy(
-                    &model,
-                    &grammar_str,
-                    "root",
-                    ["```tool_call"],
-                    &[],
-                ) {
+                match LlamaSampler::grammar_lazy(&model, &grammar_str, "root", ["```tool_call"], &[
+                ]) {
                     Ok(grammar_sampler) => {
                         debug!("grammar-constrained sampling enabled for tool calls");
                         samplers.push(grammar_sampler);

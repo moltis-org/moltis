@@ -10,7 +10,7 @@ export MOLTIS_USER__NAME=""                    # your name
 # ── LLM Provider API keys ────────────────────────────────────────
 export ANTHROPIC_API_KEY=""
 export OPENAI_API_KEY=""
-export GOOGLE_API_KEY=""                       # Gemini
+export GEMINI_API_KEY=""                       # Google Gemini (or use GOOGLE_API_KEY)
 export GROQ_API_KEY=""
 export DEEPSEEK_API_KEY=""
 export XAI_API_KEY=""

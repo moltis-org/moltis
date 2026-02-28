@@ -2276,7 +2276,12 @@ memory = 300
             mode: ToolMode,
         }
 
-        for variant in [ToolMode::Auto, ToolMode::Native, ToolMode::Text, ToolMode::Off] {
+        for variant in [
+            ToolMode::Auto,
+            ToolMode::Native,
+            ToolMode::Text,
+            ToolMode::Off,
+        ] {
             let w = Wrapper { mode: variant };
             let toml_str = toml::to_string(&w).unwrap();
             let parsed: Wrapper = toml::from_str(&toml_str).unwrap();

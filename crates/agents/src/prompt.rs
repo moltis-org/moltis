@@ -214,7 +214,9 @@ const EXEC_ROUTING_GUIDANCE: &str = "Execution routing:\n\
 - Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\n";
 /// Build model-family-aware tool call guidance for text-based tool mode.
 fn tool_call_guidance(model_id: Option<&str>) -> String {
-    let _family = model_id.map(ModelFamily::from_model_id).unwrap_or(ModelFamily::Unknown);
+    let _family = model_id
+        .map(ModelFamily::from_model_id)
+        .unwrap_or(ModelFamily::Unknown);
 
     let mut g = String::with_capacity(800);
     g.push_str("## How to call tools\n\n");
@@ -337,8 +339,7 @@ fn build_system_prompt_full(
     append_skills_section(&mut prompt, include_tools, skills);
     append_workspace_files_section(&mut prompt, agents_text, tools_text);
     append_memory_section(&mut prompt, memory_text, &tool_schemas);
-    let model_id = runtime_context
-        .and_then(|ctx| ctx.host.model.as_deref());
+    let model_id = runtime_context.and_then(|ctx| ctx.host.model.as_deref());
     append_available_tools_section(&mut prompt, native_tools, &tool_schemas);
     append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas, model_id);
     append_guidelines_section(&mut prompt, include_tools);
@@ -1362,7 +1363,10 @@ mod tests {
 
     #[test]
     fn model_family_detects_llama() {
-        assert_eq!(ModelFamily::from_model_id("llama3.1:8b"), ModelFamily::Llama);
+        assert_eq!(
+            ModelFamily::from_model_id("llama3.1:8b"),
+            ModelFamily::Llama
+        );
         assert_eq!(
             ModelFamily::from_model_id("meta-llama/Llama-3.3-70B"),
             ModelFamily::Llama,
@@ -1402,10 +1406,7 @@ mod tests {
 
     #[test]
     fn model_family_unknown_for_unrecognized() {
-        assert_eq!(
-            ModelFamily::from_model_id("gpt-4o"),
-            ModelFamily::Unknown,
-        );
+        assert_eq!(ModelFamily::from_model_id("gpt-4o"), ModelFamily::Unknown,);
         assert_eq!(
             ModelFamily::from_model_id("claude-3-opus"),
             ModelFamily::Unknown,

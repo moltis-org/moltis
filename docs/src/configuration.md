@@ -28,19 +28,25 @@ agent_max_iterations = 25       # Max tool call iterations per run
 
 ## LLM Providers
 
-Provider API keys are stored separately in `~/.config/moltis/provider_keys.json` for security. Configure them through the web UI or directly in the JSON file.
+Configure providers through the web UI or directly in `moltis.toml`. API keys can be set
+via environment variables (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or
+in the config file.
 
 ```toml
 [providers]
-offered = ["openai", "anthropic", "local-llm"]
+offered = ["anthropic", "openai", "gemini"]
+
+[providers.anthropic]
+enabled = true
 
 [providers.openai]
 enabled = true
 models = ["gpt-5.3", "gpt-5.2"]
 stream_transport = "sse"        # "sse", "websocket", or "auto"
 
-[providers.anthropic]
+[providers.gemini]
 enabled = true
+models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
 
 [providers.local-llm]
 enabled = true
@@ -50,9 +56,7 @@ models = ["qwen2.5-coder-7b-q4_k_m"]
 priority_models = ["gpt-5.2"]
 ```
 
-See [Providers](providers.md) for detailed provider configuration.
-
-*More providers are coming soon.*
+See [Providers](providers.md) for the full list of supported providers and configuration options.
 
 ## Sandbox Configuration
 
@@ -303,7 +307,7 @@ agent_timeout_secs = 600
 agent_max_iterations = 25
 
 [providers]
-offered = ["openai", "anthropic", "local-llm"]
+offered = ["anthropic", "openai", "gemini"]
 
 [tools.exec.sandbox]
 mode = "all"

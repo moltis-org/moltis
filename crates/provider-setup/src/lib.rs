@@ -758,7 +758,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             display_name: "Google Gemini",
             auth_type: AuthType::ApiKey,
             env_key: Some("GEMINI_API_KEY"),
-            default_base_url: Some("https://generativelanguage.googleapis.com/v1beta"),
+            default_base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai"),
             requires_model: false,
             key_optional: false,
         },

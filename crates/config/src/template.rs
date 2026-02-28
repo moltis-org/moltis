@@ -121,8 +121,10 @@ models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]
 # enabled = true
-# api_key = "..."                             # Or set GOOGLE_API_KEY env var
-# models = ["gemini-2.0-flash"]
+# api_key = "..."                             # Or set GEMINI_API_KEY / GOOGLE_API_KEY env var
+# models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+# fetch_models = true
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 # alias = "gemini"
 
 # ── Groq ──────────────────────────────────────────────────────
