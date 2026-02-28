@@ -12,6 +12,7 @@ pub enum ChannelType {
     Whatsapp,
     #[serde(rename = "msteams")]
     MsTeams,
+    Discord,
 }
 
 impl ChannelType {
@@ -21,6 +22,7 @@ impl ChannelType {
             Self::Telegram => "telegram",
             Self::Whatsapp => "whatsapp",
             Self::MsTeams => "msteams",
+            Self::Discord => "discord",
         }
     }
 
@@ -30,6 +32,7 @@ impl ChannelType {
             Self::Telegram => "Telegram",
             Self::Whatsapp => "WhatsApp",
             Self::MsTeams => "Microsoft Teams",
+            Self::Discord => "Discord",
         }
     }
 }
@@ -48,6 +51,7 @@ impl std::str::FromStr for ChannelType {
             "telegram" => Ok(Self::Telegram),
             "whatsapp" => Ok(Self::Whatsapp),
             "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
+            "discord" => Ok(Self::Discord),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -187,6 +191,20 @@ pub trait ChannelEventSink: Send + Sync {
     ///
     /// Returns `true` if a pending tool-triggered location request was resolved.
     async fn update_location(
+        &self,
+        _reply_to: &ChannelReplyTarget,
+        _latitude: f64,
+        _longitude: f64,
+    ) -> bool {
+        false
+    }
+
+    /// Resolve a pending tool-triggered location request from channel text/link input.
+    ///
+    /// Unlike `update_location`, this should not update cached location state
+    /// when there is no pending request. Returns `true` only when a pending
+    /// request was found and resolved.
+    async fn resolve_pending_location(
         &self,
         _reply_to: &ChannelReplyTarget,
         _latitude: f64,
@@ -488,6 +506,7 @@ mod tests {
             ChannelType::Telegram,
             ChannelType::Whatsapp,
             ChannelType::MsTeams,
+            ChannelType::Discord,
         ] {
             let json = serde_json::to_string(&ct).unwrap();
             let parsed: ChannelType = serde_json::from_str(&json).unwrap();
@@ -496,8 +515,11 @@ mod tests {
     }
 
     #[test]
-    fn channel_type_from_str_unknown_errors() {
-        assert!("discord".parse::<ChannelType>().is_err());
+    fn channel_type_discord_roundtrip() {
+        let ct = ChannelType::Discord;
+        assert_eq!(ct.as_str(), "discord");
+        assert_eq!(ct.to_string(), "discord");
+        assert_eq!("discord".parse::<ChannelType>().unwrap(), ct);
     }
 
     #[test]
@@ -570,5 +592,39 @@ mod tests {
             .send_location("acct", "42", 48.8566, 2.3522, Some("Eiffel Tower"), None)
             .await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn channel_type_round_trip() {
+        for (s, expected) in [
+            ("telegram", ChannelType::Telegram),
+            ("msteams", ChannelType::MsTeams),
+            ("discord", ChannelType::Discord),
+        ] {
+            let parsed: ChannelType = s.parse().unwrap_or_else(|e| panic!("parse {s}: {e}"));
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.as_str(), s);
+            assert_eq!(parsed.to_string(), s);
+        }
+    }
+
+    #[test]
+    fn channel_type_from_str_invalid() {
+        assert!("slack".parse::<ChannelType>().is_err());
+        assert!("".parse::<ChannelType>().is_err());
+    }
+
+    #[test]
+    fn channel_type_serde_round_trip() {
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::MsTeams,
+            ChannelType::Discord,
+        ] {
+            let json = serde_json::to_string(&ct).unwrap_or_else(|e| panic!("serialize: {e}"));
+            let back: ChannelType =
+                serde_json::from_str(&json).unwrap_or_else(|e| panic!("deserialize: {e}"));
+            assert_eq!(ct, back);
+        }
     }
 }

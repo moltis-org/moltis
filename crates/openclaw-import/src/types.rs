@@ -81,7 +81,7 @@ pub struct OpenClawChannelsConfig {
     pub telegram: Option<OpenClawTelegramConfig>,
     /// Unsupported channels — kept as raw values for TODO reporting.
     pub whatsapp: Option<serde_json::Value>,
-    pub discord: Option<serde_json::Value>,
+    pub discord: Option<OpenClawDiscordConfig>,
     pub slack: Option<serde_json::Value>,
     pub signal: Option<serde_json::Value>,
     pub imessage: Option<serde_json::Value>,
@@ -114,6 +114,51 @@ pub struct OpenClawTelegramAccount {
     pub dm_policy: Option<String>,
     #[serde(rename = "allowFrom", default)]
     pub allow_from: Vec<serde_json::Value>,
+    pub enabled: Option<bool>,
+    pub name: Option<String>,
+}
+
+/// Discord channel config. OpenClaw supports both flat and `accounts` map forms.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct OpenClawDiscordConfig {
+    /// Named accounts: `discord.accounts.<id>`.
+    pub accounts: Option<HashMap<String, OpenClawDiscordAccount>>,
+    /// Flat top-level fields (legacy single-account form).
+    pub token: Option<String>,
+    #[serde(rename = "tokenFile")]
+    pub token_file: Option<String>,
+    #[serde(rename = "dmPolicy")]
+    pub dm_policy: Option<String>,
+    #[serde(rename = "groupPolicy")]
+    pub group_policy: Option<String>,
+    #[serde(rename = "mentionMode")]
+    pub mention_mode: Option<String>,
+    #[serde(rename = "allowFrom", default)]
+    pub allow_from: Vec<serde_json::Value>,
+    #[serde(rename = "guildAllowlist", default)]
+    pub guild_allowlist: Vec<serde_json::Value>,
+    pub enabled: Option<bool>,
+    pub name: Option<String>,
+}
+
+/// A single Discord account config.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct OpenClawDiscordAccount {
+    pub token: Option<String>,
+    #[serde(rename = "tokenFile")]
+    pub token_file: Option<String>,
+    #[serde(rename = "dmPolicy")]
+    pub dm_policy: Option<String>,
+    #[serde(rename = "groupPolicy")]
+    pub group_policy: Option<String>,
+    #[serde(rename = "mentionMode")]
+    pub mention_mode: Option<String>,
+    #[serde(rename = "allowFrom", default)]
+    pub allow_from: Vec<serde_json::Value>,
+    #[serde(rename = "guildAllowlist", default)]
+    pub guild_allowlist: Vec<serde_json::Value>,
     pub enabled: Option<bool>,
     pub name: Option<String>,
 }
@@ -453,6 +498,57 @@ mod tests {
     }
 
     #[test]
+    fn parse_discord_flat_config() {
+        let json = r#"{
+            "channels": {
+                "discord": {
+                    "token": "Bot abc",
+                    "dmPolicy": "pairing",
+                    "groupPolicy": "allowlist",
+                    "mentionMode": "always",
+                    "allowFrom": ["123", 456],
+                    "guildAllowlist": ["789"]
+                }
+            }
+        }"#;
+        let config: OpenClawConfig = json5::from_str(json).unwrap_or_default();
+        let dc = config.channels.discord.as_ref().unwrap();
+        assert_eq!(dc.token.as_deref(), Some("Bot abc"));
+        assert_eq!(dc.dm_policy.as_deref(), Some("pairing"));
+        assert_eq!(dc.group_policy.as_deref(), Some("allowlist"));
+        assert_eq!(dc.mention_mode.as_deref(), Some("always"));
+        assert_eq!(dc.allow_from.len(), 2);
+        assert_eq!(dc.guild_allowlist.len(), 1);
+    }
+
+    #[test]
+    fn parse_discord_accounts_config() {
+        let json = r#"{
+            "channels": {
+                "discord": {
+                    "accounts": {
+                        "bot1": {
+                            "token": "Bot xyz",
+                            "dmPolicy": "open",
+                            "groupPolicy": "disabled",
+                            "mentionMode": "mention",
+                            "allowFrom": ["111"],
+                            "guildAllowlist": ["222"]
+                        }
+                    }
+                }
+            }
+        }"#;
+        let config: OpenClawConfig = json5::from_str(json).unwrap_or_default();
+        let dc = config.channels.discord.as_ref().unwrap();
+        let acct = dc.accounts.as_ref().unwrap().get("bot1").unwrap();
+        assert_eq!(acct.token.as_deref(), Some("Bot xyz"));
+        assert_eq!(acct.dm_policy.as_deref(), Some("open"));
+        assert_eq!(acct.group_policy.as_deref(), Some("disabled"));
+        assert_eq!(acct.mention_mode.as_deref(), Some("mention"));
+    }
+
+    #[test]
     fn parse_auth_profile_api_key() {
         let json = r#"{
             "version": 1,
@@ -530,6 +626,14 @@ mod tests {
         let config: OpenClawConfig = json5::from_str(json).unwrap_or_default();
         assert!(config.channels.whatsapp.is_some());
         assert!(config.channels.discord.is_some());
+        assert_eq!(
+            config
+                .channels
+                .discord
+                .as_ref()
+                .and_then(|d| d.token.as_deref()),
+            Some("abc")
+        );
         assert!(config.channels.telegram.is_none());
     }
 

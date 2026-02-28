@@ -1085,7 +1085,7 @@ pub struct McpOAuthOverrideEntry {
 #[serde(default)]
 pub struct ChannelsConfig {
     /// Which channel types are offered in the web UI (onboarding + channels page).
-    /// Defaults to `["telegram"]`. Set to `["telegram", "msteams"]` to opt in to Teams.
+    /// Defaults to `["telegram", "discord"]`. Set to `["telegram", "discord", "msteams"]` to opt in to Teams.
     #[serde(
         default = "default_channels_offered",
         skip_serializing_if = "Vec::is_empty"
@@ -1100,10 +1100,13 @@ pub struct ChannelsConfig {
     /// Microsoft Teams bot accounts, keyed by account ID.
     #[serde(default)]
     pub msteams: HashMap<String, serde_json::Value>,
+    /// Discord bot accounts, keyed by account ID.
+    #[serde(default)]
+    pub discord: HashMap<String, serde_json::Value>,
 }
 
 fn default_channels_offered() -> Vec<String> {
-    vec!["telegram".into()]
+    vec!["telegram".into(), "discord".into()]
 }
 
 impl Default for ChannelsConfig {
@@ -1113,6 +1116,7 @@ impl Default for ChannelsConfig {
             telegram: HashMap::new(),
             whatsapp: HashMap::new(),
             msteams: HashMap::new(),
+            discord: HashMap::new(),
         }
     }
 }
@@ -2072,15 +2076,21 @@ OPENROUTER_API_KEY = "sk-or-test"
     }
 
     #[test]
-    fn channels_config_defaults_to_telegram_offered() {
+    fn channels_config_defaults_to_telegram_and_discord_offered() {
         let config = ChannelsConfig::default();
-        assert_eq!(config.offered, vec!["telegram".to_string()]);
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "discord".to_string()
+        ]);
     }
 
     #[test]
     fn channels_config_empty_toml_defaults_offered() {
         let config: ChannelsConfig = toml::from_str("").unwrap();
-        assert_eq!(config.offered, vec!["telegram".to_string()]);
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "discord".to_string()
+        ]);
     }
 
     #[test]

@@ -196,6 +196,21 @@ token = "123456:ABC..."
 allowed_users = [123456789]     # Telegram user IDs allowed to chat
 ```
 
+## Discord Integration
+
+```toml
+[channels]
+offered = ["telegram", "discord"]
+
+[channels.discord.my-bot]
+token = "MTIzNDU2Nzg5.example.bot-token"
+dm_policy = "allowlist"
+mention_mode = "mention"
+allowlist = ["your_username"]
+```
+
+See [Discord](discord.md) for full configuration reference and setup instructions.
+
 ## TLS / HTTPS
 
 ```toml

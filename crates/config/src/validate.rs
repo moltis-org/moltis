@@ -333,6 +333,7 @@ fn build_schema_map() -> KnownKeys {
                 ("telegram", Map(Box::new(Leaf))),
                 ("whatsapp", Map(Box::new(Leaf))),
                 ("msteams", Map(Box::new(Leaf))),
+                ("discord", Map(Box::new(Leaf))),
             ])),
         ),
         (
@@ -911,7 +912,7 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     }
 
     // Unknown channel types in channels.offered
-    let valid_channel_types = ["telegram", "msteams"];
+    let valid_channel_types = ["telegram", "msteams", "discord"];
     for (idx, entry) in config.channels.offered.iter().enumerate() {
         if !valid_channel_types.contains(&entry.as_str()) {
             diagnostics.push(Diagnostic {
@@ -1931,6 +1932,43 @@ offered = ["telegram"]
         assert!(
             warning.is_none(),
             "valid channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_discord_accepted() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "discord"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered") && d.category == "unknown-field");
+        assert!(
+            warning.is_none(),
+            "discord in channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_discord_config_accepted() {
+        let toml = r#"
+[channels.discord.my_bot]
+token = "test-token"
+dm_policy = "allowlist"
+"#;
+        let result = validate_toml_str(toml);
+        let error = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.discord") && d.severity == Severity::Error);
+        assert!(
+            error.is_none(),
+            "discord channel config should be accepted, got: {:?}",
             result.diagnostics
         );
     }

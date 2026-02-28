@@ -1829,6 +1829,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn httpd_start_and_stop() {
         // Start on a random high port to avoid conflicts.
         let request = r#"{"host":"127.0.0.1","port":0}"#;
@@ -1859,6 +1860,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn httpd_stop_when_not_running() {
         // Stop without start should still return running: false.
         let payload = json_from_ptr(moltis_stop_httpd());
