@@ -20,7 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Theme colors matching macOS app and web UI
 - Connect screen links each discovered server to CA PEM download (`/certs/ca.pem`) and includes in-app iOS trust-install steps
 - Nearby servers now auto-check TLS trust and show a prominent CA download button only when trust is missing
-- Connection checks now show explicit setup guidance when remote auth is incomplete, password auth is missing, or GraphQL is disabled
+- Connection checks now show explicit setup guidance when remote auth is incomplete, available sign-in methods are missing, or GraphQL is disabled
+- Passkey sign-in support in the iOS companion app (WebAuthn assertion flow + API key bootstrap), with password/API-key fallbacks
 - Chat now includes explicit keyboard dismissal controls (Done key, scroll-to-dismiss, tap-to-dismiss) so tab navigation remains reachable
 - Connection banner now reports server drop/retry state with automatic WebSocket reconnect attempts
 - Chat now has a ChatGPT-style top bar with large model/provider pill, top-right settings button, and a left slide-out sessions drawer
