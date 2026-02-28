@@ -44,6 +44,9 @@ test.describe("Chat abort", () => {
 	test("thinking indicator shows stop button", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
+		// Wait for the messages container to exist before injecting.
+		await page.waitForSelector("#messages", { timeout: 10_000 });
+
 		// Inject a fake thinking indicator to verify the stop button is rendered.
 		await page.evaluate(() => {
 			var chatMsgBox = document.getElementById("messages");
@@ -78,6 +81,9 @@ test.describe("Chat abort", () => {
 
 	test("aborted broadcast cleans up UI state", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+
+		// Wait for the messages container to exist before injecting.
+		await page.waitForSelector("#messages", { timeout: 10_000 });
 
 		// Inject a fake thinking indicator.
 		await page.evaluate(() => {
