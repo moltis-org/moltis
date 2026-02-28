@@ -15,6 +15,9 @@ use crate::{
         ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
     },
     response_sanitizer::{clean_response, recover_tool_calls_from_content},
+    tool_parsing::{
+        looks_like_failed_tool_call, new_synthetic_tool_call_id, parse_tool_calls_from_text,
+    },
     tool_registry::ToolRegistry,
 };
 
@@ -244,19 +247,6 @@ pub struct AgentRunResult {
 /// Callback for streaming events out of the runner.
 pub type OnEvent = Box<dyn Fn(RunnerEvent) + Send + Sync>;
 
-/// Keep synthetic tool-call IDs OpenAI-compatible (`maxLength: 40`).
-const SYNTHETIC_TOOL_CALL_ID_MAX_LEN: usize = 40;
-
-fn new_synthetic_tool_call_id(prefix: &str) -> String {
-    let mut id = String::new();
-    let _ = write!(&mut id, "{prefix}_{}", uuid::Uuid::new_v4().simple());
-    if id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN {
-        return id;
-    }
-    id.truncate(SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
-    id
-}
-
 /// Events emitted during the agent run.
 #[derive(Debug, Clone)]
 pub enum RunnerEvent {
@@ -299,21 +289,6 @@ pub enum RunnerEvent {
     },
 }
 
-/// Try to parse a tool call from the LLM's text response.
-///
-/// Providers without native tool-calling support are instructed (via the system
-/// prompt) to emit a fenced block like:
-///
-/// ```tool_call
-/// {"tool": "exec", "arguments": {"command": "ls"}}
-/// ```
-///
-/// This function extracts that JSON and returns a synthetic `ToolCall` plus the
-/// remaining text (if any) outside the fence.
-fn parse_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
-    parse_fenced_tool_call_from_text(text).or_else(|| parse_function_tool_call_from_text(text))
-}
-
 /// Detect an explicit shell command in the latest user turn.
 ///
 /// Only `/sh ...` commands are treated as explicit shell execution requests.
@@ -354,157 +329,6 @@ fn explicit_shell_command_from_user_content(user_content: &UserContent) -> Optio
     }
 
     Some(command.to_string())
-}
-
-fn parse_fenced_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
-    // Look for ```tool_call ... ``` blocks.
-    let start_marker = "```tool_call";
-    let start = text.find(start_marker)?;
-    let after_marker = start + start_marker.len();
-    let rest = &text[after_marker..];
-    let end = rest.find("```")?;
-    let json_str = rest[..end].trim();
-
-    let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
-    let tool_name = parsed["tool"].as_str()?.to_string();
-    let arguments = parsed
-        .get("arguments")
-        .cloned()
-        .unwrap_or(serde_json::json!({}));
-
-    let id = new_synthetic_tool_call_id("text");
-
-    // Collect any text outside the tool_call block.
-    let before = text[..start].trim();
-    let after_end = after_marker + end + 3; // skip closing ```
-    let after = text.get(after_end..).unwrap_or("").trim();
-    let remaining = compose_remaining_text(before, after);
-
-    Some((
-        ToolCall {
-            id,
-            name: tool_name,
-            arguments,
-        },
-        remaining,
-    ))
-}
-
-fn parse_function_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
-    // Parse XML-like function calls some providers emit:
-    // <function=process>
-    // <parameter=action>start</parameter>
-    // <parameter=command>pwd</parameter>
-    // </function>
-    // </tool_call>
-    let start_marker = "<function=";
-    let start = text.find(start_marker)?;
-    let after_marker = start + start_marker.len();
-    let rest = &text[after_marker..];
-    let open_end_rel = rest.find('>')?;
-    let tool_name = rest[..open_end_rel].trim();
-    if tool_name.is_empty()
-        || !tool_name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        return None;
-    }
-
-    let body_start = after_marker + open_end_rel + 1;
-    let after_open = text.get(body_start..)?;
-    let body_end_rel = after_open.find("</function>")?;
-    let body = &after_open[..body_end_rel];
-
-    let mut args = serde_json::Map::new();
-    let mut found_parameter = false;
-    let mut cursor = 0usize;
-    while let Some(param_rel) = body[cursor..].find("<parameter=") {
-        let param_start = cursor + param_rel;
-        let after_param_marker = param_start + "<parameter=".len();
-        let param_rest = body.get(after_param_marker..)?;
-        let param_name_end_rel = param_rest.find('>')?;
-        let param_name = param_rest[..param_name_end_rel].trim();
-        if param_name.is_empty()
-            || !param_name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
-            cursor = after_param_marker + param_name_end_rel + 1;
-            continue;
-        }
-
-        let value_start = after_param_marker + param_name_end_rel + 1;
-        let value_rest = body.get(value_start..)?;
-        let value_end_rel = value_rest.find("</parameter>")?;
-        let value_end = value_start + value_end_rel;
-        let value_raw = body.get(value_start..value_end)?.trim();
-
-        args.insert(param_name.to_string(), parse_param_value(value_raw));
-        found_parameter = true;
-        cursor = value_end + "</parameter>".len();
-    }
-
-    if !found_parameter {
-        return None;
-    }
-
-    let id = new_synthetic_tool_call_id("text");
-    let before = trim_tool_call_wrappers(text[..start].trim());
-    let after_start = body_start + body_end_rel + "</function>".len();
-    let after = trim_tool_call_wrappers(text.get(after_start..).unwrap_or("").trim());
-    let remaining = compose_remaining_text(before, after);
-
-    Some((
-        ToolCall {
-            id,
-            name: tool_name.to_string(),
-            arguments: serde_json::Value::Object(args),
-        },
-        remaining,
-    ))
-}
-
-fn parse_param_value(value_raw: &str) -> serde_json::Value {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(value_raw) {
-        return v;
-    }
-    serde_json::Value::String(value_raw.to_string())
-}
-
-fn compose_remaining_text(before: &str, after: &str) -> Option<String> {
-    if before.is_empty() && after.is_empty() {
-        None
-    } else if before.is_empty() {
-        Some(after.to_string())
-    } else if after.is_empty() {
-        Some(before.to_string())
-    } else {
-        Some(format!("{before}\n{after}"))
-    }
-}
-
-fn trim_tool_call_wrappers(text: &str) -> &str {
-    let mut value = text.trim();
-    loop {
-        let stripped = value
-            .strip_prefix("<tool_call>")
-            .or_else(|| value.strip_prefix("</tool_call>"));
-        match stripped {
-            Some(s) => value = s.trim(),
-            None => break,
-        }
-    }
-    loop {
-        let stripped = value
-            .strip_suffix("<tool_call>")
-            .or_else(|| value.strip_suffix("</tool_call>"));
-        match stripped {
-            Some(s) => value = s.trim(),
-            None => break,
-        }
-    }
-    value
 }
 
 // ── Tool result sanitization ────────────────────────────────────────────
@@ -821,6 +645,7 @@ pub async fn run_agent_loop_with_context(
     let mut rate_limit_retries_remaining: u8 = RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
     let mut last_answer_text = String::new();
+    let mut malformed_retry_count: u8 = 0;
 
     loop {
         iterations += 1;
@@ -930,18 +755,39 @@ pub async fn run_agent_loop_with_context(
         }
 
         // Fallback: parse tool calls from model text if the provider returned
-        // no structured tool calls (some providers/models emit XML-like calls).
+        // no structured tool calls (some providers/models emit text-based calls).
+        if response.tool_calls.is_empty() {
+            if let Some(ref text) = response.text {
+                let (parsed, remaining) = parse_tool_calls_from_text(text);
+                if !parsed.is_empty() {
+                    info!(
+                        native_tools,
+                        count = parsed.len(),
+                        first_tool = %parsed[0].name,
+                        "parsed tool call(s) from text fallback"
+                    );
+                    response.text = remaining;
+                    response.tool_calls = parsed;
+                }
+            }
+        }
+
+        // One-shot retry for malformed tool calls: if the text looks like a
+        // failed tool call attempt, ask the model to retry with exact format.
         if response.tool_calls.is_empty()
-            && let Some(ref text) = response.text
-            && let Some((tc, remaining_text)) = parse_tool_call_from_text(text)
+            && looks_like_failed_tool_call(&response.text)
+            && malformed_retry_count == 0
         {
-            info!(
-                native_tools,
-                tool = %tc.name,
-                "parsed tool call from text fallback"
-            );
-            response.text = remaining_text;
-            response.tool_calls = vec![tc];
+            malformed_retry_count += 1;
+            info!("detected malformed tool call, requesting retry");
+            messages.push(ChatMessage::assistant(
+                response.text.as_deref().unwrap_or(""),
+            ));
+            messages.push(ChatMessage::user(
+                "Your tool call was malformed. Retry with exact format:\n\
+                 ```tool_call\n{\"tool\": \"name\", \"arguments\": {...}}\n```",
+            ));
+            continue;
         }
 
         // Fallback: recover tool calls from XML blocks (<function_call>, <tool_call>).
@@ -1335,6 +1181,7 @@ pub async fn run_agent_loop_streaming(
     // When the final iteration is empty (e.g. model stop after browser close),
     // this is used as the final response text instead of returning silent.
     let mut last_answer_text = String::new();
+    let mut malformed_retry_count: u8 = 0;
 
     loop {
         iterations += 1;
@@ -1571,18 +1418,34 @@ pub async fn run_agent_loop_streaming(
         );
 
         // Fallback: parse tool calls from model text if the provider returned
-        // no structured tool calls (some providers/models emit XML-like calls).
+        // no structured tool calls (some providers/models emit text-based calls).
+        if tool_calls.is_empty() && !accumulated_text.is_empty() {
+            let (parsed, remaining) = parse_tool_calls_from_text(&accumulated_text);
+            if !parsed.is_empty() {
+                info!(
+                    native_tools,
+                    count = parsed.len(),
+                    first_tool = %parsed[0].name,
+                    "parsed tool call(s) from text fallback"
+                );
+                accumulated_text = remaining.unwrap_or_default();
+                tool_calls = parsed;
+            }
+        }
+
+        // One-shot retry for malformed tool calls in streaming mode.
         if tool_calls.is_empty()
-            && !accumulated_text.is_empty()
-            && let Some((tc, remaining_text)) = parse_tool_call_from_text(&accumulated_text)
+            && looks_like_failed_tool_call(&Some(accumulated_text.clone()))
+            && malformed_retry_count == 0
         {
-            info!(
-                native_tools,
-                tool = %tc.name,
-                "parsed tool call from text fallback"
-            );
-            accumulated_text = remaining_text.unwrap_or_default();
-            tool_calls = vec![tc];
+            malformed_retry_count += 1;
+            info!("detected malformed tool call in stream, requesting retry");
+            messages.push(ChatMessage::assistant(&accumulated_text));
+            messages.push(ChatMessage::user(
+                "Your tool call was malformed. Retry with exact format:\n\
+                 ```tool_call\n{\"tool\": \"name\", \"arguments\": {...}}\n```",
+            ));
+            continue;
         }
 
         // Fallback: recover tool calls from XML blocks (<function_call>, <tool_call>).
@@ -1895,15 +1758,16 @@ pub async fn run_agent_loop_streaming(
 mod tests {
     use {
         super::*,
-        crate::model::{
-            ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage,
+        crate::{
+            model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+            tool_parsing::parse_tool_call_from_text,
         },
         async_trait::async_trait,
         std::pin::Pin,
         tokio_stream::Stream,
     };
 
-    // ── parse_tool_call_from_text tests ──────────────────────────────
+    // ── parse_tool_call_from_text tests (delegates to tool_parsing) ──
 
     #[test]
     fn test_parse_tool_call_basic() {
@@ -1911,8 +1775,8 @@ mod tests {
         let (tc, remaining) = parse_tool_call_from_text(text).unwrap();
         assert_eq!(tc.name, "exec");
         assert_eq!(tc.arguments["command"], "ls");
-        assert!(tc.id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
-        assert!(remaining.is_none());
+        assert!(tc.id.len() <= 40);
+        assert!(remaining.is_none() || remaining.as_deref() == Some(""));
     }
 
     #[test]
@@ -1944,20 +1808,20 @@ mod tests {
         assert_eq!(tc.name, "process");
         assert_eq!(tc.arguments["action"], "start");
         assert_eq!(tc.arguments["command"], "pwd");
-        assert!(tc.id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
-        assert!(remaining.is_none());
+        assert!(tc.id.len() <= 40);
+        assert!(remaining.is_none() || remaining.as_deref() == Some(""));
     }
 
     #[test]
     fn test_new_synthetic_tool_call_id_is_openai_compatible() {
         let id = new_synthetic_tool_call_id("forced");
         assert!(id.starts_with("forced_"));
-        assert!(id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
+        assert!(id.len() <= 40);
 
         let long_prefix_id = new_synthetic_tool_call_id(
             "prefix_that_is_intentionally_way_too_long_for_openai_tool_call_ids",
         );
-        assert!(long_prefix_id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
+        assert!(long_prefix_id.len() <= 40);
     }
 
     #[test]

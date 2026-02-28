@@ -299,6 +299,159 @@ fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<DiscoveredModel>
         .map_err(|err| anyhow::anyhow!("ollama model discovery worker failed: {err}"))?
 }
 
+// ── Ollama model info probing ────────────────────────────────────────────────
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct OllamaShowResponse {
+    #[serde(default)]
+    details: OllamaModelDetails,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct OllamaModelDetails {
+    family: Option<String>,
+    #[serde(default)]
+    families: Option<Vec<String>>,
+}
+
+/// Model families known to support native OpenAI-style tool calling in Ollama.
+const OLLAMA_NATIVE_TOOL_FAMILIES: &[&str] = &[
+    "llama3.1",
+    "llama3.2",
+    "llama3.3",
+    "llama4",
+    "qwen2.5",
+    "qwen3",
+    "mistral",
+    "mixtral",
+    "command-r",
+    "firefunction",
+    "hermes",
+];
+
+/// Determine whether an Ollama model supports native tool calling based on its
+/// model name and family metadata from `/api/show`.
+fn ollama_model_supports_native_tools(model_name: &str, details: &OllamaModelDetails) -> bool {
+    let name_lower = model_name.to_ascii_lowercase();
+
+    // Check all family strings from the model details.
+    let families_iter = details
+        .family
+        .iter()
+        .chain(details.families.iter().flatten());
+    for family in families_iter {
+        let fam_lower = family.to_ascii_lowercase();
+        if OLLAMA_NATIVE_TOOL_FAMILIES
+            .iter()
+            .any(|known| fam_lower.contains(known))
+        {
+            return true;
+        }
+    }
+
+    // Heuristic: check model name for known families.
+    OLLAMA_NATIVE_TOOL_FAMILIES
+        .iter()
+        .any(|known| name_lower.contains(known))
+}
+
+/// Probe the Ollama `/api/show` endpoint for a specific model to get its family
+/// and details. Returns `Ok(response)` on success, error on timeout/failure.
+async fn probe_ollama_model_info(
+    base_url: &str,
+    model_name: &str,
+) -> anyhow::Result<OllamaShowResponse> {
+    let api_base = normalize_ollama_api_base_url(base_url);
+    let endpoint = format!("{}/api/show", api_base.trim_end_matches('/'));
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?
+        .post(&endpoint)
+        .json(&serde_json::json!({ "name": model_name }))
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("ollama /api/show for {model_name} failed HTTP {status}");
+    }
+    Ok(response.json().await?)
+}
+
+/// Resolve the effective tool mode for an Ollama model.
+///
+/// - If the user configured an explicit `tool_mode`, use that.
+/// - Otherwise, probe the model and decide based on its family.
+fn resolve_ollama_tool_mode(
+    config_tool_mode: moltis_config::ToolMode,
+    model_name: &str,
+    probe_result: Option<&OllamaShowResponse>,
+) -> moltis_config::ToolMode {
+    use moltis_config::ToolMode;
+
+    match config_tool_mode {
+        ToolMode::Native | ToolMode::Text | ToolMode::Off => config_tool_mode,
+        ToolMode::Auto => {
+            let details = probe_result
+                .map(|r| &r.details)
+                .cloned()
+                .unwrap_or_default();
+            if ollama_model_supports_native_tools(model_name, &details) {
+                ToolMode::Native
+            } else {
+                ToolMode::Text
+            }
+        },
+    }
+}
+
+/// Batch-probe Ollama `/api/show` for a list of models.
+/// Runs probes in a dedicated thread with its own tokio runtime (same pattern
+/// as `discover_ollama_models`). Returns a map from model ID to show response;
+/// failures are silently dropped.
+fn probe_ollama_models_batch(
+    base_url: &str,
+    models: &[DiscoveredModel],
+) -> HashMap<String, OllamaShowResponse> {
+    if models.is_empty() {
+        return HashMap::new();
+    }
+    let base_url = base_url.to_string();
+    let model_ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map(|rt| {
+                rt.block_on(async {
+                    let futs: Vec<_> = model_ids
+                        .iter()
+                        .map(|id| {
+                            let base = base_url.clone();
+                            let model_id = id.clone();
+                            async move {
+                                let resp = probe_ollama_model_info(&base, &model_id).await;
+                                (model_id, resp)
+                            }
+                        })
+                        .collect();
+                    futures::future::join_all(futs).await
+                })
+            });
+        let _ = tx.send(result);
+    });
+
+    match rx.recv() {
+        Ok(Ok(results)) => results
+            .into_iter()
+            .filter_map(|(id, r)| r.ok().map(|resp| (id, resp)))
+            .collect(),
+        _ => HashMap::new(),
+    }
+}
+
 struct RegistryModelProvider {
     model_id: String,
     inner: Arc<dyn LlmProvider>,
@@ -324,6 +477,10 @@ impl LlmProvider for RegistryModelProvider {
 
     fn supports_tools(&self) -> bool {
         self.inner.supports_tools()
+    }
+
+    fn tool_mode(&self) -> Option<moltis_config::ToolMode> {
+        self.inner.tool_mode()
     }
 
     fn context_window(&self) -> u32 {
@@ -1595,21 +1752,58 @@ impl ProviderRegistry {
                     Vec::new()
                 };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
+
+            // Resolve per-provider tool_mode from config (defaults to Auto).
+            let config_tool_mode = config
+                .get(def.config_name)
+                .map(|e| e.tool_mode)
+                .unwrap_or_default();
+
+            // For Ollama, probe each model's family info to decide native vs text
+            // tool calling. For non-Ollama, just pass through the config tool mode.
+            let is_ollama = def.config_name == "ollama";
+
+            // Batch-probe Ollama models for family metadata (best-effort, 3s timeout).
+            let ollama_probes: HashMap<String, OllamaShowResponse> = if is_ollama {
+                probe_ollama_models_batch(&base_url, &models)
+            } else {
+                HashMap::new()
+            };
+
             for model in models {
                 let (model_id, display_name, created_at) =
                     (model.id, model.display_name, model.created_at);
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
-                let provider = Arc::new(
-                    openai::OpenAiProvider::new_with_name(
-                        key.clone(),
-                        model_id.clone(),
-                        base_url.clone(),
-                        provider_label.clone(),
+
+                // Determine effective tool mode for this model.
+                let effective_tool_mode = if is_ollama {
+                    resolve_ollama_tool_mode(
+                        config_tool_mode,
+                        &model_id,
+                        ollama_probes.get(&model_id),
                     )
-                    .with_stream_transport(stream_transport),
-                );
+                } else if !matches!(config_tool_mode, moltis_config::ToolMode::Auto) {
+                    config_tool_mode
+                } else {
+                    // Non-Ollama providers: let OpenAiProvider use its default logic.
+                    moltis_config::ToolMode::Auto
+                };
+
+                let mut oai = openai::OpenAiProvider::new_with_name(
+                    key.clone(),
+                    model_id.clone(),
+                    base_url.clone(),
+                    provider_label.clone(),
+                )
+                .with_stream_transport(stream_transport);
+
+                if !matches!(effective_tool_mode, moltis_config::ToolMode::Auto) {
+                    oai = oai.with_tool_mode(effective_tool_mode);
+                }
+
+                let provider = Arc::new(oai);
                 self.register(
                     ModelInfo {
                         id: model_id,
@@ -1671,21 +1865,24 @@ impl ProviderRegistry {
                 continue;
             }
 
+            let custom_tool_mode = entry.tool_mode;
             for model in models {
                 let (model_id, display_name, created_at) =
                     (model.id, model.display_name, model.created_at);
                 if self.has_provider_model(name, &model_id) {
                     continue;
                 }
-                let provider = Arc::new(
-                    openai::OpenAiProvider::new_with_name(
-                        api_key.clone(),
-                        model_id.clone(),
-                        base_url.clone(),
-                        name.clone(),
-                    )
-                    .with_stream_transport(entry.stream_transport),
-                );
+                let mut oai = openai::OpenAiProvider::new_with_name(
+                    api_key.clone(),
+                    model_id.clone(),
+                    base_url.clone(),
+                    name.clone(),
+                )
+                .with_stream_transport(entry.stream_transport);
+                if !matches!(custom_tool_mode, moltis_config::ToolMode::Auto) {
+                    oai = oai.with_tool_mode(custom_tool_mode);
+                }
+                let provider = Arc::new(oai);
                 self.register(
                     ModelInfo {
                         id: model_id,
@@ -2980,5 +3177,123 @@ mod tests {
         assert!(!supports_vision_for_model("my-claude-model"));
         assert!(!supports_vision_for_model("custom-gpt-4o-wrapper"));
         assert!(!supports_vision_for_model("not-gemini-model"));
+    }
+
+    // ── Ollama tool detection ────────────────────────────────────────────
+
+    #[test]
+    fn ollama_native_tools_known_families() {
+        let details = OllamaModelDetails {
+            family: Some("llama".into()),
+            families: Some(vec!["llama3.1".into()]),
+        };
+        assert!(ollama_model_supports_native_tools("llama3.1:8b", &details));
+    }
+
+    #[test]
+    fn ollama_native_tools_qwen_family() {
+        let details = OllamaModelDetails {
+            family: Some("qwen2.5".into()),
+            families: None,
+        };
+        assert!(ollama_model_supports_native_tools("qwen2.5:7b", &details));
+    }
+
+    #[test]
+    fn ollama_native_tools_unknown_family() {
+        let details = OllamaModelDetails {
+            family: Some("phi3".into()),
+            families: None,
+        };
+        // "phi3" is not in the native tool families list, and model name
+        // doesn't match either.
+        assert!(!ollama_model_supports_native_tools("phi3:mini", &details));
+    }
+
+    #[test]
+    fn ollama_native_tools_name_heuristic() {
+        // Even without details, model name matching should work.
+        let details = OllamaModelDetails::default();
+        assert!(ollama_model_supports_native_tools(
+            "llama3.3:70b-instruct",
+            &details
+        ));
+        assert!(!ollama_model_supports_native_tools("codellama:13b", &details));
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_explicit_override() {
+        use moltis_config::ToolMode;
+        // Explicit modes are passed through regardless of probe result.
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Native, "anything", None),
+            ToolMode::Native
+        );
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Text, "anything", None),
+            ToolMode::Text
+        );
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Off, "anything", None),
+            ToolMode::Off
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_auto_with_probe() {
+        use moltis_config::ToolMode;
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("llama3.1".into()),
+                families: None,
+            },
+        };
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "llama3.1:8b", Some(&show_resp)),
+            ToolMode::Native
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_auto_unknown_model() {
+        use moltis_config::ToolMode;
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("starcoder2".into()),
+                families: None,
+            },
+        };
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "starcoder2:3b", Some(&show_resp)),
+            ToolMode::Text
+        );
+    }
+
+    #[test]
+    fn openai_provider_supports_tools_respects_override() {
+        use moltis_config::ToolMode;
+        let make = |mode: ToolMode| {
+            openai::OpenAiProvider::new(secret("key"), "gpt-4o".into(), "http://x".into())
+                .with_tool_mode(mode)
+        };
+        assert!(make(ToolMode::Native).supports_tools());
+        assert!(!make(ToolMode::Text).supports_tools());
+        assert!(!make(ToolMode::Off).supports_tools());
+        // Auto falls through to default detection (gpt-4o supports tools).
+        assert!(make(ToolMode::Auto).supports_tools());
+    }
+
+    #[test]
+    fn openai_provider_tool_mode_returns_override() {
+        use moltis_config::ToolMode;
+        let p = openai::OpenAiProvider::new(secret("key"), "gpt-4o".into(), "http://x".into())
+            .with_tool_mode(ToolMode::Text);
+        assert_eq!(p.tool_mode(), Some(ToolMode::Text));
+    }
+
+    #[test]
+    fn openai_provider_tool_mode_default_is_none() {
+        let p = openai::OpenAiProvider::new(secret("key"), "gpt-4o".into(), "http://x".into());
+        assert_eq!(p.tool_mode(), None);
     }
 }

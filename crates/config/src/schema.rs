@@ -1827,6 +1827,25 @@ pub struct ProvidersConfig {
     pub local_models: Vec<String>,
 }
 
+/// How tool calling is handled for a provider.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolMode {
+    /// Detect automatically: native tool API if supported, else text-based fallback.
+    #[default]
+    Auto,
+    /// Force native tool calling API (provider must support it).
+    Native,
+    /// Force text-based tool calling (prompt injection + parse).
+    Text,
+    /// Disable all tool support for this provider.
+    Off,
+}
+
+const fn is_default_tool_mode(v: &ToolMode) -> bool {
+    matches!(v, ToolMode::Auto)
+}
+
 /// Streaming transport for provider response streams.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -1880,6 +1899,16 @@ pub struct ProviderEntry {
     /// (e.g., "anthropic-work", "anthropic-personal").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
+
+    /// How tool calling is handled for this provider.
+    ///
+    /// - `auto` (default): use native tool API if the provider supports it,
+    ///   otherwise fall back to text-based prompt injection.
+    /// - `native`: force native tool calling.
+    /// - `text`: force text-based tool calling.
+    /// - `off`: disable all tools for this provider.
+    #[serde(default, skip_serializing_if = "is_default_tool_mode")]
+    pub tool_mode: ToolMode,
 }
 
 impl std::fmt::Debug for ProviderEntry {
@@ -1892,6 +1921,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("fetch_models", &self.fetch_models)
             .field("stream_transport", &self.stream_transport)
             .field("alias", &self.alias)
+            .field("tool_mode", &self.tool_mode)
             .finish()
     }
 }
@@ -1906,6 +1936,7 @@ impl Default for ProviderEntry {
             fetch_models: true,
             stream_transport: ProviderStreamTransport::Sse,
             alias: None,
+            tool_mode: ToolMode::Auto,
         }
     }
 }
@@ -2220,6 +2251,94 @@ memory = 300
                 .get("calc")
                 .and_then(|override_cfg| override_cfg.fuel),
             Some(100)
+        );
+    }
+
+    #[test]
+    fn tool_mode_serde_round_trip() {
+        for (variant, expected_str) in [
+            (ToolMode::Auto, r#""auto""#),
+            (ToolMode::Native, r#""native""#),
+            (ToolMode::Text, r#""text""#),
+            (ToolMode::Off, r#""off""#),
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, expected_str, "serialize {variant:?}");
+            let parsed: ToolMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, variant, "deserialize {expected_str}");
+        }
+    }
+
+    #[test]
+    fn tool_mode_toml_round_trip() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Wrapper {
+            mode: ToolMode,
+        }
+
+        for variant in [ToolMode::Auto, ToolMode::Native, ToolMode::Text, ToolMode::Off] {
+            let w = Wrapper { mode: variant };
+            let toml_str = toml::to_string(&w).unwrap();
+            let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
+            assert_eq!(parsed.mode, variant, "toml round-trip {variant:?}");
+        }
+    }
+
+    #[test]
+    fn tool_mode_default_is_auto() {
+        assert_eq!(ToolMode::default(), ToolMode::Auto);
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_defaults_to_auto() {
+        let entry = ProviderEntry::default();
+        assert_eq!(entry.tool_mode, ToolMode::Auto);
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_skipped_when_default() {
+        let entry = ProviderEntry::default();
+        let toml_str = toml::to_string(&entry).unwrap();
+        assert!(
+            !toml_str.contains("tool_mode"),
+            "tool_mode should be skipped when default: {toml_str}"
+        );
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_persisted_when_non_default() {
+        let entry = ProviderEntry {
+            tool_mode: ToolMode::Text,
+            ..ProviderEntry::default()
+        };
+        let toml_str = toml::to_string(&entry).unwrap();
+        assert!(
+            toml_str.contains("tool_mode"),
+            "tool_mode should be present when non-default: {toml_str}"
+        );
+        let parsed: ProviderEntry = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.tool_mode, ToolMode::Text);
+    }
+
+    #[test]
+    fn full_config_with_tool_mode() {
+        let toml_str = r#"
+[providers.ollama]
+enabled = true
+tool_mode = "text"
+
+[providers.anthropic]
+enabled = true
+tool_mode = "native"
+"#;
+        let config: MoltisConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.providers.get("ollama").unwrap().tool_mode,
+            ToolMode::Text
+        );
+        assert_eq!(
+            config.providers.get("anthropic").unwrap().tool_mode,
+            ToolMode::Native
         );
     }
 }

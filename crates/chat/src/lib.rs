@@ -19,7 +19,7 @@ use {
     tracing::{debug, info, warn},
 };
 
-use moltis_config::MessageQueueMode;
+use moltis_config::{MessageQueueMode, ToolMode};
 
 use {
     moltis_agents::{
@@ -4355,7 +4355,9 @@ impl ChatService for LiveChatService {
             .resolve_provider(&session_key, &history)
             .await
             .map_err(ServiceError::message)?;
-        let native_tools = provider.supports_tools();
+        let tool_mode = effective_tool_mode(&*provider);
+        let native_tools = matches!(tool_mode, ToolMode::Native);
+        let tools_enabled = !matches!(tool_mode, ToolMode::Off);
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
@@ -4394,7 +4396,7 @@ impl ChatService for LiveChatService {
         // Build filtered tool registry.
         let filtered_registry = {
             let registry_guard = self.tool_registry.read().await;
-            if native_tools {
+            if tools_enabled {
                 apply_runtime_tool_filters(
                     &registry_guard,
                     &persona.config,
@@ -4409,7 +4411,7 @@ impl ChatService for LiveChatService {
         let tool_count = filtered_registry.list_schemas().len();
 
         // Build the system prompt.
-        let system_prompt = if native_tools {
+        let system_prompt = if tools_enabled {
             build_system_prompt_with_session_runtime(
                 &filtered_registry,
                 native_tools,
@@ -4442,6 +4444,8 @@ impl ChatService for LiveChatService {
             "prompt": system_prompt,
             "charCount": char_count,
             "native_tools": native_tools,
+            "tools_enabled": tools_enabled,
+            "tool_mode": format!("{:?}", tool_mode),
             "toolCount": tool_count,
         }))
     }
@@ -4474,7 +4478,9 @@ impl ChatService for LiveChatService {
             .resolve_provider(&session_key, &history)
             .await
             .map_err(ServiceError::message)?;
-        let native_tools = provider.supports_tools();
+        let tool_mode = effective_tool_mode(&*provider);
+        let native_tools = matches!(tool_mode, ToolMode::Native);
+        let tools_enabled = !matches!(tool_mode, ToolMode::Off);
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
@@ -4513,7 +4519,7 @@ impl ChatService for LiveChatService {
         // Build filtered tool registry.
         let filtered_registry = {
             let registry_guard = self.tool_registry.read().await;
-            if native_tools {
+            if tools_enabled {
                 apply_runtime_tool_filters(
                     &registry_guard,
                     &persona.config,
@@ -4526,7 +4532,7 @@ impl ChatService for LiveChatService {
         };
 
         // Build the system prompt.
-        let system_prompt = if native_tools {
+        let system_prompt = if tools_enabled {
             build_system_prompt_with_session_runtime(
                 &filtered_registry,
                 native_tools,
@@ -5513,6 +5519,28 @@ fn install_agent_scoped_memory_tools(
     }
 }
 
+/// Resolve the effective tool mode for a provider.
+///
+/// Combines the provider's `tool_mode()` override with its `supports_tools()`
+/// capability to determine how tools should be dispatched:
+/// - `Native` — provider handles tool schemas via API (OpenAI function calling, etc.)
+/// - `Text` — tools are described in the prompt; the runner parses tool calls from text
+/// - `Off` — no tools at all
+fn effective_tool_mode(provider: &dyn moltis_agents::model::LlmProvider) -> ToolMode {
+    match provider.tool_mode() {
+        Some(ToolMode::Native) => ToolMode::Native,
+        Some(ToolMode::Text) => ToolMode::Text,
+        Some(ToolMode::Off) => ToolMode::Off,
+        Some(ToolMode::Auto) | None => {
+            if provider.supports_tools() {
+                ToolMode::Native
+            } else {
+                ToolMode::Text
+            }
+        },
+    }
+}
+
 async fn run_with_tools(
     state: &Arc<dyn ChatRuntime>,
     model_store: &Arc<RwLock<DisabledModelsStore>>,
@@ -5542,23 +5570,27 @@ async fn run_with_tools(
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
 
-    let native_tools = provider.supports_tools();
+    let tool_mode = effective_tool_mode(&*provider);
+    let native_tools = matches!(tool_mode, ToolMode::Native);
+    let tools_enabled = !matches!(tool_mode, ToolMode::Off);
 
     let mut filtered_registry = {
         let registry_guard = tool_registry.read().await;
-        if native_tools {
+        if tools_enabled {
             apply_runtime_tool_filters(&registry_guard, &persona.config, skills, mcp_disabled)
         } else {
             registry_guard.clone_without(&[])
         }
     };
-    if native_tools && let Some(manager) = state.memory_manager() {
+    if tools_enabled && let Some(manager) = state.memory_manager() {
         install_agent_scoped_memory_tools(&mut filtered_registry, manager, agent_id);
     }
 
-    // Use a minimal prompt without tool schemas for providers that don't support tools.
-    // This reduces context size and avoids confusing the LLM with unusable instructions.
-    let system_prompt = if native_tools {
+    // Build system prompt:
+    // - Native tools: full prompt with tool schemas sent via API
+    // - Text tools: full prompt with tool schemas embedded + call guidance
+    // - Off: minimal prompt without tools
+    let system_prompt = if tools_enabled {
         build_system_prompt_with_session_runtime(
             &filtered_registry,
             native_tools,
@@ -5573,7 +5605,6 @@ async fn run_with_tools(
             persona.memory_text.as_deref(),
         )
     } else {
-        // Minimal prompt without tools for local LLMs
         build_system_prompt_minimal_runtime(
             project_context,
             Some(&persona.identity),
@@ -10608,5 +10639,109 @@ mod tests {
                 .get("test-session")
                 .is_none()
         );
+    }
+
+    // ── effective_tool_mode tests ───────────────────────────────────────
+
+    /// Provider stub for testing `effective_tool_mode()` with configurable
+    /// `supports_tools` and `tool_mode` values.
+    struct ToolModeTestProvider {
+        native: bool,
+        mode: Option<ToolMode>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ToolModeTestProvider {
+        fn name(&self) -> &str {
+            "test"
+        }
+
+        fn id(&self) -> &str {
+            "test-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            self.native
+        }
+
+        fn tool_mode(&self) -> Option<ToolMode> {
+            self.mode
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+        ) -> Result<moltis_agents::model::CompletionResponse> {
+            anyhow::bail!("not implemented")
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[test]
+    fn effective_tool_mode_native_when_supported_and_auto() {
+        let p = ToolModeTestProvider {
+            native: true,
+            mode: None,
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Native);
+    }
+
+    #[test]
+    fn effective_tool_mode_text_when_not_supported_and_auto() {
+        let p = ToolModeTestProvider {
+            native: false,
+            mode: None,
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Text);
+    }
+
+    #[test]
+    fn effective_tool_mode_respects_explicit_native() {
+        let p = ToolModeTestProvider {
+            native: false,
+            mode: Some(ToolMode::Native),
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Native);
+    }
+
+    #[test]
+    fn effective_tool_mode_respects_explicit_text() {
+        let p = ToolModeTestProvider {
+            native: true,
+            mode: Some(ToolMode::Text),
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Text);
+    }
+
+    #[test]
+    fn effective_tool_mode_respects_explicit_off() {
+        let p = ToolModeTestProvider {
+            native: true,
+            mode: Some(ToolMode::Off),
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Off);
+    }
+
+    #[test]
+    fn effective_tool_mode_auto_explicit_delegates_to_supports_tools() {
+        // Explicit Auto should behave same as None.
+        let native = ToolModeTestProvider {
+            native: true,
+            mode: Some(ToolMode::Auto),
+        };
+        assert_eq!(effective_tool_mode(&native), ToolMode::Native);
+
+        let text = ToolModeTestProvider {
+            native: false,
+            mode: Some(ToolMode::Auto),
+        };
+        assert_eq!(effective_tool_mode(&text), ToolMode::Text);
     }
 }

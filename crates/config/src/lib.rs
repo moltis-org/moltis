@@ -29,9 +29,9 @@ pub use {
     },
     schema::{
         AgentIdentity, AuthConfig, CalDavAccountConfig, CalDavConfig, ChatConfig, GeoLocation,
-        MessageQueueMode, MoltisConfig, ResolvedIdentity, Timezone, UserProfile, VoiceConfig,
-        VoiceElevenLabsConfig, VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig,
-        VoiceWhisperConfig,
+        MessageQueueMode, MoltisConfig, ResolvedIdentity, Timezone, ToolMode, UserProfile,
+        VoiceConfig, VoiceElevenLabsConfig, VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider,
+        VoiceTtsConfig, VoiceWhisperConfig,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };

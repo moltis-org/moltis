@@ -8,6 +8,7 @@
 pub mod chat_templates;
 pub mod models;
 pub mod system_info;
+pub mod tool_grammar;
 
 use std::{num::NonZeroU32, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
@@ -30,7 +31,9 @@ use {
 #[cfg(feature = "metrics")]
 use moltis_metrics::{gauge, histogram, labels, llm as llm_metrics};
 
-use moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage};
+use moltis_agents::model::{
+    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage,
+};
 
 use {
     chat_templates::{ChatTemplateHint, format_messages},
@@ -221,7 +224,15 @@ impl LocalGgufProvider {
     }
 
     /// Generate text synchronously (called from blocking context).
-    fn generate_sync(&self, prompt: &str, max_tokens: u32) -> Result<(String, u32, u32)> {
+    ///
+    /// When `tool_names` is non-empty, a lazy GBNF grammar sampler constrains
+    /// the output to valid `tool_call` fenced blocks.
+    fn generate_sync(
+        &self,
+        prompt: &str,
+        max_tokens: u32,
+        tool_names: &[&str],
+    ) -> Result<(String, u32, u32)> {
         let generation_start = Instant::now();
         let model = self.model.blocking_lock();
         let backend = &self.backend.0;
@@ -279,11 +290,33 @@ impl LocalGgufProvider {
             "prompt evaluation complete"
         );
 
-        // Set up sampler chain: temperature -> random distribution
-        let mut sampler = LlamaSampler::chain_simple([
-            LlamaSampler::temp(self.temperature),
-            LlamaSampler::dist(42), // Seed
-        ]);
+        // Set up sampler chain.
+        // When tools are available, add a lazy grammar sampler that activates
+        // when the model emits ` ``` ` (start of a fenced block).
+        let mut samplers: Vec<LlamaSampler> = Vec::new();
+
+        if let Some(grammar_str) = tool_grammar::build_tool_call_grammar(tool_names) {
+            match LlamaSampler::grammar_lazy(
+                &model,
+                &grammar_str,
+                "root",
+                ["```tool_call"],
+                &[],
+            ) {
+                Ok(grammar_sampler) => {
+                    debug!("grammar-constrained sampling enabled for tool calls");
+                    samplers.push(grammar_sampler);
+                },
+                Err(e) => {
+                    warn!(%e, "failed to create grammar sampler, falling back to unconstrained");
+                },
+            }
+        }
+
+        samplers.push(LlamaSampler::temp(self.temperature));
+        samplers.push(LlamaSampler::dist(42)); // Seed
+
+        let mut sampler = LlamaSampler::chain_simple(samplers);
 
         // Generate tokens
         let token_gen_start = Instant::now();
@@ -368,17 +401,22 @@ impl LlmProvider for LocalGgufProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        // Tool calling requires grammar-constrained generation
-        false
+        true
     }
 
     async fn complete(
         &self,
         messages: &[ChatMessage],
-        _tools: &[serde_json::Value],
+        tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         let prompt = format_messages(messages, self.chat_template());
         let max_tokens = 4096u32;
+
+        // Extract tool names for grammar constraint.
+        let tool_names: Vec<String> = tools
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect();
 
         // Clone what we need for the blocking task
         let backend = Arc::clone(&self.backend);
@@ -390,6 +428,7 @@ impl LlmProvider for LocalGgufProvider {
 
         // Run generation in blocking context
         let (text, input_tokens, output_tokens) = tokio::task::spawn_blocking(move || {
+            let tool_name_refs: Vec<&str> = tool_names.iter().map(String::as_str).collect();
             let provider = LocalGgufProvider {
                 backend,
                 model,
@@ -398,14 +437,33 @@ impl LlmProvider for LocalGgufProvider {
                 context_size,
                 temperature,
             };
-            provider.generate_sync(&prompt, max_tokens)
+            provider.generate_sync(&prompt, max_tokens, &tool_name_refs)
         })
         .await
         .context("generation task panicked")??;
 
+        // Parse tool calls from the generated text.
+        let (parsed_calls, remaining_text) =
+            moltis_agents::tool_parsing::parse_tool_calls_from_text(&text);
+
+        let tool_calls: Vec<ToolCall> = parsed_calls
+            .into_iter()
+            .map(|tc| ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
+
+        let display_text = if tool_calls.is_empty() {
+            Some(text)
+        } else {
+            remaining_text.filter(|s| !s.is_empty())
+        };
+
         Ok(CompletionResponse {
-            text: Some(text),
-            tool_calls: vec![],
+            text: display_text,
+            tool_calls,
             usage: Usage {
                 input_tokens,
                 output_tokens,
@@ -681,7 +739,7 @@ impl LlmProvider for LazyLocalGgufProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        true
     }
 
     async fn complete(

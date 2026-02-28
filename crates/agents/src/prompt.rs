@@ -4,6 +4,43 @@ use {
     moltis_skills::types::SkillMetadata,
 };
 
+// ── Model family detection ──────────────────────────────────────────────────
+
+/// Broad model family classification, used to tune text-based tool prompts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelFamily {
+    Llama,
+    Qwen,
+    Mistral,
+    DeepSeek,
+    Gemma,
+    Phi,
+    Unknown,
+}
+
+impl ModelFamily {
+    /// Detect the model family from a model identifier string.
+    #[must_use]
+    pub fn from_model_id(id: &str) -> Self {
+        let lower = id.to_ascii_lowercase();
+        if lower.contains("llama") {
+            Self::Llama
+        } else if lower.contains("qwen") {
+            Self::Qwen
+        } else if lower.contains("mistral") || lower.contains("mixtral") {
+            Self::Mistral
+        } else if lower.contains("deepseek") {
+            Self::DeepSeek
+        } else if lower.contains("gemma") {
+            Self::Gemma
+        } else if lower.contains("phi") {
+            Self::Phi
+        } else {
+            Self::Unknown
+        }
+    }
+}
+
 /// Runtime context for the host process running the current agent turn.
 #[derive(Debug, Clone, Default)]
 pub struct PromptHostRuntimeContext {
@@ -175,14 +212,74 @@ const EXEC_ROUTING_GUIDANCE: &str = "Execution routing:\n\
 - Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
 - `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n\
 - Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\n";
-const TOOL_CALL_GUIDANCE: &str = concat!(
-    "## How to call tools\n\n",
-    "For a tool call, output ONLY this JSON block:\n\n",
-    "```tool_call\n",
-    "{\"tool\": \"<tool_name>\", \"arguments\": {<arguments>}}\n",
-    "```\n\n",
-    "No text before or after the block. After execution, continue normally.\n\n",
-);
+/// Build model-family-aware tool call guidance for text-based tool mode.
+fn tool_call_guidance(model_id: Option<&str>) -> String {
+    let _family = model_id.map(ModelFamily::from_model_id).unwrap_or(ModelFamily::Unknown);
+
+    let mut g = String::with_capacity(800);
+    g.push_str("## How to call tools\n\n");
+    g.push_str("When you need to use a tool, output EXACTLY this fenced block:\n\n");
+    g.push_str("```tool_call\n");
+    g.push_str("{\"tool\": \"<tool_name>\", \"arguments\": {<arguments>}}\n");
+    g.push_str("```\n\n");
+    g.push_str("**Rules:**\n");
+    g.push_str("- The JSON must be valid. No comments, no trailing commas.\n");
+    g.push_str("- One tool call per fenced block. You may include multiple blocks.\n");
+    g.push_str("- Wait for the tool result before continuing.\n");
+    g.push_str("- You may include brief reasoning text before the block.\n\n");
+
+    // Few-shot example
+    g.push_str("**Example:**\n");
+    g.push_str("User: What files are in the current directory?\n");
+    g.push_str("Assistant: I'll list the files for you.\n");
+    g.push_str("```tool_call\n");
+    g.push_str("{\"tool\": \"exec\", \"arguments\": {\"command\": \"ls -la\"}}\n");
+    g.push_str("```\n\n");
+
+    g
+}
+
+/// Format a tool schema in compact human-readable form for text-mode prompts.
+///
+/// Output: `### tool_name\ndescription\nParams: param1 (type, required), param2 (type)\n`
+///
+/// This is much shorter than dumping full JSON schema, saving ~60% context tokens.
+fn format_compact_tool_schema(schema: &serde_json::Value) -> String {
+    let name = schema["name"].as_str().unwrap_or("unknown");
+    let desc = schema["description"].as_str().unwrap_or("");
+    let params = &schema["parameters"];
+
+    let mut out = format!("### {name}\n{desc}\n");
+
+    if let Some(properties) = params.get("properties").and_then(|v| v.as_object()) {
+        let required: Vec<&str> = params
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+
+        let mut param_parts: Vec<String> = Vec::with_capacity(properties.len());
+        for (param_name, param_schema) in properties {
+            let type_str = param_schema
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("any");
+            if required.contains(&param_name.as_str()) {
+                param_parts.push(format!("{param_name} ({type_str}, required)"));
+            } else {
+                param_parts.push(format!("{param_name} ({type_str})"));
+            }
+        }
+
+        if !param_parts.is_empty() {
+            out.push_str("Params: ");
+            out.push_str(&param_parts.join(", "));
+            out.push('\n');
+        }
+    }
+    out.push('\n');
+    out
+}
 const TOOL_GUIDELINES: &str = concat!(
     "## Guidelines\n\n",
     "- Start with a normal conversational response. Do not call tools for greetings, small talk, ",
@@ -240,8 +337,10 @@ fn build_system_prompt_full(
     append_skills_section(&mut prompt, include_tools, skills);
     append_workspace_files_section(&mut prompt, agents_text, tools_text);
     append_memory_section(&mut prompt, memory_text, &tool_schemas);
+    let model_id = runtime_context
+        .and_then(|ctx| ctx.host.model.as_deref());
     append_available_tools_section(&mut prompt, native_tools, &tool_schemas);
-    append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas);
+    append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas, model_id);
     append_guidelines_section(&mut prompt, include_tools);
     append_runtime_datetime_tail(&mut prompt, runtime_context);
 
@@ -449,14 +548,9 @@ fn append_available_tools_section(
         return;
     }
 
+    // Text-mode: use compact schema format to save context tokens.
     for schema in tool_schemas {
-        let name = schema["name"].as_str().unwrap_or("unknown");
-        let desc = schema["description"].as_str().unwrap_or("");
-        let params = &schema["parameters"];
-        prompt.push_str(&format!(
-            "### {name}\n{desc}\n\nParameters:\n```json\n{}\n```\n\n",
-            serde_json::to_string(params).unwrap_or_default()
-        ));
+        prompt.push_str(&format_compact_tool_schema(schema));
     }
 }
 
@@ -464,9 +558,10 @@ fn append_tool_call_guidance(
     prompt: &mut String,
     native_tools: bool,
     tool_schemas: &[serde_json::Value],
+    model_id: Option<&str>,
 ) {
     if !native_tools && !tool_schemas.is_empty() {
-        prompt.push_str(TOOL_CALL_GUIDANCE);
+        prompt.push_str(&tool_call_guidance(model_id));
     }
 }
 
@@ -1261,5 +1356,147 @@ mod tests {
 
         assert!(!prompt.contains("The current user datetime is "));
         assert!(!prompt.contains("The current user date is "));
+    }
+
+    // ── Phase 4: ModelFamily, compact schema, tool call guidance ────────
+
+    #[test]
+    fn model_family_detects_llama() {
+        assert_eq!(ModelFamily::from_model_id("llama3.1:8b"), ModelFamily::Llama);
+        assert_eq!(
+            ModelFamily::from_model_id("meta-llama/Llama-3.3-70B"),
+            ModelFamily::Llama,
+        );
+    }
+
+    #[test]
+    fn model_family_detects_qwen() {
+        assert_eq!(ModelFamily::from_model_id("qwen2.5:7b"), ModelFamily::Qwen);
+        assert_eq!(
+            ModelFamily::from_model_id("Qwen/Qwen2.5-Coder-32B"),
+            ModelFamily::Qwen,
+        );
+    }
+
+    #[test]
+    fn model_family_detects_mistral() {
+        assert_eq!(
+            ModelFamily::from_model_id("mistral:latest"),
+            ModelFamily::Mistral,
+        );
+        assert_eq!(
+            ModelFamily::from_model_id("mixtral-8x7b"),
+            ModelFamily::Mistral,
+        );
+    }
+
+    #[test]
+    fn model_family_detects_others() {
+        assert_eq!(
+            ModelFamily::from_model_id("deepseek-coder-v2:16b"),
+            ModelFamily::DeepSeek,
+        );
+        assert_eq!(ModelFamily::from_model_id("gemma:7b"), ModelFamily::Gemma);
+        assert_eq!(ModelFamily::from_model_id("phi-3:mini"), ModelFamily::Phi);
+    }
+
+    #[test]
+    fn model_family_unknown_for_unrecognized() {
+        assert_eq!(
+            ModelFamily::from_model_id("gpt-4o"),
+            ModelFamily::Unknown,
+        );
+        assert_eq!(
+            ModelFamily::from_model_id("claude-3-opus"),
+            ModelFamily::Unknown,
+        );
+    }
+
+    #[test]
+    fn compact_schema_formats_required_and_optional_params() {
+        let schema = serde_json::json!({
+            "name": "exec",
+            "description": "Run a shell command",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout": {"type": "integer"}
+                },
+                "required": ["command"]
+            }
+        });
+        let out = format_compact_tool_schema(&schema);
+        assert!(out.contains("### exec"));
+        assert!(out.contains("Run a shell command"));
+        assert!(out.contains("command (string, required)"));
+        assert!(out.contains("timeout (integer)"));
+    }
+
+    #[test]
+    fn compact_schema_no_params_section_when_empty() {
+        let schema = serde_json::json!({
+            "name": "noop",
+            "description": "Does nothing",
+            "parameters": {"type": "object", "properties": {}}
+        });
+        let out = format_compact_tool_schema(&schema);
+        assert!(out.contains("### noop"));
+        assert!(!out.contains("Params:"));
+    }
+
+    #[test]
+    fn tool_call_guidance_includes_fenced_example() {
+        let g = tool_call_guidance(Some("llama3.1:8b"));
+        assert!(g.contains("```tool_call"));
+        assert!(g.contains("\"tool\":"));
+        assert!(g.contains("Example:"));
+    }
+
+    #[test]
+    fn tool_call_guidance_works_with_no_model() {
+        let g = tool_call_guidance(None);
+        assert!(g.contains("## How to call tools"));
+        assert!(g.contains("```tool_call"));
+    }
+
+    #[test]
+    fn text_mode_prompt_uses_compact_schema() {
+        let mut tools = ToolRegistry::new();
+        struct ParamTool;
+        #[async_trait::async_trait]
+        impl crate::tool_registry::AgentTool for ParamTool {
+            fn name(&self) -> &str {
+                "exec"
+            }
+
+            fn description(&self) -> &str {
+                "Run a shell command"
+            }
+
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "timeout": {"type": "integer"}
+                    },
+                    "required": ["command"]
+                })
+            }
+
+            async fn execute(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+                Ok(serde_json::json!({}))
+            }
+        }
+        tools.register(Box::new(ParamTool));
+
+        let prompt = build_system_prompt(&tools, false, None);
+        // Text-mode should use compact format
+        assert!(prompt.contains("### exec"));
+        assert!(prompt.contains("Params: command (string, required)"));
+        // Should include tool call guidance
+        assert!(prompt.contains("## How to call tools"));
+        assert!(prompt.contains("```tool_call"));
     }
 }

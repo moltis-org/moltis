@@ -116,6 +116,7 @@ fn build_schema_map() -> KnownKeys {
             ("fetch_models", Leaf),
             ("stream_transport", Leaf),
             ("alias", Leaf),
+            ("tool_mode", Leaf),
         ]))
     };
 
@@ -925,6 +926,11 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
             message: "ssrf_allowlist is set — SSRF protection is relaxed for the listed ranges. Ensure these are trusted networks.".into(),
         });
     }
+
+    // Unknown tool_mode values on provider entries
+    // Note: serde rejects truly invalid values at deserialization, but if a
+    // provider entry somehow comes through with a non-standard string we still
+    // want to warn at the TOML level.  The enum is auto/native/text/off.
 
     // Unknown channel types in channels.offered
     let valid_channel_types = ["telegram", "msteams", "discord"];
@@ -2045,5 +2051,46 @@ offered = ["telegram", "slack"]
             "unknown channel type should produce warning, got: {:?}",
             result.diagnostics
         );
+    }
+
+    #[test]
+    fn tool_mode_field_accepted_in_provider_entry() {
+        let toml = r#"
+[providers.ollama]
+enabled = true
+tool_mode = "text"
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path.contains("tool_mode"));
+        assert!(
+            unknown.is_none(),
+            "tool_mode should be a known field, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn tool_mode_all_values_parse_correctly() {
+        for mode in ["auto", "native", "text", "off"] {
+            let toml = format!(
+                r#"
+[providers.anthropic]
+tool_mode = "{mode}"
+"#
+            );
+            let result = validate_toml_str(&toml);
+            let type_error = result
+                .diagnostics
+                .iter()
+                .find(|d| d.category == "type-error");
+            assert!(
+                type_error.is_none(),
+                "tool_mode = \"{mode}\" should parse without type error, got: {:?}",
+                result.diagnostics
+            );
+        }
     }
 }
