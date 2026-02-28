@@ -59,10 +59,10 @@ pub fn parse_tool_calls_from_text(text: &str) -> (Vec<ToolCall>, Option<String>)
     blocks.sort_by_key(|b| b.start);
     let mut merged: Vec<ParsedBlock> = Vec::with_capacity(blocks.len());
     for block in blocks {
-        if let Some(last) = merged.last() {
-            if block.start < last.end {
-                continue; // overlapping — skip
-            }
+        if let Some(last) = merged.last()
+            && block.start < last.end
+        {
+            continue; // overlapping — skip
         }
         merged.push(block);
     }

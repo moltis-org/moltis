@@ -756,19 +756,19 @@ pub async fn run_agent_loop_with_context(
 
         // Fallback: parse tool calls from model text if the provider returned
         // no structured tool calls (some providers/models emit text-based calls).
-        if response.tool_calls.is_empty() {
-            if let Some(ref text) = response.text {
-                let (parsed, remaining) = parse_tool_calls_from_text(text);
-                if !parsed.is_empty() {
-                    info!(
-                        native_tools,
-                        count = parsed.len(),
-                        first_tool = %parsed[0].name,
-                        "parsed tool call(s) from text fallback"
-                    );
-                    response.text = remaining;
-                    response.tool_calls = parsed;
-                }
+        if response.tool_calls.is_empty()
+            && let Some(ref text) = response.text
+        {
+            let (parsed, remaining) = parse_tool_calls_from_text(text);
+            if !parsed.is_empty() {
+                info!(
+                    native_tools,
+                    count = parsed.len(),
+                    first_tool = %parsed[0].name,
+                    "parsed tool call(s) from text fallback"
+                );
+                response.text = remaining;
+                response.tool_calls = parsed;
             }
         }
 
