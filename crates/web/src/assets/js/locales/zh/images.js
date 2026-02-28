@@ -18,8 +18,7 @@ export default {
 	// ── Default image selector ─────────────────────────────
 	defaultImage: {
 		title: "默认镜像",
-		description:
-			"用于新会话和项目的基础镜像，除非被覆盖。留空使用内置默认值 (ubuntu:25.10)。",
+		description: "用于新会话和项目的基础镜像，除非被覆盖。留空使用内置默认值 (ubuntu:25.10)。",
 	},
 
 	// ── Image row ──────────────────────────────────────────
@@ -55,19 +54,14 @@ export default {
 
 	// ── Recommendations ────────────────────────────────────
 	recommendation: {
-		noRuntimeMacos:
-			"未检测到容器运行时。安装 Apple Container（macOS 26+）以获得 VM 隔离沙盒，或安装 Docker 作为替代。",
-		noRuntimeLinux:
-			"未检测到容器运行时。安装 Docker 进行沙盒执行，或确保 systemd 可用以进行 cgroup 隔离。",
+		noRuntimeMacos: "未检测到容器运行时。安装 Apple Container（macOS 26+）以获得 VM 隔离沙盒，或安装 Docker 作为替代。",
+		noRuntimeLinux: "未检测到容器运行时。安装 Docker 进行沙盒执行，或确保 systemd 可用以进行 cgroup 隔离。",
 		noRuntimeGeneric: "未检测到容器运行时。安装 Docker 进行沙盒执行。",
 		macosDockerTip:
 			"Apple Container 在 macOS 26+ 上提供更强的 VM 级隔离。安装后会自动使用（moltis 优先选择它而非 Docker）。运行：brew install container",
-		linuxDockerTip:
-			"Docker 是 Linux 上的好选择。如需更轻量的隔离且无 Docker 开销，也支持 systemd cgroup 沙盒。",
-		restrictedHostTip:
-			"使用受限主机执行（环境变量清除、rlimits）。如需更强隔离，请安装 Docker 或 Apple Container。",
-		wasmTip:
-			"使用具有文件系统隔离的 WASM 沙盒。如需容器级隔离，请安装 Docker 或 Apple Container。",
+		linuxDockerTip: "Docker 是 Linux 上的好选择。如需更轻量的隔离且无 Docker 开销，也支持 systemd cgroup 沙盒。",
+		restrictedHostTip: "使用受限主机执行（环境变量清除、rlimits）。如需更强隔离，请安装 Docker 或 Apple Container。",
+		wasmTip: "使用具有文件系统隔离的 WASM 沙盒。如需容器级隔离，请安装 Docker 或 Apple Container。",
 	},
 
 	// ── Alert labels ───────────────────────────────────────

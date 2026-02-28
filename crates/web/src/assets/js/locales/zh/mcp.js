@@ -5,8 +5,7 @@ export default {
 	title: "MCP",
 	refresh: "刷新",
 	introTitle: "MCP（模型上下文协议）",
-	introDescription:
-		"工具通过外部能力扩展 AI 代理 \u2014 文件访问、网页获取、数据库查询、代码搜索等。",
+	introDescription: "工具通过外部能力扩展 AI 代理 \u2014 文件访问、网页获取、数据库查询、代码搜索等。",
 	flowAgent: "代理",
 	flowMoltis: "Moltis",
 	flowLocalProcess: "本地 MCP 进程",
@@ -20,8 +19,7 @@ export default {
 		"每个 MCP 服务器以 <strong>你的完整系统权限</strong> 运行。恶意或被入侵的服务器可以读取你的文件、窃取凭据或执行任意命令 \u2014 就像任何本地进程一样。",
 	securityReview:
 		"<strong>在启用任何 MCP 服务器之前，请仔细检查其源代码</strong>。仅安装来自你信任的作者的服务器，并保持更新。",
-	securityTokens:
-		"每个启用的服务器还会将工具定义添加到每个聊天会话的上下文中，消耗 token。仅启用你实际需要的服务器。",
+	securityTokens: "每个启用的服务器还会将工具定义添加到每个聊天会话的上下文中，消耗 token。仅启用你实际需要的服务器。",
 
 	// ── Featured servers section ─────────────────────────────
 	popularTitle: "热门 MCP 服务器",

@@ -4,12 +4,10 @@ export default {
 	// ── Page header & intro ─────────────────────────────────
 	title: "钩子",
 	reloading: "重新加载中\u2026",
-	introDescriptionBody:
-		"响应生命周期事件（工具调用、消息、会话等）运行 shell 命令。它们位于",
+	introDescriptionBody: "响应生命周期事件（工具调用、消息、会话等）运行 shell 命令。它们位于",
 	introDescriptionSuffix: "目录中。",
 	introHookMdPrefix: "每个钩子是一个包含",
-	introHookMdMiddle:
-		"文件的目录，其中包含 TOML 前置元数据（事件、命令、要求）和可选文档。编辑下方内容并点击",
+	introHookMdMiddle: "文件的目录，其中包含 TOML 前置元数据（事件、命令、要求）和可选文档。编辑下方内容并点击",
 	introHookMdSuffix: "来更新。",
 	flowEvent: "事件",
 	flowHookScript: "钩子脚本",

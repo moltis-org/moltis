@@ -83,15 +83,13 @@ export default {
 	// ── Missing deps ────────────────────────────────────────
 	missing: "缺少：{{deps}}",
 	installVia: "通过 {{kind}} 安装",
-	installDepConfirm:
-		"为 {{name}} 安装依赖？\n\n{{preview}}\n\n仅在你信任此技能及其来源时继续。",
+	installDepConfirm: "为 {{name}} 安装依赖？\n\n{{preview}}\n\n仅在你信任此技能及其来源时继续。",
 	installedDep: "已为 {{name}} 安装依赖",
 	installFailed: "安装失败：{{error}}",
 
 	// ── Commit warning ──────────────────────────────────────
 	recentCommitWarning: "近期提交警告：",
-	recentCommitMessage:
-		"此技能在 {{days}} 天前更新。将近期更新视为高风险，在信任/启用前请审查差异。",
+	recentCommitMessage: "此技能在 {{days}} 天前更新。将近期更新视为高风险，在信任/启用前请审查差异。",
 
 	// ── Drift warning ───────────────────────────────────────
 	driftWarning: "自上次信任以来源已变更；请在再次启用前审查更新。",
@@ -101,8 +99,7 @@ export default {
 	securityIntro:
 		"技能是社区编写的指令，AI 代理以 <strong>你的完整系统权限</strong> 执行。流行度或下载量并不意味着技能是安全的。恶意技能可以指示代理：",
 	threat1: "在你的机器上执行任意 shell 命令（安装恶意软件、挖矿程序、后门）",
-	threat2:
-		"读取和窃取敏感数据 \u2014 SSH 密钥、API 令牌、浏览器 cookie、凭据、环境变量",
+	threat2: "读取和窃取敏感数据 \u2014 SSH 密钥、API 令牌、浏览器 cookie、凭据、环境变量",
 	threat3: "修改或删除整个文件系统中的文件，包括其他项目",
 	threat4: "在你不知情的情况下通过 curl/wget 将数据发送到远程服务器",
 	securityReview:

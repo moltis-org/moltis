@@ -124,8 +124,7 @@ export default {
 	// ── Voice step ───────────────────────────────────────────
 	voice: {
 		title: "语音（可选）",
-		description:
-			"为你的代理启用语音输入（语音转文字）和语音输出（文字转语音）。你可以稍后在设置中配置。",
+		description: "为你的代理启用语音输入（语音转文字）和语音输出（文字转语音）。你可以稍后在设置中配置。",
 		autoDetected: "从你的 LLM 供应商自动检测",
 		enabling: "启用中\u2026",
 		enableVoice: "启用语音",
@@ -159,8 +158,7 @@ export default {
 	// ── Channel step ─────────────────────────────────────────
 	channel: {
 		connectTelegram: "连接 Telegram",
-		connectTelegramDescription:
-			"连接一个 Telegram 机器人，这样你就可以从手机上聊天。你可以稍后在频道中设置。",
+		connectTelegramDescription: "连接一个 Telegram 机器人，这样你就可以从手机上聊天。你可以稍后在频道中设置。",
 		botConnected: "机器人已连接",
 		botConnectedDetail: "@{{name}} 现已关联到你的代理。",
 		howToCreate: "如何创建 Telegram 机器人",

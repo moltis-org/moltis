@@ -16,8 +16,7 @@ export default {
 		description: "定期 AI 检查，监控你的环境并报告状态。",
 		inactiveLabel: "心跳未激活：",
 		blockedDisabled: "心跳已禁用。启用后才能手动运行。",
-		blockedNoPrompt:
-			"心跳未激活，因为未配置提示词。添加自定义提示词或在 HEARTBEAT.md 中写入可执行内容。",
+		blockedNoPrompt: "心跳未激活，因为未配置提示词。添加自定义提示词或在 HEARTBEAT.md 中写入可执行内容。",
 		blockedNoJob: "心跳尚无活跃的定时任务。保存心跳设置以重新创建。",
 		lastLabel: "上次：",
 		nextLabel: "下次：",

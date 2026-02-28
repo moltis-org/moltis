@@ -17,11 +17,9 @@ export default {
 
 	// ── Empty states ───────────────────────────────────────
 	noActivityTitle: "暂无活动",
-	noActivityDescription:
-		"开始使用 moltis 后，指标将显示在这里。试试发送消息或运行工具来查看数据。",
+	noActivityDescription: "开始使用 moltis 后，指标将显示在这里。试试发送消息或运行工具来查看数据。",
 	collectingTitle: "数据收集中\u2026",
-	collectingDescription:
-		"收集到一些数据点后，历史图表将显示在这里。这通常需要大约 20\u201330 秒。",
+	collectingDescription: "收集到一些数据点后，历史图表将显示在这里。这通常需要大约 20\u201330 秒。",
 
 	// ── Time range selector ────────────────────────────────
 	timeRange: {

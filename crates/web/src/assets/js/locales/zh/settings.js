@@ -47,8 +47,7 @@ export default {
 		yourNameLabel: "你的名字 *",
 		yourNamePlaceholder: "例如 小明",
 		soul: "灵魂",
-		soulDescription:
-			"注入每次对话的个性和语调。保存到工作区根目录的 SOUL.md。留空则使用默认值。",
+		soulDescription: "注入每次对话的个性和语调。保存到工作区根目录的 SOUL.md。留空则使用默认值。",
 		languageSection: "语言",
 		languageDescription: "选择 Web 界面使用的语言。更改会立即应用于新内容。",
 		languageLabel: "应用语言",
@@ -68,8 +67,7 @@ export default {
 	// ── Environment section ──────────────────────────────────
 	environment: {
 		title: "环境变量",
-		description:
-			"环境变量会注入到沙盒命令执行中。值为只写模式，不会显示。",
+		description: "环境变量会注入到沙盒命令执行中。值为只写模式，不会显示。",
 		addVariable: "添加变量",
 		keyPlaceholder: "KEY_NAME",
 		valuePlaceholder: "值",
@@ -86,8 +84,7 @@ export default {
 	security: {
 		title: "安全",
 		authDisabled: "身份验证已禁用",
-		authDisabledWarning:
-			"任何具有网络访问权限的人都可以控制 moltis 和您的计算机。请设置密码来保护您的实例。",
+		authDisabledWarning: "任何具有网络访问权限的人都可以控制 moltis 和您的计算机。请设置密码来保护您的实例。",
 		setupAuth: "设置身份验证",
 		localhostBypassWarning:
 			"仅限本地访问是安全的，但本地绕过已生效。在添加密码或通行密钥之前，此浏览器拥有完全访问权限，退出登录无效。请在下方添加凭据以在本地要求登录，并在将 Moltis 暴露到网络之前完成设置。",
@@ -172,15 +169,13 @@ export default {
 		restartingMoltis: "正在重启 moltis...",
 		serverNotBack: "服务器未恢复运行。请检查 moltis 是否正在运行。",
 		autoReloadHint: "服务器恢复后页面将自动重新加载。",
-		resetConfirm:
-			"用默认模板替换当前配置？\n\n这将显示所有可用选项及文档。除非先复制当前值，否则将丢失。",
+		resetConfirm: "用默认模板替换当前配置？\n\n这将显示所有可用选项及文档。除非先复制当前值，否则将丢失。",
 		templateLoaded: "已加载包含所有选项的默认模板。检查后保存即可。",
 		failedToConnect: "连接服务器失败。请检查 moltis 是否正在运行。",
 		invalidJsonResponse: "服务器返回无效的 JSON 响应",
 		failedToLoadTemplate: "加载模板失败",
 		tipLabel: "提示：",
-		tipText:
-			'点击"加载模板"查看所有可用的配置选项及文档。这会用完整文档模板替换编辑器内容 - 如有需要请先复制当前值。',
+		tipText: '点击"加载模板"查看所有可用的配置选项及文档。这会用完整文档模板替换编辑器内容 - 如有需要请先复制当前值。',
 	},
 
 	// ── Tailscale section ────────────────────────────────────
@@ -244,8 +239,7 @@ export default {
 	// ── Memory section ───────────────────────────────────────
 	memory: {
 		title: "记忆",
-		description:
-			"配置代理如何存储和检索长期记忆。记忆使代理能够跨会话回忆过往对话、笔记和上下文。",
+		description: "配置代理如何存储和检索长期记忆。记忆使代理能够跨会话回忆过往对话、笔记和上下文。",
 		statusHeading: "状态",
 		files: "文件：",
 		chunks: "片段：",
@@ -282,8 +276,7 @@ export default {
 		thenStartDaemon: "然后启动 QMD 守护进程：",
 		viewDocumentation: "查看文档 \u2192",
 		citations: "引用",
-		citationsDescription:
-			"在搜索结果中包含源文件和行号，以帮助追踪信息来源。",
+		citationsDescription: "在搜索结果中包含源文件和行号，以帮助追踪信息来源。",
 		citationsAuto: "自动（仅多文件）",
 		citationsAlways: "始终",
 		citationsNever: "从不",
@@ -311,8 +304,7 @@ export default {
 		installRequiredSafari:
 			"在 Safari 中，推送通知仅对已安装的应用可用。通过 文件 \u2192 添加到 Dock（或在 iOS 上通过 分享 \u2192 添加到主屏幕）将 moltis 添加到 Dock，然后从那里打开。",
 		notificationsBlocked: "通知已被阻止",
-		blockedExplanation:
-			"你之前阻止了此站点的通知。要启用它们，你需要更新浏览器的站点设置并允许此来源的通知。",
+		blockedExplanation: "你之前阻止了此站点的通知。要启用它们，你需要更新浏览器的站点设置并允许此来源的通知。",
 		subscribedDevices: "已订阅设备 ({{count}})",
 		noDevicesYet: "暂无已订阅的设备。",
 	},

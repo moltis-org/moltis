@@ -3,8 +3,7 @@
 export default {
 	title: "大语言模型",
 	addLlm: "添加 LLM",
-	description:
-		"配置聊天和代理任务的 LLM 供应商。你可以添加多个供应商并在模型之间切换。",
+	description: "配置聊天和代理任务的 LLM 供应商。你可以添加多个供应商并在模型之间切换。",
 	failedToLoadProviders: "加载 LLM 供应商失败。",
 	failedToDetectModels: "检测模型可用性失败。",
 	failedToDeleteProvider: "删除供应商失败。",
@@ -98,8 +97,7 @@ export default {
 		backend: "后端：",
 		minRamBadge: "{{gb}}GB",
 		insufficientRam: "内存不足",
-		insufficientRamWarning:
-			"你的内存不足以运行此模型（检测到 {{detected}}GB，需要 {{required}}GB）。",
+		insufficientRamWarning: "你的内存不足以运行此模型（检测到 {{detected}}GB，需要 {{required}}GB）。",
 		contextTokens: "上下文：{{tokens}}k tokens",
 		downloading: "正在下载 {{model}}...",
 		downloadedSuccessfully: "{{model}} 下载成功！",

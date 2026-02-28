@@ -115,8 +115,7 @@ export default {
 	},
 
 	// ── Warnings ─────────────────────────────────────────────
-	toolsDisabledWarning:
-		"工具已禁用 \u2014 当前模型不支持工具调用。以纯聊天模式运行。",
+	toolsDisabledWarning: "工具已禁用 \u2014 当前模型不支持工具调用。以纯聊天模式运行。",
 	unknown: "未知",
 	unknownError: "未知错误",
 	done: "完成",
@@ -167,8 +166,7 @@ export default {
 	share: {
 		title: "分享会话快照",
 		hint: "快照在此时间点冻结，之后的聊天消息保持私密。",
-		redactionWarning:
-			"我们会尽力在共享的工具输出中脱敏 API 密钥和令牌，但分享前请务必检查。",
+		redactionWarning: "我们会尽力在共享的工具输出中脱敏 API 密钥和令牌，但分享前请务必检查。",
 		publicLink: "公开链接",
 		publicBadge: "公开",
 		privateLink: "私密链接",
