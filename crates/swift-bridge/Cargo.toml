@@ -21,6 +21,7 @@ metrics               = { optional = true, workspace = true }
 moltis-agents         = { workspace = true }
 moltis-config         = { workspace = true }
 moltis-gateway        = { default-features = true, features = ["file-watcher", "metrics", "voice", "web-ui"], workspace = true }
+moltis-network-filter = { features = ["proxy", "service"], workspace = true }
 moltis-projects       = { workspace = true }
 moltis-provider-setup = { workspace = true }
 moltis-providers      = { workspace = true }
@@ -35,4 +36,4 @@ tracing               = { optional = true, workspace = true }
 uuid                  = { workspace = true }
 
 [dev-dependencies]
-serial_test = { workspace = true }
+serial_test           = { workspace = true }

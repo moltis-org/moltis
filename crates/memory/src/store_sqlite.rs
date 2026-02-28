@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 use crate::{
     schema::{ChunkRow, FileRow},
     search::SearchResult,
-    store::MemoryStore,
+    store::{CacheEntry, MemoryStore},
 };
 
 /// Sanitize a user query for FTS5 `MATCH`.
@@ -143,6 +143,7 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn upsert_chunks(&self, chunks: &[ChunkRow]) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
         for chunk in chunks {
             let emb_blob = chunk.embedding.as_deref();
             sqlx::query(
@@ -163,9 +164,10 @@ impl MemoryStore for SqliteMemoryStore {
             .bind(&chunk.text)
             .bind(emb_blob)
             .bind(&chunk.updated_at)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -284,6 +286,30 @@ impl MemoryStore for SqliteMemoryStore {
         .bind(dims)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    async fn put_cached_embeddings_batch(&self, entries: &[CacheEntry<'_>]) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        for entry in entries {
+            let blob = vec_to_blob(entry.embedding);
+            let dims = entry.embedding.len() as i64;
+            sqlx::query(
+                "INSERT INTO embedding_cache (provider, model, provider_key, hash, embedding, dims)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(provider, model, provider_key, hash) DO UPDATE SET
+                   embedding=excluded.embedding, dims=excluded.dims, updated_at=datetime('now')",
+            )
+            .bind(entry.provider)
+            .bind(entry.model)
+            .bind(entry.provider_key)
+            .bind(entry.hash)
+            .bind(&blob)
+            .bind(dims)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 

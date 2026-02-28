@@ -2699,6 +2699,47 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
 
+    // Network audit
+    reg.register(
+        "network.audit.list",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .network_audit
+                    .list(ctx.params.clone())
+                    .await
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
+            })
+        }),
+    );
+    reg.register(
+        "network.audit.tail",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .network_audit
+                    .tail(ctx.params.clone())
+                    .await
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
+            })
+        }),
+    );
+    reg.register(
+        "network.audit.stats",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .network_audit
+                    .stats()
+                    .await
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
+            })
+        }),
+    );
+
     // Models
     reg.register(
         "models.list",

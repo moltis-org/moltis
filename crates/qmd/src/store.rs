@@ -10,7 +10,7 @@ use {
     moltis_memory::{
         schema::{ChunkRow, FileRow},
         search::SearchResult,
-        store::MemoryStore,
+        store::{CacheEntry, MemoryStore},
     },
     tracing::warn,
 };
@@ -173,6 +173,14 @@ impl MemoryStore for QmdStore {
             fallback
                 .put_cached_embedding(provider, model, provider_key, hash, embedding)
                 .await
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn put_cached_embeddings_batch(&self, entries: &[CacheEntry<'_>]) -> anyhow::Result<()> {
+        if let Some(ref fallback) = self.fallback {
+            fallback.put_cached_embeddings_batch(entries).await
         } else {
             Ok(())
         }

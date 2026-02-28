@@ -40,6 +40,7 @@ moltis-media           = { workspace = true }
 moltis-memory          = { workspace = true }
 moltis-metrics         = { optional = true, workspace = true }
 moltis-msteams         = { workspace = true }
+moltis-network-filter  = { features = ["proxy", "service"], optional = true, workspace = true }
 moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
@@ -110,6 +111,7 @@ default = [
   "qmd",
   "tailscale",
   "tls",
+  "trusted-network",
   "vault",
   "voice",
   "wasm",
@@ -148,6 +150,7 @@ tls = [
   "dep:tokio-rustls",
   "dep:tower",
 ]
+trusted-network = ["dep:moltis-network-filter"]
 vault = ["dep:moltis-vault", "moltis-auth/vault"]
 voice = ["dep:moltis-voice"]
 wasm = ["moltis-tools/wasm"]

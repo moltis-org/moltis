@@ -15,6 +15,7 @@ include = [
   "moltis_chat_stream",
   "moltis_free_string",
   "moltis_set_log_callback",
+  "moltis_set_network_audit_callback",
   "moltis_shutdown",
   "moltis_version",
 ]

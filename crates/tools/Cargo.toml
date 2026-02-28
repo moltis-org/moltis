@@ -9,36 +9,38 @@ metrics = ["dep:moltis-metrics"]
 wasm    = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
 [dependencies]
-anyhow           = { workspace = true }
-async-trait      = { workspace = true }
-base64           = { workspace = true }
-bytes            = { workspace = true }
-futures          = { workspace = true }
-image            = { workspace = true }
-ipnet            = { workspace = true }
-moltis-agents    = { workspace = true }
-moltis-browser   = { workspace = true }
-moltis-common    = { workspace = true }
-moltis-config    = { workspace = true }
-moltis-cron      = { workspace = true }
-moltis-metrics   = { optional = true, workspace = true }
-moltis-providers = { workspace = true }
-moltis-sessions  = { workspace = true }
-moltis-skills    = { workspace = true }
-regex            = { workspace = true }
-reqwest          = { features = ["blocking"], workspace = true }
-secrecy          = { workspace = true }
-serde            = { workspace = true }
-serde_json       = { workspace = true }
-sha2             = { workspace = true }
-shell-words      = { optional = true, workspace = true }
-sqlx             = { workspace = true }
-tokio            = { workspace = true }
-tracing          = { workspace = true }
-url              = { workspace = true }
-uuid             = { workspace = true }
-wasmtime         = { optional = true, workspace = true }
-wasmtime-wasi    = { optional = true, workspace = true }
+anyhow                = { workspace = true }
+async-trait           = { workspace = true }
+base64                = { workspace = true }
+bytes                 = { workspace = true }
+futures               = { workspace = true }
+image                 = { workspace = true }
+ipnet                 = { workspace = true }
+moltis-agents         = { workspace = true }
+moltis-browser        = { workspace = true }
+moltis-common         = { workspace = true }
+moltis-config         = { workspace = true }
+moltis-cron           = { workspace = true }
+moltis-metrics        = { optional = true, workspace = true }
+moltis-network-filter = { workspace = true }
+moltis-providers      = { workspace = true }
+moltis-sessions       = { workspace = true }
+moltis-skills         = { workspace = true }
+regex                 = { workspace = true }
+reqwest               = { features = ["blocking"], workspace = true }
+secrecy               = { workspace = true }
+serde                 = { workspace = true }
+serde_json            = { workspace = true }
+sha2                  = { workspace = true }
+shell-words           = { optional = true, workspace = true }
+sqlx                  = { workspace = true }
+time                  = { workspace = true }
+tokio                 = { workspace = true }
+tracing               = { workspace = true }
+url                   = { workspace = true }
+uuid                  = { workspace = true }
+wasmtime              = { optional = true, workspace = true }
+wasmtime-wasi         = { optional = true, workspace = true }
 
 [dev-dependencies]
 mockito      = { workspace = true }

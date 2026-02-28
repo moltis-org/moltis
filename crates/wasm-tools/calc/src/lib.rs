@@ -7,6 +7,9 @@ wit_bindgen::generate!({
     world: "pure-tool",
 });
 
+#[cfg(target_arch = "wasm32")]
+use crate::moltis::tool::types::{ToolError, ToolValue};
+
 use {
     anyhow::{Result, bail},
     serde_json::{Value, json},

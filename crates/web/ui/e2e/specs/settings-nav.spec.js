@@ -45,6 +45,7 @@ test.describe("Settings navigation", () => {
 		{ id: "voice", heading: "Voice" },
 		{ id: "security", heading: "Security" },
 		{ id: "tailscale", heading: "Tailscale" },
+		{ id: "network-audit", heading: "Network Audit" },
 		{ id: "notifications", heading: "Notifications" },
 		{ id: "providers", heading: "LLMs" },
 		{ id: "channels", heading: "Channels" },
@@ -314,7 +315,7 @@ test.describe("Settings navigation", () => {
 			"Authentication",
 		];
 		if (navItems.includes("Encryption")) expectedPrefix.push("Encryption");
-		expectedPrefix.push("Tailscale", "Sandboxes", "Channels", "Hooks", "LLMs", "MCP", "Skills");
+		expectedPrefix.push("Tailscale", "Network Audit", "Sandboxes", "Channels", "Hooks", "LLMs", "MCP", "Skills");
 		const expectedSystem = ["Terminal", "Monitoring", "Logs"];
 		const expected = [...expectedPrefix];
 		if (navItems.includes("OpenClaw Import")) expected.push("OpenClaw Import");

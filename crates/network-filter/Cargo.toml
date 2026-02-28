@@ -1,0 +1,28 @@
+[package]
+edition.workspace = true
+name              = "moltis-network-filter"
+version.workspace = true
+
+[features]
+default = ["metrics", "proxy", "service"]
+metrics = ["dep:moltis-metrics"]
+proxy   = ["dep:uuid"]
+service = []
+
+[dependencies]
+async-trait    = { workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+time           = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+uuid           = { optional = true, workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio    = { features = ["macros", "rt-multi-thread"], workspace = true }
+
+[lints]
+workspace = true

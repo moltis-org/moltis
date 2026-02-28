@@ -67,10 +67,19 @@ impl BridgeState {
         let session_store = SessionStore::new(sessions_dir);
 
         // Open the shared SQLite database (same moltis.db used by the gateway).
+        // WAL mode + synchronous=NORMAL avoids multi-second write contention.
         let db_path = data_dir.join("moltis.db");
-        let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
         let db_pool = runtime.block_on(async {
-            let pool = sqlx::SqlitePool::connect(&db_url)
+            use {
+                sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+                std::str::FromStr,
+            };
+            let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+                .expect("invalid moltis.db path")
+                .create_if_missing(true)
+                .journal_mode(SqliteJournalMode::Wal)
+                .synchronous(SqliteSynchronous::Normal);
+            let pool = sqlx::SqlitePool::connect_with(opts)
                 .await
                 .unwrap_or_else(|e| panic!("failed to open moltis.db: {e}"));
             // Run migrations so the sessions table exists even if the gateway
@@ -218,6 +227,58 @@ fn emit_session_event(event: &SessionEvent) {
             SessionEvent::Patched { session_key } => ("patched", session_key.clone()),
         };
         let payload = BridgeSessionEvent { kind, session_key };
+        if let Ok(json) = serde_json::to_string(&payload)
+            && let Ok(c_str) = CString::new(json)
+        {
+            // SAFETY: c_str is valid NUL-terminated, callback copies
+            // before returning, and we drop c_str afterwards.
+            unsafe {
+                callback(c_str.as_ptr());
+            }
+        }
+    }
+}
+
+// ── Network audit callback for Swift ─────────────────────────────────────
+
+/// Callback type for forwarding network audit events to Swift.
+/// Rust owns the `event_json` pointer — the callback must copy the data
+/// before returning.
+type NetworkAuditCallback = unsafe extern "C" fn(event_json: *const c_char);
+
+static NETWORK_AUDIT_CALLBACK: OnceLock<NetworkAuditCallback> = OnceLock::new();
+
+/// JSON-serializable network audit event sent to Swift.
+#[derive(Debug, Serialize)]
+struct BridgeNetworkAuditEvent {
+    domain: String,
+    port: u16,
+    protocol: String,
+    action: String,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+}
+
+fn emit_network_audit(entry: &moltis_network_filter::NetworkAuditEntry) {
+    if let Some(callback) = NETWORK_AUDIT_CALLBACK.get() {
+        let source = match &entry.approval_source {
+            Some(moltis_network_filter::ApprovalSource::Config) => "config",
+            Some(moltis_network_filter::ApprovalSource::Session) => "session",
+            Some(moltis_network_filter::ApprovalSource::UserPrompt) => "user",
+            None => "unknown",
+        };
+        let payload = BridgeNetworkAuditEvent {
+            domain: entry.domain.clone(),
+            port: entry.port,
+            protocol: entry.protocol.to_string(),
+            action: entry.action.to_string(),
+            source: source.to_owned(),
+            method: entry.method.clone(),
+            url: entry.url.clone(),
+        };
         if let Ok(json) = serde_json::to_string(&payload)
             && let Ok(c_str) = CString::new(json)
         {
@@ -1084,6 +1145,22 @@ pub unsafe extern "C" fn moltis_set_session_event_callback(callback: SessionEven
     }
 }
 
+/// Register a callback for network audit events (domain filter decisions).
+///
+/// The callback receives a JSON string with fields: `domain`, `port`,
+/// `protocol`, `action`, `source`, and optionally `method` and `path`.
+/// Rust owns the pointer — the callback must copy the data before returning.
+///
+/// # Safety
+///
+/// `callback` must be a valid function pointer that remains valid for
+/// the lifetime of the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn moltis_set_network_audit_callback(callback: NetworkAuditCallback) {
+    let _ = NETWORK_AUDIT_CALLBACK.set(callback);
+    emit_log("INFO", "bridge", "Network audit callback registered");
+}
+
 /// Starts the embedded HTTP server with the full Moltis gateway.
 /// Returns JSON with `{"running": true, "addr": "..."}`.
 /// If already running, returns the current status without restarting.
@@ -1177,6 +1254,22 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
             Ok(a) => a,
             Err(e) => return encode_error("addr_error", &e.to_string()),
         };
+
+        // Subscribe to the network audit broadcast (if the proxy is active)
+        // and forward entries to Swift via the registered callback.
+        if let Some(ref audit_buf) = prepared.audit_buffer {
+            let mut audit_rx = audit_buf.subscribe();
+            BRIDGE.runtime.spawn(async move {
+                loop {
+                    match audit_rx.recv().await {
+                        Ok(entry) => emit_network_audit(&entry),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    }
+                }
+            });
+            emit_log("INFO", "bridge.httpd", "Network audit bridge subscribed");
+        }
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let app = prepared.app;

@@ -1094,6 +1094,10 @@ pub struct PreparedGateway {
     /// Metadata collected during setup, used by [`start_gateway`] for the
     /// startup banner. Not relevant for bridge callers.
     pub(crate) banner: BannerMeta,
+    /// Network audit buffer for real-time streaming (present when
+    /// the `trusted-network` feature is enabled and the proxy is active).
+    #[cfg(feature = "trusted-network")]
+    pub audit_buffer: Option<crate::network_audit::NetworkAuditBuffer>,
 }
 
 /// Internal metadata for the startup banner printed by [`start_gateway`].
@@ -1954,7 +1958,71 @@ pub async fn prepare_gateway(
         .timezone
         .as_ref()
         .map(|tz| tz.name().to_string());
-    let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(sandbox_config));
+    let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(
+        sandbox_config.clone(),
+    ));
+
+    // ── Trusted-network proxy + audit ────────────────────────────────────
+    #[cfg(feature = "trusted-network")]
+    let audit_buffer_for_broadcast: Option<crate::network_audit::NetworkAuditBuffer>;
+    #[cfg(feature = "trusted-network")]
+    let proxy_url_for_tools: Option<String>;
+    #[cfg(feature = "trusted-network")]
+    {
+        let (audit_tx, audit_rx) =
+            tokio::sync::mpsc::channel::<moltis_network_filter::NetworkAuditEntry>(1024);
+
+        info!(
+            network_policy = ?sandbox_config.network,
+            trusted_domains = ?sandbox_config.trusted_domains,
+            "trusted-network: evaluating network policy"
+        );
+
+        if sandbox_config.network == moltis_network_filter::NetworkPolicy::Trusted {
+            let domain_mgr = Arc::new(
+                moltis_network_filter::domain_approval::DomainApprovalManager::new(
+                    &sandbox_config.trusted_domains,
+                    std::time::Duration::from_secs(30),
+                ),
+            );
+            let proxy_addr: SocketAddr =
+                ([0, 0, 0, 0], moltis_network_filter::DEFAULT_PROXY_PORT).into();
+            let proxy = moltis_network_filter::proxy::NetworkProxyServer::new(
+                proxy_addr,
+                Arc::clone(&domain_mgr),
+                Some(audit_tx.clone()),
+            );
+            let (_proxy_shutdown_tx, proxy_shutdown_rx) = tokio::sync::watch::channel(false);
+            tokio::spawn(async move {
+                if let Err(e) = proxy.run(proxy_shutdown_rx).await {
+                    tracing::warn!("network proxy exited: {e}");
+                }
+            });
+            let url = format!(
+                "http://127.0.0.1:{}",
+                moltis_network_filter::DEFAULT_PROXY_PORT
+            );
+            info!(
+                proxy_url = %url,
+                "trusted-network proxy started, routing all HTTP tools through proxy"
+            );
+            moltis_tools::init_shared_http_client(Some(&url));
+            proxy_url_for_tools = Some(url);
+        } else {
+            info!(
+                network_policy = ?sandbox_config.network,
+                "trusted-network proxy not started (policy is not Trusted)"
+            );
+            proxy_url_for_tools = None;
+        }
+
+        // Create the live network audit service from the receiver channel.
+        let audit_log_path = data_dir.join("network-audit.jsonl");
+        let audit_service =
+            crate::network_audit::LiveNetworkAuditService::new(audit_rx, audit_log_path, 2048);
+        audit_buffer_for_broadcast = Some(audit_service.buffer().clone());
+        services = services.with_network_audit(Arc::new(audit_service));
+    }
 
     // Spawn background image pre-build. This bakes configured packages into a
     // container image so container creation is instant. Backends that don't
@@ -3062,6 +3130,12 @@ pub async fn prepare_gateway(
         }
         if let Some(t) = moltis_tools::web_fetch::WebFetchTool::from_config(&config.tools.web.fetch)
         {
+            #[cfg(feature = "trusted-network")]
+            let t = if let Some(ref url) = proxy_url_for_tools {
+                t.with_proxy(url.clone())
+            } else {
+                t
+            };
             tool_registry.register(Box::new(t));
         }
         if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
@@ -3463,6 +3537,10 @@ pub async fn prepare_gateway(
             );
         }
     }
+
+    // NOTE: the startup banner and GatewayStart hook dispatch are handled
+    // by start_gateway (the CLI entry point) after prepare_gateway returns.
+    // prepare_gateway only spawns background tasks and returns PreparedGateway.
 
     // Spawn periodic browser cleanup task (every 30s, removes idle instances).
     {
@@ -3875,6 +3953,35 @@ pub async fn prepare_gateway(
         });
     }
 
+    // Spawn network audit broadcast task: forwards audit entries to WS clients.
+    #[cfg(feature = "trusted-network")]
+    if let Some(ref audit_buf) = audit_buffer_for_broadcast {
+        let audit_state = Arc::clone(&state);
+        let mut audit_rx = audit_buf.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match audit_rx.recv().await {
+                    Ok(entry) => {
+                        if let Ok(payload) = serde_json::to_value(&entry) {
+                            broadcast(
+                                &audit_state,
+                                "network.audit.entry",
+                                payload,
+                                BroadcastOpts {
+                                    drop_if_slow: true,
+                                    ..Default::default()
+                                },
+                            )
+                            .await;
+                        }
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
     // Spawn log broadcast task: forwards captured tracing events to WS clients.
     if let Some(buf) = log_buffer {
         let log_state = Arc::clone(&state);
@@ -4035,6 +4142,8 @@ pub async fn prepare_gateway(
             #[cfg(feature = "tailscale")]
             tailscale_reset_on_exit,
         },
+        #[cfg(feature = "trusted-network")]
+        audit_buffer: audit_buffer_for_broadcast,
     })
 }
 

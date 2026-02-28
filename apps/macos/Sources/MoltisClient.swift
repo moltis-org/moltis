@@ -74,6 +74,56 @@ private func rustSessionEventCallbackHandler(eventJson: UnsafePointer<CChar>?) {
     }
 }
 
+// MARK: - Rust Bridge Network Audit Forwarding
+
+/// Decoded payload from Rust `emit_network_audit` JSON.
+private struct BridgeNetworkAuditPayload: Decodable {
+    let domain: String
+    let port: UInt16
+    let networkProtocol: String
+    let action: String
+    let source: String
+    let method: String?
+    let url: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case domain, port
+        case networkProtocol = "protocol"
+        case action, source, method, url
+    }
+}
+
+/// Global reference to the `NetworkAuditStore` used by the Rust network audit callback.
+/// Set once during app startup via `MoltisClient.installNetworkAuditCallback`.
+private var globalNetworkAuditStore: NetworkAuditStore?
+private let networkAuditDecoder = JSONDecoder()
+
+/// C-callable callback that receives Rust network audit events as JSON strings.
+private func rustNetworkAuditCallbackHandler(eventJson: UnsafePointer<CChar>?) {
+    guard let eventJson else { return }
+    let jsonString = String(cString: eventJson)
+    let data = Data(jsonString.utf8)
+
+    guard let payload = try? networkAuditDecoder.decode(
+        BridgeNetworkAuditPayload.self, from: data
+    ) else { return }
+
+    DispatchQueue.main.async {
+        let entry = NetworkAuditEntry(
+            id: UUID(),
+            timestamp: Date(),
+            domain: payload.domain,
+            port: payload.port,
+            networkProtocol: payload.networkProtocol,
+            action: payload.action,
+            source: payload.source,
+            method: payload.method,
+            url: payload.url
+        )
+        globalNetworkAuditStore?.push(entry)
+    }
+}
+
 // MARK: - Client Errors
 
 enum MoltisClientError: Error, LocalizedError {
@@ -383,6 +433,12 @@ struct MoltisClient {
     static func installSessionEventCallback(chatStore: ChatStore) {
         globalChatStore = chatStore
         moltis_set_session_event_callback(rustSessionEventCallbackHandler)
+    }
+
+    /// Install the Rust→Swift network audit bridge. Call once at app startup.
+    static func installNetworkAuditCallback(store: NetworkAuditStore) {
+        globalNetworkAuditStore = store
+        moltis_set_network_audit_callback(rustNetworkAuditCallbackHandler)
     }
 
     private let decoder: JSONDecoder = {

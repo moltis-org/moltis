@@ -29,6 +29,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
     case skills = "Skills"
     case voice = "Voice"
     case sandboxes = "Sandboxes"
+    case networkAudit = "Network Audit"
     case monitoring = "Monitoring"
     case logs = "Logs"
     case graphql = "GraphQL"
@@ -66,6 +67,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .skills:        "sparkles",
         .voice:         "mic.fill",
         .sandboxes:     "shippingbox.fill",
+        .networkAudit:  "network.badge.shield.half.filled",
         .monitoring:    "chart.bar.fill",
         .logs:          "doc.plaintext.fill",
         .graphql:       "point.3.connected.trianglepath.dotted",
@@ -89,6 +91,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .skills:        .yellow,
         .voice:         .mint,
         .sandboxes:     .orange,
+        .networkAudit:  .cyan,
         .monitoring:    .green,
         .logs:          .secondary,
         .graphql:       .pink,
@@ -112,6 +115,7 @@ enum SettingsSection: String, CaseIterable, Hashable {
         .skills:        .integrations,
         .voice:         .integrations,
         .sandboxes:     .systems,
+        .networkAudit:  .systems,
         .monitoring:    .systems,
         .logs:          .systems,
         .graphql:       .systems,
@@ -127,6 +131,7 @@ struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var providerStore: ProviderStore
     @ObservedObject var logStore: LogStore
+    @ObservedObject var networkAuditStore: NetworkAuditStore
     @State private var selectedSection: SettingsSection? = .identity
     @State private var searchText = ""
     @FocusState private var focusedField: String?
@@ -194,7 +199,10 @@ struct SettingsView: View {
     private var settingsDetail: some View {
         Group {
             if let section = selectedSection {
-                if section == .logs {
+                if section == .networkAudit {
+                    NetworkAuditPane(store: networkAuditStore)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if section == .logs {
                     LogsPane(logStore: logStore)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if section == .configuration {

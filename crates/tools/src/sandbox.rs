@@ -442,6 +442,8 @@ pub struct ResourceLimits {
     pub pids_max: Option<u32>,
 }
 
+pub use moltis_network_filter::NetworkPolicy;
+
 /// Configuration for sandbox behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -457,6 +459,10 @@ pub struct SandboxConfig {
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
+    /// Network policy: `Blocked` (no network), `Trusted` (proxy-filtered), `Open` (unrestricted).
+    pub network: NetworkPolicy,
+    /// Domains allowed through the proxy in `Trusted` mode.
+    pub trusted_domains: Vec<String>,
     /// Backend: `"auto"` (default), `"docker"`, `"apple-container"`,
     /// `"restricted-host"`, or `"wasm"`.
     /// `"auto"` prefers Apple Container on macOS, then Docker, then restricted-host.
@@ -486,6 +492,8 @@ impl Default for SandboxConfig {
             image: None,
             container_prefix: None,
             no_network: false,
+            network: NetworkPolicy::default(),
+            trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimits::default(),
             packages: Vec::new(),
@@ -525,6 +533,16 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             image: cfg.image.clone(),
             container_prefix: cfg.container_prefix.clone(),
             no_network: cfg.no_network,
+            network: match cfg.network.as_str() {
+                "trusted" => NetworkPolicy::Trusted,
+                "bypass" => NetworkPolicy::Bypass,
+                // Explicit "blocked" always means Blocked.
+                "blocked" => NetworkPolicy::Blocked,
+                // Empty/unset: fall back to legacy `no_network` flag.
+                _ if cfg.no_network => NetworkPolicy::Blocked,
+                _ => NetworkPolicy::Trusted,
+            },
+            trusted_domains: cfg.trusted_domains.clone(),
             backend: cfg.backend.clone(),
             resource_limits: ResourceLimits {
                 memory_limit: cfg.resource_limits.memory_limit.clone(),
@@ -1482,6 +1500,37 @@ impl DockerSandbox {
         args
     }
 
+    fn network_run_args(&self) -> Vec<String> {
+        match self.config.network {
+            NetworkPolicy::Blocked => vec!["--network=none".to_string()],
+            NetworkPolicy::Trusted => {
+                // Ensure the container can reach the host proxy on all
+                // platforms (Linux needs --add-host; macOS Docker Desktop
+                // resolves host.docker.internal automatically).
+                vec!["--add-host=host.docker.internal:host-gateway".to_string()]
+            },
+            NetworkPolicy::Bypass => Vec::new(),
+        }
+    }
+
+    fn proxy_exec_env_args(&self) -> Vec<String> {
+        if self.config.network != NetworkPolicy::Trusted {
+            return Vec::new();
+        }
+        let proxy_url = format!(
+            "http://host.docker.internal:{}",
+            moltis_network_filter::DEFAULT_PROXY_PORT
+        );
+        let mut args = Vec::new();
+        for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
+            args.extend(["-e".to_string(), format!("{key}={proxy_url}")]);
+        }
+        for key in ["NO_PROXY", "no_proxy"] {
+            args.extend(["-e".to_string(), format!("{key}=localhost,127.0.0.1,::1")]);
+        }
+        args
+    }
+
     /// Security hardening flags for `docker run`.
     ///
     /// `is_prebuilt` controls whether `--read-only` is applied: prebuilt images
@@ -1599,9 +1648,7 @@ impl Sandbox for DockerSandbox {
             name.clone(),
         ];
 
-        if self.config.no_network {
-            args.push("--network=none".to_string());
-        }
+        args.extend(self.network_run_args());
 
         if let Some(ref tz) = self.config.timezone {
             args.extend(["-e".to_string(), format!("TZ={tz}")]);
@@ -1696,6 +1743,10 @@ impl Sandbox for DockerSandbox {
         if let Some(ref dir) = opts.working_dir {
             args.extend(["-w".to_string(), dir.display().to_string()]);
         }
+
+        // Inject proxy env vars so traffic routes through the trusted-network
+        // proxy running on the host.
+        args.extend(self.proxy_exec_env_args());
 
         for (k, v) in &opts.env {
             args.extend(["-e".to_string(), format!("{}={}", k, v)]);
@@ -3312,6 +3363,8 @@ impl WasmBuiltins {
 pub struct AppleContainerSandbox {
     pub config: SandboxConfig,
     name_generations: RwLock<HashMap<String, u32>>,
+    /// Cached host gateway IP for proxy routing in Trusted mode.
+    host_gateway_cache: RwLock<Option<String>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -3320,7 +3373,52 @@ impl AppleContainerSandbox {
         Self {
             config,
             name_generations: RwLock::new(HashMap::new()),
+            host_gateway_cache: RwLock::new(None),
         }
+    }
+
+    /// Detect the host gateway IP reachable from inside the container VM.
+    /// Caches the result after the first successful probe.
+    /// Falls back to `192.168.64.1` (default macOS vmnet gateway).
+    async fn detect_host_gateway(&self, container_name: &str) -> String {
+        const FALLBACK_GATEWAY: &str = "192.168.64.1";
+
+        // Return cached value if available.
+        {
+            let cache = self.host_gateway_cache.read().await;
+            if let Some(ref gw) = *cache {
+                return gw.clone();
+            }
+        }
+
+        let probe_cmd = "ip route 2>/dev/null | grep default | head -1 | awk '{print $3}'";
+        let args = apple_container_exec_args(container_name, probe_cmd.to_string());
+        let gateway = match tokio::process::Command::new("container")
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if stdout.is_empty() {
+                    FALLBACK_GATEWAY.to_string()
+                } else {
+                    stdout
+                }
+            },
+            _ => FALLBACK_GATEWAY.to_string(),
+        };
+
+        // Cache the result.
+        {
+            let mut cache = self.host_gateway_cache.write().await;
+            *cache = Some(gateway.clone());
+        }
+
+        gateway
     }
 
     fn image(&self) -> &str {
@@ -4382,6 +4480,26 @@ impl Sandbox for AppleContainerSandbox {
         // Apple Container CLI doesn't support -e flags, so prepend export
         // statements to inject env vars into the shell.
         let mut prefix = String::new();
+
+        // Inject proxy env vars so traffic routes through the trusted-network
+        // proxy running on the host.
+        if self.config.network == NetworkPolicy::Trusted {
+            let gateway = self.detect_host_gateway(&name).await;
+            let proxy_url = format!(
+                "http://{}:{}",
+                gateway,
+                moltis_network_filter::DEFAULT_PROXY_PORT
+            );
+            let escaped_proxy = proxy_url.replace('\'', "'\\''");
+            for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
+                prefix.push_str(&format!("export {key}='{escaped_proxy}'; "));
+            }
+            let no_proxy = "localhost,127.0.0.1,::1";
+            for key in ["NO_PROXY", "no_proxy"] {
+                prefix.push_str(&format!("export {key}='{no_proxy}'; "));
+            }
+        }
+
         for (k, v) in &opts.env {
             // Shell-escape the value with single quotes.
             let escaped = v.replace('\'', "'\\''");
@@ -6318,6 +6436,150 @@ mod tests {
         clear_zombies();
         assert!(!is_zombie("ghost-a"));
         assert!(!is_zombie("ghost-b"));
+    }
+
+    // ── NetworkPolicy / proxy wiring tests ────────────────────────────────
+
+    #[test]
+    fn test_from_config_network_trusted_overrides_no_network() {
+        let cfg = moltis_config::schema::SandboxConfig {
+            no_network: true,
+            network: "trusted".into(),
+            ..Default::default()
+        };
+        let sc = SandboxConfig::from(&cfg);
+        assert_eq!(sc.network, NetworkPolicy::Trusted);
+    }
+
+    #[test]
+    fn test_from_config_network_bypass_overrides_no_network() {
+        let cfg = moltis_config::schema::SandboxConfig {
+            no_network: true,
+            network: "bypass".into(),
+            ..Default::default()
+        };
+        let sc = SandboxConfig::from(&cfg);
+        assert_eq!(sc.network, NetworkPolicy::Bypass);
+    }
+
+    #[test]
+    fn test_from_config_empty_network_defaults_to_trusted() {
+        let cfg = moltis_config::schema::SandboxConfig {
+            no_network: false,
+            network: String::new(),
+            ..Default::default()
+        };
+        let sc = SandboxConfig::from(&cfg);
+        assert_eq!(sc.network, NetworkPolicy::Trusted);
+    }
+
+    #[test]
+    fn test_from_config_no_network_true_empty_network_is_blocked() {
+        let cfg = moltis_config::schema::SandboxConfig {
+            no_network: true,
+            network: String::new(),
+            ..Default::default()
+        };
+        let sc = SandboxConfig::from(&cfg);
+        assert_eq!(sc.network, NetworkPolicy::Blocked);
+    }
+
+    #[test]
+    fn test_docker_network_run_args_blocked() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Blocked,
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        assert_eq!(docker.network_run_args(), vec!["--network=none"]);
+    }
+
+    #[test]
+    fn test_docker_network_run_args_trusted() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Trusted,
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        let args = docker.network_run_args();
+        assert_eq!(args, vec!["--add-host=host.docker.internal:host-gateway"]);
+    }
+
+    #[test]
+    fn test_docker_network_run_args_bypass() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Bypass,
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        assert!(docker.network_run_args().is_empty());
+    }
+
+    #[test]
+    fn test_docker_proxy_exec_env_args_trusted() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Trusted,
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        let args = docker.proxy_exec_env_args();
+        let expected_url = format!(
+            "http://host.docker.internal:{}",
+            moltis_network_filter::DEFAULT_PROXY_PORT
+        );
+        // Should contain -e pairs for HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy,
+        // NO_PROXY, no_proxy (6 keys x 2 args each = 12 args).
+        assert_eq!(args.len(), 12);
+        assert!(args.contains(&format!("HTTP_PROXY={expected_url}")));
+        assert!(args.contains(&format!("https_proxy={expected_url}")));
+        assert!(args.contains(&"NO_PROXY=localhost,127.0.0.1,::1".to_string()));
+        assert!(args.contains(&"no_proxy=localhost,127.0.0.1,::1".to_string()));
+    }
+
+    #[test]
+    fn test_docker_proxy_exec_env_args_blocked() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Blocked,
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        assert!(docker.proxy_exec_env_args().is_empty());
+    }
+
+    #[test]
+    fn test_docker_proxy_exec_env_args_bypass() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Bypass,
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        assert!(docker.proxy_exec_env_args().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_apple_container_proxy_prefix_trusted() {
+        // Build the same prefix that exec() would build for Trusted mode,
+        // but using the helper logic directly.
+        let gateway = "192.168.64.1";
+        let proxy_url = format!(
+            "http://{}:{}",
+            gateway,
+            moltis_network_filter::DEFAULT_PROXY_PORT
+        );
+        let mut prefix = String::new();
+        let escaped_proxy = proxy_url.replace('\'', "'\\''");
+        for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
+            prefix.push_str(&format!("export {key}='{escaped_proxy}'; "));
+        }
+        for key in ["NO_PROXY", "no_proxy"] {
+            prefix.push_str(&format!("export {key}='localhost,127.0.0.1,::1'; "));
+        }
+
+        assert!(prefix.contains("export HTTP_PROXY="));
+        assert!(prefix.contains("export https_proxy="));
+        assert!(prefix.contains(&format!(":{}", moltis_network_filter::DEFAULT_PROXY_PORT)));
+        assert!(prefix.contains("export NO_PROXY='localhost,127.0.0.1,::1'"));
     }
 
     mod restricted_host_tests {

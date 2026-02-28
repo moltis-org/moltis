@@ -31,6 +31,7 @@ pub struct WebFetchTool {
     readability: bool,
     ssrf_allowlist: Vec<ipnet::IpNet>,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    proxy_url: Option<String>,
 }
 
 impl WebFetchTool {
@@ -58,7 +59,15 @@ impl WebFetchTool {
             readability: config.readability,
             ssrf_allowlist,
             cache: Mutex::new(HashMap::new()),
+            proxy_url: None,
         })
+    }
+
+    /// Route HTTP traffic through a proxy (e.g. the trusted-network proxy).
+    #[must_use]
+    pub fn with_proxy(mut self, url: String) -> Self {
+        self.proxy_url = Some(url);
+        self
     }
 
     fn cache_get(&self, key: &str) -> Option<serde_json::Value> {
@@ -102,10 +111,16 @@ impl WebFetchTool {
             s => bail!("unsupported URL scheme: {s}"),
         }
 
-        let client = reqwest::Client::builder()
+        let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
-            .redirect(reqwest::redirect::Policy::none()) // Manual redirect handling.
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none()); // Manual redirect handling.
+        if let Some(ref url) = self.proxy_url
+            && let Ok(proxy) = reqwest::Proxy::all(url)
+        {
+            let proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
+            client_builder = client_builder.proxy(proxy);
+        }
+        let client = client_builder.build()?;
 
         let mut visited: Vec<String> = Vec::new();
         let mut hops = 0u8;
@@ -403,7 +418,6 @@ impl AgentTool for WebFetchTool {
         let result = self
             .fetch_url(url, extract_mode, max_chars, accept_language)
             .await?;
-
         self.cache_set(cache_key, result.clone());
         Ok(result)
     }
@@ -427,6 +441,7 @@ mod tests {
             readability: true,
             ssrf_allowlist: vec![],
             cache: Mutex::new(HashMap::new()),
+            proxy_url: None,
         }
     }
 
@@ -683,5 +698,20 @@ mod tests {
         };
         let tool = WebFetchTool::from_config(&cfg).unwrap();
         assert_eq!(tool.ssrf_allowlist.len(), 2);
+    }
+
+    #[test]
+    fn test_with_proxy() {
+        let tool = default_tool();
+        assert!(tool.proxy_url.is_none());
+        let tool = tool.with_proxy("http://127.0.0.1:18791".into());
+        assert_eq!(tool.proxy_url.as_deref(), Some("http://127.0.0.1:18791"));
+    }
+
+    #[test]
+    fn test_from_config_has_no_proxy_by_default() {
+        let cfg = WebFetchConfig::default();
+        let tool = WebFetchTool::from_config(&cfg).unwrap();
+        assert!(tool.proxy_url.is_none());
     }
 }

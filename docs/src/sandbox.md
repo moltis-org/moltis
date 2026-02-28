@@ -265,6 +265,22 @@ home_persistence = "session"   # "off", "session", or "shared" (default)
 
 Moltis stores persisted homes under `data_dir()/sandbox/home/`.
 
+## Network policy
+
+By default, sandbox containers have no network access (`no_network = true`).
+For tasks that need filtered internet access, use
+[trusted network mode](trusted-network.md) — a proxy-based allowlist that
+lets containers reach approved domains while blocking everything else.
+
+```toml
+[tools.exec.sandbox]
+network = "trusted"
+trusted_domains = ["registry.npmjs.org", "github.com"]
+```
+
+See [Trusted Network](trusted-network.md) for full configuration and the
+network audit log.
+
 > **Note**: Home persistence applies to Docker, Apple Container, and WASM
 > backends. The restricted-host backend uses `HOME=/tmp` and does not mount
 > persistent storage.

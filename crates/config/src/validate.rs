@@ -147,6 +147,8 @@ fn build_schema_map() -> KnownKeys {
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
+            ("network", Leaf),
+            ("trusted_domains", Array(Box::new(Leaf))),
             ("backend", Leaf),
             ("resource_limits", resource_limits()),
             ("packages", Leaf),
@@ -974,6 +976,23 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 valid_sandbox_backends.join(", ")
             ),
         });
+    }
+
+    // Unknown sandbox network policy
+    if !config.tools.exec.sandbox.network.is_empty() {
+        let valid_network_policies = ["blocked", "trusted", "bypass"];
+        if !valid_network_policies.contains(&config.tools.exec.sandbox.network.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "tools.exec.sandbox.network".into(),
+                message: format!(
+                    "unknown sandbox network policy \"{}\"; expected one of: {}",
+                    config.tools.exec.sandbox.network,
+                    valid_network_policies.join(", ")
+                ),
+            });
+        }
     }
 
     // Unknown memory backend

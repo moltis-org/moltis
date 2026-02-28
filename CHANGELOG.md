@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Trusted network mode**: sandbox containers now default to `sandbox.network = "trusted"`, routing outbound traffic through an HTTP CONNECT proxy with full audit logging. When `trusted_domains` is empty (the default), all domains are allowed (audit-only mode); when configured, only listed domains pass without approval. Includes real-time network audit log with domain, protocol, and action filtering via Settings > Network Audit. Configurable via `sandbox.trusted_domains` in `moltis.toml`. Proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) are now automatically injected into both Docker and Apple Container sandboxes, and the proxy binds to `0.0.0.0` so it is reachable from container VMs. The proxy rejects connections from non-private IPs (only loopback, RFC 1918, link-local, and CGNAT ranges are accepted)
+- **New `moltis-network-filter` crate**: domain filtering, proxy, and audit buffer logic extracted from `moltis-tools` and `moltis-gateway` into a standalone crate with feature flags (`proxy`, `service`, `metrics`). The macOS app can now depend on it directly for network audit log display via `moltis-swift-bridge`
+- **macOS Network Audit pane**: new Settings > Network Audit section with real-time log display, action filtering (allowed/denied), search, pause/resume, clipboard export, and JSONL download — matching the web UI pattern. New FFI callback `moltis_set_network_audit_callback` bridges Rust audit entries to Swift
+- **Proxy-compliant HTTP tools**: all HTTP tools (`web_fetch`, `web_search`, `location`, `map`) now route through the trusted-network proxy when active, so their traffic appears in the Network Audit log and respects domain filtering. The shared `reqwest` client is initialized with proxy config at gateway startup; `web_fetch` uses a per-tool proxy setting for its custom redirect-following client
+- **Network policy rename**: `sandbox.network = "open"` has been renamed to `"bypass"` to make explicit that traffic bypasses the proxy entirely (no audit logging)
 - **Real WASM sandbox** (`wasm` feature, default on) — Wasmtime + WASI sandbox with filesystem isolation, fuel metering, epoch-based timeouts, and ~20 built-in coreutils (echo, cat, ls, mkdir, rm, cp, mv, etc.). Two execution tiers: built-in commands operate on a sandboxed directory tree; `.wasm` modules run via Wasmtime with preopened dirs and captured I/O. Backend: `"wasm"` in config
 - **Restricted-host sandbox** — new `"restricted-host"` backend (extracted from the old `WasmtimeSandbox`) providing honest naming for what it does: env clearing, restricted PATH, and `ulimit` resource wrappers without containers or WASM. Always compiled (no feature gate)
 - **Docker security hardening** — containers now launch with `--cap-drop ALL`, `--security-opt no-new-privileges`, tmpfs mounts for `/tmp` and `/run`, and `--read-only` root filesystem for prebuilt images
@@ -74,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Slow SQLite writes**: `moltis.db` and `memory.db` now use `journal_mode=WAL` and `synchronous=NORMAL` (matching `metrics.db`), eliminating multi-second write contention that caused 3–10 s INSERT times under concurrent access
 - Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
 - Docker image now installs Docker CLI from Docker’s official Debian repository (`docker-ce-cli`), avoiding API mismatches with newer host daemons during sandbox builds/exec
 - Chat UI now shows a first-run sandbox preparation status message before container/image setup begins, so startup delays are visible while sandbox resources are created
