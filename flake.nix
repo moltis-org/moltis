@@ -41,8 +41,6 @@
           ];
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
-          doCheck = false; # Disable tests due to permission issues in Nix sandbox
-
           meta = with pkgs.lib; {
             description = "Personal AI gateway inspired by OpenClaw";
             homepage = "https://www.moltis.org/";
@@ -69,6 +67,51 @@
           shellHook = ''
             export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
           '';
-        };      }
+        };
+
+        checks = {
+          auth-tests = pkgs.rustPlatform.buildRustPackage {
+            pname = "moltis-auth-tests";
+            version = "0.1.0";
+            src = ./.;
+            cargoBuildFlags = [ "-p" "moltis-auth" ];
+            cargoLock.lockFile = ./Cargo.lock;
+
+            RUSTC = "${rustToolchain}/bin/rustc";
+            CARGO = "${rustToolchain}/bin/cargo";
+
+            nativeBuildInputs = with pkgs; [
+              perl
+              pkg-config
+              llvmPackages.clang
+              cmake
+            ];
+
+            buildInputs = with pkgs; [
+              openssl
+              pkgs.llvmPackages.libclang.lib
+            ];
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+
+            # Ensure tests are run for this check
+            doCheck = true;
+
+            preCheck = ''
+              export HOME=$(mktemp -d)
+              export XDG_CONFIG_HOME="$HOME/.config"
+              export XDG_DATA_HOME="$HOME/.local/share"
+              export CARGO_HOME="$HOME/.cargo"
+              export MOLTIS_CONFIG_DIR="$XDG_CONFIG_HOME/moltis"
+              mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$CARGO_HOME" "$XDG_CONFIG_HOME/moltis"
+              touch "$XDG_CONFIG_HOME/moltis/moltis.toml"
+              trap 'rm -rf $HOME' EXIT
+            '';
+
+            checkPhase = ''
+              cargo test -p moltis-auth
+            '';
+          };
+        };
+      }
     );
 }
