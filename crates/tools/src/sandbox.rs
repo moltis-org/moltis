@@ -5691,7 +5691,10 @@ mod tests {
         let router = SandboxRouter::new(config);
         let name = router.backend_name();
         assert!(
-            name == "docker" || name == "podman" || name == "apple-container" || name == "none",
+            name == "docker"
+                || name == "podman"
+                || name == "apple-container"
+                || name == "restricted-host",
             "unexpected backend: {name}"
         );
     }
