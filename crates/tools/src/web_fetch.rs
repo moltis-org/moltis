@@ -4,12 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use {
-    anyhow::{Result, bail},
-    async_trait::async_trait,
-    tracing::debug,
-    url::Url,
-};
+use {async_trait::async_trait, tracing::debug, url::Url};
+
+use crate::error::Error;
 
 use {
     crate::ssrf::ssrf_check, moltis_agents::tool_registry::AgentTool,
@@ -102,13 +99,13 @@ impl WebFetchTool {
         extract_mode: &str,
         max_chars: usize,
         accept_language: Option<&str>,
-    ) -> Result<serde_json::Value> {
+    ) -> crate::Result<serde_json::Value> {
         let mut current_url = Url::parse(url_str)?;
 
         // Validate scheme.
         match current_url.scheme() {
             "http" | "https" => {},
-            s => bail!("unsupported URL scheme: {s}"),
+            s => return Err(Error::message(format!("unsupported URL scheme: {s}"))),
         }
 
         let mut client_builder = reqwest::Client::builder()
@@ -139,23 +136,26 @@ impl WebFetchTool {
 
             if status.is_redirection() {
                 if hops >= self.max_redirects {
-                    bail!(
+                    return Err(Error::message(format!(
                         "too many redirects ({} hops, max {})",
                         hops + 1,
                         self.max_redirects
-                    );
+                    )));
                 }
                 let location = resp
                     .headers()
                     .get("location")
                     .and_then(|v| v.to_str().ok())
-                    .ok_or_else(|| anyhow::anyhow!("redirect without Location header"))?;
+                    .ok_or_else(|| Error::message("redirect without Location header"))?;
 
                 let next = current_url.join(location)?;
 
                 // Loop detection.
                 if visited.contains(&next.to_string()) {
-                    bail!("redirect loop detected: {} → {}", current_url, next);
+                    return Err(Error::message(format!(
+                        "redirect loop detected: {} → {}",
+                        current_url, next
+                    )));
                 }
 
                 current_url = next;
@@ -388,11 +388,11 @@ impl AgentTool for WebFetchTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let url = params
             .get("url")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'url' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'url' parameter"))?;
 
         let extract_mode = params
             .get("extract_mode")

@@ -10,6 +10,7 @@ Configure in `moltis.toml`:
 ```toml
 [tools.exec.sandbox]
 backend = "auto"          # default — picks the best available
+# backend = "podman"      # force Podman (daemonless, rootless)
 # backend = "docker"      # force Docker
 # backend = "apple-container"  # force Apple Container (macOS only)
 # backend = "wasm"        # force WASM sandbox (Wasmtime + WASI)
@@ -21,9 +22,10 @@ With `"auto"` (the default), Moltis picks the strongest available backend:
 | Priority | Backend           | Platform | Isolation          |
 |----------|-------------------|----------|--------------------|
 | 1        | Apple Container   | macOS    | VM (Virtualization.framework) |
-| 2        | Docker            | any      | Linux namespaces / cgroups    |
-| 3        | Restricted Host   | any      | env clearing, rlimits (no filesystem isolation) |
-| 4        | none (host)       | any      | no isolation                  |
+| 2        | Podman            | any      | Linux namespaces / cgroups (daemonless) |
+| 3        | Docker            | any      | Linux namespaces / cgroups    |
+| 4        | Restricted Host   | any      | env clearing, rlimits (no filesystem isolation) |
+| 5        | none (host)       | any      | no isolation                  |
 
 The WASM backend (`backend = "wasm"`) is not in the auto-detect chain because
 it cannot execute arbitrary shell commands — use it explicitly when you want
@@ -65,6 +67,38 @@ container run --rm ubuntu echo "hello from VM"
 Once installed, restart `moltis gateway` — the startup banner will show
 `sandbox: apple-container backend`.
 
+## Podman
+
+[Podman](https://podman.io/) is a daemonless, rootless container engine that
+is CLI-compatible with Docker. It is preferred over Docker in auto-detection
+because it doesn't require a background daemon process and runs rootless by
+default for better security.
+
+### Install
+
+```bash
+# macOS
+brew install podman
+podman machine init && podman machine start
+
+# Debian/Ubuntu
+sudo apt-get install -y podman
+
+# Fedora/RHEL
+sudo dnf install -y podman
+```
+
+### Verify
+
+```bash
+podman --version
+podman run --rm docker.io/library/ubuntu echo "hello from podman"
+```
+
+Once installed, restart `moltis gateway` — the startup banner will show
+`sandbox: podman backend`. All Docker hardening flags (see below) apply
+identically to Podman containers.
+
 ## Docker
 
 Docker is supported on macOS, Linux, and Windows. On macOS it runs inside a
@@ -73,10 +107,10 @@ overhead than Apple Container.
 
 Install from https://docs.docker.com/get-docker/
 
-### Docker Hardening
+### Docker/Podman Hardening
 
-Docker containers launched by Moltis include the following security hardening
-flags by default:
+Docker and Podman containers launched by Moltis include the following security
+hardening flags by default:
 
 | Flag | Effect |
 |------|--------|

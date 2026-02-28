@@ -4,12 +4,13 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use std::time::Instant;
 
 use {
-    anyhow::{Result, bail},
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     tokio::process::Command,
     tracing::{debug, info, warn},
 };
+
+use crate::{Result, error::Error};
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{
@@ -113,15 +114,15 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
     let child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             if let Some(ref dir) = opts.working_dir {
-                anyhow::anyhow!(
+                Error::message(format!(
                     "failed to start command: working directory '{}' does not exist",
                     dir.display()
-                )
+                ))
             } else {
-                anyhow::anyhow!("failed to start command: shell 'sh' not found")
+                Error::message("failed to start command: shell 'sh' not found")
             }
         } else {
-            anyhow::anyhow!("failed to start command: {e}")
+            Error::message(format!("failed to start command: {e}"))
         }
     })?;
 
@@ -150,10 +151,13 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
                 exit_code,
             })
         },
-        Ok(Err(e)) => bail!("failed to run command: {e}"),
+        Ok(Err(e)) => Err(Error::message(format!("failed to run command: {e}"))),
         Err(_) => {
             warn!(command, "exec timeout");
-            bail!("command timed out after {}s", opts.timeout.as_secs())
+            Err(Error::message(format!(
+                "command timed out after {}s",
+                opts.timeout.as_secs()
+            )))
         },
     }
 }
@@ -266,7 +270,7 @@ impl AgentTool for ExecTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         #[cfg(feature = "metrics")]
         let start = Instant::now();
         #[cfg(feature = "metrics")]
@@ -275,7 +279,7 @@ impl AgentTool for ExecTool {
         let command = params
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'command' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'command' parameter"))?;
 
         let timeout_secs = params
             .get("timeout")
@@ -399,10 +403,15 @@ impl AgentTool for ExecTool {
                         info!(command, "command approved");
                     },
                     ApprovalDecision::Denied => {
-                        bail!("command denied by user: {command}");
+                        return Err(
+                            Error::message(format!("command denied by user: {command}")).into()
+                        );
                     },
                     ApprovalDecision::Timeout => {
-                        bail!("approval timed out for command: {command}");
+                        return Err(Error::message(format!(
+                            "approval timed out for command: {command}"
+                        ))
+                        .into());
                     },
                 }
             }
@@ -455,7 +464,7 @@ impl AgentTool for ExecTool {
                             error: error.to_string(),
                         });
                     }
-                    return Err(error);
+                    return Err(error.into());
                 }
 
                 if announce_prepare {
@@ -906,7 +915,7 @@ mod tests {
         async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             if self.cleanup_should_fail {
-                bail!("cleanup failed");
+                return Err(Error::message("cleanup failed"));
             }
             Ok(())
         }

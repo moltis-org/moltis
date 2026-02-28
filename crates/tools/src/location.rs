@@ -9,12 +9,13 @@
 use std::sync::Arc;
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     moltis_config::GeoLocation,
     serde::{Deserialize, Serialize},
     tracing::warn,
 };
+
+use crate::{Result, error::Error};
 
 // ── Precision ───────────────────────────────────────────────────────────────
 
@@ -304,7 +305,7 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         // Fast path: return cached location.
         if let Some(loc) = self.requester.cached_location() {
             let geocoded = match loc.place {
@@ -396,9 +397,7 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
             };
         }
 
-        Err(anyhow::anyhow!(
-            "no client connection available for location request"
-        ))
+        Err(Error::message("no client connection available for location request").into())
     }
 }
 

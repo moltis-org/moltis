@@ -14,7 +14,6 @@
 use std::{collections::HashSet, sync::Arc};
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     serde_json::{Value, json},
     tracing::debug,
@@ -351,7 +350,7 @@ impl AgentTool for SandboxPackagesTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         #[cfg(feature = "metrics")]
         let start = std::time::Instant::now();
 

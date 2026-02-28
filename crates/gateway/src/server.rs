@@ -96,7 +96,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         &self,
         conn_id: &str,
         precision: moltis_tools::location::LocationPrecision,
-    ) -> anyhow::Result<moltis_tools::location::LocationResult> {
+    ) -> moltis_tools::Result<moltis_tools::location::LocationResult> {
         use moltis_tools::location::{LocationError, LocationResult};
 
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -113,11 +113,13 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let inner = self.state.inner.read().await;
             let clients = &inner.clients;
-            let client = clients
-                .get(conn_id)
-                .ok_or_else(|| anyhow::anyhow!("no client connection for conn_id {conn_id}"))?;
+            let client = clients.get(conn_id).ok_or_else(|| {
+                moltis_tools::Error::message(format!("no client connection for conn_id {conn_id}"))
+            })?;
             if !client.send(&event_json) {
-                anyhow::bail!("failed to send location request to client {conn_id}");
+                return Err(moltis_tools::Error::message(format!(
+                    "failed to send location request to client {conn_id}"
+                )));
             }
         }
 
@@ -204,7 +206,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
     async fn request_channel_location(
         &self,
         session_key: &str,
-    ) -> anyhow::Result<moltis_tools::location::LocationResult> {
+    ) -> moltis_tools::Result<moltis_tools::location::LocationResult> {
         use moltis_tools::location::{LocationError, LocationResult};
 
         // Look up channel binding from session metadata.
@@ -213,14 +215,13 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             .services
             .session_metadata
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("session metadata not available"))?;
-        let entry = session_meta
-            .get(session_key)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("no session metadata for key {session_key}"))?;
-        let binding_json = entry
-            .channel_binding
-            .ok_or_else(|| anyhow::anyhow!("no channel binding for session {session_key}"))?;
+            .ok_or_else(|| moltis_tools::Error::message("session metadata not available"))?;
+        let entry = session_meta.get(session_key).await.ok_or_else(|| {
+            moltis_tools::Error::message(format!("no session metadata for key {session_key}"))
+        })?;
+        let binding_json = entry.channel_binding.ok_or_else(|| {
+            moltis_tools::Error::message(format!("no channel binding for session {session_key}"))
+        })?;
         let reply_target: moltis_channels::ChannelReplyTarget =
             serde_json::from_str(&binding_json)?;
 
@@ -229,7 +230,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             .state
             .services
             .channel_outbound_arc()
-            .ok_or_else(|| anyhow::anyhow!("no channel outbound available"))?;
+            .ok_or_else(|| moltis_tools::Error::message("no channel outbound available"))?;
         outbound
             .send_text(
                 &reply_target.account_id,
@@ -237,7 +238,8 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
                 "Please share your location in this chat.",
                 None,
             )
-            .await?;
+            .await
+            .map_err(|e| moltis_tools::Error::external("send location request", e))?;
 
         // Create a pending invoke keyed by session.
         let pending_key = format!("channel_location:{session_key}");
@@ -4368,9 +4370,9 @@ pub async fn start_gateway(
         format!("openclaw: {}", banner.openclaw_status),
     ];
     lines.extend(startup_passkey_origin_lines(&passkey_origins));
-    // Hint about Apple Container on macOS when using Docker.
+    // Hint about Apple Container on macOS when using Docker or Podman.
     #[cfg(target_os = "macos")]
-    if banner.sandbox_backend_name == "docker" {
+    if banner.sandbox_backend_name == "docker" || banner.sandbox_backend_name == "podman" {
         lines.push(
             "hint: install Apple Container for VM-isolated sandboxing (see docs/sandbox.md)".into(),
         );

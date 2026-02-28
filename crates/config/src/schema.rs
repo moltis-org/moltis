@@ -1585,10 +1585,10 @@ pub struct SandboxConfig {
     /// Domains allowed through the proxy in `trusted` mode.
     #[serde(default)]
     pub trusted_domains: Vec<String>,
-    /// Backend: "auto" (default), "docker", "apple-container",
+    /// Backend: "auto" (default), "docker", "podman", "apple-container",
     /// "restricted-host", or "wasm".
-    /// "auto" prefers Apple Container on macOS, then Docker, then
-    /// restricted-host. "wasm" uses Wasmtime + WASI for real sandboxed
+    /// "auto" prefers Apple Container on macOS, then Podman, then Docker,
+    /// then restricted-host. "wasm" uses Wasmtime + WASI for real sandboxed
     /// execution.
     pub backend: String,
     pub resource_limits: ResourceLimitsConfig,

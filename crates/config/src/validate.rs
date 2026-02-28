@@ -961,6 +961,7 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     let valid_sandbox_backends = [
         "auto",
         "docker",
+        "podman",
         "apple-container",
         "restricted-host",
         "wasm",
@@ -1603,7 +1604,7 @@ disable_rag = true
     fn unknown_sandbox_backend_warned() {
         let toml = r#"
 [tools.exec.sandbox]
-backend = "podman"
+backend = "lxc"
 "#;
         let result = validate_toml_str(toml);
         let warning = result
@@ -1613,6 +1614,23 @@ backend = "podman"
         assert!(
             warning.is_some(),
             "expected warning for unknown sandbox backend"
+        );
+    }
+
+    #[test]
+    fn podman_sandbox_backend_accepted() {
+        let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "tools.exec.sandbox.backend");
+        assert!(
+            warning.is_none(),
+            "podman should be accepted as a valid sandbox backend"
         );
     }
 

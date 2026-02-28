@@ -5,7 +5,6 @@ use std::{
 };
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     sha2::{Digest, Sha256},
@@ -16,6 +15,8 @@ use {
 #[cfg(feature = "wasm")]
 use crate::wasm_engine::WasmComponentEngine;
 use crate::{
+    Result,
+    error::{Context, Error},
     exec::{ExecOpts, ExecResult},
     wasm_limits::WasmToolLimits,
 };
@@ -463,9 +464,9 @@ pub struct SandboxConfig {
     pub network: NetworkPolicy,
     /// Domains allowed through the proxy in `Trusted` mode.
     pub trusted_domains: Vec<String>,
-    /// Backend: `"auto"` (default), `"docker"`, `"apple-container"`,
+    /// Backend: `"auto"` (default), `"docker"`, `"podman"`, `"apple-container"`,
     /// `"restricted-host"`, or `"wasm"`.
-    /// `"auto"` prefers Apple Container on macOS, then Docker, then restricted-host.
+    /// `"auto"` prefers Apple Container on macOS, then Podman, then Docker, then restricted-host.
     pub backend: String,
     pub resource_limits: ResourceLimits,
     /// Packages to install via `apt-get` after container creation.
@@ -583,7 +584,7 @@ pub struct BuildImageResult {
 /// Trait for sandbox implementations (Docker, cgroups, Apple Container, etc.).
 #[async_trait]
 pub trait Sandbox: Send + Sync {
-    /// Human-readable backend name (e.g. "docker", "apple-container", "cgroup", "none").
+    /// Human-readable backend name (e.g. "docker", "podman", "apple-container", "cgroup", "none").
     fn backend_name(&self) -> &'static str;
 
     /// Ensure the sandbox environment is ready (e.g., container started).
@@ -799,8 +800,12 @@ fn rebuildable_sandbox_image_tag(
     Some(sandbox_image_tag(image_repo, base_image, packages))
 }
 
+/// OCI-compatible CLI binaries that use Docker-format commands
+/// (`image ls`, `ps`, `system df`, etc.).
+const OCI_COMPATIBLE_CLIS: &[&str] = &["docker", "podman"];
+
 /// Check whether a container image exists locally.
-/// `cli` is the container CLI binary (e.g. `"docker"` or `"container"`).
+/// `cli` is the container CLI binary (e.g. `"docker"`, `"podman"`, or `"container"`).
 async fn sandbox_image_exists(cli: &str, tag: &str) -> bool {
     tokio::process::Command::new(cli)
         .args(["image", "inspect", tag])
@@ -824,9 +829,12 @@ pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
     let mut images = Vec::new();
     let mut seen = HashSet::new();
 
-    // Docker: supports --format with Go templates.
-    if is_cli_available("docker") {
-        let output = tokio::process::Command::new("docker")
+    // Docker/Podman: both support --format with Go templates.
+    for cli in OCI_COMPATIBLE_CLIS {
+        if !is_cli_available(cli) {
+            continue;
+        }
+        let output = tokio::process::Command::new(cli)
             .args([
                 "image",
                 "ls",
@@ -934,16 +942,23 @@ fn format_bytes(bytes: u64) -> String {
 
 /// Remove a specific `<instance>-sandbox:*` image.
 pub async fn remove_sandbox_image(tag: &str) -> Result<()> {
-    anyhow::ensure!(
-        is_sandbox_image_tag(tag),
-        "refusing to remove non-sandbox image: {tag}"
-    );
-    for cli in &["docker", "container"] {
+    if !is_sandbox_image_tag(tag) {
+        return Err(Error::message(format!(
+            "refusing to remove non-sandbox image: {tag}"
+        )));
+    }
+    // OCI-compatible CLIs (docker, podman) + Apple Container.
+    let all_clis: Vec<&str> = OCI_COMPATIBLE_CLIS
+        .iter()
+        .copied()
+        .chain(std::iter::once("container"))
+        .collect();
+    for cli in &all_clis {
         if !is_cli_available(cli) {
             continue;
         }
         if sandbox_image_exists(cli, tag).await {
-            // Apple Container uses `image delete`, Docker uses `image rm`.
+            // Apple Container uses `image delete`, Docker/Podman use `image rm`.
             let subcmd = if *cli == "container" {
                 "delete"
             } else {
@@ -955,7 +970,10 @@ pub async fn remove_sandbox_image(tag: &str) -> Result<()> {
                 .await?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("{cli} image {subcmd} failed for {tag}: {}", stderr.trim());
+                return Err(Error::message(format!(
+                    "{cli} image {subcmd} failed for {tag}: {}",
+                    stderr.trim()
+                )));
             }
         }
     }
@@ -990,6 +1008,7 @@ pub enum ContainerRunState {
 pub enum ContainerBackend {
     AppleContainer,
     Docker,
+    Podman,
 }
 
 /// A container managed by moltis (running, stopped, or exited).
@@ -1119,9 +1138,15 @@ pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<Runni
         }
     }
 
-    // Docker: `docker ps -a --filter name=<prefix> --format json` outputs one JSON per line.
-    if is_cli_available("docker") {
-        let output = tokio::process::Command::new("docker")
+    // Docker/Podman: `<cli> ps -a --filter name=<prefix> --format json` outputs one JSON per line.
+    for (cli, backend) in OCI_COMPATIBLE_CLIS
+        .iter()
+        .zip([ContainerBackend::Docker, ContainerBackend::Podman])
+    {
+        if !is_cli_available(cli) {
+            continue;
+        }
+        let output = tokio::process::Command::new(cli)
             .args([
                 "ps",
                 "-a",
@@ -1176,7 +1201,7 @@ pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<Runni
                     name: name.to_string(),
                     image,
                     state,
-                    backend: ContainerBackend::Docker,
+                    backend,
                     cpus: None,
                     memory_mb: None,
                     started,
@@ -1239,9 +1264,12 @@ pub async fn container_disk_usage() -> Result<ContainerDiskUsage> {
         }
     }
 
-    // Fallback: Docker `docker system df --format json` (one JSON per line per type).
-    if is_cli_available("docker") {
-        let output = tokio::process::Command::new("docker")
+    // Fallback: Docker/Podman `<cli> system df --format json` (one JSON per line per type).
+    for cli in OCI_COMPATIBLE_CLIS {
+        if !is_cli_available(cli) {
+            continue;
+        }
+        let output = tokio::process::Command::new(cli)
             .args(["system", "df", "--format", "{{json .}}"])
             .output()
             .await;
@@ -1288,7 +1316,7 @@ pub async fn container_disk_usage() -> Result<ContainerDiskUsage> {
         }
     }
 
-    anyhow::bail!("no container CLI available for disk usage")
+    Err(Error::message("no container CLI available for disk usage"))
 }
 
 /// Remove all containers whose name starts with `container_prefix`.
@@ -1317,7 +1345,7 @@ pub async fn clean_all_containers(container_prefix: &str) -> Result<usize> {
 /// Safety: callers must validate that `name` starts with the expected prefix
 /// to prevent stopping arbitrary containers.
 pub async fn stop_container(name: &str) -> Result<()> {
-    // Try Apple Container first, then Docker.
+    // Try Apple Container first, then Docker/Podman.
     if is_cli_available("container") {
         let output = tokio::process::Command::new("container")
             .args(["stop", name])
@@ -1329,18 +1357,26 @@ pub async fn stop_container(name: &str) -> Result<()> {
             return Ok(());
         }
     }
-    if is_cli_available("docker") {
-        let output = tokio::process::Command::new("docker")
+    for cli in OCI_COMPATIBLE_CLIS {
+        if !is_cli_available(cli) {
+            continue;
+        }
+        let output = tokio::process::Command::new(cli)
             .args(["stop", name])
             .output()
             .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("docker stop failed for {name}: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "{cli} stop failed for {name}: {}",
+                stderr.trim()
+            )));
         }
         return Ok(());
     }
-    anyhow::bail!("no container CLI available to stop {name}")
+    Err(Error::message(format!(
+        "no container CLI available to stop {name}"
+    )))
 }
 
 /// Remove a container by name (force). Detects the backend from available CLIs.
@@ -1376,10 +1412,10 @@ pub async fn remove_container(name: &str) -> Result<()> {
                         .as_ref()
                         .map(|o| String::from_utf8_lossy(&o.stderr).to_string())
                         .unwrap_or_default();
-                    anyhow::bail!(
+                    return Err(Error::message(format!(
                         "container rm failed for running container {name}: {}",
                         stderr.trim()
-                    );
+                    )));
                 }
                 // Stopped/exited/unknown — ghost container, mark as zombie.
                 tracing::warn!(
@@ -1398,19 +1434,27 @@ pub async fn remove_container(name: &str) -> Result<()> {
             },
         }
     }
-    if is_cli_available("docker") {
-        let output = tokio::process::Command::new("docker")
+    for cli in OCI_COMPATIBLE_CLIS {
+        if !is_cli_available(cli) {
+            continue;
+        }
+        let output = tokio::process::Command::new(cli)
             .args(["rm", "-f", name])
             .output()
             .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("docker rm failed for {name}: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "{cli} rm failed for {name}: {}",
+                stderr.trim()
+            )));
         }
         unmark_zombie(name);
         return Ok(());
     }
-    anyhow::bail!("no container CLI available to remove {name}")
+    Err(Error::message(format!(
+        "no container CLI available to remove {name}"
+    )))
 }
 
 /// Restart the container daemon. For Apple Container this runs
@@ -1427,7 +1471,10 @@ pub async fn restart_container_daemon() -> Result<()> {
             .await?;
         if !stop.status.success() {
             let stderr = String::from_utf8_lossy(&stop.stderr);
-            anyhow::bail!("container system stop failed: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "container system stop failed: {}",
+                stderr.trim()
+            )));
         }
         let start = tokio::process::Command::new("container")
             .args(["system", "start"])
@@ -1435,32 +1482,56 @@ pub async fn restart_container_daemon() -> Result<()> {
             .await?;
         if !start.status.success() {
             let stderr = String::from_utf8_lossy(&start.stderr);
-            anyhow::bail!("container system start failed: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "container system start failed: {}",
+                stderr.trim()
+            )));
         }
         clear_zombies();
         return Ok(());
     }
-    if is_cli_available("docker") {
-        // Docker Desktop restarts via the CLI are not straightforward;
-        // restarting the daemon is platform-specific. Best-effort: just
-        // prune stopped containers to clear stale state.
-        let _ = tokio::process::Command::new("docker")
+    // Docker/Podman: best-effort prune of stopped containers.
+    for cli in OCI_COMPATIBLE_CLIS {
+        if !is_cli_available(cli) {
+            continue;
+        }
+        let _ = tokio::process::Command::new(cli)
             .args(["container", "prune", "-f"])
             .output()
             .await;
         return Ok(());
     }
-    anyhow::bail!("no container CLI available to restart daemon")
+    Err(Error::message(
+        "no container CLI available to restart daemon",
+    ))
 }
 
-/// Docker-based sandbox implementation.
+/// Docker/Podman-based sandbox implementation.
+///
+/// The `cli` field selects the container CLI binary (`"docker"` or `"podman"`).
+/// Podman's CLI is a drop-in replacement for Docker, so both backends share
+/// this single implementation.
 pub struct DockerSandbox {
     pub config: SandboxConfig,
+    cli: &'static str,
+    backend_label: &'static str,
 }
 
 impl DockerSandbox {
     pub fn new(config: SandboxConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            cli: "docker",
+            backend_label: "docker",
+        }
+    }
+
+    pub fn podman(config: SandboxConfig) -> Self {
+        Self {
+            config,
+            cli: "podman",
+            backend_label: "podman",
+        }
     }
 
     fn image(&self) -> &str {
@@ -1578,7 +1649,7 @@ impl DockerSandbox {
     }
 
     async fn resolve_local_image(&self, requested_image: &str) -> Result<String> {
-        if sandbox_image_exists("docker", requested_image).await {
+        if sandbox_image_exists(self.cli, requested_image).await {
             return Ok(requested_image.to_string());
         }
 
@@ -1616,14 +1687,14 @@ impl DockerSandbox {
 #[async_trait]
 impl Sandbox for DockerSandbox {
     fn backend_name(&self) -> &'static str {
-        "docker"
+        self.backend_label
     }
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
         let name = self.container_name(id);
 
         // Check if container already running.
-        let check = tokio::process::Command::new("docker")
+        let check = tokio::process::Command::new(self.cli)
             .args(["inspect", "--format", "{{.State.Running}}", &name])
             .output()
             .await;
@@ -1662,20 +1733,24 @@ impl Sandbox for DockerSandbox {
         args.push(image.clone());
         args.extend(["sleep".to_string(), "infinity".to_string()]);
 
-        let output = tokio::process::Command::new("docker")
+        let output = tokio::process::Command::new(self.cli)
             .args(&args)
             .output()
             .await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("docker run failed: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "{} run failed: {}",
+                self.cli,
+                stderr.trim()
+            )));
         }
 
         // Skip provisioning if the image is a pre-built instance sandbox image
         // (packages are already baked in — including /home/sandbox from the Dockerfile).
         if !is_prebuilt {
-            provision_packages("docker", &name, &self.config.packages).await?;
+            provision_packages(self.cli, &name, &self.config.packages).await?;
         }
 
         Ok(())
@@ -1693,7 +1768,7 @@ impl Sandbox for DockerSandbox {
         let tag = sandbox_image_tag(self.image_repo(), base, packages);
 
         // Check if image already exists.
-        if sandbox_image_exists("docker", &tag).await {
+        if sandbox_image_exists(self.cli, &tag).await {
             info!(
                 tag,
                 "pre-built sandbox image already exists, skipping build"
@@ -1713,7 +1788,7 @@ impl Sandbox for DockerSandbox {
 
         info!(tag, packages = %pkg_list, "building pre-built sandbox image");
 
-        let output = tokio::process::Command::new("docker")
+        let output = tokio::process::Command::new(self.cli)
             .args(["build", "-t", &tag, "-f"])
             .arg(&dockerfile_path)
             .arg(&tmp_dir)
@@ -1728,7 +1803,11 @@ impl Sandbox for DockerSandbox {
         let output = output?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("docker build failed for {tag}: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "{} build failed for {tag}: {}",
+                self.cli,
+                stderr.trim()
+            )));
         }
 
         info!(tag, "pre-built sandbox image ready");
@@ -1755,7 +1834,7 @@ impl Sandbox for DockerSandbox {
         args.push(name);
         args.extend(["sh".to_string(), "-c".to_string(), command.to_string()]);
 
-        let child = tokio::process::Command::new("docker")
+        let child = tokio::process::Command::new(self.cli)
             .args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -1778,14 +1857,22 @@ impl Sandbox for DockerSandbox {
                     exit_code: output.status.code().unwrap_or(-1),
                 })
             },
-            Ok(Err(e)) => anyhow::bail!("docker exec failed: {e}"),
-            Err(_) => anyhow::bail!("docker exec timed out after {}s", opts.timeout.as_secs()),
+            Ok(Err(e)) => {
+                return Err(Error::message(format!("{} exec failed: {e}", self.cli)));
+            },
+            Err(_) => {
+                return Err(Error::message(format!(
+                    "{} exec timed out after {}s",
+                    self.cli,
+                    opts.timeout.as_secs()
+                )));
+            },
         }
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
         let name = self.container_name(id);
-        let _ = tokio::process::Command::new("docker")
+        let _ = tokio::process::Command::new(self.cli)
             .args(["rm", "-f", &name])
             .output()
             .await;
@@ -1874,7 +1961,12 @@ impl Sandbox for CgroupSandbox {
                 debug!("systemd-run available");
                 Ok(())
             },
-            _ => anyhow::bail!("systemd-run not found; cgroup sandbox requires systemd"),
+            _ => {
+                return Err(Error::message(
+                    "systemd-run not found; cgroup sandbox requires systemd",
+                )
+                .into());
+            },
         }
     }
 
@@ -1920,11 +2012,16 @@ impl Sandbox for CgroupSandbox {
                     exit_code: output.status.code().unwrap_or(-1),
                 })
             },
-            Ok(Err(e)) => anyhow::bail!("systemd-run exec failed: {e}"),
-            Err(_) => anyhow::bail!(
-                "systemd-run exec timed out after {}s",
-                opts.timeout.as_secs()
-            ),
+            Ok(Err(e)) => {
+                return Err(Error::message(format!("systemd-run exec failed: {e}")));
+            },
+            Err(_) => {
+                return Err(Error::message(format!(
+                    "systemd-run exec timed out after {}s",
+                    opts.timeout.as_secs()
+                ))
+                .into());
+            },
         }
     }
 
@@ -2057,11 +2154,17 @@ impl Sandbox for RestrictedHostSandbox {
                     exit_code: output.status.code().unwrap_or(-1),
                 })
             },
-            Ok(Err(e)) => anyhow::bail!("restricted-host sandbox exec failed: {e}"),
-            Err(_) => anyhow::bail!(
-                "restricted-host sandbox exec timed out after {}s",
-                opts.timeout.as_secs()
-            ),
+            Ok(Err(e)) => {
+                return Err(Error::message(format!(
+                    "restricted-host sandbox exec failed: {e}"
+                )));
+            },
+            Err(_) => {
+                return Err(Error::message(format!(
+                    "restricted-host sandbox exec timed out after {}s",
+                    opts.timeout.as_secs()
+                )));
+            },
         }
     }
 
@@ -2109,7 +2212,8 @@ impl WasmSandbox {
             .memory_limit
             .as_deref()
             .and_then(parse_memory_limit);
-        let wasm_engine = Arc::new(WasmComponentEngine::new(memory_reservation)?);
+        let wasm_engine =
+            Arc::new(WasmComponentEngine::new(memory_reservation).context("wasm engine init")?);
         Ok(Self {
             config,
             wasm_engine,
@@ -2206,7 +2310,7 @@ impl WasmSandbox {
                     wasmtime_wasi::DirPerms::all(),
                     wasmtime_wasi::FilePerms::all(),
                 )
-                .map_err(|e| anyhow::anyhow!("failed to preopen /home/sandbox: {e}"))?;
+                .map_err(|e| Error::message(format!("failed to preopen /home/sandbox: {e}")))?;
             wasi_builder
                 .preopened_dir(
                     &tmp_dir,
@@ -2214,13 +2318,13 @@ impl WasmSandbox {
                     wasmtime_wasi::DirPerms::all(),
                     wasmtime_wasi::FilePerms::all(),
                 )
-                .map_err(|e| anyhow::anyhow!("failed to preopen /tmp: {e}"))?;
+                .map_err(|e| Error::message(format!("failed to preopen /tmp: {e}")))?;
 
             // Build preview1-compatible context for core WASM modules.
             let wasi_p1 = wasi_builder.build_p1();
 
             let mut store = wasmtime::Store::new(&engine, wasi_p1);
-            store.set_fuel(fuel_limit)?;
+            store.set_fuel(fuel_limit).context("set wasm fuel")?;
             store.set_epoch_deadline(1);
 
             // Background epoch ticker for timeout enforcement.
@@ -2234,14 +2338,19 @@ impl WasmSandbox {
                 }
             });
 
-            let module = wasm_engine.compile_module(&wasm_bytes)?;
+            let module = wasm_engine
+                .compile_module(&wasm_bytes)
+                .context("compile wasm module")?;
             let mut linker = wasmtime::Linker::new(&engine);
-            wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |ctx| ctx)?;
+            wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |ctx| ctx)
+                .context("link wasi preview1")?;
 
-            let instance = linker.instantiate(&mut store, &module)?;
+            let instance = linker
+                .instantiate(&mut store, &module)
+                .context("instantiate wasm module")?;
             let func = instance
                 .get_typed_func::<(), ()>(&mut store, "_start")
-                .map_err(|e| anyhow::anyhow!("WASM module missing _start: {e}"))?;
+                .map_err(|e| Error::message(format!("WASM module missing _start: {e}")))?;
 
             let collect_pipe = |pipe: MemoryOutputPipe| -> String {
                 let b: bytes::Bytes = pipe.try_into_inner().unwrap_or_default().into();
@@ -3593,7 +3702,9 @@ impl AppleContainerSandbox {
                     match apple_container_status_from_inspect(&stdout) {
                         Some("running") => return Ok(()),
                         Some("stopped") => {
-                            anyhow::bail!("container {name} failed to stay running after startup");
+                            return Err(Error::message(format!(
+                                "container {name} failed to stay running after startup"
+                            )));
                         },
                         _ => {},
                     }
@@ -3605,7 +3716,9 @@ impl AppleContainerSandbox {
                         continue;
                     }
 
-                    anyhow::bail!("container {name} did not report running state after startup");
+                    return Err(Error::message(format!(
+                        "container {name} did not report running state after startup"
+                    )));
                 },
                 Ok(output) => {
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3619,10 +3732,10 @@ impl AppleContainerSandbox {
                         tokio::time::sleep(std::time::Duration::from_millis(WAIT_MS)).await;
                         continue;
                     }
-                    anyhow::bail!(
+                    return Err(Error::message(format!(
                         "container inspect failed for {name} while waiting for running state: {}",
                         stderr.trim()
-                    );
+                    )));
                 },
                 Err(e) => {
                     if attempt + 1 < MAX_WAIT_ITERS {
@@ -3640,7 +3753,9 @@ impl AppleContainerSandbox {
             }
         }
 
-        anyhow::bail!("container {name} did not become running after startup")
+        Err(Error::message(format!(
+            "container {name} did not become running after startup"
+        )))
     }
 
     async fn probe_container_exec_ready(name: &str) -> Result<()> {
@@ -3655,10 +3770,10 @@ impl AppleContainerSandbox {
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
+        Err(Error::message(format!(
             "container {name} failed exec readiness probe: {}",
             stderr.trim()
-        );
+        )))
     }
 
     async fn wait_for_container_exec_ready(name: &str) -> Result<()> {
@@ -3689,7 +3804,9 @@ impl AppleContainerSandbox {
             }
         }
 
-        anyhow::bail!("container {name} did not become exec-ready after startup")
+        Err(Error::message(format!(
+            "container {name} did not become exec-ready after startup"
+        )))
     }
 
     async fn force_remove_and_wait(name: &str) {
@@ -3732,7 +3849,7 @@ impl AppleContainerSandbox {
         image: &str,
         tz: Option<&str>,
         home_volume: Option<&str>,
-    ) -> Result<(), CreateError> {
+    ) -> std::result::Result<(), CreateError> {
         let args = apple_container_run_args(name, image, tz, home_volume);
 
         let output = tokio::process::Command::new("container")
@@ -4073,7 +4190,7 @@ impl FailoverSandbox {
         *self.use_fallback.read().await
     }
 
-    async fn switch_to_fallback(&self, error: &anyhow::Error) {
+    async fn switch_to_fallback(&self, error: &Error) {
         let mut use_fallback = self.use_fallback.write().await;
         if !*use_fallback {
             warn!(
@@ -4086,11 +4203,12 @@ impl FailoverSandbox {
         }
     }
 
-    fn should_failover(&self, error: &anyhow::Error) -> bool {
+    fn should_failover(&self, error: &Error) -> bool {
         let message = format!("{error:#}");
         match self.primary_name {
             "apple-container" => is_apple_container_corruption_error(&message),
             "docker" => is_docker_failover_error(&message),
+            "podman" => is_podman_failover_error(&message),
             _ => false,
         }
     }
@@ -4120,13 +4238,13 @@ impl Sandbox for FailoverSandbox {
                     .ensure_ready(id, image_override)
                     .await
                     .map_err(|fallback_error| {
-                        anyhow::anyhow!(
+                        Error::message(format!(
                             "primary sandbox backend ({}) failed: {}; fallback backend ({}) also failed: {}",
                             self.primary_name,
                             primary_message,
                             self.fallback_name,
                             fallback_error
-                        )
+                        ))
                     })
             },
         }
@@ -4150,13 +4268,13 @@ impl Sandbox for FailoverSandbox {
                     .ensure_ready(id, None)
                     .await
                     .map_err(|fallback_error| {
-                        anyhow::anyhow!(
+                        Error::message(format!(
                             "primary sandbox backend ({}) failed during exec: {}; fallback backend ({}) failed to initialize: {}",
                             self.primary_name,
                             primary_message,
                             self.fallback_name,
                             fallback_error
-                        )
+                        ))
                     })?;
                 self.fallback.exec(id, command, opts).await
             },
@@ -4290,10 +4408,10 @@ impl Sandbox for AppleContainerSandbox {
                     continue;
                 },
                 Err(CreateError::ServiceDown) => {
-                    anyhow::bail!(
+                    return Err(Error::message(
                         "apple container service is not running. \
-                         Start it with `container system start` and restart moltis"
-                    );
+                         Start it with `container system start` and restart moltis",
+                    ));
                 },
                 Err(CreateError::Other(stderr)) => {
                     // Daemon-stale errors mean the VM subsystem is broken.
@@ -4306,17 +4424,17 @@ impl Sandbox for AppleContainerSandbox {
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             continue;
                         }
-                        anyhow::bail!(
+                        return Err(Error::message(format!(
                             "apple container daemon has stale Virtualization.framework state \
                              and automatic restart failed (create error: {stderr}). \
                              Restart manually with `container system stop && container system start`"
-                        );
+                        )));
                     }
                     if is_last {
                         let diag = Self::diagnose_container_failure(&name).await;
-                        anyhow::bail!(
+                        return Err(Error::message(format!(
                             "container run failed for {name} (image={image}): {stderr}; diagnostics: {diag}"
-                        );
+                        )));
                     }
                     warn!(
                         name,
@@ -4409,11 +4527,11 @@ impl Sandbox for AppleContainerSandbox {
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             continue;
                         }
-                        anyhow::bail!(
+                        return Err(Error::message(format!(
                             "apple container daemon has stale Virtualization.framework state \
                              and automatic restart failed (container logs: {log_text}). \
                              Restart manually with `container system stop && container system start`"
-                        );
+                        )));
                     }
 
                     // Boot failure: container immediately stopped with no output.
@@ -4449,10 +4567,10 @@ impl Sandbox for AppleContainerSandbox {
                             ""
                         };
                         let diag = Self::diagnose_container_failure(&name).await;
-                        anyhow::bail!(
+                        return Err(Error::message(format!(
                             "apple container {name} did not become exec-ready{boot_note}: \
                              {error:#}; diagnostics: {diag}"
-                        );
+                        )));
                     }
                     warn!(
                         name,
@@ -4468,9 +4586,9 @@ impl Sandbox for AppleContainerSandbox {
 
         // Unreachable: the loop either returns or bails on the last attempt.
         let diag = Self::diagnose_container_failure(&name).await;
-        anyhow::bail!(
+        return Err(Error::message(format!(
             "apple container {name} failed after {MAX_ATTEMPTS} attempts; diagnostics: {diag}"
-        );
+        )));
     }
 
     async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
@@ -4547,7 +4665,9 @@ impl Sandbox for AppleContainerSandbox {
             },
             Ok(Err(e)) => {
                 warn!(name, %e, "apple container exec spawn failed");
-                anyhow::bail!("container exec failed for {name}: {e}")
+                return Err(Error::message(format!(
+                    "container exec failed for {name}: {e}"
+                )));
             },
             Err(_) => {
                 warn!(
@@ -4555,10 +4675,10 @@ impl Sandbox for AppleContainerSandbox {
                     timeout_secs = opts.timeout.as_secs(),
                     "apple container exec timed out"
                 );
-                anyhow::bail!(
+                return Err(Error::message(format!(
                     "container exec timed out for {name} after {}s",
                     opts.timeout.as_secs()
-                )
+                )));
             },
         }
     }
@@ -4608,12 +4728,15 @@ impl Sandbox for AppleContainerSandbox {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if stderr.contains("XPC connection error") || stderr.contains("Connection invalid") {
-                anyhow::bail!(
+                return Err(Error::message(
                     "apple container service is not running. \
-                     Start it with `container system start` and restart moltis"
-                );
+                     Start it with `container system start` and restart moltis",
+                ));
             }
-            anyhow::bail!("container build failed for {tag}: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "container build failed for {tag}: {}",
+                stderr.trim()
+            )));
         }
 
         info!(tag, "pre-built sandbox image ready (apple container)");
@@ -4672,10 +4795,12 @@ fn create_sandbox_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 /// When `backend` is `"auto"` (the default):
 /// - On macOS, prefer Apple Container if the `container` CLI is installed
 ///   (each sandbox runs in a lightweight VM — stronger isolation than Docker).
-/// - Fall back to Docker otherwise.
+/// - Prefer Podman (daemonless, rootless) over Docker when available.
+/// - Fall back to Docker, then restricted-host otherwise.
 fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     match config.backend.as_str() {
         "docker" => Arc::new(DockerSandbox::new(config)),
+        "podman" => Arc::new(DockerSandbox::podman(config)),
         #[cfg(target_os = "macos")]
         "apple-container" => {
             if !ensure_apple_container_service() {
@@ -4722,14 +4847,31 @@ fn create_wasm_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 
 /// Wrap a primary sandbox backend with a failover chain.
 ///
-/// Tries Docker first as fallback, then WASM, returning the primary unwrapped
-/// if no fallback runtime is available.
+/// Tries Podman, then Docker as fallback, then restricted-host, returning the
+/// primary unwrapped if no fallback runtime is available.
 #[cfg(target_os = "macos")]
 fn maybe_wrap_with_failover(primary: Arc<dyn Sandbox>, config: &SandboxConfig) -> Arc<dyn Sandbox> {
-    // Try Docker as fallback first.
-    if should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available()) {
+    let primary_name = primary.backend_name();
+
+    // Try Podman as fallback (skip if primary is already Podman).
+    if primary_name != "podman" && is_cli_available("podman") {
         tracing::info!(
-            primary = primary.backend_name(),
+            primary = primary_name,
+            fallback = "podman",
+            "sandbox backend failover enabled"
+        );
+        return Arc::new(FailoverSandbox::new(
+            primary,
+            Arc::new(DockerSandbox::podman(config.clone())),
+        ));
+    }
+
+    // Try Docker as fallback (skip if primary is already Docker).
+    if primary_name != "docker"
+        && should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available())
+    {
+        tracing::info!(
+            primary = primary_name,
             fallback = "docker",
             "sandbox backend failover enabled"
         );
@@ -4739,9 +4881,9 @@ fn maybe_wrap_with_failover(primary: Arc<dyn Sandbox>, config: &SandboxConfig) -
         ));
     }
 
-    // Use restricted-host as fallback if Docker is unavailable.
+    // Use restricted-host as fallback if no OCI runtime is available.
     tracing::info!(
-        primary = primary.backend_name(),
+        primary = primary_name,
         fallback = "restricted-host",
         "sandbox backend failover enabled (restricted-host)"
     );
@@ -4760,6 +4902,17 @@ fn is_docker_failover_error(message: &str) -> bool {
         || lower.contains("connection refused")
 }
 
+/// Check whether an error message indicates a Podman runtime issue that warrants
+/// failover. Podman is daemonless so most Docker-daemon errors don't apply, but
+/// socket/service errors or missing runtimes do.
+fn is_podman_failover_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("cannot connect to podman")
+        || lower.contains("no such file or directory") && lower.contains("podman")
+        || lower.contains("connection refused")
+        || lower.contains("runtime") && lower.contains("not found")
+}
+
 fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     #[cfg(target_os = "macos")]
     {
@@ -4772,9 +4925,15 @@ fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
             }
             tracing::warn!(
                 "apple container CLI found but service could not be started; \
-                 falling back to docker"
+                 falling back to podman/docker"
             );
         }
+    }
+
+    // Prefer Podman (daemonless, rootless by default) over Docker.
+    if is_cli_available("podman") {
+        tracing::info!("sandbox backend: podman (daemonless, preferred over docker)");
+        return Arc::new(DockerSandbox::podman(config));
     }
 
     if should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available()) {
@@ -5114,8 +5273,8 @@ mod tests {
 
         async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
             self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(ref error) = self.ensure_ready_error {
-                anyhow::bail!("{error}");
+            if let Some(ref msg) = self.ensure_ready_error {
+                return Err(Error::message(msg));
             }
             Ok(())
         }
@@ -5127,8 +5286,8 @@ mod tests {
             _opts: &ExecOpts,
         ) -> Result<ExecResult> {
             self.exec_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(ref error) = self.exec_error {
-                anyhow::bail!("{error}");
+            if let Some(ref msg) = self.exec_error {
+                return Err(Error::message(msg));
             }
             Ok(ExecResult {
                 stdout: "ok".into(),
@@ -5516,6 +5675,12 @@ mod tests {
     }
 
     #[test]
+    fn test_backend_name_podman() {
+        let sandbox = DockerSandbox::podman(SandboxConfig::default());
+        assert_eq!(sandbox.backend_name(), "podman");
+    }
+
+    #[test]
     fn test_backend_name_none() {
         let sandbox = NoSandbox;
         assert_eq!(sandbox.backend_name(), "none");
@@ -5528,7 +5693,7 @@ mod tests {
         let router = SandboxRouter::new(config);
         let name = router.backend_name();
         assert!(
-            name == "docker" || name == "apple-container" || name == "none",
+            name == "docker" || name == "podman" || name == "apple-container" || name == "none",
             "unexpected backend: {name}"
         );
     }
@@ -5859,6 +6024,16 @@ mod tests {
             };
             let backend = select_backend(config);
             assert_eq!(backend.backend_name(), "docker");
+        }
+
+        // Podman backend
+        if is_cli_available("podman") {
+            let config = SandboxConfig {
+                backend: "podman".into(),
+                ..Default::default()
+            };
+            let backend = select_backend(config);
+            assert_eq!(backend.backend_name(), "podman");
         }
 
         // Apple Container backend (macOS only)
@@ -6248,6 +6423,31 @@ mod tests {
     }
 
     #[test]
+    fn test_is_podman_failover_error() {
+        assert!(is_podman_failover_error(
+            "Cannot connect to Podman: connection refused"
+        ));
+        assert!(is_podman_failover_error(
+            "Error: podman: no such file or directory"
+        ));
+        assert!(is_podman_failover_error("OCI runtime not found: crun"));
+        assert!(!is_podman_failover_error("image not found"));
+        assert!(!is_podman_failover_error("permission denied"));
+    }
+
+    #[test]
+    fn test_select_backend_podman() {
+        // This test always succeeds — select_backend("podman") unconditionally
+        // creates a DockerSandbox::podman() regardless of CLI availability.
+        let config = SandboxConfig {
+            backend: "podman".into(),
+            ..Default::default()
+        };
+        let backend = select_backend(config);
+        assert_eq!(backend.backend_name(), "podman");
+    }
+
+    #[test]
     fn test_select_backend_wasm() {
         let config = SandboxConfig {
             backend: "wasm".into(),
@@ -6382,6 +6582,12 @@ mod tests {
                 .unwrap()
                 .as_str(),
             Some("docker")
+        );
+        assert_eq!(
+            serde_json::to_value(ContainerBackend::Podman)
+                .unwrap()
+                .as_str(),
+            Some("podman")
         );
     }
 

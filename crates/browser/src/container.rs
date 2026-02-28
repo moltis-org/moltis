@@ -1,7 +1,7 @@
 //! Container management for sandboxed browser instances.
 //!
-//! Supports both Docker and Apple Container backends, auto-detecting the best
-//! available option (prefers Apple Container on macOS when available).
+//! Supports Docker, Podman, and Apple Container backends, auto-detecting the
+//! best available option (Apple Container on macOS → Podman → Docker).
 
 use std::{fmt::Display, process::Command};
 
@@ -70,6 +70,7 @@ fn new_browser_container_name(container_prefix: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerBackend {
     Docker,
+    Podman,
     #[cfg(target_os = "macos")]
     AppleContainer,
 }
@@ -79,6 +80,7 @@ impl ContainerBackend {
     fn cli(&self) -> &'static str {
         match self {
             Self::Docker => "docker",
+            Self::Podman => "podman",
             #[cfg(target_os = "macos")]
             Self::AppleContainer => "container",
         }
@@ -213,7 +215,8 @@ impl BrowserContainer {
 
         let t0 = Instant::now();
         let container_id = match backend {
-            ContainerBackend::Docker => start_docker_container(
+            ContainerBackend::Docker | ContainerBackend::Podman => start_oci_container(
+                backend,
                 image,
                 container_prefix,
                 host_port,
@@ -363,7 +366,8 @@ fn build_container_launch_args(
 }
 
 /// Start a Docker container for the browser.
-fn start_docker_container(
+fn start_oci_container(
+    backend: ContainerBackend,
     image: &str,
     container_prefix: &str,
     host_port: u16,
@@ -372,6 +376,7 @@ fn start_docker_container(
     low_memory_threshold_mb: u64,
     profile_dir: Option<&std::path::Path>,
 ) -> Result<String> {
+    let cli = backend.cli();
     let container_name = new_browser_container_name(container_prefix);
 
     let container_profile_dir = profile_dir.map(|_| CONTAINER_PROFILE_PATH);
@@ -380,10 +385,10 @@ fn start_docker_container(
         viewport_height,
         low_memory_threshold_mb,
         container_profile_dir,
-        ContainerBackend::Docker,
+        backend,
     );
 
-    let mut docker_args = vec![
+    let mut run_args = vec![
         "run".to_string(),
         "-d".to_string(),
         "--rm".to_string(),
@@ -402,33 +407,33 @@ fn start_docker_container(
 
     // Mount the profile directory if persistence is enabled
     if let Some(host_path) = profile_dir {
-        docker_args.push("-v".to_string());
-        docker_args.push(format!(
+        run_args.push("-v".to_string());
+        run_args.push(format!(
             "{}:{}:rw",
             host_path.display(),
             CONTAINER_PROFILE_PATH
         ));
     }
 
-    docker_args.push(image.to_string());
+    run_args.push(image.to_string());
 
-    let output = Command::new("docker")
-        .args(&docker_args)
+    let output = Command::new(cli)
+        .args(&run_args)
         .output()
-        .context("failed to run docker command")?;
+        .with_context(|| format!("failed to run {cli} command"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::LaunchFailed(format!(
-            "failed to start docker container: {}",
+            "failed to start {cli} container: {}",
             stderr.trim()
         )));
     }
 
     if container_name.is_empty() {
-        return Err(Error::LaunchFailed(
-            "docker container name is empty".to_string(),
-        ));
+        return Err(Error::LaunchFailed(format!(
+            "{cli} container name is empty"
+        )));
     }
 
     Ok(container_name)
@@ -506,7 +511,7 @@ fn start_apple_container(
 /// Detect the best available container backend.
 ///
 /// Prefers Apple Container on macOS when available and functional (VM-isolated),
-/// falls back to Docker otherwise.
+/// then Podman (daemonless), then Docker.
 pub fn detect_backend() -> Result<ContainerBackend> {
     #[cfg(target_os = "macos")]
     {
@@ -516,13 +521,18 @@ pub fn detect_backend() -> Result<ContainerBackend> {
         }
     }
 
+    if ContainerBackend::Podman.is_available() {
+        info!("browser sandbox backend: podman (daemonless)");
+        return Ok(ContainerBackend::Podman);
+    }
+
     if is_docker_available() {
         info!("browser sandbox backend: docker");
         return Ok(ContainerBackend::Docker);
     }
 
     Err(Error::LaunchFailed(
-        "No container runtime available. Please install Docker to use sandboxed browser mode."
+        "No container runtime available. Please install Docker or Podman to use sandboxed browser mode."
             .to_string(),
     ))
 }
@@ -895,7 +905,9 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
     info!(image, backend = cli, "pulling browser container image");
 
     let output = match backend {
-        ContainerBackend::Docker => Command::new(cli).args(["pull", image]).output(),
+        ContainerBackend::Docker | ContainerBackend::Podman => {
+            Command::new(cli).args(["pull", image]).output()
+        },
         #[cfg(target_os = "macos")]
         ContainerBackend::AppleContainer => {
             Command::new(cli).args(["image", "pull", image]).output()

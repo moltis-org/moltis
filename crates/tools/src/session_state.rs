@@ -6,12 +6,13 @@
 use std::sync::Arc;
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     moltis_sessions::state_store::SessionStateStore,
     serde_json::{Value, json},
 };
+
+use crate::error::Error;
 
 /// Agent tool exposing per-session key-value state operations.
 pub struct SessionStateTool {
@@ -62,28 +63,28 @@ impl AgentTool for SessionStateTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let operation = params
             .get("operation")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'operation' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'operation' parameter"))?;
 
         let namespace = params
             .get("namespace")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'namespace' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'namespace' parameter"))?;
 
         let session_key = params
             .get("_session_key")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing session context"))?;
+            .ok_or_else(|| Error::message("missing session context"))?;
 
         match operation {
             "get" => {
                 let key = params
                     .get("key")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("'get' requires 'key'"))?;
+                    .ok_or_else(|| Error::message("'get' requires 'key'"))?;
                 let value = self.store.get(session_key, namespace, key).await?;
                 Ok(json!({ "value": value }))
             },
@@ -91,11 +92,11 @@ impl AgentTool for SessionStateTool {
                 let key = params
                     .get("key")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("'set' requires 'key'"))?;
+                    .ok_or_else(|| Error::message("'set' requires 'key'"))?;
                 let value = params
                     .get("value")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("'set' requires 'value'"))?;
+                    .ok_or_else(|| Error::message("'set' requires 'value'"))?;
                 self.store.set(session_key, namespace, key, value).await?;
                 Ok(json!({ "ok": true }))
             },
@@ -103,7 +104,7 @@ impl AgentTool for SessionStateTool {
                 let key = params
                     .get("key")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("'delete' requires 'key'"))?;
+                    .ok_or_else(|| Error::message("'delete' requires 'key'"))?;
                 let deleted = self.store.delete(session_key, namespace, key).await?;
                 Ok(json!({ "deleted": deleted }))
             },
@@ -119,7 +120,7 @@ impl AgentTool for SessionStateTool {
                 let count = self.store.delete_all(session_key, namespace).await?;
                 Ok(json!({ "deleted": count }))
             },
-            _ => anyhow::bail!("unknown operation: {operation}"),
+            _ => return Err(Error::message(format!("unknown operation: {operation}")).into()),
         }
     }
 }

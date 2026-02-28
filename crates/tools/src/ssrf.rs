@@ -1,9 +1,8 @@
 use std::net::{IpAddr, ToSocketAddrs};
 
-use {
-    anyhow::{Result, bail},
-    url::Url,
-};
+use {crate::error::Error, url::Url};
+
+use crate::Result;
 
 /// Check if an IP is covered by an SSRF allowlist entry.
 #[must_use]
@@ -40,12 +39,14 @@ pub fn is_private_ip(ip: &IpAddr) -> bool {
 
 fn validate_ssrf_ips(host: &str, ips: &[IpAddr], allowlist: &[ipnet::IpNet]) -> Result<()> {
     if ips.is_empty() {
-        bail!("DNS resolution failed for {host}");
+        return Err(Error::message(format!("DNS resolution failed for {host}")));
     }
 
     for ip in ips {
         if is_private_ip(ip) && !is_ssrf_allowed(ip, allowlist) {
-            bail!("SSRF blocked: {host} resolves to private IP {ip}");
+            return Err(Error::message(format!(
+                "SSRF blocked: {host} resolves to private IP {ip}"
+            )));
         }
     }
 
@@ -59,7 +60,7 @@ fn validate_ssrf_ips(host: &str, ips: &[IpAddr], allowlist: &[ipnet::IpNet]) -> 
 pub async fn ssrf_check(url: &Url, allowlist: &[ipnet::IpNet]) -> Result<()> {
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
+        .ok_or_else(|| Error::message("URL has no host"))?;
 
     if let Ok(ip) = host.parse::<IpAddr>() {
         return validate_ssrf_ips(host, &[ip], allowlist);
@@ -77,7 +78,7 @@ pub async fn ssrf_check(url: &Url, allowlist: &[ipnet::IpNet]) -> Result<()> {
 pub fn ssrf_check_blocking(url: &Url, allowlist: &[ipnet::IpNet]) -> Result<()> {
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
+        .ok_or_else(|| Error::message("URL has no host"))?;
 
     if let Ok(ip) = host.parse::<IpAddr>() {
         return validate_ssrf_ips(host, &[ip], allowlist);

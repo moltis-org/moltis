@@ -3,10 +3,10 @@ use std::borrow::Cow;
 #[cfg(all(feature = "wasm", debug_assertions))]
 use std::path::PathBuf;
 
-#[cfg(all(feature = "wasm", debug_assertions))]
-use anyhow::Context;
 #[cfg(feature = "wasm")]
-use anyhow::Result;
+use crate::Result;
+#[cfg(all(feature = "wasm", debug_assertions))]
+use crate::error::Context;
 
 #[cfg(all(feature = "wasm", not(debug_assertions)))]
 const CALC_COMPONENT_RELEASE_BYTES: &[u8] = include_bytes!(concat!(

@@ -3,10 +3,11 @@
 use std::sync::Arc;
 
 use {
-    anyhow::{Result, bail},
     async_trait::async_trait,
     serde_json::{Map, Value, json},
 };
+
+use crate::{Result, error::Error};
 
 use {
     moltis_agents::tool_registry::AgentTool,
@@ -44,18 +45,21 @@ fn parse_epoch_millis(value: &Value, field: &str) -> Result<u64> {
     match value {
         Value::Number(n) => n
             .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("{field} must be a non-negative integer")),
+            .ok_or_else(|| Error::message(format!("{field} must be a non-negative integer"))),
         Value::String(raw) => {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
-                bail!("{field} cannot be empty");
+                return Err(Error::message(format!("{field} cannot be empty")));
             }
             if let Ok(v) = trimmed.parse::<u64>() {
                 return Ok(v);
             }
-            parse_absolute_time_ms(trimmed).map_err(|e| anyhow::anyhow!("invalid {field}: {e}"))
+            parse_absolute_time_ms(trimmed)
+                .map_err(|e| Error::message(format!("invalid {field}: {e}")))
         },
-        _ => bail!("{field} must be an integer milliseconds value or ISO-8601 timestamp"),
+        _ => Err(Error::message(format!(
+            "{field} must be an integer milliseconds value or ISO-8601 timestamp"
+        ))),
     }
 }
 
@@ -63,18 +67,20 @@ fn parse_interval_millis(value: &Value, field: &str) -> Result<u64> {
     match value {
         Value::Number(n) => n
             .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("{field} must be a non-negative integer")),
+            .ok_or_else(|| Error::message(format!("{field} must be a non-negative integer"))),
         Value::String(raw) => {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
-                bail!("{field} cannot be empty");
+                return Err(Error::message(format!("{field} cannot be empty")));
             }
             if let Ok(v) = trimmed.parse::<u64>() {
                 return Ok(v);
             }
-            parse_duration_ms(trimmed).map_err(|e| anyhow::anyhow!("invalid {field}: {e}"))
+            parse_duration_ms(trimmed).map_err(|e| Error::message(format!("invalid {field}: {e}")))
         },
-        _ => bail!("{field} must be an integer milliseconds value or duration string"),
+        _ => Err(Error::message(format!(
+            "{field} must be an integer milliseconds value or duration string"
+        ))),
     }
 }
 
@@ -82,20 +88,22 @@ fn parse_timeout_seconds(value: &Value, field: &str) -> Result<u64> {
     match value {
         Value::Number(n) => n
             .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("{field} must be a non-negative integer")),
+            .ok_or_else(|| Error::message(format!("{field} must be a non-negative integer"))),
         Value::String(raw) => {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
-                bail!("{field} cannot be empty");
+                return Err(Error::message(format!("{field} cannot be empty")));
             }
             if let Ok(v) = trimmed.parse::<u64>() {
                 return Ok(v);
             }
-            let ms =
-                parse_duration_ms(trimmed).map_err(|e| anyhow::anyhow!("invalid {field}: {e}"))?;
+            let ms = parse_duration_ms(trimmed)
+                .map_err(|e| Error::message(format!("invalid {field}: {e}")))?;
             Ok(ms.saturating_div(1_000))
         },
-        _ => bail!("{field} must be a number of seconds or duration string"),
+        _ => Err(Error::message(format!(
+            "{field} must be a number of seconds or duration string"
+        ))),
     }
 }
 
@@ -114,7 +122,7 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
         Value::String(expr) => {
             let expr = expr.trim();
             if expr.is_empty() {
-                bail!("schedule cron expression cannot be empty");
+                return Err(Error::message("schedule cron expression cannot be empty"));
             }
             *schedule = json!({ "kind": "cron", "expr": expr });
             Ok(())
@@ -157,11 +165,11 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
             if let Some(kind_val) = obj.get_mut("kind") {
                 let kind_raw = kind_val
                     .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("schedule.kind must be a string"))?;
+                    .ok_or_else(|| Error::message("schedule.kind must be a string"))?;
                 let kind_norm = normalize_schedule_kind(kind_raw).ok_or_else(|| {
-                    anyhow::anyhow!(
+                    Error::message(format!(
                         "invalid schedule kind `{kind_raw}` (expected `at`, `every`, or `cron`)"
-                    )
+                    ))
                 })?;
                 *kind_val = Value::String(kind_norm.to_string());
             } else {
@@ -177,12 +185,16 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
                     1 if has_at => "at",
                     1 if has_every => "every",
                     1 if has_expr => "cron",
-                    0 => bail!(
-                        "invalid schedule: missing `kind` and no recognizable fields (expected one of `at_ms`, `every_ms`, `expr`)"
-                    ),
-                    _ => bail!(
-                        "invalid schedule: ambiguous fields, specify `kind` explicitly (`at`, `every`, or `cron`)"
-                    ),
+                    0 => {
+                        return Err(Error::message(
+                            "invalid schedule: missing `kind` and no recognizable fields (expected one of `at_ms`, `every_ms`, `expr`)",
+                        ));
+                    },
+                    _ => {
+                        return Err(Error::message(
+                            "invalid schedule: ambiguous fields, specify `kind` explicitly (`at`, `every`, or `cron`)",
+                        ));
+                    },
                 };
                 obj.insert("kind".to_string(), Value::String(inferred.to_string()));
             }
@@ -190,18 +202,18 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
             let kind = obj
                 .get("kind")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("schedule.kind must be a string"))?;
+                .ok_or_else(|| Error::message("schedule.kind must be a string"))?;
             match kind {
                 "at" => {
                     let at_raw = obj
                         .get("at_ms")
-                        .ok_or_else(|| anyhow::anyhow!("schedule kind `at` requires `at_ms`"))?;
+                        .ok_or_else(|| Error::message("schedule kind `at` requires `at_ms`"))?;
                     let at_ms = parse_epoch_millis(at_raw, "schedule.at_ms")?;
                     obj.insert("at_ms".to_string(), json!(at_ms));
                 },
                 "every" => {
                     let every_raw = obj.get("every_ms").ok_or_else(|| {
-                        anyhow::anyhow!("schedule kind `every` requires `every_ms`")
+                        Error::message("schedule kind `every` requires `every_ms`")
                     })?;
                     let every_ms = parse_interval_millis(every_raw, "schedule.every_ms")?;
                     obj.insert("every_ms".to_string(), json!(every_ms));
@@ -216,14 +228,16 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
                         .and_then(Value::as_str)
                         .map(str::trim)
                         .filter(|expr| !expr.is_empty())
-                        .ok_or_else(|| anyhow::anyhow!("schedule kind `cron` requires `expr`"))?;
+                        .ok_or_else(|| Error::message("schedule kind `cron` requires `expr`"))?;
                     obj.insert("expr".to_string(), Value::String(expr.to_string()));
                 },
                 _ => unreachable!("schedule kind normalized above"),
             }
             Ok(())
         },
-        _ => bail!("schedule must be an object, cron expression string, or epoch milliseconds"),
+        _ => Err(Error::message(
+            "schedule must be an object, cron expression string, or epoch milliseconds",
+        )),
     }
 }
 
@@ -247,7 +261,7 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
         Value::String(message) => {
             let message = message.trim();
             if message.is_empty() {
-                bail!("payload message cannot be empty");
+                return Err(Error::message("payload message cannot be empty"));
             }
             if prefers_system_event(session_target_hint) {
                 *payload = json!({ "kind": "systemEvent", "text": message });
@@ -275,11 +289,11 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
             if let Some(kind_val) = obj.get_mut("kind") {
                 let kind_raw = kind_val
                     .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("payload.kind must be a string"))?;
+                    .ok_or_else(|| Error::message("payload.kind must be a string"))?;
                 let kind_norm = normalize_payload_kind(kind_raw).ok_or_else(|| {
-                    anyhow::anyhow!(
+                    Error::message(format!(
                         "invalid payload kind `{kind_raw}` (expected `systemEvent` or `agentTurn`)"
-                    )
+                    ))
                 })?;
                 *kind_val = Value::String(kind_norm.to_string());
             } else {
@@ -291,9 +305,9 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
                     (true, true) if prefers_system_event(session_target_hint) => "systemEvent",
                     (true, true) => "agentTurn",
                     (false, false) => {
-                        bail!(
-                            "invalid payload: missing `kind` and no recognizable fields (expected one of `text` or `message`)"
-                        )
+                        return Err(Error::message(
+                            "invalid payload: missing `kind` and no recognizable fields (expected one of `text` or `message`)",
+                        ));
                     },
                 };
                 obj.insert("kind".to_string(), Value::String(inferred.to_string()));
@@ -302,7 +316,7 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
             let kind = obj
                 .get("kind")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("payload.kind must be a string"))?;
+                .ok_or_else(|| Error::message("payload.kind must be a string"))?;
             match kind {
                 "systemEvent" => {
                     if !obj.contains_key("text")
@@ -316,7 +330,7 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
                         .map(str::trim)
                         .filter(|text| !text.is_empty())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("payload kind `systemEvent` requires `text`")
+                            Error::message("payload kind `systemEvent` requires `text`")
                         })?;
                     obj.insert("text".to_string(), Value::String(text.to_string()));
                 },
@@ -332,7 +346,7 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
                         .map(str::trim)
                         .filter(|message| !message.is_empty())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("payload kind `agentTurn` requires `message`")
+                            Error::message("payload kind `agentTurn` requires `message`")
                         })?;
                     obj.insert("message".to_string(), Value::String(message.to_string()));
                 },
@@ -340,7 +354,9 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
             }
             Ok(())
         },
-        _ => bail!("payload must be an object or message string"),
+        _ => Err(Error::message(
+            "payload must be an object or message string",
+        )),
     }
 }
 
@@ -360,9 +376,11 @@ fn normalize_wake_mode_field(obj: &mut Map<String, Value>) -> Result<()> {
     if let Some(val) = obj.get_mut("wakeMode") {
         let raw = val
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("wakeMode must be a string"))?;
+            .ok_or_else(|| Error::message("wakeMode must be a string"))?;
         let norm = normalize_wake_mode(raw).ok_or_else(|| {
-            anyhow::anyhow!("invalid wakeMode `{raw}` (expected `now` or `nextHeartbeat`)")
+            Error::message(format!(
+                "invalid wakeMode `{raw}` (expected `now` or `nextHeartbeat`)"
+            ))
         })?;
         *val = Value::String(norm.to_string());
     }
@@ -386,9 +404,13 @@ fn parse_sandbox_enabled(value: &Value, field: &str) -> Result<bool> {
     match value {
         Value::Bool(enabled) => Ok(*enabled),
         Value::String(raw) => normalize_execution_target(raw).ok_or_else(|| {
-            anyhow::anyhow!("{field} string must be one of `host`, `local`, or `sandbox`")
+            Error::message(format!(
+                "{field} string must be one of `host`, `local`, or `sandbox`"
+            ))
         }),
-        _ => bail!("{field} must be a boolean or execution target string"),
+        _ => Err(Error::message(format!(
+            "{field} must be a boolean or execution target string"
+        ))),
     }
 }
 
@@ -400,7 +422,9 @@ fn normalize_sandbox_value(sandbox: &mut Value, field: &str) -> Result<()> {
         },
         Value::String(raw) => {
             let enabled = normalize_execution_target(raw).ok_or_else(|| {
-                anyhow::anyhow!("{field} string must be one of `host`, `local`, or `sandbox`")
+                Error::message(format!(
+                    "{field} string must be one of `host`, `local`, or `sandbox`"
+                ))
             })?;
             *sandbox = json!({ "enabled": enabled });
             Ok(())
@@ -450,12 +474,18 @@ fn normalize_sandbox_value(sandbox: &mut Value, field: &str) -> Result<()> {
                             obj.insert("image".to_string(), Value::String(image.to_string()));
                         }
                     },
-                    _ => bail!("{field}.image must be a string when provided"),
+                    _ => {
+                        return Err(Error::message(format!(
+                            "{field}.image must be a string when provided"
+                        )));
+                    },
                 }
             }
             Ok(())
         },
-        _ => bail!("{field} must be an object, boolean, or execution target string"),
+        _ => Err(Error::message(format!(
+            "{field} must be an object, boolean, or execution target string"
+        ))),
     }
 }
 
@@ -514,7 +544,7 @@ fn normalize_job_value(job: &Value) -> Result<Value> {
     let mut normalized = job.clone();
     let obj = normalized
         .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("job must be an object"))?;
+        .ok_or_else(|| Error::message("job must be an object"))?;
     normalize_session_target_field(obj);
     normalize_sandbox_field(obj)?;
     normalize_wake_mode_field(obj)?;
@@ -526,12 +556,12 @@ fn normalize_job_value(job: &Value) -> Result<Value> {
 
     let schedule = obj
         .get_mut("schedule")
-        .ok_or_else(|| anyhow::anyhow!("missing `schedule`"))?;
+        .ok_or_else(|| Error::message("missing `schedule`"))?;
     normalize_schedule_value(schedule)?;
 
     let payload = obj
         .get_mut("payload")
-        .ok_or_else(|| anyhow::anyhow!("missing `payload`"))?;
+        .ok_or_else(|| Error::message("missing `payload`"))?;
     normalize_payload_value(payload, session_target_hint.as_deref())?;
 
     Ok(normalized)
@@ -541,7 +571,7 @@ fn normalize_patch_value(patch: &Value) -> Result<Value> {
     let mut normalized = patch.clone();
     let obj = normalized
         .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("patch must be an object"))?;
+        .ok_or_else(|| Error::message("patch must be an object"))?;
     normalize_session_target_field(obj);
     normalize_sandbox_field(obj)?;
     normalize_wake_mode_field(obj)?;
@@ -689,11 +719,11 @@ impl AgentTool for CronTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let action = params
             .get("action")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'action' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'action' parameter"))?;
 
         match action {
             "status" => {
@@ -707,10 +737,10 @@ impl AgentTool for CronTool {
             "add" => {
                 let job_val = params
                     .get("job")
-                    .ok_or_else(|| anyhow::anyhow!("missing 'job' parameter for add"))?;
+                    .ok_or_else(|| Error::message("missing 'job' parameter for add"))?;
                 let normalized = normalize_job_value(job_val)?;
                 let create: CronJobCreate = serde_json::from_value(normalized)
-                    .map_err(|e| anyhow::anyhow!("invalid job spec: {e}"))?;
+                    .map_err(|e| Error::message(format!("invalid job spec: {e}")))?;
                 let job = self.service.add(create).await?;
                 Ok(serde_json::to_value(job)?)
             },
@@ -718,13 +748,13 @@ impl AgentTool for CronTool {
                 let id = params
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("missing 'id' for update"))?;
+                    .ok_or_else(|| Error::message("missing 'id' for update"))?;
                 let patch_val = params
                     .get("patch")
-                    .ok_or_else(|| anyhow::anyhow!("missing 'patch' for update"))?;
+                    .ok_or_else(|| Error::message("missing 'patch' for update"))?;
                 let normalized = normalize_patch_value(patch_val)?;
                 let patch: CronJobPatch = serde_json::from_value(normalized)
-                    .map_err(|e| anyhow::anyhow!("invalid patch: {e}"))?;
+                    .map_err(|e| Error::message(format!("invalid patch: {e}")))?;
                 let job = self.service.update(id, patch).await?;
                 Ok(serde_json::to_value(job)?)
             },
@@ -732,7 +762,7 @@ impl AgentTool for CronTool {
                 let id = params
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("missing 'id' for remove"))?;
+                    .ok_or_else(|| Error::message("missing 'id' for remove"))?;
                 self.service.remove(id).await?;
                 Ok(json!({ "removed": id }))
             },
@@ -740,7 +770,7 @@ impl AgentTool for CronTool {
                 let id = params
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("missing 'id' for run"))?;
+                    .ok_or_else(|| Error::message("missing 'id' for run"))?;
                 let force = params
                     .get("force")
                     .and_then(|v| v.as_bool())
@@ -752,12 +782,12 @@ impl AgentTool for CronTool {
                 let id = params
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("missing 'id' for runs"))?;
+                    .ok_or_else(|| Error::message("missing 'id' for runs"))?;
                 let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
                 let runs = self.service.runs(id, limit).await?;
                 Ok(serde_json::to_value(runs)?)
             },
-            _ => bail!("unknown cron action: {action}"),
+            _ => return Err(Error::message(format!("unknown cron action: {action}")).into()),
         }
     }
 }

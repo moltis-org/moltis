@@ -9,6 +9,9 @@
 pub mod approval;
 pub mod branch_session;
 
+pub mod error;
+pub use error::{Error, Result};
+
 static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 
 /// Initialize the shared HTTP client with optional proxy.
