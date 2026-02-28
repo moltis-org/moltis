@@ -14,8 +14,7 @@ apps/macos/Generated/
 apps/macos/Moltis.xcodeproj/
 apps/macos/.derivedData*/
 apps/ios/MoltisCompanion.xcodeproj/
-apps/ios/Moltis.xcodeproj/xcuserdata/
-apps/ios/Moltis.xcodeproj/project.xcworkspace/xcuserdata/
+apps/ios/Moltis.xcodeproj/
 apps/ios/.derivedData*/
 apps/ios/.tools/
 apps/ios/local.xcconfig
