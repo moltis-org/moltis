@@ -904,6 +904,16 @@ function SecuritySection() {
 	// A credential added while localhost-bypass is active can immediately make the
 	// current session unauthenticated (no session cookie). Reload so middleware
 	// can route to /login in that transition.
+	function refreshPasskeyHostStatus() {
+		return fetch("/api/auth/status")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((status) => {
+				if (Array.isArray(status?.passkey_host_update_hosts))
+					setPasskeyHostUpdateHosts(status.passkey_host_update_hosts);
+				if (Array.isArray(status?.passkey_origins)) setPasskeyOrigins(status.passkey_origins);
+			});
+	}
+
 	function reloadIfAuthNowRequiresLogin({ reload = true } = {}) {
 		return fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
@@ -1081,19 +1091,11 @@ function SecuritySection() {
 								setHasPasskeys((d.passkeys || []).length > 0);
 								setSetupComplete(true);
 								setAuthDisabled(false);
-								return fetch("/api/auth/status")
-									.then((statusRes) => (statusRes.ok ? statusRes.json() : null))
-									.then((status) => {
-										if (Array.isArray(status?.passkey_host_update_hosts)) {
-											setPasskeyHostUpdateHosts(status.passkey_host_update_hosts);
-										}
-										if (Array.isArray(status?.passkey_origins)) {
-											setPasskeyOrigins(status.passkey_origins);
-										}
-										setPkMsg("Passkey added.");
-										notifyAuthStatusChanged();
-										rerender();
-									});
+								return refreshPasskeyHostStatus().then(() => {
+									setPkMsg("Passkey added.");
+									notifyAuthStatusChanged();
+									rerender();
+								});
 							});
 					});
 				} else
@@ -1147,15 +1149,10 @@ function SecuritySection() {
 			.then((d) => {
 				setPasskeys(d.passkeys || []);
 				setHasPasskeys((d.passkeys || []).length > 0);
-				return fetch("/api/auth/status")
-					.then((statusRes) => (statusRes.ok ? statusRes.json() : null))
-					.then((status) => {
-						if (Array.isArray(status?.passkey_host_update_hosts)) {
-							setPasskeyHostUpdateHosts(status.passkey_host_update_hosts);
-						}
-						notifyAuthStatusChanged();
-						rerender();
-					});
+				return refreshPasskeyHostStatus().then(() => {
+					notifyAuthStatusChanged();
+					rerender();
+				});
 			});
 	}
 

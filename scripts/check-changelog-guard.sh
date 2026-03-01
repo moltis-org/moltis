@@ -31,7 +31,7 @@ if ! git rev-parse --verify "$head_ref^{commit}" >/dev/null 2>&1; then
   exit 2
 fi
 
-if git diff --name-only "$base_ref" "$head_ref" | rg -q '^CHANGELOG\.md$'; then
+if git diff --name-only "$base_ref" "$head_ref" | grep -qx 'CHANGELOG\.md'; then
   cat >&2 <<'EOF'
 Manual CHANGELOG.md edits are blocked in pull requests.
 
