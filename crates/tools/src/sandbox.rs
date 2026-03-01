@@ -703,6 +703,7 @@ fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> String {
         "FROM {base}\n\
 RUN apt-get update -qq && apt-get install -y -qq {pkg_list} \
     && mkdir -p {SANDBOX_HOME_DIR}\n\
+RUN if command -v corepack >/dev/null 2>&1; then corepack enable; fi\n\
 RUN if command -v go >/dev/null 2>&1; then \
         GOBIN=/usr/local/bin go install {GOGCLI_MODULE_PATH}@{GOGCLI_VERSION} \
         && ln -sf /usr/local/bin/gog /usr/local/bin/gogcli; \
