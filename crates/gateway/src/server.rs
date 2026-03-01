@@ -1594,6 +1594,19 @@ pub async fn prepare_gateway(
                 .collect();
             try_add("localhost", &localhost_origin, &moltis_localhost);
 
+            // Register identity-derived host aliases (`<bot-name>` and
+            // `<bot-name>.local`) so passkeys work when clients connect using
+            // bot-name based local DNS/mDNS labels.
+            let bot_slug = instance_slug_value.clone();
+            if bot_slug != "localhost" {
+                let bot_origin = format!("{default_scheme}://{bot_slug}:{port}");
+                try_add(&bot_slug, &bot_origin, &[]);
+
+                let bot_local = format!("{bot_slug}.local");
+                let bot_local_origin = format!("{default_scheme}://{bot_local}:{port}");
+                try_add(&bot_local, &bot_local_origin, &[]);
+            }
+
             // Register system hostname and hostname.local for LAN/mDNS access.
             if let Ok(hn) = hostname::get() {
                 let hn_str = hn.to_string_lossy();
@@ -4248,7 +4261,12 @@ pub async fn start_gateway(
             .and_then(|h| h.into_string().ok())
             .unwrap_or_else(|| "moltis".to_string());
         let instance = format!("Moltis on {host}");
-        match crate::mdns::register(&instance, port, env!("CARGO_PKG_VERSION")) {
+        match crate::mdns::register(
+            &instance,
+            port,
+            env!("CARGO_PKG_VERSION"),
+            Some(&instance_slug(config)),
+        ) {
             Ok(daemon) => Some(daemon),
             Err(e) => {
                 tracing::warn!("mDNS registration failed: {e}");
