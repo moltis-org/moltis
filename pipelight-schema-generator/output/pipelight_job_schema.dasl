@@ -1,0 +1,10 @@
+\
+type FilePath {
+  path: String
+}
+
+type JobData {
+  "@context": String,
+  "@type": String,
+  files: Array<FilePath>
+}

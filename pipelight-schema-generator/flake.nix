@@ -5,10 +5,9 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
-    buildbot-nix.url = "github:meta-introspector/buildbot-nix"; # Added buildbot-nix as an input
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay, buildbot-nix, ... }@inputs:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -19,11 +18,10 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          inputsFrom = [ buildbot-nix.devShells.default ]; # Inherit devShells from buildbot-nix
           buildInputs = [
             rustToolchain
           ];
-          RUST_SRC_PATH = rustToolchain.rust-src;
+          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust";
         };
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "pipelight-schema-generator";
@@ -32,6 +30,9 @@
           cargoLock = {
             lockFile = ./Cargo.lock;
           };
+          buildInputs = [
+            rustToolchain
+          ];
         };
       }
     );
