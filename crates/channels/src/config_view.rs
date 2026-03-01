@@ -26,4 +26,40 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
 
     /// Provider name associated with the model.
     fn model_provider(&self) -> Option<&str>;
+
+    // ── Per-channel / per-user override methods ─────────────────────────────
+
+    /// Model override for a specific channel/chat ID.
+    fn channel_model(&self, _channel_id: &str) -> Option<&str> {
+        None
+    }
+
+    /// Provider override for a specific channel/chat ID.
+    fn channel_model_provider(&self, _channel_id: &str) -> Option<&str> {
+        None
+    }
+
+    /// Model override for a specific user.
+    fn user_model(&self, _user_id: &str) -> Option<&str> {
+        None
+    }
+
+    /// Provider override for a specific user.
+    fn user_model_provider(&self, _user_id: &str) -> Option<&str> {
+        None
+    }
+
+    /// Resolve effective model: user > channel > account default.
+    fn resolve_model(&self, channel_id: &str, user_id: &str) -> Option<&str> {
+        self.user_model(user_id)
+            .or_else(|| self.channel_model(channel_id))
+            .or_else(|| self.model())
+    }
+
+    /// Resolve effective provider: user > channel > account default.
+    fn resolve_model_provider(&self, channel_id: &str, user_id: &str) -> Option<&str> {
+        self.user_model_provider(user_id)
+            .or_else(|| self.channel_model_provider(channel_id))
+            .or_else(|| self.model_provider())
+    }
 }

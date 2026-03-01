@@ -7,6 +7,7 @@ use {
 };
 
 use moltis_channels::{
+    config_view::ChannelConfigView,
     gating::{DmPolicy, GroupPolicy, is_allowed},
     message_log::MessageLogEntry,
     plugin::{
@@ -208,6 +209,28 @@ async fn push_events_callback(
             )
             .await;
         },
+        SlackEventCallbackBody::ReactionAdded(reaction_event) => {
+            handle_reaction_event(
+                &listener_state.account_id,
+                &reaction_event.user.to_string(),
+                &reaction_event.reaction.to_string(),
+                &reaction_event.item,
+                true,
+                &listener_state.accounts,
+            )
+            .await;
+        },
+        SlackEventCallbackBody::ReactionRemoved(reaction_event) => {
+            handle_reaction_event(
+                &listener_state.account_id,
+                &reaction_event.user.to_string(),
+                &reaction_event.reaction.to_string(),
+                &reaction_event.item,
+                false,
+                &listener_state.accounts,
+            )
+            .await;
+        },
         _ => {
             debug!("unhandled slack push event");
         },
@@ -268,18 +291,69 @@ async fn command_events_callback(
     }
 }
 
-/// Interaction events callback (stub).
+/// Interaction events callback (block actions / button clicks).
 async fn interaction_events_callback(
-    _event: SlackInteractionEvent,
+    event: SlackInteractionEvent,
     _client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
-    _states: SlackClientEventsUserState,
+    states: SlackClientEventsUserState,
 ) -> UserCallbackResult<()> {
-    debug!("slack interaction event (stub)");
+    let guard = states.read().await;
+    let listener_state = match guard.get_user_state::<ListenerState>() {
+        Some(s) => s.clone(),
+        None => return Ok(()),
+    };
+    drop(guard);
+
+    // Extract the action_id from block_actions interaction type.
+    let (action_id, channel_id) = match &event {
+        SlackInteractionEvent::BlockActions(ba) => {
+            let action = ba.actions.as_ref().and_then(|a| a.first());
+            let channel = ba.channel.as_ref().map(|c| c.id.to_string());
+            match (action, channel) {
+                (Some(act), Some(ch)) => (act.action_id.to_string(), ch),
+                _ => {
+                    debug!("block_actions missing action or channel");
+                    return Ok(());
+                },
+            }
+        },
+        _ => {
+            debug!("unhandled interaction event type");
+            return Ok(());
+        },
+    };
+
+    let account_id = &listener_state.account_id;
+    let event_sink = {
+        let accts = listener_state
+            .accounts
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        accts.get(account_id).and_then(|s| s.event_sink.clone())
+    };
+
+    if let Some(sink) = event_sink {
+        let reply_to = ChannelReplyTarget {
+            channel_type: ChannelType::Slack,
+            account_id: account_id.to_string(),
+            chat_id: channel_id,
+            message_id: None,
+        };
+        match sink.dispatch_interaction(&action_id, reply_to).await {
+            Ok(_response) => {
+                // Response already sent by the gateway.
+            },
+            Err(e) => {
+                debug!(account_id, action_id, "interaction dispatch failed: {e}");
+            },
+        }
+    }
+
     Ok(())
 }
 
 /// Handle a Slack message event.
-async fn handle_message_event(
+pub(crate) async fn handle_message_event(
     account_id: &str,
     event: SlackMessageEvent,
     accounts: &AccountStateMap,
@@ -346,9 +420,9 @@ async fn handle_message_event(
 
 /// Core inbound message processing.
 ///
-/// Shared by message events and app_mention events.
+/// Shared by message events, app_mention events, and webhook events.
 #[allow(clippy::too_many_arguments)]
-async fn handle_inbound(
+pub(crate) async fn handle_inbound(
     account_id: &str,
     channel_id: &str,
     user_id: &str,
@@ -484,11 +558,52 @@ async fn handle_inbound(
             sender_name: None,
             username,
             message_kind: Some(ChannelMessageKind::Text),
-            model: config.model.clone(),
+            model: config.resolve_model(channel_id, user_id).map(String::from),
             audio_filename: None,
         };
 
         sink.dispatch_to_chat(clean_text, reply_to, meta).await;
+    }
+}
+
+/// Handle a reaction_added or reaction_removed event.
+pub(crate) async fn handle_reaction_event(
+    account_id: &str,
+    user_id: &str,
+    emoji: &str,
+    item: &SlackReactionsItem,
+    added: bool,
+    accounts: &AccountStateMap,
+) {
+    // Only handle reactions on messages (not files).
+    let (channel_id, message_ts) = match item {
+        SlackReactionsItem::Message(msg) => {
+            let channel = msg.origin.channel.as_ref().map(|c| c.to_string());
+            let ts = msg.origin.ts.to_string();
+            match channel {
+                Some(c) => (c, ts),
+                None => return,
+            }
+        },
+        _ => return,
+    };
+
+    let event_sink = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts.get(account_id).and_then(|s| s.event_sink.clone())
+    };
+
+    if let Some(sink) = event_sink {
+        sink.emit(ChannelEvent::ReactionChange {
+            channel_type: ChannelType::Slack,
+            account_id: account_id.to_string(),
+            chat_id: channel_id,
+            message_id: message_ts,
+            user_id: user_id.to_string(),
+            emoji: emoji.to_string(),
+            added,
+        })
+        .await;
     }
 }
 

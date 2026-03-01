@@ -970,7 +970,8 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
 
     // Unknown channel types in channels.offered — accept built-in types plus
     // any dynamically configured types from `[channels.<type>]` sections.
-    let mut valid_channel_types: Vec<&str> = vec!["telegram", "msteams", "discord", "whatsapp"];
+    let mut valid_channel_types: Vec<&str> =
+        vec!["telegram", "msteams", "discord", "whatsapp", "slack"];
     for ct in config.channels.extra.keys() {
         valid_channel_types.push(ct.as_str());
     }
@@ -2095,7 +2096,7 @@ dm_policy = "allowlist"
     fn channels_offered_unknown_type_warned() {
         let toml = r#"
 [channels]
-offered = ["telegram", "slack"]
+offered = ["telegram", "foobar"]
 "#;
         let result = validate_toml_str(toml);
         let warning = result
@@ -2105,6 +2106,24 @@ offered = ["telegram", "slack"]
         assert!(
             warning.is_some(),
             "unknown channel type should produce warning, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_slack_accepted() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "slack"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "channels.offered[1]" && d.category == "unknown-field");
+        assert!(
+            warning.is_none(),
+            "slack should be accepted, got: {:?}",
             result.diagnostics
         );
     }

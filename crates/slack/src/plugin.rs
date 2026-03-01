@@ -14,7 +14,7 @@ use moltis_channels::{
     message_log::MessageLog,
     plugin::{
         ChannelEventSink, ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus,
-        ChannelStreamOutbound,
+        ChannelStreamOutbound, ChannelThreadContext,
     },
 };
 
@@ -51,6 +51,37 @@ impl SlackPlugin {
         self.event_sink = Some(sink);
         self
     }
+
+    /// Ingest an Events API webhook request.
+    ///
+    /// Returns `Ok(Some(challenge))` for URL verification, `Ok(None)` for events.
+    pub async fn ingest_webhook(
+        &self,
+        account_id: &str,
+        body: &[u8],
+        timestamp: &str,
+        signature: &str,
+    ) -> ChannelResult<Option<String>> {
+        crate::webhook::handle_webhook(account_id, body, timestamp, signature, &self.accounts).await
+    }
+
+    /// Ingest an interaction webhook (button clicks).
+    pub async fn ingest_interaction_webhook(
+        &self,
+        account_id: &str,
+        body: &[u8],
+        timestamp: &str,
+        signature: &str,
+    ) -> ChannelResult<()> {
+        crate::webhook::handle_interaction_webhook(
+            account_id,
+            body,
+            timestamp,
+            signature,
+            &self.accounts,
+        )
+        .await
+    }
 }
 
 impl Default for SlackPlugin {
@@ -78,22 +109,45 @@ impl ChannelPlugin for SlackPlugin {
         if cfg.bot_token.expose_secret().is_empty() {
             return Err(ChannelError::invalid_input("Slack bot_token is required"));
         }
-        if cfg.app_token.expose_secret().is_empty() {
-            return Err(ChannelError::invalid_input(
-                "Slack app_token is required for Socket Mode",
-            ));
+
+        match cfg.connection_mode {
+            crate::config::ConnectionMode::SocketMode => {
+                if cfg.app_token.expose_secret().is_empty() {
+                    return Err(ChannelError::invalid_input(
+                        "Slack app_token is required for Socket Mode",
+                    ));
+                }
+                info!(account_id, "starting slack account (socket mode)");
+                crate::socket::start_socket_mode(
+                    account_id,
+                    cfg,
+                    Arc::clone(&self.accounts),
+                    self.message_log.clone(),
+                    self.event_sink.clone(),
+                )
+                .await
+            },
+            crate::config::ConnectionMode::EventsApi => {
+                if cfg
+                    .signing_secret
+                    .as_ref()
+                    .map_or(true, |s| s.expose_secret().is_empty())
+                {
+                    return Err(ChannelError::invalid_input(
+                        "Slack signing_secret is required for Events API mode",
+                    ));
+                }
+                info!(account_id, "starting slack account (events api)");
+                crate::webhook::register_events_api_account(
+                    account_id,
+                    cfg,
+                    Arc::clone(&self.accounts),
+                    self.message_log.clone(),
+                    self.event_sink.clone(),
+                )
+                .await
+            },
         }
-
-        info!(account_id, "starting slack account");
-
-        crate::socket::start_socket_mode(
-            account_id,
-            cfg,
-            Arc::clone(&self.accounts),
-            self.message_log.clone(),
-            self.event_sink.clone(),
-        )
-        .await
     }
 
     async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
@@ -167,6 +221,10 @@ impl ChannelPlugin for SlackPlugin {
         Arc::new(SlackOutbound {
             accounts: Arc::clone(&self.accounts),
         })
+    }
+
+    fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        Some(&self.outbound)
     }
 }
 
@@ -247,6 +305,20 @@ mod tests {
             }),
         );
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn start_events_api_rejects_missing_signing_secret() {
+        let mut plugin = SlackPlugin::new();
+        let config = serde_json::json!({
+            "bot_token": "xoxb-test",
+            "app_token": "",
+            "connection_mode": "events_api",
+        });
+        let result = plugin.start_account("test", config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("signing_secret"), "error: {err}");
     }
 
     #[tokio::test]

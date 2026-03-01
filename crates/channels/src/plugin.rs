@@ -87,6 +87,16 @@ pub enum ChannelEvent {
         account_id: String,
         reason: String,
     },
+    /// A reaction was added or removed on a channel message.
+    ReactionChange {
+        channel_type: ChannelType,
+        account_id: String,
+        chat_id: String,
+        message_id: String,
+        user_id: String,
+        emoji: String,
+        added: bool,
+    },
     /// An OTP challenge was issued to a non-allowlisted DM user.
     OtpChallenge {
         channel_type: ChannelType,
@@ -220,6 +230,17 @@ pub trait ChannelEventSink: Send + Sync {
         false
     }
 
+    /// Dispatch a button/menu interaction callback.
+    ///
+    /// Returns a response message to send back to the user.
+    async fn dispatch_interaction(
+        &self,
+        _callback_data: &str,
+        _reply_to: ChannelReplyTarget,
+    ) -> Result<String> {
+        Err(Error::unavailable("interactions not supported"))
+    }
+
     /// Dispatch an inbound message with attachments (images, files) to the chat session.
     ///
     /// This is used when a channel message contains both text and media (e.g., a
@@ -291,6 +312,60 @@ pub struct ChannelReplyTarget {
     pub message_id: Option<String>,
 }
 
+// ── Interactive messages ─────────────────────────────────────────────────────
+
+/// A clickable button in a channel message.
+#[derive(Debug, Clone)]
+pub struct InteractiveButton {
+    pub label: String,
+    pub callback_data: String,
+    pub style: ButtonStyle,
+}
+
+/// Visual style for interactive buttons.
+#[derive(Debug, Clone, Default)]
+pub enum ButtonStyle {
+    #[default]
+    Default,
+    Primary,
+    Danger,
+}
+
+/// A row of buttons.
+pub type ButtonRow = Vec<InteractiveButton>;
+
+/// A message with interactive button components.
+#[derive(Debug, Clone)]
+pub struct InteractiveMessage {
+    pub text: String,
+    pub button_rows: Vec<ButtonRow>,
+    pub replace_message_id: Option<String>,
+}
+
+// ── Thread context ──────────────────────────────────────────────────────────
+
+/// A single message from a thread conversation.
+#[derive(Debug, Clone)]
+pub struct ThreadMessage {
+    pub sender_id: String,
+    pub is_bot: bool,
+    pub text: String,
+    pub timestamp: String,
+}
+
+/// Fetch prior thread messages for context injection.
+#[async_trait]
+pub trait ChannelThreadContext: Send + Sync {
+    /// Fetch up to `limit` messages from the given thread.
+    async fn fetch_thread_messages(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        thread_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ThreadMessage>>;
+}
+
 /// Core channel plugin trait. Each messaging platform implements this.
 #[async_trait]
 pub trait ChannelPlugin: Send + Sync {
@@ -343,6 +418,11 @@ pub trait ChannelPlugin: Send + Sync {
 
     /// Downcast to OTP provider if this channel supports OTP self-approval.
     fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
+        None
+    }
+
+    /// Thread context provider for fetching prior thread messages.
+    fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
         None
     }
 }
@@ -414,6 +494,48 @@ pub trait ChannelOutbound: Send + Sync {
     ) -> Result<()> {
         self.send_text(account_id, to, text, reply_to).await
     }
+    /// Send an interactive message with buttons. Default: numbered text fallback.
+    async fn send_interactive(
+        &self,
+        account_id: &str,
+        to: &str,
+        message: &InteractiveMessage,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        // Default implementation: render buttons as numbered text lines.
+        let mut text = message.text.clone();
+        let mut idx = 1;
+        for row in &message.button_rows {
+            for btn in row {
+                text.push_str(&format!("\n{idx}. {}", btn.label));
+                idx += 1;
+            }
+        }
+        self.send_text(account_id, to, &text, reply_to).await
+    }
+
+    /// Add a reaction (emoji) to a message. No-op by default.
+    async fn add_reaction(
+        &self,
+        _account_id: &str,
+        _channel_id: &str,
+        _message_id: &str,
+        _emoji: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Remove a reaction (emoji) from a message. No-op by default.
+    async fn remove_reaction(
+        &self,
+        _account_id: &str,
+        _channel_id: &str,
+        _message_id: &str,
+        _emoji: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Send a native location pin to the channel.
     ///
     /// When `title` is provided, platforms that support it (e.g. Telegram) send
@@ -640,6 +762,42 @@ mod tests {
             .send_location("acct", "42", 48.8566, 2.3522, Some("Eiffel Tower"), None)
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn default_add_reaction_is_noop() {
+        let out = DummyOutbound;
+        let result = out
+            .add_reaction("acct", "C123", "1234.5678", "thumbsup")
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn default_remove_reaction_is_noop() {
+        let out = DummyOutbound;
+        let result = out
+            .remove_reaction("acct", "C123", "1234.5678", "thumbsup")
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn reaction_change_event_serialization() {
+        let event = ChannelEvent::ReactionChange {
+            channel_type: ChannelType::Slack,
+            account_id: "slack1".into(),
+            chat_id: "C123".into(),
+            message_id: "1234.5678".into(),
+            user_id: "U456".into(),
+            emoji: "thumbsup".into(),
+            added: true,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "reaction_change");
+        assert_eq!(json["channel_type"], "slack");
+        assert_eq!(json["emoji"], "thumbsup");
+        assert_eq!(json["added"], true);
     }
 
     #[test]

@@ -6558,12 +6558,15 @@ name = "moltis-slack"
 version = "0.10.3"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "hmac",
  "moltis-channels",
  "moltis-common",
  "reqwest 0.12.28",
  "secrecy 0.8.0",
  "serde",
  "serde_json",
+ "sha2",
  "slack-morphism",
  "tokio",
  "tokio-util",

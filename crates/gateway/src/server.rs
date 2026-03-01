@@ -2360,6 +2360,8 @@ pub async fn prepare_gateway(
     // Session service is wired after hook registry is built (below).
 
     let msteams_webhook_plugin: Arc<tokio::sync::RwLock<moltis_msteams::MsTeamsPlugin>>;
+    #[cfg(feature = "slack")]
+    let slack_webhook_plugin: Arc<tokio::sync::RwLock<moltis_slack::SlackPlugin>>;
 
     // Wire channel store, registry, and channel plugins.
     {
@@ -2432,6 +2434,7 @@ pub async fn prepare_gateway(
                     .with_message_log(Arc::clone(&message_log))
                     .with_event_sink(Arc::clone(&channel_sink)),
             ));
+            slack_webhook_plugin = Arc::clone(&slack_plugin);
             registry
                 .register(slack_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
                 .await;
@@ -2521,6 +2524,7 @@ pub async fn prepare_gateway(
         let registry = Arc::new(registry);
         let router = Arc::new(RegistryOutboundRouter::new(Arc::clone(&registry)));
 
+        services = services.with_channel_registry(Arc::clone(&registry));
         let outbound_router = Arc::clone(&router) as Arc<dyn moltis_channels::ChannelOutbound>;
         services = services.with_channel_outbound(Arc::clone(&outbound_router));
         services = services.with_channel_stream_outbound(
@@ -3633,6 +3637,110 @@ pub async fn prepare_gateway(
             },
         ),
     );
+
+    #[cfg(feature = "slack")]
+    {
+        // Slack Events API webhook — receives event callbacks.
+        let slack_events_plugin = Arc::clone(&slack_webhook_plugin);
+        app = app.route(
+            "/api/channels/slack/{account_id}/events",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&slack_events_plugin);
+                    async move {
+                        let timestamp = headers
+                            .get("x-slack-request-timestamp")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("");
+                        let signature = headers
+                            .get("x-slack-signature")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("");
+
+                        let result = {
+                            let p = plugin.read().await;
+                            p.ingest_webhook(&account_id, &body, timestamp, signature)
+                                .await
+                        };
+                        match result {
+                            Ok(Some(challenge)) => (
+                                StatusCode::OK,
+                                Json(serde_json::json!({ "challenge": challenge })),
+                            ),
+                            Ok(None) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))),
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if msg.contains("invalid Slack webhook signature") {
+                                    (
+                                        StatusCode::UNAUTHORIZED,
+                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                                    )
+                                } else if msg.contains("unknown") {
+                                    (
+                                        StatusCode::NOT_FOUND,
+                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                                    )
+                                } else {
+                                    (
+                                        StatusCode::BAD_REQUEST,
+                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                                    )
+                                }
+                            },
+                        }
+                    }
+                },
+            ),
+        );
+
+        // Slack interaction webhook — receives button click payloads.
+        let slack_interact_plugin = Arc::clone(&slack_webhook_plugin);
+        app = app.route(
+            "/api/channels/slack/{account_id}/interactions",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&slack_interact_plugin);
+                    async move {
+                        let timestamp = headers
+                            .get("x-slack-request-timestamp")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("");
+                        let signature = headers
+                            .get("x-slack-signature")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("");
+
+                        let result = {
+                            let p = plugin.read().await;
+                            p.ingest_interaction_webhook(&account_id, &body, timestamp, signature)
+                                .await
+                        };
+                        match result {
+                            Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))),
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if msg.contains("invalid Slack webhook signature") {
+                                    (
+                                        StatusCode::UNAUTHORIZED,
+                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                                    )
+                                } else {
+                                    (
+                                        StatusCode::BAD_REQUEST,
+                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                                    )
+                                }
+                            },
+                        }
+                    }
+                },
+            ),
+        );
+    }
 
     // Resolve TLS configuration (only when compiled with the `tls` feature).
     let tls_active = tls_enabled_for_gateway;

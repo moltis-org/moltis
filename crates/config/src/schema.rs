@@ -1135,7 +1135,7 @@ pub struct McpOAuthOverrideEntry {
 #[serde(default)]
 pub struct ChannelsConfig {
     /// Which channel types are offered in the web UI (onboarding + channels page).
-    /// Defaults to `["telegram", "discord"]`. Set to `["telegram", "discord", "msteams"]` to opt in to Teams.
+    /// Defaults to `["telegram", "discord", "slack"]`. Add `"msteams"` or `"whatsapp"` to opt in.
     #[serde(
         default = "default_channels_offered",
         skip_serializing_if = "Vec::is_empty"
@@ -1179,7 +1179,7 @@ impl ChannelsConfig {
 }
 
 fn default_channels_offered() -> Vec<String> {
-    vec!["telegram".into(), "discord".into()]
+    vec!["telegram".into(), "discord".into(), "slack".into()]
 }
 
 impl Default for ChannelsConfig {
@@ -2287,11 +2287,12 @@ system_prompt_suffix = "Focus on evidence."
     }
 
     #[test]
-    fn channels_config_defaults_to_telegram_and_discord_offered() {
+    fn channels_config_defaults_to_telegram_discord_slack_offered() {
         let config = ChannelsConfig::default();
         assert_eq!(config.offered, vec![
             "telegram".to_string(),
-            "discord".to_string()
+            "discord".to_string(),
+            "slack".to_string(),
         ]);
     }
 
@@ -2300,7 +2301,8 @@ system_prompt_suffix = "Focus on evidence."
         let config: ChannelsConfig = toml::from_str("").unwrap();
         assert_eq!(config.offered, vec![
             "telegram".to_string(),
-            "discord".to_string()
+            "discord".to_string(),
+            "slack".to_string(),
         ]);
     }
 

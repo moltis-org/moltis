@@ -17,10 +17,11 @@ pub use {
     config_view::ChannelConfigView,
     error::{Error, Result},
     plugin::{
-        ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelHealthSnapshot,
-        ChannelMessageKind, ChannelMessageMeta, ChannelOtpProvider, ChannelOutbound, ChannelPlugin,
-        ChannelReplyTarget, ChannelStatus, ChannelStreamOutbound, ChannelType, StreamEvent,
-        StreamReceiver, StreamSender,
+        ButtonRow, ButtonStyle, ChannelAttachment, ChannelEvent, ChannelEventSink,
+        ChannelHealthSnapshot, ChannelMessageKind, ChannelMessageMeta, ChannelOtpProvider,
+        ChannelOutbound, ChannelPlugin, ChannelReplyTarget, ChannelStatus, ChannelStreamOutbound,
+        ChannelThreadContext, ChannelType, InteractiveButton, InteractiveMessage, StreamEvent,
+        StreamReceiver, StreamSender, ThreadMessage,
     },
     registry::{ChannelRegistry, RegistryOutboundRouter},
 };

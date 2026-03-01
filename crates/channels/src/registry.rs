@@ -6,7 +6,10 @@ use std::{
 use {async_trait::async_trait, tokio::sync::RwLock, tracing::warn};
 
 use {
-    super::plugin::{ChannelOutbound, ChannelPlugin, ChannelStreamOutbound, StreamReceiver},
+    super::plugin::{
+        ChannelOutbound, ChannelPlugin, ChannelStreamOutbound, InteractiveMessage, StreamReceiver,
+        ThreadMessage,
+    },
     crate::{Error, Result, config_view::ChannelConfigView, plugin::ChannelHealthSnapshot},
 };
 
@@ -204,6 +207,34 @@ impl ChannelRegistry {
         p.account_config_json(account_id)
     }
 
+    /// Fetch thread messages for context injection.
+    ///
+    /// Resolves the plugin for the given account and calls its thread context
+    /// provider. Returns an empty vec if the plugin does not support threads.
+    pub async fn fetch_thread_messages(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        thread_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ThreadMessage>> {
+        let channel_type = self
+            .resolve_channel_type(account_id)
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        let plugin = self
+            .plugins
+            .get(&channel_type)
+            .ok_or_else(|| Error::invalid_input(format!("unknown channel type: {channel_type}")))?;
+        let p = plugin.read().await;
+        match p.thread_context() {
+            Some(ctx) => {
+                ctx.fetch_thread_messages(account_id, channel_id, thread_id, limit)
+                    .await
+            },
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Update account config via the registry.
     pub async fn update_account_config(
         &self,
@@ -345,6 +376,57 @@ impl ChannelOutbound for RegistryOutboundRouter {
             .ok_or_else(|| Error::unknown_account(account_id))?;
         outbound
             .send_location(account_id, to, latitude, longitude, title, reply_to)
+            .await
+    }
+
+    async fn send_interactive(
+        &self,
+        account_id: &str,
+        to: &str,
+        message: &InteractiveMessage,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .send_interactive(account_id, to, message, reply_to)
+            .await
+    }
+
+    async fn add_reaction(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> Result<()> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .add_reaction(account_id, channel_id, message_id, emoji)
+            .await
+    }
+
+    async fn remove_reaction(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> Result<()> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .remove_reaction(account_id, channel_id, message_id, emoji)
             .await
     }
 }
