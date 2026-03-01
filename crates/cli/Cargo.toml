@@ -75,6 +75,7 @@ default = [
   "graphql",
   "jemalloc",
   "local-llm",
+  "local-llm-metal",
   "mdns",
   "metrics",
   "openclaw-import",
@@ -99,6 +100,8 @@ jemalloc     = ["dep:tikv-jemallocator"]
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
 lightweight        = ["jemalloc", "tls", "web-ui"]
 local-llm          = ["moltis-gateway/local-llm"]
+local-llm-cuda     = ["local-llm", "moltis-gateway/local-llm-cuda"]
+local-llm-metal    = ["local-llm", "moltis-gateway/local-llm-metal"]
 mdns               = ["moltis-gateway/mdns"]
 metrics            = ["moltis-gateway/metrics", "moltis-web?/metrics"]
 openclaw-import    = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]

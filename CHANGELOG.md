@@ -22,7 +22,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Heartbeat cron delivery now respects configured channel targets and no longer skips channel delivery for heartbeat turns when trimmed output is present
+- macOS local LLM Metal detection now requires both compile-time Metal backend support and a runtime Metal device probe (`MTLCreateSystemDefaultDevice`), and default CLI/gateway builds now enable `local-llm-metal` so Metal-capable systems correctly report `has_metal=true`.
 
+### Security
+
+## [0.10.2] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Release packaging now installs cross-compilation targets on the active nightly toolchain in the Homebrew binary job, fixing `error[E0463]: can't find crate for core` during macOS binary builds.
+- Docker release builds now copy `apps/courier` into the image build context so Cargo workspace metadata resolves correctly during WASM component builds.
 ### Security
 
 ## [0.10.1] - 2026-02-28

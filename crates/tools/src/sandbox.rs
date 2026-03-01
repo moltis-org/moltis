@@ -716,8 +716,13 @@ WORKDIR {SANDBOX_HOME_DIR}\n"
 }
 
 #[cfg(target_os = "macos")]
+const APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS: u64 = 2_147_483_647;
+
+#[cfg(target_os = "macos")]
 fn apple_container_bootstrap_command() -> String {
-    format!("mkdir -p {SANDBOX_HOME_DIR} && exec sleep infinity")
+    format!(
+        "mkdir -p {SANDBOX_HOME_DIR} && if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep {APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS}; fi"
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -6113,6 +6118,17 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn test_apple_container_bootstrap_command_uses_portable_sleep() {
+        let command = apple_container_bootstrap_command();
+        assert!(command.contains("mkdir -p /home/sandbox"));
+        assert!(command.contains("command -v gnusleep >/dev/null 2>&1"));
+        assert!(command.contains("exec gnusleep infinity"));
+        assert!(command.contains("exec sleep 2147483647"));
+        assert!(!command.contains("exec sleep infinity"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
         let args =
             apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"), None);
@@ -6128,7 +6144,7 @@ mod tests {
             "ubuntu:25.10",
             "sh",
             "-c",
-            "mkdir -p /home/sandbox && exec sleep infinity",
+            "mkdir -p /home/sandbox && if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep 2147483647; fi",
         ]
         .into_iter()
         .map(str::to_string)
@@ -6159,7 +6175,7 @@ mod tests {
             "ubuntu:25.10",
             "sh",
             "-c",
-            "mkdir -p /home/sandbox && exec sleep infinity",
+            "mkdir -p /home/sandbox && if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep 2147483647; fi",
         ]
         .into_iter()
         .map(str::to_string)
