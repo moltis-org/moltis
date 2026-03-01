@@ -9,12 +9,15 @@ use {
 use {
     moltis_channels::{
         Error as ChannelError, Result as ChannelResult,
-        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver},
+        plugin::{
+            ButtonStyle as ChannelButtonStyle, ChannelOutbound, ChannelStreamOutbound,
+            InteractiveMessage, StreamEvent, StreamReceiver,
+        },
     },
     moltis_common::types::ReplyPayload,
     serenity::all::{
-        ChannelId, CreateAttachment, CreateEmbed, CreateMessage, EditMessage, MessageId,
-        ReactionType,
+        ButtonStyle as SerenityButtonStyle, ChannelId, CreateActionRow, CreateAttachment,
+        CreateButton, CreateEmbed, CreateMessage, EditMessage, MessageId, ReactionType,
     },
 };
 
@@ -587,6 +590,54 @@ impl ChannelOutbound for DiscordOutbound {
             "discord outbound location send"
         );
         self.send_text(account_id, to, &text, reply_to).await
+    }
+
+    async fn send_interactive(
+        &self,
+        account_id: &str,
+        to: &str,
+        message: &InteractiveMessage,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        let http = self.resolve_http(account_id)?;
+        let channel_id = Self::parse_channel_id(to)?;
+        let reference = self.resolve_reference(account_id, reply_to);
+
+        let action_rows: Vec<CreateActionRow> = message
+            .button_rows
+            .iter()
+            .map(|row| {
+                let buttons: Vec<CreateButton> = row
+                    .iter()
+                    .map(|btn| {
+                        let style = match btn.style {
+                            ChannelButtonStyle::Primary => SerenityButtonStyle::Primary,
+                            ChannelButtonStyle::Danger => SerenityButtonStyle::Danger,
+                            ChannelButtonStyle::Default => SerenityButtonStyle::Secondary,
+                        };
+                        CreateButton::new(&btn.callback_data)
+                            .label(&btn.label)
+                            .style(style)
+                    })
+                    .collect();
+                CreateActionRow::Buttons(buttons)
+            })
+            .collect();
+
+        let mut msg = CreateMessage::new()
+            .content(&message.text)
+            .components(action_rows);
+        if let Some(ref_id) = reference {
+            msg = msg.reference_message((channel_id, ref_id));
+        }
+
+        channel_id.send_message(&http, msg).await.map_err(|e| {
+            ChannelError::external(
+                "Discord send interactive",
+                std::io::Error::other(e.to_string()),
+            )
+        })?;
+        Ok(())
     }
 }
 
