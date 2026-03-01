@@ -50,7 +50,7 @@ use {
 use crate::{
     approval::{GatewayApprovalBroadcaster, LiveExecApprovalService},
     auth,
-    auth_routes::{AuthState, auth_router},
+    auth_routes::{AuthState, SharedWebAuthnRegistry, auth_router},
     broadcast::{BroadcastOpts, broadcast, broadcast_tick},
     chat::{LiveChatService, LiveModelService},
     methods::MethodRegistry,
@@ -541,6 +541,7 @@ pub struct AppState {
     pub gateway: Arc<GatewayState>,
     pub methods: Arc<MethodRegistry>,
     pub request_throttle: Arc<crate::request_throttle::RequestThrottle>,
+    pub webauthn_registry: Option<SharedWebAuthnRegistry>,
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<crate::push::PushService>>,
     #[cfg(feature = "graphql")]
@@ -693,7 +694,7 @@ pub fn build_gateway_base(
     state: Arc<GatewayState>,
     methods: Arc<MethodRegistry>,
     push_service: Option<Arc<crate::push::PushService>>,
-    webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
+    webauthn_registry: Option<SharedWebAuthnRegistry>,
 ) -> (Router<AppState>, AppState) {
     let mut router = Router::new()
         .route("/health", get(health_handler))
@@ -722,6 +723,7 @@ pub fn build_gateway_base(
         gateway: state,
         methods,
         request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
+        webauthn_registry: webauthn_registry.clone(),
         push_service,
         #[cfg(feature = "graphql")]
         graphql_schema,
@@ -748,7 +750,7 @@ pub fn build_gateway_base(
 pub fn build_gateway_base(
     state: Arc<GatewayState>,
     methods: Arc<MethodRegistry>,
-    webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
+    webauthn_registry: Option<SharedWebAuthnRegistry>,
 ) -> (Router<AppState>, AppState) {
     let mut router = Router::new()
         .route("/health", get(health_handler))
@@ -786,6 +788,7 @@ pub fn build_gateway_base(
         gateway: state,
         methods,
         request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
+        webauthn_registry: webauthn_registry.clone(),
         #[cfg(feature = "graphql")]
         graphql_schema,
     };
@@ -843,7 +846,7 @@ pub fn build_gateway_app(
     methods: Arc<MethodRegistry>,
     push_service: Option<Arc<crate::push::PushService>>,
     http_request_logs: bool,
-    webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
+    webauthn_registry: Option<SharedWebAuthnRegistry>,
 ) -> Router {
     let (router, app_state) = build_gateway_base(state, methods, push_service, webauthn_registry);
     finalize_gateway_app(router, app_state, http_request_logs)
@@ -855,7 +858,7 @@ pub fn build_gateway_app(
     state: Arc<GatewayState>,
     methods: Arc<MethodRegistry>,
     http_request_logs: bool,
-    webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
+    webauthn_registry: Option<SharedWebAuthnRegistry>,
 ) -> Router {
     let (router, app_state) = build_gateway_base(state, methods, webauthn_registry);
     finalize_gateway_app(router, app_state, http_request_logs)
@@ -1111,7 +1114,7 @@ pub(crate) struct BannerMeta {
     pub data_dir: PathBuf,
     pub openclaw_status: String,
     pub setup_code_display: Option<String>,
-    pub webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
+    pub webauthn_registry: Option<SharedWebAuthnRegistry>,
     pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
     pub config: moltis_config::schema::MoltisConfig,
     #[cfg(feature = "tailscale")]
@@ -1556,14 +1559,18 @@ pub async fn prepare_gateway(
 
         // Helper: try to add one RP ID with its origin + extras to the registry.
         let mut try_add = |rp_id: &str, origin_str: &str, extras: &[webauthn_rs::prelude::Url]| {
+            let rp_id = crate::auth_webauthn::normalize_host(rp_id);
+            if rp_id.is_empty() || registry.contains_host(&rp_id) {
+                return;
+            }
             let Ok(origin_url) = webauthn_rs::prelude::Url::parse(origin_str) else {
                 tracing::warn!("invalid WebAuthn origin URL '{origin_str}'");
                 return;
             };
-            match crate::auth_webauthn::WebAuthnState::new(rp_id, &origin_url, extras) {
+            match crate::auth_webauthn::WebAuthnState::new(&rp_id, &origin_url, extras) {
                 Ok(wa) => {
                     info!(rp_id = %rp_id, origins = ?wa.get_allowed_origins(), "WebAuthn RP registered");
-                    registry.add(rp_id.to_owned(), wa);
+                    registry.add(rp_id.clone(), wa);
                     any_ok = true;
                 },
                 Err(e) => tracing::warn!(rp_id = %rp_id, "failed to init WebAuthn: {e}"),
@@ -1587,6 +1594,19 @@ pub async fn prepare_gateway(
                 .collect();
             try_add("localhost", &localhost_origin, &moltis_localhost);
 
+            // Register identity-derived host aliases (`<bot-name>` and
+            // `<bot-name>.local`) so passkeys work when clients connect using
+            // bot-name based local DNS/mDNS labels.
+            let bot_slug = instance_slug_value.clone();
+            if bot_slug != "localhost" {
+                let bot_origin = format!("{default_scheme}://{bot_slug}:{port}");
+                try_add(&bot_slug, &bot_origin, &[]);
+
+                let bot_local = format!("{bot_slug}.local");
+                let bot_local_origin = format!("{default_scheme}://{bot_local}:{port}");
+                try_add(&bot_local, &bot_local_origin, &[]);
+            }
+
             // Register system hostname and hostname.local for LAN/mDNS access.
             if let Ok(hn) = hostname::get() {
                 let hn_str = hn.to_string_lossy();
@@ -1608,11 +1628,21 @@ pub async fn prepare_gateway(
                     }
                 }
             }
+
+            // Also register active Tailscale DNS host for remote access when available.
+            #[cfg(feature = "tailscale")]
+            if let Ok(Some(ts_hostname)) = CliTailscaleManager::new().hostname().await {
+                let ts_host = crate::auth_webauthn::normalize_host(&ts_hostname);
+                if !ts_host.is_empty() {
+                    let ts_origin = format!("{default_scheme}://{ts_host}:{port}");
+                    try_add(&ts_host, &ts_origin, &[]);
+                }
+            }
         }
 
         if any_ok {
             info!(origins = ?registry.get_all_origins(), "WebAuthn passkeys enabled");
-            Some(Arc::new(registry))
+            Some(Arc::new(tokio::sync::RwLock::new(registry)))
         } else {
             None
         }
@@ -4231,7 +4261,12 @@ pub async fn start_gateway(
             .and_then(|h| h.into_string().ok())
             .unwrap_or_else(|| "moltis".to_string());
         let instance = format!("Moltis on {host}");
-        match crate::mdns::register(&instance, port, env!("CARGO_PKG_VERSION")) {
+        match crate::mdns::register(
+            &instance,
+            port,
+            env!("CARGO_PKG_VERSION"),
+            Some(&instance_slug(config)),
+        ) {
             Ok(daemon) => Some(daemon),
             Err(e) => {
                 tracing::warn!("mDNS registration failed: {e}");
@@ -4321,11 +4356,11 @@ pub async fn start_gateway(
     };
     #[cfg(not(feature = "tls"))]
     let display_host = display_ip.to_string();
-    let passkey_origins = banner
-        .webauthn_registry
-        .as_ref()
-        .map(|registry| registry.get_all_origins())
-        .unwrap_or_default();
+    let passkey_origins = if let Some(registry) = banner.webauthn_registry.as_ref() {
+        registry.read().await.get_all_origins()
+    } else {
+        Vec::new()
+    };
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     let mut lines = vec![
         format!("moltis gateway v{}", state.version),

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- WebAuthn passkey host detection now auto-registers newly discovered Tailscale hostnames at runtime (no restart needed), and Settings now shows a passkey-update warning banner when an existing passkey setup encounters a newly added host.
 - macOS local LLM Metal detection now requires both compile-time Metal backend support and a runtime Metal device probe (`MTLCreateSystemDefaultDevice`), and default CLI/gateway builds now enable `local-llm-metal` so Metal-capable systems correctly report `has_metal=true`.
 
 ### Security
