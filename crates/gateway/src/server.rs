@@ -36,6 +36,10 @@ use moltis_providers::ProviderRegistry;
 use moltis_tools::{
     approval::{ApprovalManager, ApprovalMode, SecurityLevel},
     exec::EnvVarProvider,
+    sessions_manage::{
+        CreateSessionFn, CreateSessionRequest, DeleteSessionFn, DeleteSessionRequest,
+        SessionsCreateTool, SessionsDeleteTool,
+    },
 };
 
 use {
@@ -3189,6 +3193,93 @@ pub async fn prepare_gateway(
         tool_registry.register(Box::new(
             moltis_tools::session_state::SessionStateTool::new(Arc::clone(&session_state_store)),
         ));
+
+        // Register session lifecycle tools for explicit session creation/deletion.
+        let state_for_session_create = Arc::clone(&state);
+        let metadata_for_session_create = Arc::clone(&session_metadata);
+        let create_session: CreateSessionFn = Arc::new(move |req: CreateSessionRequest| {
+            let state = Arc::clone(&state_for_session_create);
+            let metadata = Arc::clone(&metadata_for_session_create);
+            Box::pin(async move {
+                let key = req.key;
+
+                let mut resolve_params = serde_json::json!({ "key": key.clone() });
+                if let Some(inherit) = req.inherit_agent_from {
+                    resolve_params["inherit_agent_from"] = serde_json::json!(inherit);
+                }
+                state
+                    .services
+                    .session
+                    .resolve(resolve_params)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                let mut patch = serde_json::Map::new();
+                patch.insert("key".to_string(), serde_json::json!(key.clone()));
+                if let Some(label) = req.label {
+                    patch.insert("label".to_string(), serde_json::json!(label));
+                }
+                if let Some(model) = req.model {
+                    patch.insert("model".to_string(), serde_json::json!(model));
+                }
+                if let Some(project_id) = req.project_id {
+                    patch.insert("projectId".to_string(), serde_json::json!(project_id));
+                }
+                if patch.len() > 1 {
+                    state
+                        .services
+                        .session
+                        .patch(serde_json::Value::Object(patch))
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+
+                let entry = metadata
+                    .get(&key)
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("session '{key}' not found after create"))?;
+                Ok(serde_json::json!({
+                    "entry": {
+                        "id": entry.id,
+                        "key": entry.key,
+                        "label": entry.label,
+                        "model": entry.model,
+                        "createdAt": entry.created_at,
+                        "updatedAt": entry.updated_at,
+                        "messageCount": entry.message_count,
+                        "projectId": entry.project_id,
+                        "agent_id": entry.agent_id,
+                        "agentId": entry.agent_id,
+                        "version": entry.version,
+                    }
+                }))
+            })
+        });
+
+        let state_for_session_delete = Arc::clone(&state);
+        let delete_session: DeleteSessionFn = Arc::new(move |req: DeleteSessionRequest| {
+            let state = Arc::clone(&state_for_session_delete);
+            Box::pin(async move {
+                state
+                    .services
+                    .session
+                    .delete(serde_json::json!({
+                        "key": req.key,
+                        "force": req.force,
+                    }))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            })
+        });
+
+        tool_registry.register(Box::new(SessionsCreateTool::new(
+            Arc::clone(&session_metadata),
+            create_session,
+        )));
+        tool_registry.register(Box::new(SessionsDeleteTool::new(
+            Arc::clone(&session_metadata),
+            delete_session,
+        )));
 
         // Register built-in voice tools for explicit TTS/STT calls in agents.
         tool_registry.register(Box::new(crate::voice_agent_tools::SpeakTool::new(

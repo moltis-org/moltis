@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent `send_message` tool for proactive outbound channel delivery (`account_id` + `to` + `text`), backed by a live `channels.send` implementation in gateway channel services
 - Heartbeat channel routing config fields (`heartbeat.deliver`, `heartbeat.channel`, `heartbeat.to`) in schema/template/GraphQL, plus heartbeat settings UI controls for channel target selection
 - Prompt runtime context fields for channel/surface awareness (`surface`, `session_kind`, `channel_type`, `channel_account`, `channel_chat_id`, `channel_chat_type`)
+- Agent session lifecycle tools: `sessions_create` (create/resolve chat sessions) and `sessions_delete` (delete sessions by key), wired through gateway session service behavior
 
 ### Changed
 
