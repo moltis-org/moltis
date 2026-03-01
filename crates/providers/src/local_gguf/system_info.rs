@@ -6,6 +6,7 @@ use sysinfo::System;
 
 #[cfg(target_os = "macos")]
 #[link(name = "Metal", kind = "framework")]
+#[allow(unsafe_code)]
 unsafe extern "C" {
     fn MTLCreateSystemDefaultDevice() -> *mut std::ffi::c_void;
 }
@@ -98,6 +99,7 @@ impl SystemInfo {
 
 #[cfg(target_os = "macos")]
 #[must_use]
+#[allow(unsafe_code)]
 fn metal_runtime_available() -> bool {
     // SAFETY: Calling a pure system probe from Apple's Metal framework.
     // Returns null when no default Metal device is available.

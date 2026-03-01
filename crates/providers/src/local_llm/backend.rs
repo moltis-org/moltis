@@ -258,7 +258,9 @@ pub mod gguf {
     struct SendSyncBackend(LlamaBackend);
 
     // SAFETY: LlamaBackend is an immutable init handle with no thread-local state.
+    #[allow(unsafe_code)]
     unsafe impl Send for SendSyncBackend {}
+    #[allow(unsafe_code)]
     unsafe impl Sync for SendSyncBackend {}
 
     /// GGUF backend implementation.
