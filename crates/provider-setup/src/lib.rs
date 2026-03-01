@@ -2789,12 +2789,7 @@ fn reorder_models_for_validation(models: &mut [moltis_providers::ModelInfo]) {
     ];
 
     /// Known-slow or experimental model substrings to deprioritize.
-    const SLOW_PATTERNS: &[&str] = &[
-        "search-preview",
-        "seed-",
-        "preview",
-        "experimental",
-    ];
+    const SLOW_PATTERNS: &[&str] = &["search-preview", "seed-", "preview", "experimental"];
 
     models.sort_by(|a, b| {
         let a_rank = probe_priority_rank(&a.id, FAST_PATTERNS, SLOW_PATTERNS);
@@ -4353,34 +4348,60 @@ mod tests {
         // Fast models should be at the front
         assert!(
             ids.iter().position(|id| *id == "gpt-4o-mini").unwrap()
-                < ids.iter().position(|id| *id == "some-regular-model").unwrap(),
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
             "fast model gpt-4o-mini should come before regular model, got: {ids:?}"
         );
         assert!(
-            ids.iter().position(|id| *id == "claude-3.5-haiku-20241022").unwrap()
-                < ids.iter().position(|id| *id == "some-regular-model").unwrap(),
+            ids.iter()
+                .position(|id| *id == "claude-3.5-haiku-20241022")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
             "fast model claude-3.5-haiku should come before regular model, got: {ids:?}"
         );
         assert!(
             ids.iter().position(|id| *id == "deepseek-chat").unwrap()
-                < ids.iter().position(|id| *id == "some-regular-model").unwrap(),
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
             "fast model deepseek-chat should come before regular model, got: {ids:?}"
         );
 
         // Slow models should be at the end
         assert!(
-            ids.iter().position(|id| *id == "some-regular-model").unwrap()
-                < ids.iter().position(|id| *id == "gpt-4o-search-preview").unwrap(),
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "gpt-4o-search-preview")
+                    .unwrap(),
             "regular model should come before slow model search-preview, got: {ids:?}"
         );
         assert!(
-            ids.iter().position(|id| *id == "some-regular-model").unwrap()
-                < ids.iter().position(|id| *id == "bytedance-seed/seed-2.0-mini").unwrap(),
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "bytedance-seed/seed-2.0-mini")
+                    .unwrap(),
             "regular model should come before slow model seed-, got: {ids:?}"
         );
         assert!(
-            ids.iter().position(|id| *id == "some-regular-model").unwrap()
-                < ids.iter().position(|id| *id == "experimental-model-v1").unwrap(),
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "experimental-model-v1")
+                    .unwrap(),
             "regular model should come before slow model experimental, got: {ids:?}"
         );
     }
@@ -4396,8 +4417,17 @@ mod tests {
         reorder_models_for_validation(&mut models);
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
 
-        assert_eq!(ids[0], "openrouter::gpt-4o-mini", "fast namespaced model should be first, got: {ids:?}");
-        assert_eq!(ids[1], "openrouter::some-model", "regular model should be middle, got: {ids:?}");
-        assert_eq!(ids[2], "openrouter::gpt-4o-search-preview", "slow namespaced model should be last, got: {ids:?}");
+        assert_eq!(
+            ids[0], "openrouter::gpt-4o-mini",
+            "fast namespaced model should be first, got: {ids:?}"
+        );
+        assert_eq!(
+            ids[1], "openrouter::some-model",
+            "regular model should be middle, got: {ids:?}"
+        );
+        assert_eq!(
+            ids[2], "openrouter::gpt-4o-search-preview",
+            "slow namespaced model should be last, got: {ids:?}"
+        );
     }
 }
