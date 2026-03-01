@@ -6,14 +6,11 @@
 
 use std::sync::Arc;
 
-use {
-    anyhow::{Result, anyhow, bail},
-    async_trait::async_trait,
-    futures::future::BoxFuture,
-    serde_json::Value,
-};
+use {async_trait::async_trait, futures::future::BoxFuture, serde_json::Value};
 
 use {moltis_agents::tool_registry::AgentTool, moltis_sessions::metadata::SqliteSessionMetadata};
+
+use crate::Error;
 
 /// Request payload for session creation.
 #[derive(Debug, Clone)]
@@ -27,7 +24,7 @@ pub struct CreateSessionRequest {
 
 /// Callback used by `sessions_create`.
 pub type CreateSessionFn =
-    Arc<dyn Fn(CreateSessionRequest) -> BoxFuture<'static, Result<Value>> + Send + Sync>;
+    Arc<dyn Fn(CreateSessionRequest) -> BoxFuture<'static, crate::Result<Value>> + Send + Sync>;
 
 /// Request payload for session deletion.
 #[derive(Debug, Clone)]
@@ -38,7 +35,7 @@ pub struct DeleteSessionRequest {
 
 /// Callback used by `sessions_delete`.
 pub type DeleteSessionFn =
-    Arc<dyn Fn(DeleteSessionRequest) -> BoxFuture<'static, Result<Value>> + Send + Sync>;
+    Arc<dyn Fn(DeleteSessionRequest) -> BoxFuture<'static, crate::Result<Value>> + Send + Sync>;
 
 /// Tool for creating sessions.
 pub struct SessionsCreateTool {
@@ -109,7 +106,7 @@ impl AgentTool for SessionsCreateTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let key = params
             .get("key")
             .and_then(Value::as_str)
@@ -192,24 +189,24 @@ impl AgentTool for SessionsDeleteTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let key = params
             .get("key")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| anyhow!("missing required parameter: key"))?;
+            .ok_or_else(|| Error::message("missing required parameter: key"))?;
         let force = params
             .get("force")
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
         if key == "main" {
-            bail!("cannot delete the main session");
+            return Err(Error::message("cannot delete the main session").into());
         }
 
         if self.metadata.get(key).await.is_none() {
-            bail!("session not found: {key}");
+            return Err(Error::message(format!("session not found: {key}")).into());
         }
 
         let req = DeleteSessionRequest {
@@ -235,7 +232,9 @@ mod tests {
 
     use super::*;
 
-    async fn test_pool() -> Result<sqlx::SqlitePool> {
+    type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+    async fn test_pool() -> TestResult<sqlx::SqlitePool> {
         let pool = sqlx::SqlitePool::connect(":memory:").await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY)")
             .execute(&pool)
@@ -245,7 +244,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sessions_create_generates_key_when_missing() -> Result<()> {
+    async fn sessions_create_generates_key_when_missing() -> TestResult<()> {
         let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
         let called = Arc::new(AtomicBool::new(false));
         let called_ref = Arc::clone(&called);
@@ -271,7 +270,7 @@ mod tests {
         let key = result
             .get("key")
             .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("missing key in create response"))?;
+            .ok_or_else(|| std::io::Error::other("missing key in create response"))?;
         assert!(key.starts_with("session:"));
         assert_eq!(result["created"], true);
         assert!(called.load(Ordering::SeqCst));
@@ -279,7 +278,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sessions_create_marks_existing_session_as_not_created() -> Result<()> {
+    async fn sessions_create_marks_existing_session_as_not_created() -> TestResult<()> {
         let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
         metadata
             .upsert("session:existing", Some("Existing".to_string()))
@@ -306,7 +305,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sessions_delete_deletes_existing_session() -> Result<()> {
+    async fn sessions_delete_deletes_existing_session() -> TestResult<()> {
         let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
         metadata
             .upsert("session:to-delete", Some("Delete me".to_string()))
@@ -338,7 +337,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sessions_delete_rejects_missing_session() -> Result<()> {
+    async fn sessions_delete_rejects_missing_session() -> TestResult<()> {
         let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
         let delete_fn: DeleteSessionFn =
             Arc::new(move |_req| Box::pin(async move { Ok(serde_json::json!({ "ok": true })) }));
@@ -352,13 +351,13 @@ mod tests {
 
         let err = result
             .err()
-            .ok_or_else(|| anyhow!("expected missing-session delete to fail"))?;
+            .ok_or_else(|| std::io::Error::other("expected missing-session delete to fail"))?;
         assert!(err.to_string().contains("session not found"));
         Ok(())
     }
 
     #[tokio::test]
-    async fn sessions_delete_rejects_main_session() -> Result<()> {
+    async fn sessions_delete_rejects_main_session() -> TestResult<()> {
         let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
         metadata.upsert("main", Some("Main".to_string())).await?;
 
@@ -374,7 +373,7 @@ mod tests {
 
         let err = result
             .err()
-            .ok_or_else(|| anyhow!("expected main-session delete to fail"))?;
+            .ok_or_else(|| std::io::Error::other("expected main-session delete to fail"))?;
         assert!(err.to_string().contains("cannot delete the main session"));
         Ok(())
     }

@@ -3212,7 +3212,7 @@ pub async fn prepare_gateway(
                     .session
                     .resolve(resolve_params)
                     .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    .map_err(|e| moltis_tools::Error::message(e.to_string()))?;
 
                 let mut patch = serde_json::Map::new();
                 patch.insert("key".to_string(), serde_json::json!(key.clone()));
@@ -3231,13 +3231,12 @@ pub async fn prepare_gateway(
                         .session
                         .patch(serde_json::Value::Object(patch))
                         .await
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        .map_err(|e| moltis_tools::Error::message(e.to_string()))?;
                 }
 
-                let entry = metadata
-                    .get(&key)
-                    .await
-                    .ok_or_else(|| anyhow::anyhow!("session '{key}' not found after create"))?;
+                let entry = metadata.get(&key).await.ok_or_else(|| {
+                    moltis_tools::Error::message(format!("session '{key}' not found after create"))
+                })?;
                 Ok(serde_json::json!({
                     "entry": {
                         "id": entry.id,
@@ -3268,7 +3267,7 @@ pub async fn prepare_gateway(
                         "force": req.force,
                     }))
                     .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .map_err(|e| moltis_tools::Error::message(e.to_string()))
             })
         });
 
