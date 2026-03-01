@@ -4,6 +4,12 @@
 
 use sysinfo::System;
 
+#[cfg(target_os = "macos")]
+#[link(name = "Metal", kind = "framework")]
+unsafe extern "C" {
+    fn MTLCreateSystemDefaultDevice() -> *mut std::ffi::c_void;
+}
+
 /// System information for model selection.
 #[derive(Debug, Clone)]
 pub struct SystemInfo {
@@ -36,8 +42,10 @@ impl SystemInfo {
             }
         };
 
-        // Metal detection: compile-time check for macOS + runtime check
-        let has_metal = cfg!(target_os = "macos") && cfg!(feature = "local-llm-metal");
+        // Metal requires both compile-time backend support and a runtime device.
+        let has_metal_compile_support =
+            cfg!(target_os = "macos") && cfg!(feature = "local-llm-metal");
+        let has_metal = has_metal_compile_support && metal_runtime_available();
 
         // CUDA detection: compile-time feature check
         let has_cuda = cfg!(feature = "local-llm-cuda");
@@ -86,6 +94,21 @@ impl SystemInfo {
     pub fn has_gpu(&self) -> bool {
         self.has_metal || self.has_cuda
     }
+}
+
+#[cfg(target_os = "macos")]
+#[must_use]
+fn metal_runtime_available() -> bool {
+    // SAFETY: Calling a pure system probe from Apple's Metal framework.
+    // Returns null when no default Metal device is available.
+    let device = unsafe { MTLCreateSystemDefaultDevice() };
+    !device.is_null()
+}
+
+#[cfg(not(target_os = "macos"))]
+#[must_use]
+const fn metal_runtime_available() -> bool {
+    false
 }
 
 /// Memory tier for model recommendations.
@@ -248,5 +271,14 @@ mod tests {
         if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
             assert!(info.is_apple_silicon);
         }
+    }
+
+    #[test]
+    fn test_has_metal_detection_formula() {
+        let info = SystemInfo::detect();
+        let expected = cfg!(target_os = "macos")
+            && cfg!(feature = "local-llm-metal")
+            && metal_runtime_available();
+        assert_eq!(info.has_metal, expected);
     }
 }
