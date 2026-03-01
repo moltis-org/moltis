@@ -733,6 +733,19 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
         }
     }
 
+    // Detect error finish reasons (e.g. "network_error", "content_filter").
+    // Normal reasons (null, "stop", "tool_calls", "length") are not errors.
+    if let Some(reason) = evt["choices"][0]["finish_reason"].as_str() {
+        match reason {
+            "stop" | "tool_calls" | "length" | "function_call" => {}
+            error_reason => {
+                events.push(StreamEvent::Error(format!(
+                    "Provider stream ended with finish_reason: {error_reason}"
+                )));
+            }
+        }
+    }
+
     SseLineResult::Events(events)
 }
 
@@ -1770,6 +1783,91 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(visible, "The answer");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_network_error_emits_stream_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":"network_error","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let errors: Vec<&str> = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Error(msg) => Some(msg.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(errors.len(), 1);
+                assert!(errors[0].contains("network_error"));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_content_filter_emits_stream_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{},"finish_reason":"content_filter","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let has_error = events
+                    .iter()
+                    .any(|e| matches!(e, StreamEvent::Error(_)));
+                assert!(has_error, "content_filter should emit error");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_stop_does_not_emit_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"done"},"finish_reason":"stop","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let has_error = events
+                    .iter()
+                    .any(|e| matches!(e, StreamEvent::Error(_)));
+                assert!(!has_error, "stop should not emit error");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_tool_calls_does_not_emit_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let has_error = events
+                    .iter()
+                    .any(|e| matches!(e, StreamEvent::Error(_)));
+                assert!(!has_error, "tool_calls should not emit error");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_length_does_not_emit_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"trunca"},"finish_reason":"length","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let has_error = events
+                    .iter()
+                    .any(|e| matches!(e, StreamEvent::Error(_)));
+                assert!(!has_error, "length should not emit error");
             },
             _ => panic!("Expected Events"),
         }
