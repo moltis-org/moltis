@@ -381,9 +381,7 @@ impl AgentTool for TaskListTool {
         match action {
             "create" => {
                 let subject = require_str(&params, "subject")?.to_string();
-                let description = str_param(&params, "description")
-                    .unwrap_or("")
-                    .to_string();
+                let description = str_param(&params, "description").unwrap_or("").to_string();
                 let task = self.store.create(list_id, subject, description).await?;
                 Ok(serde_json::json!({
                     "ok": true,

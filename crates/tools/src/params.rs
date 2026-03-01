@@ -47,8 +47,7 @@ pub fn owned_str_param(params: &Value, keys: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
+    use {super::*, serde_json::json};
 
     #[test]
     fn str_param_extracts_trimmed_value() {

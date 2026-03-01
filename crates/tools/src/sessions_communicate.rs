@@ -245,8 +245,8 @@ impl AgentTool for SessionsSendTool {
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let key = require_str(&params, "key")?.to_string();
         let message = require_str(&params, "message")?.to_string();
-        let wait_for_reply =
-            bool_param(&params, "wait_for_reply", false) || bool_param(&params, "waitForReply", false);
+        let wait_for_reply = bool_param(&params, "wait_for_reply", false)
+            || bool_param(&params, "waitForReply", false);
         let context = owned_str_param(&params, &["context"]);
         let model = owned_str_param(&params, &["model"]);
 

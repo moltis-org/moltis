@@ -172,17 +172,41 @@ mod tests {
 
         #[async_trait]
         impl ChannelService for FailingChannelService {
-            async fn status(&self) -> ServiceResult { Ok(json!({})) }
-            async fn logout(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+            async fn status(&self) -> ServiceResult {
+                Ok(json!({}))
+            }
+
+            async fn logout(&self, _: Value) -> ServiceResult {
+                Ok(json!({}))
+            }
+
             async fn send(&self, _: Value) -> ServiceResult {
                 Err(ServiceError::message("missing 'text' (or alias 'message')"))
             }
-            async fn add(&self, _: Value) -> ServiceResult { Ok(json!({})) }
-            async fn remove(&self, _: Value) -> ServiceResult { Ok(json!({})) }
-            async fn update(&self, _: Value) -> ServiceResult { Ok(json!({})) }
-            async fn senders_list(&self, _: Value) -> ServiceResult { Ok(json!({})) }
-            async fn sender_approve(&self, _: Value) -> ServiceResult { Ok(json!({})) }
-            async fn sender_deny(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+
+            async fn add(&self, _: Value) -> ServiceResult {
+                Ok(json!({}))
+            }
+
+            async fn remove(&self, _: Value) -> ServiceResult {
+                Ok(json!({}))
+            }
+
+            async fn update(&self, _: Value) -> ServiceResult {
+                Ok(json!({}))
+            }
+
+            async fn senders_list(&self, _: Value) -> ServiceResult {
+                Ok(json!({}))
+            }
+
+            async fn sender_approve(&self, _: Value) -> ServiceResult {
+                Ok(json!({}))
+            }
+
+            async fn sender_deny(&self, _: Value) -> ServiceResult {
+                Ok(json!({}))
+            }
         }
 
         let tool = SendMessageTool::new(Arc::new(FailingChannelService));
