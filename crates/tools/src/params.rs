@@ -21,7 +21,7 @@ pub fn str_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
 
 /// Try multiple keys in order and return the first non-empty string match.
 pub fn str_param_any<'a>(params: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter().find_map(|key| str_param(params, *key))
+    keys.iter().find_map(|key| str_param(params, key))
 }
 
 /// Like [`str_param`] but returns a `crate::Error` when missing.
