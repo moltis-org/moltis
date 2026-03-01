@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.5] - 2026-03-01
+### Fixed
+- [web] Lazy-load Shiki to prevent blocking page mount
+
 ## [0.10.4] - 2026-03-01
 ### Added
 - [web] Add Shiki syntax highlighting to code blocks
