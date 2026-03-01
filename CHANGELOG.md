@@ -9,14 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Agent `send_message` tool for proactive outbound channel delivery (`account_id` + `to` + `text`), backed by a live `channels.send` implementation in gateway channel services
-- Heartbeat channel routing config fields (`heartbeat.deliver`, `heartbeat.channel`, `heartbeat.to`) in schema/template/GraphQL, plus heartbeat settings UI controls for channel target selection
-- Prompt runtime context fields for channel/surface awareness (`surface`, `session_kind`, `channel_type`, `channel_account`, `channel_chat_id`, `channel_chat_type`)
-- Agent session lifecycle tools: `sessions_create` (create/resolve chat sessions) and `sessions_delete` (delete sessions by key), wired through gateway session service behavior
-- Cross-session coordination tools: `sessions_list`, `sessions_history`, and `sessions_send` for agent-to-agent/session discovery, context reads, and targeted message delivery
-- Shared `task_list` tool for multi-agent work coordination, plus `spawn_agent` policy parameters (`allow_tools`, `deny_tools`, `delegate_only`) for sub-agent tool-scope control
-- Configurable spawn presets under `agents.presets` with `spawn_agent.preset` support (model/tool policy/system prompt defaults, optional `agents.default_preset`)
-
 ### Changed
 
 ### Deprecated
@@ -25,11 +17,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Heartbeat cron delivery now respects configured channel targets and no longer skips channel delivery for heartbeat turns when trimmed output is present
-- WebAuthn passkey host detection now auto-registers newly discovered Tailscale hostnames at runtime (no restart needed), and Settings now shows a passkey-update warning banner when an existing passkey setup encounters a newly added host.
-- macOS local LLM Metal detection now requires both compile-time Metal backend support and a runtime Metal device probe (`MTLCreateSystemDefaultDevice`), and default CLI/gateway builds now enable `local-llm-metal` so Metal-capable systems correctly report `has_metal=true`.
-
 ### Security
+
+## [0.10.3] - 2026-03-01
+### Added
+- Add channel-aware heartbeat delivery and send_message agent tool (#270)
+- [memory] Add tree-sitter code splitter and RRF search merge
+
+
+### Changed
+- [ffi] Tighten unsafe_code allowances
+
+
+### Fixed
+- [sandbox] Make apple container keepalive portable (#269)
+- [local-llm] Combine compile-time and runtime Metal detection
+- [auth] Auto-detect new WebAuthn hosts and prompt passkey refresh (#268)
+- [web] Replace rg with grep in changelog guard and deduplicate passkey status refresh
 
 ## [0.10.2] - 2026-02-28
 
