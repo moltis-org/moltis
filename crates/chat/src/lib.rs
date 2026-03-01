@@ -6257,7 +6257,10 @@ async fn run_with_tools(
             // network_error finish_reason).  Surface as an error so the
             // UI renders a visible error card instead of showing nothing.
             if is_silent && usage.output_tokens == 0 && tool_calls_made == 0 {
-                warn!(run_id, "empty response with zero tokens — treating as provider error");
+                warn!(
+                    run_id,
+                    "empty response with zero tokens — treating as provider error"
+                );
                 let error_obj = parse_chat_error(
                     "The provider returned an empty response (possible network error). Please try again.",
                     Some(provider_name),
@@ -6716,7 +6719,10 @@ async fn run_streaming(
                     // Detect provider failures: silent stream with zero tokens
                     // means the LLM never produced output (e.g. network_error).
                     if is_silent && usage.output_tokens == 0 {
-                        warn!(run_id, "empty stream with zero tokens — treating as provider error");
+                        warn!(
+                            run_id,
+                            "empty stream with zero tokens — treating as provider error"
+                        );
                         let error_obj = parse_chat_error(
                             "The provider returned an empty response (possible network error). Please try again.",
                             Some(provider_name),
