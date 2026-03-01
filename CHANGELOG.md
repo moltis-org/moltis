@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent session lifecycle tools: `sessions_create` (create/resolve chat sessions) and `sessions_delete` (delete sessions by key), wired through gateway session service behavior
 - Cross-session coordination tools: `sessions_list`, `sessions_history`, and `sessions_send` for agent-to-agent/session discovery, context reads, and targeted message delivery
 - Shared `task_list` tool for multi-agent work coordination, plus `spawn_agent` policy parameters (`allow_tools`, `deny_tools`, `delegate_only`) for sub-agent tool-scope control
+- Configurable spawn presets under `agents.presets` with `spawn_agent.preset` support (model/tool policy/system prompt defaults, optional `agents.default_preset`)
 
 ### Changed
 

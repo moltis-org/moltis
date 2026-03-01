@@ -184,6 +184,21 @@ message_queue_mode = "followup"   # Default: process queued messages one-by-one 
 # allowed_models = ["gpt 5.2"]  # Legacy field (currently ignored).
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SPAWN PRESETS (OPTIONAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Configure reusable presets for the `spawn_agent` tool.
+#
+# [agents]
+# default_preset = "research"      # Optional: used when spawn_agent.preset is omitted
+#
+# [agents.presets.research]
+# model = "openai/gpt-5.2"
+# allow_tools = ["web_search", "web_fetch", "sessions_send", "task_list"]
+# deny_tools = ["exec"]
+# delegate_only = false
+# system_prompt_suffix = "Focus on gathering and summarizing evidence."
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
 # ══════════════════════════════════════════════════════════════════════════════
 

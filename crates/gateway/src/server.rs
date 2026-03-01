@@ -3418,12 +3418,14 @@ pub async fn prepare_gateway(
                     broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
                 });
             });
+            let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
             let spawn_tool = moltis_tools::spawn_agent::SpawnAgentTool::new(
                 Arc::clone(&registry),
                 default_provider,
                 base_tools,
             )
-            .with_on_event(on_spawn_event);
+            .with_on_event(on_spawn_event)
+            .with_agents_config(agents_config);
             tool_registry.register(Box::new(spawn_tool));
         }
 
