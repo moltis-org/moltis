@@ -63,6 +63,7 @@ pub mod sessions_manage;
 pub mod skill_tools;
 pub mod spawn_agent;
 pub mod ssrf;
+pub mod task_list;
 #[cfg(feature = "wasm")]
 pub mod wasm_component;
 #[cfg(feature = "wasm")]

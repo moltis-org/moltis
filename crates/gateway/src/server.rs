@@ -3321,6 +3321,11 @@ pub async fn prepare_gateway(
             send_to_session,
         )));
 
+        // Register shared task coordination tool for multi-agent workflows.
+        tool_registry.register(Box::new(moltis_tools::task_list::TaskListTool::new(
+            &data_dir,
+        )));
+
         // Register built-in voice tools for explicit TTS/STT calls in agents.
         tool_registry.register(Box::new(crate::voice_agent_tools::SpeakTool::new(
             Arc::clone(&state.services.tts),
