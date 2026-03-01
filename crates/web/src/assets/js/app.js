@@ -4,6 +4,7 @@ import { html } from "htm/preact";
 import { render } from "preact";
 import prettyBytes from "pretty-bytes";
 import { applyIdentityFavicon, formatPageTitle } from "./branding.js";
+import { initHighlighter } from "./code-highlight.js";
 import { SessionList } from "./components/session-list.js";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
@@ -57,6 +58,7 @@ registerPage("/", () => {
 
 initTheme();
 injectMarkdownStyles();
+initHighlighter();
 initPWA();
 initMobile();
 var i18nReady = initI18n()
