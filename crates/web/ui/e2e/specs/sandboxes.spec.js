@@ -134,11 +134,19 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 	test("containers list fetches on page mount", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		const fetchPromise = page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.status() === 200);
-		await page.goto("/settings/sandboxes");
-		const response = await fetchPromise;
-		const data = await response.json();
-		expect(data).toHaveProperty("containers");
+		var containersFetched = false;
+
+		// Track the containers fetch via route interceptor so it can't race
+		// with page.goto — the route is registered before navigation starts.
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				containersFetched = true;
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		expect(containersFetched).toBe(true);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -166,12 +174,16 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 	test("disk usage fetches on page mount", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		const fetchPromise = page.waitForResponse((r) => r.url().includes("/api/sandbox/disk-usage"));
-		await page.goto("/settings/sandboxes");
-		const response = await fetchPromise;
-		const data = await response.json();
-		// Response should have a usage object (or error if no backend)
-		expect(data).toBeDefined();
+		var diskUsageFetched = false;
+
+		// Track via route interceptor to avoid waitForResponse race with goto.
+		await page.route("**/api/sandbox/disk-usage", (route) => {
+			diskUsageFetched = true;
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		expect(diskUsageFetched).toBe(true);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -187,11 +199,14 @@ test.describe("Sandboxes page – Running Containers", () => {
 		});
 
 		await navigateAndWait(page, "/settings/sandboxes");
+		const refreshBtn = page.getByRole("button", { name: "Refresh", exact: true });
+		await expect(refreshBtn).toBeVisible();
+
 		// Page mount fires the first disk-usage fetch.
 		const mountCount = diskFetchCount;
 
 		const diskPromise = page.waitForResponse((r) => r.url().includes("/api/sandbox/disk-usage"));
-		await page.getByRole("button", { name: "Refresh", exact: true }).click();
+		await refreshBtn.click();
 		await diskPromise;
 
 		expect(diskFetchCount).toBeGreaterThan(mountCount);
