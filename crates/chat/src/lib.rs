@@ -6251,6 +6251,31 @@ async fn run_with_tools(
                 silent = is_silent,
                 "agent run complete"
             );
+
+            // Detect provider failures: silent response with zero tokens
+            // produced means the LLM never processed the request (e.g.
+            // network_error finish_reason).  Surface as an error so the
+            // UI renders a visible error card instead of showing nothing.
+            if is_silent && usage.output_tokens == 0 && tool_calls_made == 0 {
+                warn!(run_id, "empty response with zero tokens — treating as provider error");
+                let error_obj = parse_chat_error(
+                    "The provider returned an empty response (possible network error). Please try again.",
+                    Some(provider_name),
+                );
+                deliver_channel_error(state, session_key, &error_obj).await;
+                let error_payload = ChatErrorBroadcast {
+                    run_id: run_id.to_string(),
+                    session_key: session_key.to_string(),
+                    state: "error",
+                    error: error_obj,
+                    seq: client_seq,
+                };
+                #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                let payload_val = serde_json::to_value(&error_payload).unwrap();
+                broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
+                return None;
+            }
+
             // Tool results are persisted between the user message and the
             // assistant message, so the assistant index must account for them.
             let assistant_message_index = user_message_index + 1 + tool_calls_made;
@@ -6687,6 +6712,29 @@ async fn run_streaming(
                         silent = is_silent,
                         "chat stream done"
                     );
+
+                    // Detect provider failures: silent stream with zero tokens
+                    // means the LLM never produced output (e.g. network_error).
+                    if is_silent && usage.output_tokens == 0 {
+                        warn!(run_id, "empty stream with zero tokens — treating as provider error");
+                        let error_obj = parse_chat_error(
+                            "The provider returned an empty response (possible network error). Please try again.",
+                            Some(provider_name),
+                        );
+                        deliver_channel_error(state, session_key, &error_obj).await;
+                        let error_payload = ChatErrorBroadcast {
+                            run_id: run_id.to_string(),
+                            session_key: session_key.to_string(),
+                            state: "error",
+                            error: error_obj,
+                            seq: client_seq,
+                        };
+                        #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                        let payload_val = serde_json::to_value(&error_payload).unwrap();
+                        broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
+                        return None;
+                    }
+
                     let assistant_message_index = user_message_index + 1;
 
                     // Generate & persist TTS audio for voice-medium web UI replies.
