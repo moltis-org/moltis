@@ -58,6 +58,7 @@ pub mod sandbox;
 pub mod sandbox_packages;
 pub mod send_image;
 pub mod session_state;
+pub mod sessions_communicate;
 pub mod sessions_manage;
 pub mod skill_tools;
 pub mod spawn_agent;

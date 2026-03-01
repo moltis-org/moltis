@@ -36,6 +36,10 @@ use moltis_providers::ProviderRegistry;
 use moltis_tools::{
     approval::{ApprovalManager, ApprovalMode, SecurityLevel},
     exec::EnvVarProvider,
+    sessions_communicate::{
+        SendToSessionFn, SendToSessionRequest, SessionsHistoryTool, SessionsListTool,
+        SessionsSendTool,
+    },
     sessions_manage::{
         CreateSessionFn, CreateSessionRequest, DeleteSessionFn, DeleteSessionRequest,
         SessionsCreateTool, SessionsDeleteTool,
@@ -3278,6 +3282,43 @@ pub async fn prepare_gateway(
         tool_registry.register(Box::new(SessionsDeleteTool::new(
             Arc::clone(&session_metadata),
             delete_session,
+        )));
+
+        // Register cross-session communication tools.
+        tool_registry.register(Box::new(SessionsListTool::new(Arc::clone(
+            &session_metadata,
+        ))));
+        tool_registry.register(Box::new(SessionsHistoryTool::new(
+            Arc::clone(&session_store),
+            Arc::clone(&session_metadata),
+        )));
+
+        let state_for_session_send = Arc::clone(&state);
+        let send_to_session: SendToSessionFn = Arc::new(move |req: SendToSessionRequest| {
+            let state = Arc::clone(&state_for_session_send);
+            Box::pin(async move {
+                let mut params = serde_json::json!({
+                    "text": req.message,
+                    "_session_key": req.key,
+                });
+                if let Some(model) = req.model {
+                    params["model"] = serde_json::json!(model);
+                }
+                let chat = state.chat().await;
+                if req.wait_for_reply {
+                    chat.send_sync(params)
+                        .await
+                        .map_err(|e| moltis_tools::Error::message(e.to_string()))
+                } else {
+                    chat.send(params)
+                        .await
+                        .map_err(|e| moltis_tools::Error::message(e.to_string()))
+                }
+            })
+        });
+        tool_registry.register(Box::new(SessionsSendTool::new(
+            Arc::clone(&session_metadata),
+            send_to_session,
         )));
 
         // Register built-in voice tools for explicit TTS/STT calls in agents.
