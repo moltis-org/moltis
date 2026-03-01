@@ -197,6 +197,18 @@ release-preflight: lockfile-check
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
+# Regenerate CHANGELOG.md from git history and tags.
+changelog:
+    git-cliff --config cliff.toml --output CHANGELOG.md
+
+# Preview unreleased changelog entries from commits since the last tag.
+changelog-unreleased:
+    git-cliff --config cliff.toml --unreleased
+
+# Generate release entries for unreleased commits under the provided version.
+changelog-release version:
+    git-cliff --config cliff.toml --unreleased --tag "v{{version}}" --strip all
+
 # Commit all changes, push branch, create/update PR, and run local validation.
 # All args are optional; defaults are auto-generated from branch + changed files.
 ship commit_message='' pr_title='' pr_body='':
