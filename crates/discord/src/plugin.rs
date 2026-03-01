@@ -14,7 +14,7 @@ use moltis_channels::{
     message_log::MessageLog,
     plugin::{
         ChannelEventSink, ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus,
-        ChannelStreamOutbound,
+        ChannelStreamOutbound, ChannelThreadContext,
     },
 };
 
@@ -271,6 +271,10 @@ impl ChannelPlugin for DiscordPlugin {
         Arc::new(DiscordOutbound {
             accounts: Arc::clone(&self.accounts),
         })
+    }
+
+    fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        Some(&self.outbound)
     }
 }
 

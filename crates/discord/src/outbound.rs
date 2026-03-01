@@ -11,13 +11,14 @@ use {
         Error as ChannelError, Result as ChannelResult,
         plugin::{
             ButtonStyle as ChannelButtonStyle, ChannelOutbound, ChannelStreamOutbound,
-            InteractiveMessage, StreamEvent, StreamReceiver,
+            ChannelThreadContext, InteractiveMessage, StreamEvent, StreamReceiver, ThreadMessage,
         },
     },
     moltis_common::types::ReplyPayload,
     serenity::all::{
         ButtonStyle as SerenityButtonStyle, ChannelId, CreateActionRow, CreateAttachment,
-        CreateButton, CreateEmbed, CreateMessage, EditMessage, MessageId, ReactionType,
+        CreateButton, CreateEmbed, CreateMessage, EditMessage, GetMessages, MessageId,
+        ReactionType,
     },
 };
 
@@ -809,6 +810,44 @@ impl ChannelStreamOutbound for DiscordOutbound {
 
     async fn is_stream_enabled(&self, _account_id: &str) -> bool {
         true
+    }
+}
+
+// ── Thread context ──────────────────────────────────────────────────
+
+#[async_trait]
+impl ChannelThreadContext for DiscordOutbound {
+    async fn fetch_thread_messages(
+        &self,
+        account_id: &str,
+        _channel_id: &str,
+        thread_id: &str,
+        limit: usize,
+    ) -> ChannelResult<Vec<ThreadMessage>> {
+        let http = self.resolve_http(account_id)?;
+        // Discord threads are channels, so thread_id is a channel ID.
+        let thread_channel_id = Self::parse_channel_id(thread_id)?;
+
+        let messages = thread_channel_id
+            .messages(&http, GetMessages::new().limit(limit.min(100) as u8))
+            .await
+            .map_err(|e| {
+                ChannelError::unavailable(format!("failed to fetch thread messages: {e}"))
+            })?;
+
+        // Messages come newest-first from Discord; reverse for oldest-first.
+        let mut result: Vec<ThreadMessage> = messages
+            .into_iter()
+            .map(|msg| ThreadMessage {
+                sender_id: msg.author.id.to_string(),
+                is_bot: msg.author.bot,
+                text: msg.content,
+                timestamp: msg.timestamp.to_string(),
+            })
+            .collect();
+        result.reverse();
+
+        Ok(result)
     }
 }
 
