@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.4] - 2026-03-01
+### Added
+- [web] Add Shiki syntax highlighting to code blocks
+
 ## [0.10.3] - 2026-03-01
 ### Added
 - Add channel-aware heartbeat delivery and send_message agent tool (#270)
