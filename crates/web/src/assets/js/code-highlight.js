@@ -5,8 +5,6 @@
 // highlighting is applied after the stream completes or when
 // history messages are loaded.
 
-import { createHighlighter } from "shiki";
-
 var highlighter = null;
 
 /**
@@ -16,6 +14,7 @@ var highlighter = null;
 export async function initHighlighter() {
 	if (highlighter) return;
 	try {
+		var { createHighlighter } = await import("shiki");
 		highlighter = await createHighlighter({
 			themes: ["github-dark", "github-light"],
 			langs: [
