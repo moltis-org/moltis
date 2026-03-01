@@ -154,13 +154,13 @@ impl ChannelService for LiveChannelService {
                 continue;
             };
 
-            let (account_ids, channel_type) = {
+            let Ok(channel_type) = ct_str.parse::<ChannelType>() else {
+                continue;
+            };
+
+            let account_ids = {
                 let p = plugin_lock.read().await;
-                let ids = p.account_ids();
-                let ct = ct_str
-                    .parse::<ChannelType>()
-                    .unwrap_or(ChannelType::Telegram);
-                (ids, ct)
+                p.account_ids()
             };
 
             for aid in &account_ids {

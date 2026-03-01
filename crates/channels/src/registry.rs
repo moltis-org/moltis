@@ -173,18 +173,19 @@ impl ChannelRegistry {
 
             for account_id in account_ids {
                 let p = plugin.read().await;
-                if let Some(status) = p.status() {
-                    match status.probe(&account_id).await {
-                        Ok(snap) => results.push(snap),
-                        Err(e) => {
-                            warn!(channel_type, account_id, "health probe failed: {e}");
-                            results.push(ChannelHealthSnapshot {
-                                connected: false,
-                                account_id: account_id.clone(),
-                                details: Some(format!("probe error: {e}")),
-                            });
-                        },
-                    }
+                let Some(status) = p.status() else {
+                    continue;
+                };
+                match status.probe(&account_id).await {
+                    Ok(snap) => results.push(snap),
+                    Err(e) => {
+                        warn!(channel_type, account_id, "health probe failed: {e}");
+                        results.push(ChannelHealthSnapshot {
+                            connected: false,
+                            account_id: account_id.clone(),
+                            details: Some(format!("probe error: {e}")),
+                        });
+                    },
                 }
             }
         }
