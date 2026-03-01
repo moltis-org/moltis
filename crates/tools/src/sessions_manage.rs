@@ -10,7 +10,10 @@ use {async_trait::async_trait, futures::future::BoxFuture, serde_json::Value};
 
 use {moltis_agents::tool_registry::AgentTool, moltis_sessions::metadata::SqliteSessionMetadata};
 
-use crate::Error;
+use crate::{
+    Error,
+    params::{bool_param, owned_str_param, require_str, str_param},
+};
 
 /// Request payload for session creation.
 #[derive(Debug, Clone)]
@@ -107,40 +110,15 @@ impl AgentTool for SessionsCreateTool {
     }
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
-        let key = params
-            .get("key")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
+        let key = str_param(&params, "key")
             .map(String::from)
             .unwrap_or_else(|| format!("session:{}", uuid::Uuid::new_v4()));
 
-        let label = params
-            .get("label")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(String::from);
-        let model = params
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(String::from);
-        let project_id = params
-            .get("project_id")
-            .or_else(|| params.get("projectId"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(String::from);
-        let inherit_agent_from = params
-            .get("inherit_agent_from")
-            .or_else(|| params.get("inheritAgentFrom"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(String::from);
+        let label = owned_str_param(&params, &["label"]);
+        let model = owned_str_param(&params, &["model"]);
+        let project_id = owned_str_param(&params, &["project_id", "projectId"]);
+        let inherit_agent_from =
+            owned_str_param(&params, &["inherit_agent_from", "inheritAgentFrom"]);
 
         let created = self.metadata.get(&key).await.is_none();
 
@@ -190,16 +168,8 @@ impl AgentTool for SessionsDeleteTool {
     }
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
-        let key = params
-            .get("key")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| Error::message("missing required parameter: key"))?;
-        let force = params
-            .get("force")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let key = require_str(&params, "key")?;
+        let force = bool_param(&params, "force", false);
 
         if key == "main" {
             return Err(Error::message("cannot delete the main session").into());

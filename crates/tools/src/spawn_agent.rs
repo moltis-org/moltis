@@ -4,7 +4,10 @@ use std::{collections::HashSet, sync::Arc};
 
 use {async_trait::async_trait, tracing::info};
 
-use crate::error::Error;
+use crate::{
+    error::Error,
+    params::{bool_param, str_param, u64_param},
+};
 
 use {
     moltis_agents::{
@@ -138,12 +141,7 @@ impl SpawnAgentTool {
         &self,
         params: &serde_json::Value,
     ) -> crate::Result<(Option<String>, Option<AgentPresetConfig>)> {
-        let explicit_name = params
-            .get("preset")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(String::from);
+        let explicit_name = str_param(params, "preset").map(String::from);
 
         let Some(ref agents_config) = self.agents_config else {
             if explicit_name.is_some() {
@@ -221,17 +219,11 @@ impl AgentTool for SpawnAgentTool {
     }
 
     async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let task = params["task"]
-            .as_str()
+        let task = str_param(&params, "task")
             .ok_or_else(|| Error::message("missing required parameter: task"))?;
-        let context = params["context"].as_str().unwrap_or("");
+        let context = str_param(&params, "context").unwrap_or("");
         let (preset_name, preset) = self.resolve_preset(&params).await?;
-        let explicit_model = params
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(String::from);
+        let explicit_model = str_param(&params, "model").map(String::from);
         let model_id = explicit_model
             .clone()
             .or_else(|| preset.as_ref().and_then(|p| p.model.clone()));
@@ -256,16 +248,14 @@ impl AgentTool for SpawnAgentTool {
             explicit_deny_tools
         };
 
-        let delegate_only = params
-            .get("delegate_only")
-            .and_then(|v| v.as_bool())
-            .unwrap_or_else(|| preset.as_ref().map(|p| p.delegate_only).unwrap_or(false));
+        let delegate_only = bool_param(
+            &params,
+            "delegate_only",
+            preset.as_ref().map(|p| p.delegate_only).unwrap_or(false),
+        );
 
         // Check nesting depth.
-        let depth = params
-            .get(SPAWN_DEPTH_KEY)
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let depth = u64_param(&params, SPAWN_DEPTH_KEY, 0);
         if depth >= MAX_SPAWN_DEPTH {
             return Err(Error::message(format!(
                 "maximum sub-agent nesting depth ({MAX_SPAWN_DEPTH}) exceeded"

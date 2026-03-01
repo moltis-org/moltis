@@ -13,7 +13,13 @@ use {
     tokio::sync::RwLock,
 };
 
-use {crate::Error, moltis_agents::tool_registry::AgentTool};
+use {
+    crate::{
+        Error,
+        params::{require_str, str_param, str_param_any},
+    },
+    moltis_agents::tool_registry::AgentTool,
+};
 
 /// Status of a task in the shared list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -369,32 +375,13 @@ impl AgentTool for TaskListTool {
     }
 
     async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let action = params
-            .get("action")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| Error::message("missing required parameter: action"))?;
-        let list_id = params
-            .get("list_id")
-            .or_else(|| params.get("listId"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .unwrap_or("default");
+        let action = require_str(&params, "action")?;
+        let list_id = str_param_any(&params, &["list_id", "listId"]).unwrap_or("default");
 
         match action {
             "create" => {
-                let subject = params
-                    .get("subject")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .ok_or_else(|| Error::message("missing required parameter: subject"))?
-                    .to_string();
-                let description = params
-                    .get("description")
-                    .and_then(serde_json::Value::as_str)
+                let subject = require_str(&params, "subject")?.to_string();
+                let description = str_param(&params, "description")
                     .unwrap_or("")
                     .to_string();
                 let task = self.store.create(list_id, subject, description).await?;
@@ -404,11 +391,7 @@ impl AgentTool for TaskListTool {
                 }))
             },
             "list" => {
-                let status = params
-                    .get("status")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
+                let status = str_param(&params, "status")
                     .map(str::parse::<TaskStatus>)
                     .transpose()?;
                 let tasks = self.store.list_tasks(list_id, status.as_ref()).await?;
@@ -419,12 +402,7 @@ impl AgentTool for TaskListTool {
                 }))
             },
             "get" => {
-                let id = params
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .ok_or_else(|| Error::message("missing required parameter: id"))?;
+                let id = require_str(&params, "id")?;
                 let task = self.store.get(list_id, id).await?;
                 Ok(serde_json::json!({
                     "ok": task.is_some(),
@@ -432,31 +410,13 @@ impl AgentTool for TaskListTool {
                 }))
             },
             "update" => {
-                let id = params
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .ok_or_else(|| Error::message("missing required parameter: id"))?;
-                let status = params
-                    .get("status")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
+                let id = require_str(&params, "id")?;
+                let status = str_param(&params, "status")
                     .map(str::parse::<TaskStatus>)
                     .transpose()?;
-                let subject = params
-                    .get("subject")
-                    .and_then(serde_json::Value::as_str)
-                    .map(String::from);
-                let description = params
-                    .get("description")
-                    .and_then(serde_json::Value::as_str)
-                    .map(String::from);
-                let owner = params
-                    .get("owner")
-                    .and_then(serde_json::Value::as_str)
-                    .map(String::from);
+                let subject = str_param(&params, "subject").map(String::from);
+                let description = str_param(&params, "description").map(String::from);
+                let owner = str_param(&params, "owner").map(String::from);
                 let blocked_by = params
                     .get("blocked_by")
                     .and_then(serde_json::Value::as_array)
@@ -476,25 +436,10 @@ impl AgentTool for TaskListTool {
                 }))
             },
             "claim" => {
-                let id = params
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .ok_or_else(|| Error::message("missing required parameter: id"))?;
-                let owner = params
-                    .get("owner")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(String::from)
-                    .or_else(|| {
-                        params
-                            .get("_session_key")
-                            .and_then(serde_json::Value::as_str)
-                            .map(String::from)
-                    })
-                    .unwrap_or_else(|| "agent".to_string());
+                let id = require_str(&params, "id")?;
+                let owner = str_param_any(&params, &["owner", "_session_key"])
+                    .unwrap_or("agent")
+                    .to_string();
                 let task = self.store.claim(list_id, id, &owner).await?;
                 Ok(serde_json::json!({
                     "ok": true,

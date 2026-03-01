@@ -10,6 +10,7 @@ pub mod approval;
 pub mod branch_session;
 
 pub mod error;
+pub mod params;
 pub use error::{Error, Result};
 
 static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();

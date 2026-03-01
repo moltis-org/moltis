@@ -14,7 +14,10 @@ use {
     moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
 };
 
-use crate::Error;
+use crate::{
+    Error,
+    params::{bool_param, owned_str_param, require_str, str_param, u64_param},
+};
 
 /// Request payload for cross-session message delivery.
 #[derive(Debug, Clone)]
@@ -91,17 +94,8 @@ impl AgentTool for SessionsListTool {
     }
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
-        let filter = params
-            .get("filter")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(|v| v.to_lowercase());
-        let limit = params
-            .get("limit")
-            .and_then(Value::as_u64)
-            .unwrap_or(20)
-            .min(100) as usize;
+        let filter = str_param(&params, "filter").map(|v| v.to_lowercase());
+        let limit = u64_param(&params, "limit", 20).min(100) as usize;
 
         let mut sessions: Vec<Value> = self
             .metadata
@@ -177,18 +171,9 @@ impl AgentTool for SessionsHistoryTool {
     }
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
-        let key = params
-            .get("key")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| Error::message("missing required parameter: key"))?;
-        let limit = params
-            .get("limit")
-            .and_then(Value::as_u64)
-            .unwrap_or(20)
-            .min(100) as usize;
-        let offset = params.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let key = require_str(&params, "key")?;
+        let limit = u64_param(&params, "limit", 20).min(100) as usize;
+        let offset = u64_param(&params, "offset", 0) as usize;
 
         let entry = self
             .metadata
@@ -258,37 +243,12 @@ impl AgentTool for SessionsSendTool {
     }
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
-        let key = params
-            .get("key")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| Error::message("missing required parameter: key"))?
-            .to_string();
-        let message = params
-            .get("message")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| Error::message("missing required parameter: message"))?
-            .to_string();
-        let wait_for_reply = params
-            .get("wait_for_reply")
-            .or_else(|| params.get("waitForReply"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let context = params
-            .get("context")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(String::from);
-        let model = params
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(String::from);
+        let key = require_str(&params, "key")?.to_string();
+        let message = require_str(&params, "message")?.to_string();
+        let wait_for_reply =
+            bool_param(&params, "wait_for_reply", false) || bool_param(&params, "waitForReply", false);
+        let context = owned_str_param(&params, &["context"]);
+        let model = owned_str_param(&params, &["model"]);
 
         let entry = self
             .metadata

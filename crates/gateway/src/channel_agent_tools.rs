@@ -9,6 +9,10 @@ use {
 use crate::services::ChannelService;
 
 /// Agent tool that sends proactive outbound messages to configured channels.
+///
+/// Validation and alias resolution are handled by the underlying
+/// [`ChannelService::send`] implementation; this tool only provides the
+/// LLM-facing schema and forwards the parameters.
 pub struct SendMessageTool {
     channel_service: Arc<dyn ChannelService>,
 }
@@ -17,21 +21,6 @@ impl SendMessageTool {
     pub fn new(channel_service: Arc<dyn ChannelService>) -> Self {
         Self { channel_service }
     }
-}
-
-fn first_non_empty_string(params: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        params
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    })
-}
-
-fn bool_or_default(params: &Value, key: &str, default: bool) -> bool {
-    params.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
 
 #[async_trait]
@@ -85,47 +74,8 @@ impl AgentTool for SendMessageTool {
     }
 
     async fn execute(&self, params: Value) -> Result<Value> {
-        let account_id = first_non_empty_string(&params, &["account_id", "accountId", "channel"])
-            .ok_or_else(|| {
-            anyhow::anyhow!("missing required field `account_id` (alias: `channel`)")
-        })?;
-        let to = first_non_empty_string(&params, &["to", "chat_id", "chatId", "peer_id", "peerId"])
-            .ok_or_else(|| {
-                anyhow::anyhow!("missing required field `to` (aliases: `chat_id`, `peer_id`)")
-            })?;
-        let text = first_non_empty_string(&params, &["text", "message"])
-            .ok_or_else(|| anyhow::anyhow!("missing required field `text` (alias: `message`)"))?;
-        let reply_to =
-            first_non_empty_string(&params, &["reply_to", "replyTo", "message_id", "messageId"]);
-        let channel_type =
-            first_non_empty_string(&params, &["type", "channel_type", "channelType"]);
-        let silent = bool_or_default(&params, "silent", false);
-        let html = bool_or_default(&params, "html", false)
-            || bool_or_default(&params, "as_html", false)
-            || bool_or_default(&params, "asHtml", false);
-
-        if silent && html {
-            return Err(anyhow::anyhow!(
-                "invalid send options: `silent` and `html` cannot both be true"
-            ));
-        }
-
-        let mut payload = json!({
-            "account_id": account_id,
-            "to": to,
-            "text": text,
-            "silent": silent,
-            "html": html,
-        });
-        if let Some(reply_to) = reply_to {
-            payload["reply_to"] = Value::String(reply_to);
-        }
-        if let Some(channel_type) = channel_type {
-            payload["type"] = Value::String(channel_type);
-        }
-
         self.channel_service
-            .send(payload)
+            .send(params)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
@@ -192,41 +142,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_message_tool_maps_aliases_and_forwards_payload() {
+    async fn send_message_tool_forwards_params_to_channel_service() {
         let service = Arc::new(RecordingChannelService::new());
         let tool = SendMessageTool::new(service.clone() as Arc<dyn ChannelService>);
 
+        let input = json!({
+            "account_id": "bot-alpha",
+            "to": "12345",
+            "text": "ping",
+            "type": "telegram",
+            "reply_to": "42",
+            "silent": true
+        });
         let out = tool
-            .execute(json!({
-                "channel": "bot-alpha",
-                "chatId": "12345",
-                "message": "ping",
-                "type": "telegram",
-                "replyTo": "42",
-                "silent": true
-            }))
+            .execute(input.clone())
             .await
             .expect("send_message execute");
 
         assert_eq!(out.get("ok").and_then(Value::as_bool), Some(true));
         let sent = service.sent.lock().await.clone().expect("captured payload");
-        assert_eq!(
-            sent,
-            json!({
-                "account_id": "bot-alpha",
-                "to": "12345",
-                "text": "ping",
-                "type": "telegram",
-                "reply_to": "42",
-                "silent": true,
-                "html": false
-            })
-        );
+        assert_eq!(sent, input);
     }
 
     #[tokio::test]
-    async fn send_message_tool_requires_text() {
-        let tool = SendMessageTool::new(Arc::new(RecordingChannelService::new()));
+    async fn send_message_tool_propagates_service_errors() {
+        use crate::services::ServiceError;
+
+        struct FailingChannelService;
+
+        #[async_trait]
+        impl ChannelService for FailingChannelService {
+            async fn status(&self) -> ServiceResult { Ok(json!({})) }
+            async fn logout(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+            async fn send(&self, _: Value) -> ServiceResult {
+                Err(ServiceError::message("missing 'text' (or alias 'message')"))
+            }
+            async fn add(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+            async fn remove(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+            async fn update(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+            async fn senders_list(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+            async fn sender_approve(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+            async fn sender_deny(&self, _: Value) -> ServiceResult { Ok(json!({})) }
+        }
+
+        let tool = SendMessageTool::new(Arc::new(FailingChannelService));
         let err = tool
             .execute(json!({
                 "account_id": "bot-alpha",
@@ -234,6 +193,6 @@ mod tests {
             }))
             .await
             .expect_err("expected validation error");
-        assert!(err.to_string().contains("missing required field `text`"));
+        assert!(err.to_string().contains("missing"));
     }
 }
