@@ -145,20 +145,21 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 	test("shows 'No containers found' when list is empty", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		const containersResponse = page.waitForResponse(
-			(r) => r.url().includes("/api/sandbox/containers") && r.request().method() === "GET",
-		);
-		await navigateAndWait(page, "/settings/sandboxes");
-		await containersResponse;
 
-		// If no containers are running, we should see the empty state
-		const containerRows = page.locator(".provider-item");
-		const noContainersText = page.getByText("No containers found.");
-		// Either containers exist or the empty message shows
-		const hasContainers = (await containerRows.count()) > 0;
-		if (!hasContainers) {
-			await expect(noContainersText).toBeVisible();
-		}
+		// Mock an empty container list to make the test deterministic.
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		await expect(page.getByText("No containers found.")).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -177,12 +178,23 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 	test("refresh button also fetches disk usage", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+		var diskFetchCount = 0;
+
+		// Track disk-usage fetches so we can assert the refresh triggered one.
+		await page.route("**/api/sandbox/disk-usage", (route) => {
+			diskFetchCount++;
+			return route.continue();
+		});
+
 		await navigateAndWait(page, "/settings/sandboxes");
+		// Page mount fires the first disk-usage fetch.
+		const mountCount = diskFetchCount;
 
 		const diskPromise = page.waitForResponse((r) => r.url().includes("/api/sandbox/disk-usage"));
 		await page.getByRole("button", { name: "Refresh", exact: true }).click();
 		await diskPromise;
 
+		expect(diskFetchCount).toBeGreaterThan(mountCount);
 		expect(pageErrors).toEqual([]);
 	});
 
