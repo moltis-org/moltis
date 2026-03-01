@@ -606,7 +606,10 @@ struct AuthPasswordChangeRequest {
 impl std::fmt::Debug for AuthPasswordChangeRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthPasswordChangeRequest")
-            .field("current_password", &self.current_password.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "current_password",
+                &self.current_password.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("new_password", &"[REDACTED]")
             .finish()
     }
@@ -1433,7 +1436,10 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
     trace_call("moltis_save_provider_config");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SaveProviderRequest>("moltis_save_provider_config", request_json) {
+        let request = match parse_ffi_request::<SaveProviderRequest>(
+            "moltis_save_provider_config",
+            request_json,
+        ) {
             Ok(request) => request,
             Err(e) => return e,
         };
@@ -1446,12 +1452,7 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
 
         let key_store = KeyStore::new();
         let api_key = request.api_key.map(|s| s.expose_secret().clone());
-        match key_store.save_config(
-            &request.provider,
-            api_key,
-            request.base_url,
-            request.models,
-        ) {
+        match key_store.save_config(&request.provider, api_key, request.base_url, request.models) {
             Ok(()) => {
                 emit_log("INFO", "bridge.config", "Provider config saved");
                 encode_json(&OkResponse { ok: true })
@@ -1873,7 +1874,10 @@ pub extern "C" fn moltis_switch_session(request_json: *const c_char) -> *mut c_c
     trace_call("moltis_switch_session");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SwitchSessionRequest>("moltis_switch_session", request_json) {
+        let request = match parse_ffi_request::<SwitchSessionRequest>(
+            "moltis_switch_session",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -2184,7 +2188,10 @@ pub extern "C" fn moltis_save_config(request_json: *const c_char) -> *mut c_char
     trace_call("moltis_save_config");
 
     with_ffi_boundary(|| {
-        let config = match parse_ffi_request::<moltis_config::MoltisConfig>("moltis_save_config", request_json) {
+        let config = match parse_ffi_request::<moltis_config::MoltisConfig>(
+            "moltis_save_config",
+            request_json,
+        ) {
             Ok(c) => c,
             Err(e) => return e,
         };
@@ -2358,7 +2365,10 @@ pub extern "C" fn moltis_memory_config_update(request_json: *const c_char) -> *m
     trace_call("moltis_memory_config_update");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<MemoryConfigUpdateRequest>("moltis_memory_config_update", request_json) {
+        let request = match parse_ffi_request::<MemoryConfigUpdateRequest>(
+            "moltis_memory_config_update",
+            request_json,
+        ) {
             Ok(request) => request,
             Err(e) => return e,
         };
@@ -2521,10 +2531,11 @@ pub extern "C" fn moltis_save_identity(request_json: *const c_char) -> *mut c_ch
     trace_call("moltis_save_identity");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SaveIdentityRequest>("moltis_save_identity", request_json) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
+        let request =
+            match parse_ffi_request::<SaveIdentityRequest>("moltis_save_identity", request_json) {
+                Ok(r) => r,
+                Err(e) => return e,
+            };
 
         let identity = moltis_config::AgentIdentity {
             name: request.name,
@@ -2561,7 +2572,10 @@ pub extern "C" fn moltis_save_user_profile(request_json: *const c_char) -> *mut 
     trace_call("moltis_save_user_profile");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SaveUserProfileRequest>("moltis_save_user_profile", request_json) {
+        let request = match parse_ffi_request::<SaveUserProfileRequest>(
+            "moltis_save_user_profile",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -2627,10 +2641,11 @@ pub extern "C" fn moltis_set_env_var(request_json: *const c_char) -> *mut c_char
     trace_call("moltis_set_env_var");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SetEnvVarRequest>("moltis_set_env_var", request_json) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
+        let request =
+            match parse_ffi_request::<SetEnvVarRequest>("moltis_set_env_var", request_json) {
+                Ok(r) => r,
+                Err(e) => return e,
+            };
 
         let key = request.key.trim();
         if key.is_empty() {
@@ -2665,10 +2680,11 @@ pub extern "C" fn moltis_delete_env_var(request_json: *const c_char) -> *mut c_c
     trace_call("moltis_delete_env_var");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<DeleteEnvVarRequest>("moltis_delete_env_var", request_json) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
+        let request =
+            match parse_ffi_request::<DeleteEnvVarRequest>("moltis_delete_env_var", request_json) {
+                Ok(r) => r,
+                Err(e) => return e,
+            };
 
         match BRIDGE
             .runtime
@@ -2732,7 +2748,10 @@ pub extern "C" fn moltis_auth_password_change(request_json: *const c_char) -> *m
     trace_call("moltis_auth_password_change");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<AuthPasswordChangeRequest>("moltis_auth_password_change", request_json) {
+        let request = match parse_ffi_request::<AuthPasswordChangeRequest>(
+            "moltis_auth_password_change",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -2801,16 +2820,12 @@ pub extern "C" fn moltis_auth_password_change(request_json: *const c_char) -> *m
             record_error("moltis_auth_password_change", "AUTH_PASSWORD_SET_FAILED");
             return encode_error("AUTH_PASSWORD_SET_FAILED", &error.to_string());
         } else if let Some(vault) = BRIDGE.credential_store.vault() {
-            match BRIDGE
-                .runtime
-                .block_on(vault.initialize(new_password))
-            {
+            match BRIDGE.runtime.block_on(vault.initialize(new_password)) {
                 Ok(key) => {
                     recovery_key = Some(key.phrase().to_owned());
                 },
                 Err(moltis_gateway::auth::moltis_vault::VaultError::AlreadyInitialized) => {
-                    if let Err(error) = BRIDGE.runtime.block_on(vault.unseal(new_password))
-                    {
+                    if let Err(error) = BRIDGE.runtime.block_on(vault.unseal(new_password)) {
                         emit_log(
                             "WARN",
                             "bridge.auth",
@@ -2881,7 +2896,10 @@ pub extern "C" fn moltis_auth_remove_passkey(request_json: *const c_char) -> *mu
     trace_call("moltis_auth_remove_passkey");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<AuthPasskeyIdRequest>("moltis_auth_remove_passkey", request_json) {
+        let request = match parse_ffi_request::<AuthPasskeyIdRequest>(
+            "moltis_auth_remove_passkey",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -2906,7 +2924,10 @@ pub extern "C" fn moltis_auth_rename_passkey(request_json: *const c_char) -> *mu
     trace_call("moltis_auth_rename_passkey");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<AuthPasskeyRenameRequest>("moltis_auth_rename_passkey", request_json) {
+        let request = match parse_ffi_request::<AuthPasskeyRenameRequest>(
+            "moltis_auth_rename_passkey",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -2988,7 +3009,10 @@ pub extern "C" fn moltis_sandbox_delete_image(request_json: *const c_char) -> *m
     trace_call("moltis_sandbox_delete_image");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SandboxDeleteImageRequest>("moltis_sandbox_delete_image", request_json) {
+        let request = match parse_ffi_request::<SandboxDeleteImageRequest>(
+            "moltis_sandbox_delete_image",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -3063,7 +3087,10 @@ pub extern "C" fn moltis_sandbox_check_packages(request_json: *const c_char) -> 
     trace_call("moltis_sandbox_check_packages");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SandboxCheckPackagesRequest>("moltis_sandbox_check_packages", request_json) {
+        let request = match parse_ffi_request::<SandboxCheckPackagesRequest>(
+            "moltis_sandbox_check_packages",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -3097,7 +3124,10 @@ pub extern "C" fn moltis_sandbox_check_packages(request_json: *const c_char) -> 
         }
 
         if let Some(bad) = packages.iter().find(|p| !is_valid_package_name(p)) {
-            record_error("moltis_sandbox_check_packages", SANDBOX_PACKAGE_NAME_INVALID);
+            record_error(
+                "moltis_sandbox_check_packages",
+                SANDBOX_PACKAGE_NAME_INVALID,
+            );
             return encode_error(
                 SANDBOX_PACKAGE_NAME_INVALID,
                 &format!("invalid package name: {bad}"),
@@ -3153,7 +3183,10 @@ pub extern "C" fn moltis_sandbox_build_image(request_json: *const c_char) -> *mu
     trace_call("moltis_sandbox_build_image");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SandboxBuildImageRequest>("moltis_sandbox_build_image", request_json) {
+        let request = match parse_ffi_request::<SandboxBuildImageRequest>(
+            "moltis_sandbox_build_image",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -3275,7 +3308,10 @@ pub extern "C" fn moltis_sandbox_set_default_image(request_json: *const c_char) 
     trace_call("moltis_sandbox_set_default_image");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SandboxSetDefaultImageRequest>("moltis_sandbox_set_default_image", request_json) {
+        let request = match parse_ffi_request::<SandboxSetDefaultImageRequest>(
+            "moltis_sandbox_set_default_image",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -3326,7 +3362,10 @@ pub extern "C" fn moltis_sandbox_set_shared_home(request_json: *const c_char) ->
     trace_call("moltis_sandbox_set_shared_home");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SandboxSharedHomeUpdateRequest>("moltis_sandbox_set_shared_home", request_json) {
+        let request = match parse_ffi_request::<SandboxSharedHomeUpdateRequest>(
+            "moltis_sandbox_set_shared_home",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -3406,7 +3445,10 @@ pub extern "C" fn moltis_sandbox_stop_container(request_json: *const c_char) -> 
     trace_call("moltis_sandbox_stop_container");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SandboxContainerNameRequest>("moltis_sandbox_stop_container", request_json) {
+        let request = match parse_ffi_request::<SandboxContainerNameRequest>(
+            "moltis_sandbox_stop_container",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -3456,7 +3498,10 @@ pub extern "C" fn moltis_sandbox_remove_container(request_json: *const c_char) -
     trace_call("moltis_sandbox_remove_container");
 
     with_ffi_boundary(|| {
-        let request = match parse_ffi_request::<SandboxContainerNameRequest>("moltis_sandbox_remove_container", request_json) {
+        let request = match parse_ffi_request::<SandboxContainerNameRequest>(
+            "moltis_sandbox_remove_container",
+            request_json,
+        ) {
             Ok(r) => r,
             Err(e) => return e,
         };

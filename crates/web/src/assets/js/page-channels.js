@@ -445,10 +445,13 @@ function AddTelegramModal() {
 	      <input data-field="credential" type="password" placeholder="123456:ABC-DEF..." class="channel-input"
 	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
 	        name="telegram_bot_token" />
-	      ${accountDraft.value.trim() && html`<div class="flex items-center gap-1.5 text-xs py-1">
+	      ${
+					accountDraft.value.trim() &&
+					html`<div class="flex items-center gap-1.5 text-xs py-1">
 	        <span class="text-[var(--muted)]">Chat with your bot:</span>
 	        <a href="https://t.me/${accountDraft.value.trim()}" target="_blank" class="text-[var(--accent)] underline">t.me/${accountDraft.value.trim()}</a>
-	      </div>`}
+	      </div>`
+				}
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
