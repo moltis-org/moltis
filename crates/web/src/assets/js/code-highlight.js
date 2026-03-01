@@ -14,35 +14,10 @@ var highlighter = null;
 export async function initHighlighter() {
 	if (highlighter) return;
 	try {
-		var { createHighlighter } = await import("shiki");
-		highlighter = await createHighlighter({
+		var shiki = await import("./vendor/shiki.mjs");
+		highlighter = await shiki.createHighlighter({
 			themes: ["github-dark", "github-light"],
-			langs: [
-				"javascript",
-				"typescript",
-				"python",
-				"rust",
-				"go",
-				"bash",
-				"shell",
-				"json",
-				"html",
-				"css",
-				"sql",
-				"yaml",
-				"toml",
-				"markdown",
-				"c",
-				"cpp",
-				"java",
-				"ruby",
-				"php",
-				"swift",
-				"kotlin",
-				"dockerfile",
-				"xml",
-				"diff",
-			],
+			langs: Object.keys(shiki.bundledLanguages),
 		});
 	} catch (err) {
 		console.warn("[shiki] failed to initialize highlighter:", err);
