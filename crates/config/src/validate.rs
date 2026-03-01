@@ -368,6 +368,7 @@ fn build_schema_map() -> KnownKeys {
                 ("whatsapp", Map(Box::new(Leaf))),
                 ("msteams", Map(Box::new(Leaf))),
                 ("discord", Map(Box::new(Leaf))),
+                ("slack", Map(Box::new(Leaf))),
             ]),
         }),
         (
