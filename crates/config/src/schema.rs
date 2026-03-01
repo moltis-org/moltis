@@ -189,6 +189,7 @@ pub struct MoltisConfig {
     pub providers: ProvidersConfig,
     pub chat: ChatConfig,
     pub tools: ToolsConfig,
+    pub agents: AgentsConfig,
     pub skills: SkillsConfig,
     pub mcp: McpConfig,
     pub channels: ChannelsConfig,
@@ -211,6 +212,43 @@ pub struct MoltisConfig {
     /// Process env vars take precedence (existing vars are not overwritten).
     #[serde(default)]
     pub env: HashMap<String, String>,
+}
+
+/// Agent spawn presets used by tools like `spawn_agent`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentsConfig {
+    /// Optional default preset name used when `spawn_agent.preset` is omitted.
+    pub default_preset: Option<String>,
+    /// Named spawn presets.
+    #[serde(default)]
+    pub presets: HashMap<String, AgentPresetConfig>,
+}
+
+impl AgentsConfig {
+    /// Return a preset by name.
+    pub fn get_preset(&self, name: &str) -> Option<&AgentPresetConfig> {
+        self.presets.get(name)
+    }
+}
+
+/// Spawn policy preset for sub-agents.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPresetConfig {
+    /// Optional model override for this preset.
+    pub model: Option<String>,
+    /// Optional allowlist of tools available to the sub-agent.
+    #[serde(default)]
+    pub allow_tools: Vec<String>,
+    /// Optional denylist of tools removed from the sub-agent.
+    #[serde(default)]
+    pub deny_tools: Vec<String>,
+    /// Restrict sub-agent to delegation/session/task tools only.
+    #[serde(default)]
+    pub delegate_only: bool,
+    /// Optional extra instructions appended to sub-agent system prompt.
+    pub system_prompt_suffix: Option<String>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -708,6 +746,13 @@ pub struct HeartbeatConfig {
     pub ack_max_chars: usize,
     /// Active hours window — heartbeats only run during this window.
     pub active_hours: ActiveHoursConfig,
+    /// Whether heartbeat replies should be delivered to a channel account.
+    #[serde(default)]
+    pub deliver: bool,
+    /// Channel account identifier for heartbeat delivery (e.g. a Telegram bot account id).
+    pub channel: Option<String>,
+    /// Destination chat/recipient id for heartbeat delivery.
+    pub to: Option<String>,
     /// Whether heartbeat runs inside a sandbox. Defaults to true.
     #[serde(default = "default_true")]
     pub sandbox_enabled: bool,
@@ -724,6 +769,9 @@ impl Default for HeartbeatConfig {
             prompt: None,
             ack_max_chars: 300,
             active_hours: ActiveHoursConfig::default(),
+            deliver: false,
+            channel: None,
+            to: None,
             sandbox_enabled: true,
             sandbox_image: None,
         }
@@ -2096,6 +2144,39 @@ OPENROUTER_API_KEY = "sk-or-test"
     fn env_section_defaults_to_empty() {
         let config: MoltisConfig = toml::from_str("").unwrap();
         assert!(config.env.is_empty());
+    }
+
+    #[test]
+    fn agents_config_defaults_empty() {
+        let config: MoltisConfig = toml::from_str("").unwrap();
+        assert!(config.agents.default_preset.is_none());
+        assert!(config.agents.presets.is_empty());
+    }
+
+    #[test]
+    fn agents_config_parses_presets() {
+        let toml = r#"
+[agents]
+default_preset = "research"
+
+[agents.presets.research]
+model = "openai/gpt-5.2"
+allow_tools = ["web_search", "web_fetch"]
+deny_tools = ["exec"]
+delegate_only = false
+system_prompt_suffix = "Focus on evidence."
+"#;
+        let config: MoltisConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.agents.default_preset.as_deref(), Some("research"));
+        let preset = config.agents.get_preset("research").unwrap();
+        assert_eq!(preset.model.as_deref(), Some("openai/gpt-5.2"));
+        assert_eq!(preset.allow_tools.len(), 2);
+        assert_eq!(preset.deny_tools, vec!["exec".to_string()]);
+        assert!(!preset.delegate_only);
+        assert_eq!(
+            preset.system_prompt_suffix.as_deref(),
+            Some("Focus on evidence.")
+        );
     }
 
     #[test]

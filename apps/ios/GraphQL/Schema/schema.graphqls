@@ -305,6 +305,9 @@ type HeartbeatConfig {
 	prompt: String
 	ackMaxChars: Int
 	activeHours: HeartbeatActiveHours
+	deliver: Boolean
+	channel: String
+	to: String
 	sandboxEnabled: Boolean
 	sandboxImage: String
 }

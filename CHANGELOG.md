@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent `send_message` tool for proactive outbound channel delivery (`account_id` + `to` + `text`), backed by a live `channels.send` implementation in gateway channel services
+- Heartbeat channel routing config fields (`heartbeat.deliver`, `heartbeat.channel`, `heartbeat.to`) in schema/template/GraphQL, plus heartbeat settings UI controls for channel target selection
+- Prompt runtime context fields for channel/surface awareness (`surface`, `session_kind`, `channel_type`, `channel_account`, `channel_chat_id`, `channel_chat_type`)
+- Agent session lifecycle tools: `sessions_create` (create/resolve chat sessions) and `sessions_delete` (delete sessions by key), wired through gateway session service behavior
+- Cross-session coordination tools: `sessions_list`, `sessions_history`, and `sessions_send` for agent-to-agent/session discovery, context reads, and targeted message delivery
+- Shared `task_list` tool for multi-agent work coordination, plus `spawn_agent` policy parameters (`allow_tools`, `deny_tools`, `delegate_only`) for sub-agent tool-scope control
+- Configurable spawn presets under `agents.presets` with `spawn_agent.preset` support (model/tool policy/system prompt defaults, optional `agents.default_preset`)
+
 ### Changed
 
 ### Deprecated
@@ -17,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Heartbeat cron delivery now respects configured channel targets and no longer skips channel delivery for heartbeat turns when trimmed output is present
 - WebAuthn passkey host detection now auto-registers newly discovered Tailscale hostnames at runtime (no restart needed), and Settings now shows a passkey-update warning banner when an existing passkey setup encounters a newly added host.
 - macOS local LLM Metal detection now requires both compile-time Metal backend support and a runtime Metal device probe (`MTLCreateSystemDefaultDevice`), and default CLI/gateway builds now enable `local-llm-metal` so Metal-capable systems correctly report `has_metal=true`.
 
@@ -37,7 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Release packaging now installs cross-compilation targets on the active nightly toolchain in the Homebrew binary job, fixing `error[E0463]: can't find crate for core` during macOS binary builds.
 - Docker release builds now copy `apps/courier` into the image build context so Cargo workspace metadata resolves correctly during WASM component builds.
-
 ### Security
 
 ## [0.10.1] - 2026-02-28

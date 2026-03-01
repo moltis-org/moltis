@@ -302,6 +302,16 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let agent_preset = || {
+        Struct(HashMap::from([
+            ("model", Leaf),
+            ("allow_tools", Leaf),
+            ("deny_tools", Leaf),
+            ("delegate_only", Leaf),
+            ("system_prompt_suffix", Leaf),
+        ]))
+    };
+
     Struct(HashMap::from([
         (
             "server",
@@ -324,6 +334,13 @@ fn build_schema_map() -> KnownKeys {
                 ("message_queue_mode", Leaf),
                 ("priority_models", Leaf),
                 ("allowed_models", Leaf),
+            ])),
+        ),
+        (
+            "agents",
+            Struct(HashMap::from([
+                ("default_preset", Leaf),
+                ("presets", Map(Box::new(agent_preset()))),
             ])),
         ),
         ("tools", tools()),
@@ -428,6 +445,9 @@ fn build_schema_map() -> KnownKeys {
                 ("prompt", Leaf),
                 ("ack_max_chars", Leaf),
                 ("active_hours", active_hours()),
+                ("deliver", Leaf),
+                ("channel", Leaf),
+                ("to", Leaf),
                 ("sandbox_enabled", Leaf),
                 ("sandbox_image", Leaf),
             ])),
@@ -902,6 +922,20 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
             category: "invalid-value",
             path: "tools.agent_max_iterations".into(),
             message: "tools.agent_max_iterations must be at least 1".into(),
+        });
+    }
+
+    // agents.default_preset should reference an existing preset key.
+    if let Some(default_preset) = config.agents.default_preset.as_deref()
+        && !config.agents.presets.contains_key(default_preset)
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "agents.default_preset".into(),
+            message: format!(
+                "default preset \"{default_preset}\" is not defined in agents.presets"
+            ),
         });
     }
 

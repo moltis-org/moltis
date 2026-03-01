@@ -36,6 +36,14 @@ use moltis_providers::ProviderRegistry;
 use moltis_tools::{
     approval::{ApprovalManager, ApprovalMode, SecurityLevel},
     exec::EnvVarProvider,
+    sessions_communicate::{
+        SendToSessionFn, SendToSessionRequest, SessionsHistoryTool, SessionsListTool,
+        SessionsSendTool,
+    },
+    sessions_manage::{
+        CreateSessionFn, CreateSessionRequest, DeleteSessionFn, DeleteSessionRequest,
+        SessionsCreateTool, SessionsDeleteTool,
+    },
 };
 
 use {
@@ -1901,16 +1909,26 @@ pub async fn prepare_gateway(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let delivery_text = if is_heartbeat_turn {
+                let hb_cfg = state.inner.read().await.heartbeat_config.clone();
+                moltis_cron::heartbeat::strip_heartbeat_token(
+                    &text,
+                    moltis_cron::heartbeat::StripMode::Trim,
+                    hb_cfg.ack_max_chars,
+                )
+                .text
+            } else {
+                text.clone()
+            };
 
             // Deliver output to a channel if requested.
             if req.deliver
-                && !is_heartbeat_turn
-                && !text.is_empty()
+                && !delivery_text.trim().is_empty()
                 && let (Some(channel_account), Some(chat_id)) = (&req.channel, &req.to)
             {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     if let Err(e) = outbound
-                        .send_text(channel_account, chat_id, &text, None)
+                        .send_text(channel_account, chat_id, &delivery_text, None)
                         .await
                     {
                         tracing::warn!(
@@ -2538,9 +2556,9 @@ pub async fn prepare_gateway(
             wa_stream_outbound,
         ));
 
-        services = services.with_channel_outbound(
-            Arc::clone(&multi_router) as Arc<dyn moltis_channels::ChannelOutbound>
-        );
+        let outbound_router =
+            Arc::clone(&multi_router) as Arc<dyn moltis_channels::ChannelOutbound>;
+        services = services.with_channel_outbound(Arc::clone(&outbound_router));
         services = services.with_channel_stream_outbound(
             multi_router as Arc<dyn moltis_channels::ChannelStreamOutbound>,
         );
@@ -2551,6 +2569,7 @@ pub async fn prepare_gateway(
             discord_plugin,
             #[cfg(feature = "whatsapp")]
             whatsapp_plugin,
+            outbound_router,
             channel_store,
             Arc::clone(&message_log),
             Arc::clone(&session_metadata),
@@ -3152,6 +3171,9 @@ pub async fn prepare_gateway(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
+        tool_registry.register(Box::new(crate::channel_agent_tools::SendMessageTool::new(
+            Arc::clone(&state.services.channel),
+        )));
         tool_registry.register(Box::new(
             moltis_tools::send_image::SendImageTool::new()
                 .with_sandbox_router(Arc::clone(&sandbox_router)),
@@ -3205,6 +3227,134 @@ pub async fn prepare_gateway(
         tool_registry.register(Box::new(
             moltis_tools::session_state::SessionStateTool::new(Arc::clone(&session_state_store)),
         ));
+
+        // Register session lifecycle tools for explicit session creation/deletion.
+        let state_for_session_create = Arc::clone(&state);
+        let metadata_for_session_create = Arc::clone(&session_metadata);
+        let create_session: CreateSessionFn = Arc::new(move |req: CreateSessionRequest| {
+            let state = Arc::clone(&state_for_session_create);
+            let metadata = Arc::clone(&metadata_for_session_create);
+            Box::pin(async move {
+                let key = req.key;
+
+                let mut resolve_params = serde_json::json!({ "key": key.clone() });
+                if let Some(inherit) = req.inherit_agent_from {
+                    resolve_params["inherit_agent_from"] = serde_json::json!(inherit);
+                }
+                state
+                    .services
+                    .session
+                    .resolve(resolve_params)
+                    .await
+                    .map_err(|e| moltis_tools::Error::message(e.to_string()))?;
+
+                let mut patch = serde_json::Map::new();
+                patch.insert("key".to_string(), serde_json::json!(key.clone()));
+                if let Some(label) = req.label {
+                    patch.insert("label".to_string(), serde_json::json!(label));
+                }
+                if let Some(model) = req.model {
+                    patch.insert("model".to_string(), serde_json::json!(model));
+                }
+                if let Some(project_id) = req.project_id {
+                    patch.insert("projectId".to_string(), serde_json::json!(project_id));
+                }
+                if patch.len() > 1 {
+                    state
+                        .services
+                        .session
+                        .patch(serde_json::Value::Object(patch))
+                        .await
+                        .map_err(|e| moltis_tools::Error::message(e.to_string()))?;
+                }
+
+                let entry = metadata.get(&key).await.ok_or_else(|| {
+                    moltis_tools::Error::message(format!("session '{key}' not found after create"))
+                })?;
+                Ok(serde_json::json!({
+                    "entry": {
+                        "id": entry.id,
+                        "key": entry.key,
+                        "label": entry.label,
+                        "model": entry.model,
+                        "createdAt": entry.created_at,
+                        "updatedAt": entry.updated_at,
+                        "messageCount": entry.message_count,
+                        "projectId": entry.project_id,
+                        "agent_id": entry.agent_id,
+                        "agentId": entry.agent_id,
+                        "version": entry.version,
+                    }
+                }))
+            })
+        });
+
+        let state_for_session_delete = Arc::clone(&state);
+        let delete_session: DeleteSessionFn = Arc::new(move |req: DeleteSessionRequest| {
+            let state = Arc::clone(&state_for_session_delete);
+            Box::pin(async move {
+                state
+                    .services
+                    .session
+                    .delete(serde_json::json!({
+                        "key": req.key,
+                        "force": req.force,
+                    }))
+                    .await
+                    .map_err(|e| moltis_tools::Error::message(e.to_string()))
+            })
+        });
+
+        tool_registry.register(Box::new(SessionsCreateTool::new(
+            Arc::clone(&session_metadata),
+            create_session,
+        )));
+        tool_registry.register(Box::new(SessionsDeleteTool::new(
+            Arc::clone(&session_metadata),
+            delete_session,
+        )));
+
+        // Register cross-session communication tools.
+        tool_registry.register(Box::new(SessionsListTool::new(Arc::clone(
+            &session_metadata,
+        ))));
+        tool_registry.register(Box::new(SessionsHistoryTool::new(
+            Arc::clone(&session_store),
+            Arc::clone(&session_metadata),
+        )));
+
+        let state_for_session_send = Arc::clone(&state);
+        let send_to_session: SendToSessionFn = Arc::new(move |req: SendToSessionRequest| {
+            let state = Arc::clone(&state_for_session_send);
+            Box::pin(async move {
+                let mut params = serde_json::json!({
+                    "text": req.message,
+                    "_session_key": req.key,
+                });
+                if let Some(model) = req.model {
+                    params["model"] = serde_json::json!(model);
+                }
+                let chat = state.chat().await;
+                if req.wait_for_reply {
+                    chat.send_sync(params)
+                        .await
+                        .map_err(|e| moltis_tools::Error::message(e.to_string()))
+                } else {
+                    chat.send(params)
+                        .await
+                        .map_err(|e| moltis_tools::Error::message(e.to_string()))
+                }
+            })
+        });
+        tool_registry.register(Box::new(SessionsSendTool::new(
+            Arc::clone(&session_metadata),
+            send_to_session,
+        )));
+
+        // Register shared task coordination tool for multi-agent workflows.
+        tool_registry.register(Box::new(moltis_tools::task_list::TaskListTool::new(
+            &data_dir,
+        )));
 
         // Register built-in voice tools for explicit TTS/STT calls in agents.
         tool_registry.register(Box::new(crate::voice_agent_tools::SpeakTool::new(
@@ -3298,12 +3448,14 @@ pub async fn prepare_gateway(
                     broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
                 });
             });
+            let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
             let spawn_tool = moltis_tools::spawn_agent::SpawnAgentTool::new(
                 Arc::clone(&registry),
                 default_provider,
                 base_tools,
             )
-            .with_on_event(on_spawn_event);
+            .with_on_event(on_spawn_event)
+            .with_agents_config(agents_config);
             tool_registry.register(Box::new(spawn_tool));
         }
 
@@ -4096,9 +4248,9 @@ pub async fn prepare_gateway(
                         message: prompt,
                         model: hb.model.clone(),
                         timeout_secs: None,
-                        deliver: false,
-                        channel: None,
-                        to: None,
+                        deliver: hb.deliver,
+                        channel: hb.channel.clone(),
+                        to: hb.to.clone(),
                     }),
                     enabled: Some(true),
                     sandbox: Some(moltis_cron::types::CronSandboxConfig {
@@ -4124,9 +4276,9 @@ pub async fn prepare_gateway(
                         message: prompt,
                         model: hb.model.clone(),
                         timeout_secs: None,
-                        deliver: false,
-                        channel: None,
-                        to: None,
+                        deliver: hb.deliver,
+                        channel: hb.channel.clone(),
+                        to: hb.to.clone(),
                     },
                     session_target: SessionTarget::Named("heartbeat".into()),
                     delete_after_run: false,

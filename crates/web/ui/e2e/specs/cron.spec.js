@@ -57,6 +57,9 @@ test.describe("Cron jobs page", () => {
 		await navigateAndWait(page, "/settings/heartbeat");
 
 		await expect(page.getByRole("heading", { name: /heartbeat/i })).toBeVisible();
+		await expect(page.getByText("Deliver to channel", { exact: true })).toBeVisible();
+		await expect(page.getByText("Channel Account", { exact: true })).toBeVisible();
+		await expect(page.getByText("Chat ID", { exact: true })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 

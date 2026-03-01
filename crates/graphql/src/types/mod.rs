@@ -282,6 +282,12 @@ pub struct HeartbeatConfig {
     #[serde(default)]
     pub active_hours: Option<HeartbeatActiveHours>,
     #[serde(default)]
+    pub deliver: Option<bool>,
+    #[serde(default)]
+    pub channel: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
     pub sandbox_enabled: Option<bool>,
     #[serde(default)]
     pub sandbox_image: Option<String>,
