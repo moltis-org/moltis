@@ -934,6 +934,8 @@ pub struct MemoryEmbeddingConfig {
     /// Enable LLM reranking for hybrid search results.
     #[serde(default)]
     pub llm_reranking: bool,
+    /// Merge strategy for hybrid search: "rrf" (default) or "linear".
+    pub search_merge_strategy: Option<String>,
     /// Enable session export to memory for cross-run recall.
     #[serde(default)]
     pub session_export: bool,

@@ -421,6 +421,7 @@ fn build_schema_map() -> KnownKeys {
                 ("api_key", Leaf),
                 ("citations", Leaf),
                 ("llm_reranking", Leaf),
+                ("search_merge_strategy", Leaf),
                 ("session_export", Leaf),
                 ("qmd", qmd()),
             ])),
@@ -1063,6 +1064,22 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 message: format!(
                     "unknown memory provider \"{provider}\"; expected one of: {}",
                     valid_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown search merge strategy
+    if let Some(ref strategy) = config.memory.search_merge_strategy {
+        let valid_strategies = ["rrf", "linear"];
+        if !valid_strategies.contains(&strategy.to_lowercase().as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "memory.search_merge_strategy".into(),
+                message: format!(
+                    "unknown search merge strategy \"{strategy}\"; expected one of: {}",
+                    valid_strategies.join(", ")
                 ),
             });
         }

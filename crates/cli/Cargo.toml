@@ -71,6 +71,7 @@ caldav = ["moltis-gateway/caldav"]
 default = [
   "agent",
   "caldav",
+  "code-splitter",
   "file-watcher",
   "graphql",
   "jemalloc",
@@ -93,9 +94,21 @@ default = [
 ]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
-file-watcher = ["moltis-gateway/file-watcher"]
-graphql      = ["moltis-gateway/graphql", "moltis-web?/graphql"]
-jemalloc     = ["dep:tikv-jemallocator"]
+code-splitter   = ["moltis-memory/code-splitter"]
+file-watcher    = ["moltis-gateway/file-watcher"]
+graphql         = ["moltis-gateway/graphql", "moltis-web?/graphql"]
+jemalloc        = ["dep:tikv-jemallocator"]
+lang-bash       = ["moltis-memory/lang-bash"]
+lang-c          = ["moltis-memory/lang-c"]
+lang-cpp        = ["moltis-memory/lang-cpp"]
+lang-css        = ["moltis-memory/lang-css"]
+lang-html       = ["moltis-memory/lang-html"]
+lang-java       = ["moltis-memory/lang-java"]
+lang-json       = ["moltis-memory/lang-json"]
+lang-markdown   = ["moltis-memory/lang-markdown"]
+lang-ruby       = ["moltis-memory/lang-ruby"]
+lang-toml       = ["moltis-memory/lang-toml"]
+lang-typescript = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
 lightweight        = ["jemalloc", "tls", "web-ui"]
