@@ -2727,6 +2727,7 @@ function OpenClawImportStep({ onNext, onBack }) {
 		memory: true,
 		channels: true,
 		sessions: true,
+		workspace_files: true,
 	});
 
 	useEffect(() => {
@@ -2854,6 +2855,12 @@ function OpenClawImportStep({ onNext, onBack }) {
 			available: scan.sessions_count > 0,
 			detail: `${scan.sessions_count} session(s)`,
 		},
+		{
+			key: "workspace_files",
+			label: "Workspace Files",
+			available: scan.workspace_files_available,
+			detail: scan.workspace_files_found?.length > 0 ? scan.workspace_files_found.join(", ") : null,
+		},
 	];
 	var anySelected = categories.some((c) => c.available && selection[c.key]);
 
@@ -2863,7 +2870,11 @@ function OpenClawImportStep({ onNext, onBack }) {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Import from OpenClaw</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
 			We detected an OpenClaw installation at <code class="text-[var(--text)]">${scan.home_dir}</code>.
-			Select the data you'd like to import.
+			Select the data you'd like to bring into Moltis.
+		</p>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">
+			This is a read-only copy \u2014 your OpenClaw installation will not be modified or removed.
+			You can keep using OpenClaw alongside Moltis, and re-import at any time from Settings.
 		</p>
 		${
 			workspaceMissing

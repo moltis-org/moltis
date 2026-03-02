@@ -11,6 +11,7 @@ import {
 	stripChannelPrefix,
 	updateTokenBar,
 } from "./chat-ui.js";
+import { highlightCodeBlocks } from "./code-highlight.js";
 import { eventListeners } from "./events.js";
 import {
 	formatTokenSpeed,
@@ -675,6 +676,10 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	S.setLastToolOutput("");
 	S.setVoicePending(false);
 	maybeRefreshFullContext();
+	// Syntax-highlight any code blocks in the completed message.
+	if (S.chatMsgBox?.lastElementChild) {
+		highlightCodeBlocks(S.chatMsgBox.lastElementChild);
+	}
 	// Move the next queued message from the tray AFTER the response is
 	// fully rendered. This ensures correct ordering: user-msg → response →
 	// next-user-msg → next-response (never next-user-msg before response).

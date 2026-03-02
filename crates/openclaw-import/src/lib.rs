@@ -21,6 +21,7 @@ pub mod skills;
 pub mod types;
 #[cfg(feature = "file-watcher")]
 pub mod watcher;
+pub mod workspace_files;
 
 use std::path::Path;
 
@@ -41,6 +42,7 @@ pub struct ImportSelection {
     pub memory: bool,
     pub channels: bool,
     pub sessions: bool,
+    pub workspace_files: bool,
 }
 
 impl ImportSelection {
@@ -53,6 +55,7 @@ impl ImportSelection {
             memory: true,
             channels: true,
             sessions: true,
+            workspace_files: true,
         }
     }
 }
@@ -78,6 +81,9 @@ pub struct ImportScan {
     pub unsupported_channels: Vec<String>,
     pub agent_ids: Vec<String>,
     pub agents: Vec<agents::ImportedAgent>,
+    pub workspace_files_available: bool,
+    pub workspace_files_count: usize,
+    pub workspace_files_found: Vec<String>,
 }
 
 /// Scan an OpenClaw installation without importing anything.
@@ -118,6 +124,9 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
         unsupported_channels: detection.unsupported_channels.clone(),
         agent_ids: detection.agent_ids.clone(),
         agents: imported_agents.agents,
+        workspace_files_available: detection.has_workspace_files,
+        workspace_files_count: detection.workspace_files_found.len(),
+        workspace_files_found: detection.workspace_files_found.clone(),
     }
 }
 
@@ -215,6 +224,34 @@ pub fn import(
                     );
                 }
                 report.add_category(agent_report);
+            }
+        }
+    }
+
+    // Workspace personality files (default agent)
+    if selection.workspace_files {
+        report.add_category(workspace_files::import_workspace_files(detection, data_dir));
+
+        // Per-agent workspace files for non-default agents
+        for agent in imported_agents.agents.iter().filter(|a| !a.is_default) {
+            if let Some(ref source_ws) = agent.source_workspace {
+                let has_files = workspace_files::WORKSPACE_FILE_NAMES
+                    .iter()
+                    .any(|name| source_ws.join(name).is_file());
+
+                if has_files {
+                    let agent_data_dir = data_dir.join("agents").join(&agent.moltis_id);
+                    let agent_report =
+                        workspace_files::import_agent_workspace_files(source_ws, &agent_data_dir);
+                    if agent_report.items_imported > 0 {
+                        debug!(
+                            agent = %agent.moltis_id,
+                            imported = agent_report.items_imported,
+                            "imported per-agent workspace files"
+                        );
+                    }
+                    report.add_category(agent_report);
+                }
             }
         }
     }
@@ -563,6 +600,13 @@ mod tests {
         std::fs::create_dir_all(ws.join("skills").join("test-skill")).unwrap();
         std::fs::write(ws.join("MEMORY.md"), "# Memory").unwrap();
         std::fs::write(ws.join("memory").join("2024-01-15.md"), "log").unwrap();
+        std::fs::write(ws.join("SOUL.md"), "# Custom Soul\nI have personality.").unwrap();
+        std::fs::write(
+            ws.join("IDENTITY.md"),
+            "---\ncreature: owl\nvibe: wise\n---\n",
+        )
+        .unwrap();
+        std::fs::write(ws.join("TOOLS.md"), "# Tool Guidance\nUse tools wisely.").unwrap();
         std::fs::write(
             ws.join("skills").join("test-skill").join("SKILL.md"),
             "---\nname: test-skill\n---\nDo stuff.",
@@ -588,6 +632,8 @@ mod tests {
         assert_eq!(scan_result.telegram_accounts, 1);
         assert_eq!(scan_result.discord_accounts, 0);
         assert_eq!(scan_result.sessions_count, 1);
+        assert!(scan_result.workspace_files_available);
+        assert_eq!(scan_result.workspace_files_count, 3);
     }
 
     #[test]
@@ -660,7 +706,7 @@ mod tests {
         let report = import(&detection, &ImportSelection::all(), &config_dir, &data_dir);
 
         // Check that all categories have a report
-        assert!(report.categories.len() >= 6);
+        assert!(report.categories.len() >= 7);
 
         // Check specific imports
         assert!(config_dir.join("provider_keys.json").is_file());
@@ -672,6 +718,11 @@ mod tests {
                 .join("SKILL.md")
                 .is_file()
         );
+
+        // Workspace personality files should be imported
+        assert!(data_dir.join("SOUL.md").is_file());
+        assert!(data_dir.join("IDENTITY.md").is_file());
+        assert!(data_dir.join("TOOLS.md").is_file());
 
         // Check import state saved
         assert!(data_dir.join("openclaw-import-state.json").is_file());

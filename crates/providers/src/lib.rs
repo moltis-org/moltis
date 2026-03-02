@@ -1,8 +1,5 @@
 //! LLM provider implementations and registry.
 
-// FFI wrappers for llama-cpp-2 require unsafe Send/Sync impls when local-llm feature is enabled.
-#![cfg_attr(feature = "local-llm", allow(unsafe_code))]
-
 pub mod anthropic;
 pub mod error;
 pub mod openai;
@@ -299,6 +296,159 @@ fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<DiscoveredModel>
         .map_err(|err| anyhow::anyhow!("ollama model discovery worker failed: {err}"))?
 }
 
+// ── Ollama model info probing ────────────────────────────────────────────────
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct OllamaShowResponse {
+    #[serde(default)]
+    details: OllamaModelDetails,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct OllamaModelDetails {
+    family: Option<String>,
+    #[serde(default)]
+    families: Option<Vec<String>>,
+}
+
+/// Model families known to support native OpenAI-style tool calling in Ollama.
+const OLLAMA_NATIVE_TOOL_FAMILIES: &[&str] = &[
+    "llama3.1",
+    "llama3.2",
+    "llama3.3",
+    "llama4",
+    "qwen2.5",
+    "qwen3",
+    "mistral",
+    "mixtral",
+    "command-r",
+    "firefunction",
+    "hermes",
+];
+
+/// Determine whether an Ollama model supports native tool calling based on its
+/// model name and family metadata from `/api/show`.
+fn ollama_model_supports_native_tools(model_name: &str, details: &OllamaModelDetails) -> bool {
+    let name_lower = model_name.to_ascii_lowercase();
+
+    // Check all family strings from the model details.
+    let families_iter = details
+        .family
+        .iter()
+        .chain(details.families.iter().flatten());
+    for family in families_iter {
+        let fam_lower = family.to_ascii_lowercase();
+        if OLLAMA_NATIVE_TOOL_FAMILIES
+            .iter()
+            .any(|known| fam_lower.contains(known))
+        {
+            return true;
+        }
+    }
+
+    // Heuristic: check model name for known families.
+    OLLAMA_NATIVE_TOOL_FAMILIES
+        .iter()
+        .any(|known| name_lower.contains(known))
+}
+
+/// Probe the Ollama `/api/show` endpoint for a specific model to get its family
+/// and details. Returns `Ok(response)` on success, error on timeout/failure.
+async fn probe_ollama_model_info(
+    base_url: &str,
+    model_name: &str,
+) -> anyhow::Result<OllamaShowResponse> {
+    let api_base = normalize_ollama_api_base_url(base_url);
+    let endpoint = format!("{}/api/show", api_base.trim_end_matches('/'));
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?
+        .post(&endpoint)
+        .json(&serde_json::json!({ "name": model_name }))
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("ollama /api/show for {model_name} failed HTTP {status}");
+    }
+    Ok(response.json().await?)
+}
+
+/// Resolve the effective tool mode for an Ollama model.
+///
+/// - If the user configured an explicit `tool_mode`, use that.
+/// - Otherwise, probe the model and decide based on its family.
+fn resolve_ollama_tool_mode(
+    config_tool_mode: moltis_config::ToolMode,
+    model_name: &str,
+    probe_result: Option<&OllamaShowResponse>,
+) -> moltis_config::ToolMode {
+    use moltis_config::ToolMode;
+
+    match config_tool_mode {
+        ToolMode::Native | ToolMode::Text | ToolMode::Off => config_tool_mode,
+        ToolMode::Auto => {
+            let details = probe_result
+                .map(|r| &r.details)
+                .cloned()
+                .unwrap_or_default();
+            if ollama_model_supports_native_tools(model_name, &details) {
+                ToolMode::Native
+            } else {
+                ToolMode::Text
+            }
+        },
+    }
+}
+
+/// Batch-probe Ollama `/api/show` for a list of models.
+/// Runs probes in a dedicated thread with its own tokio runtime (same pattern
+/// as `discover_ollama_models`). Returns a map from model ID to show response;
+/// failures are silently dropped.
+fn probe_ollama_models_batch(
+    base_url: &str,
+    models: &[DiscoveredModel],
+) -> HashMap<String, OllamaShowResponse> {
+    if models.is_empty() {
+        return HashMap::new();
+    }
+    let base_url = base_url.to_string();
+    let model_ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map(|rt| {
+                rt.block_on(async {
+                    let futs: Vec<_> = model_ids
+                        .iter()
+                        .map(|id| {
+                            let base = base_url.clone();
+                            let model_id = id.clone();
+                            async move {
+                                let resp = probe_ollama_model_info(&base, &model_id).await;
+                                (model_id, resp)
+                            }
+                        })
+                        .collect();
+                    futures::future::join_all(futs).await
+                })
+            });
+        let _ = tx.send(result);
+    });
+
+    match rx.recv() {
+        Ok(Ok(results)) => results
+            .into_iter()
+            .filter_map(|(id, r)| r.ok().map(|resp| (id, resp)))
+            .collect(),
+        _ => HashMap::new(),
+    }
+}
+
 struct RegistryModelProvider {
     model_id: String,
     inner: Arc<dyn LlmProvider>,
@@ -324,6 +474,10 @@ impl LlmProvider for RegistryModelProvider {
 
     fn supports_tools(&self) -> bool {
         self.inner.supports_tools()
+    }
+
+    fn tool_mode(&self) -> Option<moltis_config::ToolMode> {
+        self.inner.tool_mode()
     }
 
     fn context_window(&self) -> u32 {
@@ -447,6 +601,10 @@ pub fn is_chat_capable_model(model_id: &str) -> bool {
         "omni-moderation",
         "moderation-",
         "sora",
+        // Google Gemini non-chat models
+        "imagen-",
+        "gemini-embedding",
+        "learnlm-",
         // Z.AI non-chat models
         "glm-image",
         "glm-asr",
@@ -609,6 +767,15 @@ const DEEPSEEK_MODELS: &[(&str, &str)] = &[
 /// Known Moonshot models.
 const MOONSHOT_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5")];
 
+/// Known Google Gemini models.
+/// See: <https://ai.google.dev/gemini-api/docs/models>
+const GEMINI_MODELS: &[(&str, &str)] = &[
+    ("gemini-2.5-flash-preview-05-20", "Gemini 2.5 Flash Preview"),
+    ("gemini-2.5-pro-preview-05-06", "Gemini 2.5 Pro Preview"),
+    ("gemini-2.0-flash", "Gemini 2.0 Flash"),
+    ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite"),
+];
+
 /// OpenAI-compatible provider definition for table-driven registration.
 struct OpenAiCompatDef {
     config_name: &'static str,
@@ -621,6 +788,15 @@ struct OpenAiCompatDef {
     /// this to `false` so the static catalog is used without a noisy warning.
     /// Users can still override via `fetch_models = true` in config.
     supports_model_discovery: bool,
+    /// When `false`, a dummy API key (the provider name) is used if none is
+    /// configured. Intended for local servers that don't authenticate.
+    requires_api_key: bool,
+    /// Local-only providers (Ollama, LM Studio) are skipped unless the user
+    /// has an explicit `[providers.<name>]` entry, a `_BASE_URL` env var, or
+    /// configured models. This avoids probing localhost when nothing is running.
+    /// Also ensures model discovery is always attempted (never short-circuited
+    /// by the empty-catalog heuristic).
+    local_only: bool,
 }
 
 const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
@@ -631,6 +807,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.mistral.ai/v1",
         models: MISTRAL_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "openrouter",
@@ -639,6 +817,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://openrouter.ai/api/v1",
         models: &[],
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "cerebras",
@@ -647,6 +827,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.cerebras.ai/v1",
         models: CEREBRAS_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "minimax",
@@ -656,6 +838,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: MINIMAX_MODELS,
         // MiniMax API does not expose a /models endpoint (returns 404).
         supports_model_discovery: false,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "moonshot",
@@ -664,6 +848,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.moonshot.ai/v1",
         models: MOONSHOT_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "zai",
@@ -672,6 +858,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.z.ai/api/paas/v4",
         models: ZAI_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "venice",
@@ -680,6 +868,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.venice.ai/api/v1",
         models: &[],
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "deepseek",
@@ -688,6 +878,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.deepseek.com",
         models: DEEPSEEK_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "ollama",
@@ -696,6 +888,28 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "http://127.0.0.1:11434/v1",
         models: &[],
         supports_model_discovery: true,
+        requires_api_key: false,
+        local_only: true,
+    },
+    OpenAiCompatDef {
+        config_name: "lmstudio",
+        env_key: "LMSTUDIO_API_KEY",
+        env_base_url_key: "LMSTUDIO_BASE_URL",
+        default_base_url: "http://127.0.0.1:1234/v1",
+        models: &[],
+        supports_model_discovery: true,
+        requires_api_key: false,
+        local_only: true,
+    },
+    OpenAiCompatDef {
+        config_name: "gemini",
+        env_key: "GEMINI_API_KEY",
+        env_base_url_key: "GEMINI_BASE_URL",
+        default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+        models: GEMINI_MODELS,
+        supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
 ];
 
@@ -1075,12 +1289,6 @@ impl ProviderRegistry {
                 "Claude Sonnet 4 (genai)",
             ),
             ("OPENAI_API_KEY", "openai", "gpt-4o", "GPT-4o (genai)"),
-            (
-                "GEMINI_API_KEY",
-                "gemini",
-                "gemini-2.0-flash",
-                "Gemini 2.0 Flash (genai)",
-            ),
             (
                 "GROQ_API_KEY",
                 "groq",
@@ -1506,9 +1714,12 @@ impl ProviderRegistry {
 
             let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
 
-            // Ollama doesn't require an API key — use a dummy value.
-            let key = if def.config_name == "ollama" {
-                key.or_else(|| Some(secrecy::Secret::new("ollama".into())))
+            // Local providers don't require an API key — use a dummy value.
+            // Gemini accepts both GEMINI_API_KEY and GOOGLE_API_KEY.
+            let key = if !def.requires_api_key {
+                key.or_else(|| Some(secrecy::Secret::new(def.config_name.into())))
+            } else if def.config_name == "gemini" {
+                key.or_else(|| env_value(env_overrides, "GOOGLE_API_KEY").map(secrecy::Secret::new))
             } else {
                 key
             };
@@ -1531,8 +1742,8 @@ impl ProviderRegistry {
                 .map(|entry| entry.stream_transport)
                 .unwrap_or(ProviderStreamTransport::Sse);
             let preferred = configured_models_for_provider(config, def.config_name);
-            if def.config_name == "ollama" {
-                let has_explicit_entry = config.get("ollama").is_some();
+            if def.local_only {
+                let has_explicit_entry = config.get(def.config_name).is_some();
                 let has_env_base_url = env_value(env_overrides, def.env_base_url_key).is_some();
                 if !has_explicit_entry && !has_env_base_url && preferred.is_empty() {
                     continue;
@@ -1543,7 +1754,7 @@ impl ProviderRegistry {
             // OpenRouter supports `/models`, so we discover dynamically.
             let skip_discovery = def.models.is_empty()
                 && preferred.is_empty()
-                && def.config_name != "ollama"
+                && !def.local_only
                 && (def.config_name == "venice" || cfg!(test));
             // Respect `supports_model_discovery`: providers whose API lacks a
             // /models endpoint (e.g. MiniMax) skip live fetch unless the user
@@ -1595,21 +1806,58 @@ impl ProviderRegistry {
                     Vec::new()
                 };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
+
+            // Resolve per-provider tool_mode from config (defaults to Auto).
+            let config_tool_mode = config
+                .get(def.config_name)
+                .map(|e| e.tool_mode)
+                .unwrap_or_default();
+
+            // For Ollama, probe each model's family info to decide native vs text
+            // tool calling. For non-Ollama, just pass through the config tool mode.
+            let is_ollama = def.config_name == "ollama";
+
+            // Batch-probe Ollama models for family metadata (best-effort, 3s timeout).
+            let ollama_probes: HashMap<String, OllamaShowResponse> = if is_ollama {
+                probe_ollama_models_batch(&base_url, &models)
+            } else {
+                HashMap::new()
+            };
+
             for model in models {
                 let (model_id, display_name, created_at) =
                     (model.id, model.display_name, model.created_at);
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
-                let provider = Arc::new(
-                    openai::OpenAiProvider::new_with_name(
-                        key.clone(),
-                        model_id.clone(),
-                        base_url.clone(),
-                        provider_label.clone(),
+
+                // Determine effective tool mode for this model.
+                let effective_tool_mode = if is_ollama {
+                    resolve_ollama_tool_mode(
+                        config_tool_mode,
+                        &model_id,
+                        ollama_probes.get(&model_id),
                     )
-                    .with_stream_transport(stream_transport),
-                );
+                } else if !matches!(config_tool_mode, moltis_config::ToolMode::Auto) {
+                    config_tool_mode
+                } else {
+                    // Non-Ollama providers: let OpenAiProvider use its default logic.
+                    moltis_config::ToolMode::Auto
+                };
+
+                let mut oai = openai::OpenAiProvider::new_with_name(
+                    key.clone(),
+                    model_id.clone(),
+                    base_url.clone(),
+                    provider_label.clone(),
+                )
+                .with_stream_transport(stream_transport);
+
+                if !matches!(effective_tool_mode, moltis_config::ToolMode::Auto) {
+                    oai = oai.with_tool_mode(effective_tool_mode);
+                }
+
+                let provider = Arc::new(oai);
                 self.register(
                     ModelInfo {
                         id: model_id,
@@ -1671,21 +1919,24 @@ impl ProviderRegistry {
                 continue;
             }
 
+            let custom_tool_mode = entry.tool_mode;
             for model in models {
                 let (model_id, display_name, created_at) =
                     (model.id, model.display_name, model.created_at);
                 if self.has_provider_model(name, &model_id) {
                     continue;
                 }
-                let provider = Arc::new(
-                    openai::OpenAiProvider::new_with_name(
-                        api_key.clone(),
-                        model_id.clone(),
-                        base_url.clone(),
-                        name.clone(),
-                    )
-                    .with_stream_transport(entry.stream_transport),
-                );
+                let mut oai = openai::OpenAiProvider::new_with_name(
+                    api_key.clone(),
+                    model_id.clone(),
+                    base_url.clone(),
+                    name.clone(),
+                )
+                .with_stream_transport(entry.stream_transport);
+                if !matches!(custom_tool_mode, moltis_config::ToolMode::Auto) {
+                    oai = oai.with_tool_mode(custom_tool_mode);
+                }
+                let provider = Arc::new(oai);
                 self.register(
                     ModelInfo {
                         id: model_id,
@@ -2024,6 +2275,14 @@ mod tests {
         assert!(!is_chat_capable_model("gpt-4o-mini-transcribe"));
         assert!(!is_chat_capable_model("sora"));
 
+        // Google Gemini non-chat models
+        assert!(!is_chat_capable_model("imagen-3.0-generate-002"));
+        assert!(!is_chat_capable_model("gemini-embedding-exp"));
+        assert!(!is_chat_capable_model("learnlm-1.5-pro-experimental"));
+        // Gemini chat models pass
+        assert!(is_chat_capable_model("gemini-2.0-flash"));
+        assert!(is_chat_capable_model("gemini-2.5-flash-preview-05-20"));
+
         // Z.AI non-chat models
         assert!(!is_chat_capable_model("glm-image"));
         assert!(!is_chat_capable_model("glm-asr-2512"));
@@ -2141,6 +2400,7 @@ mod tests {
         assert!(!MINIMAX_MODELS.is_empty());
         assert!(!ZAI_MODELS.is_empty());
         assert!(!MOONSHOT_MODELS.is_empty());
+        assert!(!GEMINI_MODELS.is_empty());
     }
 
     #[test]
@@ -2162,6 +2422,7 @@ mod tests {
             MINIMAX_MODELS,
             ZAI_MODELS,
             MOONSHOT_MODELS,
+            GEMINI_MODELS,
         ] {
             let mut ids: Vec<&str> = models.iter().map(|(id, _)| *id).collect();
             ids.sort();
@@ -2980,5 +3241,126 @@ mod tests {
         assert!(!supports_vision_for_model("my-claude-model"));
         assert!(!supports_vision_for_model("custom-gpt-4o-wrapper"));
         assert!(!supports_vision_for_model("not-gemini-model"));
+    }
+
+    // ── Ollama tool detection ────────────────────────────────────────────
+
+    #[test]
+    fn ollama_native_tools_known_families() {
+        let details = OllamaModelDetails {
+            family: Some("llama".into()),
+            families: Some(vec!["llama3.1".into()]),
+        };
+        assert!(ollama_model_supports_native_tools("llama3.1:8b", &details));
+    }
+
+    #[test]
+    fn ollama_native_tools_qwen_family() {
+        let details = OllamaModelDetails {
+            family: Some("qwen2.5".into()),
+            families: None,
+        };
+        assert!(ollama_model_supports_native_tools("qwen2.5:7b", &details));
+    }
+
+    #[test]
+    fn ollama_native_tools_unknown_family() {
+        let details = OllamaModelDetails {
+            family: Some("phi3".into()),
+            families: None,
+        };
+        // "phi3" is not in the native tool families list, and model name
+        // doesn't match either.
+        assert!(!ollama_model_supports_native_tools("phi3:mini", &details));
+    }
+
+    #[test]
+    fn ollama_native_tools_name_heuristic() {
+        // Even without details, model name matching should work.
+        let details = OllamaModelDetails::default();
+        assert!(ollama_model_supports_native_tools(
+            "llama3.3:70b-instruct",
+            &details
+        ));
+        assert!(!ollama_model_supports_native_tools(
+            "codellama:13b",
+            &details
+        ));
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_explicit_override() {
+        use moltis_config::ToolMode;
+        // Explicit modes are passed through regardless of probe result.
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Native, "anything", None),
+            ToolMode::Native
+        );
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Text, "anything", None),
+            ToolMode::Text
+        );
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Off, "anything", None),
+            ToolMode::Off
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_auto_with_probe() {
+        use moltis_config::ToolMode;
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("llama3.1".into()),
+                families: None,
+            },
+        };
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "llama3.1:8b", Some(&show_resp)),
+            ToolMode::Native
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_auto_unknown_model() {
+        use moltis_config::ToolMode;
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("starcoder2".into()),
+                families: None,
+            },
+        };
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "starcoder2:3b", Some(&show_resp)),
+            ToolMode::Text
+        );
+    }
+
+    #[test]
+    fn openai_provider_supports_tools_respects_override() {
+        use moltis_config::ToolMode;
+        let make = |mode: ToolMode| {
+            openai::OpenAiProvider::new(secret("key"), "gpt-4o".into(), "http://x".into())
+                .with_tool_mode(mode)
+        };
+        assert!(make(ToolMode::Native).supports_tools());
+        assert!(!make(ToolMode::Text).supports_tools());
+        assert!(!make(ToolMode::Off).supports_tools());
+        // Auto falls through to default detection (gpt-4o supports tools).
+        assert!(make(ToolMode::Auto).supports_tools());
+    }
+
+    #[test]
+    fn openai_provider_tool_mode_returns_override() {
+        use moltis_config::ToolMode;
+        let p = openai::OpenAiProvider::new(secret("key"), "gpt-4o".into(), "http://x".into())
+            .with_tool_mode(ToolMode::Text);
+        assert_eq!(p.tool_mode(), Some(ToolMode::Text));
+    }
+
+    #[test]
+    fn openai_provider_tool_mode_default_is_none() {
+        let p = openai::OpenAiProvider::new(secret("key"), "gpt-4o".into(), "http://x".into());
+        assert_eq!(p.tool_mode(), None);
     }
 }

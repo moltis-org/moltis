@@ -18,7 +18,7 @@ struct SettingsView: View {
                     if let version = connectionStore.serverVersion {
                         LabeledContent("Version", value: version)
                     }
-                    if connectionStore.state.isConnected {
+                    if !connectionStore.state.isDisconnected {
                         Button("Disconnect", role: .destructive) {
                             authManager.disconnect()
                             Task { await connectionStore.disconnect() }

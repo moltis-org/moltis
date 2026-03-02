@@ -18,6 +18,7 @@ struct ConnectView: View {
 
     enum AuthMode {
         case check
+        case passkey
         case password
         case apiKey
     }
@@ -133,9 +134,32 @@ struct ConnectView: View {
                         .controlSize(.large)
                         .disabled(serverURL.isEmpty || authManager.isAuthenticating)
 
-                        Text("Remote access needs two server settings: password auth configured and GraphQL enabled.")
+                        Text("Remote access needs auth configured (password or passkey) and GraphQL enabled.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                    case .passkey:
+                        Button {
+                            Task { await loginWithPasskey() }
+                        } label: {
+                            Text("Sign In with Passkey")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(authManager.isAuthenticating)
+
+                        if authStatus?.hasPassword == true {
+                            Button("Use Password Instead") {
+                                authMode = .password
+                            }
+                            .font(.caption)
+                        }
+
+                        Button("Use API Key Instead") {
+                            authMode = .apiKey
+                        }
+                        .font(.caption)
 
                     case .password:
                         SecureField("Password", text: $password)
@@ -150,6 +174,13 @@ struct ConnectView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .disabled(password.isEmpty || authManager.isAuthenticating)
+
+                        if authStatus?.hasPasskeys == true {
+                            Button("Use Passkey Instead") {
+                                authMode = .passkey
+                            }
+                            .font(.caption)
+                        }
 
                         Button("Use API Key Instead") {
                             authMode = .apiKey
@@ -171,10 +202,25 @@ struct ConnectView: View {
                         .controlSize(.large)
                         .disabled(apiKey.isEmpty || authManager.isAuthenticating)
 
-                        Button("Use Password Instead") {
-                            authMode = .password
+                        if authStatus?.hasPasskeys == true {
+                            Button("Use Passkey Instead") {
+                                authMode = .passkey
+                            }
+                            .font(.caption)
                         }
-                        .font(.caption)
+
+                        if authStatus?.hasPassword == true {
+                            Button("Use Password Instead") {
+                                authMode = .password
+                            }
+                            .font(.caption)
+                        }
+
+                        if authStatus?.hasPassword != true && authStatus?.hasPasskeys != true {
+                            Text("Check Connection to detect available sign-in methods.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
@@ -239,17 +285,17 @@ struct ConnectView: View {
                     )
                 } else if status.setupRequired || !status.setupComplete {
                     showError(
-                        message: "Server auth is not fully configured for remote access. On the Moltis host, set a password first, then try again from iOS."
-                    )
-                } else if !status.authDisabled && !status.hasPassword {
-                    showError(
-                        message: "This server has no password configured. The iOS companion currently requires password auth. Set a password in Moltis, then reconnect."
+                        message: "Server auth is not fully configured for remote access. On the Moltis host, complete authentication setup (password or passkey), then try again from iOS."
                     )
                 } else if status.authDisabled {
                     // No auth needed — connect directly with empty key
                     await connectWithApiKey()
-                } else {
+                } else if status.hasPasskeys {
+                    authMode = .passkey
+                } else if status.hasPassword {
                     authMode = .password
+                } else {
+                    showError(message: "Server requires authentication but no password or passkey is configured.")
                 }
             }
         } catch {
@@ -258,6 +304,24 @@ struct ConnectView: View {
                 await refreshNearbyServerTrustStates(force: true)
                 return
             }
+            showError(message: error.localizedDescription)
+        }
+    }
+
+    private func loginWithPasskey() async {
+        guard let url = URL(string: normalizeURL(serverURL)) else {
+            showError(message: "Invalid URL")
+            return
+        }
+        let name = serverName.isEmpty ? url.host ?? "Server" : serverName
+
+        do {
+            let server = try await authManager.loginWithPasskeyAndCreateApiKey(
+                serverURL: url,
+                serverName: name
+            )
+            await connectionStore.connect(to: server, authManager: authManager)
+        } catch {
             showError(message: error.localizedDescription)
         }
     }

@@ -19,6 +19,52 @@ struct PendingAuthentication {
     created_at: Instant,
 }
 
+/// Normalize a host/authority value for WebAuthn host matching.
+pub fn normalize_host(host: &str) -> String {
+    let trimmed = host.trim().trim_end_matches('.');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let without_port = if trimmed.starts_with('[') {
+        // IPv6 in bracket form: [::1]:443
+        trimmed
+            .rsplit_once("]:")
+            .map_or(trimmed, |(addr, _)| addr)
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+    } else if trimmed.matches(':').count() > 1 {
+        // Bare IPv6 (no port).
+        trimmed
+    } else {
+        trimmed.rsplit_once(':').map_or(trimmed, |(addr, _)| addr)
+    };
+
+    without_port.to_ascii_lowercase()
+}
+
+fn collect_allowed_hosts(rp_id: &str, state: &WebAuthnState) -> Vec<String> {
+    let mut hosts = Vec::new();
+
+    let rp_host = normalize_host(rp_id);
+    if !rp_host.is_empty() {
+        hosts.push(rp_host);
+    }
+
+    for origin in state.get_allowed_origins() {
+        if let Ok(url) = Url::parse(&origin)
+            && let Some(host) = url.host_str()
+        {
+            let normalized = normalize_host(host);
+            if !normalized.is_empty() && !hosts.contains(&normalized) {
+                hosts.push(normalized);
+            }
+        }
+    }
+
+    hosts
+}
+
 /// WebAuthn state manager. Wraps `webauthn-rs` and stores in-flight
 /// challenges in a `DashMap` with TTL-based expiry.
 pub struct WebAuthnState {
@@ -188,7 +234,13 @@ impl WebAuthnState {
 /// registration/authentication from multiple hostnames (e.g. `localhost`
 /// and `m4max.local`).
 pub struct WebAuthnRegistry {
-    entries: Vec<(String, WebAuthnState)>,
+    entries: Vec<WebAuthnEntry>,
+}
+
+struct WebAuthnEntry {
+    rp_id: String,
+    allowed_hosts: Vec<String>,
+    state: std::sync::Arc<WebAuthnState>,
 }
 
 impl Default for WebAuthnRegistry {
@@ -207,23 +259,45 @@ impl WebAuthnRegistry {
 
     /// Add a WebAuthn instance for the given RP ID.
     pub fn add(&mut self, rp_id: String, state: WebAuthnState) {
-        self.entries.push((rp_id, state));
+        let rp_id = normalize_host(&rp_id);
+        let state = std::sync::Arc::new(state);
+        let allowed_hosts = collect_allowed_hosts(&rp_id, &state);
+        self.entries.push(WebAuthnEntry {
+            rp_id,
+            allowed_hosts,
+            state,
+        });
     }
 
-    /// Look up the `WebAuthnState` whose RP ID matches the hostname portion
-    /// of the request's `Host` header.
-    pub fn get_for_host(&self, host: &str) -> Option<&WebAuthnState> {
-        let hostname = host.split(':').next().unwrap_or(host);
+    /// Check whether the registry already contains the given RP ID.
+    pub fn contains_rp_id(&self, rp_id: &str) -> bool {
+        let rp_id = normalize_host(rp_id);
+        self.entries.iter().any(|entry| entry.rp_id == rp_id)
+    }
+
+    /// Check whether the registry already accepts the given hostname.
+    pub fn contains_host(&self, host: &str) -> bool {
+        let host = normalize_host(host);
         self.entries
             .iter()
-            .find(|(rpid, _)| rpid == hostname)
-            .map(|(_, state)| state)
+            .any(|entry| entry.allowed_hosts.contains(&host))
+    }
+
+    /// Look up the `WebAuthnState` whose RP ID or allowed hostnames include
+    /// the hostname portion of the request's `Host` header.
+    pub fn get_for_host(&self, host: &str) -> Option<std::sync::Arc<WebAuthnState>> {
+        let hostname = normalize_host(host);
+        self.entries
+            .iter()
+            .find(|entry| entry.allowed_hosts.contains(&hostname))
+            .map(|entry| std::sync::Arc::clone(&entry.state))
     }
 
     /// Return combined allowed origins from all registered instances.
     pub fn get_all_origins(&self) -> Vec<String> {
         let mut origins = Vec::new();
-        for (_, state) in &self.entries {
+        for entry in &self.entries {
+            let state = &entry.state;
             for o in state.get_allowed_origins() {
                 if !origins.contains(&o) {
                     origins.push(o);
@@ -243,4 +317,31 @@ pub async fn load_passkeys(store: &CredentialStore) -> anyhow::Result<Vec<Passke
         passkeys.push(pk);
     }
     Ok(passkeys)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn normalize_host_strips_port_and_lowercases() {
+        assert_eq!(normalize_host("Example.COM:443"), "example.com");
+        assert_eq!(normalize_host("moltis.local"), "moltis.local");
+        assert_eq!(normalize_host("[::1]:8443"), "::1");
+    }
+
+    #[test]
+    fn registry_matches_extra_origin_host() {
+        let rp_origin = Url::parse("https://localhost:18080").unwrap();
+        let extra = vec![Url::parse("https://moltis.localhost:18080").unwrap()];
+        let state = WebAuthnState::new("localhost", &rp_origin, &extra).unwrap();
+
+        let mut registry = WebAuthnRegistry::new();
+        registry.add("localhost".to_string(), state);
+
+        assert!(registry.get_for_host("moltis.localhost:18080").is_some());
+        assert!(registry.contains_host("moltis.localhost"));
+    }
 }

@@ -190,6 +190,7 @@ pub struct MoltisConfig {
     pub chat: ChatConfig,
     pub prompt_profiles: PromptProfilesConfig,
     pub tools: ToolsConfig,
+    pub agents: AgentsConfig,
     pub skills: SkillsConfig,
     pub mcp: McpConfig,
     pub channels: ChannelsConfig,
@@ -212,6 +213,43 @@ pub struct MoltisConfig {
     /// Process env vars take precedence (existing vars are not overwritten).
     #[serde(default)]
     pub env: HashMap<String, String>,
+}
+
+/// Agent spawn presets used by tools like `spawn_agent`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentsConfig {
+    /// Optional default preset name used when `spawn_agent.preset` is omitted.
+    pub default_preset: Option<String>,
+    /// Named spawn presets.
+    #[serde(default)]
+    pub presets: HashMap<String, AgentPresetConfig>,
+}
+
+impl AgentsConfig {
+    /// Return a preset by name.
+    pub fn get_preset(&self, name: &str) -> Option<&AgentPresetConfig> {
+        self.presets.get(name)
+    }
+}
+
+/// Spawn policy preset for sub-agents.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPresetConfig {
+    /// Optional model override for this preset.
+    pub model: Option<String>,
+    /// Optional allowlist of tools available to the sub-agent.
+    #[serde(default)]
+    pub allow_tools: Vec<String>,
+    /// Optional denylist of tools removed from the sub-agent.
+    #[serde(default)]
+    pub deny_tools: Vec<String>,
+    /// Restrict sub-agent to delegation/session/task tools only.
+    #[serde(default)]
+    pub delegate_only: bool,
+    /// Optional extra instructions appended to sub-agent system prompt.
+    pub system_prompt_suffix: Option<String>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -709,6 +747,13 @@ pub struct HeartbeatConfig {
     pub ack_max_chars: usize,
     /// Active hours window — heartbeats only run during this window.
     pub active_hours: ActiveHoursConfig,
+    /// Whether heartbeat replies should be delivered to a channel account.
+    #[serde(default)]
+    pub deliver: bool,
+    /// Channel account identifier for heartbeat delivery (e.g. a Telegram bot account id).
+    pub channel: Option<String>,
+    /// Destination chat/recipient id for heartbeat delivery.
+    pub to: Option<String>,
     /// Whether heartbeat runs inside a sandbox. Defaults to true.
     #[serde(default = "default_true")]
     pub sandbox_enabled: bool,
@@ -725,6 +770,9 @@ impl Default for HeartbeatConfig {
             prompt: None,
             ack_max_chars: 300,
             active_hours: ActiveHoursConfig::default(),
+            deliver: false,
+            channel: None,
+            to: None,
             sandbox_enabled: true,
             sandbox_image: None,
         }
@@ -887,6 +935,8 @@ pub struct MemoryEmbeddingConfig {
     /// Enable LLM reranking for hybrid search results.
     #[serde(default)]
     pub llm_reranking: bool,
+    /// Merge strategy for hybrid search: "rrf" (default) or "linear".
+    pub search_merge_strategy: Option<String>,
     /// Enable session export to memory for cross-run recall.
     #[serde(default)]
     pub session_export: bool,
@@ -1877,6 +1927,13 @@ fn default_sandbox_packages() -> Vec<String> {
         "ruby",
         "ruby-dev",
         "golang-go",
+        "php-cli",
+        "php-mbstring",
+        "php-xml",
+        "php-curl",
+        "default-jdk",
+        "maven",
+        "perl",
         // Build toolchain & native deps
         "build-essential",
         "clang",
@@ -1894,6 +1951,8 @@ fn default_sandbox_packages() -> Vec<String> {
         "flex",
         "dpkg-dev",
         "fakeroot",
+        "cmake",
+        "ninja-build",
         // Compression & archiving
         "zip",
         "unzip",
@@ -1917,6 +1976,11 @@ fn default_sandbox_packages() -> Vec<String> {
         "tzdata",
         "shellcheck",
         "patchelf",
+        "git-lfs",
+        "gettext",
+        "lsb-release",
+        "software-properties-common",
+        "yamllint",
         // Text processing & search
         "ripgrep",
         "fd-find",
@@ -1978,6 +2042,11 @@ fn default_sandbox_packages() -> Vec<String> {
         "dos2unix",
         "miller",
         "datamash",
+        // Database clients
+        "postgresql-client",
+        "default-mysql-client",
+        // DevOps
+        "ansible",
         // GIS / OpenStreetMap / map generation
         "gdal-bin",
         "mapnik-utils",
@@ -2075,6 +2144,25 @@ pub struct ProvidersConfig {
     pub local_models: Vec<String>,
 }
 
+/// How tool calling is handled for a provider.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolMode {
+    /// Detect automatically: native tool API if supported, else text-based fallback.
+    #[default]
+    Auto,
+    /// Force native tool calling API (provider must support it).
+    Native,
+    /// Force text-based tool calling (prompt injection + parse).
+    Text,
+    /// Disable all tool support for this provider.
+    Off,
+}
+
+const fn is_default_tool_mode(v: &ToolMode) -> bool {
+    matches!(v, ToolMode::Auto)
+}
+
 /// Streaming transport for provider response streams.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -2128,6 +2216,16 @@ pub struct ProviderEntry {
     /// (e.g., "anthropic-work", "anthropic-personal").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
+
+    /// How tool calling is handled for this provider.
+    ///
+    /// - `auto` (default): use native tool API if the provider supports it,
+    ///   otherwise fall back to text-based prompt injection.
+    /// - `native`: force native tool calling.
+    /// - `text`: force text-based tool calling.
+    /// - `off`: disable all tools for this provider.
+    #[serde(default, skip_serializing_if = "is_default_tool_mode")]
+    pub tool_mode: ToolMode,
 }
 
 impl std::fmt::Debug for ProviderEntry {
@@ -2140,6 +2238,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("fetch_models", &self.fetch_models)
             .field("stream_transport", &self.stream_transport)
             .field("alias", &self.alias)
+            .field("tool_mode", &self.tool_mode)
             .finish()
     }
 }
@@ -2154,6 +2253,7 @@ impl Default for ProviderEntry {
             fetch_models: true,
             stream_transport: ProviderStreamTransport::Sse,
             alias: None,
+            tool_mode: ToolMode::Auto,
         }
     }
 }
@@ -2316,6 +2416,39 @@ OPENROUTER_API_KEY = "sk-or-test"
     }
 
     #[test]
+    fn agents_config_defaults_empty() {
+        let config: MoltisConfig = toml::from_str("").unwrap();
+        assert!(config.agents.default_preset.is_none());
+        assert!(config.agents.presets.is_empty());
+    }
+
+    #[test]
+    fn agents_config_parses_presets() {
+        let toml = r#"
+[agents]
+default_preset = "research"
+
+[agents.presets.research]
+model = "openai/gpt-5.2"
+allow_tools = ["web_search", "web_fetch"]
+deny_tools = ["exec"]
+delegate_only = false
+system_prompt_suffix = "Focus on evidence."
+"#;
+        let config: MoltisConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.agents.default_preset.as_deref(), Some("research"));
+        let preset = config.agents.get_preset("research").unwrap();
+        assert_eq!(preset.model.as_deref(), Some("openai/gpt-5.2"));
+        assert_eq!(preset.allow_tools.len(), 2);
+        assert_eq!(preset.deny_tools, vec!["exec".to_string()]);
+        assert!(!preset.delegate_only);
+        assert_eq!(
+            preset.system_prompt_suffix.as_deref(),
+            Some("Focus on evidence.")
+        );
+    }
+
+    #[test]
     fn chat_config_default_queue_mode_is_followup() {
         let cfg = ChatConfig::default();
         assert_eq!(cfg.message_queue_mode, MessageQueueMode::Followup);
@@ -2468,6 +2601,99 @@ memory = 300
                 .get("calc")
                 .and_then(|override_cfg| override_cfg.fuel),
             Some(100)
+        );
+    }
+
+    #[test]
+    fn tool_mode_serde_round_trip() {
+        for (variant, expected_str) in [
+            (ToolMode::Auto, r#""auto""#),
+            (ToolMode::Native, r#""native""#),
+            (ToolMode::Text, r#""text""#),
+            (ToolMode::Off, r#""off""#),
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, expected_str, "serialize {variant:?}");
+            let parsed: ToolMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, variant, "deserialize {expected_str}");
+        }
+    }
+
+    #[test]
+    fn tool_mode_toml_round_trip() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Wrapper {
+            mode: ToolMode,
+        }
+
+        for variant in [
+            ToolMode::Auto,
+            ToolMode::Native,
+            ToolMode::Text,
+            ToolMode::Off,
+        ] {
+            let w = Wrapper { mode: variant };
+            let toml_str = toml::to_string(&w).unwrap();
+            let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
+            assert_eq!(parsed.mode, variant, "toml round-trip {variant:?}");
+        }
+    }
+
+    #[test]
+    fn tool_mode_default_is_auto() {
+        assert_eq!(ToolMode::default(), ToolMode::Auto);
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_defaults_to_auto() {
+        let entry = ProviderEntry::default();
+        assert_eq!(entry.tool_mode, ToolMode::Auto);
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_skipped_when_default() {
+        let entry = ProviderEntry::default();
+        let toml_str = toml::to_string(&entry).unwrap();
+        assert!(
+            !toml_str.contains("tool_mode"),
+            "tool_mode should be skipped when default: {toml_str}"
+        );
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_persisted_when_non_default() {
+        let entry = ProviderEntry {
+            tool_mode: ToolMode::Text,
+            ..ProviderEntry::default()
+        };
+        let toml_str = toml::to_string(&entry).unwrap();
+        assert!(
+            toml_str.contains("tool_mode"),
+            "tool_mode should be present when non-default: {toml_str}"
+        );
+        let parsed: ProviderEntry = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.tool_mode, ToolMode::Text);
+    }
+
+    #[test]
+    fn full_config_with_tool_mode() {
+        let toml_str = r#"
+[providers.ollama]
+enabled = true
+tool_mode = "text"
+
+[providers.anthropic]
+enabled = true
+tool_mode = "native"
+"#;
+        let config: MoltisConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.providers.get("ollama").unwrap().tool_mode,
+            ToolMode::Text
+        );
+        assert_eq!(
+            config.providers.get("anthropic").unwrap().tool_mode,
+            ToolMode::Native
         );
     }
 }

@@ -9,7 +9,7 @@ use {
 
 use {
     moltis_channels::{
-        ChannelPlugin, ChannelType,
+        ChannelOutbound, ChannelPlugin, ChannelType,
         message_log::MessageLog,
         plugin::ChannelHealthSnapshot,
         store::{ChannelStore, StoredChannel},
@@ -39,6 +39,7 @@ pub struct LiveChannelService {
     discord: Arc<RwLock<DiscordPlugin>>,
     #[cfg(feature = "whatsapp")]
     whatsapp: Arc<RwLock<WhatsAppPlugin>>,
+    outbound: Arc<dyn ChannelOutbound>,
     store: Arc<dyn ChannelStore>,
     message_log: Arc<dyn MessageLog>,
     session_metadata: Arc<SqliteSessionMetadata>,
@@ -50,6 +51,7 @@ impl LiveChannelService {
         msteams: Arc<RwLock<MsTeamsPlugin>>,
         discord: Arc<RwLock<DiscordPlugin>>,
         #[cfg(feature = "whatsapp")] whatsapp: Arc<RwLock<WhatsAppPlugin>>,
+        outbound: Arc<dyn ChannelOutbound>,
         store: Arc<dyn ChannelStore>,
         message_log: Arc<dyn MessageLog>,
         session_metadata: Arc<SqliteSessionMetadata>,
@@ -60,6 +62,7 @@ impl LiveChannelService {
             discord,
             #[cfg(feature = "whatsapp")]
             whatsapp,
+            outbound,
             store,
             message_log,
             session_metadata,
@@ -566,8 +569,92 @@ impl ChannelService for LiveChannelService {
         }))
     }
 
-    async fn send(&self, _params: Value) -> ServiceResult {
-        Err("direct channel send not yet implemented".into())
+    async fn send(&self, params: Value) -> ServiceResult {
+        let account_id = params
+            .get("account_id")
+            .or_else(|| params.get("channel"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "missing 'account_id' (or alias 'channel')".to_string())?;
+        let to = params
+            .get("to")
+            .or_else(|| params.get("chat_id"))
+            .or_else(|| params.get("chatId"))
+            .or_else(|| params.get("peer_id"))
+            .or_else(|| params.get("peerId"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "missing 'to' (or aliases 'chat_id'/'peer_id')".to_string())?;
+        let text = params
+            .get("text")
+            .or_else(|| params.get("message"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "missing 'text' (or alias 'message')".to_string())?;
+        let reply_to = params
+            .get("reply_to")
+            .or_else(|| params.get("replyTo"))
+            .or_else(|| params.get("message_id"))
+            .or_else(|| params.get("messageId"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let silent = params
+            .get("silent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let html = params
+            .get("html")
+            .or_else(|| params.get("as_html"))
+            .or_else(|| params.get("asHtml"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if silent && html {
+            return Err("invalid send options: 'silent' and 'html' cannot both be true".into());
+        }
+
+        let channel_type = self
+            .resolve_channel_type(&params, account_id, ChannelType::Telegram)
+            .await?;
+        let reply_to_ref = reply_to;
+
+        let send_result = if html {
+            self.outbound
+                .send_html(account_id, to, text, reply_to_ref)
+                .await
+        } else if silent {
+            self.outbound
+                .send_text_silent(account_id, to, text, reply_to_ref)
+                .await
+        } else {
+            self.outbound
+                .send_text(account_id, to, text, reply_to_ref)
+                .await
+        };
+        send_result.map_err(ServiceError::message)?;
+
+        info!(
+            account_id,
+            channel_type = channel_type.as_str(),
+            to,
+            silent,
+            html,
+            "sent outbound channel message"
+        );
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "type": channel_type.as_str(),
+            "account_id": account_id,
+            "to": to,
+            "silent": silent,
+            "html": html,
+            "reply_to": reply_to,
+        }))
     }
 
     async fn senders_list(&self, params: Value) -> ServiceResult {

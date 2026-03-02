@@ -1,6 +1,8 @@
 # OpenClaw Import
 
-Moltis can automatically detect and import data from an existing [OpenClaw](https://docs.openclaw.ai) installation. This lets you migrate to Moltis without losing your provider keys, memory files, skills, sessions, or channel configuration.
+Moltis can automatically detect and import data from an existing [OpenClaw](https://docs.openclaw.ai) installation. This lets you migrate to Moltis without losing your provider keys, memory files, skills, sessions, personality, or channel configuration.
+
+> **Your OpenClaw installation is never modified.** The import is strictly read-only — Moltis copies data into its own directory and does not write to, move, or delete anything under `~/.openclaw/`. You can safely keep using OpenClaw alongside Moltis, and re-import at any time to pick up new data.
 
 ## How Detection Works
 
@@ -15,13 +17,38 @@ If the directory exists and contains recognizable OpenClaw files (`openclaw.json
 
 | Category | Source | Destination | Notes |
 |----------|--------|-------------|-------|
-| **Identity** | `openclaw.json` agent name and timezone | `moltis.toml` identity section | Preserves existing Moltis identity if already configured |
+| **Identity** | `openclaw.json` agent name, theme, and timezone | `moltis.toml` identity section | Preserves existing Moltis identity if already configured |
 | **Providers** | Agent auth-profiles (API keys) | `~/.moltis/provider_keys.json` | Maps OpenClaw provider names to Moltis equivalents (e.g., `google` becomes `gemini`) |
 | **Skills** | `skills/` directories with `SKILL.md` | `~/.moltis/skills/` | Copies entire skill directories; skips duplicates |
 | **Memory** | `MEMORY.md` and all `memory/*.md` files | `~/.moltis/MEMORY.md` and `~/.moltis/memory/` | Imports daily logs, project notes, and all other markdown memory files. Appends with `<!-- Imported from OpenClaw -->` separator for idempotency |
-| **Channels** | Telegram bot configuration in `openclaw.json` | `moltis.toml` channels section | Supports both flat and multi-account Telegram configs |
+| **Channels** | Telegram and Discord bot configuration in `openclaw.json` | `moltis.toml` channels section | Supports both flat and multi-account Telegram configs |
 | **Sessions** | JSONL conversation files under `agents/*/sessions/` | `~/.moltis/sessions/` and `~/.moltis/memory/sessions/` | Converts OpenClaw message format to Moltis format; prefixes keys with `oc:`. Also generates markdown transcripts for memory search indexing |
 | **MCP Servers** | `mcp-servers.json` | `~/.moltis/mcp-servers.json` | Merges with existing servers; skips duplicates by name |
+| **Workspace Files** | `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, `AGENTS.md`, `HEARTBEAT.md`, `BOOT.md` | `~/.moltis/` (root) or `~/.moltis/agents/<id>/` | Copies raw workspace files; skips if destination already has user content. Replaces auto-seeded defaults |
+
+### Workspace files explained
+
+These markdown files shape your agent's personality and behavior. Moltis uses them in the same way OpenClaw does:
+
+- **`SOUL.md`** — personality directives (tone, style, boundaries)
+- **`IDENTITY.md`** — agent name, emoji, creature/vibe theme
+- **`USER.md`** — user profile (name, preferences, context the agent should know about you)
+- **`TOOLS.md`** — tool usage guidelines and constraints
+- **`AGENTS.md`** — global workspace rules injected into every conversation
+- **`HEARTBEAT.md`** — periodic heartbeat prompt (what to check on each scheduled tick)
+- **`BOOT.md`** — startup context injected when the gateway starts
+
+If you customized any of these files in OpenClaw, they will carry over. If the destination already has user content, the import skips the file to avoid overwriting your work. Auto-seeded defaults (like the template `SOUL.md`) are replaced with your imported content.
+
+### Multi-agent support
+
+If your OpenClaw installation has multiple agents (defined in `openclaw.json`'s `agents.list` or detected from `agents/` directories), all of them are imported:
+
+- The **default agent** becomes Moltis's `main` agent
+- **Non-default agents** are created as separate agent personas with their name, theme, and emoji
+- **Per-agent workspace files** (`SOUL.md`, `IDENTITY.md`, etc.) are copied to `~/.moltis/agents/<id>/`, giving each agent its own personality
+- **Per-agent sessions** are prefixed with `oc:<agent_id>:` so they appear under the correct agent
+- Agents without per-agent workspace files inherit from the root files automatically
 
 ## Importing via Web UI
 
@@ -56,13 +83,14 @@ Example output:
 ```
 OpenClaw installation detected at /Users/you/.openclaw
 
-  Identity:      available (agent: "friday")
-  Providers:     available (2 auth profiles)
-  Skills:        3 skills found
-  Memory:        available (MEMORY.md + 12 memory files)
-  Channels:      available (1 Telegram account)
-  Sessions:      47 session files across 2 agents
-  MCP Servers:   4 servers configured
+  Identity:        available (agent: "friday")
+  Providers:       available (2 auth profiles)
+  Skills:          3 skills found
+  Memory:          available (MEMORY.md + 12 memory files)
+  Channels:        available (1 Telegram account)
+  Sessions:        47 session files across 2 agents
+  MCP Servers:     4 servers configured
+  Workspace Files: SOUL.md, IDENTITY.md, USER.md, TOOLS.md, HEARTBEAT.md
 ```
 
 Use `--json` for machine-readable output:
@@ -93,7 +121,7 @@ Import only specific categories:
 moltis import select -c providers,skills,memory
 ```
 
-Valid category names: `identity`, `providers`, `skills`, `memory`, `channels`, `sessions`, `mcp_servers`.
+Valid category names: `identity`, `providers`, `skills`, `memory`, `channels`, `sessions`, `mcp_servers`, `workspace-files`.
 
 Combine with `--dry-run` to preview:
 
@@ -121,7 +149,8 @@ Example `openclaw.import` params:
   "memory": true,
   "channels": false,
   "sessions": false,
-  "mcp_servers": true
+  "mcp_servers": true,
+  "workspace_files": true
 }
 ```
 
@@ -174,6 +203,7 @@ Running the import multiple times is safe:
 - **MCP servers** skip entries with matching names
 - **Sessions** use `oc:` prefixed keys that won't collide with native Moltis sessions. Unchanged sessions (same line count) are skipped; grown sessions are re-converted
 - **Provider keys** merge with existing keys without overwriting
+- **Workspace files** skip if the destination already has user content; replace only auto-seeded defaults
 
 ## Provider Name Mapping
 
@@ -190,7 +220,7 @@ Unmapped provider names are passed through as-is.
 
 ## Unsupported Channels
 
-Currently only Telegram channels are imported. If your OpenClaw configuration includes other channel types (Slack, Discord, etc.), they will appear as warnings in the scan output but will not be imported.
+Currently only Telegram and Discord channels are imported. If your OpenClaw configuration includes other channel types (Slack, WhatsApp, etc.), they will appear as warnings in the scan output but will not be imported.
 
 ## Troubleshooting
 
@@ -211,3 +241,7 @@ The import brings over `MEMORY.md` and all `.md` files from the `memory/` direct
 ### Session transcripts
 
 When sessions are imported, Moltis also generates markdown transcripts in `~/.moltis/memory/sessions/`. These contain the user/assistant conversation text and are indexed by the memory system, making your imported OpenClaw conversations searchable.
+
+### Workspace files not appearing
+
+If a workspace file wasn't imported, it may already exist at the destination with custom content. The import never overwrites user-customized files. Check `~/.moltis/SOUL.md` (or `~/.moltis/agents/<id>/SOUL.md` for non-default agents) to see what's there. You can delete it and re-import to get the OpenClaw version.

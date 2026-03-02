@@ -10,14 +10,19 @@
 #
 # See README.md for detailed instructions.
 
-# Build stage
+# Build stage — nightly required for wacore-binary (portable_simd)
 FROM rust:bookworm AS builder
 
 WORKDIR /build
 
+# Switch to nightly (pinned for reproducibility; wacore-binary needs portable_simd)
+RUN rustup install nightly-2025-11-30 && rustup default nightly-2025-11-30
+
 # Copy manifests first for better caching
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY apps/courier ./apps/courier
+COPY wit ./wit
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Install build dependencies for llama-cpp-sys-2
@@ -25,8 +30,15 @@ RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
     rm -rf /var/lib/apt/lists/*
 
-# Build release binary
-RUN cargo build --release
+# Install WASM target and build WASM components (embedded via include_bytes!)
+RUN rustup target add wasm32-wasip2 && \
+    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+
+# Build release binary (exclude local-llm-metal: Metal is macOS-only)
+RUN cargo build --release -p moltis --no-default-features --features "\
+agent,caldav,code-splitter,file-watcher,graphql,jemalloc,local-llm,\
+mdns,metrics,openclaw-import,prometheus,push-notifications,qmd,\
+tailscale,tls,trusted-network,vault,voice,wasm,web-ui,whatsapp"
 
 # Runtime stage
 FROM debian:bookworm-slim

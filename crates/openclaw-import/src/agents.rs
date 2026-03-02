@@ -395,6 +395,8 @@ mod tests {
             agent_ids: vec!["main".to_string()],
             session_count: 0,
             unsupported_channels: Vec::new(),
+            has_workspace_files: false,
+            workspace_files_found: Vec::new(),
         };
 
         let result = import_agents(&detection);
@@ -429,6 +431,8 @@ mod tests {
             agent_ids: vec!["main".to_string(), "research".to_string()],
             session_count: 0,
             unsupported_channels: Vec::new(),
+            has_workspace_files: false,
+            workspace_files_found: Vec::new(),
         };
 
         let result = import_agents(&detection);
@@ -473,6 +477,8 @@ mod tests {
             agent_ids: vec!["main".to_string(), "research".to_string()],
             session_count: 0,
             unsupported_channels: Vec::new(),
+            has_workspace_files: false,
+            workspace_files_found: Vec::new(),
         };
 
         let result = import_agents(&detection);
@@ -500,6 +506,8 @@ mod tests {
             agent_ids: vec!["main".to_string(), "helper".to_string()],
             session_count: 0,
             unsupported_channels: Vec::new(),
+            has_workspace_files: false,
+            workspace_files_found: Vec::new(),
         };
 
         let result = import_agents(&detection);
@@ -526,6 +534,8 @@ mod tests {
             agent_ids: Vec::new(),
             session_count: 0,
             unsupported_channels: Vec::new(),
+            has_workspace_files: false,
+            workspace_files_found: Vec::new(),
         };
 
         let result = import_agents(&detection);

@@ -19,7 +19,7 @@ use {
     tracing::{debug, info, warn},
 };
 
-use moltis_config::MessageQueueMode;
+use moltis_config::{MessageQueueMode, ToolMode};
 
 use {
     moltis_agents::{
@@ -1387,6 +1387,72 @@ fn load_prompt_persona_for_session(session_entry: Option<&SessionEntry>) -> Prom
     load_prompt_persona_for_agent(&agent_id)
 }
 
+#[derive(Default)]
+struct ChannelRuntimeContext {
+    surface: Option<String>,
+    session_kind: Option<String>,
+    channel_type: Option<String>,
+    channel_account_id: Option<String>,
+    channel_chat_id: Option<String>,
+    channel_chat_type: Option<String>,
+}
+
+fn infer_channel_chat_type(channel_type: &str, chat_id: &str) -> Option<String> {
+    if channel_type.eq_ignore_ascii_case("telegram") {
+        if chat_id.starts_with("-100") {
+            return Some("channel_or_supergroup".to_string());
+        }
+        if chat_id.starts_with('-') {
+            return Some("group".to_string());
+        }
+        return Some("private".to_string());
+    }
+    None
+}
+
+fn resolve_channel_runtime_context(
+    session_key: &str,
+    session_entry: Option<&SessionEntry>,
+) -> ChannelRuntimeContext {
+    if session_key == "cron:heartbeat" {
+        return ChannelRuntimeContext {
+            surface: Some("heartbeat".to_string()),
+            session_kind: Some("cron".to_string()),
+            ..Default::default()
+        };
+    }
+
+    if session_key.starts_with("cron:") {
+        return ChannelRuntimeContext {
+            surface: Some("cron".to_string()),
+            session_kind: Some("cron".to_string()),
+            ..Default::default()
+        };
+    }
+
+    if let Some(binding_json) = session_entry.and_then(|entry| entry.channel_binding.as_deref())
+        && let Ok(binding) =
+            serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
+    {
+        let channel_type = binding.channel_type.as_str().to_string();
+        let chat_id = binding.chat_id;
+        return ChannelRuntimeContext {
+            surface: Some(channel_type.clone()),
+            session_kind: Some("channel".to_string()),
+            channel_chat_type: infer_channel_chat_type(&channel_type, &chat_id),
+            channel_type: Some(channel_type),
+            channel_account_id: Some(binding.account_id),
+            channel_chat_id: Some(chat_id),
+        };
+    }
+
+    ChannelRuntimeContext {
+        surface: Some("web".to_string()),
+        session_kind: Some("web".to_string()),
+        ..Default::default()
+    }
+}
+
 async fn build_prompt_runtime_context(
     state: &Arc<dyn ChatRuntime>,
     provider: Option<&Arc<dyn moltis_agents::model::LlmProvider>>,
@@ -1444,6 +1510,7 @@ async fn build_prompt_runtime_context(
         .await
         .as_ref()
         .map(|loc| loc.to_string());
+    let channel_context = resolve_channel_runtime_context(session_key, session_entry);
 
     let mut host_ctx = PromptHostRuntimeContext {
         host: Some(state.hostname().to_string()),
@@ -1454,6 +1521,12 @@ async fn build_prompt_runtime_context(
         provider: provider.map(|p| p.name().to_string()),
         model: provider.map(|p| p.id().to_string()),
         session_key: Some(session_key.to_string()),
+        surface: channel_context.surface,
+        session_kind: channel_context.session_kind,
+        channel_type: channel_context.channel_type,
+        channel_account_id: channel_context.channel_account_id,
+        channel_chat_id: channel_context.channel_chat_id,
+        channel_chat_type: channel_context.channel_chat_type,
         data_dir: Some(data_dir_display),
         sudo_non_interactive,
         sudo_status,
@@ -4682,7 +4755,12 @@ impl ChatService for LiveChatService {
                 }
             },
         };
-        let native_tools = provider.as_ref().is_some_and(|p| p.supports_tools());
+        let (native_tools, tools_enabled, tool_mode) = if let Some(ref p) = provider {
+            let tool_mode = effective_tool_mode(&**p);
+            (matches!(tool_mode, ToolMode::Native), !matches!(tool_mode, ToolMode::Off), tool_mode)
+        } else {
+            (false, false, ToolMode::Off)
+        };
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
@@ -4721,7 +4799,7 @@ impl ChatService for LiveChatService {
         // Build filtered tool registry.
         let filtered_registry = {
             let registry_guard = self.tool_registry.read().await;
-            if native_tools {
+            if tools_enabled {
                 apply_runtime_tool_filters(
                     &registry_guard,
                     &persona.config,
@@ -4752,7 +4830,7 @@ impl ChatService for LiveChatService {
         }
 
         // Build the system prompt.
-        let system_prompt = if native_tools {
+        let system_prompt = if tools_enabled {
             build_system_prompt_with_profile(
                 &filtered_registry,
                 native_tools,
@@ -4791,6 +4869,8 @@ impl ChatService for LiveChatService {
             "charCount": char_count,
             "estimatedTokens": estimated_tokens,
             "native_tools": native_tools,
+            "tools_enabled": tools_enabled,
+            "tool_mode": format!("{:?}", tool_mode),
             "toolCount": tool_count,
             "profile": prompt_profile.name,
             "template": prompt_template_payload(&prompt_profile.profile),
@@ -4825,7 +4905,9 @@ impl ChatService for LiveChatService {
             .resolve_provider(&session_key, &history)
             .await
             .map_err(ServiceError::message)?;
-        let native_tools = provider.supports_tools();
+        let tool_mode = effective_tool_mode(&*provider);
+        let native_tools = matches!(tool_mode, ToolMode::Native);
+        let tools_enabled = !matches!(tool_mode, ToolMode::Off);
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
@@ -4864,7 +4946,7 @@ impl ChatService for LiveChatService {
         // Build filtered tool registry.
         let filtered_registry = {
             let registry_guard = self.tool_registry.read().await;
-            if native_tools {
+            if tools_enabled {
                 apply_runtime_tool_filters(
                     &registry_guard,
                     &persona.config,
@@ -4879,7 +4961,7 @@ impl ChatService for LiveChatService {
             resolve_prompt_profile(&persona.config, provider.name(), provider.id());
 
         // Build the system prompt.
-        let system_prompt = if native_tools {
+        let system_prompt = if tools_enabled {
             build_system_prompt_with_profile(
                 &filtered_registry,
                 native_tools,
@@ -5872,6 +5954,28 @@ fn install_agent_scoped_memory_tools(
     }
 }
 
+/// Resolve the effective tool mode for a provider.
+///
+/// Combines the provider's `tool_mode()` override with its `supports_tools()`
+/// capability to determine how tools should be dispatched:
+/// - `Native` — provider handles tool schemas via API (OpenAI function calling, etc.)
+/// - `Text` — tools are described in the prompt; the runner parses tool calls from text
+/// - `Off` — no tools at all
+fn effective_tool_mode(provider: &dyn moltis_agents::model::LlmProvider) -> ToolMode {
+    match provider.tool_mode() {
+        Some(ToolMode::Native) => ToolMode::Native,
+        Some(ToolMode::Text) => ToolMode::Text,
+        Some(ToolMode::Off) => ToolMode::Off,
+        Some(ToolMode::Auto) | None => {
+            if provider.supports_tools() {
+                ToolMode::Native
+            } else {
+                ToolMode::Text
+            }
+        },
+    }
+}
+
 async fn run_with_tools(
     state: &Arc<dyn ChatRuntime>,
     model_store: &Arc<RwLock<DisabledModelsStore>>,
@@ -5901,22 +6005,28 @@ async fn run_with_tools(
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
 
-    let native_tools = provider.supports_tools();
+    let tool_mode = effective_tool_mode(&*provider);
+    let native_tools = matches!(tool_mode, ToolMode::Native);
+    let tools_enabled = !matches!(tool_mode, ToolMode::Off);
     let prompt_profile = resolve_prompt_profile(&persona.config, provider.name(), provider.id());
 
     let mut filtered_registry = {
         let registry_guard = tool_registry.read().await;
-        if native_tools {
+        if tools_enabled {
             apply_runtime_tool_filters(&registry_guard, &persona.config, skills, mcp_disabled)
         } else {
             registry_guard.clone_without(&[])
         }
     };
-    if native_tools && let Some(manager) = state.memory_manager() {
+    if tools_enabled && let Some(manager) = state.memory_manager() {
         install_agent_scoped_memory_tools(&mut filtered_registry, manager, agent_id);
     }
 
-    let system_prompt = if native_tools {
+    // Build system prompt:
+    // - Native tools: full prompt with tool schemas sent via API
+    // - Text tools: full prompt with tool schemas embedded + call guidance
+    // - Off: minimal prompt without tools
+    let system_prompt = if tools_enabled {
         build_system_prompt_with_profile(
             &filtered_registry,
             native_tools,
@@ -6503,6 +6613,34 @@ async fn run_with_tools(
                 silent = is_silent,
                 "agent run complete"
             );
+
+            // Detect provider failures: silent response with zero tokens
+            // produced means the LLM never processed the request (e.g.
+            // network_error finish_reason).  Surface as an error so the
+            // UI renders a visible error card instead of showing nothing.
+            if is_silent && usage.output_tokens == 0 && tool_calls_made == 0 {
+                warn!(
+                    run_id,
+                    "empty response with zero tokens — treating as provider error"
+                );
+                let error_obj = parse_chat_error(
+                    "The provider returned an empty response (possible network error). Please try again.",
+                    Some(provider_name),
+                );
+                deliver_channel_error(state, session_key, &error_obj).await;
+                let error_payload = ChatErrorBroadcast {
+                    run_id: run_id.to_string(),
+                    session_key: session_key.to_string(),
+                    state: "error",
+                    error: error_obj,
+                    seq: client_seq,
+                };
+                #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                let payload_val = serde_json::to_value(&error_payload).unwrap();
+                broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
+                return None;
+            }
+
             // Tool results are persisted between the user message and the
             // assistant message, so the assistant index must account for them.
             let assistant_message_index = user_message_index + 1 + tool_calls_made;
@@ -6937,6 +7075,32 @@ async fn run_streaming(
                         silent = is_silent,
                         "chat stream done"
                     );
+
+                    // Detect provider failures: silent stream with zero tokens
+                    // means the LLM never produced output (e.g. network_error).
+                    if is_silent && usage.output_tokens == 0 {
+                        warn!(
+                            run_id,
+                            "empty stream with zero tokens — treating as provider error"
+                        );
+                        let error_obj = parse_chat_error(
+                            "The provider returned an empty response (possible network error). Please try again.",
+                            Some(provider_name),
+                        );
+                        deliver_channel_error(state, session_key, &error_obj).await;
+                        let error_payload = ChatErrorBroadcast {
+                            run_id: run_id.to_string(),
+                            session_key: session_key.to_string(),
+                            state: "error",
+                            error: error_obj,
+                            seq: client_seq,
+                        };
+                        #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                        let payload_val = serde_json::to_value(&error_payload).unwrap();
+                        broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
+                        return None;
+                    }
+
                     let assistant_message_index = user_message_index + 1;
 
                     // Generate & persist TTS audio for voice-medium web UI replies.
@@ -8525,6 +8689,69 @@ mod tests {
     fn server_prompt_timezone_defaults_to_server_local() {
         assert_eq!(server_prompt_timezone(None), "server-local".to_string());
         assert_eq!(server_prompt_timezone(Some("")), "server-local".to_string());
+    }
+
+    fn make_session_entry_with_binding(binding: Option<String>) -> SessionEntry {
+        SessionEntry {
+            id: "sid-1".to_string(),
+            key: "session:key".to_string(),
+            label: None,
+            model: None,
+            created_at: 0,
+            updated_at: 0,
+            message_count: 0,
+            last_seen_message_count: 0,
+            project_id: None,
+            archived: false,
+            worktree_branch: None,
+            sandbox_enabled: None,
+            sandbox_image: None,
+            channel_binding: binding,
+            parent_session_key: None,
+            fork_point: None,
+            mcp_disabled: None,
+            preview: None,
+            agent_id: None,
+            version: 0,
+        }
+    }
+
+    #[test]
+    fn resolve_channel_runtime_context_sets_heartbeat_surface() {
+        let context = resolve_channel_runtime_context("cron:heartbeat", None);
+        assert_eq!(context.surface.as_deref(), Some("heartbeat"));
+        assert_eq!(context.session_kind.as_deref(), Some("cron"));
+        assert_eq!(context.channel_type, None);
+    }
+
+    #[test]
+    fn resolve_channel_runtime_context_extracts_channel_binding() {
+        let binding = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "bot-main".to_string(),
+            chat_id: "123456".to_string(),
+            message_id: Some("99".to_string()),
+        };
+        let binding_json = serde_json::to_string(&binding).expect("serialize binding");
+        let entry = make_session_entry_with_binding(Some(binding_json));
+
+        let context = resolve_channel_runtime_context("telegram:bot-main:123456", Some(&entry));
+        assert_eq!(context.surface.as_deref(), Some("telegram"));
+        assert_eq!(context.session_kind.as_deref(), Some("channel"));
+        assert_eq!(context.channel_type.as_deref(), Some("telegram"));
+        assert_eq!(context.channel_account_id.as_deref(), Some("bot-main"));
+        assert_eq!(context.channel_chat_id.as_deref(), Some("123456"));
+        assert_eq!(context.channel_chat_type.as_deref(), Some("private"));
+    }
+
+    #[test]
+    fn resolve_channel_runtime_context_falls_back_to_web_when_unbound() {
+        let context = resolve_channel_runtime_context("main", None);
+        assert_eq!(context.surface.as_deref(), Some("web"));
+        assert_eq!(context.session_kind.as_deref(), Some("web"));
+        assert_eq!(context.channel_type, None);
+        assert_eq!(context.channel_account_id, None);
+        assert_eq!(context.channel_chat_id, None);
     }
 
     #[test]
@@ -11113,5 +11340,109 @@ mod tests {
                 .get("test-session")
                 .is_none()
         );
+    }
+
+    // ── effective_tool_mode tests ───────────────────────────────────────
+
+    /// Provider stub for testing `effective_tool_mode()` with configurable
+    /// `supports_tools` and `tool_mode` values.
+    struct ToolModeTestProvider {
+        native: bool,
+        mode: Option<ToolMode>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ToolModeTestProvider {
+        fn name(&self) -> &str {
+            "test"
+        }
+
+        fn id(&self) -> &str {
+            "test-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            self.native
+        }
+
+        fn tool_mode(&self) -> Option<ToolMode> {
+            self.mode
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+        ) -> Result<moltis_agents::model::CompletionResponse> {
+            anyhow::bail!("not implemented")
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[test]
+    fn effective_tool_mode_native_when_supported_and_auto() {
+        let p = ToolModeTestProvider {
+            native: true,
+            mode: None,
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Native);
+    }
+
+    #[test]
+    fn effective_tool_mode_text_when_not_supported_and_auto() {
+        let p = ToolModeTestProvider {
+            native: false,
+            mode: None,
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Text);
+    }
+
+    #[test]
+    fn effective_tool_mode_respects_explicit_native() {
+        let p = ToolModeTestProvider {
+            native: false,
+            mode: Some(ToolMode::Native),
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Native);
+    }
+
+    #[test]
+    fn effective_tool_mode_respects_explicit_text() {
+        let p = ToolModeTestProvider {
+            native: true,
+            mode: Some(ToolMode::Text),
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Text);
+    }
+
+    #[test]
+    fn effective_tool_mode_respects_explicit_off() {
+        let p = ToolModeTestProvider {
+            native: true,
+            mode: Some(ToolMode::Off),
+        };
+        assert_eq!(effective_tool_mode(&p), ToolMode::Off);
+    }
+
+    #[test]
+    fn effective_tool_mode_auto_explicit_delegates_to_supports_tools() {
+        // Explicit Auto should behave same as None.
+        let native = ToolModeTestProvider {
+            native: true,
+            mode: Some(ToolMode::Auto),
+        };
+        assert_eq!(effective_tool_mode(&native), ToolMode::Native);
+
+        let text = ToolModeTestProvider {
+            native: false,
+            mode: Some(ToolMode::Auto),
+        };
+        assert_eq!(effective_tool_mode(&text), ToolMode::Text);
     }
 }

@@ -11,7 +11,7 @@ use {
 use moltis_agents::memory_writer::{MemoryWriteResult, MemoryWriter};
 
 use crate::{
-    chunker::chunk_markdown,
+    chunker::chunk_content,
     config::MemoryConfig,
     embeddings::EmbeddingProvider,
     schema::{ChunkRow, FileRow},
@@ -241,9 +241,14 @@ impl MemoryManager {
         self.store.upsert_file(&file_row).await?;
         info!(path = %path_str, source, size, "memory: loaded markdown file");
 
-        // Chunk the content
-        let raw_chunks =
-            chunk_markdown(&content, self.config.chunk_size, self.config.chunk_overlap);
+        // Chunk the content (tree-sitter AST splitting when grammar available, else line-based).
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("md");
+        let raw_chunks = chunk_content(
+            &content,
+            self.config.chunk_size,
+            self.config.chunk_overlap,
+            ext,
+        );
 
         // Delete old chunks
         self.store.delete_chunks_for_file(path_str).await?;
@@ -350,6 +355,7 @@ impl MemoryManager {
                 limit,
                 self.config.vector_weight,
                 self.config.keyword_weight,
+                self.config.merge_strategy,
             )
             .await
         } else {

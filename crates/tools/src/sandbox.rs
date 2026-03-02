@@ -703,6 +703,7 @@ fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> String {
         "FROM {base}\n\
 RUN apt-get update -qq && apt-get install -y -qq {pkg_list} \
     && mkdir -p {SANDBOX_HOME_DIR}\n\
+RUN if command -v corepack >/dev/null 2>&1; then corepack enable; fi\n\
 RUN if command -v go >/dev/null 2>&1; then \
         GOBIN=/usr/local/bin go install {GOGCLI_MODULE_PATH}@{GOGCLI_VERSION} \
         && ln -sf /usr/local/bin/gog /usr/local/bin/gogcli; \
@@ -716,8 +717,13 @@ WORKDIR {SANDBOX_HOME_DIR}\n"
 }
 
 #[cfg(target_os = "macos")]
+const APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS: u64 = 2_147_483_647;
+
+#[cfg(target_os = "macos")]
 fn apple_container_bootstrap_command() -> String {
-    format!("mkdir -p {SANDBOX_HOME_DIR} && exec sleep infinity")
+    format!(
+        "mkdir -p {SANDBOX_HOME_DIR} && if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep {APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS}; fi"
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -1578,10 +1584,41 @@ impl DockerSandbox {
                 // Ensure the container can reach the host proxy on all
                 // platforms (Linux needs --add-host; macOS Docker Desktop
                 // resolves host.docker.internal automatically).
-                vec!["--add-host=host.docker.internal:host-gateway".to_string()]
+                let gateway = self.resolve_host_gateway();
+                vec![format!("--add-host=host.docker.internal:{gateway}")]
             },
             NetworkPolicy::Bypass => Vec::new(),
         }
+    }
+
+    /// Resolve the IP that containers use to reach the host.
+    ///
+    /// Docker (and Podman >= 5.0) support the special `host-gateway` token in
+    /// `--add-host`.  Older Podman versions reject it with:
+    ///
+    ///   Error: invalid IP address in add-host: "host-gateway"
+    ///
+    /// For those we resolve the address ourselves: rootless Podman (< 5.0) uses
+    /// slirp4netns by default, which maps the host to `10.0.2.2`.  Rootful
+    /// Podman uses a bridge whose gateway we can query via
+    /// `podman network inspect`.
+    fn resolve_host_gateway(&self) -> String {
+        if self.cli != "podman" {
+            return "host-gateway".to_string();
+        }
+
+        if podman_supports_host_gateway() {
+            return "host-gateway".to_string();
+        }
+
+        // Podman < 5.0 — resolve the address manually.
+        podman_resolve_host_ip().unwrap_or_else(|| {
+            debug!(
+                "could not resolve host gateway IP for podman; \
+                 falling back to host-gateway (may fail)"
+            );
+            "host-gateway".to_string()
+        })
     }
 
     fn proxy_exec_env_args(&self) -> Vec<String> {
@@ -4976,6 +5013,61 @@ fn is_cli_available(name: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// Return `true` when the installed Podman version supports `host-gateway`
+/// in `--add-host` (added in Podman 5.0).
+fn podman_supports_host_gateway() -> bool {
+    let Ok(output) = std::process::Command::new("podman")
+        .args(["version", "--format", "{{.Client.Version}}"])
+        .output()
+    else {
+        return false;
+    };
+    let version_str = String::from_utf8_lossy(&output.stdout);
+    let major: u32 = version_str
+        .trim()
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    major >= 5
+}
+
+/// Resolve the host IP that a Podman container (< 5.0) can use to reach the
+/// host.  Rootless Podman defaults to slirp4netns where the host is always
+/// `10.0.2.2`.  Rootful Podman uses a bridge network whose gateway we query
+/// with `podman network inspect`.
+fn podman_resolve_host_ip() -> Option<String> {
+    let rootless = std::process::Command::new("podman")
+        .args(["info", "--format", "{{.Host.Security.Rootless}}"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    if rootless.as_deref() == Some("true") {
+        // slirp4netns (default rootless network before Podman 5.0) maps the
+        // host to 10.0.2.2.
+        return Some("10.0.2.2".to_string());
+    }
+
+    // Rootful — ask for the gateway of the default "podman" network.
+    let output = std::process::Command::new("podman")
+        .args([
+            "network",
+            "inspect",
+            "podman",
+            "--format",
+            "{{(index .Subnets 0).Gateway}}",
+        ])
+        .output()
+        .ok()?;
+    let gateway = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if gateway.is_empty() {
+        None
+    } else {
+        Some(gateway)
+    }
+}
+
 /// Events emitted by the sandbox subsystem for UI feedback.
 #[derive(Debug, Clone)]
 pub enum SandboxEvent {
@@ -6113,6 +6205,17 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn test_apple_container_bootstrap_command_uses_portable_sleep() {
+        let command = apple_container_bootstrap_command();
+        assert!(command.contains("mkdir -p /home/sandbox"));
+        assert!(command.contains("command -v gnusleep >/dev/null 2>&1"));
+        assert!(command.contains("exec gnusleep infinity"));
+        assert!(command.contains("exec sleep 2147483647"));
+        assert!(!command.contains("exec sleep infinity"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
         let args =
             apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"), None);
@@ -6128,7 +6231,7 @@ mod tests {
             "ubuntu:25.10",
             "sh",
             "-c",
-            "mkdir -p /home/sandbox && exec sleep infinity",
+            "mkdir -p /home/sandbox && if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep 2147483647; fi",
         ]
         .into_iter()
         .map(str::to_string)
@@ -6159,7 +6262,7 @@ mod tests {
             "ubuntu:25.10",
             "sh",
             "-c",
-            "mkdir -p /home/sandbox && exec sleep infinity",
+            "mkdir -p /home/sandbox && if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep 2147483647; fi",
         ]
         .into_iter()
         .map(str::to_string)
@@ -6762,6 +6865,36 @@ mod tests {
         };
         let docker = DockerSandbox::new(config);
         assert!(docker.proxy_exec_env_args().is_empty());
+    }
+
+    #[test]
+    fn test_docker_resolve_host_gateway_always_returns_host_gateway() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Trusted,
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        // Docker always uses the host-gateway token regardless of version.
+        assert_eq!(docker.resolve_host_gateway(), "host-gateway");
+    }
+
+    #[test]
+    fn test_podman_network_run_args_trusted_contains_add_host() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Trusted,
+            ..Default::default()
+        };
+        let podman = DockerSandbox::podman(config);
+        let args = podman.network_run_args();
+        // The exact IP depends on the host environment (Podman version and
+        // rootless/rootful mode), but the flag must always start with
+        // `--add-host=host.docker.internal:`.
+        assert_eq!(args.len(), 1);
+        assert!(
+            args[0].starts_with("--add-host=host.docker.internal:"),
+            "unexpected arg: {}",
+            args[0],
+        );
     }
 
     #[cfg(target_os = "macos")]

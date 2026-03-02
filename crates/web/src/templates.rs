@@ -562,7 +562,7 @@ pub(crate) async fn render_spa_template(
 
     let csp = format!(
         "default-src 'self'; \
-         script-src 'self' 'nonce-{nonce}'; \
+         script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; \
          style-src 'self' 'unsafe-inline'; \
          img-src 'self' data: blob:; \
          media-src 'self' blob:; \

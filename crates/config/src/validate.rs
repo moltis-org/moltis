@@ -98,6 +98,7 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "moonshot",
     "venice",
     "ollama",
+    "lmstudio",
 ];
 
 /// Static metadata keys allowed directly under `[providers]`.
@@ -116,6 +117,7 @@ fn build_schema_map() -> KnownKeys {
             ("fetch_models", Leaf),
             ("stream_transport", Leaf),
             ("alias", Leaf),
+            ("tool_mode", Leaf),
         ]))
     };
 
@@ -358,6 +360,16 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let agent_preset = || {
+        Struct(HashMap::from([
+            ("model", Leaf),
+            ("allow_tools", Leaf),
+            ("deny_tools", Leaf),
+            ("delegate_only", Leaf),
+            ("system_prompt_suffix", Leaf),
+        ]))
+    };
+
     Struct(HashMap::from([
         (
             "server",
@@ -383,6 +395,13 @@ fn build_schema_map() -> KnownKeys {
             ])),
         ),
         ("prompt_profiles", prompt_profiles()),
+        (
+            "agents",
+            Struct(HashMap::from([
+                ("default_preset", Leaf),
+                ("presets", Map(Box::new(agent_preset()))),
+            ])),
+        ),
         ("tools", tools()),
         (
             "skills",
@@ -461,6 +480,7 @@ fn build_schema_map() -> KnownKeys {
                 ("api_key", Leaf),
                 ("citations", Leaf),
                 ("llm_reranking", Leaf),
+                ("search_merge_strategy", Leaf),
                 ("session_export", Leaf),
                 ("qmd", qmd()),
             ])),
@@ -485,6 +505,9 @@ fn build_schema_map() -> KnownKeys {
                 ("prompt", Leaf),
                 ("ack_max_chars", Leaf),
                 ("active_hours", active_hours()),
+                ("deliver", Leaf),
+                ("channel", Leaf),
+                ("to", Leaf),
                 ("sandbox_enabled", Leaf),
                 ("sandbox_image", Leaf),
             ])),
@@ -962,6 +985,20 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         });
     }
 
+    // agents.default_preset should reference an existing preset key.
+    if let Some(default_preset) = config.agents.default_preset.as_deref()
+        && !config.agents.presets.contains_key(default_preset)
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "agents.default_preset".into(),
+            message: format!(
+                "default preset \"{default_preset}\" is not defined in agents.presets"
+            ),
+        });
+    }
+
     // SSRF allowlist CIDR validation
     for (idx, entry) in config.tools.web.fetch.ssrf_allowlist.iter().enumerate() {
         if entry.parse::<ipnet::IpNet>().is_err() {
@@ -983,6 +1020,11 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
             message: "ssrf_allowlist is set — SSRF protection is relaxed for the listed ranges. Ensure these are trusted networks.".into(),
         });
     }
+
+    // Unknown tool_mode values on provider entries
+    // Note: serde rejects truly invalid values at deserialization, but if a
+    // provider entry somehow comes through with a non-standard string we still
+    // want to warn at the TOML level.  The enum is auto/native/text/off.
 
     // Unknown channel types in channels.offered
     let valid_channel_types = ["telegram", "msteams", "discord"];
@@ -1081,6 +1123,22 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 message: format!(
                     "unknown memory provider \"{provider}\"; expected one of: {}",
                     valid_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown search merge strategy
+    if let Some(ref strategy) = config.memory.search_merge_strategy {
+        let valid_strategies = ["rrf", "linear"];
+        if !valid_strategies.contains(&strategy.to_lowercase().as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "memory.search_merge_strategy".into(),
+                message: format!(
+                    "unknown search merge strategy \"{strategy}\"; expected one of: {}",
+                    valid_strategies.join(", ")
                 ),
             });
         }
@@ -2103,5 +2161,46 @@ offered = ["telegram", "slack"]
             "unknown channel type should produce warning, got: {:?}",
             result.diagnostics
         );
+    }
+
+    #[test]
+    fn tool_mode_field_accepted_in_provider_entry() {
+        let toml = r#"
+[providers.ollama]
+enabled = true
+tool_mode = "text"
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path.contains("tool_mode"));
+        assert!(
+            unknown.is_none(),
+            "tool_mode should be a known field, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn tool_mode_all_values_parse_correctly() {
+        for mode in ["auto", "native", "text", "off"] {
+            let toml = format!(
+                r#"
+[providers.anthropic]
+tool_mode = "{mode}"
+"#
+            );
+            let result = validate_toml_str(&toml);
+            let type_error = result
+                .diagnostics
+                .iter()
+                .find(|d| d.category == "type-error");
+            assert!(
+                type_error.is_none(),
+                "tool_mode = \"{mode}\" should parse without type error, got: {:?}",
+                result.diagnostics
+            );
+        }
     }
 }

@@ -121,8 +121,10 @@ models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]
 # enabled = true
-# api_key = "..."                             # Or set GOOGLE_API_KEY env var
-# models = ["gemini-2.0-flash"]
+# api_key = "..."                             # Or set GEMINI_API_KEY / GOOGLE_API_KEY env var
+# models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+# fetch_models = true
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 # alias = "gemini"
 
 # ── Groq ──────────────────────────────────────────────────────
@@ -250,6 +252,21 @@ mode = "datetime"                  # "datetime", "date_only", or "disabled"
 # [prompt_profiles.overrides.match]
 # provider = "openai"
 # model = "gpt-5*"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SPAWN PRESETS (OPTIONAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Configure reusable presets for the `spawn_agent` tool.
+#
+# [agents]
+# default_preset = "research"      # Optional: used when spawn_agent.preset is omitted
+#
+# [agents.presets.research]
+# model = "openai/gpt-5.2"
+# allow_tools = ["web_search", "web_fetch", "sessions_send", "task_list"]
+# deny_tools = ["exec"]
+# delegate_only = false
+# system_prompt_suffix = "Focus on gathering and summarizing evidence."
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
@@ -540,6 +557,9 @@ every = "30m"                     # Interval between heartbeats (e.g., "30m", "1
 # model = "anthropic/claude-sonnet-4-20250514"  # Override model for heartbeats
 # prompt = "..."                  # Custom heartbeat prompt (default: built-in)
 ack_max_chars = 300               # Max characters for acknowledgment reply
+deliver = false                   # Deliver heartbeat replies to a channel account
+# channel = "my-bot"              # Channel account identifier (required when deliver = true)
+# to = "123456789"                # Chat/recipient ID (required when deliver = true)
 sandbox_enabled = true            # Run heartbeat commands in sandbox
 # sandbox_image = "..."           # Override sandbox image for heartbeats
 

@@ -9,6 +9,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.10.6] - 2026-03-01
+### Fixed
+- [web] Fix Shiki highlighter init failures in E2E tests
+- [web] Make thinking stop button smaller with left spacing
+- [chat] Surface error when LLM returns empty response with zero tokens
+- [providers] Emit StreamEvent::Error on non-success finish_reason
+
+## [0.10.5] - 2026-03-01
+### Fixed
+- [web] Lazy-load Shiki to prevent blocking page mount
+
+## [0.10.4] - 2026-03-01
+### Added
+- [web] Add Shiki syntax highlighting to code blocks
+
+## [0.10.3] - 2026-03-01
+### Added
+- Add channel-aware heartbeat delivery and send_message agent tool (#270)
+- [memory] Add tree-sitter code splitter and RRF search merge
+
+
+### Changed
+- [ffi] Tighten unsafe_code allowances
+
+
+### Fixed
+- [sandbox] Make apple container keepalive portable (#269)
+- [local-llm] Combine compile-time and runtime Metal detection
+- [auth] Auto-detect new WebAuthn hosts and prompt passkey refresh (#268)
+- [web] Replace rg with grep in changelog guard and deduplicate passkey status refresh
+
+## [0.10.2] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Release packaging now installs cross-compilation targets on the active nightly toolchain in the Homebrew binary job, fixing `error[E0463]: can't find crate for core` during macOS binary builds.
+- Docker release builds now copy `apps/courier` into the image build context so Cargo workspace metadata resolves correctly during WASM component builds.
+### Security
+
+## [0.10.1] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.10.0] - 2026-02-28
+
+
+### Added
+
+- **Gemini first-class provider**: Google Gemini is now registered via the OpenAI-compatible endpoint with native tool calling, vision/multimodal support, streaming, and model discovery. Replaces the previous genai-backed fallback that lacked tool support. Supports both `GEMINI_API_KEY` and `GOOGLE_API_KEY` environment variables
 - **Podman sandbox backend** — Podman as a first-class sandbox backend. Set `backend = "podman"` or let auto-detection prefer it over Docker (Apple Container → Podman → Docker → restricted-host). Uses the `podman` CLI directly (no socket compatibility needed)
 - **Trusted network mode**: sandbox containers now default to `sandbox.network = "trusted"`, routing outbound traffic through an HTTP CONNECT proxy with full audit logging. When `trusted_domains` is empty (the default), all domains are allowed (audit-only mode); when configured, only listed domains pass without approval. Includes real-time network audit log with domain, protocol, and action filtering via Settings > Network Audit. Configurable via `sandbox.trusted_domains` in `moltis.toml`. Proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) are now automatically injected into both Docker and Apple Container sandboxes, and the proxy binds to `0.0.0.0` so it is reachable from container VMs. The proxy rejects connections from non-private IPs (only loopback, RFC 1918, link-local, and CGNAT ranges are accepted)
 - **New `moltis-network-filter` crate**: domain filtering, proxy, and audit buffer logic extracted from `moltis-tools` and `moltis-gateway` into a standalone crate with feature flags (`proxy`, `service`, `metrics`). The macOS app can now depend on it directly for network audit log display via `moltis-swift-bridge`

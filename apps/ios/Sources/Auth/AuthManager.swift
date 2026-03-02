@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import UIKit
 import os
@@ -10,6 +11,7 @@ struct AuthStatusResponse: Codable {
     let authenticated: Bool
     let authDisabled: Bool
     let hasPassword: Bool
+    let hasPasskeys: Bool
     let setupCodeRequired: Bool
     let graphqlEnabled: Bool?
 
@@ -19,8 +21,21 @@ struct AuthStatusResponse: Codable {
         case authenticated
         case authDisabled = "auth_disabled"
         case hasPassword = "has_password"
+        case hasPasskeys = "has_passkeys"
         case setupCodeRequired = "setup_code_required"
         case graphqlEnabled = "graphql_enabled"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        setupRequired = try container.decode(Bool.self, forKey: .setupRequired)
+        setupComplete = try container.decode(Bool.self, forKey: .setupComplete)
+        authenticated = try container.decode(Bool.self, forKey: .authenticated)
+        authDisabled = try container.decode(Bool.self, forKey: .authDisabled)
+        hasPassword = try container.decode(Bool.self, forKey: .hasPassword)
+        hasPasskeys = try container.decodeIfPresent(Bool.self, forKey: .hasPasskeys) ?? false
+        setupCodeRequired = try container.decode(Bool.self, forKey: .setupCodeRequired)
+        graphqlEnabled = try container.decodeIfPresent(Bool.self, forKey: .graphqlEnabled)
     }
 }
 
@@ -37,6 +52,141 @@ struct CreateApiKeyResponse: Codable {
     let key: String
 }
 
+private struct PasskeyAuthBeginResponse: Codable {
+    let challengeId: String
+    let options: PasskeyPublicKeyCredentialRequestOptions
+
+    enum CodingKeys: String, CodingKey {
+        case challengeId = "challenge_id"
+        case options
+    }
+}
+
+private struct PasskeyPublicKeyCredentialRequestOptions: Codable {
+    let publicKey: PasskeyRequestPublicKey
+
+    enum CodingKeys: String, CodingKey {
+        case publicKey = "publicKey"
+    }
+}
+
+private struct PasskeyRequestPublicKey: Codable {
+    let challenge: String
+    let rpId: String?
+    let allowCredentials: [PasskeyCredentialDescriptor]?
+    let userVerification: String?
+
+    enum CodingKeys: String, CodingKey {
+        case challenge
+        case rpId
+        case allowCredentials
+        case userVerification
+    }
+}
+
+private struct PasskeyCredentialDescriptor: Codable {
+    let id: String
+}
+
+private struct PasskeyAuthFinishRequest: Codable {
+    let challengeId: String
+    let credential: PasskeyFinishCredential
+
+    enum CodingKeys: String, CodingKey {
+        case challengeId = "challenge_id"
+        case credential
+    }
+}
+
+private struct PasskeyFinishCredential: Codable {
+    let id: String
+    let rawId: String
+    let type: String
+    let response: PasskeyFinishCredentialResponse
+}
+
+private struct PasskeyFinishCredentialResponse: Codable {
+    let authenticatorData: String
+    let clientDataJSON: String
+    let signature: String
+    let userHandle: String?
+}
+
+@available(iOS 15.0, *)
+private final class PasskeyAssertionAuthorizationDelegate: NSObject,
+    ASAuthorizationControllerDelegate,
+    ASAuthorizationControllerPresentationContextProviding
+{
+    private static var activeDelegates: [PasskeyAssertionAuthorizationDelegate] = []
+
+    private var continuation: CheckedContinuation<ASAuthorizationPlatformPublicKeyCredentialAssertion, Error>?
+
+    private init(continuation: CheckedContinuation<ASAuthorizationPlatformPublicKeyCredentialAssertion, Error>) {
+        self.continuation = continuation
+    }
+
+    static func perform(
+        request: ASAuthorizationPlatformPublicKeyCredentialAssertionRequest
+    ) async throws -> ASAuthorizationPlatformPublicKeyCredentialAssertion {
+        try await withCheckedThrowingContinuation { continuation in
+            let delegate = PasskeyAssertionAuthorizationDelegate(continuation: continuation)
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate = delegate
+            controller.presentationContextProvider = delegate
+            activeDelegates.append(delegate)
+            controller.performRequests()
+        }
+    }
+
+    func presentationAnchor(for _: ASAuthorizationController) -> ASPresentationAnchor {
+        if let keyWindow = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first(where: { $0.isKeyWindow })
+        {
+            return keyWindow
+        }
+
+        if let firstWindow = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first
+        {
+            return firstWindow
+        }
+
+        return ASPresentationAnchor()
+    }
+
+    func authorizationController(
+        controller _: ASAuthorizationController,
+        didCompleteWithAuthorization authorization: ASAuthorization
+    ) {
+        guard let assertion = authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion else {
+            complete(.failure(AuthError.passkeyAuthorizationFailed))
+            return
+        }
+        complete(.success(assertion))
+    }
+
+    func authorizationController(controller _: ASAuthorizationController, didCompleteWithError error: Error) {
+        if let authError = error as? ASAuthorizationError,
+           authError.code == .canceled
+        {
+            complete(.failure(AuthError.passkeyCancelled))
+            return
+        }
+        complete(.failure(error))
+    }
+
+    private func complete(_ result: Result<ASAuthorizationPlatformPublicKeyCredentialAssertion, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        Self.activeDelegates.removeAll { $0 === self }
+        continuation.resume(with: result)
+    }
+}
+
 // MARK: - Auth errors
 
 enum AuthError: LocalizedError {
@@ -46,6 +196,10 @@ enum AuthError: LocalizedError {
     case setupRequired
     case invalidCredentials
     case noApiKey
+    case passkeyUnavailable
+    case passkeyCancelled
+    case passkeyChallengeInvalid
+    case passkeyAuthorizationFailed
 
     var errorDescription: String? {
         switch self {
@@ -61,6 +215,14 @@ enum AuthError: LocalizedError {
             return "Invalid password"
         case .noApiKey:
             return "No API key available"
+        case .passkeyUnavailable:
+            return "Passkeys are not available on this device."
+        case .passkeyCancelled:
+            return "Passkey sign-in was cancelled."
+        case .passkeyChallengeInvalid:
+            return "Server returned an invalid passkey challenge."
+        case .passkeyAuthorizationFailed:
+            return "Passkey authorization failed."
         }
     }
 }
@@ -178,6 +340,32 @@ final class AuthManager: ObservableObject {
         return server
     }
 
+    /// Login with passkey, then create an API key for persistent access.
+    func loginWithPasskeyAndCreateApiKey(
+        serverURL: URL,
+        serverName: String
+    ) async throws -> ServerConnection {
+        isAuthenticating = true
+        authError = nil
+        defer { isAuthenticating = false }
+
+        let baseURL = ServerConnection.normalizedURL(serverURL)
+
+        // 1. Login with passkey to get a session cookie.
+        let sessionCookie = try await loginWithPasskey(baseURL: baseURL)
+
+        // 2. Create an API key using the session.
+        let apiKey = try await createApiKey(baseURL: baseURL, sessionCookie: sessionCookie)
+
+        // 3. Save the server.
+        let server = ServerConnection(name: serverName, url: serverURL)
+        server.saveApiKey(apiKey)
+        upsertAndActivate(server)
+
+        logger.info("Authenticated with passkey to \(serverURL.absoluteString)")
+        return server
+    }
+
     /// Connect using an existing API key.
     func connectWithApiKey(
         serverURL: URL,
@@ -274,20 +462,111 @@ final class AuthManager: ObservableObject {
             throw AuthError.serverError(httpResponse.statusCode, body)
         }
 
-        // Extract session cookie
-        let cookies = HTTPCookieStorage.shared.cookies(for: loginURL) ?? []
-        guard let sessionCookie = cookies.first(where: { $0.name == "moltis_session" }) else {
-            // If no cookie found in storage, try to parse from headers
-            if let setCookie = httpResponse.value(forHTTPHeaderField: "Set-Cookie"),
-               let range = setCookie.range(of: "moltis_session=") {
-                let valueStart = range.upperBound
-                let valueEnd = setCookie[valueStart...].firstIndex(of: ";") ?? setCookie.endIndex
-                return String(setCookie[valueStart..<valueEnd])
-            }
-            throw AuthError.serverError(200, "No session cookie received")
+        if let sessionCookie = Self.sessionCookieValue(for: loginURL, response: httpResponse) {
+            return sessionCookie
         }
 
-        return sessionCookie.value
+        throw AuthError.serverError(200, "No session cookie received")
+    }
+
+    private func loginWithPasskey(baseURL: URL) async throws -> String {
+        guard #available(iOS 15.0, *) else {
+            throw AuthError.passkeyUnavailable
+        }
+
+        let beginURL = baseURL.appendingPathComponent("api/auth/passkey/auth/begin")
+        var beginRequest = URLRequest(url: beginURL)
+        beginRequest.httpMethod = "POST"
+        beginRequest.timeoutInterval = 10
+
+        let (beginData, beginResponse) = try await URLSession.shared.data(for: beginRequest)
+        guard let beginHttpResponse = beginResponse as? HTTPURLResponse else {
+            throw AuthError.invalidURL
+        }
+        guard beginHttpResponse.statusCode == 200 else {
+            let body = String(data: beginData, encoding: .utf8) ?? "Unknown error"
+            throw AuthError.serverError(beginHttpResponse.statusCode, body)
+        }
+
+        let beginPayload = try JSONDecoder().decode(PasskeyAuthBeginResponse.self, from: beginData)
+        let options = beginPayload.options.publicKey
+        guard let challenge = Self.decodeBase64URL(options.challenge) else {
+            throw AuthError.passkeyChallengeInvalid
+        }
+
+        guard let rpID = Self.relyingPartyIdentifier(rpIdFromServer: options.rpId, baseURL: baseURL) else {
+            throw AuthError.invalidURL
+        }
+
+        let assertion = try await createPasskeyAssertion(
+            relyingPartyIdentifier: rpID,
+            challenge: challenge,
+            allowCredentials: options.allowCredentials,
+            userVerification: options.userVerification
+        )
+
+        let finishPayload = PasskeyAuthFinishRequest(
+            challengeId: beginPayload.challengeId,
+            credential: PasskeyFinishCredential(
+                id: Self.encodeBase64URL(assertion.credentialID),
+                rawId: Self.encodeBase64URL(assertion.credentialID),
+                type: "public-key",
+                response: PasskeyFinishCredentialResponse(
+                    authenticatorData: Self.encodeBase64URL(assertion.rawAuthenticatorData),
+                    clientDataJSON: Self.encodeBase64URL(assertion.rawClientDataJSON),
+                    signature: Self.encodeBase64URL(assertion.signature),
+                    userHandle: assertion.userID.isEmpty ? nil : Self.encodeBase64URL(assertion.userID)
+                )
+            )
+        )
+
+        let finishURL = baseURL.appendingPathComponent("api/auth/passkey/auth/finish")
+        var finishRequest = URLRequest(url: finishURL)
+        finishRequest.httpMethod = "POST"
+        finishRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        finishRequest.httpBody = try JSONEncoder().encode(finishPayload)
+        finishRequest.timeoutInterval = 10
+
+        let (finishData, finishResponse) = try await URLSession.shared.data(for: finishRequest)
+        guard let finishHttpResponse = finishResponse as? HTTPURLResponse else {
+            throw AuthError.invalidURL
+        }
+        guard finishHttpResponse.statusCode == 200 else {
+            let body = String(data: finishData, encoding: .utf8) ?? "Unknown error"
+            throw AuthError.serverError(finishHttpResponse.statusCode, body)
+        }
+
+        if let sessionCookie = Self.sessionCookieValue(for: finishURL, response: finishHttpResponse) {
+            return sessionCookie
+        }
+
+        throw AuthError.serverError(200, "No session cookie received")
+    }
+
+    @available(iOS 15.0, *)
+    private func createPasskeyAssertion(
+        relyingPartyIdentifier: String,
+        challenge: Data,
+        allowCredentials: [PasskeyCredentialDescriptor]?,
+        userVerification: String?
+    ) async throws -> ASAuthorizationPlatformPublicKeyCredentialAssertion {
+        let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(
+            relyingPartyIdentifier: relyingPartyIdentifier
+        )
+        let request = provider.createCredentialAssertionRequest(challenge: challenge)
+        request.relyingPartyIdentifier = relyingPartyIdentifier
+        request.userVerificationPreference = Self.userVerificationPreference(from: userVerification)
+
+        if let allowCredentials, !allowCredentials.isEmpty {
+            request.allowedCredentials = allowCredentials.compactMap { descriptor in
+                guard let credentialID = Self.decodeBase64URL(descriptor.id) else {
+                    return nil
+                }
+                return ASAuthorizationPlatformPublicKeyCredentialDescriptor(credentialID: credentialID)
+            }
+        }
+
+        return try await PasskeyAssertionAuthorizationDelegate.perform(request: request)
     }
 
     private func createApiKey(baseURL: URL, sessionCookie: String) async throws -> String {
@@ -315,5 +594,71 @@ final class AuthManager: ObservableObject {
 
         let decoded = try JSONDecoder().decode(CreateApiKeyResponse.self, from: data)
         return decoded.key
+    }
+
+    private static func relyingPartyIdentifier(rpIdFromServer: String?, baseURL: URL) -> String? {
+        let rpId = normalizeHost(rpIdFromServer) ?? normalizeHost(baseURL.host)
+        guard let rpId, !rpId.isEmpty else {
+            return nil
+        }
+        return rpId
+    }
+
+    private static func normalizeHost(_ host: String?) -> String? {
+        guard var host else { return nil }
+        host = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        while host.hasSuffix(".") {
+            host.removeLast()
+        }
+        return host.isEmpty ? nil : host
+    }
+
+    private static func userVerificationPreference(
+        from value: String?
+    ) -> ASAuthorizationPublicKeyCredentialUserVerificationPreference {
+        switch value?.lowercased() {
+        case "required":
+            return .required
+        case "discouraged":
+            return .discouraged
+        default:
+            return .preferred
+        }
+    }
+
+    private static func decodeBase64URL(_ value: String) -> Data? {
+        var normalized = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+
+        let remainder = normalized.count % 4
+        if remainder != 0 {
+            normalized += String(repeating: "=", count: 4 - remainder)
+        }
+        return Data(base64Encoded: normalized)
+    }
+
+    private static func encodeBase64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private static func sessionCookieValue(for url: URL, response: HTTPURLResponse) -> String? {
+        let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
+        if let sessionCookie = cookies.first(where: { $0.name == "moltis_session" }) {
+            return sessionCookie.value
+        }
+
+        if let setCookie = response.value(forHTTPHeaderField: "Set-Cookie"),
+           let range = setCookie.range(of: "moltis_session=")
+        {
+            let valueStart = range.upperBound
+            let valueEnd = setCookie[valueStart...].firstIndex(of: ";") ?? setCookie.endIndex
+            return String(setCookie[valueStart..<valueEnd])
+        }
+
+        return nil
     }
 }
