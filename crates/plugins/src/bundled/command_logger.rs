@@ -2,9 +2,12 @@
 
 use std::{path::PathBuf, sync::Mutex};
 
-use {anyhow::Result, async_trait::async_trait, tracing::warn};
+use {async_trait::async_trait, tracing::warn};
 
-use moltis_common::hooks::{HookAction, HookEvent, HookHandler, HookPayload};
+use moltis_common::{
+    Result,
+    hooks::{HookAction, HookEvent, HookHandler, HookPayload},
+};
 
 /// Appends JSONL entries for every `Command` event.
 pub struct CommandLoggerHook {

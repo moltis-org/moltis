@@ -75,6 +75,21 @@ pub fn chunk_markdown(text: &str, chunk_size: usize, overlap: usize) -> Vec<Chun
     chunks
 }
 
+/// Split content into chunks, using tree-sitter AST splitting when a grammar
+/// is available for the given file `extension`, otherwise falling back to
+/// the line-based [`chunk_markdown`] splitter.
+///
+/// This is the primary entry point for chunking; callers should prefer this
+/// over calling [`chunk_markdown`] directly.
+pub fn chunk_content(
+    text: &str,
+    chunk_size: usize,
+    chunk_overlap: usize,
+    extension: &str,
+) -> Vec<Chunk> {
+    crate::splitter::chunk_content(text, chunk_size, chunk_overlap, extension)
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {

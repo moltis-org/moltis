@@ -1,0 +1,4 @@
+[toolchain]
+channel    = "nightly-2025-11-30"
+components = ["clippy", "rustfmt"]
+targets    = ["wasm32-wasip2"]

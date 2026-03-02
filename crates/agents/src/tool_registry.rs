@@ -20,6 +20,8 @@ pub enum ToolSource {
     Builtin,
     /// Tool provided by an MCP server.
     Mcp { server: String },
+    /// Tool provided by a precompiled WASM component.
+    Wasm { component_hash: [u8; 32] },
 }
 
 /// Internal entry pairing a tool with its source metadata.
@@ -52,25 +54,28 @@ impl ToolRegistry {
     /// Register a built-in tool.
     pub fn register(&mut self, tool: Box<dyn AgentTool>) {
         let name = tool.name().to_string();
-        self.tools.insert(
-            name,
-            ToolEntry {
-                tool: Arc::from(tool),
-                source: ToolSource::Builtin,
-            },
-        );
+        self.tools.insert(name, ToolEntry {
+            tool: Arc::from(tool),
+            source: ToolSource::Builtin,
+        });
     }
 
     /// Register a tool from an MCP server.
     pub fn register_mcp(&mut self, tool: Box<dyn AgentTool>, server: String) {
         let name = tool.name().to_string();
-        self.tools.insert(
-            name,
-            ToolEntry {
-                tool: Arc::from(tool),
-                source: ToolSource::Mcp { server },
-            },
-        );
+        self.tools.insert(name, ToolEntry {
+            tool: Arc::from(tool),
+            source: ToolSource::Mcp { server },
+        });
+    }
+
+    /// Register a tool from a WASM component.
+    pub fn register_wasm(&mut self, tool: Box<dyn AgentTool>, component_hash: [u8; 32]) {
+        let name = tool.name().to_string();
+        self.tools.insert(name, ToolEntry {
+            tool: Arc::from(tool),
+            source: ToolSource::Wasm { component_hash },
+        });
     }
 
     pub fn unregister(&mut self, name: &str) -> bool {
@@ -87,6 +92,11 @@ impl ToolRegistry {
 
     pub fn get(&self, name: &str) -> Option<&dyn AgentTool> {
         self.tools.get(name).map(|e| e.tool.as_ref())
+    }
+
+    /// Return a cloned tool handle by name.
+    pub fn get_arc(&self, name: &str) -> Option<Arc<dyn AgentTool>> {
+        self.tools.get(name).map(|e| Arc::clone(&e.tool))
     }
 
     pub fn list_schemas(&self) -> Vec<serde_json::Value> {
@@ -106,6 +116,11 @@ impl ToolRegistry {
                         schema["source"] = serde_json::json!("mcp");
                         schema["mcpServer"] = serde_json::json!(server);
                     },
+                    ToolSource::Wasm { component_hash } => {
+                        schema["source"] = serde_json::json!("wasm");
+                        schema["componentHash"] =
+                            serde_json::json!(hex_component_hash(*component_hash));
+                    },
                 }
                 schema
             })
@@ -124,13 +139,10 @@ impl ToolRegistry {
             .iter()
             .filter(|(name, _)| !name.starts_with(prefix))
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    ToolEntry {
-                        tool: Arc::clone(&entry.tool),
-                        source: entry.source.clone(),
-                    },
-                )
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
             })
             .collect();
         ToolRegistry { tools }
@@ -143,13 +155,10 @@ impl ToolRegistry {
             .iter()
             .filter(|(_, entry)| !matches!(entry.source, ToolSource::Mcp { .. }))
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    ToolEntry {
-                        tool: Arc::clone(&entry.tool),
-                        source: entry.source.clone(),
-                    },
-                )
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
             })
             .collect();
         ToolRegistry { tools }
@@ -162,13 +171,10 @@ impl ToolRegistry {
             .iter()
             .filter(|(name, _)| !exclude.contains(&name.as_str()))
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    ToolEntry {
-                        tool: Arc::clone(&entry.tool),
-                        source: entry.source.clone(),
-                    },
-                )
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
             })
             .collect();
         ToolRegistry { tools }
@@ -184,17 +190,23 @@ impl ToolRegistry {
             .iter()
             .filter(|(name, _)| predicate(name))
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    ToolEntry {
-                        tool: Arc::clone(&entry.tool),
-                        source: entry.source.clone(),
-                    },
-                )
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
             })
             .collect();
         ToolRegistry { tools }
     }
+}
+
+fn hex_component_hash(component_hash: [u8; 32]) -> String {
+    let mut output = String::with_capacity(component_hash.len() * 2);
+    for byte in component_hash {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -326,6 +338,12 @@ mod tests {
             }),
             "github".to_string(),
         );
+        registry.register_wasm(
+            Box::new(DummyTool {
+                name: "calc_wasm".to_string(),
+            }),
+            [0xAB; 32],
+        );
 
         let schemas = registry.list_schemas();
         let builtin = schemas
@@ -341,6 +359,16 @@ mod tests {
             .expect("mcp tool should exist");
         assert_eq!(mcp["source"], "mcp");
         assert_eq!(mcp["mcpServer"], "github");
+
+        let wasm = schemas
+            .iter()
+            .find(|s| s["name"] == "calc_wasm")
+            .expect("wasm tool should exist");
+        assert_eq!(wasm["source"], "wasm");
+        assert_eq!(
+            wasm["componentHash"],
+            "abababababababababababababababababababababababababababababababab"
+        );
     }
 
     #[test]
@@ -356,6 +384,16 @@ mod tests {
         let mut names = registry.list_names();
         names.sort();
         assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
+    }
+
+    #[test]
+    fn test_get_arc_returns_cloned_tool_handle() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+        assert!(registry.get_arc("exec").is_some());
+        assert!(registry.get_arc("missing").is_none());
     }
 
     #[test]

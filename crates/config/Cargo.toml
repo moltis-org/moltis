@@ -4,15 +4,17 @@ name              = "moltis-config"
 version.workspace = true
 
 [dependencies]
-anyhow         = { workspace = true }
 chrono-tz      = { workspace = true }
 directories    = { workspace = true }
+ipnet          = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 secrecy        = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 serde_yaml     = { workspace = true }
+thiserror      = { workspace = true }
 toml           = { workspace = true }
+toml_edit      = { workspace = true }
 tracing        = { workspace = true }
 
 [features]

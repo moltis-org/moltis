@@ -38,7 +38,10 @@ pub mod snapshot;
 pub mod types;
 
 pub use {
-    error::BrowserError,
+    error::Error,
     manager::BrowserManager,
-    types::{BrowserAction, BrowserConfig, BrowserRequest, BrowserResponse},
+    types::{
+        BrowserAction, BrowserConfig, BrowserKind, BrowserPreference, BrowserRequest,
+        BrowserResponse,
+    },
 };

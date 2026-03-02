@@ -29,8 +29,7 @@ The prompt is built in `crates/agents/src/prompt.rs` by
 
 A single sentence that sets the assistant role:
 
-- With tools: *"You are a helpful assistant with access to tools for executing
-  shell commands."*
+- With tools: *"You are a helpful assistant. You can use tools when needed."*
 - Without tools: *"You are a helpful assistant. Answer questions clearly and
   concisely."*
 
@@ -95,8 +94,11 @@ The default soul is ~1,500 characters (~400 tokens).
 
 ### User Profile (`USER.md`)
 
-Loaded from `~/.moltis/USER.md` using YAML frontmatter. Currently only the
-`name` field is injected: *"The user's name is {name}."*
+Loaded from `~/.moltis/USER.md` using YAML frontmatter.
+
+- `name` is injected as: *"The user's name is {name}."*
+- `timezone` is used by runtime context to localize `Host: time=...` and
+  `Host: today=...` fields.
 
 ### Project Context
 
@@ -116,7 +118,7 @@ project-specific instructions override workspace-level ones.
 Injected as compact key=value lines under a `## Runtime` heading:
 
 ```
-Host: host=moltis-devbox | os=macos | arch=aarch64 | shell=zsh | provider=openai | model=gpt-5 | session=main | sudo_non_interactive=true | timezone=Europe/Paris
+Host: host=moltis-devbox | os=macos | arch=aarch64 | shell=zsh | time=2026-02-17 16:18:00 CET | today=2026-02-17 | provider=openai | model=gpt-5 | session=main | sudo_non_interactive=true | timezone=Europe/Paris
 Sandbox(exec): enabled=true | mode=all | backend=docker | scope=session | image=moltis-sandbox:abc123 | workspace_mount=ro | network=disabled
 ```
 
@@ -172,7 +174,8 @@ tool calling:
 
 The final section contains:
 
-- Tool usage guidelines (when to use exec, browser, etc.)
+- Tool usage guidelines (conversation first, when to use exec/browser, `/sh`
+  explicit shell prefix)
 - A reminder not to parrot raw tool output
 - **Silent reply protocol**: when tool output speaks for itself, the LLM should
   return an empty response rather than acknowledging it

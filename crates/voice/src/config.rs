@@ -41,8 +41,8 @@ impl TtsProviderId {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "elevenlabs" => Some(Self::ElevenLabs),
-            "openai" => Some(Self::OpenAi),
-            "google" => Some(Self::Google),
+            "openai" | "openai-tts" => Some(Self::OpenAi),
+            "google" | "google-tts" => Some(Self::Google),
             "piper" => Some(Self::Piper),
             "coqui" => Some(Self::Coqui),
             _ => None,
@@ -618,6 +618,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tts_provider_parse_accepts_ui_aliases() {
+        assert_eq!(
+            TtsProviderId::parse("openai-tts"),
+            Some(TtsProviderId::OpenAi)
+        );
+        assert_eq!(
+            TtsProviderId::parse("google-tts"),
+            Some(TtsProviderId::Google)
+        );
+    }
 
     #[test]
     fn test_default_tts_config() {

@@ -21,10 +21,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use {
-    anyhow::{Context, Result, bail},
-    serde::{Deserialize, Serialize},
-};
+use serde::{Deserialize, Serialize};
 
 use moltis_common::hooks::HookEvent;
 
@@ -77,17 +74,23 @@ pub struct ParsedHook {
 /// Parse a HOOK.md file content into metadata + body.
 ///
 /// Expects TOML frontmatter delimited by `+++` lines.
-pub fn parse_hook_md(content: &str, source_path: &Path) -> Result<ParsedHook> {
+pub fn parse_hook_md(content: &str, source_path: &Path) -> crate::Result<ParsedHook> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("+++") {
-        bail!("HOOK.md must start with +++ TOML frontmatter");
+        return Err(crate::Error::invalid_hook_metadata(
+            source_path,
+            "HOOK.md must start with +++ TOML frontmatter",
+        ));
     }
 
     // Find the closing +++
     let after_first = &trimmed[3..];
-    let end = after_first
-        .find("\n+++")
-        .context("missing closing +++ in HOOK.md frontmatter")?;
+    let end = after_first.find("\n+++").ok_or_else(|| {
+        crate::Error::invalid_hook_metadata(
+            source_path,
+            "missing closing +++ in HOOK.md frontmatter",
+        )
+    })?;
 
     let toml_str = after_first[..end].trim();
     let body_start = end + 4; // skip "\n+++"
@@ -96,8 +99,15 @@ pub fn parse_hook_md(content: &str, source_path: &Path) -> Result<ParsedHook> {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
 
-    let metadata: HookMetadata =
-        toml::from_str(toml_str).context("failed to parse HOOK.md TOML frontmatter")?;
+    let metadata: HookMetadata = toml::from_str(toml_str).map_err(|source| {
+        crate::Error::external(
+            format!(
+                "failed to parse HOOK.md TOML frontmatter at {}",
+                source_path.display()
+            ),
+            source,
+        )
+    })?;
 
     Ok(ParsedHook {
         metadata,

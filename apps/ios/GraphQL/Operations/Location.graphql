@@ -1,0 +1,7 @@
+mutation UpdateUserLocation($input: JSON!) {
+  agents {
+    updateIdentity(input: $input) {
+      ok
+    }
+  }
+}

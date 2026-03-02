@@ -9,6 +9,13 @@ body:
       value: |
         Help us improve the docs! Let us know what's missing, confusing, or wrong.
 
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight Checklist
+      options:
+        - label: If this docs issue happened during a chat session, I included relevant session context and redacted secrets
+
   - type: dropdown
     id: doc_type
     attributes:
@@ -55,3 +62,10 @@ body:
     attributes:
       label: Additional context
       description: Screenshots, links to related docs, or examples from other projects.
+
+  - type: textarea
+    id: session_context
+    attributes:
+      label: Chat session context (if applicable)
+      description: If this docs issue happened during a chat session, share the full session export from the chat session UI and include as much context as possible. Redact API keys, private keys, tokens, passwords, and personal/confidential data.
+      render: markdown

@@ -1,0 +1,109 @@
+---
+# ── System user ──────────────────────────────────────────────
+- name: Create moltis-courier system user
+  ansible.builtin.user:
+    name: moltis-courier
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+# ── Config directory ─────────────────────────────────────────
+- name: Create config directory
+  ansible.builtin.file:
+    path: /etc/moltis-courier
+    state: directory
+    owner: moltis-courier
+    group: moltis-courier
+    mode: "0750"
+
+# ── Binary ───────────────────────────────────────────────────
+- name: Upload courier binary
+  ansible.builtin.copy:
+    src: "{{ courier_binary_path }}"
+    dest: /usr/local/bin/moltis-courier
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart courier
+
+# ── .p8 key ──────────────────────────────────────────────────
+- name: Upload .p8 key
+  ansible.builtin.copy:
+    src: "{{ courier_p8_key_path }}"
+    dest: /etc/moltis-courier/AuthKey.p8
+    owner: moltis-courier
+    group: moltis-courier
+    mode: "0600"
+  notify: Restart courier
+
+# ── Environment file ─────────────────────────────────────────
+- name: Write environment file
+  ansible.builtin.template:
+    src: moltis-courier.env.j2
+    dest: /etc/moltis-courier/env
+    owner: moltis-courier
+    group: moltis-courier
+    mode: "0600"
+  notify: Restart courier
+
+# ── Systemd unit ─────────────────────────────────────────────
+- name: Install systemd service
+  ansible.builtin.template:
+    src: moltis-courier.service.j2
+    dest: /etc/systemd/system/moltis-courier.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart courier
+
+- name: Enable and start courier
+  ansible.builtin.systemd:
+    name: moltis-courier
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ── Caddy ────────────────────────────────────────────────────
+- name: Install Caddy apt prerequisites
+  ansible.builtin.apt:
+    name:
+      - debian-keyring
+      - debian-archive-keyring
+      - apt-transport-https
+      - curl
+    state: present
+    update_cache: true
+
+- name: Add Caddy GPG key
+  ansible.builtin.get_url:
+    url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+    dest: /usr/share/keyrings/caddy-stable-archive-keyring.asc
+    mode: "0644"
+
+- name: Add Caddy apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.asc] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main"
+    filename: caddy-stable
+    state: present
+
+- name: Install Caddy
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+    update_cache: true
+
+- name: Write Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: root
+    mode: "0644"
+    validate: caddy validate --config %s --adapter caddyfile
+  notify: Reload Caddy
+
+- name: Enable and start Caddy
+  ansible.builtin.systemd:
+    name: caddy
+    enabled: true
+    state: started

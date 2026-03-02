@@ -10,10 +10,14 @@
 use std::path::Path;
 
 use {
-    anyhow::{Context, Result},
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     tracing::{debug, info},
+};
+
+use crate::{
+    Result,
+    error::{Context, Error},
 };
 
 /// Metadata about a cached tool image.
@@ -132,7 +136,10 @@ impl ImageBuilder for DockerImageBuilder {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("docker build failed for {tag}: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "docker build failed for {tag}: {}",
+                stderr.trim()
+            )));
         }
 
         info!(tag, "tool image built successfully");
@@ -187,7 +194,9 @@ impl ImageBuilder for DockerImageBuilder {
     async fn remove_cached(&self, tag: &str) -> Result<()> {
         // Only allow removing moltis-cache images.
         if !tag.starts_with("moltis-cache/") {
-            anyhow::bail!("refusing to remove non-cache image: {tag}");
+            return Err(Error::message(format!(
+                "refusing to remove non-cache image: {tag}"
+            )));
         }
 
         let output = tokio::process::Command::new("docker")
@@ -198,7 +207,10 @@ impl ImageBuilder for DockerImageBuilder {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("docker rmi failed for {tag}: {}", stderr.trim());
+            return Err(Error::message(format!(
+                "docker rmi failed for {tag}: {}",
+                stderr.trim()
+            )));
         }
 
         info!(tag, "removed cached image");

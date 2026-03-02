@@ -1,4 +1,4 @@
-/// Agent tools for memory search and retrieval.
+/// Agent tools for memory search, retrieval, and persistence.
 use std::sync::Arc;
 
 use {async_trait::async_trait, moltis_agents::tool_registry::AgentTool, serde_json::json};
@@ -139,6 +139,68 @@ impl AgentTool for MemoryGetTool {
     }
 }
 
+/// Tool: save content to long-term memory files.
+pub struct MemorySaveTool {
+    manager: Arc<MemoryManager>,
+}
+
+impl MemorySaveTool {
+    pub fn new(manager: Arc<MemoryManager>) -> Self {
+        Self { manager }
+    }
+}
+
+#[async_trait]
+impl AgentTool for MemorySaveTool {
+    fn name(&self) -> &str {
+        "memory_save"
+    }
+
+    fn description(&self) -> &str {
+        "Save content to long-term memory. Writes to MEMORY.md or memory/<name>.md. Content persists across sessions and is searchable via memory_search."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The content to save to memory"
+                },
+                "file": {
+                    "type": "string",
+                    "description": "Target file: MEMORY.md, memory.md, or memory/<name>.md",
+                    "default": "MEMORY.md"
+                },
+                "append": {
+                    "type": "boolean",
+                    "description": "Append to existing file (true) or overwrite (false)",
+                    "default": true
+                }
+            },
+            "required": ["content"]
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let content = params["content"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing 'content' parameter"))?;
+        let file = params["file"].as_str().unwrap_or("MEMORY.md");
+        let append = params["append"].as_bool().unwrap_or(true);
+
+        use moltis_agents::memory_writer::MemoryWriter;
+        let result = self.manager.write_memory(file, content, append).await?;
+
+        Ok(json!({
+            "saved": true,
+            "path": file,
+            "bytes_written": result.bytes_written,
+        }))
+    }
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -188,9 +250,14 @@ mod tests {
         }
     }
 
+    /// Set up a memory manager in a temporary directory.
+    ///
+    /// Returns the Arc'd manager, the TempDir handle, and the data_dir path
+    /// (which is `tmp.path()` — the root for MEMORY.md and memory/).
     async fn setup_manager() -> (Arc<MemoryManager>, TempDir) {
         let tmp = TempDir::new().unwrap();
-        let mem_dir = tmp.path().join("memory");
+        let data_dir = tmp.path().to_path_buf();
+        let mem_dir = data_dir.join("memory");
         std::fs::create_dir_all(&mem_dir).unwrap();
 
         let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -198,7 +265,8 @@ mod tests {
 
         let config = MemoryConfig {
             db_path: ":memory:".into(),
-            memory_dirs: vec![mem_dir],
+            data_dir: Some(data_dir),
+            memory_dirs: vec![tmp.path().join("MEMORY.md"), mem_dir],
             chunk_size: 50,
             chunk_overlap: 10,
             vector_weight: 0.7,
@@ -385,6 +453,265 @@ mod tests {
         assert_eq!(
             retrieved_text, original_text,
             "round-trip text should match original"
+        );
+    }
+
+    // ---- MemorySaveTool tests ----
+
+    #[test]
+    fn test_memory_save_tool_schema() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (manager, _tmp) = rt.block_on(setup_manager());
+        let tool = MemorySaveTool::new(manager);
+        assert_eq!(tool.name(), "memory_save");
+        let schema = tool.parameters_schema();
+        assert!(schema["properties"]["content"].is_object());
+        assert!(schema["properties"]["file"].is_object());
+        assert!(schema["properties"]["append"].is_object());
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("content"))
+        );
+    }
+
+    /// Default append mode: two writes produce both contents in the file.
+    #[tokio::test]
+    async fn test_memory_save_append_default() {
+        let (manager, tmp) = setup_manager().await;
+        let data_dir = tmp.path().to_path_buf();
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+
+        let r1 = tool
+            .execute(json!({ "content": "First memory about rust." }))
+            .await
+            .unwrap();
+        assert_eq!(r1["saved"], json!(true));
+        assert_eq!(r1["path"], json!("MEMORY.md"));
+
+        let r2 = tool
+            .execute(json!({ "content": "Second memory about database." }))
+            .await
+            .unwrap();
+        assert_eq!(r2["saved"], json!(true));
+
+        let content = std::fs::read_to_string(data_dir.join("MEMORY.md")).unwrap();
+        assert!(content.contains("First memory"), "should have first write");
+        assert!(
+            content.contains("Second memory"),
+            "should have second write"
+        );
+    }
+
+    /// Overwrite mode: second write replaces the first.
+    #[tokio::test]
+    async fn test_memory_save_overwrite() {
+        let (manager, tmp) = setup_manager().await;
+        let data_dir = tmp.path().to_path_buf();
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+
+        tool.execute(json!({ "content": "Original content about rust." }))
+            .await
+            .unwrap();
+
+        tool.execute(json!({
+            "content": "Replaced content about database.",
+            "append": false
+        }))
+        .await
+        .unwrap();
+
+        let content = std::fs::read_to_string(data_dir.join("MEMORY.md")).unwrap();
+        assert!(
+            !content.contains("Original"),
+            "overwrite should remove original"
+        );
+        assert!(content.contains("Replaced"), "overwrite should have new");
+    }
+
+    /// Custom file under memory/ subdirectory.
+    #[tokio::test]
+    async fn test_memory_save_custom_file() {
+        let (manager, tmp) = setup_manager().await;
+        let data_dir = tmp.path().to_path_buf();
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+
+        let result = tool
+            .execute(json!({
+                "content": "Notes from 2024-01-15 about cooking.",
+                "file": "memory/2024-01-15.md"
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["saved"], json!(true));
+        assert_eq!(result["path"], json!("memory/2024-01-15.md"));
+
+        let content =
+            std::fs::read_to_string(data_dir.join("memory").join("2024-01-15.md")).unwrap();
+        assert!(content.contains("Notes from 2024-01-15"));
+    }
+
+    /// Auto-creates memory/ directory if it doesn't exist.
+    #[tokio::test]
+    async fn test_memory_save_creates_memory_dir() {
+        let (manager, tmp) = setup_manager().await;
+        let data_dir = tmp.path().to_path_buf();
+        // Remove the memory dir that setup_manager created
+        std::fs::remove_dir_all(data_dir.join("memory")).unwrap();
+        assert!(!data_dir.join("memory").exists());
+
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        tool.execute(json!({
+            "content": "Content for new dir.",
+            "file": "memory/notes.md"
+        }))
+        .await
+        .unwrap();
+
+        assert!(data_dir.join("memory").join("notes.md").exists());
+    }
+
+    /// Re-indexes after write so content is immediately searchable.
+    #[tokio::test]
+    async fn test_memory_save_reindexes() {
+        let (manager, _tmp) = setup_manager().await;
+        let save_tool = MemorySaveTool::new(Arc::clone(&manager));
+        let search_tool = MemorySearchTool::new(Arc::clone(&manager));
+
+        save_tool
+            .execute(json!({
+                "content": "The cooking recipe uses garlic and olive oil.",
+                "file": "memory/recipe.md"
+            }))
+            .await
+            .unwrap();
+
+        let results = search_tool
+            .execute(json!({ "query": "cooking", "limit": 5 }))
+            .await
+            .unwrap();
+
+        let items = results["results"].as_array().unwrap();
+        assert!(!items.is_empty(), "saved content should be searchable");
+        assert!(
+            items[0]["text"].as_str().unwrap().contains("cooking"),
+            "search should find the saved text"
+        );
+    }
+
+    /// Path traversal attempts are rejected.
+    #[tokio::test]
+    async fn test_memory_save_rejects_path_traversal() {
+        let (manager, _tmp) = setup_manager().await;
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+
+        for bad_path in &[
+            "../etc/passwd",
+            "memory/../../../etc/passwd",
+            "memory/../../secret.md",
+        ] {
+            let result = tool
+                .execute(json!({ "content": "test", "file": bad_path }))
+                .await;
+            assert!(result.is_err(), "should reject path traversal: {bad_path}");
+        }
+    }
+
+    /// Absolute paths are rejected.
+    #[tokio::test]
+    async fn test_memory_save_rejects_absolute_paths() {
+        let (manager, _tmp) = setup_manager().await;
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+
+        let result = tool
+            .execute(json!({ "content": "test", "file": "/etc/passwd" }))
+            .await;
+        assert!(result.is_err(), "should reject absolute paths");
+    }
+
+    /// Invalid file names are rejected.
+    #[tokio::test]
+    async fn test_memory_save_rejects_invalid_names() {
+        let (manager, _tmp) = setup_manager().await;
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+
+        let invalid = &[
+            "memory/notes.txt",     // wrong extension
+            "memory/.md",           // empty stem
+            "memory/a b c.md",      // spaces in name
+            "memory/sub/nested.md", // nested subdirectory
+            "random.md",            // not MEMORY.md or memory/
+            "foo/bar.md",           // not in allowed paths
+        ];
+
+        for name in invalid {
+            let result = tool
+                .execute(json!({ "content": "test", "file": name }))
+                .await;
+            assert!(result.is_err(), "should reject invalid name: {name}");
+        }
+    }
+
+    /// Missing content parameter returns an error.
+    #[tokio::test]
+    async fn test_memory_save_missing_content() {
+        let (manager, _tmp) = setup_manager().await;
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+
+        let result = tool.execute(json!({})).await;
+        assert!(result.is_err(), "missing content should produce an error");
+    }
+
+    /// Content exceeding the size limit is rejected.
+    #[tokio::test]
+    async fn test_memory_save_content_size_limit() {
+        let (manager, _tmp) = setup_manager().await;
+        let tool = MemorySaveTool::new(Arc::clone(&manager));
+
+        // 50 KB limit is enforced by MemoryManager's MemoryWriter impl
+        let big = "x".repeat(50 * 1024 + 1);
+        let result = tool.execute(json!({ "content": big })).await;
+        assert!(result.is_err(), "oversized content should be rejected");
+
+        let at_limit = "x".repeat(50 * 1024);
+        let result = tool.execute(json!({ "content": at_limit })).await;
+        assert!(result.is_ok(), "content at limit should succeed");
+    }
+
+    /// Full round-trip: save → search → get → verify text matches.
+    #[tokio::test]
+    async fn test_memory_save_round_trip() {
+        let (manager, _tmp) = setup_manager().await;
+        let save_tool = MemorySaveTool::new(Arc::clone(&manager));
+        let search_tool = MemorySearchTool::new(Arc::clone(&manager));
+        let get_tool = MemoryGetTool::new(Arc::clone(&manager));
+
+        let text = "Music from the jazz era is deeply expressive and soulful.";
+        save_tool
+            .execute(json!({ "content": text, "file": "memory/jazz.md" }))
+            .await
+            .unwrap();
+
+        // Search
+        let search_result = search_tool
+            .execute(json!({ "query": "music", "limit": 1 }))
+            .await
+            .unwrap();
+        let results = search_result["results"].as_array().unwrap();
+        assert!(!results.is_empty(), "saved content should be searchable");
+        let chunk_id = results[0]["chunk_id"].as_str().unwrap();
+
+        // Get
+        let get_result = get_tool
+            .execute(json!({ "chunk_id": chunk_id }))
+            .await
+            .unwrap();
+        let retrieved = get_result["text"].as_str().unwrap();
+        assert!(
+            retrieved.contains("jazz era"),
+            "round-trip text should contain saved content, got: {retrieved}"
         );
     }
 }

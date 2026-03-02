@@ -1,0 +1,27 @@
+{
+  "schemaNamespace": "MoltisAPI",
+  "input": {
+    "operationSearchPaths": [
+      "GraphQL/Operations/**/*.graphql"
+    ],
+    "schemaSearchPaths": [
+      "GraphQL/Schema/**/*.graphqls"
+    ]
+  },
+  "output": {
+    "testMocks": {
+      "none": {}
+    },
+    "schemaTypes": {
+      "path": "Sources/GraphQL/Generated/MoltisAPI",
+      "moduleType": {
+        "embeddedInTarget": {
+          "name": "Moltis"
+        }
+      }
+    },
+    "operations": {
+      "inSchemaModule": {}
+    }
+  }
+}
