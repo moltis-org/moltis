@@ -260,6 +260,39 @@ impl ChannelEventSink for GatewayChannelEventSink {
             // user activity as a heuristic and mark prior session history seen.
             state.services.session.mark_seen(&session_key).await;
 
+            // If the message is a thread reply, fetch prior thread messages
+            // for context injection so the LLM sees the conversation history.
+            let thread_context = if let Some(ref thread_id) = reply_to.message_id
+                && let Some(ref reg) = state.services.channel_registry
+            {
+                match reg
+                    .fetch_thread_messages(&reply_to.account_id, &reply_to.chat_id, thread_id, 20)
+                    .await
+                {
+                    Ok(msgs) if !msgs.is_empty() => {
+                        let history: Vec<serde_json::Value> = msgs
+                            .iter()
+                            .map(|m| {
+                                serde_json::json!({
+                                    "role": if m.is_bot { "assistant" } else { "user" },
+                                    "text": m.text,
+                                    "sender_id": m.sender_id,
+                                    "timestamp": m.timestamp,
+                                })
+                            })
+                            .collect();
+                        Some(history)
+                    },
+                    Ok(_) => None,
+                    Err(e) => {
+                        debug!("failed to fetch thread context: {e}");
+                        None
+                    },
+                }
+            } else {
+                None
+            };
+
             let chat = state.chat().await;
             let mut params = serde_json::json!({
                 "text": effective_text,
@@ -269,6 +302,11 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 // starts executing this message (after semaphore acquire).
                 "_channel_reply_target": &reply_to,
             });
+
+            // Attach thread context if available.
+            if let Some(thread_history) = thread_context {
+                params["_thread_context"] = serde_json::json!(thread_history);
+            }
             // Thread saved voice audio filename so chat.rs persists the audio path.
             if let Some(ref audio_filename) = meta.audio_filename {
                 params["_audio_filename"] = serde_json::json!(audio_filename);
@@ -516,6 +554,34 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 .unwrap_or(false),
             Err(_) => false,
         }
+    }
+
+    async fn dispatch_interaction(
+        &self,
+        callback_data: &str,
+        reply_to: ChannelReplyTarget,
+    ) -> ChannelResult<String> {
+        // Map callback_data prefixes to slash-command text, following the same
+        // convention used by Telegram's handle_callback_query.
+        let cmd_text = if let Some(n) = callback_data.strip_prefix("sessions_switch:") {
+            format!("sessions {n}")
+        } else if let Some(n) = callback_data.strip_prefix("agent_switch:") {
+            format!("agent {n}")
+        } else if let Some(n) = callback_data.strip_prefix("model_switch:") {
+            format!("model {n}")
+        } else if let Some(val) = callback_data.strip_prefix("sandbox_toggle:") {
+            format!("sandbox {val}")
+        } else if let Some(n) = callback_data.strip_prefix("sandbox_image:") {
+            format!("sandbox image {n}")
+        } else if let Some(provider) = callback_data.strip_prefix("model_provider:") {
+            format!("model provider:{provider}")
+        } else {
+            return Err(ChannelError::invalid_input(format!(
+                "unknown interaction callback: {callback_data}"
+            )));
+        };
+
+        self.dispatch_command(&cmd_text, reply_to).await
     }
 
     async fn update_location(
