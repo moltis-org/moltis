@@ -240,9 +240,12 @@ pub fn channel_webhook_verifier_rejects_empty_signature(verifier: &dyn ChannelWe
         result.is_err(),
         "verifier must reject requests without signature headers"
     );
-    match result.unwrap_err() {
-        ChannelWebhookRejection::BadSignature(_) | ChannelWebhookRejection::MissingHeaders(_) => {},
-        other => panic!("expected BadSignature or MissingHeaders, got: {other}"),
+    match result {
+        Err(
+            ChannelWebhookRejection::BadSignature(_) | ChannelWebhookRejection::MissingHeaders(_),
+        ) => {},
+        Err(other) => panic!("expected BadSignature or MissingHeaders, got: {other}"),
+        Ok(_) => panic!("verifier must reject requests without signature headers"),
     }
 }
 
@@ -257,10 +260,7 @@ pub fn channel_webhook_verifier_rejects_bad_signature(
         "verifier must reject requests with bad signatures"
     );
     assert!(
-        matches!(
-            result.unwrap_err(),
-            ChannelWebhookRejection::BadSignature(_)
-        ),
+        matches!(result, Err(ChannelWebhookRejection::BadSignature(_))),
         "rejection must be BadSignature"
     );
 }
