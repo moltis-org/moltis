@@ -207,6 +207,7 @@ pub struct MoltisConfig {
     pub voice: VoiceConfig,
     pub cron: CronConfig,
     pub caldav: CalDavConfig,
+    pub webhooks: WebhooksConfig,
     /// Environment variables injected into the Moltis process at startup.
     /// Useful for API keys in Docker where you can't easily set env vars.
     /// Process env vars take precedence (existing vars are not overwritten).
@@ -904,6 +905,41 @@ impl Default for CronConfig {
         Self {
             rate_limit_max: 10,
             rate_limit_window_secs: 60,
+        }
+    }
+}
+
+/// Channel webhook middleware configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebhooksConfig {
+    /// Per-account rate limiting settings.
+    pub rate_limit: WebhookRateLimitConfig,
+}
+
+/// Rate limiting configuration for channel webhooks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebhookRateLimitConfig {
+    /// Whether rate limiting is enabled (default: true).
+    pub enabled: bool,
+    /// Override max requests per minute per account. When set, overrides the
+    /// channel's built-in default. Leave unset to use per-channel defaults
+    /// (Slack: 30/min, Teams: 60/min).
+    pub requests_per_minute: Option<u32>,
+    /// Override burst allowance per account.
+    pub burst: Option<u32>,
+    /// Interval in seconds between stale bucket cleanup (default: 300).
+    pub cleanup_interval_secs: u64,
+}
+
+impl Default for WebhookRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            requests_per_minute: None,
+            burst: None,
+            cleanup_interval_secs: 300,
         }
     }
 }

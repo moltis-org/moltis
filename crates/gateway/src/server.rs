@@ -3616,50 +3616,112 @@ pub async fn prepare_gateway(
 
     let mut app = finalize_gateway_app(router, app_state, config.server.http_request_logs);
 
-    app = app.route(
-        "/api/channels/msteams/{account_id}/webhook",
-        axum::routing::post(
-            move |axum::extract::Path(account_id): axum::extract::Path<String>,
-                  axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
-                  Json(payload): Json<serde_json::Value>| {
-                let teams_plugin = Arc::clone(&msteams_webhook_plugin);
-                async move {
-                    let secret = query.get("secret").map(String::as_str);
-                    let result = {
-                        let plugin = teams_plugin.read().await;
-                        plugin.ingest_activity(&account_id, payload, secret).await
-                    };
-                    match result {
-                        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))),
-                        Err(e) => {
-                            let msg = e.to_string();
-                            if msg.contains("invalid Teams webhook secret") {
-                                (
-                                    StatusCode::UNAUTHORIZED,
-                                    Json(serde_json::json!({ "ok": false, "error": msg })),
-                                )
-                            } else if msg.contains("unknown Teams account") {
-                                (
-                                    StatusCode::NOT_FOUND,
-                                    Json(serde_json::json!({ "ok": false, "error": msg })),
-                                )
-                            } else {
-                                (
-                                    StatusCode::BAD_REQUEST,
-                                    Json(serde_json::json!({ "ok": false, "error": msg })),
-                                )
-                            }
-                        },
+    {
+        let teams_plugin_for_webhook = Arc::clone(&msteams_webhook_plugin);
+        let state_for_teams_webhook = Arc::clone(&state);
+        app = app.route(
+            "/api/channels/msteams/{account_id}/webhook",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let teams_plugin = Arc::clone(&teams_plugin_for_webhook);
+                    let gw_state = Arc::clone(&state_for_teams_webhook);
+                    async move {
+                        // Get the verifier from the plugin.
+                        let verifier = {
+                            let plugin = teams_plugin.read().await;
+                            plugin.channel_webhook_verifier(&account_id)
+                        };
+                        let Some(verifier) = verifier else {
+                            return (
+                                StatusCode::NOT_FOUND,
+                                Json(serde_json::json!({ "ok": false, "error": "unknown Teams account" })),
+                            )
+                                .into_response();
+                        };
+
+                        // Inject query-param secret as header for the verifier.
+                        let mut merged_headers = headers;
+                        if let Some(secret) = query.get("secret")
+                            && let Ok(val) = secret.parse()
+                        {
+                            merged_headers.insert("x-moltis-webhook-secret", val);
+                        }
+
+                        // Run the middleware pipeline.
+                        match crate::channel_webhook_middleware::channel_webhook_gate(
+                            verifier.as_ref(),
+                            &gw_state.channel_webhook_dedup,
+                            &gw_state.channel_webhook_rate_limiter,
+                            &account_id,
+                            &merged_headers,
+                            &body,
+                        ) {
+                            Err(rejection) => {
+                                crate::channel_webhook_middleware::rejection_into_response(rejection)
+                            },
+                            Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => (
+                                StatusCode::OK,
+                                Json(serde_json::json!({ "ok": true, "deduplicated": true })),
+                            )
+                                .into_response(),
+                            Ok((verified, moltis_channels::ChannelWebhookDedupeResult::New)) => {
+                                // Parse verified body and dispatch.
+                                let payload: serde_json::Value =
+                                    match serde_json::from_slice(&verified.body) {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            return (
+                                                StatusCode::BAD_REQUEST,
+                                                Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+                                            )
+                                                .into_response();
+                                        },
+                                    };
+                                let result = {
+                                    let plugin = teams_plugin.read().await;
+                                    plugin
+                                        .ingest_verified_activity(&account_id, payload)
+                                        .await
+                                };
+                                match result {
+                                    Ok(()) => (
+                                        StatusCode::OK,
+                                        Json(serde_json::json!({ "ok": true })),
+                                    )
+                                        .into_response(),
+                                    Err(e) => {
+                                        let msg = e.to_string();
+                                        if msg.contains("unknown Teams account") {
+                                            (
+                                                StatusCode::NOT_FOUND,
+                                                Json(serde_json::json!({ "ok": false, "error": msg })),
+                                            )
+                                                .into_response()
+                                        } else {
+                                            (
+                                                StatusCode::BAD_REQUEST,
+                                                Json(serde_json::json!({ "ok": false, "error": msg })),
+                                            )
+                                                .into_response()
+                                        }
+                                    },
+                                }
+                            },
+                        }
                     }
-                }
-            },
-        ),
-    );
+                },
+            ),
+        );
+    }
 
     #[cfg(feature = "slack")]
     {
         // Slack Events API webhook — receives event callbacks.
         let slack_events_plugin = Arc::clone(&slack_webhook_plugin);
+        let state_for_slack_events = Arc::clone(&state);
         app = app.route(
             "/api/channels/slack/{account_id}/events",
             axum::routing::post(
@@ -3667,44 +3729,72 @@ pub async fn prepare_gateway(
                       headers: axum::http::HeaderMap,
                       body: axum::body::Bytes| {
                     let plugin = Arc::clone(&slack_events_plugin);
+                    let gw_state = Arc::clone(&state_for_slack_events);
                     async move {
-                        let timestamp = headers
-                            .get("x-slack-request-timestamp")
-                            .and_then(|v| v.to_str().ok())
-                            .unwrap_or("");
-                        let signature = headers
-                            .get("x-slack-signature")
-                            .and_then(|v| v.to_str().ok())
-                            .unwrap_or("");
-
-                        let result = {
+                        // Get the verifier from the plugin.
+                        let verifier = {
                             let p = plugin.read().await;
-                            p.ingest_webhook(&account_id, &body, timestamp, signature)
-                                .await
+                            p.channel_webhook_verifier(&account_id)
                         };
-                        match result {
-                            Ok(Some(challenge)) => (
+                        let Some(verifier) = verifier else {
+                            return (
+                                StatusCode::NOT_FOUND,
+                                Json(serde_json::json!({ "ok": false, "error": "unknown Slack account" })),
+                            )
+                                .into_response();
+                        };
+
+                        // Run the middleware pipeline.
+                        match crate::channel_webhook_middleware::channel_webhook_gate(
+                            verifier.as_ref(),
+                            &gw_state.channel_webhook_dedup,
+                            &gw_state.channel_webhook_rate_limiter,
+                            &account_id,
+                            &headers,
+                            &body,
+                        ) {
+                            Err(rejection) => {
+                                crate::channel_webhook_middleware::rejection_into_response(rejection)
+                            },
+                            Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => (
                                 StatusCode::OK,
-                                Json(serde_json::json!({ "challenge": challenge })),
-                            ),
-                            Ok(None) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))),
-                            Err(e) => {
-                                let msg = e.to_string();
-                                if msg.contains("invalid Slack webhook signature") {
-                                    (
-                                        StatusCode::UNAUTHORIZED,
-                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                                Json(serde_json::json!({ "ok": true, "deduplicated": true })),
+                            )
+                                .into_response(),
+                            Ok((verified, moltis_channels::ChannelWebhookDedupeResult::New)) => {
+                                // Dispatch to Slack plugin with verified body.
+                                let result = {
+                                    let p = plugin.read().await;
+                                    p.ingest_verified_webhook(&account_id, &verified.body)
+                                        .await
+                                };
+                                match result {
+                                    Ok(Some(challenge)) => (
+                                        StatusCode::OK,
+                                        Json(serde_json::json!({ "challenge": challenge })),
                                     )
-                                } else if msg.contains("unknown") {
-                                    (
-                                        StatusCode::NOT_FOUND,
-                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                                        .into_response(),
+                                    Ok(None) => (
+                                        StatusCode::OK,
+                                        Json(serde_json::json!({ "ok": true })),
                                     )
-                                } else {
-                                    (
-                                        StatusCode::BAD_REQUEST,
-                                        Json(serde_json::json!({ "ok": false, "error": msg })),
-                                    )
+                                        .into_response(),
+                                    Err(e) => {
+                                        let msg = e.to_string();
+                                        if msg.contains("unknown") {
+                                            (
+                                                StatusCode::NOT_FOUND,
+                                                Json(serde_json::json!({ "ok": false, "error": msg })),
+                                            )
+                                                .into_response()
+                                        } else {
+                                            (
+                                                StatusCode::BAD_REQUEST,
+                                                Json(serde_json::json!({ "ok": false, "error": msg })),
+                                            )
+                                                .into_response()
+                                        }
+                                    },
                                 }
                             },
                         }
@@ -3715,6 +3805,7 @@ pub async fn prepare_gateway(
 
         // Slack interaction webhook — receives button click payloads.
         let slack_interact_plugin = Arc::clone(&slack_webhook_plugin);
+        let state_for_slack_interact = Arc::clone(&state);
         app = app.route(
             "/api/channels/slack/{account_id}/interactions",
             axum::routing::post(
@@ -3722,35 +3813,59 @@ pub async fn prepare_gateway(
                       headers: axum::http::HeaderMap,
                       body: axum::body::Bytes| {
                     let plugin = Arc::clone(&slack_interact_plugin);
+                    let gw_state = Arc::clone(&state_for_slack_interact);
                     async move {
-                        let timestamp = headers
-                            .get("x-slack-request-timestamp")
-                            .and_then(|v| v.to_str().ok())
-                            .unwrap_or("");
-                        let signature = headers
-                            .get("x-slack-signature")
-                            .and_then(|v| v.to_str().ok())
-                            .unwrap_or("");
-
-                        let result = {
+                        // Get the verifier from the plugin.
+                        let verifier = {
                             let p = plugin.read().await;
-                            p.ingest_interaction_webhook(&account_id, &body, timestamp, signature)
-                                .await
+                            p.channel_webhook_verifier(&account_id)
                         };
-                        match result {
-                            Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))),
-                            Err(e) => {
-                                let msg = e.to_string();
-                                if msg.contains("invalid Slack webhook signature") {
-                                    (
-                                        StatusCode::UNAUTHORIZED,
-                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                        let Some(verifier) = verifier else {
+                            return (
+                                StatusCode::NOT_FOUND,
+                                Json(serde_json::json!({ "ok": false, "error": "unknown Slack account" })),
+                            )
+                                .into_response();
+                        };
+
+                        // Run the middleware pipeline.
+                        match crate::channel_webhook_middleware::channel_webhook_gate(
+                            verifier.as_ref(),
+                            &gw_state.channel_webhook_dedup,
+                            &gw_state.channel_webhook_rate_limiter,
+                            &account_id,
+                            &headers,
+                            &body,
+                        ) {
+                            Err(rejection) => {
+                                crate::channel_webhook_middleware::rejection_into_response(rejection)
+                            },
+                            Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => (
+                                StatusCode::OK,
+                                Json(serde_json::json!({ "ok": true, "deduplicated": true })),
+                            )
+                                .into_response(),
+                            Ok((verified, moltis_channels::ChannelWebhookDedupeResult::New)) => {
+                                // Dispatch to Slack plugin with verified body.
+                                let result = {
+                                    let p = plugin.read().await;
+                                    p.ingest_verified_interaction_webhook(
+                                        &account_id,
+                                        &verified.body,
                                     )
-                                } else {
-                                    (
+                                    .await
+                                };
+                                match result {
+                                    Ok(()) => (
+                                        StatusCode::OK,
+                                        Json(serde_json::json!({ "ok": true })),
+                                    )
+                                        .into_response(),
+                                    Err(e) => (
                                         StatusCode::BAD_REQUEST,
-                                        Json(serde_json::json!({ "ok": false, "error": msg })),
+                                        Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
                                     )
+                                        .into_response(),
                                 }
                             },
                         }

@@ -227,3 +227,67 @@ pub async fn probe_started_account_returns_connected(plugin: &mut dyn ChannelPlu
     plugin.stop_account(id).await?;
     Ok(())
 }
+
+// ── Channel webhook verifier contracts ──────────────────────────────────────
+
+use crate::channel_webhook_middleware::{ChannelWebhookRejection, ChannelWebhookVerifier};
+
+/// A verifier must reject an empty body with no signature headers.
+pub fn channel_webhook_verifier_rejects_empty_signature(verifier: &dyn ChannelWebhookVerifier) {
+    let headers = http::HeaderMap::new();
+    let result = verifier.verify(&headers, b"{}");
+    assert!(
+        result.is_err(),
+        "verifier must reject requests without signature headers"
+    );
+    match result {
+        Err(
+            ChannelWebhookRejection::BadSignature(_) | ChannelWebhookRejection::MissingHeaders(_),
+        ) => {},
+        Err(other) => panic!("expected BadSignature or MissingHeaders, got: {other}"),
+        Ok(_) => panic!("verifier must reject requests without signature headers"),
+    }
+}
+
+/// A verifier must reject a body with an invalid/corrupted signature.
+pub fn channel_webhook_verifier_rejects_bad_signature(
+    verifier: &dyn ChannelWebhookVerifier,
+    headers_with_bad_sig: &http::HeaderMap,
+) {
+    let result = verifier.verify(headers_with_bad_sig, b"{\"text\":\"hello\"}");
+    assert!(
+        result.is_err(),
+        "verifier must reject requests with bad signatures"
+    );
+    assert!(
+        matches!(result, Err(ChannelWebhookRejection::BadSignature(_))),
+        "rejection must be BadSignature"
+    );
+}
+
+/// A verifier must produce a non-empty `channel_type()`.
+pub fn channel_webhook_verifier_has_channel_type(verifier: &dyn ChannelWebhookVerifier) {
+    let ct = verifier.channel_type();
+    assert!(
+        !ct.as_str().is_empty(),
+        "channel_type().as_str() must not be empty"
+    );
+}
+
+/// A verifier's `max_timestamp_age()` must be positive.
+pub fn channel_webhook_verifier_has_positive_max_age(verifier: &dyn ChannelWebhookVerifier) {
+    let age = verifier.max_timestamp_age();
+    assert!(
+        !age.is_zero(),
+        "max_timestamp_age() must be positive, got: {age:?}"
+    );
+}
+
+/// A verifier's `rate_policy()` must have a non-zero rate.
+pub fn channel_webhook_verifier_has_valid_rate_policy(verifier: &dyn ChannelWebhookVerifier) {
+    let policy = verifier.rate_policy();
+    assert!(
+        policy.max_requests_per_minute > 0,
+        "rate_policy().max_requests_per_minute must be > 0"
+    );
+}

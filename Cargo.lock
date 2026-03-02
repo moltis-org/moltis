@@ -5912,6 +5912,8 @@ name = "moltis-channels"
 version = "0.10.6"
 dependencies = [
  "async-trait",
+ "bytes",
+ "http 1.4.0",
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
@@ -6275,6 +6277,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "bytes",
+ "http 1.4.0",
  "moltis-channels",
  "moltis-common",
  "moltis-metrics",
@@ -6282,6 +6286,7 @@ dependencies = [
  "secrecy 0.8.0",
  "serde",
  "serde_json",
+ "subtle",
  "tokio",
  "tracing",
  "url",
@@ -6562,7 +6567,9 @@ version = "0.10.6"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "bytes",
  "hmac",
+ "http 1.4.0",
  "moltis-channels",
  "moltis-common",
  "moltis-metrics",

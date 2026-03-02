@@ -507,6 +507,18 @@ fn build_schema_map() -> KnownKeys {
             ])),
         ),
         (
+            "webhooks",
+            Struct(HashMap::from([(
+                "rate_limit",
+                Struct(HashMap::from([
+                    ("enabled", Leaf),
+                    ("requests_per_minute", Leaf),
+                    ("burst", Leaf),
+                    ("cleanup_interval_secs", Leaf),
+                ])),
+            )])),
+        ),
+        (
             "voice",
             Struct(HashMap::from([
                 (

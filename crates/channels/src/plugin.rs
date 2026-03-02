@@ -564,6 +564,15 @@ pub trait ChannelPlugin: Send + Sync {
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
         None
     }
+
+    /// Return the webhook verifier for this channel account, if this channel
+    /// uses HTTP webhooks. Channels that use polling/socket modes return `None`.
+    fn channel_webhook_verifier(
+        &self,
+        _account_id: &str,
+    ) -> Option<Box<dyn crate::channel_webhook_middleware::ChannelWebhookVerifier>> {
+        None
+    }
 }
 
 /// OTP challenge provider for channels that support self-approval.
