@@ -83,6 +83,7 @@ default = [
   "prometheus",
   "push-notifications",
   "qmd",
+  "slack",
   "tailscale",
   "tls",
   "trusted-network",
@@ -121,6 +122,7 @@ openclaw-import    = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-imp
 prometheus         = ["moltis-gateway/prometheus"]
 push-notifications = ["moltis-gateway/push-notifications", "moltis-web?/push-notifications"]
 qmd                = ["moltis-gateway/qmd"]
+slack              = ["moltis-gateway/slack"]
 tailscale          = ["moltis-gateway/tailscale", "moltis-web?/tailscale"]
 tls                = ["moltis-gateway/tls"]
 trusted-network    = ["moltis-gateway/trusted-network"]

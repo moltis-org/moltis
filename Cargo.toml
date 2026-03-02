@@ -36,6 +36,7 @@ default-members = [
   "crates/service-traits",
   "crates/sessions",
   "crates/skills",
+  "crates/slack",
   "crates/swift-bridge",
   "crates/tailscale",
   "crates/telegram",
@@ -85,6 +86,7 @@ members = [
   "crates/service-traits",
   "crates/sessions",
   "crates/skills",
+  "crates/slack",
   "crates/swift-bridge",
   "crates/tailscale",
   "crates/telegram",
@@ -173,6 +175,7 @@ genai        = "0.5"
 async-graphql      = "7"
 async-graphql-axum = "7"
 gix                = "0.78"
+hmac               = "0.12"
 llama-cpp-2        = "0.1"
 mockito            = "1.7"
 open               = "5.3"
@@ -181,6 +184,7 @@ regex              = "1"
 secrecy            = { features = ["serde"], version = "0.8" }
 serenity           = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
 sha2               = "0.10"
+slack-morphism     = { features = ["axum", "hyper"], version = "2.6" }
 sled               = "0.34"
 sysinfo            = "0.34"
 teloxide           = { features = ["macros"], version = "0.13" }
@@ -311,6 +315,7 @@ moltis-schema-export   = { path = "crates/schema-export" }
 moltis-service-traits  = { path = "crates/service-traits" }
 moltis-sessions        = { path = "crates/sessions" }
 moltis-skills          = { path = "crates/skills" }
+moltis-slack           = { path = "crates/slack" }
 moltis-swift-bridge    = { path = "crates/swift-bridge" }
 moltis-tailscale       = { path = "crates/tailscale" }
 moltis-telegram        = { path = "crates/telegram" }

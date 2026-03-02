@@ -1,18 +1,22 @@
+use std::sync::Arc;
+
 use {async_trait::async_trait, moltis_common::types::ReplyPayload, tokio::sync::mpsc};
 
-use crate::{Error, Result};
+use crate::{Error, Result, config_view::ChannelConfigView};
 
 // ── Channel type enum ───────────────────────────────────────────────────────
 
 /// Supported channel types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum ChannelType {
     Telegram,
     Whatsapp,
     #[serde(rename = "msteams")]
     MsTeams,
     Discord,
+    Slack,
 }
 
 impl ChannelType {
@@ -23,6 +27,7 @@ impl ChannelType {
             Self::Whatsapp => "whatsapp",
             Self::MsTeams => "msteams",
             Self::Discord => "discord",
+            Self::Slack => "slack",
         }
     }
 
@@ -33,6 +38,7 @@ impl ChannelType {
             Self::Whatsapp => "WhatsApp",
             Self::MsTeams => "Microsoft Teams",
             Self::Discord => "Discord",
+            Self::Slack => "Slack",
         }
     }
 }
@@ -52,11 +58,149 @@ impl std::str::FromStr for ChannelType {
             "whatsapp" => Ok(Self::Whatsapp),
             "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
             "discord" => Ok(Self::Discord),
+            "slack" => Ok(Self::Slack),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
         }
     }
+}
+
+impl ChannelType {
+    /// All known channel types.
+    pub const ALL: &[ChannelType] = &[
+        Self::Telegram,
+        Self::Whatsapp,
+        Self::MsTeams,
+        Self::Discord,
+        Self::Slack,
+    ];
+
+    /// Returns the static descriptor for this channel type.
+    #[must_use]
+    pub fn descriptor(&self) -> ChannelDescriptor {
+        match self {
+            Self::Telegram => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Telegram",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::Polling,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: true,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: true,
+                },
+            },
+            Self::Whatsapp => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "WhatsApp",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: true,
+                    supports_pairing: true,
+                    supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: false,
+                },
+            },
+            Self::MsTeams => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Microsoft Teams",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::Webhook,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: false,
+                    supports_reactions: false,
+                    supports_location: true,
+                },
+            },
+            Self::Discord => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Discord",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: true,
+                    supports_threads: true,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: false,
+                    supports_reactions: false,
+                    supports_location: true,
+                },
+            },
+            Self::Slack => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Slack",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::SocketMode,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: true,
+                    supports_threads: true,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: false,
+                    supports_reactions: true,
+                    supports_location: false,
+                },
+            },
+        }
+    }
+}
+
+// ── Channel capabilities ──────────────────────────────────────────────────
+
+/// How a channel receives inbound messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InboundMode {
+    /// Long-polling loop (Telegram).
+    Polling,
+    /// Persistent gateway/WebSocket connection (Discord, WhatsApp).
+    GatewayLoop,
+    /// Socket Mode connection (Slack).
+    SocketMode,
+    /// HTTP webhook endpoint (Microsoft Teams).
+    Webhook,
+}
+
+/// Static capability flags for a channel type.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ChannelCapabilities {
+    pub inbound_mode: InboundMode,
+    pub supports_outbound: bool,
+    pub supports_streaming: bool,
+    pub supports_interactive: bool,
+    pub supports_threads: bool,
+    pub supports_voice_ingest: bool,
+    pub supports_pairing: bool,
+    pub supports_otp: bool,
+    pub supports_reactions: bool,
+    pub supports_location: bool,
+}
+
+/// Full descriptor for a channel type, including capabilities.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChannelDescriptor {
+    pub channel_type: ChannelType,
+    pub display_name: &'static str,
+    pub capabilities: ChannelCapabilities,
 }
 
 // ── Channel events (pub/sub) ────────────────────────────────────────────────
@@ -79,6 +223,16 @@ pub enum ChannelEvent {
         channel_type: ChannelType,
         account_id: String,
         reason: String,
+    },
+    /// A reaction was added or removed on a channel message.
+    ReactionChange {
+        channel_type: ChannelType,
+        account_id: String,
+        chat_id: String,
+        message_id: String,
+        user_id: String,
+        emoji: String,
+        added: bool,
     },
     /// An OTP challenge was issued to a non-allowlisted DM user.
     OtpChallenge {
@@ -213,6 +367,17 @@ pub trait ChannelEventSink: Send + Sync {
         false
     }
 
+    /// Dispatch a button/menu interaction callback.
+    ///
+    /// Returns a response message to send back to the user.
+    async fn dispatch_interaction(
+        &self,
+        _callback_data: &str,
+        _reply_to: ChannelReplyTarget,
+    ) -> Result<String> {
+        Err(Error::unavailable("interactions not supported"))
+    }
+
     /// Dispatch an inbound message with attachments (images, files) to the chat session.
     ///
     /// This is used when a channel message contains both text and media (e.g., a
@@ -284,6 +449,60 @@ pub struct ChannelReplyTarget {
     pub message_id: Option<String>,
 }
 
+// ── Interactive messages ─────────────────────────────────────────────────────
+
+/// A clickable button in a channel message.
+#[derive(Debug, Clone)]
+pub struct InteractiveButton {
+    pub label: String,
+    pub callback_data: String,
+    pub style: ButtonStyle,
+}
+
+/// Visual style for interactive buttons.
+#[derive(Debug, Clone, Default)]
+pub enum ButtonStyle {
+    #[default]
+    Default,
+    Primary,
+    Danger,
+}
+
+/// A row of buttons.
+pub type ButtonRow = Vec<InteractiveButton>;
+
+/// A message with interactive button components.
+#[derive(Debug, Clone)]
+pub struct InteractiveMessage {
+    pub text: String,
+    pub button_rows: Vec<ButtonRow>,
+    pub replace_message_id: Option<String>,
+}
+
+// ── Thread context ──────────────────────────────────────────────────────────
+
+/// A single message from a thread conversation.
+#[derive(Debug, Clone)]
+pub struct ThreadMessage {
+    pub sender_id: String,
+    pub is_bot: bool,
+    pub text: String,
+    pub timestamp: String,
+}
+
+/// Fetch prior thread messages for context injection.
+#[async_trait]
+pub trait ChannelThreadContext: Send + Sync {
+    /// Fetch up to `limit` messages from the given thread.
+    async fn fetch_thread_messages(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        thread_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ThreadMessage>>;
+}
+
 /// Core channel plugin trait. Each messaging platform implements this.
 #[async_trait]
 pub trait ChannelPlugin: Send + Sync {
@@ -304,6 +523,51 @@ pub trait ChannelPlugin: Send + Sync {
 
     /// Get status adapter for health checks.
     fn status(&self) -> Option<&dyn ChannelStatus>;
+
+    /// Whether the given account is currently active.
+    fn has_account(&self, account_id: &str) -> bool;
+
+    /// List all active account IDs.
+    fn account_ids(&self) -> Vec<String>;
+
+    /// Get the typed config view for a specific account.
+    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
+
+    /// Update the in-memory config for an account without restarting.
+    ///
+    /// Accepts raw JSON because the store persists `Value`. Each plugin
+    /// deserializes into its concrete config type internally.
+    fn update_account_config(&self, account_id: &str, config: serde_json::Value) -> Result<()>;
+
+    /// Get a shared outbound sender for routing outside the plugin.
+    fn shared_outbound(&self) -> Arc<dyn ChannelOutbound>;
+
+    /// Get a shared streaming outbound sender for routing outside the plugin.
+    fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound>;
+
+    /// Get the raw JSON config for an account (for API status responses).
+    ///
+    /// Each plugin serializes its concrete config type. Returns `None` if the
+    /// account is not found.
+    fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Downcast to OTP provider if this channel supports OTP self-approval.
+    fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
+        None
+    }
+
+    /// Thread context provider for fetching prior thread messages.
+    fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        None
+    }
+}
+
+/// OTP challenge provider for channels that support self-approval.
+pub trait ChannelOtpProvider: Send + Sync {
+    /// List pending OTP challenges for the given account.
+    fn pending_otp_challenges(&self, account_id: &str) -> Vec<crate::otp::OtpChallengeInfo>;
 }
 
 /// Send messages to a channel.
@@ -367,6 +631,48 @@ pub trait ChannelOutbound: Send + Sync {
     ) -> Result<()> {
         self.send_text(account_id, to, text, reply_to).await
     }
+    /// Send an interactive message with buttons. Default: numbered text fallback.
+    async fn send_interactive(
+        &self,
+        account_id: &str,
+        to: &str,
+        message: &InteractiveMessage,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        // Default implementation: render buttons as numbered text lines.
+        let mut text = message.text.clone();
+        let mut idx = 1;
+        for row in &message.button_rows {
+            for btn in row {
+                text.push_str(&format!("\n{idx}. {}", btn.label));
+                idx += 1;
+            }
+        }
+        self.send_text(account_id, to, &text, reply_to).await
+    }
+
+    /// Add a reaction (emoji) to a message. No-op by default.
+    async fn add_reaction(
+        &self,
+        _account_id: &str,
+        _channel_id: &str,
+        _message_id: &str,
+        _emoji: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Remove a reaction (emoji) from a message. No-op by default.
+    async fn remove_reaction(
+        &self,
+        _account_id: &str,
+        _channel_id: &str,
+        _message_id: &str,
+        _emoji: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Send a native location pin to the channel.
     ///
     /// When `title` is provided, platforms that support it (e.g. Telegram) send
@@ -507,6 +813,7 @@ mod tests {
             ChannelType::Whatsapp,
             ChannelType::MsTeams,
             ChannelType::Discord,
+            ChannelType::Slack,
         ] {
             let json = serde_json::to_string(&ct).unwrap();
             let parsed: ChannelType = serde_json::from_str(&json).unwrap();
@@ -594,12 +901,49 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[tokio::test]
+    async fn default_add_reaction_is_noop() {
+        let out = DummyOutbound;
+        let result = out
+            .add_reaction("acct", "C123", "1234.5678", "thumbsup")
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn default_remove_reaction_is_noop() {
+        let out = DummyOutbound;
+        let result = out
+            .remove_reaction("acct", "C123", "1234.5678", "thumbsup")
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn reaction_change_event_serialization() {
+        let event = ChannelEvent::ReactionChange {
+            channel_type: ChannelType::Slack,
+            account_id: "slack1".into(),
+            chat_id: "C123".into(),
+            message_id: "1234.5678".into(),
+            user_id: "U456".into(),
+            emoji: "thumbsup".into(),
+            added: true,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "reaction_change");
+        assert_eq!(json["channel_type"], "slack");
+        assert_eq!(json["emoji"], "thumbsup");
+        assert_eq!(json["added"], true);
+    }
+
     #[test]
     fn channel_type_round_trip() {
         for (s, expected) in [
             ("telegram", ChannelType::Telegram),
             ("msteams", ChannelType::MsTeams),
             ("discord", ChannelType::Discord),
+            ("slack", ChannelType::Slack),
         ] {
             let parsed: ChannelType = s.parse().unwrap_or_else(|e| panic!("parse {s}: {e}"));
             assert_eq!(parsed, expected);
@@ -610,7 +954,7 @@ mod tests {
 
     #[test]
     fn channel_type_from_str_invalid() {
-        assert!("slack".parse::<ChannelType>().is_err());
+        assert!("foobar".parse::<ChannelType>().is_err());
         assert!("".parse::<ChannelType>().is_err());
     }
 
@@ -620,11 +964,70 @@ mod tests {
             ChannelType::Telegram,
             ChannelType::MsTeams,
             ChannelType::Discord,
+            ChannelType::Slack,
         ] {
             let json = serde_json::to_string(&ct).unwrap_or_else(|e| panic!("serialize: {e}"));
             let back: ChannelType =
                 serde_json::from_str(&json).unwrap_or_else(|e| panic!("deserialize: {e}"));
             assert_eq!(ct, back);
         }
+    }
+
+    #[test]
+    fn all_covers_every_variant() {
+        // If a new variant is added to ChannelType, this test forces updating ALL.
+        assert_eq!(ChannelType::ALL.len(), 5);
+        for ct in ChannelType::ALL {
+            // descriptor() must not panic
+            let desc = ct.descriptor();
+            assert_eq!(desc.channel_type, *ct);
+        }
+    }
+
+    #[test]
+    fn descriptor_returns_correct_display_names() {
+        assert_eq!(ChannelType::Telegram.descriptor().display_name, "Telegram");
+        assert_eq!(ChannelType::Whatsapp.descriptor().display_name, "WhatsApp");
+        assert_eq!(
+            ChannelType::MsTeams.descriptor().display_name,
+            "Microsoft Teams"
+        );
+        assert_eq!(ChannelType::Discord.descriptor().display_name, "Discord");
+        assert_eq!(ChannelType::Slack.descriptor().display_name, "Slack");
+    }
+
+    #[test]
+    fn descriptor_channel_type_matches() {
+        for ct in ChannelType::ALL {
+            let desc = ct.descriptor();
+            assert_eq!(
+                desc.channel_type, *ct,
+                "descriptor channel_type mismatch for {ct}"
+            );
+            assert_eq!(desc.display_name, ct.display_name());
+        }
+    }
+
+    #[test]
+    fn descriptor_serialization_does_not_panic() {
+        for ct in ChannelType::ALL {
+            let desc = ct.descriptor();
+            let json = serde_json::to_value(&desc)
+                .unwrap_or_else(|e| panic!("serialize descriptor for {ct}: {e}"));
+            assert_eq!(json["channel_type"], ct.as_str());
+            assert!(json["capabilities"]["inbound_mode"].is_string());
+        }
+    }
+
+    #[test]
+    fn inbound_mode_serialization() {
+        let json = serde_json::to_string(&InboundMode::Polling).unwrap();
+        assert_eq!(json, "\"polling\"");
+        let json = serde_json::to_string(&InboundMode::GatewayLoop).unwrap();
+        assert_eq!(json, "\"gateway_loop\"");
+        let json = serde_json::to_string(&InboundMode::SocketMode).unwrap();
+        assert_eq!(json, "\"socket_mode\"");
+        let json = serde_json::to_string(&InboundMode::Webhook).unwrap();
+        assert_eq!(json, "\"webhook\"");
     }
 }

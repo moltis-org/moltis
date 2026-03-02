@@ -16,6 +16,10 @@ use {
 
 static ASSETS: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/src/assets");
 
+// Fail compilation with a clear message if style.css hasn't been generated.
+// Run `just build-css` (or `cd crates/web/ui && ./build.sh`) to generate it.
+const _: &str = include_str!("assets/style.css");
+
 // ── Asset serving: filesystem (dev) or embedded (release) ────────────────────
 
 /// Filesystem path to serve assets from, if available. Checked once at startup.
