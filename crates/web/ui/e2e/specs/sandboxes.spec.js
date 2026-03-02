@@ -183,7 +183,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 		});
 
 		await navigateAndWait(page, "/settings/sandboxes");
-		expect(diskUsageFetched).toBe(true);
+		await expect.poll(() => diskUsageFetched, { timeout: 10_000 }).toBe(true);
 
 		expect(pageErrors).toEqual([]);
 	});

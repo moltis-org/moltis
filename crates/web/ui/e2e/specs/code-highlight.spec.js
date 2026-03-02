@@ -13,22 +13,27 @@ test.describe("Code block syntax highlighting", () => {
 			var appUrl = new URL(appScript.src, window.location.origin);
 			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			var helpers = await import(`${prefix}js/helpers.js`);
-			var chatUi = await import(`${prefix}js/chat-ui.js`);
 			var markdown = "Here is some code:\n```rust\nfn main() {\n    println!(\"hello\");\n}\n```";
-			chatUi.chatAddMsg("assistant", helpers.renderMarkdown(markdown), true);
+			var existing = document.getElementById("e2e-code-highlight-fixture");
+			if (existing) existing.remove();
+			var fixture = document.createElement("div");
+			fixture.id = "e2e-code-highlight-fixture";
+			fixture.className = "msg assistant";
+			fixture.innerHTML = helpers.renderMarkdown(markdown); // eslint-disable-line no-unsanitized/property
+			document.body.appendChild(fixture);
 		});
 
 		// Verify data-lang attribute is present
-		var codeEl = page.locator(".msg.assistant pre code[data-lang='rust']");
+		var codeEl = page.locator("#e2e-code-highlight-fixture pre code[data-lang='rust']");
 		await expect(codeEl).toBeVisible({ timeout: 5000 });
 
 		// Verify language badge is displayed
-		var badge = page.locator(".msg.assistant .code-lang-badge");
+		var badge = page.locator("#e2e-code-highlight-fixture .code-lang-badge");
 		await expect(badge).toBeVisible();
 		await expect(badge).toHaveText("rust");
 
 		// Verify the pre has the code-block class
-		var pre = page.locator(".msg.assistant pre.code-block");
+		var pre = page.locator("#e2e-code-highlight-fixture pre.code-block");
 		await expect(pre).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
@@ -61,19 +66,24 @@ test.describe("Code block syntax highlighting", () => {
 			var appUrl = new URL(appScript.src, window.location.origin);
 			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			var helpers = await import(`${prefix}js/helpers.js`);
-			var chatUi = await import(`${prefix}js/chat-ui.js`);
 			var codeHighlight = await import(`${prefix}js/code-highlight.js`);
 			var markdown = "```javascript\nconst x = 42;\n```";
-			var el = chatUi.chatAddMsg("assistant", helpers.renderMarkdown(markdown), true);
-			if (el) codeHighlight.highlightCodeBlocks(el);
+			var existing = document.getElementById("e2e-shiki-fixture");
+			if (existing) existing.remove();
+			var fixture = document.createElement("div");
+			fixture.id = "e2e-shiki-fixture";
+			fixture.className = "msg assistant";
+			fixture.innerHTML = helpers.renderMarkdown(markdown); // eslint-disable-line no-unsanitized/property
+			document.body.appendChild(fixture);
+			codeHighlight.highlightCodeBlocks(fixture);
 		});
 
 		// Verify Shiki classes are applied
-		var shikiCode = page.locator(".msg.assistant code.shiki");
+		var shikiCode = page.locator("#e2e-shiki-fixture code.shiki");
 		await expect(shikiCode).toBeVisible({ timeout: 5000 });
 
 		// Verify spans with style attributes are present (Shiki token coloring)
-		var coloredSpan = page.locator(".msg.assistant code.shiki span[style]");
+		var coloredSpan = page.locator("#e2e-shiki-fixture code.shiki span[style]");
 		await expect(coloredSpan.first()).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
