@@ -2111,6 +2111,8 @@ pub struct ProviderEntry {
     pub api_key: Option<Secret<String>>,
 
     /// Override the base URL.
+    /// Accepts legacy `url` as an alias for compatibility.
+    #[serde(alias = "url")]
     pub base_url: Option<String>,
 
     /// Preferred model IDs for this provider.
@@ -2640,6 +2642,19 @@ memory = 300
         );
         let parsed: ProviderEntry = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.tool_mode, ToolMode::Text);
+    }
+
+    #[test]
+    fn provider_entry_url_alias_maps_to_base_url() {
+        let entry: ProviderEntry = toml::from_str(
+            r#"
+enabled = true
+url = "http://192.168.0.9:11434"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(entry.base_url.as_deref(), Some("http://192.168.0.9:11434"));
     }
 
     #[test]
