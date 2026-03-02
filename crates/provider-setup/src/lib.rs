@@ -2313,7 +2313,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         let temp_registry = self.build_registry(&temp_config);
 
         // Filter models for this provider.
-        let models: Vec<_> = temp_registry
+        let mut models: Vec<_> = temp_registry
             .list_models()
             .iter()
             .filter(|m| {
@@ -2358,8 +2358,11 @@ impl ProviderSetupService for LiveProviderSetupService {
         .await;
 
         const VALIDATION_MAX_MODEL_PROBES: usize = 8;
-        const VALIDATION_MAX_TIMEOUTS: usize = 2;
+        const VALIDATION_MAX_TIMEOUTS: usize = 3;
         const VALIDATION_PROBE_TIMEOUT_SECS: u64 = 10;
+
+        reorder_models_for_validation(&mut models);
+
         let total_probe_attempts = models.len().min(VALIDATION_MAX_MODEL_PROBES);
 
         let probe = [ChatMessage::user("ping")];
@@ -2762,6 +2765,52 @@ impl ProviderSetupService for LiveProviderSetupService {
             "displayName": display_name,
         }))
     }
+}
+
+// ── Validation probe ordering ────────────────────────────────────────────────
+
+/// Reorder models so that known-fast, reliable models appear first for
+/// validation probing.  We only need *one* successful response to prove the
+/// API key works, so prefer the cheapest/fastest endpoints.
+fn reorder_models_for_validation(models: &mut [moltis_providers::ModelInfo]) {
+    /// Known-fast model substrings, ordered by preference.
+    /// These are small/cheap models that respond quickly on every major provider.
+    const FAST_PATTERNS: &[&str] = &[
+        "gpt-4o-mini",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "claude-3-haiku",
+        "claude-3.5-haiku",
+        "gemini-2.0-flash",
+        "gemini-flash",
+        "llama-3",
+        "mistral-small",
+        "deepseek-chat",
+    ];
+
+    /// Known-slow or experimental model substrings to deprioritize.
+    const SLOW_PATTERNS: &[&str] = &["search-preview", "seed-", "preview", "experimental"];
+
+    models.sort_by(|a, b| {
+        let a_rank = probe_priority_rank(&a.id, FAST_PATTERNS, SLOW_PATTERNS);
+        let b_rank = probe_priority_rank(&b.id, FAST_PATTERNS, SLOW_PATTERNS);
+        a_rank.cmp(&b_rank)
+    });
+}
+
+fn probe_priority_rank(model_id: &str, fast: &[&str], slow: &[&str]) -> u8 {
+    let raw = raw_model_id(model_id);
+    for pattern in fast {
+        if raw.contains(pattern) {
+            return 0; // probe first
+        }
+    }
+    for pattern in slow {
+        if raw.contains(pattern) {
+            return 2; // probe last
+        }
+    }
+    1 // default: middle tier
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -4270,5 +4319,115 @@ mod tests {
             "  anthropic/claude-sonnet-4-5  ".into(),
         ]);
         assert_eq!(models, vec!["gpt-5.2", "anthropic/claude-sonnet-4-5"]);
+    }
+
+    fn make_model(id: &str) -> moltis_providers::ModelInfo {
+        moltis_providers::ModelInfo {
+            id: id.to_string(),
+            provider: "test".to_string(),
+            display_name: id.to_string(),
+            created_at: None,
+        }
+    }
+
+    #[test]
+    fn reorder_models_for_validation_fast_first_slow_last() {
+        let mut models = vec![
+            make_model("bytedance-seed/seed-2.0-mini"),
+            make_model("some-regular-model"),
+            make_model("gpt-4o-mini"),
+            make_model("gpt-4o-search-preview"),
+            make_model("claude-3.5-haiku-20241022"),
+            make_model("experimental-model-v1"),
+            make_model("deepseek-chat"),
+        ];
+
+        reorder_models_for_validation(&mut models);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+
+        // Fast models should be at the front
+        assert!(
+            ids.iter().position(|id| *id == "gpt-4o-mini").unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
+            "fast model gpt-4o-mini should come before regular model, got: {ids:?}"
+        );
+        assert!(
+            ids.iter()
+                .position(|id| *id == "claude-3.5-haiku-20241022")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
+            "fast model claude-3.5-haiku should come before regular model, got: {ids:?}"
+        );
+        assert!(
+            ids.iter().position(|id| *id == "deepseek-chat").unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
+            "fast model deepseek-chat should come before regular model, got: {ids:?}"
+        );
+
+        // Slow models should be at the end
+        assert!(
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "gpt-4o-search-preview")
+                    .unwrap(),
+            "regular model should come before slow model search-preview, got: {ids:?}"
+        );
+        assert!(
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "bytedance-seed/seed-2.0-mini")
+                    .unwrap(),
+            "regular model should come before slow model seed-, got: {ids:?}"
+        );
+        assert!(
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "experimental-model-v1")
+                    .unwrap(),
+            "regular model should come before slow model experimental, got: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn reorder_models_for_validation_with_namespaced_ids() {
+        let mut models = vec![
+            make_model("openrouter::gpt-4o-search-preview"),
+            make_model("openrouter::gpt-4o-mini"),
+            make_model("openrouter::some-model"),
+        ];
+
+        reorder_models_for_validation(&mut models);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+
+        assert_eq!(
+            ids[0], "openrouter::gpt-4o-mini",
+            "fast namespaced model should be first, got: {ids:?}"
+        );
+        assert_eq!(
+            ids[1], "openrouter::some-model",
+            "regular model should be middle, got: {ids:?}"
+        );
+        assert_eq!(
+            ids[2], "openrouter::gpt-4o-search-preview",
+            "slow namespaced model should be last, got: {ids:?}"
+        );
     }
 }

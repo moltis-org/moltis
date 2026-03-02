@@ -35,6 +35,7 @@ Configure providers through the web UI or directly in configuration files.
 | Provider | Config Name | Notes |
 |----------|-------------|-------|
 | **Ollama** | `ollama` | Local or remote Ollama instance |
+| **LM Studio** | `lmstudio` | Local LM Studio or any OpenAI-compatible server |
 | **Local LLM** | `local-llm` | Runs GGUF models directly on your machine |
 
 ### Custom OpenAI-Compatible
@@ -184,6 +185,17 @@ Ollama auto-detects when running at `http://127.0.0.1:11434`. No API key needed.
 [providers.ollama]
 enabled = true
 # base_url = "http://127.0.0.1:11434/v1"  # Override for remote Ollama
+```
+
+### LM Studio
+
+LM Studio auto-detects when running at `http://127.0.0.1:1234`. No API key needed.
+Also works with llama.cpp or any OpenAI-compatible local server.
+
+```toml
+[providers.lmstudio]
+enabled = true
+# base_url = "http://127.0.0.1:1234/v1"  # Override for different port/host
 ```
 
 ### Local LLM

@@ -12,6 +12,7 @@ import {
 	updateCommandInputUI,
 	updateTokenBar,
 } from "./chat-ui.js";
+import { highlightCodeBlocks } from "./code-highlight.js";
 import * as gon from "./gon.js";
 import {
 	formatTokenSpeed,
@@ -907,6 +908,8 @@ function renderHistory(key, history, searchContext, thinkingText) {
 		}
 	});
 	S.setChatBatchLoading(false);
+	// Syntax-highlight all code blocks in the rendered history.
+	if (S.chatMsgBox) highlightCodeBlocks(S.chatMsgBox);
 	var historyTailIndex = computeHistoryTailIndex(history);
 	syncHistoryState(key, history, historyTailIndex);
 
