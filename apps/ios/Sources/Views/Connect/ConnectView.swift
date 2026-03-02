@@ -167,7 +167,7 @@ struct ConnectView: View {
                         Button {
                             Task { await loginWithPassword() }
                         } label: {
-                            Text("Login & Connect")
+                            Text("Connect")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
@@ -339,6 +339,13 @@ struct ConnectView: View {
             authManager.updateServerEmoji(identity?.normalizedEmoji, forURL: url)
             await connectionStore.connect(to: server, authManager: authManager)
         } catch {
+            if let message = passkeyDomainAssociationErrorMessage(error, serverURL: url) {
+                if authStatus?.hasPassword == true {
+                    authMode = .password
+                }
+                showError(message: message)
+                return
+            }
             showError(message: error.localizedDescription)
         }
     }
@@ -392,6 +399,16 @@ struct ConnectView: View {
             url = "https://\(url)"
         }
         return url
+    }
+
+    private func passkeyDomainAssociationErrorMessage(_ error: Error, serverURL: URL) -> String? {
+        let description = (error as NSError).localizedDescription.lowercased()
+        guard description.contains("not associated with domain") else {
+            return nil
+        }
+
+        let host = serverURL.host ?? "this server"
+        return "Passkey sign-in is not available for \(host) in this iOS app. Use Password instead."
     }
 
     private var needsCertificateTrustHelp: Bool {

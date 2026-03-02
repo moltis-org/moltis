@@ -1932,7 +1932,6 @@ function GraphqlSection() {
 		setSaving(true);
 		setMsg(null);
 		setErr(null);
-		setEnabled(nextEnabled);
 		rerender();
 
 		sendRpc("graphql.config.set", { enabled: nextEnabled })
@@ -1944,14 +1943,12 @@ function GraphqlSection() {
 						setMsg("GraphQL updated for this runtime, but failed to persist to config. It may revert on restart.");
 					}
 				} else {
-					setEnabled(!nextEnabled);
 					setErr(res?.error?.message || "Failed to update GraphQL setting");
 				}
 				rerender();
 			})
 			.catch((error) => {
 				setSaving(false);
-				setEnabled(!nextEnabled);
 				setErr(error?.message || "Failed to update GraphQL setting");
 				rerender();
 			});
