@@ -89,6 +89,7 @@ fn truncate_output_for_display(output: &mut String, max_output_bytes: usize) {
 }
 
 /// Execute a shell command with timeout and output limits.
+#[tracing::instrument(skip(opts), fields(timeout_secs = opts.timeout.as_secs()))]
 pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> {
     debug!(
         command,

@@ -146,7 +146,7 @@ clap = { features = ["derive", "env"], version = "4" }
 # Database
 sqlx = { features = ["migrate", "runtime-tokio", "sqlite"], version = "0.8" }
 # HTTP client
-reqwest = { features = ["json", "stream"], version = "0.12" }
+reqwest = { features = ["json", "multipart", "stream"], version = "0.12" }
 # UUID
 uuid = { features = ["v4"], version = "1" }
 # Async

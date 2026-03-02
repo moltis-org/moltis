@@ -2508,6 +2508,7 @@ impl LiveChatService {
 
 #[async_trait]
 impl ChatService for LiveChatService {
+    #[tracing::instrument(skip(self, params), fields(session_id))]
     async fn send(&self, mut params: Value) -> ServiceResult {
         // Support both text-only and multimodal content.
         // - "text": string → plain text message

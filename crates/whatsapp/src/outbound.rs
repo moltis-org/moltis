@@ -173,6 +173,14 @@ impl ChannelOutbound for WhatsAppOutbound {
             .await
             .map_err(|e| moltis_channels::Error::unavailable(format!("whatsapp send_text: {e}")))?;
         self.record_sent_id(account_id, &msg_id);
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_SENT_TOTAL,
+            moltis_metrics::labels::CHANNEL => "whatsapp"
+        )
+        .increment(1);
+
         Ok(())
     }
 
@@ -232,6 +240,13 @@ impl ChannelOutbound for WhatsAppOutbound {
             moltis_channels::Error::unavailable(format!("whatsapp send_media: {e}"))
         })?;
         self.record_sent_id(account_id, &msg_id);
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_SENT_TOTAL,
+            moltis_metrics::labels::CHANNEL => "whatsapp"
+        )
+        .increment(1);
 
         info!(account_id, to, "WhatsApp media sent");
         Ok(())

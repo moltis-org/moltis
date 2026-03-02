@@ -346,6 +346,7 @@ impl MemoryManager {
 
     /// Search memory. Uses hybrid (vector + keyword) when embeddings are available,
     /// falls back to keyword-only search otherwise.
+    #[tracing::instrument(skip(self), fields(query_len = query.len(), limit))]
     pub async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {
         if let Some(ref embedder) = self.embedder {
             search::hybrid_search(

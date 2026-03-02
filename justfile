@@ -222,6 +222,13 @@ ship commit_message='' pr_title='' pr_body='':
 test:
     cargo nextest run --all-features
 
+# Run contract test suites (channel, provider, memory, tools)
+contract-tests:
+    cargo test -p moltis-channels contract
+    cargo test -p moltis-providers contract
+    cargo test -p moltis-memory contract
+    cargo test -p moltis-tools contract
+
 # Verify locale key parity across frontend i18n bundles.
 i18n-check:
     ./scripts/i18n-check.sh

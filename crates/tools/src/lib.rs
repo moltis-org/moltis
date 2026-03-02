@@ -8,6 +8,8 @@
 
 pub mod approval;
 pub mod branch_session;
+#[cfg(test)]
+pub mod contract;
 
 pub mod error;
 pub mod params;

@@ -562,6 +562,13 @@ pub(crate) async fn handle_inbound(
             audio_filename: None,
         };
 
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_RECEIVED_TOTAL,
+            moltis_metrics::labels::CHANNEL => "slack"
+        )
+        .increment(1);
+
         sink.dispatch_to_chat(clean_text, reply_to, meta).await;
     }
 }
