@@ -10,7 +10,7 @@ use {
     moltis_memory::{
         schema::{ChunkRow, FileRow},
         search::SearchResult,
-        store::MemoryStore,
+        store::{CacheEntry, MemoryStore},
     },
     tracing::warn,
 };
@@ -178,6 +178,14 @@ impl MemoryStore for QmdStore {
         }
     }
 
+    async fn put_cached_embeddings_batch(&self, entries: &[CacheEntry<'_>]) -> anyhow::Result<()> {
+        if let Some(ref fallback) = self.fallback {
+            fallback.put_cached_embeddings_batch(entries).await
+        } else {
+            Ok(())
+        }
+    }
+
     async fn count_cached_embeddings(&self) -> anyhow::Result<usize> {
         if let Some(ref fallback) = self.fallback {
             fallback.count_cached_embeddings().await
@@ -281,6 +289,7 @@ impl QmdStore {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::manager::QmdManagerConfig};

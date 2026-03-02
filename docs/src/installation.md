@@ -20,16 +20,6 @@ This downloads the latest release for your platform and installs it to `~/.local
 brew install moltis-org/tap/moltis
 ```
 
-### Cargo Binstall (Pre-built Binary)
-
-If you have [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed:
-
-```bash
-cargo binstall moltis
-```
-
-This downloads a pre-built binary without compiling from source.
-
 ## Linux Packages
 
 ### Debian / Ubuntu (.deb)
@@ -93,7 +83,7 @@ See [Docker Deployment](docker.md) for full instructions on running Moltis in a 
 
 ### Prerequisites
 
-- Rust 1.75 or later
+- Rust 1.91 or later
 - A C compiler (for some dependencies)
 
 ### Clone and Build
@@ -146,12 +136,6 @@ moltis --version
 
 ```bash
 brew upgrade moltis
-```
-
-### Cargo Binstall
-
-```bash
-cargo binstall moltis
 ```
 
 ### From Source

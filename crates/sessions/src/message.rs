@@ -18,11 +18,20 @@ pub enum PersistedMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         created_at: Option<u64>,
     },
+    /// UI-only informational message (not part of LLM prompt history).
+    Notice {
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created_at: Option<u64>,
+    },
     User {
         /// Content can be a string (plain text) or array (multimodal).
         content: MessageContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         created_at: Option<u64>,
+        /// Relative media path for uploaded user audio (e.g. "media/main/voice-123.webm").
+        #[serde(skip_serializing_if = "Option::is_none")]
+        audio: Option<String>,
         /// Channel metadata for UI display (e.g., Telegram sender info).
         #[serde(skip_serializing_if = "Option::is_none")]
         channel: Option<serde_json::Value>,
@@ -41,12 +50,31 @@ pub enum PersistedMessage {
         model: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         provider: Option<String>,
+        /// Total input tokens spent during this assistant turn.
         #[serde(rename = "inputTokens", skip_serializing_if = "Option::is_none")]
         input_tokens: Option<u32>,
+        /// Total output tokens produced during this assistant turn.
         #[serde(rename = "outputTokens", skip_serializing_if = "Option::is_none")]
         output_tokens: Option<u32>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        /// Input tokens sent in the final LLM request for this turn.
+        #[serde(rename = "requestInputTokens", skip_serializing_if = "Option::is_none")]
+        request_input_tokens: Option<u32>,
+        /// Output tokens produced in the final LLM request for this turn.
+        #[serde(
+            rename = "requestOutputTokens",
+            skip_serializing_if = "Option::is_none"
+        )]
+        request_output_tokens: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_calls: Option<Vec<PersistedToolCall>>,
+        /// Optional provider reasoning/planning text (not final answer text).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning: Option<String>,
+        /// Raw provider API payload captured during streaming for debugging.
+        #[serde(rename = "llmApiResponse", skip_serializing_if = "Option::is_none")]
+        llm_api_response: Option<serde_json::Value>,
         /// Relative media path for TTS audio (e.g. "media/main/run_abc.ogg").
         #[serde(skip_serializing_if = "Option::is_none")]
         audio: Option<String>,
@@ -78,8 +106,14 @@ pub enum PersistedMessage {
         result: Option<serde_json::Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// Provider reasoning/thinking text that preceded this tool call.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         created_at: Option<u64>,
+        /// Agent run ID linking this result to its parent run.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
 }
 
@@ -127,6 +161,7 @@ impl PersistedMessage {
         Self::User {
             content: MessageContent::Text(text.into()),
             created_at: Some(now_ms()),
+            audio: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -138,6 +173,7 @@ impl PersistedMessage {
         Self::User {
             content: MessageContent::Text(text.into()),
             created_at: Some(now_ms()),
+            audio: None,
             channel: Some(channel),
             seq: None,
             run_id: None,
@@ -149,6 +185,7 @@ impl PersistedMessage {
         Self::User {
             content: MessageContent::Multimodal(blocks),
             created_at: Some(now_ms()),
+            audio: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -163,6 +200,7 @@ impl PersistedMessage {
         Self::User {
             content: MessageContent::Multimodal(blocks),
             created_at: Some(now_ms()),
+            audio: None,
             channel: Some(channel),
             seq: None,
             run_id: None,
@@ -185,7 +223,12 @@ impl PersistedMessage {
             provider: Some(provider.into()),
             input_tokens: Some(input_tokens),
             output_tokens: Some(output_tokens),
+            duration_ms: None,
+            request_input_tokens: Some(input_tokens),
+            request_output_tokens: Some(output_tokens),
             tool_calls: None,
+            reasoning: None,
+            llm_api_response: None,
             audio,
             seq: None,
             run_id: None,
@@ -195,6 +238,14 @@ impl PersistedMessage {
     /// Create a system message (e.g., for error display).
     pub fn system(text: impl Into<String>) -> Self {
         Self::System {
+            content: text.into(),
+            created_at: Some(now_ms()),
+        }
+    }
+
+    /// Create a notice message shown in UI but skipped from model context.
+    pub fn notice(text: impl Into<String>) -> Self {
+        Self::Notice {
             content: text.into(),
             created_at: Some(now_ms()),
         }
@@ -225,11 +276,63 @@ impl PersistedMessage {
             success,
             result,
             error,
+            reasoning: None,
             created_at: Some(now_ms()),
+            run_id: None,
+        }
+    }
+
+    /// Create a tool execution result message with reasoning text.
+    pub fn tool_result_with_reasoning(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        arguments: Option<serde_json::Value>,
+        success: bool,
+        result: Option<serde_json::Value>,
+        error: Option<String>,
+        reasoning: Option<String>,
+    ) -> Self {
+        Self::ToolResult {
+            tool_call_id: tool_call_id.into(),
+            tool_name: tool_name.into(),
+            arguments,
+            success,
+            result,
+            error,
+            reasoning,
+            created_at: Some(now_ms()),
+            run_id: None,
+        }
+    }
+
+    /// Create a tool result message with a run ID linking it to its agent run.
+    pub fn tool_result_with_run_id(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        arguments: Option<serde_json::Value>,
+        success: bool,
+        result: Option<serde_json::Value>,
+        error: Option<String>,
+        run_id: impl Into<String>,
+    ) -> Self {
+        Self::ToolResult {
+            tool_call_id: tool_call_id.into(),
+            tool_name: tool_name.into(),
+            arguments,
+            success,
+            result,
+            error,
+            reasoning: None,
+            created_at: Some(now_ms()),
+            run_id: Some(run_id.into()),
         }
     }
 
     /// Convert to JSON value for storage.
+    ///
+    /// This cannot fail because `PersistedMessage` only contains types with
+    /// infallible serialization (strings, numbers, booleans, vecs, options).
+    #[allow(clippy::expect_used)]
     pub fn to_value(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("PersistedMessage serialization cannot fail")
     }
@@ -258,6 +361,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +371,7 @@ mod tests {
         let msg = PersistedMessage::User {
             content: MessageContent::Text("hello".to_string()),
             created_at: Some(12345),
+            audio: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -286,6 +391,7 @@ mod tests {
                 ContentBlock::image_base64("image/jpeg", "abc123"),
             ]),
             created_at: Some(12345),
+            audio: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -314,7 +420,12 @@ mod tests {
             provider: Some("openai".to_string()),
             input_tokens: Some(100),
             output_tokens: Some(50),
+            duration_ms: Some(2_000),
+            request_input_tokens: Some(100),
+            request_output_tokens: Some(50),
             tool_calls: None,
+            reasoning: None,
+            llm_api_response: None,
             audio: None,
             seq: None,
             run_id: None,
@@ -326,7 +437,22 @@ mod tests {
         assert_eq!(json["provider"], "openai");
         assert_eq!(json["inputTokens"], 100);
         assert_eq!(json["outputTokens"], 50);
+        assert_eq!(json["durationMs"], 2_000);
+        assert_eq!(json["requestInputTokens"], 100);
+        assert_eq!(json["requestOutputTokens"], 50);
         assert!(json.get("audio").is_none());
+    }
+
+    #[test]
+    fn notice_serializes_correctly() {
+        let msg = PersistedMessage::Notice {
+            content: "shared cutoff".to_string(),
+            created_at: Some(12345),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "notice");
+        assert_eq!(json["content"], "shared cutoff");
+        assert_eq!(json["created_at"], 12345);
     }
 
     #[test]
@@ -340,6 +466,39 @@ mod tests {
         match msg {
             PersistedMessage::User { content, .. } => {
                 assert!(matches!(content, MessageContent::Text(t) if t == "hello"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
+    fn user_with_audio_serializes_correctly() {
+        let msg = PersistedMessage::User {
+            content: MessageContent::Text("voice note".to_string()),
+            created_at: Some(12345),
+            audio: Some("media/main/voice-123.webm".to_string()),
+            channel: None,
+            seq: None,
+            run_id: None,
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "user");
+        assert_eq!(json["content"], "voice note");
+        assert_eq!(json["audio"], "media/main/voice-123.webm");
+    }
+
+    #[test]
+    fn user_without_audio_field_deserializes() {
+        let json = serde_json::json!({
+            "role": "user",
+            "content": "old user message",
+            "created_at": 12345
+        });
+        let msg: PersistedMessage = serde_json::from_value(json).unwrap();
+        match msg {
+            PersistedMessage::User { content, audio, .. } => {
+                assert!(matches!(content, MessageContent::Text(t) if t == "old user message"));
+                assert!(audio.is_none());
             },
             _ => panic!("expected User message"),
         }
@@ -380,6 +539,19 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_notice() {
+        let original = PersistedMessage::notice("snapshot cutoff");
+        let json = original.to_value();
+        let parsed: PersistedMessage = serde_json::from_value(json).unwrap();
+        match parsed {
+            PersistedMessage::Notice { content, .. } => {
+                assert_eq!(content, "snapshot cutoff");
+            },
+            _ => panic!("expected Notice message"),
+        }
+    }
+
+    #[test]
     fn roundtrip_assistant() {
         let original = PersistedMessage::assistant("response", "gpt-4o", "openai", 100, 50, None);
         let json = original.to_value();
@@ -391,6 +563,9 @@ mod tests {
                 provider,
                 input_tokens,
                 output_tokens,
+                request_input_tokens,
+                request_output_tokens,
+                reasoning,
                 audio,
                 ..
             } => {
@@ -399,6 +574,9 @@ mod tests {
                 assert_eq!(provider.as_deref(), Some("openai"));
                 assert_eq!(input_tokens, Some(100));
                 assert_eq!(output_tokens, Some(50));
+                assert_eq!(request_input_tokens, Some(100));
+                assert_eq!(request_output_tokens, Some(50));
+                assert!(reasoning.is_none());
                 assert!(audio.is_none());
             },
             _ => panic!("expected Assistant message"),
@@ -440,9 +618,17 @@ mod tests {
         });
         let msg: PersistedMessage = serde_json::from_value(json).unwrap();
         match msg {
-            PersistedMessage::Assistant { audio, content, .. } => {
+            PersistedMessage::Assistant {
+                audio,
+                content,
+                request_input_tokens,
+                request_output_tokens,
+                ..
+            } => {
                 assert_eq!(content, "old message");
                 assert!(audio.is_none());
+                assert!(request_input_tokens.is_none());
+                assert!(request_output_tokens.is_none());
             },
             _ => panic!("expected Assistant message"),
         }
@@ -457,7 +643,9 @@ mod tests {
             success: true,
             result: Some(serde_json::json!({"stdout": "file.txt", "exit_code": 0})),
             error: None,
+            reasoning: None,
             created_at: Some(12345),
+            run_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "tool_result");
@@ -478,7 +666,9 @@ mod tests {
             success: false,
             result: None,
             error: Some("command not found".to_string()),
+            reasoning: None,
             created_at: Some(12345),
+            run_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "tool_result");
@@ -536,13 +726,62 @@ mod tests {
                 tool_call_id,
                 tool_name,
                 success,
+                reasoning,
                 ..
             } => {
                 assert_eq!(tool_call_id, "call_4");
                 assert_eq!(tool_name, "exec");
                 assert!(success);
+                // Old sessions without reasoning field should deserialize as None.
+                assert!(reasoning.is_none());
             },
             _ => panic!("expected ToolResult message"),
         }
+    }
+
+    #[test]
+    fn tool_result_with_reasoning_roundtrips() {
+        let original = PersistedMessage::tool_result_with_reasoning(
+            "call_5",
+            "web_search",
+            Some(serde_json::json!({"query": "top news"})),
+            true,
+            Some(serde_json::json!({"stdout": "results", "exit_code": 0})),
+            None,
+            Some("I need to search for today's news".to_string()),
+        );
+        let json = original.to_value();
+        assert_eq!(json["reasoning"], "I need to search for today's news");
+
+        let parsed: PersistedMessage = serde_json::from_value(json).unwrap();
+        match parsed {
+            PersistedMessage::ToolResult {
+                tool_call_id,
+                reasoning,
+                ..
+            } => {
+                assert_eq!(tool_call_id, "call_5");
+                assert_eq!(
+                    reasoning.as_deref(),
+                    Some("I need to search for today's news")
+                );
+            },
+            _ => panic!("expected ToolResult message"),
+        }
+    }
+
+    #[test]
+    fn tool_result_without_reasoning_omits_field() {
+        let msg = PersistedMessage::tool_result(
+            "call_6",
+            "exec",
+            None,
+            true,
+            Some(serde_json::json!({"stdout": "ok"})),
+            None,
+        );
+        let json = msg.to_value();
+        // reasoning field should not be present when None.
+        assert!(json.get("reasoning").is_none());
     }
 }

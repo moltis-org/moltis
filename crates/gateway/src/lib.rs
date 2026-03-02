@@ -10,6 +10,7 @@
 //! All domain logic (agents, channels, etc.) lives in other crates and is
 //! invoked through method handlers registered in `methods.rs`.
 
+pub mod agent_persona;
 pub mod approval;
 pub mod auth;
 pub mod auth_middleware;
@@ -17,23 +18,29 @@ pub mod auth_routes;
 pub mod auth_webauthn;
 pub mod broadcast;
 pub mod channel;
+pub mod channel_agent_tools;
 pub mod channel_events;
 pub mod channel_store;
 pub mod chat;
 pub mod chat_error;
 pub mod cron;
 pub mod env_routes;
+#[cfg(feature = "graphql")]
+pub mod graphql_routes;
 #[cfg(feature = "local-llm")]
 pub mod local_llm_setup;
 pub mod logs;
 pub mod mcp_health;
 pub mod mcp_service;
+#[cfg(feature = "mdns")]
+pub mod mdns;
 pub mod message_log_store;
 pub mod methods;
 #[cfg(feature = "metrics")]
 pub mod metrics_middleware;
 #[cfg(feature = "metrics")]
 pub mod metrics_routes;
+pub mod network_audit;
 pub mod nodes;
 pub mod onboarding;
 pub mod pairing;
@@ -43,9 +50,12 @@ pub mod provider_setup;
 pub mod push;
 #[cfg(feature = "push-notifications")]
 pub mod push_routes;
+pub mod request_throttle;
 pub mod server;
 pub mod services;
 pub mod session;
+pub mod session_types;
+pub mod share_store;
 pub mod state;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
@@ -56,10 +66,9 @@ pub mod tls;
 pub mod tools_routes;
 pub mod tts_phrases;
 pub mod update_check;
+pub mod upload_routes;
 pub mod voice;
 pub mod voice_agent_tools;
-#[cfg(feature = "whatsapp-business")]
-pub mod whatsapp_routes;
 pub mod ws;
 
 /// Run database migrations for the gateway crate.

@@ -183,6 +183,7 @@ async fn run_migrations() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, tempfile::TempDir};
@@ -238,9 +239,9 @@ mod tests {
     #[test]
     fn test_db_action_variants() {
         // Verify the enum variants exist
-        let _ = super::DbAction::Reset;
-        let _ = super::DbAction::Clear;
-        let _ = super::DbAction::Migrate;
+        let _ = DbAction::Reset;
+        let _ = DbAction::Clear;
+        let _ = DbAction::Migrate;
     }
 
     /// Test that migrations run successfully against a fresh database in a temp directory.

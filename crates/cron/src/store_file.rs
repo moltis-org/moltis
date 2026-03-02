@@ -3,12 +3,12 @@
 use std::path::PathBuf;
 
 use {
-    anyhow::{Context, Result},
     async_trait::async_trait,
-    tokio::fs,
+    tokio::{fs, io::AsyncWriteExt},
 };
 
 use crate::{
+    Error, Result,
     store::CronStore,
     types::{CronJob, CronRunRecord},
 };
@@ -27,10 +27,9 @@ impl FileStore {
         }
     }
 
-    /// Create a store using the default `~/.clawdbot/cron/` layout.
+    /// Create a store using the default `<data_dir>/cron/` layout.
     pub fn default_path() -> Result<Self> {
-        let home = dirs_next::home_dir().context("cannot determine home directory")?;
-        let base = home.join(".clawdbot").join("cron");
+        let base = moltis_config::data_dir().join("cron");
         Ok(Self::new(base.join("jobs.json"), base.join("runs")))
     }
 
@@ -72,8 +71,8 @@ impl CronStore for FileStore {
             return Ok(Vec::new());
         }
         let data = fs::read_to_string(&self.jobs_path).await?;
-        let jobs: Vec<CronJob> =
-            serde_json::from_str(&data).context("failed to parse jobs.json")?;
+        let jobs: Vec<CronJob> = serde_json::from_str(&data)
+            .map_err(|source| Error::external("failed to parse jobs.json", source))?;
         Ok(jobs)
     }
 
@@ -93,7 +92,7 @@ impl CronStore for FileStore {
         let before = jobs.len();
         jobs.retain(|j| j.id != id);
         if jobs.len() == before {
-            anyhow::bail!("job not found: {id}");
+            return Err(Error::job_not_found(id));
         }
         self.atomic_write_jobs(&jobs).await
     }
@@ -103,7 +102,7 @@ impl CronStore for FileStore {
         let pos = jobs
             .iter()
             .position(|j| j.id == job.id)
-            .ok_or_else(|| anyhow::anyhow!("job not found: {}", job.id))?;
+            .ok_or_else(|| Error::job_not_found(job.id.clone()))?;
         jobs[pos] = job.clone();
         self.atomic_write_jobs(&jobs).await
     }
@@ -113,13 +112,14 @@ impl CronStore for FileStore {
         let path = self.runs_path(job_id);
         let mut line = serde_json::to_string(run)?;
         line.push('\n');
-        fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
-            .await?
-            .write_all(line.as_bytes())
             .await?;
+        file.write_all(line.as_bytes()).await?;
+        file.flush().await?;
+        file.sync_data().await?;
         Ok(())
     }
 
@@ -129,18 +129,29 @@ impl CronStore for FileStore {
             return Ok(Vec::new());
         }
         let data = fs::read_to_string(&path).await?;
-        let all: Vec<CronRunRecord> = data
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .filter_map(|l| serde_json::from_str(l).ok())
-            .collect();
+        let mut all = Vec::new();
+        for (line_no, line) in data.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let run = serde_json::from_str(line).map_err(|source| {
+                Error::external(
+                    format!(
+                        "failed to parse run record in {} at line {}",
+                        path.display(),
+                        line_no + 1
+                    ),
+                    source,
+                )
+            })?;
+            all.push(run);
+        }
         let start = all.len().saturating_sub(limit);
         Ok(all[start..].to_vec())
     }
 }
 
-use tokio::io::AsyncWriteExt;
-
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::types::*, std::path::Path, tempfile::TempDir};
@@ -160,6 +171,7 @@ mod tests {
             session_target: SessionTarget::Main,
             state: CronJobState::default(),
             sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
             system: false,
             created_at_ms: 1000,
             updated_at_ms: 1000,
@@ -221,6 +233,24 @@ mod tests {
 
         let runs = store.get_runs("j1", 10).await.unwrap();
         assert_eq!(runs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_file_store_runs_reports_invalid_jsonl() {
+        let tmp = TempDir::new().unwrap();
+        let store = make_store(tmp.path());
+        let runs_path = tmp.path().join("runs").join("j1.jsonl");
+
+        fs::create_dir_all(runs_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs::write(&runs_path, "{not-json}\n").await.unwrap();
+
+        let err = store
+            .get_runs("j1", 10)
+            .await
+            .expect_err("expected parse failure");
+        assert!(err.to_string().contains("failed to parse run record"));
     }
 
     #[tokio::test]

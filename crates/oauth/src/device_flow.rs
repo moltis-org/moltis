@@ -1,6 +1,9 @@
-use {anyhow::Result, reqwest::header::HeaderMap, secrecy::Secret};
+use {reqwest::header::HeaderMap, secrecy::Secret};
 
-use crate::types::{OAuthConfig, OAuthTokens};
+use crate::{
+    Error, Result,
+    types::{OAuthConfig, OAuthTokens},
+};
 
 /// Response from the device code request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -46,7 +49,9 @@ pub async fn request_device_code_with_headers(
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("device code request failed: {body}");
+        return Err(Error::message(format!(
+            "device code request failed: {body}"
+        )));
     }
 
     Ok(resp.json().await?)
@@ -99,16 +104,17 @@ pub async fn poll_for_token_with_headers(
         let body: TokenPollResponse = resp.json().await?;
 
         if let Some(token) = body.access_token {
-            let expires_at = body.expires_in.map(|secs| {
+            let expires_at = body.expires_in.and_then(|secs| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    + secs
+                    .ok()
+                    .map(|d| d.as_secs() + secs)
             });
             return Ok(OAuthTokens {
                 access_token: Secret::new(token),
                 refresh_token: body.refresh_token.map(Secret::new),
+                id_token: None,
+                account_id: None,
                 expires_at,
             });
         }
@@ -119,12 +125,13 @@ pub async fn poll_for_token_with_headers(
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             },
-            Some(err) => anyhow::bail!("device flow error: {err}"),
-            None => anyhow::bail!("unexpected response from token endpoint"),
+            Some(err) => return Err(Error::message(format!("device flow error: {err}"))),
+            None => return Err(Error::message("unexpected response from token endpoint")),
         }
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +149,7 @@ mod tests {
             auth_url,
             token_url,
             redirect_uri: String::new(),
+            resource: None,
             scopes: vec![],
             extra_auth_params: vec![],
             device_flow: true,

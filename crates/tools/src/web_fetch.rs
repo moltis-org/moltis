@@ -1,18 +1,17 @@
 use std::{
     collections::HashMap,
-    net::IpAddr,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
-use {
-    anyhow::{Result, bail},
-    async_trait::async_trait,
-    tracing::debug,
-    url::Url,
-};
+use {async_trait::async_trait, tracing::debug, url::Url};
 
-use {moltis_agents::tool_registry::AgentTool, moltis_config::schema::WebFetchConfig};
+use crate::error::Error;
+
+use {
+    crate::ssrf::ssrf_check, moltis_agents::tool_registry::AgentTool,
+    moltis_config::schema::WebFetchConfig,
+};
 
 /// Cached fetch result with expiry.
 struct CacheEntry {
@@ -27,7 +26,9 @@ pub struct WebFetchTool {
     cache_ttl: Duration,
     max_redirects: u8,
     readability: bool,
+    ssrf_allowlist: Vec<ipnet::IpNet>,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    proxy_url: Option<String>,
 }
 
 impl WebFetchTool {
@@ -36,14 +37,34 @@ impl WebFetchTool {
         if !config.enabled {
             return None;
         }
+        let ssrf_allowlist: Vec<ipnet::IpNet> = config
+            .ssrf_allowlist
+            .iter()
+            .filter_map(|s| match s.parse::<ipnet::IpNet>() {
+                Ok(net) => Some(net),
+                Err(e) => {
+                    tracing::warn!("ignoring invalid ssrf_allowlist entry \"{s}\": {e}");
+                    None
+                },
+            })
+            .collect();
         Some(Self {
             max_chars: config.max_chars,
             timeout: Duration::from_secs(config.timeout_seconds),
             cache_ttl: Duration::from_secs(config.cache_ttl_minutes * 60),
             max_redirects: config.max_redirects,
             readability: config.readability,
+            ssrf_allowlist,
             cache: Mutex::new(HashMap::new()),
+            proxy_url: None,
         })
+    }
+
+    /// Route HTTP traffic through a proxy (e.g. the trusted-network proxy).
+    #[must_use]
+    pub fn with_proxy(mut self, url: String) -> Self {
+        self.proxy_url = Some(url);
+        self
     }
 
     fn cache_get(&self, key: &str) -> Option<serde_json::Value> {
@@ -78,26 +99,32 @@ impl WebFetchTool {
         extract_mode: &str,
         max_chars: usize,
         accept_language: Option<&str>,
-    ) -> Result<serde_json::Value> {
+    ) -> crate::Result<serde_json::Value> {
         let mut current_url = Url::parse(url_str)?;
 
         // Validate scheme.
         match current_url.scheme() {
             "http" | "https" => {},
-            s => bail!("unsupported URL scheme: {s}"),
+            s => return Err(Error::message(format!("unsupported URL scheme: {s}"))),
         }
 
-        let client = reqwest::Client::builder()
+        let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
-            .redirect(reqwest::redirect::Policy::none()) // Manual redirect handling.
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none()); // Manual redirect handling.
+        if let Some(ref url) = self.proxy_url
+            && let Ok(proxy) = reqwest::Proxy::all(url)
+        {
+            let proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
+            client_builder = client_builder.proxy(proxy);
+        }
+        let client = client_builder.build()?;
 
         let mut visited: Vec<String> = Vec::new();
         let mut hops = 0u8;
 
         loop {
             // SSRF check before each request.
-            ssrf_check(&current_url).await?;
+            ssrf_check(&current_url, &self.ssrf_allowlist).await?;
             visited.push(current_url.to_string());
 
             let mut req = client.get(current_url.as_str());
@@ -109,23 +136,26 @@ impl WebFetchTool {
 
             if status.is_redirection() {
                 if hops >= self.max_redirects {
-                    bail!(
+                    return Err(Error::message(format!(
                         "too many redirects ({} hops, max {})",
                         hops + 1,
                         self.max_redirects
-                    );
+                    )));
                 }
                 let location = resp
                     .headers()
                     .get("location")
                     .and_then(|v| v.to_str().ok())
-                    .ok_or_else(|| anyhow::anyhow!("redirect without Location header"))?;
+                    .ok_or_else(|| Error::message("redirect without Location header"))?;
 
                 let next = current_url.join(location)?;
 
                 // Loop detection.
                 if visited.contains(&next.to_string()) {
-                    bail!("redirect loop detected: {} → {}", current_url, next);
+                    return Err(Error::message(format!(
+                        "redirect loop detected: {} → {}",
+                        current_url, next
+                    )));
                 }
 
                 current_url = next;
@@ -168,64 +198,6 @@ impl WebFetchTool {
                 "original_length": body.len(),
             }));
         }
-    }
-}
-
-/// SSRF protection: resolve the URL host and reject private/loopback/link-local IPs.
-async fn ssrf_check(url: &Url) -> Result<()> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
-
-    // Try parsing as IP directly.
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) {
-            bail!("SSRF blocked: {host} resolves to private IP {ip}");
-        }
-        return Ok(());
-    }
-
-    // DNS resolution.
-    let port = url.port_or_known_default().unwrap_or(443);
-    let addrs: Vec<_> = tokio::net::lookup_host(format!("{host}:{port}"))
-        .await?
-        .collect();
-
-    if addrs.is_empty() {
-        bail!("DNS resolution failed for {host}");
-    }
-
-    for addr in &addrs {
-        if is_private_ip(&addr.ip()) {
-            bail!("SSRF blocked: {host} resolves to private IP {}", addr.ip());
-        }
-    }
-
-    Ok(())
-}
-
-/// Check if an IP address is private, loopback, or link-local.
-fn is_private_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_unspecified()
-                // 100.64.0.0/10 (CGNAT)
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
-                // 192.0.0.0/24
-                || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0)
-        },
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                // fc00::/7 (unique local)
-                || (v6.segments()[0] & 0xFE00) == 0xFC00
-                // fe80::/10 (link-local)
-                || (v6.segments()[0] & 0xFFC0) == 0xFE80
-        },
     }
 }
 
@@ -416,11 +388,11 @@ impl AgentTool for WebFetchTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let url = params
             .get("url")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'url' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'url' parameter"))?;
 
         let extract_mode = params
             .get("extract_mode")
@@ -446,15 +418,19 @@ impl AgentTool for WebFetchTool {
         let result = self
             .fetch_url(url, extract_mode, max_chars, accept_language)
             .await?;
-
         self.cache_set(cache_key, result.clone());
         Ok(result)
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::ssrf::{is_private_ip, is_ssrf_allowed, ssrf_check},
+        std::net::IpAddr,
+    };
 
     fn default_tool() -> WebFetchTool {
         WebFetchTool {
@@ -463,7 +439,9 @@ mod tests {
             cache_ttl: Duration::from_secs(60),
             max_redirects: 3,
             readability: true,
+            ssrf_allowlist: vec![],
             cache: Mutex::new(HashMap::new()),
+            proxy_url: None,
         }
     }
 
@@ -485,42 +463,37 @@ mod tests {
 
     // --- SSRF tests ---
 
-    #[test]
-    fn test_is_private_ip_v4() {
-        use std::net::Ipv4Addr;
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::LOCALHOST)));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
-        assert!(!is_private_ip(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
-        assert!(!is_private_ip(&IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("127.0.0.1", true)]
+    #[case("192.168.1.1", true)]
+    #[case("10.0.0.1", true)]
+    #[case("172.16.0.1", true)]
+    #[case("169.254.1.1", true)]
+    #[case("0.0.0.0", true)]
+    #[case("8.8.8.8", false)]
+    #[case("1.1.1.1", false)]
+    fn test_is_private_ip_v4(#[case] addr: &str, #[case] expected: bool) {
+        let ip: IpAddr = addr.parse().unwrap();
+        assert_eq!(is_private_ip(&ip), expected, "{addr}");
     }
 
-    #[test]
-    fn test_is_private_ip_v6() {
-        use std::net::Ipv6Addr;
-        assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
-        assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
-        // fc00::/7 unique local
-        assert!(is_private_ip(&IpAddr::V6(
-            "fd00::1".parse::<Ipv6Addr>().unwrap()
-        )));
-        // fe80::/10 link-local
-        assert!(is_private_ip(&IpAddr::V6(
-            "fe80::1".parse::<Ipv6Addr>().unwrap()
-        )));
-        // Public
-        assert!(!is_private_ip(&IpAddr::V6(
-            "2607:f8b0:4004:800::200e".parse::<Ipv6Addr>().unwrap()
-        )));
+    #[rstest]
+    #[case("::1", true)]
+    #[case("::", true)]
+    #[case("fd00::1", true)]
+    #[case("fe80::1", true)]
+    #[case("2607:f8b0:4004:800::200e", false)]
+    fn test_is_private_ip_v6(#[case] addr: &str, #[case] expected: bool) {
+        let ip: IpAddr = addr.parse().unwrap();
+        assert_eq!(is_private_ip(&ip), expected, "{addr}");
     }
 
     #[tokio::test]
     async fn test_ssrf_blocks_localhost_url() {
         let url = Url::parse("http://127.0.0.1/secret").unwrap();
-        let result = ssrf_check(&url).await;
+        let result = ssrf_check(&url, &[]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("SSRF"));
     }
@@ -528,7 +501,7 @@ mod tests {
     #[tokio::test]
     async fn test_ssrf_blocks_private_ip() {
         let url = Url::parse("http://192.168.1.1/admin").unwrap();
-        let result = ssrf_check(&url).await;
+        let result = ssrf_check(&url, &[]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("SSRF"));
     }
@@ -536,7 +509,7 @@ mod tests {
     #[tokio::test]
     async fn test_ssrf_blocks_link_local() {
         let url = Url::parse("http://169.254.1.1/metadata").unwrap();
-        let result = ssrf_check(&url).await;
+        let result = ssrf_check(&url, &[]).await;
         assert!(result.is_err());
     }
 
@@ -654,5 +627,91 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unsupported"));
+    }
+
+    // --- SSRF allowlist tests ---
+
+    #[test]
+    fn test_is_ssrf_allowed_matching_cidr() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.0/16".parse().unwrap()];
+        let ip: IpAddr = "172.22.1.5".parse().unwrap();
+        assert!(is_ssrf_allowed(&ip, &allowlist));
+    }
+
+    #[test]
+    fn test_is_ssrf_allowed_non_matching() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.0/16".parse().unwrap()];
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(!is_ssrf_allowed(&ip, &allowlist));
+    }
+
+    #[test]
+    fn test_is_ssrf_allowed_empty_blocks_all() {
+        let ip: IpAddr = "172.22.1.5".parse().unwrap();
+        assert!(!is_ssrf_allowed(&ip, &[]));
+    }
+
+    #[test]
+    fn test_is_ssrf_allowed_single_host() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.5/32".parse().unwrap()];
+        assert!(is_ssrf_allowed(&"172.22.0.5".parse().unwrap(), &allowlist));
+        assert!(!is_ssrf_allowed(&"172.22.0.6".parse().unwrap(), &allowlist));
+    }
+
+    #[test]
+    fn test_is_ssrf_allowed_ipv6() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["fd00::/8".parse().unwrap()];
+        let ip: IpAddr = "fd12::1".parse().unwrap();
+        assert!(is_ssrf_allowed(&ip, &allowlist));
+        let ip_outside: IpAddr = "fe80::1".parse().unwrap();
+        assert!(!is_ssrf_allowed(&ip_outside, &allowlist));
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_check_allowlist_permits_private_ip() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.0/16".parse().unwrap()];
+        let url = Url::parse("http://172.22.1.5/api").unwrap();
+        let result = ssrf_check(&url, &allowlist).await;
+        assert!(result.is_ok(), "allowlisted IP should pass SSRF check");
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_check_allowlist_still_blocks_non_matching() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.0/16".parse().unwrap()];
+        let url = Url::parse("http://10.0.0.1/admin").unwrap();
+        let result = ssrf_check(&url, &allowlist).await;
+        assert!(
+            result.is_err(),
+            "non-allowlisted private IP should be blocked"
+        );
+    }
+
+    #[test]
+    fn test_from_config_parses_ssrf_allowlist() {
+        let cfg = WebFetchConfig {
+            ssrf_allowlist: vec![
+                "172.22.0.0/16".into(),
+                "invalid".into(),
+                "10.0.0.0/8".into(),
+            ],
+            ..Default::default()
+        };
+        let tool = WebFetchTool::from_config(&cfg).unwrap();
+        assert_eq!(tool.ssrf_allowlist.len(), 2);
+    }
+
+    #[test]
+    fn test_with_proxy() {
+        let tool = default_tool();
+        assert!(tool.proxy_url.is_none());
+        let tool = tool.with_proxy("http://127.0.0.1:18791".into());
+        assert_eq!(tool.proxy_url.as_deref(), Some("http://127.0.0.1:18791"));
+    }
+
+    #[test]
+    fn test_from_config_has_no_proxy_by_default() {
+        let cfg = WebFetchConfig::default();
+        let tool = WebFetchTool::from_config(&cfg).unwrap();
+        assert!(tool.proxy_url.is_none());
     }
 }

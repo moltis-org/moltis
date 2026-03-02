@@ -8,10 +8,9 @@
 //! - Exit 1 → [`HookAction::Block`] with stderr as reason
 //! - Timeout → error (non-fatal, logged by registry)
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use {
-    anyhow::{Context, Result, bail},
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     serde_json::Value,
@@ -19,7 +18,10 @@ use {
     tracing::{debug, warn},
 };
 
-use crate::hooks::{HookAction, HookEvent, HookHandler, HookPayload, ShellHookConfig};
+use {
+    crate::hooks::{HookAction, HookEvent, HookHandler, HookPayload, ShellHookConfig},
+    moltis_common::{Error as HookError, Result as HookResult},
+};
 
 /// Response format expected from shell hooks on stdout.
 #[derive(Debug, Deserialize, Serialize)]
@@ -36,6 +38,7 @@ pub struct ShellHookHandler {
     subscribed_events: Vec<HookEvent>,
     timeout: Duration,
     env: HashMap<String, String>,
+    working_dir: Option<PathBuf>,
 }
 
 impl ShellHookHandler {
@@ -45,6 +48,7 @@ impl ShellHookHandler {
         events: Vec<HookEvent>,
         timeout: Duration,
         env: HashMap<String, String>,
+        working_dir: Option<PathBuf>,
     ) -> Self {
         Self {
             hook_name: name.into(),
@@ -52,10 +56,14 @@ impl ShellHookHandler {
             subscribed_events: events,
             timeout,
             env,
+            working_dir,
         }
     }
 
     /// Create from a [`ShellHookConfig`].
+    ///
+    /// Config-based hooks (from `moltis.toml`) don't have a hook directory,
+    /// so `working_dir` is `None`.
     pub fn from_config(config: &ShellHookConfig) -> Self {
         Self::new(
             config.name.clone(),
@@ -63,6 +71,7 @@ impl ShellHookHandler {
             config.events.clone(),
             Duration::from_secs(config.timeout),
             config.env.clone(),
+            None,
         )
     }
 }
@@ -77,9 +86,10 @@ impl HookHandler for ShellHookHandler {
         &self.subscribed_events
     }
 
-    async fn handle(&self, _event: HookEvent, payload: &HookPayload) -> Result<HookAction> {
-        let payload_json =
-            serde_json::to_string(payload).context("failed to serialize hook payload")?;
+    async fn handle(&self, _event: HookEvent, payload: &HookPayload) -> HookResult<HookAction> {
+        let payload_json = serde_json::to_string(payload).map_err(|source| {
+            HookError::message(format!("failed to serialize hook payload: {source}"))
+        })?;
 
         debug!(
             hook = %self.hook_name,
@@ -88,34 +98,51 @@ impl HookHandler for ShellHookHandler {
             "spawning shell hook"
         );
 
-        let mut child = Command::new("sh")
-            .arg("-c")
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
             .arg(&self.command)
             .envs(&self.env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .with_context(|| format!("failed to spawn hook command: {}", self.command))?;
+            .stderr(std::process::Stdio::piped());
+
+        if let Some(ref dir) = self.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        let mut child = cmd.spawn().map_err(|source| {
+            HookError::message(format!(
+                "failed to spawn hook command '{}': {source}",
+                self.command
+            ))
+        })?;
 
         // Write payload to stdin (ignore broken pipe if child doesn't read it).
         if let Some(mut stdin) = child.stdin.take()
             && let Err(e) = stdin.write_all(payload_json.as_bytes()).await
             && e.kind() != std::io::ErrorKind::BrokenPipe
         {
-            return Err(e.into());
+            return Err(HookError::message(format!(
+                "failed writing payload to hook '{}': {e}",
+                self.hook_name
+            )));
         }
 
         // Wait with timeout.
         let output = tokio::time::timeout(self.timeout, child.wait_with_output())
             .await
-            .with_context(|| {
-                format!(
+            .map_err(|_| {
+                HookError::message(format!(
                     "hook '{}' timed out after {:?}",
                     self.hook_name, self.timeout
-                )
+                ))
             })?
-            .with_context(|| format!("hook '{}' failed to complete", self.hook_name))?;
+            .map_err(|source| {
+                HookError::message(format!(
+                    "hook '{}' failed to complete: {source}",
+                    self.hook_name
+                ))
+            })?;
 
         let exit_code = output.status.code().unwrap_or(-1);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -138,12 +165,12 @@ impl HookHandler for ShellHookHandler {
         }
 
         if exit_code != 0 {
-            bail!(
+            return Err(HookError::message(format!(
                 "hook '{}' exited with code {}: {}",
                 self.hook_name,
                 exit_code,
                 stderr.trim()
-            );
+            )));
         }
 
         // Exit 0 — check for modify response on stdout.
@@ -170,6 +197,7 @@ impl HookHandler for ShellHookHandler {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +216,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -204,6 +233,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -223,6 +253,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -243,6 +274,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -262,6 +294,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_millis(100),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -283,6 +316,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             env,
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -302,6 +336,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -317,12 +352,62 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
             .await
             .unwrap();
         assert!(matches!(result, HookAction::Continue));
+    }
+
+    #[tokio::test]
+    async fn shell_hook_working_dir() {
+        let tmp = std::env::temp_dir().join("moltis_hook_wd_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let handler = ShellHookHandler::new(
+            "test-wd",
+            "pwd",
+            vec![HookEvent::SessionStart],
+            Duration::from_secs(5),
+            HashMap::new(),
+            Some(tmp.clone()),
+        );
+        let result = handler
+            .handle(HookEvent::SessionStart, &test_payload())
+            .await
+            .unwrap();
+
+        // pwd outputs a path on stdout — handler treats non-JSON stdout as Continue,
+        // so we verify via a modify response instead.
+        drop(result);
+
+        // Use a command that echoes pwd as JSON modify data.
+        let handler = ShellHookHandler::new(
+            "test-wd-json",
+            r#"echo "{\"action\":\"modify\",\"data\":{\"cwd\":\"$(pwd)\"}}"  "#,
+            vec![HookEvent::SessionStart],
+            Duration::from_secs(5),
+            HashMap::new(),
+            Some(tmp.clone()),
+        );
+        let result = handler
+            .handle(HookEvent::SessionStart, &test_payload())
+            .await
+            .unwrap();
+        match result {
+            HookAction::ModifyPayload(v) => {
+                let cwd = v["cwd"].as_str().unwrap();
+                // Canonicalize both to handle /tmp vs /private/tmp on macOS.
+                let expected = std::fs::canonicalize(&tmp).unwrap();
+                let actual = std::fs::canonicalize(cwd).unwrap();
+                assert_eq!(actual, expected);
+            },
+            _ => panic!("expected ModifyPayload, got: {result:?}"),
+        }
+
+        let _ = std::fs::remove_dir(&tmp);
     }
 
     #[tokio::test]

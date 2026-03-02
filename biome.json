@@ -6,7 +6,10 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["crates/gateway/src/assets/js/**/*.js"]
+    "includes": [
+      "crates/web/src/assets/js/**/*.js",
+      "crates/web/ui/**/*.js"
+    ]
   },
   "linter": {
     "enabled": true,

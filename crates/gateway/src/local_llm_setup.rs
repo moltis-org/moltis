@@ -3,7 +3,7 @@
 //! Provides RPC handlers for configuring the local GGUF LLM provider,
 //! including system info detection, model listing, and model configuration.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{fmt, path::PathBuf, sync::Arc};
 
 use {
     async_trait::async_trait,
@@ -13,13 +13,30 @@ use {
     tracing::info,
 };
 
-use moltis_agents::providers::{ProviderRegistry, local_gguf, local_llm, raw_model_id};
+use moltis_providers::{ProviderRegistry, local_gguf, local_llm, raw_model_id};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
     services::{LocalLlmService, ServiceResult},
     state::GatewayState,
 };
+
+#[derive(Debug, thiserror::Error)]
+pub enum LocalModelCacheError {
+    #[error("{message}")]
+    Message { message: String },
+}
+
+impl LocalModelCacheError {
+    #[must_use]
+    pub fn message(message: impl fmt::Display) -> Self {
+        Self::Message {
+            message: message.to_string(),
+        }
+    }
+}
+
+pub type LocalModelCacheResult<T> = Result<T, LocalModelCacheError>;
 
 /// Check if a local model is cached on disk, and download it if not.
 ///
@@ -28,18 +45,16 @@ use crate::{
 /// Returns Err if download failed.
 pub async fn ensure_local_model_cached(
     model_id: &str,
-    state: &Arc<crate::state::GatewayState>,
-) -> Result<bool, String> {
+    state: &Arc<GatewayState>,
+) -> LocalModelCacheResult<bool> {
     let cache_dir = local_gguf::models::default_models_dir();
     info!(model_id, ?cache_dir, "checking if local model is cached");
 
     // First check the unified registry
-    if let Some(def) = moltis_agents::providers::local_llm::models::find_model(model_id) {
+    if let Some(def) = local_llm::models::find_model(model_id) {
         // Determine backend type
-        let backend =
-            moltis_agents::providers::local_llm::backend::detect_backend_for_model(model_id);
-        let is_cached =
-            moltis_agents::providers::local_llm::models::is_model_cached(def, backend, &cache_dir);
+        let backend = local_llm::backend::detect_backend_for_model(model_id);
+        let is_cached = local_llm::models::is_model_cached(def, backend, &cache_dir);
 
         info!(model_id, is_cached, "found in unified registry");
 
@@ -78,12 +93,12 @@ pub async fn ensure_local_model_cached(
 
 /// Download a model from the unified registry with progress broadcasting.
 async fn download_unified_model(
-    model: &'static moltis_agents::providers::local_llm::models::LocalModelDef,
-    backend: moltis_agents::providers::local_llm::backend::BackendType,
+    model: &'static local_llm::models::LocalModelDef,
+    backend: local_llm::backend::BackendType,
     cache_dir: &std::path::Path,
-    state: &Arc<crate::state::GatewayState>,
-) -> Result<bool, String> {
-    use moltis_agents::providers::local_llm::models as llm_models;
+    state: &Arc<GatewayState>,
+) -> LocalModelCacheResult<bool> {
+    use moltis_providers::local_llm::models as llm_models;
 
     let model_id = model.id.to_string();
     let display_name = model.display_name.to_string();
@@ -136,13 +151,13 @@ async fn download_unified_model(
 
     // Download based on backend
     let result = match backend {
-        moltis_agents::providers::local_llm::backend::BackendType::Gguf => {
+        local_llm::backend::BackendType::Gguf => {
             llm_models::ensure_model_with_progress(model, cache_dir, |p| {
                 let _ = tx.send((p.downloaded, p.total));
             })
             .await
         },
-        moltis_agents::providers::local_llm::backend::BackendType::Mlx => {
+        local_llm::backend::BackendType::Mlx => {
             llm_models::ensure_mlx_model_with_progress(model, cache_dir, |p| {
                 let _ = tx.send((p.downloaded, p.total));
             })
@@ -183,7 +198,9 @@ async fn download_unified_model(
                 BroadcastOpts::default(),
             )
             .await;
-            Err(format!("Failed to download model: {}", e))
+            Err(LocalModelCacheError::message(format!(
+                "Failed to download model: {e}"
+            )))
         },
     }
 }
@@ -192,8 +209,8 @@ async fn download_unified_model(
 async fn download_legacy_model(
     model: &'static local_gguf::models::GgufModelDef,
     cache_dir: &std::path::Path,
-    state: &Arc<crate::state::GatewayState>,
-) -> Result<bool, String> {
+    state: &Arc<GatewayState>,
+) -> LocalModelCacheResult<bool> {
     let model_id = model.id.to_string();
     let display_name = model.display_name.to_string();
 
@@ -292,7 +309,9 @@ async fn download_legacy_model(
                 BroadcastOpts::default(),
             )
             .await;
-            Err(format!("Failed to download model: {}", e))
+            Err(LocalModelCacheError::message(format!(
+                "Failed to download model: {e}"
+            )))
         },
     }
 }
@@ -562,6 +581,20 @@ impl LiveLocalLlmService {
     }
 }
 
+fn has_enough_ram(total_ram_gb: u32, required_ram_gb: u32) -> bool {
+    total_ram_gb >= required_ram_gb
+}
+
+fn insufficient_ram_error(
+    model_display_name: &str,
+    required_ram_gb: u32,
+    total_ram_gb: u32,
+) -> String {
+    format!(
+        "not enough RAM for {model_display_name}: requires at least {required_ram_gb}GB, detected {total_ram_gb}GB. Choose a smaller model."
+    )
+}
+
 #[async_trait]
 impl LocalLlmService for LiveLocalLlmService {
     async fn system_info(&self) -> ServiceResult {
@@ -694,17 +727,25 @@ impl LocalLlmService for LiveLocalLlmService {
 
         // Validate backend choice
         if backend != "GGUF" && backend != "MLX" {
-            return Err(format!("invalid backend: {backend}. Must be GGUF or MLX"));
+            return Err(format!("invalid backend: {backend}. Must be GGUF or MLX").into());
         }
         if backend == "MLX" && !mlx_available {
-            return Err(
-                "MLX backend requires mlx-lm. Install with: pip install mlx-lm".to_string(),
-            );
+            return Err("MLX backend requires mlx-lm. Install with: pip install mlx-lm".into());
         }
 
         // Validate model exists in registry
         let model_def = local_gguf::models::find_model(&model_id)
             .ok_or_else(|| format!("unknown model: {model_id}"))?;
+
+        let total_ram_gb = sys.total_ram_gb();
+        if !has_enough_ram(total_ram_gb, model_def.min_ram_gb) {
+            return Err(insufficient_ram_error(
+                model_def.display_name,
+                model_def.min_ram_gb,
+                total_ram_gb,
+            )
+            .into());
+        }
 
         info!(model = %model_id, backend = %backend, "configuring local-llm");
 
@@ -834,10 +875,11 @@ impl LocalLlmService for LiveLocalLlmService {
 
                     let mut reg = registry.write().await;
                     reg.register(
-                        moltis_agents::providers::ModelInfo {
+                        moltis_providers::ModelInfo {
                             id: model_id_clone.clone(),
                             provider: "local-llm".into(),
                             display_name,
+                            created_at: None,
                         },
                         provider,
                     );
@@ -926,7 +968,7 @@ impl LocalLlmService for LiveLocalLlmService {
 
         // Validate: GGUF requires a filename, MLX doesn't
         if backend == "GGUF" && hf_filename.is_none() {
-            return Err("GGUF models require 'hfFilename' parameter".to_string());
+            return Err("GGUF models require 'hfFilename' parameter".into());
         }
 
         // Generate a model ID from the repo name
@@ -994,7 +1036,7 @@ impl LocalLlmService for LiveLocalLlmService {
         let removed = config.remove_model(local_model_id);
 
         if !removed {
-            return Err(format!("model '{model_id}' not found in config"));
+            return Err(format!("model '{model_id}' not found in config").into());
         }
 
         config
@@ -1115,6 +1157,7 @@ struct HfModelInfo {
     tags: Vec<String>,
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1180,6 +1223,20 @@ mod tests {
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["status"], "ready");
         assert_eq!(json["model_id"], "test-model");
+    }
+
+    #[test]
+    fn test_has_enough_ram() {
+        assert!(has_enough_ram(8, 8));
+        assert!(has_enough_ram(16, 8));
+        assert!(!has_enough_ram(0, 4));
+    }
+
+    #[test]
+    fn test_insufficient_ram_error() {
+        let message = insufficient_ram_error("Qwen 2.5 Coder 7B", 8, 0);
+        assert!(message.contains("requires at least 8GB"));
+        assert!(message.contains("detected 0GB"));
     }
 
     #[test]

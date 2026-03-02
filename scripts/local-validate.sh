@@ -5,17 +5,22 @@ set -euo pipefail
 ACTIVE_PIDS=()
 CURRENT_PID=""
 RUN_CHECK_ASYNC_PID=""
+STATUS_PUBLISH_ENABLED=1
 
 remove_active_pid() {
   local target="$1"
-  local kept=()
+  local -a kept=()
   local pid
   for pid in "${ACTIVE_PIDS[@]}"; do
     if [[ "$pid" != "$target" ]]; then
       kept+=("$pid")
     fi
   done
-  ACTIVE_PIDS=("${kept[@]}")
+  if [[ "${#kept[@]}" -gt 0 ]]; then
+    ACTIVE_PIDS=("${kept[@]}")
+  else
+    ACTIVE_PIDS=()
+  fi
 }
 
 handle_interrupt() {
@@ -123,36 +128,84 @@ if ! cargo fetch --locked 2>/dev/null; then
   fi
 fi
 
-# Reject dirty working trees in all modes. Validating with uncommitted changes
-# gives misleading results (local-only) or publishes statuses for the wrong
-# content (PR mode).
-if ! git diff --quiet --ignore-submodules -- || \
-   ! git diff --cached --quiet --ignore-submodules -- || \
-   [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
-  cat >&2 <<EOF
+# Reject dirty working trees in PR mode. Validating with uncommitted changes
+# publishes statuses for the wrong content. In local-only mode (no PR) we
+# allow a dirty tree so developers can lint/test without committing first.
+if [[ "$LOCAL_ONLY" -eq 0 ]]; then
+  if ! git diff --quiet --ignore-submodules -- || \
+     ! git diff --cached --quiet --ignore-submodules -- || \
+     [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+    cat >&2 <<EOF
 Working tree is not clean.
 
 Commit or stash all local changes (including untracked files) before running
-local validation.
+local validation with a PR number.
 EOF
-  exit 1
+    exit 1
+  fi
 fi
 
-fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
-biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/gateway/src/assets/js/}"
-zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-zizmor . --min-severity high >/dev/null 2>&1 || true}"
-lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
-test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
+detect_nightly_toolchain() {
+  if [[ -n "${LOCAL_VALIDATE_NIGHTLY_TOOLCHAIN:-}" ]]; then
+    printf '%s' "$LOCAL_VALIDATE_NIGHTLY_TOOLCHAIN"
+    return
+  fi
+
+  if [[ -f justfile ]]; then
+    local justfile_toolchain
+    justfile_toolchain="$(sed -nE 's/^nightly_toolchain := "([^"]+)"/\1/p' justfile | head -n1)"
+    if [[ -n "$justfile_toolchain" ]]; then
+      printf '%s' "$justfile_toolchain"
+      return
+    fi
+  fi
+
+  printf '%s' "nightly-2025-11-30"
+}
+
+nightly_toolchain="$(detect_nightly_toolchain)"
+
+if [[ -n "${LOCAL_VALIDATE_FMT_CMD:-}" ]]; then
+  fmt_cmd="$LOCAL_VALIDATE_FMT_CMD"
+elif command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
+  fmt_cmd="just format-check"
+else
+  fmt_cmd="cargo +${nightly_toolchain} fmt --all -- --check"
+fi
+biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/web/src/assets/js/}"
+i18n_cmd="${LOCAL_VALIDATE_I18N_CMD:-./scripts/i18n-check.sh}"
+zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --min-severity high}"
+lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
+test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
+e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
+coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
+macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate build}"
+ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
+
+strip_all_features_flag() {
+  local cmd="$1"
+  cmd="${cmd// --all-features / }"
+  cmd="${cmd// --all-features/}"
+  cmd="${cmd//--all-features /}"
+  cmd="${cmd//--all-features/}"
+  printf '%s' "$cmd"
+}
 
 if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   if [[ -z "${LOCAL_VALIDATE_LINT_CMD:-}" ]]; then
-    lint_cmd="cargo clippy --workspace -- -D warnings"
+    lint_cmd="cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings"
   fi
   if [[ -z "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
-    test_cmd="cargo test"
+    test_cmd="cargo nextest run"
   fi
-  echo "Detected macOS without nvcc; using non-CUDA local validation commands." >&2
-  echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD if needed." >&2
+  if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
+    coverage_cmd="cargo +${nightly_toolchain} llvm-cov --workspace --html"
+  fi
+  lint_cmd="$(strip_all_features_flag "$lint_cmd")"
+  test_cmd="$(strip_all_features_flag "$test_cmd")"
+  coverage_cmd="$(strip_all_features_flag "$coverage_cmd")"
+  echo "Detected macOS without nvcc; forcing non-CUDA local validation commands (no --all-features)." >&2
+  echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD / LOCAL_VALIDATE_COVERAGE_CMD if needed." >&2
 fi
 
 ensure_zizmor() {
@@ -197,12 +250,46 @@ repair_stale_llama_build_dirs() {
   shopt -u nullglob
 }
 
+cleanup_e2e_ports() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local port
+  for port in "${MOLTIS_E2E_PORT:-18789}" "${MOLTIS_E2E_ONBOARDING_PORT:-18790}"; do
+    local pids
+    pids="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -z "$pids" ]]; then
+      continue
+    fi
+
+    echo "Stopping stale process(es) on TCP ${port}: ${pids//$'\n'/ }"
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null || true
+    done <<<"$pids"
+
+    sleep 1
+
+    local remaining
+    remaining="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "$remaining" ]]; then
+      while IFS= read -r pid; do
+        [[ -n "$pid" ]] && kill -KILL "$pid" 2>/dev/null || true
+      done <<<"$remaining"
+    fi
+  done
+}
+
 set_status() {
   local state="$1"
   local context="$2"
   local description="$3"
 
   if [[ "$LOCAL_ONLY" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ "$STATUS_PUBLISH_ENABLED" -eq 0 ]]; then
     return 0
   fi
 
@@ -223,7 +310,9 @@ If this is an org with SSO enforcement, authorize the token for the org.
 If GH_TOKEN is set in your shell, try unsetting it to use your gh auth token:
   unset GH_TOKEN
 EOF
-    return 1
+    STATUS_PUBLISH_ENABLED=0
+    echo "Disabling further status publication for this run; continuing local checks." >&2
+    return 0
   fi
 }
 
@@ -299,6 +388,7 @@ run_check_async() {
 
 report_async_result() {
   local context="$1"
+  local pid="$2"
   local safe_context
   local result_file
   local status_word
@@ -309,10 +399,18 @@ report_async_result() {
   if [[ -f "$result_file" ]]; then
     read -r status_word duration <"$result_file"
     rm -f "$result_file"
-    remove_active_pid "$2"
+    remove_active_pid "$pid"
     echo "[$context] total ${duration}s"
     [[ "$status_word" == "ok" ]]
     return
+  fi
+
+  # Rare race fallback: if the child already exited and `wait` has already
+  # observed the status, treat missing timing metadata as non-fatal.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    remove_active_pid "$pid"
+    echo "[$context] total unavailable (timing result missing)"
+    return 0
   fi
 
   echo "[$context] missing timing result" >&2
@@ -343,6 +441,8 @@ run_check_async "local/fmt" "$fmt_cmd"
 fmt_pid="$RUN_CHECK_ASYNC_PID"
 run_check_async "local/biome" "$biome_cmd"
 biome_pid="$RUN_CHECK_ASYNC_PID"
+run_check_async "local/i18n" "$i18n_cmd"
+i18n_pid="$RUN_CHECK_ASYNC_PID"
 run_check_async "local/zizmor" "$zizmor_cmd"
 zizmor_pid="$RUN_CHECK_ASYNC_PID"
 
@@ -351,6 +451,8 @@ if ! wait "$fmt_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/fmt" "$fmt_pid"; then parallel_failed=1; fi
 if ! wait "$biome_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/biome" "$biome_pid"; then parallel_failed=1; fi
+if ! wait "$i18n_pid"; then parallel_failed=1; fi
+if ! report_async_result "local/i18n" "$i18n_pid"; then parallel_failed=1; fi
 
 if [[ "$parallel_failed" -ne 0 ]]; then
   echo "One or more parallel local checks failed." >&2
@@ -360,16 +462,107 @@ fi
 # Verify Cargo.lock is in sync (same as CI's `cargo fetch --locked`).
 run_check "local/lockfile" "cargo fetch --locked"
 
-# Keep lint/test sequential to maximize incremental compile reuse.
-# These do not wait on local/zizmor (advisory and non-blocking).
+# Lint runs first to warm the cargo build cache (clippy compiles all targets).
+# These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"
-run_check "local/test" "$test_cmd"
 
-# Collect local/zizmor result at the end without affecting pass/fail.
-if wait "$zizmor_pid"; then
-  report_async_result "local/zizmor" "$zizmor_pid" || true
+# Build WASM guest components if the target is installed — required by
+# release-profile builds (macOS app, swift-bridge) that embed the artifacts
+# via include_bytes!.
+if rustup target list --installed 2>/dev/null | grep -q wasm32-wasip2; then
+  echo "Building WASM tool components..."
+  cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+fi
+
+# Build the gateway binary so e2e startup scripts find a fresh binary and
+# skip recompilation. Clippy (lint) compiled dependencies but may not produce
+# a runnable binary with matching fingerprints.
+echo "Building moltis binary for e2e tests..."
+cargo +"${nightly_toolchain}" build --bin moltis
+
+# After lint, run test / macOS app / e2e in parallel — they use independent
+# toolchains (cargo nextest, Xcode, Playwright) and don't contend on resources.
+run_check_async "local/test" "$test_cmd"
+test_pid="$RUN_CHECK_ASYNC_PID"
+
+macos_pid=""
+if [[ "${LOCAL_VALIDATE_SKIP_MACOS_APP:-0}" != "1" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    run_check_async "local/macos-app" "$macos_app_cmd"
+    macos_pid="$RUN_CHECK_ASYNC_PID"
+  else
+    echo "Skipping macOS app checks (requires macOS host)."
+    set_status success "local/macos-app" "Skipped on non-macOS host"
+  fi
 else
-  report_async_result "local/zizmor" "$zizmor_pid" || true
+  echo "Skipping macOS app checks (LOCAL_VALIDATE_SKIP_MACOS_APP=1)."
+  set_status success "local/macos-app" "Skipped via LOCAL_VALIDATE_SKIP_MACOS_APP"
+fi
+
+# iOS app validation (macOS hosts only — requires Xcode with iOS SDK).
+if [[ "${LOCAL_VALIDATE_SKIP_IOS_APP:-0}" != "1" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    run_check "local/ios-app" "$ios_app_cmd"
+  else
+    echo "Skipping iOS app checks (requires macOS host)."
+    set_status success "local/ios-app" "Skipped on non-macOS host"
+  fi
+else
+  echo "Skipping iOS app checks (LOCAL_VALIDATE_SKIP_IOS_APP=1)."
+  set_status success "local/ios-app" "Skipped via LOCAL_VALIDATE_SKIP_IOS_APP"
+fi
+
+# Gateway web UI e2e tests.
+e2e_pid=""
+if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" != "1" ]]; then
+  cleanup_e2e_ports
+  run_check_async "local/e2e" "$e2e_cmd"
+  e2e_pid="$RUN_CHECK_ASYNC_PID"
+else
+  echo "Skipping E2E checks (LOCAL_VALIDATE_SKIP_E2E=1)."
+fi
+
+# Wait for the heavy parallel checks.
+heavy_failed=0
+if ! wait "$test_pid"; then heavy_failed=1; fi
+if ! report_async_result "local/test" "$test_pid"; then heavy_failed=1; fi
+
+if [[ -n "$macos_pid" ]]; then
+  if ! wait "$macos_pid"; then heavy_failed=1; fi
+  if ! report_async_result "local/macos-app" "$macos_pid"; then heavy_failed=1; fi
+fi
+
+if [[ -n "$e2e_pid" ]]; then
+  if ! wait "$e2e_pid"; then heavy_failed=1; fi
+  if ! report_async_result "local/e2e" "$e2e_pid"; then heavy_failed=1; fi
+fi
+
+if [[ "$heavy_failed" -ne 0 ]]; then
+  echo "One or more checks (test/macos-app/e2e) failed." >&2
+  exit 1
+fi
+
+# Coverage (optional — requires cargo-llvm-cov).
+# Skipped silently when the tool is not installed. Disable explicitly with
+# LOCAL_VALIDATE_SKIP_COVERAGE=1.
+if [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]] && cargo llvm-cov --version >/dev/null 2>&1; then
+  run_check "local/coverage" "$coverage_cmd"
+  echo "Coverage report: target/llvm-cov/html/index.html"
+elif [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]]; then
+  echo "Skipping coverage (cargo-llvm-cov not installed). Install with: cargo install cargo-llvm-cov"
+fi
+
+# Collect local/zizmor result at the end and fail if it found issues.
+zizmor_failed=0
+if ! wait "$zizmor_pid"; then
+  zizmor_failed=1
+fi
+if ! report_async_result "local/zizmor" "$zizmor_pid"; then
+  zizmor_failed=1
+fi
+if [[ "$zizmor_failed" -ne 0 ]]; then
+  echo "local/zizmor failed." >&2
+  exit 1
 fi
 
 if [[ "$LOCAL_ONLY" -eq 1 ]]; then

@@ -67,7 +67,7 @@ impl ExecApprovalService for LiveExecApprovalService {
         let decision = match decision_str {
             "approved" => ApprovalDecision::Approved,
             "denied" => ApprovalDecision::Denied,
-            _ => return Err(format!("invalid decision: {decision_str}")),
+            _ => return Err(format!("invalid decision: {decision_str}").into()),
         };
 
         let command = params.get("command").and_then(|v| v.as_str());
@@ -92,7 +92,7 @@ impl GatewayApprovalBroadcaster {
 
 #[async_trait]
 impl ApprovalBroadcaster for GatewayApprovalBroadcaster {
-    async fn broadcast_request(&self, request_id: &str, command: &str) -> anyhow::Result<()> {
+    async fn broadcast_request(&self, request_id: &str, command: &str) -> moltis_tools::Result<()> {
         broadcast(
             &self.state,
             "exec.approval.requested",
@@ -107,6 +107,7 @@ impl ApprovalBroadcaster for GatewayApprovalBroadcaster {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

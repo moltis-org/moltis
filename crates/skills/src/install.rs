@@ -356,6 +356,7 @@ pub fn default_install_dir() -> anyhow::Result<PathBuf> {
     Ok(moltis_config::data_dir().join("installed-skills"))
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

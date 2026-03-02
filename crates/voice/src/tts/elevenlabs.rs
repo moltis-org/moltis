@@ -10,6 +10,7 @@ use {
     reqwest::Client,
     secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
+    tracing::{debug, info, warn},
 };
 
 use super::{AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice, contains_ssml};
@@ -89,6 +90,7 @@ impl ElevenLabsTts {
             AudioFormat::Opus => "opus_48000_64", // Good for Telegram voice notes
             AudioFormat::Aac => "aac_44100",
             AudioFormat::Pcm => "pcm_44100",
+            AudioFormat::Webm => "opus_48000_64", // WebM uses Opus codec
         }
     }
 }
@@ -158,6 +160,15 @@ impl TtsProvider for ElevenLabsTts {
         let model = request.model.as_deref().unwrap_or(&self.default_model);
         let has_ssml = contains_ssml(&request.text);
 
+        info!(
+            voice_id = voice_id,
+            model = model,
+            text_len = request.text.len(),
+            ssml = has_ssml,
+            format = ?request.output_format,
+            "ElevenLabs TTS synthesize request"
+        );
+
         let body = TtsRequest {
             text: &request.text,
             model_id: model,
@@ -175,6 +186,8 @@ impl TtsProvider for ElevenLabsTts {
             "{API_BASE}/text-to-speech/{voice_id}?output_format={output_format}&optimize_streaming_latency=2"
         );
 
+        debug!(url = %url, "ElevenLabs TTS API call");
+
         let response = self
             .client
             .post(&url)
@@ -185,9 +198,14 @@ impl TtsProvider for ElevenLabsTts {
             .await
             .context("failed to send ElevenLabs TTS request")?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            warn!(
+                status = %status,
+                body = %body,
+                "ElevenLabs TTS API error"
+            );
             return Err(anyhow!(
                 "ElevenLabs TTS request failed: {} - {}",
                 status,
@@ -199,6 +217,12 @@ impl TtsProvider for ElevenLabsTts {
             .bytes()
             .await
             .context("failed to read ElevenLabs TTS response")?;
+
+        info!(
+            audio_bytes = data.len(),
+            format = ?request.output_format,
+            "ElevenLabs TTS synthesis complete"
+        );
 
         Ok(AudioOutput {
             data,
@@ -249,6 +273,7 @@ struct ElevenLabsVoice {
     preview_url: Option<String>,
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

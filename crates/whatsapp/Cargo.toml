@@ -4,23 +4,37 @@ name              = "moltis-whatsapp"
 version.workspace = true
 
 [dependencies]
-anyhow            = { workspace = true }
-async-trait       = "0.1"
-futures           = { workspace = true }
-moltis-channels   = { workspace = true }
-moltis-common     = { workspace = true }
-serde             = { workspace = true }
-serde_json        = { workspace = true }
-tokio             = { workspace = true }
-tokio-tungstenite = { workspace = true }
-tracing           = { workspace = true }
-uuid              = { workspace = true }
+async-trait     = { workspace = true }
+base64          = { workspace = true }
+dashmap         = { workspace = true }
+moltis-channels = { workspace = true }
+moltis-common   = { workspace = true }
+moltis-config   = { workspace = true }
+moltis-media    = { workspace = true }
+moltis-metrics  = { optional = true, workspace = true }
+rand            = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+sled            = { workspace = true }
+thiserror       = { workspace = true }
+tokio           = { workspace = true }
+tokio-util      = { workspace = true }
+tracing         = { workspace = true }
+wacore          = { workspace = true }
+wacore-binary   = { workspace = true }
+waproto         = { workspace = true }
 
-[target.'cfg(unix)'.dependencies]
-nix = { features = ["signal"], version = "0.29" }
+whatsapp-rust                  = { workspace = true }
+whatsapp-rust-tokio-transport  = { workspace = true }
+whatsapp-rust-ureq-http-client = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
-tokio = { workspace = true }
+tempfile = { workspace = true }
+tokio    = { workspace = true }
 
 [lints]
 workspace = true

@@ -34,11 +34,16 @@ pub struct HooksConfig {
     pub hooks: Vec<ShellHookConfig>,
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use {anyhow::Result, async_trait::async_trait, serde_json::Value};
+    use {
+        async_trait::async_trait,
+        moltis_common::{Error as HookError, Result},
+        serde_json::Value,
+    };
 
     use super::*;
 
@@ -116,7 +121,7 @@ mod tests {
         }
 
         async fn handle(&self, _event: HookEvent, _payload: &HookPayload) -> Result<HookAction> {
-            anyhow::bail!("handler failed")
+            Err(HookError::message("handler failed"))
         }
     }
 

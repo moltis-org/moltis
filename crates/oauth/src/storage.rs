@@ -1,8 +1,8 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use anyhow::Result;
+use tracing::{debug, info, warn};
 
-use crate::{config_dir::moltis_config_dir, types::OAuthTokens};
+use crate::{Result, config_dir::moltis_config_dir, types::OAuthTokens};
 
 /// File-based token storage at `~/.config/moltis/oauth_tokens.json`.
 #[derive(Debug, Clone)]
@@ -22,12 +22,53 @@ impl TokenStore {
     }
 
     pub fn load(&self, provider: &str) -> Option<OAuthTokens> {
-        let data = std::fs::read_to_string(&self.path).ok()?;
-        let map: HashMap<String, OAuthTokens> = serde_json::from_str(&data).ok()?;
-        map.get(provider).cloned()
+        let path = self.path.display().to_string();
+        let data = match std::fs::read_to_string(&self.path) {
+            Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(path = %path, provider, "token file not found");
+                return None;
+            },
+            Err(e) => {
+                warn!(
+                    path = %path,
+                    provider,
+                    error = %e,
+                    "token file read failed"
+                );
+                return None;
+            },
+        };
+
+        let map: HashMap<String, OAuthTokens> = match serde_json::from_str(&data) {
+            Ok(m) => m,
+            Err(e) => {
+                warn!(
+                    path = %path,
+                    provider,
+                    error = %e,
+                    "token file parse failed"
+                );
+                return None;
+            },
+        };
+
+        match map.get(provider).cloned() {
+            Some(tokens) => {
+                debug!(path = %path, provider, "OAuth tokens loaded");
+                Some(tokens)
+            },
+            None => {
+                debug!(path = %path, provider, "provider not found in token store");
+                None
+            },
+        }
     }
 
     pub fn save(&self, provider: &str, tokens: &OAuthTokens) -> Result<()> {
+        let path = self.path.display().to_string();
+        info!(path = %path, provider, "saving OAuth tokens");
+
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -49,10 +90,14 @@ impl TokenStore {
             std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))?;
         }
 
+        info!(path = %path, provider, "OAuth tokens saved");
         Ok(())
     }
 
     pub fn delete(&self, provider: &str) -> Result<()> {
+        let path = self.path.display().to_string();
+        info!(path = %path, provider, "deleting OAuth tokens");
+
         let data = match std::fs::read_to_string(&self.path) {
             Ok(d) => d,
             Err(_) => return Ok(()),

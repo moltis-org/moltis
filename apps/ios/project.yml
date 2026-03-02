@@ -1,0 +1,73 @@
+name: Moltis
+options:
+  minimumXcodeGenVersion: 2.42.0
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+configs:
+  Debug: debug
+  Release: release
+
+configFiles:
+  Debug: local.xcconfig
+  Release: local.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+
+packages:
+  Apollo:
+    url: https://github.com/apollographql/apollo-ios.git
+    from: 2.0.6
+
+targets:
+  Moltis:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.moltis.ios
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Info.plist
+        SWIFT_EMIT_LOC_STRINGS: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SUPPORTS_MACCATALYST: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        CODE_SIGN_ENTITLEMENTS: Moltis.entitlements
+    dependencies:
+      - target: MoltisWidgetExtension
+        embed: true
+      - package: Apollo
+        product: Apollo
+      - package: Apollo
+        product: ApolloAPI
+      - package: Apollo
+        product: ApolloWebSocket
+    scheme:
+      testTargets: []
+
+  MoltisWidgetExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widget
+      - path: Sources/LiveActivity/MoltisActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.moltis.ios.widget
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Widget/Info.plist
+        SWIFT_EMIT_LOC_STRINGS: NO
+        CODE_SIGN_ENTITLEMENTS: Widget/MoltisWidgetExtension.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"

@@ -19,6 +19,15 @@ HTTP mode. The key settings are:
 | `MOLTIS_DEPLOY_PLATFORM` | Deploy platform | Hides local-only providers (see below) |
 | `MOLTIS_PASSWORD` | Initial password | Set auth password via environment variable |
 
+```admonish tip
+If requests to your domain are redirected to `:13131`, Moltis TLS is still
+enabled behind a TLS-terminating proxy. Use `--no-tls` (or
+`MOLTIS_NO_TLS=true`).
+
+Only keep Moltis TLS enabled when your proxy talks HTTPS to Moltis (or uses
+TCP TLS passthrough). In that case, set `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`.
+```
+
 ```admonish warning
 **Sandbox limitation**: Most cloud providers do not support Docker-in-Docker.
 The sandboxed command execution feature (where the LLM runs shell commands
@@ -30,11 +39,23 @@ MCP server connections.
 ### `MOLTIS_DEPLOY_PLATFORM`
 
 Set this to the name of your cloud provider (e.g. `flyio`, `digitalocean`,
-`render`, `railway`). When set, Moltis hides local-only LLM providers
+`render`). When set, Moltis hides local-only LLM providers
 (local-llm and Ollama) from the provider setup page since they cannot run
 on cloud VMs. The included deploy templates for Fly.io, DigitalOcean, and
-Render already set this variable. Railway users should set it manually in
-the dashboard (`MOLTIS_DEPLOY_PLATFORM=railway`).
+Render already set this variable.
+
+## Coolify (self-hosted, e.g. Hetzner)
+
+Coolify deployments can run Moltis with sandboxed exec tools, as long as the
+service mounts the host Docker socket.
+
+- Use [`examples/docker-compose.coolify.yml`](../examples/docker-compose.coolify.yml)
+  as a starting point.
+- Run Moltis with `--no-tls` (Coolify terminates HTTPS at the proxy).
+- Set `MOLTIS_BEHIND_PROXY=true` so client IP/auth behavior is correct behind
+  reverse proxying.
+- Mount `/var/run/docker.sock:/var/run/docker.sock` to enable container-backed
+  sandbox execution.
 
 ## Fly.io
 
@@ -110,6 +131,7 @@ The repository includes a `render.yaml` blueprint. Click the button above or:
 - **Environment**: set `MOLTIS_PASSWORD` in the Render dashboard under
   **Environment** > **Secret Files** or **Environment Variables**
 
+<!-- TODO: Railway deploy does not work yet
 ## Railway
 
 The repository includes a `railway.json` configuration that sets the required
@@ -127,6 +149,35 @@ environment variables (`MOLTIS_CONFIG_DIR`, `MOLTIS_DATA_DIR`,
 
 Railway supports persistent volumes. Add one in the service settings and mount
 it at `/data`.
+-->
+
+## OAuth Providers (OpenAI Codex, GitHub Copilot)
+
+OAuth providers that redirect to `localhost` (like OpenAI Codex) cannot
+complete the browser flow when Moltis runs on a remote server — `localhost`
+on the user's browser points to their own machine, not the cloud instance.
+
+**Use the CLI to authenticate instead:**
+
+```bash
+# Fly.io
+fly ssh console -C "moltis auth login --provider openai-codex"
+
+# DigitalOcean (Droplet with Docker)
+docker exec -it moltis moltis auth login --provider openai-codex
+
+# Generic container
+docker exec -it <container> moltis auth login --provider openai-codex
+```
+
+The CLI opens a browser on the machine where you run the command. After you
+log in, tokens are saved to the config volume and the running gateway picks
+them up automatically — no restart needed.
+
+```admonish tip
+GitHub Copilot uses device-flow authentication (a code you enter on
+github.com), so it works from the web UI without this workaround.
+```
 
 ## Authentication
 
@@ -139,8 +190,6 @@ setup code flow is skipped.
 # Fly.io
 fly secrets set MOLTIS_PASSWORD="your-secure-password"
 
-# Railway (via dashboard or CLI)
-railway variables set MOLTIS_PASSWORD="your-secure-password"
 ```
 
 For Render and DigitalOcean, set the variable in the dashboard's environment

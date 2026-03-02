@@ -4,4 +4,4 @@ pub mod error;
 pub mod hooks;
 pub mod types;
 
-pub use error::MoltisError;
+pub use error::{Error, FromMessage, MoltisError, Result};

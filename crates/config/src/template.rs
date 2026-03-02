@@ -36,6 +36,14 @@ disabled = false                  # true = disable auth entirely (DANGEROUS if e
                                   # When disabled, anyone with network access can use moltis
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GRAPHQL
+# ══════════════════════════════════════════════════════════════════════════════
+
+[graphql]
+enabled = false                   # Enable GraphQL endpoint (/graphql for HTTP + WebSocket)
+                                  # Can be toggled at runtime in Settings > GraphQL
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TLS / HTTPS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -55,8 +63,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 [identity]
 # name = "moltis"                 # Agent's display name
 # emoji = "🦊"                    # Agent's emoji/avatar
-# creature = "fox"                # Creature type for personality
-# vibe = "helpful"                # Personality vibe/style
+# theme = "wise owl"              # Theme for agent personality (e.g. wise owl, chill fox)
 # soul = ""                       # Freeform personality text injected into system prompt
                                   # Use this for custom instructions, tone, or behavior
 
@@ -79,47 +86,59 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   enabled   - Whether to use this provider (default: true)
 #   api_key   - API key (or use env var like ANTHROPIC_API_KEY)
 #   base_url  - Override API endpoint
-#   model     - Default model for this provider
+#   models    - Preferred models shown first (optional)
+#   fetch_models - Discover models from provider API when available (default: true)
+#   stream_transport - Streaming transport: "sse", "websocket", or "auto" (default: "sse")
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
-offered = ["openai", "github-copilot"]      # Providers shown in onboarding/picker UI ([] = show all)
+offered = ["local-llm", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
+# All available providers:
+#   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
+#   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
+#   "zai", "venice", "ollama", "local-llm", "openai-codex",
+#   "github-copilot", "kimi-code"
 
 # ── Anthropic (Claude) ────────────────────────────────────────
 # [providers.anthropic]
 # enabled = true
 # api_key = "sk-ant-..."                      # Or set ANTHROPIC_API_KEY env var
-# model = "claude-sonnet-4-20250514"          # Default model
+# models = ["claude-sonnet-4-5-20250929"]     # Optional preferred models
+# fetch_models = true                          # Set false to skip remote discovery
 # base_url = "https://api.anthropic.com"     # API endpoint
 # alias = "anthropic"                         # Custom name for metrics
 
 # ── OpenAI ────────────────────────────────────────────────────
-# [providers.openai]
+[providers.openai]
 # enabled = true
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
-# model = "gpt-4o"                            # Default model
+models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
+# fetch_models = true
+# stream_transport = "sse"                     # "sse" | "websocket" | "auto"
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
 
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]
 # enabled = true
-# api_key = "..."                             # Or set GOOGLE_API_KEY env var
-# model = "gemini-2.0-flash"
+# api_key = "..."                             # Or set GEMINI_API_KEY / GOOGLE_API_KEY env var
+# models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+# fetch_models = true
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 # alias = "gemini"
 
 # ── Groq ──────────────────────────────────────────────────────
 # [providers.groq]
 # enabled = true
 # api_key = "..."                             # Or set GROQ_API_KEY env var
-# model = "llama-3.3-70b-versatile"
+# models = ["llama-3.3-70b-versatile"]
 # alias = "groq"
 
 # ── DeepSeek ──────────────────────────────────────────────────
 # [providers.deepseek]
 # enabled = true
 # api_key = "..."                             # Or set DEEPSEEK_API_KEY env var
-# model = "deepseek-chat"
+# models = ["deepseek-chat"]
 # base_url = "https://api.deepseek.com"
 # alias = "deepseek"
 
@@ -127,25 +146,57 @@ offered = ["openai", "github-copilot"]      # Providers shown in onboarding/pick
 # [providers.xai]
 # enabled = true
 # api_key = "..."                             # Or set XAI_API_KEY env var
-# model = "grok-3-mini"
+# models = ["grok-3-mini"]
 # alias = "xai"
 
 # ── OpenRouter (multi-provider gateway) ───────────────────────
 # [providers.openrouter]
 # enabled = true
 # api_key = "..."                             # Or set OPENROUTER_API_KEY env var
-# model = "anthropic/claude-3.5-sonnet"       # Any model on OpenRouter
+# models = ["anthropic/claude-3.5-sonnet"]    # Any model IDs on OpenRouter
 # base_url = "https://openrouter.ai/api/v1"
+
+# ── Moonshot (Kimi) ─────────────────────────────────────────
+[providers.moonshot]
+# enabled = true
+# api_key = "..."                             # Or set MOONSHOT_API_KEY env var
+models = ["kimi-k2.5"]                        # Preferred models shown first
+# base_url = "https://api.moonshot.ai/v1"
+# alias = "moonshot"
+
+[providers.ollama]
+# base_url = "http://localhost:11434"
+# models = ["llama3.2", "qwen2.5:7b"]         # Optional preferred models; installed models are discovered dynamically
+
+[providers.local-llm]
+# models = ["qwen2.5-coder-7b-q4_k_m"]        # Optional; configure local models in onboarding
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHAT SETTINGS
 # ══════════════════════════════════════════════════════════════════════════════
 
 [chat]
-message_queue_mode = "followup"   # How to handle messages during an active agent run:
+message_queue_mode = "followup"   # Default: process queued messages one-by-one after the current run.
+                                  # How to handle messages during an active agent run:
                                   #   "followup" - Queue messages, replay one-by-one after run
                                   #   "collect"  - Buffer messages, concatenate as single message
 # priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors
+# allowed_models = ["gpt 5.2"]  # Legacy field (currently ignored).
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SPAWN PRESETS (OPTIONAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Configure reusable presets for the `spawn_agent` tool.
+#
+# [agents]
+# default_preset = "research"      # Optional: used when spawn_agent.preset is omitted
+#
+# [agents.presets.research]
+# model = "openai/gpt-5.2"
+# allow_tools = ["web_search", "web_fetch", "sessions_send", "task_list"]
+# deny_tools = ["exec"]
+# delegate_only = false
+# system_prompt_suffix = "Focus on gathering and summarizing evidence."
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
@@ -153,7 +204,16 @@ message_queue_mode = "followup"   # How to handle messages during an active agen
 
 [tools]
 agent_timeout_secs = 600          # Max seconds for an agent run (0 = no timeout)
+agent_max_iterations = 25         # Max LLM/tool loop iterations before stopping
 max_tool_result_bytes = 50000     # Max bytes per tool result before truncation (50KB)
+
+# ── Maps ─────────────────────────────────────────────────────────────────────
+
+[tools.maps]
+provider = "google_maps"          # Map provider used by show_map:
+                                  #   "google_maps" (default)
+                                  #   "apple_maps"
+                                  #   "openstreetmap"
 
 # ── Command Execution ─────────────────────────────────────────────────────────
 
@@ -187,6 +247,11 @@ workspace_mount = "ro"            # How to mount workspace in sandbox:
                                   #   "ro"   - Read-only (safe)
                                   #   "rw"   - Read-write (can modify files)
                                   #   "none" - No mount
+home_persistence = "shared"       # Persist /home/sandbox across container recreation:
+                                  #   "off"     - Ephemeral home
+                                  #   "session" - Per-session persisted home
+                                  #   "shared"  - One shared persisted home (default)
+# shared_home_dir = "/path/to/shared-home"  # Host dir for shared persistence (default: data_dir()/sandbox/home/shared)
 backend = "auto"                  # Container backend:
                                   #   "auto"            - Auto-detect (prefers Apple Container on macOS)
                                   #   "docker"          - Use Docker
@@ -217,6 +282,7 @@ packages = [
     "npm",
     "ruby",
     "ruby-dev",
+    "golang-go",
     # Build toolchain & native deps
     "build-essential",
     "clang",
@@ -301,6 +367,7 @@ provider = "brave"                # Search provider: "brave" or "perplexity"
 max_results = 5                   # Number of results to return (1-10)
 timeout_seconds = 30              # HTTP request timeout
 cache_ttl_minutes = 15            # Cache results for this many minutes (0 = no cache)
+duckduckgo_fallback = false       # Off by default; enable only if you want DDG fallback without API keys
 # api_key = "..."                 # Brave API key (or set BRAVE_API_KEY env var)
 
 # Perplexity-specific settings (when provider = "perplexity")
@@ -318,6 +385,7 @@ timeout_seconds = 30              # HTTP request timeout
 cache_ttl_minutes = 15            # Cache fetched pages for this many minutes (0 = no cache)
 max_redirects = 3                 # Maximum HTTP redirects to follow
 readability = true                # Use readability extraction for HTML (cleaner output)
+# ssrf_allowlist = ["172.22.0.0/16"] # CIDR ranges exempt from SSRF blocking (e.g. Docker networks)
 
 # ── Browser Automation ────────────────────────────────────────────────────────
 # Full browser control via Chrome DevTools Protocol (CDP).
@@ -394,7 +462,7 @@ auto_load = []                    # Skills to always load without explicit activ
 # Example: SSE server
 # [mcp.servers.remote]
 # transport = "sse"
-# url = "http://localhost:8080/sse"
+# url = "http://localhost:8080/mcp"
 # enabled = true
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -419,6 +487,9 @@ every = "30m"                     # Interval between heartbeats (e.g., "30m", "1
 # model = "anthropic/claude-sonnet-4-20250514"  # Override model for heartbeats
 # prompt = "..."                  # Custom heartbeat prompt (default: built-in)
 ack_max_chars = 300               # Max characters for acknowledgment reply
+deliver = false                   # Deliver heartbeat replies to a channel account
+# channel = "my-bot"              # Channel account identifier (required when deliver = true)
+# to = "123456789"                # Chat/recipient ID (required when deliver = true)
 sandbox_enabled = true            # Run heartbeat commands in sandbox
 # sandbox_image = "..."           # Override sandbox image for heartbeats
 
@@ -446,24 +517,24 @@ fallback_models = []              # Ordered list of fallback models
 # `providers` controls what appears in the Settings UI provider list.
 
 [voice.tts]
-enabled = false                   # Enable text-to-speech
-provider = "elevenlabs"           # Active TTS provider
-providers = ["elevenlabs"]        # UI allowlist (empty = show all TTS providers)
+enabled = true                    # Enable text-to-speech
+# provider = "openai"             # Active TTS provider (auto-selects first configured if omitted)
+providers = ["openai", "elevenlabs"] # UI allowlist (empty = show all TTS providers)
+# All available TTS providers:
+#   "openai", "elevenlabs", "google", "piper", "coqui"
 
 [voice.stt]
-enabled = false                   # Enable speech-to-text
-provider = "mistral"              # Active STT provider
-providers = ["mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
+enabled = true                    # Enable speech-to-text
+# provider = "whisper"            # Active STT provider (auto-selects first configured if omitted)
+providers = ["whisper", "mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
+# All available STT providers:
+#   "whisper", "groq", "deepgram", "google", "mistral",
+#   "voxtral-local", "whisper-cli", "sherpa-onnx", "elevenlabs-stt"
 
-# [voice.tts.elevenlabs]
-# api_key = "${{ELEVENLABS_API_KEY}}" # Or set ELEVENLABS_API_KEY env var
-# voice_id = "21m00Tcm4TlvDq8ikWAM"
-# model = "eleven_flash_v2_5"
-
-# [voice.stt.mistral]
-# api_key = "${{MISTRAL_API_KEY}}"    # Or set MISTRAL_API_KEY env var
-# model = "voxtral-mini-latest"
-# language = "en"
+# No api_key needed for OpenAI TTS/Whisper when OpenAI is configured as an LLM provider.
+# [voice.tts.openai]
+# voice = "alloy"                 # alloy, echo, fable, onyx, nova, shimmer
+# model = "tts-1"                 # tts-1 or tts-1-hd
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAILSCALE
@@ -489,7 +560,8 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
                                   #   "openai"  - OpenAI API
                                   #   "custom"  - Custom endpoint
                                   #   (none)    - Auto-detect from available providers
-# base_url = "http://localhost:11434/v1"  # API endpoint for embeddings
+# disable_rag = false             # true => keyword-only search (no embeddings)
+# base_url = "http://localhost:11434/v1"  # Embedding API base (host, /v1, or /embeddings)
 # model = "nomic-embed-text"      # Embedding model name
 # api_key = "..."                 # API key (optional for local endpoints like Ollama)
 
@@ -504,6 +576,46 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # token = "..."                   # Bot token from @BotFather
 # allowed_users = []              # Telegram user IDs allowed to chat (empty = all)
 
+# Microsoft Teams bots
+# [channels.msteams.my-bot]
+# app_id = "..."                  # Azure Bot App ID
+# app_password = "..."            # Azure Bot App Password (client secret)
+# webhook_secret = "..."          # Optional query secret for webhook URL (?secret=...)
+# allowlist = []                  # User IDs allowed to DM (empty = all unless dm_policy=allowlist)
+
+# Discord bots
+# [channels.discord.my-bot]
+# token = "..."                   # Bot token from Discord Developer Portal
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Discord user IDs allowed to DM
+# guild_allowlist = []            # Discord guild/server IDs (empty = all)
+# reply_to_message = false        # Send responses as Discord replies
+# ack_reaction = "👀"             # Emoji reaction while processing (omit to disable)
+# activity = "with AI"            # Bot activity status text
+# activity_type = "custom"        # "playing", "listening", "watching", "competing", or "custom"
+# status = "online"               # "online", "idle", "dnd", or "invisible"
+# otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HOOKS
+# ══════════════════════════════════════════════════════════════════════════════
+# Shell commands triggered by events.
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENVIRONMENT VARIABLES
+# ══════════════════════════════════════════════════════════════════════════════
+# Variables injected into the Moltis process at startup.
+# Useful for API keys in Docker where you can't easily pass env vars.
+# Process env vars (docker -e, host env) take precedence — existing vars
+# are NOT overwritten.
+#
+# [env]
+# BRAVE_API_KEY = "..."
+# OPENROUTER_API_KEY = "sk-or-..."
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -511,20 +623,33 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 
 # [hooks]
 # [[hooks.hooks]]
-# name = "notify-on-complete"     # Hook name (for logging)
-# command = "/path/to/script.sh"  # Command to run
-# events = [                      # Events that trigger this hook:
-#     "agent.turn.start",         #   Agent turn started
-#     "agent.turn.complete",      #   Agent turn completed
-#     "tool.call.start",          #   Tool call started
-#     "tool.call.complete",       #   Tool call completed
-#     "session.create",           #   Session created
-#     "session.close",            #   Session closed
+# name = "my-hook"                # Hook name (for logging)
+# command = "/path/to/handler.sh" # Command to run
+# events = [
+#     # ── Modifying events (can block or modify payload) ──
+#     "BeforeAgentStart",          # Before the agent loop starts
+#     "BeforeLLMCall",             # Before prompt is sent to the LLM provider
+#     "AfterLLMCall",              # After LLM response, before tool execution
+#     "BeforeToolCall",            # Before a tool executes
+#     "BeforeCompaction",          # Before context window compaction
+#     "MessageSending",            # Before sending a response to the user
+#     "ToolResultPersist",         # When a tool result is persisted
+#     #
+#     # ── Read-only events (observe only, run in parallel) ──
+#     "AfterToolCall",             # After a tool completes
+#     "AfterCompaction",           # After context is compacted
+#     "AgentEnd",                  # When the agent loop finishes
+#     "MessageReceived",           # When a user message arrives
+#     "MessageSent",               # After a response is delivered
+#     "SessionStart",              # When a new session begins
+#     "SessionEnd",                # When a session ends
+#     "GatewayStart",              # When Moltis starts
+#     "GatewayStop",               # When Moltis shuts down
+#     "Command",                   # When a slash command is used
 # ]
 # timeout = 10                    # Command timeout in seconds
 # [hooks.hooks.env]               # Environment variables passed to command
 # CUSTOM_VAR = "value"
-# SESSION_ID = "${{SESSION_ID}}"    # Variables are substituted
 "##
     )
 }

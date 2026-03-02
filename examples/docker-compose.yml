@@ -2,7 +2,7 @@
 #
 # Usage:
 #   docker compose up -d
-#   open http://localhost:13131
+#   open https://localhost:13131
 #
 # On first launch, a setup code is printed to the logs:
 #   docker compose logs moltis
@@ -15,11 +15,13 @@
 
 services:
   moltis:
-    image: ghcr.io/penso/moltis:latest
+    image: ghcr.io/moltis-org/moltis:latest
     container_name: moltis
     restart: unless-stopped
     ports:
       - "13131:13131"
+      - "13132:13132"
+      - "1455:1455"   # OAuth callback (OpenAI Codex, etc.)
     volumes:
       # Configuration files (editable from host)
       - ./config:/home/moltis/.config/moltis
@@ -36,3 +38,10 @@ services:
       #
       # For Podman rootful, use:
       # - /run/podman/podman.sock:/var/run/docker.sock
+    healthcheck:
+      test: curl -Ssf http://localhost:13131/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+

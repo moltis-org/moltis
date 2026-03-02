@@ -2,18 +2,22 @@
 use std::path::Path;
 
 use {
+    async_trait::async_trait,
     sha2::{Digest, Sha256},
     tracing::{debug, info, warn},
     walkdir::WalkDir,
 };
 
+use moltis_agents::memory_writer::{MemoryWriteResult, MemoryWriter};
+
 use crate::{
-    chunker::chunk_markdown,
+    chunker::chunk_content,
     config::MemoryConfig,
     embeddings::EmbeddingProvider,
     schema::{ChunkRow, FileRow},
     search::{self, SearchResult},
-    store::MemoryStore,
+    store::{CacheEntry, MemoryStore},
+    writer::validate_memory_path,
 };
 
 pub struct MemoryManager {
@@ -237,9 +241,14 @@ impl MemoryManager {
         self.store.upsert_file(&file_row).await?;
         info!(path = %path_str, source, size, "memory: loaded markdown file");
 
-        // Chunk the content
-        let raw_chunks =
-            chunk_markdown(&content, self.config.chunk_size, self.config.chunk_overlap);
+        // Chunk the content (tree-sitter AST splitting when grammar available, else line-based).
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("md");
+        let raw_chunks = chunk_content(
+            &content,
+            self.config.chunk_size,
+            self.config.chunk_overlap,
+            ext,
+        );
 
         // Delete old chunks
         self.store.delete_chunks_for_file(path_str).await?;
@@ -277,24 +286,26 @@ impl MemoryManager {
             let mut all_embeddings: Vec<Vec<f32>> =
                 cached.into_iter().map(|c| c.unwrap_or_default()).collect();
 
-            // Embed cache misses and store them
+            // Embed cache misses and store them in a single transaction.
             if !miss_indices.is_empty() {
                 let miss_texts: Vec<String> =
                     miss_indices.iter().map(|&i| texts[i].clone()).collect();
                 let new_embs = embedder.embed_batch(&miss_texts).await?;
 
-                for (idx, emb) in miss_indices.iter().zip(new_embs) {
-                    self.store
-                        .put_cached_embedding(
-                            provider_key,
-                            model,
-                            provider_key,
-                            &chunk_hashes[*idx],
-                            &emb,
-                        )
-                        .await?;
-                    all_embeddings[*idx] = emb;
+                let mut cache_entries = Vec::with_capacity(new_embs.len());
+                for (idx, emb) in miss_indices.iter().zip(&new_embs) {
+                    all_embeddings[*idx] = emb.clone();
+                    cache_entries.push(CacheEntry {
+                        provider: provider_key,
+                        model,
+                        provider_key,
+                        hash: &chunk_hashes[*idx],
+                        embedding: emb,
+                    });
                 }
+                self.store
+                    .put_cached_embeddings_batch(&cache_entries)
+                    .await?;
             }
 
             (Some(all_embeddings), model.to_string())
@@ -344,6 +355,7 @@ impl MemoryManager {
                 limit,
                 self.config.vector_weight,
                 self.config.keyword_weight,
+                self.config.merge_strategy,
             )
             .await
         } else {
@@ -380,6 +392,60 @@ impl MemoryManager {
     }
 }
 
+/// Maximum content size per write (50 KB).
+const MAX_CONTENT_BYTES: usize = 50 * 1024;
+
+#[async_trait]
+impl MemoryWriter for MemoryManager {
+    async fn write_memory(
+        &self,
+        file: &str,
+        content: &str,
+        append: bool,
+    ) -> anyhow::Result<MemoryWriteResult> {
+        let data_dir = self.config.data_dir.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("memory writes are disabled (no data_dir configured)")
+        })?;
+
+        if content.len() > MAX_CONTENT_BYTES {
+            anyhow::bail!(
+                "content exceeds maximum size of {} bytes ({} bytes provided)",
+                MAX_CONTENT_BYTES,
+                content.len()
+            );
+        }
+
+        let path = validate_memory_path(data_dir, file)?;
+
+        // Create parent directories if needed.
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let final_content = if append && path.exists() {
+            let existing = tokio::fs::read_to_string(&path).await?;
+            format!("{existing}\n\n{content}")
+        } else {
+            content.to_string()
+        };
+
+        let bytes_written = final_content.len();
+        tokio::fs::write(&path, &final_content).await?;
+
+        debug!(path = %path.display(), bytes = bytes_written, "memory manager: wrote file");
+
+        // Re-index so the content is immediately searchable.
+        if let Err(e) = self.sync_path(&path).await {
+            warn!(path = %path.display(), error = %e, "memory manager: re-index after write failed");
+        }
+
+        Ok(MemoryWriteResult {
+            location: path.to_string_lossy().into_owned(),
+            bytes_written,
+        })
+    }
+}
+
 /// Sync report.
 #[derive(Debug, Default)]
 pub struct SyncReport {
@@ -408,6 +474,7 @@ fn chrono_now() -> String {
     format!("{}", dur.as_secs())
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {
@@ -876,6 +943,208 @@ mod tests {
         assert_eq!(
             hash,
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    // --- MemoryWriter impl tests ---
+
+    /// Create a `MemoryManager` with `data_dir` set, enabling write support.
+    async fn setup_writable() -> (MemoryManager, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let data_dir = tmp.path().to_path_buf();
+        let mem_dir = data_dir.join("memory");
+        std::fs::create_dir_all(&mem_dir).unwrap();
+
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+
+        let config = MemoryConfig {
+            db_path: ":memory:".into(),
+            data_dir: Some(data_dir),
+            memory_dirs: vec![mem_dir],
+            chunk_size: 50,
+            chunk_overlap: 10,
+            vector_weight: 0.7,
+            keyword_weight: 0.3,
+            ..Default::default()
+        };
+
+        let store = Box::new(SqliteMemoryStore::new(pool));
+        let embedder = Box::new(MockEmbedder);
+
+        (MemoryManager::new(config, store, embedder), tmp)
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_overwrite() {
+        let (manager, tmp) = setup_writable().await;
+        let data_dir = tmp.path().to_path_buf();
+
+        manager
+            .write_memory("MEMORY.md", "first", false)
+            .await
+            .unwrap();
+        manager
+            .write_memory("MEMORY.md", "second", false)
+            .await
+            .unwrap();
+
+        let content = std::fs::read_to_string(data_dir.join("MEMORY.md")).unwrap();
+        assert_eq!(content, "second");
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_append() {
+        let (manager, tmp) = setup_writable().await;
+        let data_dir = tmp.path().to_path_buf();
+
+        manager
+            .write_memory("MEMORY.md", "first", false)
+            .await
+            .unwrap();
+        manager
+            .write_memory("MEMORY.md", "second", true)
+            .await
+            .unwrap();
+
+        let content = std::fs::read_to_string(data_dir.join("MEMORY.md")).unwrap();
+        assert!(content.contains("first"));
+        assert!(content.contains("second"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_creates_parent_dir() {
+        let tmp = TempDir::new().unwrap();
+        let data_dir = tmp.path().to_path_buf();
+        // Do NOT pre-create memory/ dir
+
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+
+        let config = MemoryConfig {
+            db_path: ":memory:".into(),
+            data_dir: Some(data_dir.clone()),
+            memory_dirs: vec![data_dir.join("memory")],
+            ..Default::default()
+        };
+
+        let store = Box::new(SqliteMemoryStore::new(pool));
+        let manager = MemoryManager::keyword_only(config, store);
+
+        manager
+            .write_memory("memory/notes.md", "hello", false)
+            .await
+            .unwrap();
+
+        assert!(data_dir.join("memory").join("notes.md").exists());
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_size_limit() {
+        let (manager, _tmp) = setup_writable().await;
+
+        let big = "x".repeat(MAX_CONTENT_BYTES + 1);
+        let result = manager.write_memory("MEMORY.md", &big, false).await;
+        assert!(result.is_err(), "oversized content should be rejected");
+
+        let at_limit = "x".repeat(MAX_CONTENT_BYTES);
+        let result = manager.write_memory("MEMORY.md", &at_limit, false).await;
+        assert!(result.is_ok(), "content at limit should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_rejects_path_traversal() {
+        let (manager, _tmp) = setup_writable().await;
+
+        for bad_path in &[
+            "../etc/passwd",
+            "memory/../../../etc/passwd",
+            "memory/../../secret.md",
+        ] {
+            let result = manager.write_memory(bad_path, "test", false).await;
+            assert!(result.is_err(), "should reject path traversal: {bad_path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_rejects_absolute_paths() {
+        let (manager, _tmp) = setup_writable().await;
+
+        let result = manager.write_memory("/etc/passwd", "test", false).await;
+        assert!(result.is_err(), "should reject absolute paths");
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_rejects_invalid_names() {
+        let (manager, _tmp) = setup_writable().await;
+
+        let invalid = &[
+            "memory/notes.txt",
+            "memory/.md",
+            "memory/a b c.md",
+            "memory/sub/nested.md",
+            "random.md",
+            "foo/bar.md",
+        ];
+
+        for name in invalid {
+            let result = manager.write_memory(name, "test", false).await;
+            assert!(result.is_err(), "should reject invalid name: {name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_reindexes() {
+        let (manager, _tmp) = setup_writable().await;
+
+        manager
+            .write_memory(
+                "memory/recipe.md",
+                "The cooking recipe uses garlic and olive oil.",
+                false,
+            )
+            .await
+            .unwrap();
+
+        // Content should be immediately searchable
+        let results = manager.search("cooking", 5).await.unwrap();
+        assert!(!results.is_empty(), "saved content should be searchable");
+        assert!(
+            results[0].text.contains("cooking"),
+            "search should find the saved text"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_returns_correct_result() {
+        let (manager, tmp) = setup_writable().await;
+        let data_dir = tmp.path().to_path_buf();
+
+        let result = manager
+            .write_memory("MEMORY.md", "hello world", false)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.location,
+            data_dir.join("MEMORY.md").to_string_lossy()
+        );
+        assert_eq!(result.bytes_written, "hello world".len());
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_disabled_without_data_dir() {
+        let (manager, _tmp) = setup().await;
+
+        // setup() does not set data_dir, so writes should be rejected
+        let result = manager.write_memory("MEMORY.md", "test", false).await;
+        assert!(result.is_err(), "writes should fail without data_dir");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no data_dir configured"),
+            "error should mention data_dir"
         );
     }
 }

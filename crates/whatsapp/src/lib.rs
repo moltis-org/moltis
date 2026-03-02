@@ -1,19 +1,22 @@
-//! WhatsApp Web channel plugin for moltis.
+//! WhatsApp channel plugin for moltis.
 //!
-//! Implements `ChannelPlugin` using the WhatsApp Web protocol via Baileys
-//! (a Node.js sidecar process) to receive and send messages.
+//! Implements `ChannelPlugin` using the `whatsapp-rust` library to receive and
+//! send messages via WhatsApp Linked Devices (QR code pairing).
 
+pub mod access;
 pub mod config;
+pub mod connection;
+pub mod error;
+pub mod handlers;
+pub mod memory_store;
+pub mod otp;
 pub mod outbound;
 pub mod plugin;
-pub mod process;
-pub mod sidecar;
+pub mod sled_store;
 pub mod state;
-pub mod types;
 
 pub use {
-    config::WhatsAppConfig,
+    config::WhatsAppAccountConfig,
+    error::{Error, Result},
     plugin::WhatsAppPlugin,
-    process::{SidecarConfig, SidecarProcess, find_sidecar_dir, start_sidecar},
-    sidecar::DEFAULT_SIDECAR_PORT,
 };

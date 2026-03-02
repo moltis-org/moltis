@@ -5,8 +5,38 @@ use sqlx::SqlitePool;
 use crate::{
     schema::{ChunkRow, FileRow},
     search::SearchResult,
-    store::MemoryStore,
+    store::{CacheEntry, MemoryStore},
 };
+
+/// Sanitize a user query for FTS5 `MATCH`.
+///
+/// FTS5 has its own query grammar where characters like `.` (column filter),
+/// `*` (prefix), `"` (phrase), `+`, `-`, `(`, `)`, `NEAR`, `OR`, `AND`, `NOT`
+/// have special meaning.  Passing unsanitized user input (e.g. coordinates
+/// like "37.759") causes `fts5: syntax error near "."`.
+///
+/// Strategy: split on whitespace, strip all non-alphanumeric characters from
+/// each token, wrap every token in double quotes (so FTS5 treats it as a
+/// literal), then join with spaces (implicit AND).
+fn sanitize_fts5_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter_map(|token| {
+            // Keep only alphanumeric + underscore characters within each token
+            let cleaned: String = token
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if cleaned.is_empty() {
+                None
+            } else {
+                // Wrap in double quotes so FTS5 treats it as a literal term
+                Some(format!("\"{cleaned}\""))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 pub struct SqliteMemoryStore {
     pool: SqlitePool,
@@ -113,6 +143,7 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn upsert_chunks(&self, chunks: &[ChunkRow]) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
         for chunk in chunks {
             let emb_blob = chunk.embedding.as_deref();
             sqlx::query(
@@ -133,9 +164,10 @@ impl MemoryStore for SqliteMemoryStore {
             .bind(&chunk.text)
             .bind(emb_blob)
             .bind(&chunk.updated_at)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -257,6 +289,30 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(())
     }
 
+    async fn put_cached_embeddings_batch(&self, entries: &[CacheEntry<'_>]) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        for entry in entries {
+            let blob = vec_to_blob(entry.embedding);
+            let dims = entry.embedding.len() as i64;
+            sqlx::query(
+                "INSERT INTO embedding_cache (provider, model, provider_key, hash, embedding, dims)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(provider, model, provider_key, hash) DO UPDATE SET
+                   embedding=excluded.embedding, dims=excluded.dims, updated_at=datetime('now')",
+            )
+            .bind(entry.provider)
+            .bind(entry.model)
+            .bind(entry.provider_key)
+            .bind(entry.hash)
+            .bind(&blob)
+            .bind(dims)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     async fn count_cached_embeddings(&self) -> anyhow::Result<usize> {
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM embedding_cache")
             .fetch_one(&self.pool)
@@ -316,6 +372,11 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn keyword_search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {
+        let sanitized = sanitize_fts5_query(query);
+        if sanitized.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let rows: Vec<(String, String, String, i64, i64, f64)> = sqlx::query_as(
             "SELECT c.id, c.path, c.source, c.start_line, c.end_line, rank
              FROM chunks_fts f
@@ -324,7 +385,7 @@ impl MemoryStore for SqliteMemoryStore {
              ORDER BY rank
              LIMIT ?",
         )
-        .bind(query)
+        .bind(&sanitized)
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -357,6 +418,7 @@ impl MemoryStore for SqliteMemoryStore {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::schema::run_migrations};
@@ -549,6 +611,74 @@ mod tests {
         let results = store.keyword_search("rust", 10).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].chunk_id, "c1");
+    }
+
+    #[test]
+    fn test_sanitize_fts5_query_basic() {
+        assert_eq!(sanitize_fts5_query("hello world"), "\"hello\" \"world\"");
+    }
+
+    #[test]
+    fn test_sanitize_fts5_query_dots() {
+        // Coordinates like "37.759" should not cause FTS5 syntax errors
+        assert_eq!(sanitize_fts5_query("37.759"), "\"37759\"");
+        assert_eq!(
+            sanitize_fts5_query("location 37.759,-122.433"),
+            "\"location\" \"37759122433\""
+        );
+    }
+
+    #[test]
+    fn test_sanitize_fts5_query_special_chars() {
+        assert_eq!(sanitize_fts5_query("hello + world"), "\"hello\" \"world\"");
+        assert_eq!(
+            sanitize_fts5_query("NOT this OR that"),
+            "\"NOT\" \"this\" \"OR\" \"that\""
+        );
+        assert_eq!(sanitize_fts5_query("(test)"), "\"test\"");
+    }
+
+    #[test]
+    fn test_sanitize_fts5_query_empty() {
+        assert_eq!(sanitize_fts5_query(""), "");
+        assert_eq!(sanitize_fts5_query("..."), "");
+        assert_eq!(sanitize_fts5_query("  "), "");
+    }
+
+    #[tokio::test]
+    async fn test_keyword_search_with_special_chars() {
+        let store = setup().await;
+        let file = FileRow {
+            path: "t.md".into(),
+            source: "s".into(),
+            hash: "h".into(),
+            mtime: 0,
+            size: 0,
+        };
+        store.upsert_file(&file).await.unwrap();
+
+        let c1 = ChunkRow {
+            id: "c1".into(),
+            path: "t.md".into(),
+            source: "s".into(),
+            start_line: 1,
+            end_line: 5,
+            hash: "h1".into(),
+            model: "m".into(),
+            text: "San Francisco Mission District".into(),
+            embedding: None,
+            updated_at: "now".into(),
+        };
+        store.upsert_chunks(&[c1]).await.unwrap();
+
+        // Query with dots (like coordinates) should not error
+        let results = store.keyword_search("37.759 location", 10).await.unwrap();
+        // May or may not find results, but must not panic/error
+        assert!(results.len() <= 10);
+
+        // Query with only punctuation should return empty, not error
+        let results = store.keyword_search("...", 10).await.unwrap();
+        assert!(results.is_empty());
     }
 
     #[test]

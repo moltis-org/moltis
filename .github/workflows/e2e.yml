@@ -1,0 +1,44 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    paths:
+      - "crates/gateway/**"
+      - "crates/cli/**"
+      - "crates/config/**"
+      - "crates/sessions/**"
+      - "crates/tools/**"
+      - "crates/oauth/**"
+      - "crates/projects/**"
+      - "crates/cron/**"
+      - "crates/memory/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/e2e.yml"
+      - "scripts/local-validate.sh"
+      - "scripts/check-local-status.py"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  local-validation:
+    name: Local E2E Validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Verify local status context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRED_CONTEXT: local/e2e
+        run: python3 scripts/check-local-status.py

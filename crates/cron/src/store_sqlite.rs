@@ -1,12 +1,12 @@
 //! SQLite-backed cron store using sqlx.
 
 use {
-    anyhow::{Context, Result},
     async_trait::async_trait,
     sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions},
 };
 
 use crate::{
+    Error, Result,
     store::CronStore,
     types::{CronJob, CronRunRecord},
 };
@@ -26,7 +26,7 @@ impl SqliteStore {
             .max_connections(5)
             .connect(database_url)
             .await
-            .context("failed to connect to SQLite")?;
+            .map_err(|source| Error::external("failed to connect to SQLite", source))?;
 
         crate::run_migrations(&pool).await?;
 
@@ -76,7 +76,7 @@ impl CronStore for SqliteStore {
             .execute(&self.pool)
             .await?;
         if result.rows_affected() == 0 {
-            anyhow::bail!("job not found: {id}");
+            return Err(Error::job_not_found(id));
         }
         Ok(())
     }
@@ -89,7 +89,7 @@ impl CronStore for SqliteStore {
             .execute(&self.pool)
             .await?;
         if result.rows_affected() == 0 {
-            anyhow::bail!("job not found: {}", job.id);
+            return Err(Error::job_not_found(job.id.clone()));
         }
         Ok(())
     }
@@ -157,6 +157,7 @@ impl CronStore for SqliteStore {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::types::*};
@@ -176,6 +177,7 @@ mod tests {
             session_target: SessionTarget::Main,
             state: CronJobState::default(),
             sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
             system: false,
             created_at_ms: 1000,
             updated_at_ms: 1000,

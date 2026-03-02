@@ -10,39 +10,77 @@
 #
 # See README.md for detailed instructions.
 
-# Build stage
+# Build stage — nightly required for wacore-binary (portable_simd)
 FROM rust:bookworm AS builder
 
 WORKDIR /build
 
+# Switch to nightly (pinned for reproducibility; wacore-binary needs portable_simd)
+RUN rustup install nightly-2025-11-30 && rustup default nightly-2025-11-30
+
 # Copy manifests first for better caching
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY apps/courier ./apps/courier
+COPY wit ./wit
 
+ENV DEBIAN_FRONTEND=noninteractive
 # Install build dependencies for llama-cpp-sys-2
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
+RUN apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
     rm -rf /var/lib/apt/lists/*
 
-# Build release binary
-RUN cargo build --release
+# Install WASM target and build WASM components (embedded via include_bytes!)
+RUN rustup target add wasm32-wasip2 && \
+    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+
+# Build release binary (exclude local-llm-metal: Metal is macOS-only)
+RUN cargo build --release -p moltis --no-default-features --features "\
+agent,caldav,code-splitter,file-watcher,graphql,jemalloc,local-llm,\
+mdns,metrics,openclaw-import,prometheus,push-notifications,qmd,\
+tailscale,tls,trusted-network,vault,voice,wasm,web-ui,whatsapp"
 
 # Runtime stage
 FROM debian:bookworm-slim
 
 # Install runtime dependencies:
 # - ca-certificates: for HTTPS connections to LLM providers
-# - docker.io: Docker CLI for sandbox execution (talks to mounted socket)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# - chromium: headless browser for the browser tool (web search/fetch)
+# - curl: makes it possible to run healthchecks from docker
+# - sudo: allows moltis user to install packages at runtime (passwordless)
+# - docker-ce-cli + docker-buildx-plugin: Docker CLI for sandbox execution
+#   (talks to mounted socket, no daemon in-container)
+# - tmux: terminal multiplexer available in deployed container
+# - vim-tiny: lightweight terminal text editor
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends \
         ca-certificates \
+        chromium \
+        curl \
+        gnupg \
         libgomp1 \
-        docker.io && \
+        sudo \
+        tmux \
+        vim-tiny && \
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    chmod a+r /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" \
+        > /etc/apt/sources.list.d/docker.list && \
+    apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends \
+        docker-buildx-plugin \
+        docker-ce-cli && \
     rm -rf /var/lib/apt/lists/*
 
-# Create non-root user and add to docker group for socket access
-RUN useradd --create-home --user-group moltis && \
-    usermod -aG docker moltis
+# Create non-root user and add to docker group for socket access.
+# Grant passwordless sudo so moltis can install host packages at startup.
+RUN groupadd -f docker && \
+    useradd --create-home --user-group moltis && \
+    usermod -aG docker moltis && \
+    echo "moltis ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/moltis
 
 # Copy binary from builder
 COPY --from=builder /build/target/release/moltis /usr/local/bin/moltis
@@ -57,9 +95,11 @@ VOLUME ["/home/moltis/.config/moltis", "/home/moltis/.moltis", "/var/run/docker.
 USER moltis
 WORKDIR /home/moltis
 
-# Expose gateway port (HTTPS) and HTTP redirect/CA-download port (gateway port + 1)
-EXPOSE 13131 13132
+# Expose gateway port (HTTPS), HTTP port for CA certificate download (gateway port + 1),
+# and OAuth callback port (used by providers with pre-registered redirect URIs).
+EXPOSE 13131 13132 1455
 
-# Run the gateway on the specified port
+# Bind 0.0.0.0 so Docker port forwarding works (localhost only binds to
+# the container's loopback, making the port unreachable from the host).
 ENTRYPOINT ["moltis"]
-CMD ["--port", "13131"]
+CMD ["--bind", "0.0.0.0", "--port", "13131"]

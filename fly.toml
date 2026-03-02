@@ -1,7 +1,8 @@
 [build]
-image = 'ghcr.io/moltis-org/moltis:latest'
+image = 'ghcr.io/moltis-org/moltis:0.10.6'
 
 [env]
+MOLTIS_BEHIND_PROXY    = 'true'
 MOLTIS_CONFIG_DIR      = '/data/config'
 MOLTIS_DATA_DIR        = '/data'
 MOLTIS_DEPLOY_PLATFORM = 'flyio'

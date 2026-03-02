@@ -208,6 +208,7 @@ pub fn auto_detect(dirs: &[&Path], known_ids: &[String]) -> Vec<Project> {
     detected
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

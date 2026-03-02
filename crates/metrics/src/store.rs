@@ -4,9 +4,10 @@
 //! to enable historical charts that survive restarts.
 
 use {
-    anyhow::Result,
+    crate::Result,
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, path::Path},
+    sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
+    std::{collections::HashMap, path::Path, str::FromStr, time::Duration},
 };
 
 /// Per-provider token metrics for a single time point.
@@ -87,13 +88,29 @@ pub struct SqliteMetricsStore {
     pool: sqlx::SqlitePool,
 }
 
+/// Metrics persistence is low-throughput (one write every 10 seconds), so a
+/// single dedicated SQLite connection avoids cross-connection lock contention.
+const METRICS_POOL_MAX_CONNECTIONS: u32 = 1;
+/// Allow lock waits long enough for transient contention while still surfacing
+/// genuinely slow queries through SQLx slow-statement logs.
+const METRICS_BUSY_TIMEOUT: Duration = Duration::from_secs(30);
+
 impl SqliteMetricsStore {
     /// Create a new SQLite metrics store.
     ///
     /// Opens or creates the database at the given path.
     pub async fn new(path: &Path) -> Result<Self> {
-        let db_url = format!("sqlite:{}?mode=rwc", path.display());
-        let pool = sqlx::SqlitePool::connect(&db_url).await?;
+        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", path.display()))?
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(METRICS_BUSY_TIMEOUT)
+            .synchronous(SqliteSynchronous::Normal);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(METRICS_POOL_MAX_CONNECTIONS)
+            .min_connections(METRICS_POOL_MAX_CONNECTIONS)
+            .acquire_timeout(METRICS_BUSY_TIMEOUT)
+            .connect_with(options)
+            .await?;
 
         // Run migrations
         Self::migrate(&pool).await?;
@@ -102,9 +119,19 @@ impl SqliteMetricsStore {
     }
 
     /// Create an in-memory SQLite metrics store (for testing).
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     #[cfg(test)]
     pub async fn in_memory() -> Result<Self> {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await?;
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")?
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(METRICS_BUSY_TIMEOUT)
+            .synchronous(SqliteSynchronous::Normal);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(METRICS_POOL_MAX_CONNECTIONS)
+            .min_connections(METRICS_POOL_MAX_CONNECTIONS)
+            .acquire_timeout(METRICS_BUSY_TIMEOUT)
+            .connect_with(options)
+            .await?;
         Self::migrate(&pool).await?;
         Ok(Self { pool })
     }
@@ -287,6 +314,7 @@ impl From<MetricsRow> for MetricsHistoryPoint {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

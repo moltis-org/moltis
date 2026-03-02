@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Integration tests for the embedded chat UI and WebSocket handshake.
 
 use std::{net::SocketAddr, sync::Arc};
@@ -12,12 +13,12 @@ use moltis_gateway::{
     auth,
     chat::{DisabledModelsStore, LiveChatService, LiveModelService},
     methods::MethodRegistry,
-    server::build_gateway_app,
+    server::{build_gateway_base, finalize_gateway_app},
     services::GatewayServices,
     state::GatewayState,
 };
 
-use moltis_agents::providers::ProviderRegistry;
+use moltis_providers::ProviderRegistry;
 
 /// Spin up a test gateway on an ephemeral port, return the bound address.
 async fn start_test_server() -> SocketAddr {
@@ -26,9 +27,12 @@ async fn start_test_server() -> SocketAddr {
     let state = GatewayState::new(resolved_auth, services);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None, false, None);
+    let (router, app_state) = build_gateway_base(state, methods, None, None);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods, false, None);
+    let (router, app_state) = build_gateway_base(state, methods, None);
+
+    let router = router.merge(moltis_web::web_routes());
+    let app = finalize_gateway_app(router, app_state, false);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -62,13 +66,13 @@ async fn health_endpoint_returns_json() {
     assert_eq!(resp.status(), 200);
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["status"], "ok");
-    assert_eq!(json["protocol"], 3);
+    assert_eq!(json["protocol"], 4);
 }
 
 #[tokio::test]
 async fn ws_handshake_returns_hello_ok() {
     let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws"))
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
         .await
         .expect("ws connect failed");
 
@@ -79,7 +83,7 @@ async fn ws_handshake_returns_hello_ok() {
         "method": "connect",
         "params": {
             "minProtocol": 3,
-            "maxProtocol": 3,
+            "maxProtocol": 4,
             "client": {
                 "id": "test-client",
                 "version": "0.0.1",
@@ -99,7 +103,7 @@ async fn ws_handshake_returns_hello_ok() {
     assert_eq!(frame["id"], "test-1");
     assert_eq!(frame["ok"], true);
     assert_eq!(frame["payload"]["type"], "hello-ok");
-    assert_eq!(frame["payload"]["protocol"], 3);
+    assert_eq!(frame["payload"]["protocol"], 4);
     assert!(frame["payload"]["server"]["version"].is_string());
     assert!(frame["payload"]["features"]["methods"].is_array());
 
@@ -109,7 +113,7 @@ async fn ws_handshake_returns_hello_ok() {
 #[tokio::test]
 async fn ws_health_method_after_handshake() {
     let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws"))
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
         .await
         .expect("ws connect failed");
 
@@ -120,7 +124,7 @@ async fn ws_health_method_after_handshake() {
         "method": "connect",
         "params": {
             "minProtocol": 3,
-            "maxProtocol": 3,
+            "maxProtocol": 4,
             "client": {
                 "id": "test-client-2",
                 "version": "0.0.1",
@@ -158,7 +162,7 @@ async fn ws_health_method_after_handshake() {
 #[tokio::test]
 async fn ws_system_presence_shows_connected_client() {
     let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws"))
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
         .await
         .expect("ws connect failed");
 
@@ -169,7 +173,7 @@ async fn ws_system_presence_shows_connected_client() {
         "method": "connect",
         "params": {
             "minProtocol": 3,
-            "maxProtocol": 3,
+            "maxProtocol": 4,
             "client": {
                 "id": "presence-test",
                 "version": "0.0.1",
@@ -249,7 +253,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
             .set_chat(Arc::new(LiveChatService::new(
                 Arc::clone(&registry),
                 Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
-                Arc::clone(&state),
+                moltis_gateway::chat::GatewayChatRuntime::from_state(Arc::clone(&state)),
                 Arc::clone(&session_store1),
                 Arc::clone(&session_metadata1),
             )))
@@ -280,7 +284,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
         .set_chat(Arc::new(LiveChatService::new(
             Arc::clone(&registry2),
             Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
-            Arc::clone(&state2),
+            moltis_gateway::chat::GatewayChatRuntime::from_state(Arc::clone(&state2)),
             Arc::clone(&session_store2),
             Arc::clone(&session_metadata2),
         )))
@@ -293,7 +297,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
     let result = chat.send(serde_json::json!({ "text": "hello" })).await;
     match result {
         Err(e) => assert!(
-            !e.contains("chat not configured"),
+            !e.to_string().contains("chat not configured"),
             "expected LiveChatService (not noop), got: {e}"
         ),
         Ok(_) => { /* providers found (e.g. Codex tokens on this machine) — OK */ },

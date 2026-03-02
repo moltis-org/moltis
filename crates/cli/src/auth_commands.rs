@@ -59,7 +59,7 @@ async fn login(provider: &str) -> Result<()> {
 
     let port = callback_port(&config);
     let flow = OAuthFlow::new(config);
-    let req = flow.start();
+    let req = flow.start()?;
 
     println!("Opening browser for authentication...");
     if open::that(&req.url).is_err() {
@@ -67,7 +67,7 @@ async fn login(provider: &str) -> Result<()> {
     }
 
     println!("Waiting for callback on http://127.0.0.1:{port}/auth/callback ...");
-    let code = CallbackServer::wait_for_code(port, req.state).await?;
+    let code = CallbackServer::wait_for_code(port, req.state, "127.0.0.1").await?;
 
     println!("Exchanging code for tokens...");
     let tokens = flow.exchange(&code, &req.pkce.verifier).await?;
@@ -137,7 +137,7 @@ fn status() -> Result<()> {
             let expiry = tokens.expires_at.map_or("unknown".to_string(), |ts| {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs();
                 if ts > now {
                     let remaining = ts - now;
@@ -179,9 +179,17 @@ async fn reset_password() -> Result<()> {
     }
 
     moltis_gateway::auth::CredentialStore::reset_from_db_path(&db_path).await?;
-    println!("Authentication reset. Password, sessions, passkeys, and API keys removed.");
-    println!("The gateway will require a new setup on next start.");
+    for line in reset_password_success_lines() {
+        println!("{line}");
+    }
     Ok(())
+}
+
+fn reset_password_success_lines() -> [&'static str; 2] {
+    [
+        "Authentication reset. Password, sessions, passkeys, and API keys removed.",
+        "Authentication is now disabled. Open Settings > Security to set a password or passkey to re-enable it.",
+    ]
 }
 
 async fn create_api_key(label: &str, scopes_str: Option<String>) -> Result<()> {
@@ -234,4 +242,22 @@ async fn create_api_key(label: &str, scopes_str: Option<String>) -> Result<()> {
     println!();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reset_password_success_lines;
+
+    #[test]
+    fn reset_password_message_describes_disabled_auth_state() {
+        let lines = reset_password_success_lines();
+        assert_eq!(
+            lines[0],
+            "Authentication reset. Password, sessions, passkeys, and API keys removed."
+        );
+        assert_eq!(
+            lines[1],
+            "Authentication is now disabled. Open Settings > Security to set a password or passkey to re-enable it."
+        );
+    }
 }

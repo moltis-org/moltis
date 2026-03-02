@@ -8,12 +8,29 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  zizmor:
+    name: Workflow Security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@135698455da5c3b3e55f73f4419e481ab68cdd95 # v0.4.1
+        with:
+          advanced-security: false
+          online-audits: false
+
   codspeed:
     name: Run Benchmarks
+    needs: zizmor
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -25,16 +42,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
+          shared-key: codspeed-v1
           cache-all-crates: true
 
       - name: Install cargo-codspeed
-        run: cargo install cargo-codspeed --version 4.3.0
+        uses: taiki-e/install-action@f176c07a0a40cbfdd08ee9aa8bf1655701d11e69 # v2.67.25
+        with:
+          tool: cargo-codspeed@4.3.0
 
       - name: Build benchmarks
-        run: cargo codspeed build -p benchmarks
+        run: cargo codspeed build -p benchmarks --bench boot
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@37e4be5af911eb58190ab54b9cd1d60848a58985 # v4
+        uses: CodSpeedHQ/action@4deb3275dd364fb96fb074c953133d29ec96f80f # v4
         with:
           mode: simulation
           run: cargo codspeed run

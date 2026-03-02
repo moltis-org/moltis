@@ -1,0 +1,31 @@
+included:
+  - Sources
+  - Widget
+
+excluded:
+  - Moltis.xcodeproj
+
+line_length:
+  warning: 120
+  error: 140
+
+opt_in_rules:
+  - closure_spacing
+  - empty_count
+  - explicit_init
+  - force_unwrapping
+  - implicit_return
+  - redundant_nil_coalescing
+  - sorted_imports
+  - vertical_whitespace_closing_braces
+
+disabled_rules:
+  - trailing_whitespace
+
+identifier_name:
+  min_length: 2
+  excluded:
+    - id
+
+type_name:
+  min_length: 3

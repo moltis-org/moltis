@@ -16,6 +16,9 @@ use moltis_metrics::MetricsSnapshot;
 #[cfg(feature = "metrics")]
 use crate::server::AppState;
 
+#[cfg(feature = "metrics")]
+const METRICS_NOT_ENABLED: &str = "METRICS_NOT_ENABLED";
+
 /// Prometheus metrics endpoint handler.
 ///
 /// Returns metrics in Prometheus text exposition format, suitable for scraping
@@ -29,6 +32,7 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
     match metrics_handle {
         Some(handle) => {
             let body = handle.render();
+            #[allow(clippy::unwrap_used)] // building response with valid static headers
             Response::builder()
                 .status(StatusCode::OK)
                 .header(
@@ -38,11 +42,14 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
                 .body(body)
                 .unwrap()
         },
-        None => Response::builder()
-            .status(StatusCode::SERVICE_UNAVAILABLE)
-            .header(header::CONTENT_TYPE, "text/plain")
-            .body("Metrics not enabled".to_string())
-            .unwrap(),
+        None => {
+            #[allow(clippy::unwrap_used)] // building response with valid static headers
+            Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body("Metrics not enabled".to_string())
+                .unwrap()
+        },
     }
 }
 
@@ -63,6 +70,7 @@ pub async fn api_metrics_handler(State(state): State<AppState>) -> impl IntoResp
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
+                "code": METRICS_NOT_ENABLED,
                 "error": "Metrics not enabled"
             })),
         )

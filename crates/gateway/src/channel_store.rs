@@ -1,6 +1,13 @@
-use {anyhow::Result, async_trait::async_trait, sqlx::SqlitePool};
+use {async_trait::async_trait, sqlx::SqlitePool};
 
-use moltis_channels::store::{ChannelStore, StoredChannel};
+use moltis_channels::{
+    Error as ChannelError, Result as ChannelResult,
+    store::{ChannelStore, StoredChannel},
+};
+
+fn channel_db_error(context: &'static str, source: sqlx::Error) -> ChannelError {
+    ChannelError::external(context, source)
+}
 
 /// Internal row type for sqlx mapping.
 #[derive(sqlx::FromRow)]
@@ -13,9 +20,9 @@ struct ChannelRow {
 }
 
 impl TryFrom<ChannelRow> for StoredChannel {
-    type Error = anyhow::Error;
+    type Error = ChannelError;
 
-    fn try_from(r: ChannelRow) -> Result<Self> {
+    fn try_from(r: ChannelRow) -> ChannelResult<Self> {
         Ok(Self {
             account_id: r.account_id,
             channel_type: r.channel_type,
@@ -41,46 +48,57 @@ impl SqliteChannelStore {
     /// **Deprecated**: Schema is now managed by sqlx migrations.
     /// This method is retained for tests that use in-memory databases.
     #[doc(hidden)]
-    pub async fn init(pool: &SqlitePool) -> Result<()> {
+    pub async fn init(pool: &SqlitePool) -> ChannelResult<()> {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS channels (
-                account_id   TEXT    PRIMARY KEY,
                 channel_type TEXT    NOT NULL DEFAULT 'telegram',
+                account_id   TEXT    NOT NULL,
                 config       TEXT    NOT NULL,
                 created_at   INTEGER NOT NULL,
-                updated_at   INTEGER NOT NULL
+                updated_at   INTEGER NOT NULL,
+                PRIMARY KEY (channel_type, account_id)
             )"#,
         )
         .execute(pool)
-        .await?;
+        .await
+        .map_err(|e| channel_db_error("init channels table", e))?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl ChannelStore for SqliteChannelStore {
-    async fn list(&self) -> Result<Vec<StoredChannel>> {
+    async fn list(&self) -> ChannelResult<Vec<StoredChannel>> {
         let rows =
             sqlx::query_as::<_, ChannelRow>("SELECT * FROM channels ORDER BY updated_at DESC")
                 .fetch_all(&self.pool)
-                .await?;
+                .await
+                .map_err(|e| channel_db_error("list channels", e))?;
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
-    async fn get(&self, account_id: &str) -> Result<Option<StoredChannel>> {
-        let row = sqlx::query_as::<_, ChannelRow>("SELECT * FROM channels WHERE account_id = ?")
-            .bind(account_id)
-            .fetch_optional(&self.pool)
-            .await?;
+    async fn get(
+        &self,
+        channel_type: &str,
+        account_id: &str,
+    ) -> ChannelResult<Option<StoredChannel>> {
+        let row = sqlx::query_as::<_, ChannelRow>(
+            "SELECT * FROM channels WHERE channel_type = ? AND account_id = ?",
+        )
+        .bind(channel_type)
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| channel_db_error("get channel", e))?;
         row.map(TryInto::try_into).transpose()
     }
 
-    async fn upsert(&self, channel: StoredChannel) -> Result<()> {
+    async fn upsert(&self, channel: StoredChannel) -> ChannelResult<()> {
         let config_json = serde_json::to_string(&channel.config)?;
         sqlx::query(
             r#"INSERT INTO channels (account_id, channel_type, config, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(account_id) DO UPDATE SET
+               ON CONFLICT(channel_type, account_id) DO UPDATE SET
                  channel_type = excluded.channel_type,
                  config = excluded.config,
                  updated_at = excluded.updated_at"#,
@@ -91,19 +109,23 @@ impl ChannelStore for SqliteChannelStore {
         .bind(channel.created_at)
         .bind(channel.updated_at)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| channel_db_error("upsert channel", e))?;
         Ok(())
     }
 
-    async fn delete(&self, account_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM channels WHERE account_id = ?")
+    async fn delete(&self, channel_type: &str, account_id: &str) -> ChannelResult<()> {
+        sqlx::query("DELETE FROM channels WHERE channel_type = ? AND account_id = ?")
+            .bind(channel_type)
             .bind(account_id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| channel_db_error("delete channel", e))?;
         Ok(())
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,7 +157,7 @@ mod tests {
         };
         store.upsert(ch).await.unwrap();
 
-        let got = store.get("bot1").await.unwrap().unwrap();
+        let got = store.get("telegram", "bot1").await.unwrap().unwrap();
         assert_eq!(got.account_id, "bot1");
         assert_eq!(got.config["token"], "abc");
     }
@@ -168,7 +190,7 @@ mod tests {
             .await
             .unwrap();
 
-        let got = store.get("bot1").await.unwrap().unwrap();
+        let got = store.get("telegram", "bot1").await.unwrap().unwrap();
         assert_eq!(got.config["token"], "new");
 
         let all = store.list().await.unwrap();
@@ -191,8 +213,8 @@ mod tests {
             .await
             .unwrap();
 
-        store.delete("bot1").await.unwrap();
-        assert!(store.get("bot1").await.unwrap().is_none());
+        store.delete("telegram", "bot1").await.unwrap();
+        assert!(store.get("telegram", "bot1").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -232,6 +254,6 @@ mod tests {
     async fn test_get_nonexistent() {
         let pool = test_pool().await;
         let store = SqliteChannelStore::new(pool);
-        assert!(store.get("nope").await.unwrap().is_none());
+        assert!(store.get("telegram", "nope").await.unwrap().is_none());
     }
 }

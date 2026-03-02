@@ -152,7 +152,7 @@ impl ProviderState {
 
     fn record_failure(&self) {
         self.consecutive_failures.fetch_add(1, Ordering::SeqCst);
-        *self.last_failure.lock().unwrap() = Some(Instant::now());
+        *self.last_failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
     }
 
     /// Returns `true` when the circuit is open (provider should be skipped).
@@ -162,7 +162,7 @@ impl ProviderState {
         if failures < 3 {
             return false;
         }
-        let last = self.last_failure.lock().unwrap();
+        let last = self.last_failure.lock().unwrap_or_else(|e| e.into_inner());
         match *last {
             Some(t) if t.elapsed() < Duration::from_secs(60) => true,
             _ => {
@@ -362,6 +362,7 @@ impl LlmProvider for ProviderChain {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {
@@ -654,13 +655,13 @@ mod tests {
 
     /// A mock provider that records whether stream_with_tools received tools.
     struct ToolTrackingProvider {
-        received_tools: std::sync::Mutex<Option<Vec<serde_json::Value>>>,
+        received_tools: Mutex<Option<Vec<serde_json::Value>>>,
     }
 
     impl ToolTrackingProvider {
         fn new() -> Self {
             Self {
-                received_tools: std::sync::Mutex::new(None),
+                received_tools: Mutex::new(None),
             }
         }
 

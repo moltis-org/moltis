@@ -29,25 +29,33 @@ You'll see output like:
 
 ## 3. Configure a Provider
 
-You need an LLM API key to chat. The easiest options:
+You need an LLM provider configured to chat. The fastest options:
 
-### Option A: Anthropic (Recommended)
+### Option A: API Key (Anthropic, OpenAI, Gemini, etc.)
 
-1. Get an API key from [console.anthropic.com](https://console.anthropic.com)
-2. In Moltis, go to **Settings** → **Providers**
-3. Click **Anthropic** → Enter your API key → **Save**
+1. Set an API key as an environment variable and restart Moltis:
+   ```bash
+   export ANTHROPIC_API_KEY="sk-ant-..."   # Anthropic
+   export OPENAI_API_KEY="sk-..."          # OpenAI
+   export GEMINI_API_KEY="..."             # Google Gemini
+   ```
+2. Models appear automatically in the model picker.
 
-### Option B: OpenAI
+Or configure via the web UI: **Settings** → **Providers** → enter your API key.
 
-1. Get an API key from [platform.openai.com](https://platform.openai.com)
-2. In Moltis, go to **Settings** → **Providers**
-3. Click **OpenAI** → Enter your API key → **Save**
+### Option B: OAuth (Codex / Copilot)
 
-### Option C: Local Model (Free)
+1. In Moltis, go to **Settings** → **Providers**
+2. Click **OpenAI Codex** or **GitHub Copilot** → **Connect**
+3. Complete the OAuth flow
 
-1. Install [Ollama](https://ollama.ai): `curl -fsSL https://ollama.ai/install.sh | sh`
-2. Pull a model: `ollama pull llama3.2`
-3. In Moltis, configure Ollama in **Settings** → **Providers**
+### Option C: Local LLM (Offline)
+
+1. In Moltis, go to **Settings** → **Providers**
+2. Click **Local LLM**
+3. Choose a model and save
+
+See [Providers](providers.md) for the full list of supported providers.
 
 ## 4. Chat!
 
@@ -88,14 +96,23 @@ Chat with your agent from anywhere:
 3. In Moltis: **Settings** → **Telegram** → Enter token → **Save**
 4. Message your bot!
 
+### Connect Discord
+
+1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Enable **Message Content Intent** and copy the bot token
+3. In Moltis: **Settings** → **Channels** → **Connect Discord** → Enter token → **Connect**
+4. Invite the bot to your server and @mention it!
+
+→ [Full Discord setup guide](discord.md)
+
 ### Add MCP Servers
 
 Extend capabilities with [MCP servers](mcp.md):
 
 ```toml
 # In moltis.toml
-[[mcp.servers]]
-name = "github"
+[mcp]
+[mcp.servers.github]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 env = { GITHUB_TOKEN = "ghp_..." }
@@ -108,7 +125,8 @@ Enable long-term memory for context across sessions:
 ```toml
 # In moltis.toml
 [memory]
-enabled = true
+provider = "openai"
+model = "text-embedding-3-small"
 ```
 
 Add knowledge by placing Markdown files in `~/.moltis/memory/`.

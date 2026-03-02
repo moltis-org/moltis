@@ -1,14 +1,14 @@
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     fs,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use {
-    anyhow::Result,
-    serde::{Deserialize, Serialize},
-};
+use serde::{Deserialize, Serialize};
+
+use crate::Result;
 
 /// A single session entry in the metadata index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +21,8 @@ pub struct SessionEntry {
     pub created_at: u64,
     pub updated_at: u64,
     pub message_count: u32,
+    #[serde(default)]
+    pub last_seen_message_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
     #[serde(default)]
@@ -39,6 +41,12 @@ pub struct SessionEntry {
     pub fork_point: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_disabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub version: u64,
 }
 
 /// JSON file-backed index mapping session key → SessionEntry.
@@ -52,6 +60,17 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn compare_sidebar_order(lhs: &SessionEntry, rhs: &SessionEntry) -> Ordering {
+    let lhs_main = lhs.key == "main";
+    let rhs_main = rhs.key == "main";
+
+    rhs_main
+        .cmp(&lhs_main)
+        .then_with(|| rhs.updated_at.cmp(&lhs.updated_at))
+        .then_with(|| rhs.created_at.cmp(&lhs.created_at))
+        .then_with(|| lhs.key.cmp(&rhs.key))
 }
 
 impl SessionMetadata {
@@ -92,6 +111,7 @@ impl SessionMetadata {
                 {
                     e.label = label.clone();
                     e.updated_at = now;
+                    e.version += 1;
                 }
             })
             .or_insert_with(|| SessionEntry {
@@ -102,6 +122,7 @@ impl SessionMetadata {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                last_seen_message_count: 0,
                 project_id: None,
                 archived: false,
                 worktree_branch: None,
@@ -111,6 +132,9 @@ impl SessionMetadata {
                 parent_session_key: None,
                 fork_point: None,
                 mcp_disabled: None,
+                preview: None,
+                agent_id: None,
+                version: 0,
             })
     }
 
@@ -119,6 +143,7 @@ impl SessionMetadata {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.model = model;
             entry.updated_at = now_ms();
+            entry.version += 1;
         }
     }
 
@@ -127,6 +152,7 @@ impl SessionMetadata {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.message_count = message_count;
             entry.updated_at = now_ms();
+            entry.version += 1;
         }
     }
 
@@ -135,6 +161,7 @@ impl SessionMetadata {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.project_id = project_id;
             entry.updated_at = now_ms();
+            entry.version += 1;
         }
     }
 
@@ -143,6 +170,7 @@ impl SessionMetadata {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.worktree_branch = branch;
             entry.updated_at = now_ms();
+            entry.version += 1;
         }
     }
 
@@ -151,6 +179,7 @@ impl SessionMetadata {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.sandbox_image = image;
             entry.updated_at = now_ms();
+            entry.version += 1;
         }
     }
 
@@ -159,6 +188,7 @@ impl SessionMetadata {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.sandbox_enabled = enabled;
             entry.updated_at = now_ms();
+            entry.version += 1;
         }
     }
 
@@ -167,6 +197,7 @@ impl SessionMetadata {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.mcp_disabled = disabled;
             entry.updated_at = now_ms();
+            entry.version += 1;
         }
     }
 
@@ -175,7 +206,45 @@ impl SessionMetadata {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.channel_binding = binding;
             entry.updated_at = now_ms();
+            entry.version += 1;
         }
+    }
+
+    /// Assign (or unassign) a session to an agent persona.
+    pub fn set_agent_id(&mut self, key: &str, agent_id: Option<String>) {
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.agent_id = agent_id;
+            entry.updated_at = now_ms();
+            entry.version += 1;
+        }
+    }
+
+    /// List all sessions belonging to a given agent.
+    pub fn list_by_agent_id(&self, agent_id: &str) -> Vec<SessionEntry> {
+        let mut entries: Vec<_> = self
+            .entries
+            .values()
+            .filter(|e| e.agent_id.as_deref() == Some(agent_id))
+            .cloned()
+            .collect();
+        entries.sort_by_key(|a| a.created_at);
+        entries
+    }
+
+    /// Delete all sessions belonging to a given agent. Returns the number of
+    /// sessions removed.
+    pub fn delete_by_agent_id(&mut self, agent_id: &str) -> u64 {
+        let keys: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.agent_id.as_deref() == Some(agent_id))
+            .map(|(k, _)| k.clone())
+            .collect();
+        let count = keys.len() as u64;
+        for key in keys {
+            self.entries.remove(&key);
+        }
+        count
     }
 
     /// Remove an entry by key. Returns the removed entry if found.
@@ -183,10 +252,11 @@ impl SessionMetadata {
         self.entries.remove(key)
     }
 
-    /// List all entries sorted by updated_at descending.
+    /// List all entries for sidebar rendering.
+    /// `main` is pinned first, then sessions are sorted by recency.
     pub fn list(&self) -> Vec<SessionEntry> {
         let mut entries: Vec<_> = self.entries.values().cloned().collect();
-        entries.sort_by_key(|a| a.created_at);
+        entries.sort_by(compare_sidebar_order);
         entries
     }
 }
@@ -196,6 +266,7 @@ impl SessionMetadata {
 /// SQLite-backed session metadata store.
 pub struct SqliteSessionMetadata {
     pool: sqlx::SqlitePool,
+    event_bus: Option<crate::session_events::SessionEventBus>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -207,6 +278,7 @@ struct SessionRow {
     created_at: i64,
     updated_at: i64,
     message_count: i32,
+    last_seen_message_count: i32,
     project_id: Option<String>,
     archived: i32,
     worktree_branch: Option<String>,
@@ -216,6 +288,9 @@ struct SessionRow {
     parent_session_key: Option<String>,
     fork_point: Option<i32>,
     mcp_disabled: Option<i32>,
+    preview: Option<String>,
+    agent_id: Option<String>,
+    version: i64,
 }
 
 impl From<SessionRow> for SessionEntry {
@@ -228,6 +303,7 @@ impl From<SessionRow> for SessionEntry {
             created_at: r.created_at as u64,
             updated_at: r.updated_at as u64,
             message_count: r.message_count as u32,
+            last_seen_message_count: r.last_seen_message_count as u32,
             project_id: r.project_id,
             archived: r.archived != 0,
             worktree_branch: r.worktree_branch,
@@ -237,13 +313,42 @@ impl From<SessionRow> for SessionEntry {
             parent_session_key: r.parent_session_key,
             fork_point: r.fork_point.map(|v| v as u32),
             mcp_disabled: r.mcp_disabled.map(|v| v != 0),
+            preview: r.preview,
+            agent_id: r.agent_id,
+            version: r.version as u64,
         }
     }
 }
 
 impl SqliteSessionMetadata {
     pub fn new(pool: sqlx::SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            event_bus: None,
+        }
+    }
+
+    /// Create with an event bus that auto-publishes on mutations.
+    pub fn with_event_bus(
+        pool: sqlx::SqlitePool,
+        bus: crate::session_events::SessionEventBus,
+    ) -> Self {
+        Self {
+            pool,
+            event_bus: Some(bus),
+        }
+    }
+
+    /// Accessor for the event bus (subscribers call `.subscribe()` on it).
+    pub fn event_bus(&self) -> Option<&crate::session_events::SessionEventBus> {
+        self.event_bus.as_ref()
+    }
+
+    /// Publish an event if a bus is configured.
+    fn emit(&self, event: crate::session_events::SessionEvent) {
+        if let Some(bus) = &self.event_bus {
+            bus.publish(event);
+        }
     }
 
     /// Initialize the sessions table schema.
@@ -261,6 +366,7 @@ impl SqliteSessionMetadata {
                 created_at      INTEGER NOT NULL,
                 updated_at      INTEGER NOT NULL,
                 message_count   INTEGER NOT NULL DEFAULT 0,
+                last_seen_message_count INTEGER NOT NULL DEFAULT 0,
                 project_id      TEXT    REFERENCES projects(id) ON DELETE SET NULL,
                 archived        INTEGER NOT NULL DEFAULT 0,
                 worktree_branch TEXT,
@@ -269,7 +375,10 @@ impl SqliteSessionMetadata {
                 channel_binding     TEXT,
                 parent_session_key  TEXT,
                 fork_point          INTEGER,
-                mcp_disabled        INTEGER
+                mcp_disabled        INTEGER,
+                preview             TEXT,
+                agent_id            TEXT,
+                version             INTEGER NOT NULL DEFAULT 0
             )"#,
         )
         .execute(pool)
@@ -315,14 +424,15 @@ impl SqliteSessionMetadata {
         &self,
         key: &str,
         label: Option<String>,
-    ) -> Result<SessionEntry, sqlx::Error> {
+    ) -> std::result::Result<SessionEntry, sqlx::Error> {
         let now = now_ms() as i64;
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            r#"INSERT INTO sessions (key, id, label, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?)
+            r#"INSERT INTO sessions (key, id, label, created_at, updated_at, version)
+               VALUES (?, ?, ?, ?, ?, 0)
                ON CONFLICT(key) DO UPDATE SET
-                 label = COALESCE(excluded.label, sessions.label)"#,
+                 label = COALESCE(excluded.label, sessions.label),
+                 version = sessions.version + 1"#,
         )
         .bind(key)
         .bind(&id)
@@ -331,97 +441,238 @@ impl SqliteSessionMetadata {
         .bind(now)
         .execute(&self.pool)
         .await?;
-        self.get(key).await.ok_or_else(|| sqlx::Error::RowNotFound)
+        let entry = self
+            .get(key)
+            .await
+            .ok_or_else(|| sqlx::Error::RowNotFound)?;
+        // version == 0 means freshly inserted; > 0 means conflict-updated.
+        if entry.version == 0 {
+            self.emit(crate::session_events::SessionEvent::Created {
+                session_key: key.to_string(),
+            });
+        } else {
+            self.emit(crate::session_events::SessionEvent::Patched {
+                session_key: key.to_string(),
+            });
+        }
+        Ok(entry)
     }
 
     pub async fn set_model(&self, key: &str, model: Option<String>) {
         let now = now_ms() as i64;
-        sqlx::query("UPDATE sessions SET model = ?, updated_at = ? WHERE key = ?")
-            .bind(&model)
-            .bind(now)
-            .bind(key)
-            .execute(&self.pool)
-            .await
-            .ok();
+        sqlx::query(
+            "UPDATE sessions SET model = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(&model)
+        .bind(now)
+        .bind(key)
+        .execute(&self.pool)
+        .await
+        .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn touch(&self, key: &str, message_count: u32) {
         let now = now_ms() as i64;
-        sqlx::query("UPDATE sessions SET message_count = ?, updated_at = ? WHERE key = ?")
-            .bind(message_count as i32)
-            .bind(now)
+        sqlx::query(
+            "UPDATE sessions SET message_count = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(message_count as i32)
+        .bind(now)
+        .bind(key)
+            .execute(&self.pool)
+            .await
+            .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
+    }
+
+    /// Set imported timestamps and message counters without replacing them with "now".
+    pub async fn set_timestamps_and_counts(
+        &self,
+        key: &str,
+        created_at: u64,
+        updated_at: u64,
+        message_count: u32,
+        last_seen_message_count: u32,
+    ) {
+        sqlx::query(
+            "UPDATE sessions SET created_at = ?, updated_at = ?, message_count = ?, last_seen_message_count = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(created_at as i64)
+        .bind(updated_at as i64)
+        .bind(message_count as i32)
+        .bind(last_seen_message_count as i32)
+        .bind(key)
+        .execute(&self.pool)
+        .await
+        .ok();
+    }
+
+    /// Store a short preview of the first user message for sidebar display.
+    pub async fn set_preview(&self, key: &str, preview: Option<&str>) {
+        sqlx::query("UPDATE sessions SET preview = ?, version = version + 1 WHERE key = ?")
+            .bind(preview)
             .bind(key)
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
+    }
+
+    /// Mark a session as "seen" by setting `last_seen_message_count` to the
+    /// current `message_count`.
+    pub async fn mark_seen(&self, key: &str) {
+        sqlx::query(
+            "UPDATE sessions SET last_seen_message_count = message_count, version = version + 1 WHERE key = ?",
+        )
+        .bind(key)
+            .execute(&self.pool)
+            .await
+            .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_project_id(&self, key: &str, project_id: Option<String>) {
         let now = now_ms() as i64;
-        sqlx::query("UPDATE sessions SET project_id = ?, updated_at = ? WHERE key = ?")
-            .bind(&project_id)
-            .bind(now)
-            .bind(key)
+        sqlx::query(
+            "UPDATE sessions SET project_id = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(&project_id)
+        .bind(now)
+        .bind(key)
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_sandbox_image(&self, key: &str, image: Option<String>) {
         let now = now_ms() as i64;
-        sqlx::query("UPDATE sessions SET sandbox_image = ?, updated_at = ? WHERE key = ?")
-            .bind(&image)
-            .bind(now)
-            .bind(key)
+        sqlx::query(
+            "UPDATE sessions SET sandbox_image = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(&image)
+        .bind(now)
+        .bind(key)
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_sandbox_enabled(&self, key: &str, enabled: Option<bool>) {
         let now = now_ms() as i64;
         let val = enabled.map(|b| b as i32);
-        sqlx::query("UPDATE sessions SET sandbox_enabled = ?, updated_at = ? WHERE key = ?")
-            .bind(val)
-            .bind(now)
-            .bind(key)
+        sqlx::query(
+            "UPDATE sessions SET sandbox_enabled = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(val)
+        .bind(now)
+        .bind(key)
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_worktree_branch(&self, key: &str, branch: Option<String>) {
         let now = now_ms() as i64;
-        sqlx::query("UPDATE sessions SET worktree_branch = ?, updated_at = ? WHERE key = ?")
-            .bind(&branch)
-            .bind(now)
-            .bind(key)
+        sqlx::query(
+            "UPDATE sessions SET worktree_branch = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(&branch)
+        .bind(now)
+        .bind(key)
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_mcp_disabled(&self, key: &str, disabled: Option<bool>) {
         let now = now_ms() as i64;
         let val = disabled.map(|b| b as i32);
-        sqlx::query("UPDATE sessions SET mcp_disabled = ?, updated_at = ? WHERE key = ?")
-            .bind(val)
-            .bind(now)
-            .bind(key)
+        sqlx::query(
+            "UPDATE sessions SET mcp_disabled = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(val)
+        .bind(now)
+        .bind(key)
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     pub async fn set_channel_binding(&self, key: &str, binding: Option<String>) {
         let now = now_ms() as i64;
-        sqlx::query("UPDATE sessions SET channel_binding = ?, updated_at = ? WHERE key = ?")
-            .bind(&binding)
-            .bind(now)
-            .bind(key)
+        sqlx::query(
+            "UPDATE sessions SET channel_binding = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(&binding)
+        .bind(now)
+        .bind(key)
             .execute(&self.pool)
             .await
             .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
+    }
+
+    /// Assign (or unassign) a session to an agent persona.
+    pub async fn set_agent_id(&self, key: &str, agent_id: Option<&str>) -> Result<()> {
+        let now = now_ms() as i64;
+        sqlx::query(
+            "UPDATE sessions SET agent_id = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(agent_id)
+        .bind(now)
+        .bind(key)
+        .execute(&self.pool)
+        .await?;
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
+        Ok(())
+    }
+
+    /// List all sessions belonging to a given agent.
+    pub async fn list_by_agent_id(&self, agent_id: &str) -> Result<Vec<SessionEntry>> {
+        let rows = sqlx::query_as::<_, SessionRow>(
+            "SELECT * FROM sessions WHERE agent_id = ? ORDER BY created_at ASC",
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete all sessions belonging to a given agent (cascade).
+    pub async fn delete_by_agent_id(&self, agent_id: &str) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM sessions WHERE agent_id = ?")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 
     /// Set the parent session key and fork point for a branched session.
@@ -429,7 +680,7 @@ impl SqliteSessionMetadata {
         let now = now_ms() as i64;
         let fp = fork_point.map(|v| v as i32);
         sqlx::query(
-            "UPDATE sessions SET parent_session_key = ?, fork_point = ?, updated_at = ? WHERE key = ?",
+            "UPDATE sessions SET parent_session_key = ?, fork_point = ?, updated_at = ?, version = version + 1 WHERE key = ?",
         )
         .bind(&parent_key)
         .bind(fp)
@@ -438,6 +689,9 @@ impl SqliteSessionMetadata {
         .execute(&self.pool)
         .await
         .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
     }
 
     /// List all sessions that are children of the given parent key.
@@ -461,11 +715,18 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+        if entry.is_some() {
+            self.emit(crate::session_events::SessionEvent::Deleted {
+                session_key: key.to_string(),
+            });
+        }
         entry
     }
 
     pub async fn list(&self) -> Vec<SessionEntry> {
-        sqlx::query_as::<_, SessionRow>("SELECT * FROM sessions ORDER BY created_at ASC")
+        sqlx::query_as::<_, SessionRow>(
+            "SELECT * FROM sessions ORDER BY CASE WHEN key = 'main' THEN 0 ELSE 1 END ASC, updated_at DESC, created_at DESC, key ASC",
+        )
             .fetch_all(&self.pool)
             .await
             .unwrap_or_default()
@@ -584,6 +845,7 @@ impl SqliteSessionMetadata {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,6 +866,33 @@ mod tests {
         assert!(keys.contains(&"session:abc"));
         let abc = list.iter().find(|e| e.key == "session:abc").unwrap();
         assert_eq!(abc.label.as_deref(), Some("My Chat"));
+    }
+
+    #[test]
+    fn test_list_pins_main_then_sorts_by_recency() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path).unwrap();
+
+        meta.upsert("main", None);
+        meta.upsert("session:older", None);
+        meta.upsert("session:newer", None);
+
+        if let Some(entry) = meta.entries.get_mut("main") {
+            entry.created_at = 1;
+            entry.updated_at = 1;
+        }
+        if let Some(entry) = meta.entries.get_mut("session:older") {
+            entry.created_at = 100;
+            entry.updated_at = 100;
+        }
+        if let Some(entry) = meta.entries.get_mut("session:newer") {
+            entry.created_at = 200;
+            entry.updated_at = 200;
+        }
+
+        let keys: Vec<String> = meta.list().into_iter().map(|entry| entry.key).collect();
+        assert_eq!(keys, vec!["main", "session:newer", "session:older"]);
     }
 
     #[test]
@@ -662,6 +951,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sqlite_list_pins_main_then_sorts_by_recency() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        meta.upsert("session:older", None).await.unwrap();
+        meta.upsert("session:newer", None).await.unwrap();
+
+        meta.set_timestamps_and_counts("main", 1, 1, 0, 0).await;
+        meta.set_timestamps_and_counts("session:older", 100, 100, 0, 0)
+            .await;
+        meta.set_timestamps_and_counts("session:newer", 200, 200, 0, 0)
+            .await;
+
+        let keys: Vec<String> = meta
+            .list()
+            .await
+            .into_iter()
+            .map(|entry| entry.key)
+            .collect();
+        assert_eq!(keys, vec!["main", "session:newer", "session:older"]);
+    }
+
+    #[tokio::test]
     async fn test_sqlite_remove() {
         let pool = sqlite_pool().await;
         let meta = SqliteSessionMetadata::new(pool);
@@ -680,6 +993,76 @@ mod tests {
         meta.upsert("main", None).await.unwrap();
         meta.touch("main", 5).await;
         assert_eq!(meta.get("main").await.unwrap().message_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_set_timestamps_and_counts() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        meta.set_timestamps_and_counts("main", 100, 200, 5, 3).await;
+
+        let entry = meta.get("main").await.unwrap();
+        assert_eq!(entry.created_at, 100);
+        assert_eq!(entry.updated_at, 200);
+        assert_eq!(entry.message_count, 5);
+        assert_eq!(entry.last_seen_message_count, 3);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_mark_seen() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        // New session starts with last_seen_message_count = 0.
+        assert_eq!(meta.get("main").await.unwrap().last_seen_message_count, 0);
+
+        // Simulate receiving messages.
+        meta.touch("main", 5).await;
+        // touch does NOT change last_seen_message_count.
+        assert_eq!(meta.get("main").await.unwrap().last_seen_message_count, 0);
+
+        // Mark as seen.
+        meta.mark_seen("main").await;
+        let entry = meta.get("main").await.unwrap();
+        assert_eq!(entry.last_seen_message_count, 5);
+        assert_eq!(entry.message_count, 5);
+
+        // More messages arrive — last_seen stays at previous value.
+        meta.touch("main", 8).await;
+        let entry = meta.get("main").await.unwrap();
+        assert_eq!(entry.message_count, 8);
+        assert_eq!(entry.last_seen_message_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_mark_seen_emits_patched_event() {
+        let pool = sqlite_pool().await;
+        let bus = crate::session_events::SessionEventBus::new();
+        let meta = SqliteSessionMetadata::with_event_bus(pool, bus.clone());
+        let mut rx = bus.subscribe();
+
+        meta.upsert("main", None).await.unwrap();
+        let created = rx.recv().await.unwrap();
+        assert!(
+            matches!(
+                created,
+                crate::session_events::SessionEvent::Created { session_key } if session_key == "main"
+            ),
+            "expected created event after upsert"
+        );
+
+        meta.mark_seen("main").await;
+        let patched = rx.recv().await.unwrap();
+        assert!(
+            matches!(
+                patched,
+                crate::session_events::SessionEvent::Patched { session_key } if session_key == "main"
+            ),
+            "expected patched event after mark_seen"
+        );
     }
 
     #[test]
@@ -814,7 +1197,7 @@ mod tests {
         // Existing metadata without sandbox_enabled should deserialize fine.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meta.json");
-        std::fs::write(
+        fs::write(
             &path,
             r#"{"main":{"id":"1","key":"main","label":null,"created_at":0,"updated_at":0,"message_count":0}}"#,
         )
@@ -1005,5 +1388,297 @@ mod tests {
 
         meta.set_mcp_disabled("main", None).await;
         assert!(meta.get("main").await.unwrap().mcp_disabled.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_version_starts_at_zero() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        let entry = meta.upsert("main", None).await.unwrap();
+        assert_eq!(entry.version, 0);
+    }
+
+    #[tokio::test]
+    async fn test_version_increments_on_mutation() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        assert_eq!(meta.get("main").await.unwrap().version, 0);
+
+        meta.set_model("main", Some("gpt-4".to_string())).await;
+        assert_eq!(meta.get("main").await.unwrap().version, 1);
+
+        meta.touch("main", 5).await;
+        assert_eq!(meta.get("main").await.unwrap().version, 2);
+
+        // Insert a project row so the FK constraint is satisfied.
+        sqlx::query("INSERT INTO projects (id) VALUES ('proj1')")
+            .execute(&meta.pool)
+            .await
+            .unwrap();
+        meta.set_project_id("main", Some("proj1".to_string())).await;
+        assert_eq!(meta.get("main").await.unwrap().version, 3);
+
+        meta.set_sandbox_enabled("main", Some(true)).await;
+        assert_eq!(meta.get("main").await.unwrap().version, 4);
+
+        meta.set_sandbox_image("main", Some("img:1".to_string()))
+            .await;
+        assert_eq!(meta.get("main").await.unwrap().version, 5);
+
+        meta.set_worktree_branch("main", Some("branch".to_string()))
+            .await;
+        assert_eq!(meta.get("main").await.unwrap().version, 6);
+
+        meta.set_mcp_disabled("main", Some(true)).await;
+        assert_eq!(meta.get("main").await.unwrap().version, 7);
+
+        meta.set_channel_binding("main", Some("{}".to_string()))
+            .await;
+        assert_eq!(meta.get("main").await.unwrap().version, 8);
+
+        meta.set_parent("main", Some("parent".to_string()), Some(0))
+            .await;
+        assert_eq!(meta.get("main").await.unwrap().version, 9);
+
+        meta.mark_seen("main").await;
+        assert_eq!(meta.get("main").await.unwrap().version, 10);
+
+        meta.set_preview("main", Some("hello")).await;
+        assert_eq!(meta.get("main").await.unwrap().version, 11);
+
+        meta.set_agent_id("main", Some("agent-1")).await.unwrap();
+        assert_eq!(meta.get("main").await.unwrap().version, 12);
+    }
+
+    #[tokio::test]
+    async fn test_version_increments_on_upsert_update() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", Some("First".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(meta.get("main").await.unwrap().version, 0);
+
+        // Upsert with existing key bumps version via ON CONFLICT.
+        meta.upsert("main", Some("Second".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(meta.get("main").await.unwrap().version, 1);
+    }
+
+    #[tokio::test]
+    async fn test_version_in_list() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        meta.touch("main", 3).await;
+
+        let list = meta.list().await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].version, 1);
+    }
+
+    #[test]
+    fn test_json_backend_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path.clone()).unwrap();
+
+        meta.upsert("main", None);
+        assert_eq!(meta.get("main").unwrap().version, 0);
+
+        meta.set_model("main", Some("gpt-4".to_string()));
+        assert_eq!(meta.get("main").unwrap().version, 1);
+
+        meta.touch("main", 5);
+        assert_eq!(meta.get("main").unwrap().version, 2);
+
+        // Upsert with label change bumps version.
+        meta.upsert("main", Some("New Label".to_string()));
+        assert_eq!(meta.get("main").unwrap().version, 3);
+
+        // Upsert without change does not bump version.
+        meta.upsert("main", Some("New Label".to_string()));
+        assert_eq!(meta.get("main").unwrap().version, 3);
+
+        // Round-trip through save/load preserves version.
+        meta.save().unwrap();
+        let reloaded = SessionMetadata::load(path).unwrap();
+        assert_eq!(reloaded.get("main").unwrap().version, 3);
+    }
+
+    #[test]
+    fn test_agent_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path.clone()).unwrap();
+
+        meta.upsert("main", None);
+        assert!(meta.get("main").unwrap().agent_id.is_none());
+
+        meta.set_agent_id("main", Some("agent-1".to_string()));
+        assert_eq!(
+            meta.get("main").unwrap().agent_id.as_deref(),
+            Some("agent-1")
+        );
+
+        meta.set_agent_id("main", None);
+        assert!(meta.get("main").unwrap().agent_id.is_none());
+
+        // Round-trip through save/load.
+        meta.set_agent_id("main", Some("agent-2".to_string()));
+        meta.save().unwrap();
+        let reloaded = SessionMetadata::load(path).unwrap();
+        assert_eq!(
+            reloaded.get("main").unwrap().agent_id.as_deref(),
+            Some("agent-2")
+        );
+    }
+
+    #[test]
+    fn test_list_by_agent_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path).unwrap();
+
+        meta.upsert("s1", Some("Session 1".to_string()));
+        meta.upsert("s2", Some("Session 2".to_string()));
+        meta.upsert("s3", Some("Session 3".to_string()));
+
+        meta.set_agent_id("s1", Some("agent-a".to_string()));
+        meta.set_agent_id("s2", Some("agent-a".to_string()));
+        meta.set_agent_id("s3", Some("agent-b".to_string()));
+
+        let agent_a = meta.list_by_agent_id("agent-a");
+        assert_eq!(agent_a.len(), 2);
+        let keys: Vec<&str> = agent_a.iter().map(|e| e.key.as_str()).collect();
+        assert!(keys.contains(&"s1"));
+        assert!(keys.contains(&"s2"));
+
+        let agent_b = meta.list_by_agent_id("agent-b");
+        assert_eq!(agent_b.len(), 1);
+        assert_eq!(agent_b[0].key, "s3");
+
+        let none = meta.list_by_agent_id("agent-missing");
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn test_delete_by_agent_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path).unwrap();
+
+        meta.upsert("s1", None);
+        meta.upsert("s2", None);
+        meta.upsert("s3", None);
+
+        meta.set_agent_id("s1", Some("agent-a".to_string()));
+        meta.set_agent_id("s2", Some("agent-a".to_string()));
+        meta.set_agent_id("s3", Some("agent-b".to_string()));
+
+        let deleted = meta.delete_by_agent_id("agent-a");
+        assert_eq!(deleted, 2);
+        assert!(meta.get("s1").is_none());
+        assert!(meta.get("s2").is_none());
+        assert!(meta.get("s3").is_some());
+
+        // Deleting a non-existent agent returns 0.
+        let deleted = meta.delete_by_agent_id("agent-missing");
+        assert_eq!(deleted, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_agent_id() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        assert!(meta.get("main").await.unwrap().agent_id.is_none());
+
+        meta.set_agent_id("main", Some("agent-1")).await.unwrap();
+        assert_eq!(
+            meta.get("main").await.unwrap().agent_id.as_deref(),
+            Some("agent-1")
+        );
+
+        meta.set_agent_id("main", None).await.unwrap();
+        assert!(meta.get("main").await.unwrap().agent_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_list_by_agent_id() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("s1", Some("Session 1".to_string()))
+            .await
+            .unwrap();
+        meta.upsert("s2", Some("Session 2".to_string()))
+            .await
+            .unwrap();
+        meta.upsert("s3", Some("Session 3".to_string()))
+            .await
+            .unwrap();
+
+        meta.set_agent_id("s1", Some("agent-a")).await.unwrap();
+        meta.set_agent_id("s2", Some("agent-a")).await.unwrap();
+        meta.set_agent_id("s3", Some("agent-b")).await.unwrap();
+
+        let agent_a = meta.list_by_agent_id("agent-a").await.unwrap();
+        assert_eq!(agent_a.len(), 2);
+        let keys: Vec<&str> = agent_a.iter().map(|e| e.key.as_str()).collect();
+        assert!(keys.contains(&"s1"));
+        assert!(keys.contains(&"s2"));
+
+        let agent_b = meta.list_by_agent_id("agent-b").await.unwrap();
+        assert_eq!(agent_b.len(), 1);
+        assert_eq!(agent_b[0].key, "s3");
+
+        let none = meta.list_by_agent_id("agent-missing").await.unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_delete_by_agent_id() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("s1", None).await.unwrap();
+        meta.upsert("s2", None).await.unwrap();
+        meta.upsert("s3", None).await.unwrap();
+
+        meta.set_agent_id("s1", Some("agent-a")).await.unwrap();
+        meta.set_agent_id("s2", Some("agent-a")).await.unwrap();
+        meta.set_agent_id("s3", Some("agent-b")).await.unwrap();
+
+        let deleted = meta.delete_by_agent_id("agent-a").await.unwrap();
+        assert_eq!(deleted, 2);
+        assert!(meta.get("s1").await.is_none());
+        assert!(meta.get("s2").await.is_none());
+        assert!(meta.get("s3").await.is_some());
+
+        // Deleting a non-existent agent returns 0.
+        let deleted = meta.delete_by_agent_id("agent-missing").await.unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn test_agent_id_serde_compat() {
+        // Existing metadata without agent_id should deserialize fine.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        fs::write(
+            &path,
+            r#"{"main":{"id":"1","key":"main","label":null,"created_at":0,"updated_at":0,"message_count":0}}"#,
+        )
+        .unwrap();
+        let meta = SessionMetadata::load(path).unwrap();
+        assert!(meta.get("main").unwrap().agent_id.is_none());
     }
 }

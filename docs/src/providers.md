@@ -1,221 +1,233 @@
 # LLM Providers
 
-Moltis supports 30+ LLM providers through a trait-based architecture. Configure providers through the web UI or directly in configuration files.
+Moltis supports multiple LLM providers through a trait-based architecture.
+Configure providers through the web UI or directly in configuration files.
 
-## Supported Providers
+## Available Providers
 
-### Tier 1 (Full Support)
+### API Key Providers
 
-| Provider | Models | Tool Calling | Streaming |
-|----------|--------|--------------|-----------|
-| **Anthropic** | Claude 4, Claude 3.5, Claude 3 | ✅ | ✅ |
-| **OpenAI** | GPT-4o, GPT-4, o1, o3 | ✅ | ✅ |
-| **Google** | Gemini 2.0, Gemini 1.5 | ✅ | ✅ |
-| **GitHub Copilot** | GPT-4o, Claude | ✅ | ✅ |
+| Provider | Config Name | Env Variable | Features |
+|----------|-------------|--------------|----------|
+| **Anthropic** | `anthropic` | `ANTHROPIC_API_KEY` | Streaming, tools, vision |
+| **OpenAI** | `openai` | `OPENAI_API_KEY` | Streaming, tools, vision, model discovery |
+| **Google Gemini** | `gemini` | `GEMINI_API_KEY` | Streaming, tools, vision, model discovery |
+| **DeepSeek** | `deepseek` | `DEEPSEEK_API_KEY` | Streaming, tools, model discovery |
+| **Mistral** | `mistral` | `MISTRAL_API_KEY` | Streaming, tools, model discovery |
+| **Groq** | `groq` | `GROQ_API_KEY` | Streaming |
+| **xAI (Grok)** | `xai` | `XAI_API_KEY` | Streaming |
+| **OpenRouter** | `openrouter` | `OPENROUTER_API_KEY` | Streaming, tools, model discovery |
+| **Cerebras** | `cerebras` | `CEREBRAS_API_KEY` | Streaming, tools, model discovery |
+| **MiniMax** | `minimax` | `MINIMAX_API_KEY` | Streaming, tools |
+| **Moonshot (Kimi)** | `moonshot` | `MOONSHOT_API_KEY` | Streaming, tools, model discovery |
+| **Venice** | `venice` | `VENICE_API_KEY` | Streaming, tools, model discovery |
+| **Z.AI (Zhipu)** | `zai` | `Z_API_KEY` | Streaming, tools, model discovery |
 
-### Tier 2 (Good Support)
+### OAuth Providers
 
-| Provider | Models | Tool Calling | Streaming |
-|----------|--------|--------------|-----------|
-| **Mistral** | Mistral Large, Codestral | ✅ | ✅ |
-| **Groq** | Llama 3, Mixtral | ✅ | ✅ |
-| **Together** | Various open models | ✅ | ✅ |
-| **Fireworks** | Various open models | ✅ | ✅ |
-| **DeepSeek** | DeepSeek V3, Coder | ✅ | ✅ |
+| Provider | Config Name | Notes |
+|----------|-------------|-------|
+| **OpenAI Codex** | `openai-codex` | OAuth flow via web UI |
+| **GitHub Copilot** | `github-copilot` | Requires active Copilot subscription |
 
-### Tier 3 (Basic Support)
+### Local
 
-| Provider | Notes |
-|----------|-------|
-| **OpenRouter** | Aggregator for 100+ models |
-| **Ollama** | Local models |
-| **Venice** | Privacy-focused |
-| **Cerebras** | Fast inference |
-| **SambaNova** | Enterprise |
-| **Cohere** | Command models |
-| **AI21** | Jamba models |
+| Provider | Config Name | Notes |
+|----------|-------------|-------|
+| **Ollama** | `ollama` | Local or remote Ollama instance |
+| **LM Studio** | `lmstudio` | Local LM Studio or any OpenAI-compatible server |
+| **Local LLM** | `local-llm` | Runs GGUF models directly on your machine |
+
+### Custom OpenAI-Compatible
+
+Any OpenAI-compatible endpoint can be added with a `custom-` prefix:
+
+```toml
+[providers.custom-myservice]
+enabled = true
+api_key = "..."
+base_url = "https://my-service.example.com/v1"
+models = ["my-model"]
+```
 
 ## Configuration
 
 ### Via Web UI (Recommended)
 
-1. Open Moltis in your browser
-2. Go to **Settings** → **Providers**
-3. Click on a provider card
-4. Enter your API key
-5. Select your preferred model
+1. Open Moltis in your browser.
+2. Go to **Settings** → **Providers**.
+3. Choose a provider card.
+4. Complete OAuth or enter your API key.
+5. Select your preferred model.
 
 ### Via Configuration Files
 
-Provider credentials are stored in `~/.config/moltis/provider_keys.json`:
-
-```json
-{
-  "anthropic": {
-    "apiKey": "sk-ant-...",
-    "model": "claude-sonnet-4-20250514"
-  },
-  "openai": {
-    "apiKey": "sk-...",
-    "model": "gpt-4o"
-  }
-}
-```
-
-Enable providers in `moltis.toml`:
+Configure providers in `moltis.toml`:
 
 ```toml
 [providers]
-default = "anthropic"
+offered = ["anthropic", "openai", "gemini"]
 
 [providers.anthropic]
 enabled = true
-models = [
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-]
 
 [providers.openai]
 enabled = true
+models = ["gpt-5.3", "gpt-5.2"]
+stream_transport = "sse"              # "sse", "websocket", or "auto"
+
+[providers.gemini]
+enabled = true
+models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+# api_key = "..."                     # Or set GEMINI_API_KEY / GOOGLE_API_KEY env var
+# fetch_models = true                 # Discover models from the API
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+[chat]
+priority_models = ["gpt-5.2"]
 ```
 
-## Provider-Specific Setup
+### Provider Entry Options
+
+Each provider supports these options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `true` | Enable or disable the provider |
+| `api_key` | — | API key (overrides env var) |
+| `base_url` | — | Override API endpoint URL |
+| `models` | `[]` | Preferred models shown first in the picker |
+| `fetch_models` | `true` | Discover available models from the API |
+| `stream_transport` | `"sse"` | `"sse"`, `"websocket"`, or `"auto"` |
+| `alias` | — | Custom label for metrics |
+| `tool_mode` | `"auto"` | `"auto"`, `"native"`, `"text"`, or `"off"` |
+
+## Provider Setup
+
+### Google Gemini
+
+Google Gemini uses an API key from [Google AI Studio](https://aistudio.google.com/).
+
+1. Get an API key from Google AI Studio.
+2. Set `GEMINI_API_KEY` in your environment (or use `GOOGLE_API_KEY`).
+3. Gemini models appear automatically in the model picker.
+
+```toml
+[providers.gemini]
+enabled = true
+models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+```
+
+Gemini supports native tool calling, vision/multimodal inputs, streaming, and automatic model discovery.
 
 ### Anthropic
 
-1. Get an API key from [console.anthropic.com](https://console.anthropic.com)
-2. Enter it in Settings → Providers → Anthropic
-
-```admonish tip
-Claude Sonnet 4 offers the best balance of capability and cost for most coding tasks.
-```
+1. Get an API key from [console.anthropic.com](https://console.anthropic.com/).
+2. Set `ANTHROPIC_API_KEY` in your environment.
 
 ### OpenAI
 
-1. Get an API key from [platform.openai.com](https://platform.openai.com)
-2. Enter it in Settings → Providers → OpenAI
+1. Get an API key from [platform.openai.com](https://platform.openai.com/).
+2. Set `OPENAI_API_KEY` in your environment.
+
+### OpenAI Codex
+
+OpenAI Codex uses OAuth-based access.
+
+1. Go to **Settings** → **Providers** → **OpenAI Codex**.
+2. Click **Connect** and complete the auth flow.
+3. Choose a Codex model.
+
+```admonish note title="Docker and cloud deployments"
+The OAuth flow redirects your browser to `localhost:1455`. In Docker, make sure
+port 1455 is published (`-p 1455:1455`). On cloud platforms where `localhost`
+cannot reach the server, authenticate via the CLI instead:
+
+~~~bash
+# Docker
+docker exec -it moltis moltis auth login --provider openai-codex
+
+# Fly.io
+fly ssh console -C "moltis auth login --provider openai-codex"
+~~~
+
+The CLI opens a browser on your machine and handles the callback locally.
+Tokens are saved to the config volume and picked up by the gateway automatically.
+```
 
 ### GitHub Copilot
 
-GitHub Copilot uses OAuth authentication:
+GitHub Copilot uses OAuth authentication.
 
-1. Click **Connect** in Settings → Providers → GitHub Copilot
-2. Complete the GitHub OAuth flow
-3. Authorize Moltis to access Copilot
+1. Go to **Settings** → **Providers** → **GitHub Copilot**.
+2. Click **Connect**.
+3. Complete the GitHub OAuth flow.
+
+```admonish note title="Docker and cloud deployments"
+GitHub Copilot uses device-flow authentication (a code you enter on github.com),
+so it works from the web UI without extra port configuration. If you prefer the
+CLI:
+
+~~~bash
+docker exec -it moltis moltis auth login --provider github-copilot
+~~~
+```
 
 ```admonish info
 Requires an active GitHub Copilot subscription.
 ```
 
-### Google (Gemini)
+### Ollama
 
-1. Get an API key from [aistudio.google.com](https://aistudio.google.com)
-2. Enter it in Settings → Providers → Google
-
-### Ollama (Local Models)
-
-Run models locally with [Ollama](https://ollama.ai):
-
-1. Install Ollama: `curl -fsSL https://ollama.ai/install.sh | sh`
-2. Pull a model: `ollama pull llama3.2`
-3. Configure in Moltis:
-
-```json
-{
-  "ollama": {
-    "baseUrl": "http://localhost:11434",
-    "model": "llama3.2"
-  }
-}
-```
-
-### OpenRouter
-
-Access 100+ models through one API:
-
-1. Get an API key from [openrouter.ai](https://openrouter.ai)
-2. Enter it in Settings → Providers → OpenRouter
-3. Specify the model ID you want to use
-
-```json
-{
-  "openrouter": {
-    "apiKey": "sk-or-...",
-    "model": "anthropic/claude-3.5-sonnet"
-  }
-}
-```
-
-## Custom Base URLs
-
-For providers with custom endpoints (enterprise, proxies):
-
-```json
-{
-  "openai": {
-    "apiKey": "sk-...",
-    "baseUrl": "https://your-proxy.example.com/v1",
-    "model": "gpt-4o"
-  }
-}
-```
-
-## Switching Providers
-
-### Per-Session
-
-In the chat interface, use the model selector dropdown to switch providers/models for the current session.
-
-### Per-Message
-
-Use the `/model` command to switch models mid-conversation:
-
-```
-/model claude-opus-4-20250514
-```
-
-### Default Provider
-
-Set the default in `moltis.toml`:
+Ollama auto-detects when running at `http://127.0.0.1:11434`. No API key needed.
 
 ```toml
-[providers]
-default = "anthropic"
-
-[agent]
-model = "claude-sonnet-4-20250514"
+[providers.ollama]
+enabled = true
+# base_url = "http://127.0.0.1:11434/v1"  # Override for remote Ollama
 ```
 
-## Model Capabilities
+### LM Studio
 
-Different models have different strengths:
+LM Studio auto-detects when running at `http://127.0.0.1:1234`. No API key needed.
+Also works with llama.cpp or any OpenAI-compatible local server.
 
-| Use Case | Recommended Model |
-|----------|-------------------|
-| General coding | Claude Sonnet 4, GPT-4o |
-| Complex reasoning | Claude Opus 4, o1 |
-| Fast responses | Claude Haiku, GPT-4o-mini |
-| Long context | Claude (200k), Gemini (1M+) |
-| Local/private | Llama 3 via Ollama |
+```toml
+[providers.lmstudio]
+enabled = true
+# base_url = "http://127.0.0.1:1234/v1"  # Override for different port/host
+```
+
+### Local LLM
+
+Local LLM runs GGUF models directly on your machine.
+
+1. Go to **Settings** → **Providers** → **Local LLM**.
+2. Choose a model from the local registry or download one.
+3. Save and select it as your active model.
+
+## Switching Models
+
+- **Per session**: Use the model selector in the chat UI.
+- **Per message**: Use `/model <name>` in chat.
+- **Global defaults**: Use `[providers].offered`, provider `models = [...]`, and
+  `[chat].priority_models` in `moltis.toml`.
 
 ## Troubleshooting
 
 ### "Model not available"
 
-The model may not be enabled for your account or region. Check:
-- Your API key has access to the model
-- The model ID is spelled correctly
-- Your account has sufficient credits
+- Check provider auth is still valid.
+- Check model ID spelling.
+- Check account access for that model.
 
 ### "Rate limited"
 
-You've exceeded the provider's rate limits. Solutions:
-- Wait and retry
-- Use a different provider
-- Upgrade your API plan
+- Retry after a short delay.
+- Switch provider/model.
+- Upgrade provider quota if needed.
 
 ### "Invalid API key"
 
-- Verify the key is correct (no extra spaces)
-- Check the key hasn't expired
-- Ensure the key has the required permissions
+- Verify the key has no extra spaces.
+- Verify it is active and has required permissions.

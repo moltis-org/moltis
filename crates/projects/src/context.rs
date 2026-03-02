@@ -3,9 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use {anyhow::Result, tracing::info};
+use tracing::info;
 
-use crate::types::ContextFile;
+use crate::{Result, types::ContextFile};
 
 /// Names of context files to collect when walking the directory hierarchy.
 const CONTEXT_FILE_NAMES: &[&str] = &["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"];
@@ -71,6 +71,7 @@ pub fn load_context_files(project_dir: &Path) -> Result<Vec<ContextFile>> {
     Ok(files)
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

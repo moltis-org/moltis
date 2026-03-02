@@ -10,7 +10,7 @@ spec:
         registry_type: GHCR
         registry: ghcr.io
         repository: moltis-org/moltis
-        tag: latest
+        tag: "0.10.6"
       instance_count: 1
       instance_size_slug: basic-xxs
       http_port: 8080
@@ -22,3 +22,7 @@ spec:
           value: /data
         - key: MOLTIS_DEPLOY_PLATFORM
           value: digitalocean
+        - key: MOLTIS_WEBAUTHN_RP_ID
+          value: ${APP_DOMAIN}
+        - key: MOLTIS_WEBAUTHN_ORIGIN
+          value: ${APP_URL}

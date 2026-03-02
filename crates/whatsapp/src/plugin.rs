@@ -1,65 +1,55 @@
-//! WhatsApp Web channel plugin implementation.
-
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, RwLock as StdRwLock},
+    sync::{Arc, RwLock},
+    time::Instant,
 };
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
-    tokio::sync::RwLock,
-    tracing::{debug, info, warn},
+    tracing::{info, warn},
 };
 
 use moltis_channels::{
-    ChannelEventSink,
+    ChannelConfigView, ChannelEventSink, Error as ChannelError, Result as ChannelResult,
     message_log::MessageLog,
+    otp::OtpChallengeInfo,
     plugin::{
-        ChannelEvent, ChannelHealthSnapshot, ChannelMessageMeta, ChannelOutbound, ChannelPlugin,
-        ChannelReplyTarget, ChannelStatus, ChannelType,
+        ChannelHealthSnapshot, ChannelOtpProvider, ChannelOutbound, ChannelPlugin, ChannelStatus,
+        ChannelStreamOutbound,
     },
 };
 
 use crate::{
-    config::WhatsAppConfig,
-    outbound::WhatsAppOutbound,
-    process::{SidecarConfig, SidecarProcess, find_sidecar_dir, start_sidecar},
-    sidecar::{DEFAULT_SIDECAR_PORT, MessageCallback, SidecarHandle, connect_with_retry},
-    state::{AccountState, AccountStateMap},
-    types::{ConnectionState, GatewayMessage, SidecarMessage},
+    config::WhatsAppAccountConfig, connection, outbound::WhatsAppOutbound, state::AccountStateMap,
 };
 
-/// WhatsApp Web channel plugin (via Baileys sidecar).
+/// Cache TTL for probe results (30 seconds).
+const PROBE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// WhatsApp channel plugin.
 pub struct WhatsAppPlugin {
     accounts: AccountStateMap,
     outbound: WhatsAppOutbound,
-    sidecar: Arc<RwLock<Option<SidecarHandle>>>,
-    sidecar_process: Arc<RwLock<Option<SidecarProcess>>>,
     message_log: Option<Arc<dyn MessageLog>>,
     event_sink: Option<Arc<dyn ChannelEventSink>>,
-    sidecar_port: u16,
-    sidecar_dir: Option<PathBuf>,
-    auth_base_dir: Option<PathBuf>,
-    auto_start_sidecar: bool,
+    data_dir: PathBuf,
+    probe_cache: RwLock<HashMap<String, (ChannelHealthSnapshot, Instant)>>,
 }
 
 impl WhatsAppPlugin {
-    pub fn new() -> Self {
-        let sidecar: Arc<RwLock<Option<SidecarHandle>>> = Arc::new(RwLock::new(None));
-        let outbound = WhatsAppOutbound::new(Arc::clone(&sidecar));
+    pub fn new(data_dir: PathBuf) -> Self {
+        let accounts: AccountStateMap = Arc::new(RwLock::new(HashMap::new()));
+        let outbound = WhatsAppOutbound {
+            accounts: Arc::clone(&accounts),
+        };
         Self {
-            accounts: Arc::new(StdRwLock::new(HashMap::new())),
+            accounts,
             outbound,
-            sidecar,
-            sidecar_process: Arc::new(RwLock::new(None)),
             message_log: None,
             event_sink: None,
-            sidecar_port: DEFAULT_SIDECAR_PORT,
-            sidecar_dir: None,
-            auth_base_dir: None,
-            auto_start_sidecar: true,
+            data_dir,
+            probe_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -73,253 +63,124 @@ impl WhatsAppPlugin {
         self
     }
 
-    pub fn with_sidecar_port(mut self, port: u16) -> Self {
-        self.sidecar_port = port;
-        self
-    }
-
-    /// Set the directory containing the sidecar code.
-    pub fn with_sidecar_dir(mut self, dir: PathBuf) -> Self {
-        self.sidecar_dir = Some(dir);
-        self
-    }
-
-    /// Set the base directory for WhatsApp auth files.
-    pub fn with_auth_base_dir(mut self, dir: PathBuf) -> Self {
-        self.auth_base_dir = Some(dir);
-        self
-    }
-
-    /// Disable automatic sidecar process management.
-    /// Use this if you want to run the sidecar manually.
-    pub fn without_auto_start(mut self) -> Self {
-        self.auto_start_sidecar = false;
-        self
-    }
-
     /// Get a shared reference to the outbound sender.
     pub fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
-        Arc::new(WhatsAppOutbound::new(Arc::clone(&self.sidecar)))
+        Arc::new(WhatsAppOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
     }
 
-    /// Get the shared account state map.
-    pub fn accounts(&self) -> AccountStateMap {
-        Arc::clone(&self.accounts)
+    /// Get a shared reference to the streaming outbound sender.
+    pub fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
+        Arc::new(WhatsAppOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
     }
 
     /// List all active account IDs.
     pub fn account_ids(&self) -> Vec<String> {
-        let accounts = self.accounts.read().unwrap();
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts.keys().cloned().collect()
+    }
+
+    /// Check whether the given account ID is registered.
+    pub fn has_account(&self, account_id: &str) -> bool {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.contains_key(account_id)
     }
 
     /// Get the config for a specific account (serialized to JSON).
     pub fn account_config(&self, account_id: &str) -> Option<serde_json::Value> {
-        let accounts = self.accounts.read().unwrap();
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .and_then(|s| serde_json::to_value(&s.config).ok())
     }
 
-    /// Get the config for a specific account.
-    pub fn get_account_config(&self, account_id: &str) -> Option<WhatsAppConfig> {
-        let accounts = self.accounts.read().unwrap();
-        accounts.get(account_id).map(|s| s.config.clone())
+    /// Get the latest QR code data for a specific account.
+    pub fn latest_qr(&self, account_id: &str) -> Option<String> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .and_then(|s| s.latest_qr.read().ok()?.clone())
     }
 
-    /// Get the connection state for an account.
-    pub fn connection_state(&self, account_id: &str) -> Option<ConnectionState> {
-        let accounts = self.accounts.read().unwrap();
-        accounts.get(account_id).map(|s| s.connection_state.clone())
-    }
-
-    /// Get the current QR code for an account (if waiting for scan).
-    pub fn get_qr_code(&self, account_id: &str) -> Option<String> {
-        let accounts = self.accounts.read().unwrap();
-        accounts.get(account_id).and_then(|s| {
-            if let ConnectionState::QrReceived(qr) = &s.connection_state {
-                Some(qr.clone())
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Ensure the sidecar process is running and we're connected to it.
-    async fn ensure_sidecar_connected(&self) -> Result<()> {
-        // Check if already connected.
-        {
-            let sidecar = self.sidecar.read().await;
-            if let Some(handle) = sidecar.as_ref()
-                && handle.is_connected().await
-            {
-                return Ok(());
-            }
+    /// Update the in-memory config for an account without restarting.
+    /// Use for allowlist changes that don't need re-pairing.
+    pub fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
+        let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
+        let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get_mut(account_id) {
+            state.config = wa_config;
+            Ok(())
+        } else {
+            Err(moltis_channels::Error::unknown_account(account_id))
         }
-
-        // Start the sidecar process if needed.
-        if self.auto_start_sidecar {
-            self.ensure_sidecar_process_running().await?;
-        }
-
-        // Connect to the sidecar.
-        let mut sidecar = self.sidecar.write().await;
-
-        // Double-check after acquiring write lock.
-        if let Some(handle) = sidecar.as_ref()
-            && handle.is_connected().await
-        {
-            return Ok(());
-        }
-
-        let accounts = Arc::clone(&self.accounts);
-        let event_sink = self.event_sink.clone();
-        let message_log = self.message_log.clone();
-
-        let callback: MessageCallback = Arc::new(move |msg| {
-            handle_sidecar_message(
-                msg,
-                Arc::clone(&accounts),
-                event_sink.clone(),
-                message_log.clone(),
-            );
-        });
-
-        // Use retry logic since the process might still be starting.
-        let (handle, _disconnect_rx) = connect_with_retry(self.sidecar_port, callback, 10).await?;
-        *sidecar = Some(handle);
-
-        Ok(())
     }
 
-    /// Ensure the sidecar process is running.
-    async fn ensure_sidecar_process_running(&self) -> Result<()> {
-        let mut process = self.sidecar_process.write().await;
-
-        // Check if already running.
-        if let Some(ref mut proc) = *process {
-            if proc.is_running() {
-                return Ok(());
-            }
-            warn!("sidecar process died, restarting");
-        }
-
-        // Find sidecar directory.
-        let sidecar_dir = find_sidecar_dir(self.sidecar_dir.as_deref())?;
-
-        let config = SidecarConfig {
-            sidecar_dir,
-            port: self.sidecar_port,
-            auth_dir: self.auth_base_dir.clone(),
-        };
-
-        let proc = start_sidecar(config).await?;
-        *process = Some(proc);
-
-        Ok(())
-    }
-
-    /// Stop the sidecar process.
-    pub async fn stop_sidecar(&self) -> Result<()> {
-        let mut process = self.sidecar_process.write().await;
-        if let Some(ref mut proc) = *process {
-            proc.stop().await?;
-        }
-        *process = None;
-
-        // Also clear the connection handle.
-        let mut sidecar = self.sidecar.write().await;
-        *sidecar = None;
-
-        Ok(())
-    }
-}
-
-impl Default for WhatsAppPlugin {
-    fn default() -> Self {
-        Self::new()
+    /// List pending OTP challenges for a specific account.
+    pub fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| {
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.list_pending()
+            })
+            .unwrap_or_default()
     }
 }
 
 #[async_trait]
 impl ChannelPlugin for WhatsAppPlugin {
     fn id(&self) -> &str {
-        "whatsapp-web"
+        "whatsapp"
     }
 
     fn name(&self) -> &str {
-        "WhatsApp Web"
+        "WhatsApp"
     }
 
-    async fn start_account(&mut self, account_id: &str, config: serde_json::Value) -> Result<()> {
-        let wa_config: WhatsAppConfig = serde_json::from_value(config)?;
+    async fn start_account(
+        &mut self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
+        let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
 
-        info!(account_id, "starting whatsapp web account");
+        info!(account_id, "starting WhatsApp account");
 
-        // Store account state.
-        let state = AccountState {
-            account_id: account_id.to_string(),
-            config: wa_config.clone(),
-            connection_state: ConnectionState::Disconnected,
-            message_log: self.message_log.clone(),
-            event_sink: self.event_sink.clone(),
-        };
-
-        {
-            let mut accounts = self.accounts.write().unwrap();
-            accounts.insert(account_id.to_string(), state);
-        }
-
-        // Connect to sidecar if not already connected.
-        if let Err(e) = self.ensure_sidecar_connected().await {
-            warn!(account_id, error = %e, "failed to connect to sidecar");
-            // Update state to show error.
-            let mut accounts = self.accounts.write().unwrap();
-            if let Some(state) = accounts.get_mut(account_id) {
-                state.connection_state = ConnectionState::Disconnected;
-            }
-            return Err(e);
-        }
-
-        // Tell sidecar to login.
-        let sidecar = self.sidecar.read().await;
-        if let Some(handle) = sidecar.as_ref() {
-            handle
-                .send(GatewayMessage::Login {
-                    account_id: account_id.to_string(),
-                    auth_dir: wa_config.auth_dir,
-                })
-                .await?;
-
-            // Mark as waiting for QR.
-            let mut accounts = self.accounts.write().unwrap();
-            if let Some(state) = accounts.get_mut(account_id) {
-                state.connection_state = ConnectionState::WaitingForQr;
-            }
-        }
+        connection::start_connection(
+            account_id.to_string(),
+            wa_config,
+            Arc::clone(&self.accounts),
+            self.data_dir.clone(),
+            self.message_log.clone(),
+            self.event_sink.clone(),
+        )
+        .await
+        .map_err(|e| moltis_channels::Error::unavailable(format!("whatsapp start: {e}")))?;
 
         Ok(())
     }
 
-    async fn stop_account(&mut self, account_id: &str) -> Result<()> {
-        let removed = {
-            let mut accounts = self.accounts.write().unwrap();
-            accounts.remove(account_id).is_some()
+    async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
+        let cancel = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts.get(account_id).map(|s| s.cancel.clone())
         };
 
-        if removed {
-            // Tell sidecar to logout.
-            let sidecar = self.sidecar.read().await;
-            if let Some(handle) = sidecar.as_ref() {
-                let _ = handle
-                    .send(GatewayMessage::Logout {
-                        account_id: account_id.to_string(),
-                    })
-                    .await;
-            }
-            info!(account_id, "stopped whatsapp web account");
+        if let Some(cancel) = cancel {
+            info!(account_id, "stopping WhatsApp account");
+            cancel.cancel();
+            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+            accounts.remove(account_id);
         } else {
-            warn!(account_id, "whatsapp web account not found");
+            warn!(account_id, "WhatsApp account not found");
         }
 
         Ok(())
@@ -332,167 +193,181 @@ impl ChannelPlugin for WhatsAppPlugin {
     fn status(&self) -> Option<&dyn ChannelStatus> {
         Some(self)
     }
+
+    fn has_account(&self, account_id: &str) -> bool {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.contains_key(account_id)
+    }
+
+    fn account_ids(&self) -> Vec<String> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.keys().cloned().collect()
+    }
+
+    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| Box::new(s.config.clone()) as Box<dyn ChannelConfigView>)
+    }
+
+    fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .and_then(|s| serde_json::to_value(&s.config).ok())
+    }
+
+    fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
+        let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
+        let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get_mut(account_id) {
+            state.config = wa_config;
+            Ok(())
+        } else {
+            Err(ChannelError::unknown_account(account_id))
+        }
+    }
+
+    fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
+        Arc::new(WhatsAppOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
+    }
+
+    fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
+        Arc::new(WhatsAppOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
+    }
+
+    fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
+        Some(self)
+    }
+}
+
+impl ChannelOtpProvider for WhatsAppPlugin {
+    fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| {
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.list_pending()
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[async_trait]
 impl ChannelStatus for WhatsAppPlugin {
-    async fn probe(&self, account_id: &str) -> Result<ChannelHealthSnapshot> {
-        let state = {
-            let accounts = self.accounts.read().unwrap();
-            accounts.get(account_id).map(|s| s.connection_state.clone())
+    async fn probe(&self, account_id: &str) -> ChannelResult<ChannelHealthSnapshot> {
+        // Return cached result if fresh enough.
+        if let Ok(cache) = self.probe_cache.read()
+            && let Some((snap, ts)) = cache.get(account_id)
+            && ts.elapsed() < PROBE_CACHE_TTL
+        {
+            return Ok(snap.clone());
+        }
+
+        let result = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            match accounts.get(account_id) {
+                Some(state) => {
+                    let connected = state.connected.load(std::sync::atomic::Ordering::Relaxed);
+                    let details = if connected {
+                        state
+                            .config
+                            .display_name
+                            .as_ref()
+                            .map(|n| format!("WhatsApp: {n}"))
+                            .or_else(|| Some("WhatsApp: connected".into()))
+                    } else if state
+                        .latest_qr
+                        .read()
+                        .ok()
+                        .and_then(|q| q.clone())
+                        .is_some()
+                    {
+                        Some("waiting for QR scan".into())
+                    } else {
+                        Some("disconnected".into())
+                    };
+                    ChannelHealthSnapshot {
+                        connected,
+                        account_id: account_id.to_string(),
+                        details,
+                    }
+                },
+                None => ChannelHealthSnapshot {
+                    connected: false,
+                    account_id: account_id.to_string(),
+                    details: Some("account not started".into()),
+                },
+            }
         };
 
-        match state {
-            Some(ConnectionState::Connected { phone_number }) => Ok(ChannelHealthSnapshot {
-                connected: true,
-                account_id: account_id.to_string(),
-                details: phone_number.map(|p| format!("Phone: {p}")),
-            }),
-            Some(ConnectionState::QrReceived(_)) => Ok(ChannelHealthSnapshot {
-                connected: false,
-                account_id: account_id.to_string(),
-                details: Some("waiting for QR code scan".into()),
-            }),
-            Some(ConnectionState::WaitingForQr) => Ok(ChannelHealthSnapshot {
-                connected: false,
-                account_id: account_id.to_string(),
-                details: Some("generating QR code".into()),
-            }),
-            Some(ConnectionState::Disconnected) | None => Ok(ChannelHealthSnapshot {
-                connected: false,
-                account_id: account_id.to_string(),
-                details: Some("disconnected".into()),
-            }),
+        if let Ok(mut cache) = self.probe_cache.write() {
+            cache.insert(account_id.to_string(), (result.clone(), Instant::now()));
         }
+
+        Ok(result)
     }
 }
 
-/// Handle a message from the sidecar.
-fn handle_sidecar_message(
-    msg: SidecarMessage,
-    accounts: AccountStateMap,
-    event_sink: Option<Arc<dyn ChannelEventSink>>,
-    _message_log: Option<Arc<dyn MessageLog>>,
-) {
-    match msg {
-        SidecarMessage::Qr { account_id, qr } => {
-            debug!(account_id, "received QR code from sidecar");
-            let mut accounts = accounts.write().unwrap();
-            if let Some(state) = accounts.get_mut(&account_id) {
-                state.connection_state = ConnectionState::QrReceived(qr);
-            }
-        },
-        SidecarMessage::Connected {
-            account_id,
-            phone_number,
-        } => {
-            info!(account_id, ?phone_number, "whatsapp web connected");
-            let mut accounts = accounts.write().unwrap();
-            if let Some(state) = accounts.get_mut(&account_id) {
-                state.connection_state = ConnectionState::Connected { phone_number };
-            }
-        },
-        SidecarMessage::Disconnected { account_id, reason } => {
-            warn!(account_id, reason, "whatsapp web disconnected");
-            let mut accounts = accounts.write().unwrap();
-            if let Some(state) = accounts.get_mut(&account_id) {
-                state.connection_state = ConnectionState::Disconnected;
-            }
-        },
-        SidecarMessage::LoggedOut { account_id } => {
-            info!(account_id, "whatsapp web logged out");
-            let mut accounts = accounts.write().unwrap();
-            if let Some(state) = accounts.get_mut(&account_id) {
-                state.connection_state = ConnectionState::Disconnected;
-            }
-        },
-        SidecarMessage::InboundMessage {
-            account_id,
-            message_id: _,
-            chat_jid,
-            sender_jid,
-            sender_name,
-            is_group: _,
-            body,
-            media_type: _,
-            media_url: _,
-            quoted_message_id: _,
-            quoted_body: _,
-            timestamp: _,
-        } => {
-            debug!(account_id, sender_jid, "received inbound message");
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
 
-            // Get config to check allowlist.
-            let (config, sink) = {
-                let accounts = accounts.read().unwrap();
-                accounts.get(&account_id).map_or((None, None), |s| {
-                    (Some(s.config.clone()), s.event_sink.clone())
-                })
-            };
+    #[test]
+    fn plugin_id_and_name() {
+        let plugin = WhatsAppPlugin::new(PathBuf::from("/tmp/test"));
+        assert_eq!(plugin.id(), "whatsapp");
+        assert_eq!(plugin.name(), "WhatsApp");
+    }
 
-            let sink = sink.or(event_sink);
+    #[test]
+    fn empty_account_ids() {
+        let plugin = WhatsAppPlugin::new(PathBuf::from("/tmp/test"));
+        assert!(plugin.account_ids().is_empty());
+    }
 
-            // Check allowlist.
-            let access_granted = config
-                .as_ref()
-                .map(|c| {
-                    c.allowlist.is_empty() || c.allowlist.iter().any(|p| sender_jid.contains(p))
-                })
-                .unwrap_or(true);
+    #[test]
+    fn account_config_returns_none_for_unknown() {
+        let plugin = WhatsAppPlugin::new(PathBuf::from("/tmp/test"));
+        assert!(plugin.account_config("nonexistent").is_none());
+    }
 
-            // Emit event for UI.
-            if let Some(sink) = sink.clone() {
-                let event = ChannelEvent::InboundMessage {
-                    channel_type: ChannelType::WhatsappWeb,
-                    account_id: account_id.clone(),
-                    peer_id: sender_jid.clone(),
-                    username: sender_name.clone(),
-                    sender_name: sender_name.clone(),
-                    message_count: None,
-                    access_granted,
-                };
-                tokio::spawn(async move {
-                    sink.emit(event).await;
-                });
-            }
+    #[test]
+    fn latest_qr_returns_none_for_unknown() {
+        let plugin = WhatsAppPlugin::new(PathBuf::from("/tmp/test"));
+        assert!(plugin.latest_qr("nonexistent").is_none());
+    }
 
-            // Dispatch to chat if access granted.
-            if access_granted && let Some(sink) = sink {
-                let reply_target = ChannelReplyTarget {
-                    channel_type: ChannelType::WhatsappWeb,
-                    account_id: account_id.clone(),
-                    chat_id: chat_jid,
-                    message_id: None,
-                };
-                let meta = ChannelMessageMeta {
-                    channel_type: ChannelType::WhatsappWeb,
-                    sender_name,
-                    username: None,
-                    message_kind: None,
-                    model: config.as_ref().and_then(|c| c.model.clone()),
-                };
-                tokio::spawn(async move {
-                    sink.dispatch_to_chat(&body, reply_target, meta).await;
-                });
-            }
-        },
-        SidecarMessage::SendResult {
-            request_id,
-            success,
-            message_id: _,
-            error,
-        } => {
-            if success {
-                debug!(request_id, "message sent successfully");
-            } else {
-                warn!(request_id, ?error, "failed to send message");
-            }
-        },
-        SidecarMessage::StatusResponse { .. } => {
-            // Status responses are handled separately.
-        },
-        SidecarMessage::Error { account_id, error } => {
-            warn!(?account_id, error, "sidecar error");
-        },
+    #[test]
+    fn descriptor_coherence() {
+        use moltis_channels::{ChannelType, InboundMode};
+        let plugin = WhatsAppPlugin::new(PathBuf::from("/tmp/test"));
+        let desc = ChannelType::Whatsapp.descriptor();
+
+        assert_eq!(desc.channel_type, ChannelType::Whatsapp);
+        assert_eq!(desc.display_name, "WhatsApp");
+        assert_eq!(desc.capabilities.inbound_mode, InboundMode::GatewayLoop);
+
+        // OTP: WhatsApp implements ChannelOtpProvider
+        assert!(desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_some());
+
+        // Pairing: WhatsApp supports pairing
+        assert!(desc.capabilities.supports_pairing);
+
+        // Threads: WhatsApp does NOT implement ChannelThreadContext
+        assert!(!desc.capabilities.supports_threads);
+        assert!(plugin.thread_context().is_none());
     }
 }

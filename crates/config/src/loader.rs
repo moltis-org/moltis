@@ -4,11 +4,11 @@ use std::{
     sync::Mutex,
 };
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     env_subst::substitute_env,
-    schema::{AgentIdentity, MoltisConfig, UserProfile},
+    schema::{AgentIdentity, MoltisConfig, ResolvedIdentity, UserProfile},
 };
 
 /// Generate a random available port by binding to port 0 and reading the assigned port.
@@ -34,48 +34,60 @@ static DATA_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Can be called multiple times (e.g. in tests) — each call replaces the
 /// previous override.
 pub fn set_config_dir(path: PathBuf) {
-    *CONFIG_DIR_OVERRIDE.lock().unwrap() = Some(path);
+    *CONFIG_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(path);
 }
 
 /// Clear the config directory override, restoring default discovery.
 pub fn clear_config_dir() {
-    *CONFIG_DIR_OVERRIDE.lock().unwrap() = None;
+    *CONFIG_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn config_dir_override() -> Option<PathBuf> {
-    CONFIG_DIR_OVERRIDE.lock().unwrap().clone()
+    CONFIG_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 /// Set a custom data directory. When set, `data_dir()` returns this path
 /// instead of the default.
 pub fn set_data_dir(path: PathBuf) {
-    *DATA_DIR_OVERRIDE.lock().unwrap() = Some(path);
+    *DATA_DIR_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
 }
 
 /// Clear the data directory override, restoring default discovery.
 pub fn clear_data_dir() {
-    *DATA_DIR_OVERRIDE.lock().unwrap() = None;
+    *DATA_DIR_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn data_dir_override() -> Option<PathBuf> {
-    DATA_DIR_OVERRIDE.lock().unwrap().clone()
+    DATA_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 /// Load config from the given path (any supported format).
 ///
 /// After parsing, `MOLTIS_*` env vars are applied as overrides.
-pub fn load_config(path: &Path) -> anyhow::Result<MoltisConfig> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+pub fn load_config(path: &Path) -> crate::Result<MoltisConfig> {
+    let raw = std::fs::read_to_string(path).map_err(|source| {
+        crate::Error::external(format!("failed to read {}", path.display()), source)
+    })?;
     let raw = substitute_env(&raw);
     let config = parse_config(&raw, path)?;
     Ok(apply_env_overrides(config))
 }
 
 /// Load and parse the config file with env substitution and includes.
-pub fn load_config_value(path: &Path) -> anyhow::Result<serde_json::Value> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+pub fn load_config_value(path: &Path) -> crate::Result<serde_json::Value> {
+    let raw = std::fs::read_to_string(path).map_err(|source| {
+        crate::Error::external(format!("failed to read {}", path.display()), source)
+    })?;
     let raw = substitute_env(&raw);
     parse_config_value(&raw, path)
 }
@@ -95,14 +107,18 @@ pub fn discover_and_load() -> MoltisConfig {
         debug!(path = %path.display(), "loading config");
         match load_config(&path) {
             Ok(mut cfg) => {
-                // If port is 0 (default/missing), generate a random port and save it
+                // If port is 0 (default/missing), generate a random port and save it.
+                // Use `save_config_to_path` directly instead of `save_config` because
+                // this function may be called from within `update_config`, which already
+                // holds `CONFIG_SAVE_LOCK`. Re-acquiring a `std::sync::Mutex` on the
+                // same thread would deadlock.
                 if cfg.server.port == 0 {
                     cfg.server.port = generate_random_port();
                     debug!(
                         port = cfg.server.port,
                         "generated random port for existing config"
                     );
-                    if let Err(e) = save_config(&cfg) {
+                    if let Err(e) = save_config_to_path(&path, &cfg) {
                         warn!(error = %e, "failed to save config with generated port");
                     }
                 }
@@ -113,12 +129,25 @@ pub fn discover_and_load() -> MoltisConfig {
             },
         }
     } else {
-        debug!("no config file found, writing default config with random port");
+        let default_path = find_or_default_config_path();
+        debug!(
+            path = %default_path.display(),
+            "no config file found, writing default config with random port"
+        );
         let mut config = MoltisConfig::default();
         // Generate a unique port for this installation
         config.server.port = generate_random_port();
-        if let Err(e) = write_default_config(&config) {
-            warn!(error = %e, "failed to write default config file");
+        if let Err(e) = write_default_config(&default_path, &config) {
+            warn!(
+                path = %default_path.display(),
+                error = %e,
+                "failed to write default config file, continuing with in-memory defaults"
+            );
+        } else {
+            info!(
+                path = %default_path.display(),
+                "wrote default config template"
+            );
         }
         return apply_env_overrides(config);
     }
@@ -253,21 +282,78 @@ pub fn heartbeat_path() -> PathBuf {
     data_dir().join("HEARTBEAT.md")
 }
 
+/// Path to the workspace `MEMORY.md` file.
+pub fn memory_path() -> PathBuf {
+    data_dir().join("MEMORY.md")
+}
+
+/// Return the workspace directory for a named agent: `data_dir()/agents/<id>`.
+pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
+    data_dir().join("agents").join(agent_id)
+}
+
 /// Load identity values from `IDENTITY.md` frontmatter if present.
 pub fn load_identity() -> Option<AgentIdentity> {
     let path = identity_path();
     let content = std::fs::read_to_string(path).ok()?;
     let frontmatter = extract_yaml_frontmatter(&content)?;
     let identity = parse_identity_frontmatter(frontmatter);
-    if identity.name.is_none()
-        && identity.emoji.is_none()
-        && identity.creature.is_none()
-        && identity.vibe.is_none()
-    {
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
         None
     } else {
         Some(identity)
     }
+}
+
+/// Load identity values for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/IDENTITY.md` first and
+/// falls back to the root `IDENTITY.md`.
+pub fn load_identity_for_agent(agent_id: &str) -> Option<AgentIdentity> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("IDENTITY.md");
+        if let Some(identity) = load_identity_from_path(&main_path) {
+            return Some(identity);
+        }
+        return load_identity();
+    }
+    load_identity_from_path(&agent_workspace_dir(agent_id).join("IDENTITY.md"))
+}
+
+/// Build a fully-resolved identity by merging all sources:
+/// `moltis.toml` `[identity]` + `IDENTITY.md` frontmatter + `USER.md` + `SOUL.md`.
+///
+/// This is the single source of truth used by both the gateway (`identity_get`)
+/// and the Swift FFI bridge.
+pub fn resolve_identity() -> ResolvedIdentity {
+    let config = discover_and_load();
+    resolve_identity_from_config(&config)
+}
+
+/// Like [`resolve_identity`] but accepts a pre-loaded config.
+pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
+    let mut id = ResolvedIdentity::from_config(config);
+
+    if let Some(file_identity) = load_identity() {
+        if let Some(name) = file_identity.name {
+            id.name = name;
+        }
+        if let Some(emoji) = file_identity.emoji {
+            id.emoji = Some(emoji);
+        }
+        if let Some(theme) = file_identity.theme {
+            id.theme = Some(theme);
+        }
+    }
+
+    if let Some(file_user) = load_user()
+        && let Some(name) = file_user.name
+    {
+        id.user_name = Some(name);
+    }
+
+    id.soul = load_soul();
+    id
 }
 
 /// Load user values from `USER.md` frontmatter if present.
@@ -283,16 +369,110 @@ pub fn load_user() -> Option<UserProfile> {
     }
 }
 
+/// Default soul text used when the user hasn't written their own.
+///
+/// Sourced from OpenClaw:
+/// <https://github.com/openclaw/openclaw/blob/main/docs/reference/templates/SOUL.md>
+pub const DEFAULT_SOUL: &str = "\
+# SOUL.md - Who You Are\n\
+\n\
+_You're not a chatbot. You're becoming someone._\n\
+\n\
+## Core Truths\n\
+\n\
+**Be genuinely helpful, not performatively helpful.** Skip the \"Great question!\" \
+and \"I'd be happy to help!\" — just help. Actions speak louder than filler words.\n\
+\n\
+**Have opinions.** You're allowed to disagree, prefer things, find stuff amusing \
+or boring. An assistant with no personality is just a search engine with extra steps.\n\
+\n\
+**Be resourceful before asking.** Try to figure it out. Read the file. Check the \
+context. Search for it. _Then_ ask if you're stuck. The goal is to come back with \
+answers, not questions.\n\
+\n\
+**Earn trust through competence.** Your human gave you access to their stuff. Don't \
+make them regret it. Be careful with external actions (emails, tweets, anything \
+public). Be bold with internal ones (reading, organizing, learning).\n\
+\n\
+**Remember you're a guest.** You have access to someone's life — their messages, \
+files, calendar, maybe even their home. That's intimacy. Treat it with respect.\n\
+\n\
+## Boundaries\n\
+\n\
+- Private things stay private. Period.\n\
+- When in doubt, ask before acting externally.\n\
+- Never send half-baked replies to messaging surfaces.\n\
+- You're not the user's voice — be careful in group chats.\n\
+\n\
+## Vibe\n\
+\n\
+Be the assistant you'd actually want to talk to. Concise when needed, thorough \
+when it matters. Not a corporate drone. Not a sycophant. Just... good.\n\
+\n\
+## Continuity\n\
+\n\
+Each session, you wake up fresh. These files _are_ your memory. Read them. Update \
+them. They're how you persist.\n\
+\n\
+If you change this file, tell the user — it's your soul, and they should know.\n\
+\n\
+---\n\
+\n\
+_This file is yours to evolve. As you learn who you are, update it._";
+
 /// Load SOUL.md from the workspace root (`data_dir`) if present and non-empty.
+///
+/// When the file does not exist, it is seeded with [`DEFAULT_SOUL`] (mirroring
+/// how `discover_and_load()` writes `moltis.toml` on first run).
 pub fn load_soul() -> Option<String> {
     let path = soul_path();
-    let content = std::fs::read_to_string(path).ok()?;
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        },
+        Err(_) => {
+            // File doesn't exist — seed it with the default soul.
+            if let Err(e) = write_default_soul() {
+                debug!("failed to write default SOUL.md: {e}");
+                return None;
+            }
+            Some(DEFAULT_SOUL.to_string())
+        },
     }
+}
+
+/// Load SOUL.md for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/SOUL.md` first and
+/// falls back to the root `SOUL.md`.
+pub fn load_soul_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("SOUL.md");
+        if let Some(soul) = load_workspace_markdown(main_path) {
+            return Some(soul);
+        }
+        return load_soul();
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("SOUL.md"))
+}
+
+/// Write `DEFAULT_SOUL` to `SOUL.md` when the file doesn't already exist.
+fn write_default_soul() -> crate::Result<()> {
+    let path = soul_path();
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, DEFAULT_SOUL)?;
+    debug!(path = %path.display(), "wrote default SOUL.md");
+    Ok(())
 }
 
 /// Load AGENTS.md from the workspace root (`data_dir`) if present and non-empty.
@@ -300,9 +480,21 @@ pub fn load_agents_md() -> Option<String> {
     load_workspace_markdown(agents_path())
 }
 
+/// Load AGENTS.md for a specific agent, falling back to the root file.
+pub fn load_agents_md_for_agent(agent_id: &str) -> Option<String> {
+    let agent_path = agent_workspace_dir(agent_id).join("AGENTS.md");
+    load_workspace_markdown(agent_path).or_else(load_agents_md)
+}
+
 /// Load TOOLS.md from the workspace root (`data_dir`) if present and non-empty.
 pub fn load_tools_md() -> Option<String> {
     load_workspace_markdown(tools_path())
+}
+
+/// Load TOOLS.md for a specific agent, falling back to the root file.
+pub fn load_tools_md_for_agent(agent_id: &str) -> Option<String> {
+    let agent_path = agent_workspace_dir(agent_id).join("TOOLS.md");
+    load_workspace_markdown(agent_path).or_else(load_tools_md)
 }
 
 /// Load HEARTBEAT.md from the workspace root (`data_dir`) if present and non-empty.
@@ -310,35 +502,54 @@ pub fn load_heartbeat_md() -> Option<String> {
     load_workspace_markdown(heartbeat_path())
 }
 
+/// Load MEMORY.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_memory_md() -> Option<String> {
+    load_workspace_markdown(memory_path())
+}
+
+/// Load MEMORY.md for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/MEMORY.md` first and
+/// falls back to the root `MEMORY.md`.
+pub fn load_memory_md_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("MEMORY.md");
+        if let Some(memory) = load_workspace_markdown(main_path) {
+            return Some(memory);
+        }
+        return load_memory_md();
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("MEMORY.md"))
+}
+
 /// Persist SOUL.md in the workspace root (`data_dir`).
 ///
-/// - `Some(non-empty)` writes `SOUL.md`
-/// - `None` or empty removes `SOUL.md` when it exists
-pub fn save_soul(soul: Option<&str>) -> anyhow::Result<PathBuf> {
+/// - `Some(non-empty)` writes `SOUL.md` with the given content
+/// - `None` or empty writes an empty `SOUL.md` so that `load_soul()`
+///   returns `None` without re-seeding the default
+pub fn save_soul(soul: Option<&str>) -> crate::Result<PathBuf> {
     let path = soul_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     match soul.map(str::trim) {
         Some(content) if !content.is_empty() => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
             std::fs::write(&path, content)?;
         },
         _ => {
-            if path.exists() {
-                std::fs::remove_file(&path)?;
-            }
+            // Write an empty file rather than deleting so `load_soul()`
+            // distinguishes "user cleared soul" from "file never existed".
+            std::fs::write(&path, "")?;
         },
     }
     Ok(path)
 }
 
 /// Persist identity values to `IDENTITY.md` using YAML frontmatter.
-pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
+pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     let path = identity_path();
-    let has_values = identity.name.is_some()
-        || identity.emoji.is_some()
-        || identity.creature.is_some()
-        || identity.vibe.is_some();
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
 
     if !has_values {
         if path.exists() {
@@ -358,11 +569,8 @@ pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
     if let Some(emoji) = identity.emoji.as_deref() {
         yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
     }
-    if let Some(creature) = identity.creature.as_deref() {
-        yaml_lines.push(format!("creature: {}", yaml_scalar(creature)));
-    }
-    if let Some(vibe) = identity.vibe.as_deref() {
-        yaml_lines.push(format!("vibe: {}", yaml_scalar(vibe)));
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
     }
     let yaml = yaml_lines.join("\n");
     let content = format!(
@@ -373,8 +581,40 @@ pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
+/// Persist identity values for a non-main agent into its workspace.
+pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crate::Result<PathBuf> {
+    let dir = agent_workspace_dir(agent_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("IDENTITY.md");
+
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
+
+    if !has_values {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        return Ok(path);
+    }
+
+    let mut yaml_lines = Vec::new();
+    if let Some(name) = identity.name.as_deref() {
+        yaml_lines.push(format!("name: {}", yaml_scalar(name)));
+    }
+    if let Some(emoji) = identity.emoji.as_deref() {
+        yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
+    }
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
+    }
+
+    let content = format!("---\n{}\n---\n", yaml_lines.join("\n"));
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
 /// Persist user values to `USER.md` using YAML frontmatter.
-pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
+pub fn save_user(user: &UserProfile) -> crate::Result<PathBuf> {
     let path = user_path();
     let has_values = user.name.is_some() || user.timezone.is_some() || user.location.is_some();
 
@@ -399,6 +639,9 @@ pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
     if let Some(ref loc) = user.location {
         yaml_lines.push(format!("latitude: {}", loc.latitude));
         yaml_lines.push(format!("longitude: {}", loc.longitude));
+        if let Some(ref place) = loc.place {
+            yaml_lines.push(format!("location_place: {}", yaml_scalar(place)));
+        }
         if let Some(ts) = loc.updated_at {
             yaml_lines.push(format!("location_updated_at: {ts}"));
         }
@@ -412,7 +655,7 @@ pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
+pub fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return None;
@@ -425,6 +668,10 @@ fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
 
 fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
     let mut identity = AgentIdentity::default();
+    // Legacy fields for backward compat with old IDENTITY.md files.
+    let mut creature: Option<String> = None;
+    let mut vibe: Option<String> = None;
+
     for raw in frontmatter.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -441,11 +688,25 @@ fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
         match key {
             "name" => identity.name = Some(value.to_string()),
             "emoji" => identity.emoji = Some(value.to_string()),
-            "creature" => identity.creature = Some(value.to_string()),
-            "vibe" => identity.vibe = Some(value.to_string()),
+            "theme" => identity.theme = Some(value.to_string()),
+            // Backward compat: compose legacy creature/vibe into theme.
+            "creature" => creature = Some(value.to_string()),
+            "vibe" => vibe = Some(value.to_string()),
             _ => {},
         }
     }
+
+    // If no explicit `theme` was set, compose from legacy creature/vibe.
+    if identity.theme.is_none() {
+        let composed = match (vibe, creature) {
+            (Some(v), Some(c)) => Some(format!("{v} {c}")),
+            (Some(v), None) => Some(v),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        };
+        identity.theme = composed;
+    }
+
     identity
 }
 
@@ -454,6 +715,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
     let mut latitude: Option<f64> = None;
     let mut longitude: Option<f64> = None;
     let mut location_updated_at: Option<i64> = None;
+    let mut location_place: Option<String> = None;
 
     for raw in frontmatter.lines() {
         let line = raw.trim();
@@ -478,6 +740,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
             "latitude" => latitude = value.parse().ok(),
             "longitude" => longitude = value.parse().ok(),
             "location_updated_at" => location_updated_at = value.parse().ok(),
+            "location_place" => location_place = Some(value.to_string()),
             _ => {},
         }
     }
@@ -486,6 +749,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
         user.location = Some(crate::schema::GeoLocation {
             latitude: lat,
             longitude: lon,
+            place: location_place,
             updated_at: location_updated_at,
         });
     }
@@ -527,6 +791,17 @@ fn load_workspace_markdown(path: PathBuf) -> Option<String> {
     }
 }
 
+fn load_identity_from_path(path: &Path) -> Option<AgentIdentity> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let frontmatter = extract_yaml_frontmatter(&content)?;
+    let identity = parse_identity_frontmatter(frontmatter);
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
+        None
+    } else {
+        Some(identity)
+    }
+}
+
 fn strip_leading_html_comments(content: &str) -> &str {
     let mut rest = content;
     loop {
@@ -541,7 +816,12 @@ fn strip_leading_html_comments(content: &str) -> &str {
     }
 }
 
-fn home_dir() -> Option<PathBuf> {
+/// Returns the user's home directory (`$HOME` / `~`).
+///
+/// This is the **single call-site** for `directories::BaseDirs` — all other
+/// crates must call this via `moltis_config::home_dir()` instead of using the
+/// `directories` crate directly.
+pub fn home_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf())
 }
 
@@ -568,8 +848,8 @@ static CONFIG_SAVE_LOCK: Mutex<ConfigSaveState> = Mutex::new(ConfigSaveState { t
 ///
 /// Acquires a process-wide lock so concurrent callers cannot race.
 /// Returns the path written to.
-pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBuf> {
-    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap();
+pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> crate::Result<PathBuf> {
+    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
     let mut config = discover_and_load();
@@ -582,29 +862,115 @@ pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBu
 /// Creates parent directories if needed. Returns the path written to.
 ///
 /// Prefer [`update_config`] for read-modify-write cycles to avoid races.
-pub fn save_config(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
-    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap();
+pub fn save_config(config: &MoltisConfig) -> crate::Result<PathBuf> {
+    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
     save_config_to_path(&target_path, config)
 }
 
-fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result<PathBuf> {
+/// Write raw TOML to the config file, preserving comments.
+///
+/// Validates the input by parsing it first. Acquires the config save lock
+/// so concurrent callers cannot race.  Returns the path written to.
+pub fn save_raw_config(toml_str: &str) -> crate::Result<PathBuf> {
+    let _: MoltisConfig = toml::from_str(toml_str)
+        .map_err(|source| crate::Error::external(format!("invalid config: {source}"), source))?;
+    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = find_or_default_config_path();
+    guard.target_path = Some(path.clone());
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let toml_str =
-        toml::to_string_pretty(config).map_err(|e| anyhow::anyhow!("serialize config: {e}"))?;
-    std::fs::write(path, toml_str)?;
+    std::fs::write(&path, toml_str)?;
+    debug!(path = %path.display(), "saved raw config");
+    Ok(path)
+}
+
+/// Serialize `config` to TOML and write it to the provided path.
+///
+/// For existing TOML files, this preserves user comments by merging the new
+/// serialized values into the current document structure before writing.
+pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Result<PathBuf> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let toml_str = toml::to_string_pretty(config)
+        .map_err(|source| crate::Error::external("serialize config", source))?;
+
+    let is_toml_path = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
+
+    if is_toml_path && path.exists() {
+        if let Err(error) = merge_toml_preserving_comments(path, &toml_str) {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to preserve TOML comments, rewriting config without comments"
+            );
+            std::fs::write(path, toml_str)?;
+        }
+    } else {
+        std::fs::write(path, toml_str)?;
+    }
+
     debug!(path = %path.display(), "saved config");
     Ok(path.to_path_buf())
+}
+
+fn merge_toml_preserving_comments(path: &Path, updated_toml: &str) -> crate::Result<()> {
+    let current_toml = std::fs::read_to_string(path)?;
+    let mut current_doc = current_toml
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|source| crate::Error::external("parse existing TOML", source))?;
+    let updated_doc = updated_toml
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|source| crate::Error::external("parse updated TOML", source))?;
+
+    merge_toml_tables(current_doc.as_table_mut(), updated_doc.as_table());
+    std::fs::write(path, current_doc.to_string())?;
+    Ok(())
+}
+
+fn merge_toml_tables(current: &mut toml_edit::Table, updated: &toml_edit::Table) {
+    let current_keys: Vec<String> = current.iter().map(|(key, _)| key.to_string()).collect();
+    for key in current_keys {
+        if !updated.contains_key(&key) {
+            let _ = current.remove(&key);
+        }
+    }
+
+    for (key, updated_item) in updated.iter() {
+        if let Some(current_item) = current.get_mut(key) {
+            merge_toml_items(current_item, updated_item);
+        } else {
+            current.insert(key, updated_item.clone());
+        }
+    }
+}
+
+fn merge_toml_items(current: &mut toml_edit::Item, updated: &toml_edit::Item) {
+    match (current, updated) {
+        (toml_edit::Item::Table(current_table), toml_edit::Item::Table(updated_table)) => {
+            merge_toml_tables(current_table, updated_table);
+        },
+        (toml_edit::Item::Value(current_value), toml_edit::Item::Value(updated_value)) => {
+            let existing_decor = current_value.decor().clone();
+            *current_value = updated_value.clone();
+            *current_value.decor_mut() = existing_decor;
+        },
+        (current_item, updated_item) => {
+            *current_item = updated_item.clone();
+        },
+    }
 }
 
 /// Write the default config file to the user-global config path.
 /// Only called when no config file exists yet.
 /// Uses a comprehensive template with all options documented.
-fn write_default_config(config: &MoltisConfig) -> anyhow::Result<()> {
-    let path = find_or_default_config_path();
+fn write_default_config(path: &Path, config: &MoltisConfig) -> crate::Result<()> {
     if path.exists() {
         return Ok(());
     }
@@ -613,7 +979,7 @@ fn write_default_config(config: &MoltisConfig) -> anyhow::Result<()> {
     }
     // Use the documented template instead of plain serialization
     let toml_str = crate::template::default_config_template(config.server.port);
-    std::fs::write(&path, &toml_str)?;
+    std::fs::write(path, &toml_str)?;
     debug!(path = %path.display(), "wrote default config file with template");
     Ok(())
 }
@@ -743,22 +1109,27 @@ fn set_nested(root: &mut serde_json::Value, path: &[String], val: serde_json::Va
         {
             map.insert(key.clone(), serde_json::Value::Object(Default::default()));
         }
-        current = current.get_mut(key).unwrap();
+        let Some(next) = current.get_mut(key) else {
+            return;
+        };
+        current = next;
     }
 }
 
-fn parse_config(raw: &str, path: &Path) -> anyhow::Result<MoltisConfig> {
+fn parse_config(raw: &str, path: &Path) -> crate::Result<MoltisConfig> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("toml");
 
     match ext {
         "toml" => Ok(toml::from_str(raw)?),
         "yaml" | "yml" => Ok(serde_yaml::from_str(raw)?),
         "json" => Ok(serde_json::from_str(raw)?),
-        _ => anyhow::bail!("unsupported config format: .{ext}"),
+        _ => Err(crate::Error::message(format!(
+            "unsupported config format: .{ext}"
+        ))),
     }
 }
 
-fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Value> {
+fn parse_config_value(raw: &str, path: &Path) -> crate::Result<serde_json::Value> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("toml");
 
     match ext {
@@ -771,10 +1142,13 @@ fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Valu
             Ok(serde_json::to_value(v)?)
         },
         "json" => Ok(serde_json::from_str(raw)?),
-        _ => anyhow::bail!("unsupported config format: .{ext}"),
+        _ => Err(crate::Error::message(format!(
+            "unsupported config format: .{ext}"
+        ))),
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -783,8 +1157,8 @@ mod tests {
         _data_dir: Option<PathBuf>,
     }
 
-    static DATA_DIR_TEST_LOCK: std::sync::Mutex<TestDataDirState> =
-        std::sync::Mutex::new(TestDataDirState { _data_dir: None });
+    static DATA_DIR_TEST_LOCK: Mutex<TestDataDirState> =
+        Mutex::new(TestDataDirState { _data_dir: None });
 
     #[test]
     fn parse_env_value_bool() {
@@ -851,6 +1225,13 @@ mod tests {
         let vars = vec![("MOLTIS_TOOLS__AGENT_TIMEOUT_SECS".into(), "120".into())];
         let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
         assert_eq!(config.tools.agent_timeout_secs, 120);
+    }
+
+    #[test]
+    fn apply_env_overrides_tools_agent_max_iterations() {
+        let vars = vec![("MOLTIS_TOOLS__AGENT_MAX_ITERATIONS".into(), "64".into())];
+        let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
+        assert_eq!(config.tools.agent_max_iterations, 64);
     }
 
     #[test]
@@ -934,6 +1315,101 @@ mod tests {
     }
 
     #[test]
+    fn write_default_config_writes_template_to_requested_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("moltis.toml");
+        let mut config = MoltisConfig::default();
+        config.server.port = 23456;
+
+        write_default_config(&path, &config).expect("write default config");
+
+        let raw = std::fs::read_to_string(&path).expect("read generated config");
+        assert!(
+            raw.contains("port = 23456"),
+            "generated template should include selected server port"
+        );
+        assert!(
+            raw.contains("message_queue_mode = \"followup\""),
+            "generated template should set followup queue mode by default"
+        );
+        assert!(
+            raw.contains("\"followup\" - Queue messages, replay one-by-one after run"),
+            "generated template should document the followup queue option"
+        );
+        assert!(
+            raw.contains("\"collect\"  - Buffer messages, concatenate as single message"),
+            "generated template should document the collect queue option"
+        );
+    }
+
+    #[test]
+    fn write_default_config_does_not_overwrite_existing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("moltis.toml");
+        std::fs::write(&path, "existing = true\n").expect("seed config");
+
+        let mut config = MoltisConfig::default();
+        config.server.port = 34567;
+        write_default_config(&path, &config).expect("write default config");
+
+        let raw = std::fs::read_to_string(&path).expect("read seeded config");
+        assert_eq!(raw, "existing = true\n");
+    }
+
+    #[test]
+    fn save_config_to_path_preserves_provider_and_voice_comment_blocks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("moltis.toml");
+        std::fs::write(&path, crate::template::default_config_template(18789))
+            .expect("write template");
+
+        let mut config = load_config(&path).expect("load template config");
+        config.auth.disabled = true;
+        config.server.http_request_logs = true;
+
+        save_config_to_path(&path, &config).expect("save config");
+
+        let saved = std::fs::read_to_string(&path).expect("read saved config");
+        assert!(saved.contains("# All available providers:"));
+        assert!(saved.contains("# All available TTS providers:"));
+        assert!(saved.contains("# All available STT providers:"));
+        assert!(saved.contains("disabled = true"));
+        assert!(saved.contains("http_request_logs = true"));
+    }
+
+    #[test]
+    fn save_config_to_path_removes_stale_keys_when_values_are_cleared() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("moltis.toml");
+        std::fs::write(
+            &path,
+            r#"[server]
+bind = "127.0.0.1"
+port = 18789
+
+[identity]
+name = "Rex"
+"#,
+        )
+        .expect("write seed config");
+
+        // Use parse_config directly to avoid env-override pollution
+        // (e.g. MOLTIS_IDENTITY__NAME in the process environment).
+        let raw = std::fs::read_to_string(&path).expect("read seed");
+        let mut config: MoltisConfig = parse_config(&raw, &path).expect("parse seed config");
+        config.identity.name = None;
+
+        save_config_to_path(&path, &config).expect("save config");
+
+        let saved = std::fs::read_to_string(&path).expect("read saved file");
+        let reloaded: MoltisConfig = parse_config(&saved, &path).expect("reload config");
+        assert!(
+            reloaded.identity.name.is_none(),
+            "identity.name should be removed when cleared"
+        );
+    }
+
+    #[test]
     fn server_config_default_port_is_zero() {
         // Default port should be 0 (to be replaced with random port on config creation)
         let config = crate::schema::ServerConfig::default();
@@ -959,8 +1435,7 @@ mod tests {
         let identity = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: Some("🐶".to_string()),
-            creature: Some("dog".to_string()),
-            vibe: Some("chill".to_string()),
+            theme: Some("chill dog golden retriever".to_string()),
         };
 
         let path = save_identity(&identity).expect("save identity");
@@ -970,8 +1445,7 @@ mod tests {
         let loaded = load_identity().expect("load identity");
         assert_eq!(loaded.name.as_deref(), Some("Rex"));
         assert_eq!(loaded.emoji.as_deref(), Some("🐶"), "raw file:\n{raw}");
-        assert_eq!(loaded.creature.as_deref(), Some("dog"));
-        assert_eq!(loaded.vibe.as_deref(), Some("chill"));
+        assert_eq!(loaded.theme.as_deref(), Some("chill dog golden retriever"));
 
         clear_data_dir();
     }
@@ -985,8 +1459,7 @@ mod tests {
         let seeded = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: None,
-            creature: None,
-            vibe: None,
+            theme: None,
         };
         let path = save_identity(&seeded).expect("seed identity");
         assert!(path.exists());
@@ -1034,7 +1507,8 @@ mod tests {
             location: Some(crate::schema::GeoLocation {
                 latitude: 48.8566,
                 longitude: 2.3522,
-                updated_at: Some(1700000000),
+                place: Some("Paris, France".to_string()),
+                updated_at: Some(1_700_000_000),
             }),
         };
 
@@ -1049,6 +1523,7 @@ mod tests {
         let loc = loaded.location.expect("location should be present");
         assert!((loc.latitude - 48.8566).abs() < 1e-6);
         assert!((loc.longitude - 2.3522).abs() < 1e-6);
+        assert_eq!(loc.place.as_deref(), Some("Paris, France"));
 
         clear_data_dir();
     }
@@ -1117,6 +1592,47 @@ mod tests {
     }
 
     #[test]
+    fn load_memory_md_reads_trimmed_content() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(
+            dir.path().join("MEMORY.md"),
+            "\n## User Facts\n- Lives in Paris\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load_memory_md().as_deref(),
+            Some("## User Facts\n- Lives in Paris")
+        );
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_memory_md_returns_none_when_missing() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        assert_eq!(load_memory_md(), None);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn memory_path_is_under_data_dir() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        assert_eq!(memory_path(), dir.path().join("MEMORY.md"));
+
+        clear_data_dir();
+    }
+
+    #[test]
     fn workspace_markdown_ignores_leading_html_comments() {
         let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1143,6 +1659,124 @@ mod tests {
 
         std::fs::write(dir.path().join("HEARTBEAT.md"), "<!-- guidance -->").unwrap();
         assert_eq!(load_heartbeat_md(), None);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_soul_creates_default_when_missing() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let soul_file = dir.path().join("SOUL.md");
+        assert!(!soul_file.exists(), "SOUL.md should not exist yet");
+
+        let content = load_soul();
+        assert!(
+            content.is_some(),
+            "load_soul should return Some after seeding"
+        );
+        assert_eq!(content.as_deref(), Some(DEFAULT_SOUL));
+        assert!(soul_file.exists(), "SOUL.md should be created on disk");
+
+        let on_disk = std::fs::read_to_string(&soul_file).unwrap();
+        assert_eq!(on_disk, DEFAULT_SOUL);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_soul_does_not_overwrite_existing() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let custom = "You are a loyal companion who loves fetch.";
+        std::fs::write(dir.path().join("SOUL.md"), custom).unwrap();
+
+        let content = load_soul();
+        assert_eq!(content.as_deref(), Some(custom));
+
+        let on_disk = std::fs::read_to_string(dir.path().join("SOUL.md")).unwrap();
+        assert_eq!(on_disk, custom, "existing SOUL.md must not be overwritten");
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_soul_reseeds_after_deletion() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        // First call seeds the file.
+        let _ = load_soul();
+        let soul_file = dir.path().join("SOUL.md");
+        assert!(soul_file.exists());
+
+        // Delete it.
+        std::fs::remove_file(&soul_file).unwrap();
+        assert!(!soul_file.exists());
+
+        // Second call re-seeds.
+        let content = load_soul();
+        assert_eq!(content.as_deref(), Some(DEFAULT_SOUL));
+        assert!(soul_file.exists());
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_none_prevents_reseed() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        // Auto-seed SOUL.md.
+        let _ = load_soul();
+        let soul_file = dir.path().join("SOUL.md");
+        assert!(soul_file.exists());
+
+        // User explicitly clears the soul via settings.
+        save_soul(None).expect("save_soul(None)");
+        assert!(
+            soul_file.exists(),
+            "save_soul(None) should leave an empty file, not delete"
+        );
+        assert!(
+            std::fs::read_to_string(&soul_file).unwrap().is_empty(),
+            "file should be empty after clearing"
+        );
+
+        // load_soul must return None — NOT re-seed.
+        let content = load_soul();
+        assert_eq!(
+            content, None,
+            "load_soul must return None after explicit clear, not re-seed"
+        );
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_some_overwrites_default() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        // Auto-seed.
+        let _ = load_soul();
+
+        // User writes custom soul.
+        let custom = "You love fetch and belly rubs.";
+        save_soul(Some(custom)).expect("save_soul");
+
+        let content = load_soul();
+        assert_eq!(content.as_deref(), Some(custom));
+
+        let on_disk = std::fs::read_to_string(dir.path().join("SOUL.md")).unwrap();
+        assert_eq!(on_disk, custom);
 
         clear_data_dir();
     }

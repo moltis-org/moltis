@@ -96,7 +96,7 @@ impl OpenAiTts {
     fn response_format(format: AudioFormat) -> &'static str {
         match format {
             AudioFormat::Mp3 => "mp3",
-            AudioFormat::Opus => "opus",
+            AudioFormat::Opus | AudioFormat::Webm => "opus",
             AudioFormat::Aac => "aac",
             AudioFormat::Pcm => "pcm",
         }
@@ -187,6 +187,7 @@ struct TtsRequest<'a> {
     speed: Option<f32>,
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

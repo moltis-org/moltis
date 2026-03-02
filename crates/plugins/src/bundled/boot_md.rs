@@ -4,12 +4,14 @@
 use std::path::PathBuf;
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     tracing::{debug, info},
 };
 
-use moltis_common::hooks::{HookAction, HookEvent, HookHandler, HookPayload};
+use moltis_common::{
+    Result,
+    hooks::{HookAction, HookEvent, HookHandler, HookPayload},
+};
 
 /// Reads workspace BOOT.md and injects its content on startup.
 pub struct BootMdHook {
@@ -87,6 +89,7 @@ fn strip_leading_html_comments(content: &str) -> &str {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

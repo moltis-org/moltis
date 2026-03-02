@@ -376,6 +376,7 @@ fn update_categories(categories: &mut MetricCategories, metric: &MetricSnapshot)
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

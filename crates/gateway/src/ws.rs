@@ -8,8 +8,9 @@ use {
 };
 
 use moltis_protocol::{
-    ConnectParams, ErrorShape, EventFrame, Features, GatewayFrame, HANDSHAKE_TIMEOUT_MS, HelloAuth,
-    HelloOk, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION, Policy, ResponseFrame, ServerInfo, error_codes,
+    ConnectParams, ConnectParamsV4, ErrorShape, EventFrame, Extensions, Features, GatewayFrame,
+    HANDSHAKE_TIMEOUT_MS, HelloAuth, HelloOk, KNOWN_EVENTS, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    Policy, ResponseFrame, ServerInfo, error_codes, roles, scopes,
 };
 
 use crate::{
@@ -38,13 +39,15 @@ pub async fn handle_connection(
     accept_language: Option<String>,
     remote_ip: Option<String>,
     header_authenticated: bool,
+    is_local: bool,
 ) {
     let conn_id = uuid::Uuid::new_v4().to_string();
     let conn_remote_ip = remote_addr.ip().to_string();
     info!(conn_id = %conn_id, remote_ip = %conn_remote_ip, "ws: new connection");
 
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let (client_tx, mut client_rx) = mpsc::unbounded_channel::<String>();
+    // Bounded channel prevents unbounded memory growth from slow clients.
+    let (client_tx, mut client_rx) = mpsc::channel::<String>(512);
 
     // Spawn write loop: forwards frames from the client_tx channel to the WebSocket.
     let write_conn_id = conn_id.clone();
@@ -80,7 +83,11 @@ pub async fn handle_connection(
         },
     };
 
-    let (request_id, params) = connect_result;
+    let ConnectResult {
+        request_id,
+        params,
+        is_v4,
+    } = connect_result;
 
     if state.ws_request_logs {
         let connect_param_keys = serde_json::to_value(&params)
@@ -102,25 +109,35 @@ pub async fn handle_connection(
         let err = ResponseFrame::err(
             &request_id,
             ErrorShape::new(
-                error_codes::INVALID_REQUEST,
+                error_codes::PROTOCOL_ERROR,
                 format!(
                     "protocol mismatch: server={}, client={}-{}",
                     PROTOCOL_VERSION, params.min_protocol, params.max_protocol
                 ),
             ),
         );
-        let _ = client_tx.send(serde_json::to_string(&err).unwrap());
+        #[allow(clippy::unwrap_used)] // serializing known-valid struct
+        let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
         drop(client_tx);
         write_handle.abort();
         return;
     }
 
     // ── Auth validation ──────────────────────────────────────────────────
-    let is_loopback = auth::is_loopback(&conn_remote_ip);
-
-    // Try credential-store auth first (API key, password hash), then fall
-    // back to legacy env-var auth.
-    let mut authenticated = is_loopback || header_authenticated;
+    // SECURITY: Three-tier auth model (see docs/src/security.md):
+    //
+    // 1. Password set → always require credentials, any IP.
+    // 2. No password + genuine local connection → full access (dev convenience).
+    // 3. No password + remote/proxied → onboarding only.
+    //
+    // `is_local` is computed per-request by `is_local_connection()` using:
+    //   - MOLTIS_BEHIND_PROXY env var (hard override)
+    //   - Proxy header detection (X-Forwarded-For, X-Real-IP, etc.)
+    //   - Host header loopback check
+    //   - TCP source IP loopback check
+    //
+    // See CVE-2026-25253 for the analogous OpenClaw vulnerability.
+    let mut authenticated = header_authenticated;
     // Scopes from API key verification (if any).
     let mut api_key_scopes: Option<Vec<String>> = None;
 
@@ -131,7 +148,7 @@ pub async fn handle_connection(
                 && let Ok(Some(verification)) = cred_store.verify_api_key(api_key).await
             {
                 authenticated = true;
-                // Store the scopes from the API key (empty = full access)
+                // Store the scopes from the API key (empty = no access)
                 api_key_scopes = Some(verification.scopes);
             }
             // Check password against DB hash.
@@ -142,8 +159,11 @@ pub async fn handle_connection(
                 authenticated = true;
             }
         } else {
-            // Setup not complete yet — allow all connections.
-            authenticated = true;
+            // Setup not complete yet — only allow local connections.
+            // Remote connections must go through the onboarding/setup flow.
+            if is_local {
+                authenticated = true;
+            }
         }
     }
 
@@ -172,28 +192,49 @@ pub async fn handle_connection(
         warn!(conn_id = %conn_id, "ws: auth failed");
         let err = ResponseFrame::err(
             &request_id,
-            ErrorShape::new(error_codes::INVALID_REQUEST, "authentication failed"),
+            ErrorShape::new(error_codes::UNAUTHORIZED, "authentication failed"),
         );
-        let _ = client_tx.send(serde_json::to_string(&err).unwrap());
+        #[allow(clippy::unwrap_used)] // serializing known-valid struct
+        let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
         drop(client_tx);
         write_handle.abort();
         return;
     }
 
-    let role = params.role.clone().unwrap_or_else(|| "operator".into());
+    let role = params
+        .role
+        .clone()
+        .unwrap_or_else(|| roles::OPERATOR.into());
 
-    // Determine scopes: use API key scopes if provided, otherwise default to full access.
-    // Empty API key scopes means full access (backward compatibility).
+    // Determine scopes based on auth method.
+    // API keys MUST declare scopes explicitly — empty scopes means no access.
+    // Non-API-key auth (password, local, legacy) gets full access.
     let scopes = match api_key_scopes {
         Some(key_scopes) if !key_scopes.is_empty() => key_scopes,
-        _ => {
-            // Full access: either no API key used, or API key has no scope restrictions
+        Some(_empty) => {
+            // API key with no scopes → reject (least-privilege).
+            warn!(conn_id = %conn_id, "ws: API key has no scopes, denying access");
+            let err = ResponseFrame::err(
+                &request_id,
+                ErrorShape::new(
+                    error_codes::FORBIDDEN,
+                    "API key has no scopes — specify at least one scope when creating the key",
+                ),
+            );
+            #[allow(clippy::unwrap_used)] // serializing known-valid struct
+            let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+            drop(client_tx);
+            write_handle.abort();
+            return;
+        },
+        None => {
+            // Non-API-key auth (password, local, legacy) → full access.
             vec![
-                "operator.admin".into(),
-                "operator.read".into(),
-                "operator.write".into(),
-                "operator.approvals".into(),
-                "operator.pairing".into(),
+                scopes::ADMIN.into(),
+                scopes::READ.into(),
+                scopes::WRITE.into(),
+                scopes::APPROVALS.into(),
+                scopes::PAIRING.into(),
             ]
         },
     };
@@ -222,29 +263,19 @@ pub async fn handle_connection(
         },
         features: Features {
             methods: methods.method_names(),
-            events: vec![
-                "tick".into(),
-                "shutdown".into(),
-                "agent".into(),
-                "chat".into(),
-                "presence".into(),
-                "health".into(),
-                "exec.approval.requested".into(),
-                "exec.approval.resolved".into(),
-                "device.pair.requested".into(),
-                "device.pair.resolved".into(),
-                "node.pair.requested".into(),
-                "node.pair.resolved".into(),
-                "node.invoke.request".into(),
-            ],
+            events: KNOWN_EVENTS.iter().map(|s| (*s).into()).collect(),
         },
         snapshot: serde_json::json!({}),
         canvas_host_url: None,
         auth: Some(hello_auth),
-        policy: Policy::default_policy(),
+        policy: Policy::default(),
+        extensions: Extensions::new(),
     };
-    let resp = ResponseFrame::ok(&request_id, serde_json::to_value(&hello).unwrap());
-    let _ = client_tx.send(serde_json::to_string(&resp).unwrap());
+    #[allow(clippy::unwrap_used)] // serializing known-valid struct
+    let hello_val = serde_json::to_value(&hello).unwrap();
+    let resp = ResponseFrame::ok(&request_id, hello_val);
+    #[allow(clippy::unwrap_used)] // serializing known-valid struct
+    let _ = client_tx.try_send(serde_json::to_string(&resp).unwrap());
 
     info!(
         conn_id = %conn_id,
@@ -281,6 +312,14 @@ pub async fn handle_connection(
         }
     }
 
+    // v3 clients default to wildcard subscriptions (all events).
+    // v4 clients default to empty subscriptions (must explicitly subscribe).
+    let subscriptions = if is_v4 {
+        Some(std::collections::HashSet::new())
+    } else {
+        None
+    };
+
     let client = ConnectedClient {
         conn_id: conn_id.clone(),
         connect_params: resolved_params,
@@ -290,6 +329,9 @@ pub async fn handle_connection(
         accept_language,
         remote_ip,
         timezone: browser_timezone,
+        subscriptions,
+        joined_channels: std::collections::HashSet::new(),
+        negotiated_protocol: PROTOCOL_VERSION,
     };
     state.register_client(client).await;
 
@@ -300,7 +342,7 @@ pub async fn handle_connection(
     }
 
     // If node role, register in node registry.
-    if role == "node" {
+    if role == roles::NODE {
         let caps = params.caps.clone().unwrap_or_default();
         let commands = params.commands.clone().unwrap_or_default();
         let permissions: HashMap<String, bool> = params
@@ -361,10 +403,11 @@ pub async fn handle_connection(
             warn!(conn_id = %conn_id, size = text.len(), "ws: payload too large");
             let err = EventFrame::new(
                 "error",
-                serde_json::json!({ "message": "payload too large", "maxBytes": MAX_PAYLOAD_BYTES }),
+                serde_json::json!({ "code": error_codes::PAYLOAD_TOO_LARGE, "message": "payload too large", "maxBytes": MAX_PAYLOAD_BYTES }),
                 state.next_seq(),
             );
-            let _ = client_tx.send(serde_json::to_string(&err).unwrap());
+            #[allow(clippy::unwrap_used)] // serializing known-valid struct
+            let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
             continue;
         }
 
@@ -377,7 +420,8 @@ pub async fn handle_connection(
                     serde_json::json!({ "message": "invalid frame" }),
                     state.next_seq(),
                 );
-                let _ = client_tx.send(serde_json::to_string(&err).unwrap());
+                #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
                 continue;
             },
         };
@@ -406,6 +450,7 @@ pub async fn handle_connection(
                     client_role: role.clone(),
                     client_scopes: scopes.clone(),
                     state: Arc::clone(&state),
+                    channel: req.channel,
                 };
                 let response = methods.dispatch(ctx).await;
                 if state.ws_request_logs {
@@ -417,7 +462,32 @@ pub async fn handle_connection(
                         "ws: sent response frame"
                     );
                 }
-                let _ = client_tx.send(serde_json::to_string(&response).unwrap());
+                #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                let _ = client_tx.try_send(serde_json::to_string(&response).unwrap());
+            },
+            GatewayFrame::Response(res) => {
+                // v4 bidirectional RPC: client responding to a server-initiated request.
+                let pending = state
+                    .inner
+                    .write()
+                    .await
+                    .pending_client_requests
+                    .remove(&res.id);
+                if let Some(req) = pending {
+                    let result = if res.ok {
+                        Ok(res.payload.unwrap_or(serde_json::Value::Null))
+                    } else {
+                        Err(res.error.unwrap_or_else(|| {
+                            ErrorShape::new(
+                                error_codes::INTERNAL,
+                                "client returned error without details",
+                            )
+                        }))
+                    };
+                    let _ = req.sender.send(result);
+                } else {
+                    debug!(conn_id = %conn_id, id = %res.id, "ws: response for unknown request");
+                }
             },
             _ => {
                 debug!(conn_id = %conn_id, "ws: ignoring non-request frame");
@@ -462,10 +532,17 @@ pub async fn handle_connection(
     write_handle.abort();
 }
 
-/// Wait for the first `connect` request frame.
+/// Result of parsing connect params: includes whether v4 format was used.
+struct ConnectResult {
+    request_id: String,
+    params: ConnectParams,
+    is_v4: bool,
+}
+
+/// Wait for the first `connect` request frame. Tries v4 format first, falls back to v3.
 async fn wait_for_connect(
     rx: &mut futures::stream::SplitStream<WebSocket>,
-) -> anyhow::Result<(String, ConnectParams)> {
+) -> anyhow::Result<ConnectResult> {
     while let Some(msg) = rx.next().await {
         let text = match msg? {
             Message::Text(t) => t.to_string(),
@@ -479,9 +556,24 @@ async fn wait_for_connect(
                 if req.method != "connect" {
                     anyhow::bail!("first message must be 'connect', got '{}'", req.method);
                 }
-                let params: ConnectParams =
-                    serde_json::from_value(req.params.unwrap_or(serde_json::Value::Null))?;
-                return Ok((req.id, params));
+                let raw = req.params.unwrap_or(serde_json::Value::Null);
+
+                // Try v4 format first (has `protocol` object instead of flat fields).
+                if let Ok(v4) = serde_json::from_value::<ConnectParamsV4>(raw.clone()) {
+                    return Ok(ConnectResult {
+                        request_id: req.id,
+                        params: v4.into_connect_params(),
+                        is_v4: true,
+                    });
+                }
+
+                // Fall back to v3 flat format.
+                let params: ConnectParams = serde_json::from_value(raw)?;
+                return Ok(ConnectResult {
+                    request_id: req.id,
+                    params,
+                    is_v4: false,
+                });
             },
             _ => anyhow::bail!("first message must be a request frame"),
         }

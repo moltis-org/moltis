@@ -14,11 +14,13 @@ pub mod reranking;
 pub mod schema;
 pub mod search;
 pub mod session_export;
+pub(crate) mod splitter;
 pub mod store;
 pub mod store_sqlite;
 pub mod tools;
 #[cfg(feature = "file-watcher")]
 pub mod watcher;
+pub mod writer;
 
 // Re-export run_migrations for consistency with other crates.
 pub use schema::run_migrations;

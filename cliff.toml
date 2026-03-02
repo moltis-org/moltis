@@ -1,0 +1,60 @@
+# git-cliff ~ configuration file
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+body = """
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [Unreleased]
+{% endif -%}
+
+{% for group, commits in commits | group_by(attribute="group") -%}
+### {{ group | striptags | trim }}
+{% for commit in commits -%}
+- {% if commit.breaking %}**BREAKING:** {% endif %}{% if commit.scope %}[{{ commit.scope }}] {% endif %}{{ commit.message | split(pat="\n") | first | trim | upper_first }}
+{% endfor -%}
+{% if not loop.last %}
+
+{% endif -%}
+{% endfor -%}
+"""
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+render_always = true
+trim = true
+
+[git]
+commit_parsers = [
+  { body = "(?i)security", group = "<!-- 5 -->Security" },
+  { group = "<!-- 0 -->Added", message = "^feat(\\([^)]+\\))?!?:" },
+  { group = "<!-- 1 -->Changed", message = "^perf(\\([^)]+\\))?!?:" },
+  { group = "<!-- 1 -->Changed", message = "^refactor(\\([^)]+\\))?!?:" },
+  { group = "<!-- 1 -->Changed", message = "^revert(\\([^)]+\\))?!?:" },
+  { group = "<!-- 2 -->Deprecated", message = "(?i)^.*deprecat.*$" },
+  { group = "<!-- 3 -->Removed", message = "(?i)^.*(remove|delete|drop).*$" },
+  { group = "<!-- 4 -->Fixed", message = "^fix(\\([^)]+\\))?!?:" },
+  { group = "<!-- 5 -->Security", message = "(?i)^.*security.*$" },
+  { message = "^build(\\([^)]+\\))?!?:", skip = true },
+  { message = "^chore(\\([^)]+\\))?!?:", skip = true },
+  { message = "^chore\\(release\\):", skip = true },
+  { message = "^ci(\\([^)]+\\))?!?:", skip = true },
+  { message = "^docs(\\([^)]+\\))?!?:", skip = true },
+  { message = "^merge", skip = true },
+  { message = "^style(\\([^)]+\\))?!?:", skip = true },
+  { message = "^test(\\([^)]+\\))?!?:", skip = true },
+]
+conventional_commits = true
+filter_commits = true
+filter_unconventional = false
+protect_breaking_commits = true
+sort_commits = "oldest"
+split_commits = false
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+"
+topo_order = false

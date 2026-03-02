@@ -14,7 +14,6 @@
 use std::{collections::HashSet, sync::Arc};
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     serde_json::{Value, json},
     tracing::debug,
@@ -53,6 +52,7 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
         "nodejs",
         "npm",
         "ruby",
+        "golang-go",
     ]),
     ("Build tools", &[
         "build-essential",
@@ -117,7 +117,6 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
         "pandoc",
         "poppler-utils",
         "ghostscript",
-        "wkhtmltopdf",
         "texlive-latex-base",
         "texlive-latex-extra",
         "texlive-fonts-recommended",
@@ -351,7 +350,7 @@ impl AgentTool for SandboxPackagesTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         #[cfg(feature = "metrics")]
         let start = std::time::Instant::now();
 
@@ -430,6 +429,7 @@ impl AgentTool for SandboxPackagesTool {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

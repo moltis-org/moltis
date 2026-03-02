@@ -243,6 +243,7 @@ fn write_tool_audio_file(file_name: &str, bytes: &[u8]) -> Result<String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::services::ServiceResult};
@@ -294,6 +295,17 @@ mod tests {
 
         async fn transcribe(&self, _params: Value) -> ServiceResult {
             Ok(json!({ "text": "hello" }))
+        }
+
+        async fn transcribe_bytes(
+            &self,
+            _audio: bytes::Bytes,
+            _format: &str,
+            _provider: Option<&str>,
+            _language: Option<&str>,
+            _prompt: Option<&str>,
+        ) -> ServiceResult {
+            Err("STT not available in agent mode".into())
         }
 
         async fn set_provider(&self, _params: Value) -> ServiceResult {

@@ -78,6 +78,80 @@ fn default_wait_timeout_ms() -> u64 {
     30000
 }
 
+/// Known Chromium-family browser engines we can launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserKind {
+    Chrome,
+    Chromium,
+    Edge,
+    Brave,
+    Opera,
+    Vivaldi,
+    Arc,
+    Custom,
+}
+
+impl BrowserKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Chrome => "chrome",
+            Self::Chromium => "chromium",
+            Self::Edge => "edge",
+            Self::Brave => "brave",
+            Self::Opera => "opera",
+            Self::Vivaldi => "vivaldi",
+            Self::Arc => "arc",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+impl fmt::Display for BrowserKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Preferred browser for a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserPreference {
+    #[default]
+    Auto,
+    Chrome,
+    Chromium,
+    Edge,
+    Brave,
+    Opera,
+    Vivaldi,
+    Arc,
+}
+
+impl BrowserPreference {
+    pub fn preferred_kind(self) -> Option<BrowserKind> {
+        match self {
+            Self::Auto => None,
+            Self::Chrome => Some(BrowserKind::Chrome),
+            Self::Chromium => Some(BrowserKind::Chromium),
+            Self::Edge => Some(BrowserKind::Edge),
+            Self::Brave => Some(BrowserKind::Brave),
+            Self::Opera => Some(BrowserKind::Opera),
+            Self::Vivaldi => Some(BrowserKind::Vivaldi),
+            Self::Arc => Some(BrowserKind::Arc),
+        }
+    }
+}
+
+impl fmt::Display for BrowserPreference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.preferred_kind() {
+            Some(kind) => kind.fmt(f),
+            None => f.write_str("auto"),
+        }
+    }
+}
+
 impl fmt::Display for BrowserAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -131,6 +205,12 @@ pub struct BrowserRequest {
     /// If None, uses host mode (no sandbox).
     #[serde(default)]
     pub sandbox: Option<bool>,
+
+    /// Optional browser preference for host mode.
+    /// - "auto" (default): first detected installed browser
+    /// - specific browser ("brave", "chrome", etc): use that browser
+    #[serde(default)]
+    pub browser: Option<BrowserPreference>,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -352,13 +432,27 @@ pub struct BrowserConfig {
     /// Sandbox mode is controlled per-session via the request, not globally.
     #[serde(default = "default_sandbox_image")]
     pub sandbox_image: String,
+    /// Container name prefix for sandboxed browser instances.
+    #[serde(default = "default_container_prefix")]
+    pub container_prefix: String,
     /// Allowed domains for navigation (empty = all allowed).
     #[serde(default)]
     pub allowed_domains: Vec<String>,
+    /// Total system RAM threshold (MB) below which memory-saving Chrome flags
+    /// are injected automatically. Set to 0 to disable. Default: 2048.
+    pub low_memory_threshold_mb: u64,
+    /// Whether to persist the Chrome user profile across sessions.
+    pub persist_profile: bool,
+    /// Custom path for the persistent Chrome profile directory.
+    pub profile_dir: Option<String>,
 }
 
 fn default_sandbox_image() -> String {
     "browserless/chrome".to_string()
+}
+
+fn default_container_prefix() -> String {
+    "moltis-browser".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -377,7 +471,28 @@ impl Default for BrowserConfig {
             user_agent: None,
             chrome_args: Vec::new(),
             sandbox_image: default_sandbox_image(),
+            container_prefix: default_container_prefix(),
             allowed_domains: Vec::new(),
+            low_memory_threshold_mb: 2048,
+            persist_profile: true,
+            profile_dir: None,
+        }
+    }
+}
+
+impl BrowserConfig {
+    /// Resolve the effective Chrome profile directory, if profile persistence is enabled.
+    ///
+    /// Returns `Some(path)` when either `profile_dir` is set or `persist_profile` is true.
+    /// Returns `None` when profiles should be ephemeral.
+    #[must_use]
+    pub fn resolved_profile_dir(&self) -> Option<std::path::PathBuf> {
+        if let Some(ref dir) = self.profile_dir {
+            Some(std::path::PathBuf::from(dir))
+        } else if self.persist_profile {
+            Some(moltis_config::data_dir().join("browser").join("profile"))
+        } else {
+            None
         }
     }
 }
@@ -398,7 +513,11 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             user_agent: cfg.user_agent.clone(),
             chrome_args: cfg.chrome_args.clone(),
             sandbox_image: cfg.sandbox_image.clone(),
+            container_prefix: default_container_prefix(),
             allowed_domains: cfg.allowed_domains.clone(),
+            low_memory_threshold_mb: cfg.low_memory_threshold_mb,
+            persist_profile: cfg.persist_profile,
+            profile_dir: cfg.profile_dir.clone(),
         }
     }
 }
@@ -475,5 +594,59 @@ mod tests {
         let allowed = vec!["example.com".to_string()];
         assert!(!is_domain_allowed("not-a-url", &allowed));
         assert!(!is_domain_allowed("", &allowed));
+    }
+
+    #[test]
+    fn test_browser_preference_default_is_auto() {
+        assert_eq!(BrowserPreference::default(), BrowserPreference::Auto);
+    }
+
+    #[test]
+    fn test_browser_preference_deserialize() {
+        let value: BrowserPreference = match serde_json::from_str("\"brave\"") {
+            Ok(value) => value,
+            Err(error) => panic!("failed to deserialize browser preference: {error}"),
+        };
+        assert_eq!(value, BrowserPreference::Brave);
+    }
+
+    #[test]
+    fn resolved_profile_dir_returns_path_by_default() {
+        // Default config has persist_profile = true
+        let config = BrowserConfig::default();
+        let dir = config.resolved_profile_dir();
+        assert!(dir.is_some());
+        let path = dir.unwrap_or_default();
+        assert!(path.ends_with("browser/profile"));
+    }
+
+    #[test]
+    fn resolved_profile_dir_returns_none_when_disabled() {
+        let config = BrowserConfig {
+            persist_profile: false,
+            ..BrowserConfig::default()
+        };
+        assert!(config.resolved_profile_dir().is_none());
+    }
+
+    #[test]
+    fn resolved_profile_dir_uses_custom_path() {
+        let config = BrowserConfig {
+            profile_dir: Some("/custom/path".to_string()),
+            ..BrowserConfig::default()
+        };
+        let dir = config.resolved_profile_dir();
+        assert_eq!(dir, Some(std::path::PathBuf::from("/custom/path")));
+    }
+
+    #[test]
+    fn resolved_profile_dir_custom_overrides_persist_flag() {
+        let config = BrowserConfig {
+            persist_profile: false,
+            profile_dir: Some("/override".to_string()),
+            ..BrowserConfig::default()
+        };
+        // profile_dir takes precedence, implicitly enabling persistence
+        assert!(config.resolved_profile_dir().is_some());
     }
 }

@@ -63,6 +63,7 @@ fn list_subdirs(dir: &PathBuf) -> Vec<PathBuf> {
     dirs
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,9 +76,9 @@ mod tests {
     #[test]
     fn test_complete_lists_subdirs() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("alpha")).unwrap();
-        std::fs::create_dir(dir.path().join("beta")).unwrap();
-        std::fs::create_dir(dir.path().join(".hidden")).unwrap();
+        fs::create_dir(dir.path().join("alpha")).unwrap();
+        fs::create_dir(dir.path().join("beta")).unwrap();
+        fs::create_dir(dir.path().join(".hidden")).unwrap();
 
         let path_str = format!("{}/", dir.path().display());
         let results = complete_path(&path_str);
@@ -87,9 +88,9 @@ mod tests {
     #[test]
     fn test_complete_prefix_match() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("alpha")).unwrap();
-        std::fs::create_dir(dir.path().join("alpine")).unwrap();
-        std::fs::create_dir(dir.path().join("beta")).unwrap();
+        fs::create_dir(dir.path().join("alpha")).unwrap();
+        fs::create_dir(dir.path().join("alpine")).unwrap();
+        fs::create_dir(dir.path().join("beta")).unwrap();
 
         let partial = format!("{}/al", dir.path().display());
         let results = complete_path(&partial);

@@ -1,15 +1,17 @@
 //! Kimi-specific helpers for OAuth device flow and API requests.
 
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue};
 
 use crate::config_dir::moltis_config_dir;
 
 /// Get or generate a persistent device ID for Kimi API headers.
 /// Stored at `~/.config/moltis/kimi_device_id`.
 pub fn get_or_create_device_id() -> String {
-    let path = moltis_config_dir().join("kimi_device_id");
+    get_or_create_device_id_at(&moltis_config_dir().join("kimi_device_id"))
+}
 
-    if let Ok(id) = std::fs::read_to_string(&path) {
+fn get_or_create_device_id_at(path: &std::path::Path) -> String {
+    if let Ok(id) = std::fs::read_to_string(path) {
         let id = id.trim().to_string();
         if !id.is_empty() {
             return id;
@@ -17,13 +19,15 @@ pub fn get_or_create_device_id() -> String {
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    let dir = path.parent().unwrap();
+    let Some(dir) = path.parent() else {
+        return id;
+    };
     let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(&path, &id);
+    let _ = std::fs::write(path, &id);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
     id
 }
@@ -32,17 +36,18 @@ pub fn get_or_create_device_id() -> String {
 pub fn kimi_headers() -> HeaderMap {
     let device_id = get_or_create_device_id();
     let mut headers = HeaderMap::new();
-    headers.insert("X-Msh-Platform", "web".parse().unwrap());
-    headers.insert("X-Msh-Version", "1.0.0".parse().unwrap());
-    headers.insert("X-Msh-Device-Name", "moltis".parse().unwrap());
-    headers.insert("X-Msh-Device-Model", "cli".parse().unwrap());
+    headers.insert("X-Msh-Platform", HeaderValue::from_static("web"));
+    headers.insert("X-Msh-Version", HeaderValue::from_static("1.0.0"));
+    headers.insert("X-Msh-Device-Name", HeaderValue::from_static("moltis"));
+    headers.insert("X-Msh-Device-Model", HeaderValue::from_static("cli"));
     headers.insert(
         "X-Msh-Os-Version",
-        std::env::consts::OS
-            .parse()
-            .unwrap_or_else(|_| "unknown".parse().unwrap()),
+        HeaderValue::from_str(std::env::consts::OS)
+            .unwrap_or_else(|_| HeaderValue::from_static("unknown")),
     );
-    headers.insert("X-Msh-Device-Id", device_id.parse().unwrap());
+    if let Ok(val) = HeaderValue::from_str(&device_id) {
+        headers.insert("X-Msh-Device-Id", val);
+    }
     headers
 }
 
@@ -62,10 +67,13 @@ mod tests {
     }
 
     #[test]
-    fn device_id_is_stable() {
-        let id1 = get_or_create_device_id();
-        let id2 = get_or_create_device_id();
+    fn device_id_is_stable() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("kimi_device_id");
+        let id1 = get_or_create_device_id_at(&path);
+        let id2 = get_or_create_device_id_at(&path);
         assert_eq!(id1, id2);
         assert!(!id1.is_empty());
+        Ok(())
     }
 }

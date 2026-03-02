@@ -52,7 +52,7 @@ pub async fn handle_message_direct(
     bot: &Bot,
     account_id: &str,
     accounts: &AccountStateMap,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
@@ -66,7 +66,7 @@ pub async fn handle_message_direct(
     }
 
     let (config, bot_username, outbound, message_log, event_sink) = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = match accts.get(account_id) {
             Some(s) => s,
             None => {
@@ -111,6 +111,21 @@ pub async fn handle_message_direct(
     );
 
     let username = msg.from.as_ref().and_then(|u| u.username.clone());
+    let inbound_kind = message_kind(&msg);
+    let text_len = text.as_ref().map_or(0, |body| body.len());
+    info!(
+        account_id,
+        chat_id = msg.chat.id.0,
+        message_id = msg.id.0,
+        peer_id,
+        username = ?username,
+        sender_name = ?sender_name,
+        kind = ?inbound_kind,
+        has_media = has_media(&msg),
+        has_text = text.is_some(),
+        text_len,
+        "telegram inbound message received"
+    );
 
     // Access control
     let access_result = access::check_access(
@@ -194,8 +209,14 @@ pub async fn handle_message_direct(
 
     debug!(account_id, "handler: access granted");
 
-    // Check for voice/audio messages and transcribe them
-    let (body, attachments) = if let Some(voice_file) = extract_voice_file(&msg) {
+    // Check for voice/audio messages and transcribe them.
+    // `voice_audio` carries the raw bytes + format so we can save them to the
+    // session media directory once we have a reply target.
+    let (body, attachments, voice_audio): (
+        String,
+        Vec<ChannelAttachment>,
+        Option<(Vec<u8>, String)>,
+    ) = if let Some(voice_file) = extract_voice_file(&msg) {
         // If STT is not configured, reply with guidance and do not dispatch to the LLM.
         if let Some(ref sink) = event_sink
             && !sink.voice_stt_available().await
@@ -225,7 +246,20 @@ pub async fn handle_message_direct(
                         size = audio_data.len(),
                         "downloaded voice file, transcribing"
                     );
+                    let saved_audio = Some((audio_data.clone(), voice_file.format.clone()));
                     match sink.transcribe_voice(&audio_data, &voice_file.format).await {
+                        Ok(transcribed) if transcribed.trim().is_empty() => {
+                            warn!(
+                                account_id,
+                                audio_size = audio_data.len(),
+                                "voice transcription returned empty text"
+                            );
+                            (
+                                "[Voice message - could not transcribe]".to_string(),
+                                Vec::new(),
+                                saved_audio,
+                            )
+                        },
                         Ok(transcribed) => {
                             debug!(
                                 account_id,
@@ -239,7 +273,7 @@ pub async fn handle_message_direct(
                             } else {
                                 format!("{}\n\n[Voice message]: {}", caption, transcribed)
                             };
-                            (body, Vec::new())
+                            (body, Vec::new(), saved_audio)
                         },
                         Err(e) => {
                             warn!(account_id, error = %e, "voice transcription failed");
@@ -249,6 +283,7 @@ pub async fn handle_message_direct(
                                     "[Voice message - transcription unavailable]".to_string()
                                 }),
                                 Vec::new(),
+                                saved_audio,
                             )
                         },
                     }
@@ -259,6 +294,7 @@ pub async fn handle_message_direct(
                         text.clone()
                             .unwrap_or_else(|| "[Voice message - download failed]".to_string()),
                         Vec::new(),
+                        None,
                     )
                 },
             }
@@ -268,6 +304,7 @@ pub async fn handle_message_direct(
                 text.clone()
                     .unwrap_or_else(|| "[Voice message]".to_string()),
                 Vec::new(),
+                None,
             )
         }
     } else if let Some(photo_file) = extract_photo_file(&msg) {
@@ -311,7 +348,7 @@ pub async fn handle_message_direct(
                 };
                 // Use caption as text, or empty string if no caption
                 let caption = text.clone().unwrap_or_default();
-                (caption, vec![attachment])
+                (caption, vec![attachment], None)
             },
             Err(e) => {
                 warn!(account_id, error = %e, "failed to download photo");
@@ -319,6 +356,7 @@ pub async fn handle_message_direct(
                     text.clone()
                         .unwrap_or_else(|| "[Photo - download failed]".to_string()),
                     Vec::new(),
+                    None,
                 )
             },
         }
@@ -338,6 +376,17 @@ pub async fn handle_message_direct(
         } else {
             false
         };
+
+        info!(
+            account_id,
+            chat_id = msg.chat.id.0,
+            message_id = msg.id.0,
+            lat,
+            lon,
+            is_live = loc_info.is_live,
+            resolved_pending_request = resolved,
+            "telegram location received"
+        );
 
         if resolved {
             // Pending tool request was resolved — the LLM will respond via the tool flow.
@@ -373,7 +422,11 @@ pub async fn handle_message_direct(
         }
 
         // Static location share — dispatch to LLM so it can acknowledge.
-        (format!("I'm sharing my location: {lat}, {lon}"), Vec::new())
+        (
+            format!("I'm sharing my location: {lat}, {lon}"),
+            Vec::new(),
+            None,
+        )
     } else {
         // Log unhandled media types so we know when users are sending attachments we don't process
         if let Some(media_type) = describe_media_kind(&msg) {
@@ -382,12 +435,21 @@ pub async fn handle_message_direct(
                 peer_id, media_type, "received unhandled attachment type"
             );
         }
-        (text.unwrap_or_default(), Vec::new())
+        (text.unwrap_or_default(), Vec::new(), None)
     };
 
     // Dispatch to the chat session (per-channel session key derived by the sink).
     // The reply target tells the gateway where to send the LLM response back.
     let has_content = !body.is_empty() || !attachments.is_empty();
+    if !has_content {
+        warn!(
+            account_id,
+            chat_id = msg.chat.id.0,
+            message_id = msg.id.0,
+            kind = ?inbound_kind,
+            "telegram message produced empty body, skipping dispatch"
+        );
+    }
     if let Some(ref sink) = event_sink
         && has_content
     {
@@ -398,20 +460,27 @@ pub async fn handle_message_direct(
             message_id: Some(msg.id.0.to_string()),
         };
 
+        info!(
+            account_id,
+            chat_id = %reply_target.chat_id,
+            message_id = ?reply_target.message_id,
+            body_len = body.len(),
+            attachment_count = attachments.len(),
+            message_kind = ?inbound_kind,
+            "telegram inbound dispatched to chat"
+        );
+
         // Intercept slash commands before dispatching to the LLM.
         if body.starts_with('/') {
             let cmd_text = body.trim_start_matches('/');
             let cmd = cmd_text.split_whitespace().next().unwrap_or("");
-            if matches!(
-                cmd,
-                "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "help"
-            ) {
+            if should_intercept_slash_command(cmd, cmd_text) {
                 // For /context, send a formatted card with inline keyboard.
                 if cmd == "context" {
                     let context_result =
                         sink.dispatch_command("context", reply_target.clone()).await;
                     let bot = {
-                        let accts = accounts.read().unwrap();
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                         accts.get(account_id).map(|s| s.bot.clone())
                     };
                     if let Some(bot) = bot {
@@ -433,10 +502,35 @@ pub async fn handle_message_direct(
                 }
 
                 // For /model without args, send an inline keyboard to pick a model.
+                if cmd == "agent" && cmd_text.trim() == "agent" {
+                    let list_result = sink.dispatch_command("agent", reply_target.clone()).await;
+                    let bot = {
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+                        accts.get(account_id).map(|s| s.bot.clone())
+                    };
+                    if let Some(bot) = bot {
+                        match list_result {
+                            Ok(text) => {
+                                send_agent_keyboard(&bot, &reply_target.chat_id, &text).await;
+                            },
+                            Err(e) => {
+                                let _ = bot
+                                    .send_message(
+                                        ChatId(reply_target.chat_id.parse().unwrap_or(0)),
+                                        format!("Error: {e}"),
+                                    )
+                                    .await;
+                            },
+                        }
+                    }
+                    return Ok(());
+                }
+
+                // For /model without args, send an inline keyboard to pick a model.
                 if cmd == "model" && cmd_text.trim() == "model" {
                     let list_result = sink.dispatch_command("model", reply_target.clone()).await;
                     let bot = {
-                        let accts = accounts.read().unwrap();
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                         accts.get(account_id).map(|s| s.bot.clone())
                     };
                     if let Some(bot) = bot {
@@ -461,7 +555,7 @@ pub async fn handle_message_direct(
                 if cmd == "sandbox" && cmd_text.trim() == "sandbox" {
                     let list_result = sink.dispatch_command("sandbox", reply_target.clone()).await;
                     let bot = {
-                        let accts = accounts.read().unwrap();
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                         accts.get(account_id).map(|s| s.bot.clone())
                     };
                     if let Some(bot) = bot {
@@ -488,7 +582,7 @@ pub async fn handle_message_direct(
                         .dispatch_command("sessions", reply_target.clone())
                         .await;
                     let bot = {
-                        let accts = accounts.read().unwrap();
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                         accts.get(account_id).map(|s| s.bot.clone())
                     };
                     if let Some(bot) = bot {
@@ -510,7 +604,7 @@ pub async fn handle_message_direct(
                 }
 
                 let response = if cmd == "help" {
-                    "Available commands:\n/new — Start a new session\n/sessions — List and switch sessions\n/model — Switch provider/model\n/sandbox — Toggle sandbox and choose image\n/clear — Clear session history\n/compact — Compact session (summarize)\n/context — Show session context info\n/help — Show this help".to_string()
+                    "Available commands:\n/new — Start a new session\n/sessions — List and switch sessions\n/agent — Switch session agent\n/model — Switch provider/model\n/sandbox — Toggle sandbox and choose image\n/sh — Enable command mode (/sh off to exit)\n/clear — Clear session history\n/compact — Compact session (summarize)\n/context — Show session context info\n/help — Show this help".to_string()
                 } else {
                     match sink.dispatch_command(cmd_text, reply_target.clone()).await {
                         Ok(msg) => msg,
@@ -519,7 +613,7 @@ pub async fn handle_message_direct(
                 };
                 // Get the outbound Arc before awaiting (avoid holding RwLockReadGuard across await).
                 let outbound = {
-                    let accts = accounts.read().unwrap();
+                    let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                     accts.get(account_id).map(|s| Arc::clone(&s.outbound))
                 };
                 if let Some(outbound) = outbound
@@ -533,12 +627,22 @@ pub async fn handle_message_direct(
             }
         }
 
+        // Save voice audio to the session media directory (best-effort).
+        let audio_filename = if let Some((ref audio_data, ref format)) = voice_audio {
+            let filename = format!("voice-tg-{}.{format}", msg.id.0);
+            sink.save_channel_voice(audio_data, &filename, &reply_target)
+                .await
+        } else {
+            None
+        };
+
         let meta = ChannelMessageMeta {
             channel_type: ChannelType::Telegram,
             sender_name: sender_name.clone(),
             username: username.clone(),
             message_kind: message_kind(&msg),
             model: config.model.clone(),
+            audio_filename,
         };
 
         if attachments.is_empty() {
@@ -553,6 +657,18 @@ pub async fn handle_message_direct(
     histogram!(tg_metrics::POLLING_DURATION_SECONDS).record(start.elapsed().as_secs_f64());
 
     Ok(())
+}
+
+fn should_intercept_slash_command(cmd: &str, cmd_text: &str) -> bool {
+    match cmd {
+        "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "agent"
+        | "help" => true,
+        "sh" => {
+            let args = cmd_text.strip_prefix(cmd).unwrap_or("").trim();
+            args.is_empty() || matches!(args, "on" | "off" | "exit" | "status")
+        },
+        _ => false,
+    }
 }
 
 /// OTP challenge message sent to the Telegram user.
@@ -585,7 +701,7 @@ async fn handle_otp_flow(
 
     // Resolve bot early (needed for sending messages).
     let bot = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts.get(account_id).map(|s| s.bot.clone())
     };
     let bot = match bot {
@@ -595,11 +711,11 @@ async fn handle_otp_flow(
 
     // Check current OTP state.
     let has_pending = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts
             .get(account_id)
             .map(|s| {
-                let otp = s.otp.lock().unwrap();
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
                 otp.has_pending(peer_id)
             })
             .unwrap_or(false)
@@ -617,10 +733,10 @@ async fn handle_otp_flow(
 
         // Verify the code.
         let result = {
-            let accts = accounts.read().unwrap();
+            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
             match accts.get(account_id) {
                 Some(s) => {
-                    let mut otp = s.otp.lock().unwrap();
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
                     otp.verify(peer_id, body)
                 },
                 None => return,
@@ -723,10 +839,10 @@ async fn handle_otp_flow(
     } else {
         // No pending challenge — initiate one.
         let init_result = {
-            let accts = accounts.read().unwrap();
+            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
             match accts.get(account_id) {
                 Some(s) => {
-                    let mut otp = s.otp.lock().unwrap();
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
                     otp.initiate(
                         peer_id,
                         username.map(String::from),
@@ -784,7 +900,7 @@ pub async fn handle_edited_location(
     msg: Message,
     account_id: &str,
     accounts: &AccountStateMap,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     let Some(loc_info) = extract_location(&msg) else {
         // Not a location edit — ignore (could be a text edit, etc.).
         return Ok(());
@@ -799,9 +915,17 @@ pub async fn handle_edited_location(
         chat_id = msg.chat.id.0,
         "live location update"
     );
+    info!(
+        account_id,
+        chat_id = msg.chat.id.0,
+        message_id = msg.id.0,
+        lat,
+        lon,
+        "telegram live location update received"
+    );
 
     let event_sink = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts.get(account_id).and_then(|s| s.event_sink.clone())
     };
 
@@ -824,9 +948,7 @@ async fn handle_message(
     bot: Bot,
     ctx: Arc<HandlerContext>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    handle_message_direct(msg, &bot, &ctx.account_id, &ctx.accounts)
-        .await
-        .map_err(|e| e.to_string())?;
+    handle_message_direct(msg, &bot, &ctx.account_id, &ctx.accounts).await?;
     Ok(())
 }
 
@@ -867,6 +989,44 @@ async fn send_sessions_keyboard(bot: &Bot, chat_id: &str, sessions_text: &str) {
     let keyboard = InlineKeyboardMarkup::new(buttons);
     let _ = bot
         .send_message(chat, "Select a session:")
+        .reply_markup(keyboard)
+        .await;
+}
+
+/// Send agent selection as an inline keyboard.
+///
+/// Parses numbered lines like:
+/// `1. 🤖 Main [main] (default) *`
+async fn send_agent_keyboard(bot: &Bot, chat_id: &str, agents_text: &str) {
+    let chat = ChatId(chat_id.parse().unwrap_or(0));
+    let mut buttons: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    for line in agents_text.lines() {
+        let trimmed = line.trim();
+        if let Some(dot_pos) = trimmed.find(". ")
+            && let Ok(n) = trimmed[..dot_pos].parse::<usize>()
+        {
+            let label_part = &trimmed[dot_pos + 2..];
+            let is_active = label_part.ends_with('*');
+            let display = if is_active {
+                format!("● {}", label_part.trim_end_matches('*').trim())
+            } else {
+                format!("○ {label_part}")
+            };
+            buttons.push(vec![InlineKeyboardButton::callback(
+                display,
+                format!("agent_switch:{n}"),
+            )]);
+        }
+    }
+
+    if buttons.is_empty() {
+        let _ = bot.send_message(chat, agents_text).await;
+        return;
+    }
+
+    let keyboard = InlineKeyboardMarkup::new(buttons);
+    let _ = bot
+        .send_message(chat, "Select an agent:")
         .reply_markup(keyboard)
         .await;
 }
@@ -1080,7 +1240,7 @@ pub async fn handle_callback_query(
     _bot: &Bot,
     account_id: &str,
     accounts: &AccountStateMap,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     let data = match query.data {
         Some(ref d) => d.as_str(),
         None => return Ok(()),
@@ -1088,13 +1248,15 @@ pub async fn handle_callback_query(
 
     // Answer the callback to dismiss the loading spinner.
     let bot = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts.get(account_id).map(|s| s.bot.clone())
     };
 
     // Determine which command this callback is for.
     let cmd_text = if let Some(n_str) = data.strip_prefix("sessions_switch:") {
         Some(format!("sessions {n_str}"))
+    } else if let Some(n_str) = data.strip_prefix("agent_switch:") {
+        Some(format!("agent {n_str}"))
     } else if let Some(n_str) = data.strip_prefix("model_switch:") {
         Some(format!("model {n_str}"))
     } else if let Some(val) = data.strip_prefix("sandbox_toggle:") {
@@ -1122,7 +1284,7 @@ pub async fn handle_callback_query(
     }
 
     let (event_sink, outbound) = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = match accts.get(account_id) {
             Some(s) => s,
             None => return Ok(()),
@@ -1130,7 +1292,7 @@ pub async fn handle_callback_query(
         (state.event_sink.clone(), Arc::clone(&state.outbound))
     };
 
-    let reply_target = moltis_channels::ChannelReplyTarget {
+    let reply_target = ChannelReplyTarget {
         channel_type: ChannelType::Telegram,
         account_id: account_id.to_string(),
         chat_id: chat_id.clone(),
@@ -1146,8 +1308,9 @@ pub async fn handle_callback_query(
             let cmd = format!("model provider:{provider_name}");
             match sink.dispatch_command(&cmd, reply_target).await {
                 Ok(text) => {
-                    let b = bot.as_ref().unwrap();
-                    send_model_keyboard(b, &chat_id, &text).await;
+                    if let Some(ref b) = bot {
+                        send_model_keyboard(b, &chat_id, &text).await;
+                    }
                 },
                 Err(e) => {
                     if let Err(err) = outbound
@@ -1162,7 +1325,9 @@ pub async fn handle_callback_query(
         return Ok(());
     }
 
-    let cmd_text = cmd_text.unwrap();
+    let Some(cmd_text) = cmd_text else {
+        return Ok(());
+    };
 
     if let Some(ref sink) = event_sink {
         let response = match sink.dispatch_command(&cmd_text, reply_target).await {
@@ -1373,22 +1538,22 @@ impl ToChannelMessageKind for MediaKind {
 }
 
 /// Download a file from Telegram by file ID.
-async fn download_telegram_file(bot: &Bot, file_id: &str) -> anyhow::Result<Vec<u8>> {
+async fn download_telegram_file(bot: &Bot, file_id: &str) -> crate::Result<Vec<u8>> {
     // Get file info from Telegram
     let file = bot.get_file(file_id).await?;
 
-    // Build the download URL
-    // Telegram file URL format: https://api.telegram.org/file/bot<token>/<file_path>
+    // Build the download URL from the bot's API base (respects custom/self-hosted endpoints).
     let token = bot.token();
-    let url = format!("https://api.telegram.org/file/bot{}/{}", token, file.path);
+    let base = bot.api_url();
+    let url = format!("{base}file/bot{token}/{}", file.path);
 
     // Download using reqwest
     let response = reqwest::get(&url).await?;
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!(
+        return Err(crate::Error::message(format!(
             "failed to download file: HTTP {}",
             response.status()
-        ));
+        )));
     }
 
     let data = response.bytes().await?.to_vec();
@@ -1436,6 +1601,7 @@ fn build_session_key(
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {
@@ -1447,10 +1613,12 @@ mod tests {
     };
 
     use {
-        anyhow::Result,
         async_trait::async_trait,
         axum::{Json, Router, body::Bytes, extract::State, http::Uri, routing::post},
-        moltis_channels::{ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget},
+        moltis_channels::{
+            ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
+            Error as ChannelError, Result, gating::DmPolicy,
+        },
         secrecy::Secret,
         serde::{Deserialize, Serialize},
         serde_json::json,
@@ -1469,6 +1637,7 @@ mod tests {
     enum TelegramApiMethod {
         SendMessage,
         SendChatAction,
+        GetFile,
         Other(String),
     }
 
@@ -1476,8 +1645,9 @@ mod tests {
         fn from_path(path: &str) -> Self {
             let method = path.rsplit('/').next().unwrap_or_default();
             match method {
-                "SendMessage" => Self::SendMessage,
-                "SendChatAction" => Self::SendChatAction,
+                "SendMessage" | "sendMessage" => Self::SendMessage,
+                "SendChatAction" | "sendChatAction" => Self::SendChatAction,
+                "GetFile" | "getFile" => Self::GetFile,
                 _ => Self::Other(method.to_string()),
             }
         }
@@ -1517,7 +1687,15 @@ mod tests {
     #[serde(untagged)]
     enum TelegramApiResult {
         Message(TelegramMessageResult),
+        File(TelegramFileResult),
         Bool(bool),
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TelegramFileResult {
+        file_id: String,
+        file_unique_id: String,
+        file_path: String,
     }
 
     #[derive(Debug, Serialize)]
@@ -1561,7 +1739,9 @@ mod tests {
                     Err(_) => CapturedTelegramRequest::Other { method, raw_body },
                 }
             },
-            TelegramApiMethod::Other(_) => CapturedTelegramRequest::Other { method, raw_body },
+            TelegramApiMethod::GetFile | TelegramApiMethod::Other(_) => {
+                CapturedTelegramRequest::Other { method, raw_body }
+            },
         };
 
         state.requests.lock().expect("lock requests").push(captured);
@@ -1579,6 +1759,14 @@ mod tests {
                     text: "ok".to_string(),
                 }),
             }),
+            TelegramApiMethod::GetFile => Json(TelegramApiResponse {
+                ok: true,
+                result: TelegramApiResult::File(TelegramFileResult {
+                    file_id: "test-file-id".to_string(),
+                    file_unique_id: "test-unique-id".to_string(),
+                    file_path: "voice/test-voice.ogg".to_string(),
+                }),
+            }),
             TelegramApiMethod::SendChatAction | TelegramApiMethod::Other(_) => {
                 Json(TelegramApiResponse {
                     ok: true,
@@ -1591,6 +1779,19 @@ mod tests {
     #[derive(Default)]
     struct MockSink {
         dispatch_calls: std::sync::atomic::AtomicUsize,
+        dispatched_texts: Mutex<Vec<String>>,
+        stt_available: bool,
+        transcription_result: Mutex<Option<Result<String>>>,
+    }
+
+    impl MockSink {
+        fn with_stt(transcription: Result<String>) -> Self {
+            Self {
+                stt_available: true,
+                transcription_result: Mutex::new(Some(transcription)),
+                ..Default::default()
+            }
+        }
     }
 
     #[async_trait]
@@ -1599,19 +1800,23 @@ mod tests {
 
         async fn dispatch_to_chat(
             &self,
-            _text: &str,
+            text: &str,
             _reply_to: ChannelReplyTarget,
             _meta: ChannelMessageMeta,
         ) {
             self.dispatch_calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.dispatched_texts
+                .lock()
+                .expect("lock")
+                .push(text.to_string());
         }
 
         async fn dispatch_command(
             &self,
             _command: &str,
             _reply_to: ChannelReplyTarget,
-        ) -> anyhow::Result<String> {
+        ) -> Result<String> {
             Ok(String::new())
         }
 
@@ -1624,13 +1829,19 @@ mod tests {
         }
 
         async fn transcribe_voice(&self, _audio_data: &[u8], _format: &str) -> Result<String> {
-            Err(anyhow::anyhow!(
-                "transcribe should not be called when STT unavailable"
-            ))
+            self.transcription_result
+                .lock()
+                .expect("lock")
+                .take()
+                .unwrap_or_else(|| {
+                    Err(ChannelError::unavailable(
+                        "transcribe should not be called when STT unavailable",
+                    ))
+                })
         }
 
         async fn voice_stt_available(&self) -> bool {
-            false
+            self.stt_available
         }
     }
 
@@ -1644,6 +1855,21 @@ mod tests {
     fn session_key_group() {
         let key = build_session_key("bot1", &ChatType::Group, "user123", Some("-100999"));
         assert_eq!(key, "telegram:bot1:group:-100999");
+    }
+
+    #[test]
+    fn intercepts_shell_mode_control_commands_only() {
+        assert!(should_intercept_slash_command("sh", "sh"));
+        assert!(should_intercept_slash_command("sh", "sh on"));
+        assert!(should_intercept_slash_command("sh", "sh off"));
+        assert!(should_intercept_slash_command("sh", "sh exit"));
+        assert!(should_intercept_slash_command("sh", "sh status"));
+    }
+
+    #[test]
+    fn shell_command_payloads_are_not_intercepted() {
+        assert!(!should_intercept_slash_command("sh", "sh uname -a"));
+        assert!(!should_intercept_slash_command("sh", "sh ls -la"));
     }
 
     /// Security: the OTP challenge message sent to the Telegram user must
@@ -1731,7 +1957,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
-        let bot = teloxide::Bot::new("test-token").set_api_url(api_url);
+        let bot = Bot::new("test-token").set_api_url(api_url);
 
         let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
         let outbound = Arc::new(TelegramOutbound {
@@ -1748,13 +1974,14 @@ mod tests {
                 account_id: account_id.to_string(),
                 config: TelegramAccountConfig {
                     token: Secret::new("test-token".to_string()),
+                    dm_policy: DmPolicy::Open,
                     ..Default::default()
                 },
                 outbound: Arc::clone(&outbound),
                 cancel: CancellationToken::new(),
                 message_log: None,
                 event_sink: Some(Arc::clone(&sink) as Arc<dyn ChannelEventSink>),
-                otp: std::sync::Mutex::new(OtpState::new(300)),
+                otp: Mutex::new(OtpState::new(300)),
             });
         }
 
@@ -1832,6 +2059,126 @@ mod tests {
             0,
             "voice message should not be dispatched to chat when STT is unavailable"
         );
+
+        let _ = shutdown_tx.send(());
+        server.await.expect("server join");
+    }
+
+    /// Regression test: when STT is available but transcription returns an empty
+    /// string (e.g. noisy environment), the voice message must still be
+    /// dispatched to chat and the audio saved, rather than silently dropped.
+    #[tokio::test]
+    async fn voice_empty_transcription_still_dispatches_to_chat() {
+        use axum::{http::Method, routing::any};
+
+        async fn combined_handler(
+            method: Method,
+            State(state): State<MockTelegramApi>,
+            uri: Uri,
+            body: Bytes,
+        ) -> axum::response::Response {
+            use axum::response::IntoResponse;
+            if method == Method::GET {
+                // File download endpoint — return dummy audio bytes.
+                return Bytes::from_static(b"fake-ogg-audio-data").into_response();
+            }
+            // Delegate POST to the normal mock Telegram API handler.
+            let resp = telegram_api_handler(State(state), uri, body).await;
+            resp.into_response()
+        }
+
+        let recorded_requests = Arc::new(Mutex::new(Vec::<CapturedTelegramRequest>::new()));
+        let mock_api = MockTelegramApi {
+            requests: Arc::clone(&recorded_requests),
+        };
+        let app = Router::new()
+            .route("/{*path}", any(combined_handler))
+            .with_state(mock_api);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("serve mock telegram api");
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
+        let bot = Bot::new("test-token").set_api_url(api_url);
+
+        let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+        let outbound = Arc::new(TelegramOutbound {
+            accounts: Arc::clone(&accounts),
+        });
+        // STT available, transcription returns empty string.
+        let sink = Arc::new(MockSink::with_stt(Ok(String::new())));
+        let account_id = "test-account";
+
+        {
+            let mut map = accounts.write().expect("accounts write lock");
+            map.insert(account_id.to_string(), AccountState {
+                bot: bot.clone(),
+                bot_username: Some("test_bot".into()),
+                account_id: account_id.to_string(),
+                config: TelegramAccountConfig {
+                    token: Secret::new("test-token".to_string()),
+                    dm_policy: DmPolicy::Open,
+                    ..Default::default()
+                },
+                outbound: Arc::clone(&outbound),
+                cancel: CancellationToken::new(),
+                message_log: None,
+                event_sink: Some(Arc::clone(&sink) as Arc<dyn ChannelEventSink>),
+                otp: Mutex::new(OtpState::new(300)),
+            });
+        }
+
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice",
+                "username": "alice"
+            },
+            "voice": {
+                "file_id": "voice-file-id",
+                "file_unique_id": "voice-unique-id",
+                "duration": 1,
+                "mime_type": "audio/ogg",
+                "file_size": 123
+            }
+        }))
+        .expect("deserialize voice message");
+
+        handle_message_direct(msg, &bot, account_id, &accounts)
+            .await
+            .expect("handle message");
+
+        assert_eq!(
+            sink.dispatch_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "voice message with empty transcription must still be dispatched to chat"
+        );
+
+        {
+            let texts = sink.dispatched_texts.lock().expect("lock");
+            assert!(
+                texts[0].contains("could not transcribe"),
+                "dispatched text should indicate transcription was empty, got: {}",
+                texts[0]
+            );
+        }
 
         let _ = shutdown_tx.send(());
         server.await.expect("server join");

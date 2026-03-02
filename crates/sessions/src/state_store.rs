@@ -5,7 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use crate::Result;
 
 /// A single state entry.
 #[derive(Debug, Clone)]
@@ -143,6 +143,7 @@ impl SessionStateStore {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

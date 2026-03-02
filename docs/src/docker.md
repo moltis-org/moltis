@@ -10,20 +10,52 @@ Registry on every release.
 docker run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
+  -p 1455:1455 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 ```
 
-Open http://localhost:13131 in your browser and configure your LLM provider to start chatting.
+Open https://localhost:13131 in your browser and configure your LLM provider to start chatting.
+
+### Ports
+
+| Port | Purpose |
+|------|---------|
+| 13131 | Gateway (HTTPS) — web UI, API, WebSocket |
+| 13132 | HTTP — CA certificate download for TLS trust |
+| 1455 | OAuth callback — required for OpenAI Codex and other providers with pre-registered redirect URIs |
+
+### Trusting the TLS certificate
+
+Moltis generates a self-signed CA on first run. Browsers will show a security
+warning until you trust this CA. Port 13132 serves the certificate over plain
+HTTP so you can download it:
+
+```bash
+# Download the CA certificate
+curl -o moltis-ca.pem http://localhost:13132/certs/ca.pem
+
+# macOS — add to system Keychain and trust it
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain moltis-ca.pem
+
+# Linux (Debian/Ubuntu)
+sudo cp moltis-ca.pem /usr/local/share/ca-certificates/moltis-ca.crt
+sudo update-ca-certificates
+```
+
+After trusting the CA, restart your browser. The warning will not appear again
+(the CA persists in the mounted config volume).
 
 ```admonish note
 When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup:
 
-\`\`\`bash
+~~~bash
 docker logs moltis
-\`\`\`
+~~~
 ```
 
 ## Volume Mounts
@@ -42,10 +74,12 @@ for easier access to configuration files:
 docker run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
+  -p 1455:1455 \
   -v ./config:/home/moltis/.config/moltis \
   -v ./data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 ```
 
 With bind mounts, you can edit `config/moltis.toml` directly on the host.
@@ -70,7 +104,7 @@ will fail.
 Mounting the Docker socket gives the container full access to the Docker
 daemon. This is equivalent to root access on the host for practical purposes.
 Only run Moltis containers from trusted sources (official images from
-`ghcr.io/penso/moltis`).
+`ghcr.io/moltis-org/moltis`).
 
 If you cannot mount the Docker socket, Moltis will run in "no sandbox" mode —
 commands execute directly inside the Moltis container itself, which provides
@@ -84,16 +118,34 @@ complete example:
 ```yaml
 services:
   moltis:
-    image: ghcr.io/penso/moltis:latest
+    image: ghcr.io/moltis-org/moltis:latest
     container_name: moltis
     restart: unless-stopped
     ports:
       - "13131:13131"
+      - "13132:13132"
+      - "1455:1455"   # OAuth callback (OpenAI Codex, etc.)
     volumes:
       - ./config:/home/moltis/.config/moltis
       - ./data:/home/moltis/.moltis
       - /var/run/docker.sock:/var/run/docker.sock
 ```
+
+### Coolify (Hetzner/VPS)
+
+For Coolify service stacks, use
+[`examples/docker-compose.coolify.yml`](../examples/docker-compose.coolify.yml).
+It is preconfigured for reverse-proxy deployments (`--no-tls`) and includes
+the Docker socket mount for sandboxed command execution.
+
+Key points:
+
+- Set `MOLTIS_PASSWORD` in the Coolify UI before first deploy.
+- Set `SERVICE_FQDN_MOLTIS_13131` to your app domain.
+- Keep Moltis in `--no-tls` mode behind Coolify's reverse proxy. If requests
+  are redirected to `:13131`, check that TLS is disabled in Moltis.
+- Keep `/var/run/docker.sock:/var/run/docker.sock` mounted if you want sandbox
+  isolation for exec tools.
 
 Start with:
 
@@ -112,19 +164,23 @@ socket instead of the Docker socket:
 podman run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
+  -p 1455:1455 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 
 # Podman rootful
 podman run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
+  -p 1455:1455 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/podman/podman.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 ```
 
 You may need to enable the Podman socket service first:
@@ -150,12 +206,57 @@ Example:
 docker run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
+  -p 1455:1455 \
   -e MOLTIS_CONFIG_DIR=/config \
   -e MOLTIS_DATA_DIR=/data \
   -v ./config:/config \
   -v ./data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
+```
+
+### API Keys and the `[env]` Section
+
+Features like web search (Brave), embeddings, and LLM provider API calls read
+keys from process environment variables (`std::env::var`). In Docker, there are
+two ways to provide these:
+
+**Option 1: `docker -e` flags** (takes precedence)
+
+```bash
+docker run -d \
+  --name moltis \
+  -e BRAVE_API_KEY=your-key \
+  -e OPENROUTER_API_KEY=sk-or-... \
+  ...
+  ghcr.io/moltis-org/moltis:latest
+```
+
+**Option 2: `[env]` section in `moltis.toml`**
+
+Add an `[env]` section to your config file. These variables are injected into
+the Moltis process at startup, making them available to all features:
+
+```toml
+[env]
+BRAVE_API_KEY = "your-brave-key"
+OPENROUTER_API_KEY = "sk-or-..."
+```
+
+If a variable is set both via `docker -e` and `[env]`, the Docker/host
+environment value wins — `[env]` never overwrites existing variables.
+
+```admonish info title="Settings UI env vars"
+Environment variables set through the Settings UI (Settings > Environment)
+are stored in SQLite. At startup, Moltis injects them into the process
+environment so they are available to all features (search, embeddings,
+provider API calls), not just sandbox commands.
+
+Precedence order (highest wins):
+1. Host / `docker -e` environment variables
+2. Config file `[env]` section
+3. Settings UI environment variables
 ```
 
 ## Building Locally
@@ -194,6 +295,27 @@ The setup code only appears when accessing from a non-localhost address. If you'
 ```bash
 docker logs moltis 2>&1 | grep -i setup
 ```
+
+### OAuth authentication error (OpenAI Codex)
+
+If clicking **Connect** for OpenAI Codex shows "unknown_error" on OpenAI's
+page, port 1455 is not reachable from your browser. Make sure you published it:
+
+```bash
+-p 1455:1455
+```
+
+If you're running Moltis on a remote server (cloud VM, VPS) and accessing it
+over the network, `localhost:1455` on the browser side points to your local
+machine — not the server. In that case, authenticate via the CLI instead:
+
+```bash
+docker exec -it moltis moltis auth login --provider openai-codex
+```
+
+The CLI opens a browser on the machine where you run the command and handles
+the OAuth callback locally. Tokens are saved to the config volume and picked
+up by the running gateway automatically.
 
 ### Permission denied on bind mounts
 

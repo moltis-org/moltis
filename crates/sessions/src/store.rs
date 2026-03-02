@@ -5,7 +5,7 @@ use std::{
 };
 
 use {
-    anyhow::Result,
+    crate::{Error, Result},
     fd_lock::RwLock,
     serde::{Deserialize, Serialize},
 };
@@ -22,6 +22,16 @@ pub struct SearchResult {
 /// Append-only JSONL session storage with file locking.
 pub struct SessionStore {
     pub base_dir: PathBuf,
+}
+
+#[must_use]
+fn slice_on_char_boundaries(content: &str, start: usize, end: usize) -> &str {
+    let bounded_start = content.floor_char_boundary(start.min(content.len()));
+    let bounded_end = content.floor_char_boundary(end.min(content.len()));
+    if bounded_start >= bounded_end {
+        return "";
+    }
+    &content[bounded_start..bounded_end]
 }
 
 impl SessionStore {
@@ -85,7 +95,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             writeln!(*guard, "{line}")?;
             Ok(())
         })
@@ -121,6 +131,16 @@ impl SessionStore {
             Ok(messages)
         })
         .await?
+    }
+
+    /// Read all messages from a session that match a given `run_id`.
+    pub async fn read_by_run_id(&self, key: &str, run_id: &str) -> Result<Vec<serde_json::Value>> {
+        let all = self.read(key).await?;
+        let run_id = run_id.to_string();
+        Ok(all
+            .into_iter()
+            .filter(|msg| msg.get("run_id").and_then(|v| v.as_str()) == Some(&run_id))
+            .collect())
     }
 
     /// Read the last N messages from a session file.
@@ -233,8 +253,8 @@ impl SessionStore {
                         let lower = content.to_lowercase();
                         let pos = lower.find(&query).unwrap_or(0);
                         let start = pos.saturating_sub(40);
-                        let end = (pos + query.len() + 60).min(content.len());
-                        let snippet = content[start..end].to_string();
+                        let end = pos.saturating_add(query.len()).saturating_add(60);
+                        let snippet = slice_on_char_boundaries(content, start, end).to_string();
 
                         results.push(SearchResult {
                             session_key: session_key.clone(),
@@ -269,7 +289,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             for msg in &messages {
                 let line = serde_json::to_string(msg)?;
                 writeln!(*guard, "{line}")?;
@@ -279,6 +299,111 @@ impl SessionStore {
         .await??;
 
         Ok(())
+    }
+
+    /// Read all messages as typed [`PersistedMessage`] values.
+    ///
+    /// Lines that fail to deserialize into `PersistedMessage` are skipped
+    /// (with a warning), matching the behavior of [`read`].
+    pub async fn read_typed(&self, key: &str) -> Result<Vec<crate::message::PersistedMessage>> {
+        let path = self.path_for(key);
+
+        tokio::task::spawn_blocking(move || -> Result<Vec<crate::message::PersistedMessage>> {
+            if !path.exists() {
+                return Ok(vec![]);
+            }
+            let file = File::open(&path)?;
+            let reader = BufReader::new(file);
+            let mut messages = Vec::new();
+            for line in reader.lines() {
+                let line = line?;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str(trimmed) {
+                    Ok(msg) => messages.push(msg),
+                    Err(e) => {
+                        tracing::warn!("skipping malformed JSONL line (typed): {e}");
+                    },
+                }
+            }
+            Ok(messages)
+        })
+        .await?
+    }
+
+    /// Read the last N messages as typed [`PersistedMessage`] values.
+    pub async fn read_last_n_typed(
+        &self,
+        key: &str,
+        n: usize,
+    ) -> Result<Vec<crate::message::PersistedMessage>> {
+        let path = self.path_for(key);
+
+        tokio::task::spawn_blocking(move || -> Result<Vec<crate::message::PersistedMessage>> {
+            if !path.exists() {
+                return Ok(vec![]);
+            }
+            let file = File::open(&path)?;
+            let reader = BufReader::new(file);
+            let mut all: Vec<crate::message::PersistedMessage> = Vec::new();
+            for line in reader.lines() {
+                let line = line?;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Ok(msg) = serde_json::from_str(trimmed) {
+                    all.push(msg);
+                }
+            }
+            let start = all.len().saturating_sub(n);
+            Ok(all[start..].to_vec())
+        })
+        .await?
+    }
+
+    /// Replace the entire session history with typed messages.
+    pub async fn replace_history_typed(
+        &self,
+        key: &str,
+        messages: &[crate::message::PersistedMessage],
+    ) -> Result<()> {
+        let path = self.path_for(key);
+        let values: Vec<serde_json::Value> = messages.iter().map(|m| m.to_value()).collect();
+
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)?;
+            let mut lock = RwLock::new(file);
+            let mut guard = lock
+                .write()
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
+            for msg in &values {
+                let line = serde_json::to_string(msg)?;
+                writeln!(*guard, "{line}")?;
+            }
+            Ok(())
+        })
+        .await??;
+
+        Ok(())
+    }
+
+    /// Append a typed message to the session file.
+    pub async fn append_typed(
+        &self,
+        key: &str,
+        message: &crate::message::PersistedMessage,
+    ) -> Result<()> {
+        self.append(key, &message.to_value()).await
     }
 
     /// Count messages in a session file without parsing them.
@@ -293,7 +418,7 @@ impl SessionStore {
             let reader = BufReader::new(file);
             let count = reader
                 .lines()
-                .map_while(Result::ok)
+                .map_while(std::result::Result::ok)
                 .filter(|l| !l.trim().is_empty())
                 .count();
             Ok(count as u32)
@@ -302,6 +427,7 @@ impl SessionStore {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, serde_json::json};
@@ -310,6 +436,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::new(dir.path().to_path_buf());
         (store, dir)
+    }
+
+    #[test]
+    fn slice_on_char_boundaries_handles_multibyte_boundary() {
+        let content = format!("{}л{}", "a".repeat(39), "z".repeat(20));
+        let snippet = slice_on_char_boundaries(&content, 0, 40);
+        assert_eq!(snippet.len(), 39);
+        assert!(snippet.chars().all(|c| c == 'a'));
     }
 
     #[tokio::test]
@@ -594,5 +728,143 @@ mod tests {
 
         assert!(!media_dir.exists());
         assert!(store.read("main").await.unwrap().is_empty());
+    }
+
+    // --- Typed API tests ---
+
+    #[tokio::test]
+    async fn test_append_typed_and_read_typed() {
+        use crate::message::PersistedMessage;
+
+        let (store, _dir) = temp_store();
+
+        store
+            .append_typed("main", &PersistedMessage::user("hello"))
+            .await
+            .unwrap();
+        store
+            .append_typed(
+                "main",
+                &PersistedMessage::assistant("hi", "gpt-4o", "openai", 10, 5, None),
+            )
+            .await
+            .unwrap();
+
+        let msgs = store.read_typed("main").await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        match &msgs[0] {
+            PersistedMessage::User { content, .. } => {
+                assert!(matches!(content, crate::message::MessageContent::Text(t) if t == "hello"));
+            },
+            _ => panic!("expected User message"),
+        }
+        match &msgs[1] {
+            PersistedMessage::Assistant { content, model, .. } => {
+                assert_eq!(content, "hi");
+                assert_eq!(model.as_deref(), Some("gpt-4o"));
+            },
+            _ => panic!("expected Assistant message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_typed_empty() {
+        let (store, _dir) = temp_store();
+        let msgs = store.read_typed("nonexistent").await.unwrap();
+        assert!(msgs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_read_last_n_typed() {
+        use crate::message::PersistedMessage;
+
+        let (store, _dir) = temp_store();
+
+        for i in 0..5 {
+            store
+                .append_typed("test", &PersistedMessage::user(format!("msg-{i}")))
+                .await
+                .unwrap();
+        }
+
+        let last2 = store.read_last_n_typed("test", 2).await.unwrap();
+        assert_eq!(last2.len(), 2);
+        match &last2[0] {
+            PersistedMessage::User { content, .. } => {
+                assert!(matches!(content, crate::message::MessageContent::Text(t) if t == "msg-3"));
+            },
+            _ => panic!("expected User message"),
+        }
+        match &last2[1] {
+            PersistedMessage::User { content, .. } => {
+                assert!(matches!(content, crate::message::MessageContent::Text(t) if t == "msg-4"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_replace_history_typed() {
+        use crate::message::PersistedMessage;
+
+        let (store, _dir) = temp_store();
+
+        store
+            .append_typed("main", &PersistedMessage::user("old"))
+            .await
+            .unwrap();
+        assert_eq!(store.count("main").await.unwrap(), 1);
+
+        let new_history = vec![
+            PersistedMessage::user("new1"),
+            PersistedMessage::assistant("new2", "gpt-4o", "openai", 10, 5, None),
+        ];
+        store
+            .replace_history_typed("main", &new_history)
+            .await
+            .unwrap();
+
+        let msgs = store.read_typed("main").await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        match &msgs[0] {
+            PersistedMessage::User { content, .. } => {
+                assert!(matches!(content, crate::message::MessageContent::Text(t) if t == "new1"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_typed_roundtrip_with_value_api() {
+        use crate::message::PersistedMessage;
+
+        let (store, _dir) = temp_store();
+
+        // Write with typed API, read with Value API.
+        store
+            .append_typed("main", &PersistedMessage::user("typed write"))
+            .await
+            .unwrap();
+        let values = store.read("main").await.unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["role"], "user");
+        assert_eq!(values[0]["content"], "typed write");
+
+        // Write with Value API, read with typed API.
+        store
+            .append(
+                "main",
+                &json!({"role": "assistant", "content": "value write"}),
+            )
+            .await
+            .unwrap();
+        let typed = store.read_typed("main").await.unwrap();
+        assert_eq!(typed.len(), 2);
+        match &typed[1] {
+            PersistedMessage::Assistant { content, .. } => {
+                assert_eq!(content, "value write");
+            },
+            _ => panic!("expected Assistant message"),
+        }
     }
 }
