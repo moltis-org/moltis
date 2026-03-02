@@ -1662,29 +1662,28 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
         // Prepare the full gateway (config, DB migrations, service wiring,
         // background tasks). This runs on the bridge runtime via block_on —
         // valid because this is an extern "C" fn, not async.
-        let prepared =
-            match BRIDGE
-                .runtime
-                .block_on(moltis_gateway::server::prepare_gateway_embedded(
-                    &request.host,
-                    request.port,
-                    true, // no_tls — the macOS app manages its own TLS if needed
-                    None, // log_buffer
-                    request.config_dir.map(std::path::PathBuf::from),
-                    request.data_dir.map(std::path::PathBuf::from),
-                    Some(moltis_web::web_routes), // full web UI
-                    BRIDGE.session_metadata.event_bus().cloned(), // share bus with gateway
-                )) {
-                Ok(p) => p,
-                Err(e) => {
-                    emit_log(
-                        "ERROR",
-                        "bridge.httpd",
-                        &format!("Gateway init failed: {e}"),
-                    );
-                    return encode_error("gateway_init_failed", &e.to_string());
-                },
-            };
+        let prepared = match BRIDGE
+            .runtime
+            .block_on(moltis_httpd::prepare_httpd_embedded(
+                &request.host,
+                request.port,
+                true, // no_tls — the macOS app manages its own TLS if needed
+                None, // log_buffer
+                request.config_dir.map(std::path::PathBuf::from),
+                request.data_dir.map(std::path::PathBuf::from),
+                Some(moltis_web::web_routes), // full web UI
+                BRIDGE.session_metadata.event_bus().cloned(), // share bus with gateway
+            )) {
+            Ok(p) => p,
+            Err(e) => {
+                emit_log(
+                    "ERROR",
+                    "bridge.httpd",
+                    &format!("Gateway init failed: {e}"),
+                );
+                return encode_error("gateway_init_failed", &e.to_string());
+            },
+        };
 
         let gateway_state = prepared.state;
 

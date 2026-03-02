@@ -37,6 +37,7 @@ moltis-common          = { workspace = true }
 moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
 moltis-gateway         = { workspace = true }
+moltis-httpd           = { workspace = true }
 moltis-memory          = { workspace = true }
 moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
@@ -97,7 +98,7 @@ default = [
 # Build with: cargo build --release --no-default-features --features lightweight
 code-splitter   = ["moltis-memory/code-splitter"]
 file-watcher    = ["moltis-gateway/file-watcher"]
-graphql         = ["moltis-gateway/graphql", "moltis-web?/graphql"]
+graphql         = ["moltis-httpd/graphql", "moltis-web?/graphql"]
 jemalloc        = ["dep:tikv-jemallocator"]
 lang-bash       = ["moltis-memory/lang-bash"]
 lang-c          = ["moltis-memory/lang-c"]
@@ -117,19 +118,19 @@ local-llm          = ["moltis-gateway/local-llm"]
 local-llm-cuda     = ["local-llm", "moltis-gateway/local-llm-cuda"]
 local-llm-metal    = ["local-llm", "moltis-gateway/local-llm-metal"]
 mdns               = ["moltis-gateway/mdns"]
-metrics            = ["moltis-gateway/metrics", "moltis-web?/metrics"]
+metrics            = ["moltis-httpd/metrics", "moltis-web?/metrics"]
 openclaw-import    = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
-prometheus         = ["moltis-gateway/prometheus"]
-push-notifications = ["moltis-gateway/push-notifications", "moltis-web?/push-notifications"]
+prometheus         = ["moltis-httpd/prometheus"]
+push-notifications = ["moltis-httpd/push-notifications", "moltis-web?/push-notifications"]
 qmd                = ["moltis-gateway/qmd"]
-slack              = ["moltis-gateway/slack"]
-tailscale          = ["moltis-gateway/tailscale", "moltis-web?/tailscale"]
-tls                = ["moltis-gateway/tls"]
-trusted-network    = ["moltis-gateway/trusted-network"]
-vault              = ["moltis-gateway/vault", "moltis-web?/vault"]
+slack              = ["moltis-httpd/slack"]
+tailscale          = ["moltis-httpd/tailscale", "moltis-web?/tailscale"]
+tls                = ["moltis-httpd/tls"]
+trusted-network    = ["moltis-httpd/trusted-network"]
+vault              = ["moltis-httpd/vault", "moltis-web?/vault"]
 voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
 wasm               = ["moltis-tools/wasm"]
-web-ui             = ["dep:moltis-web", "moltis-gateway/web-ui"]
+web-ui             = ["dep:moltis-web", "moltis-httpd/web-ui"]
 whatsapp           = ["moltis-gateway/whatsapp"]
 
 [lints]

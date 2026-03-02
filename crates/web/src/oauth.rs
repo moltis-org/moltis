@@ -8,7 +8,7 @@ use {
         http::StatusCode,
         response::{Html, IntoResponse},
     },
-    moltis_gateway::server::AppState,
+    moltis_httpd::AppState,
 };
 
 pub async fn oauth_callback_handler(

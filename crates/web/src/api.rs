@@ -9,7 +9,7 @@ use {
         http::StatusCode,
         response::{IntoResponse, Response},
     },
-    moltis_gateway::server::AppState,
+    moltis_httpd::AppState,
     moltis_tools::image_cache::ImageBuilder,
     tracing::warn,
 };

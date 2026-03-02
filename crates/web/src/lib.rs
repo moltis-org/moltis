@@ -20,7 +20,7 @@ pub use error::{Error, Result};
 
 use {
     axum::{Router, routing::get},
-    moltis_gateway::server::AppState,
+    moltis_httpd::AppState,
 };
 
 /// Build the web-UI router: pages, API routes, assets, and SPA fallback.
@@ -117,35 +117,33 @@ fn build_api_routes() -> Router<AppState> {
         )
         .route(
             "/api/env",
-            get(moltis_gateway::env_routes::env_list).post(moltis_gateway::env_routes::env_set),
+            get(moltis_httpd::env_routes::env_list).post(moltis_httpd::env_routes::env_set),
         )
         .route(
             "/api/env/{id}",
-            axum::routing::delete(moltis_gateway::env_routes::env_delete),
+            axum::routing::delete(moltis_httpd::env_routes::env_delete),
         )
         .route(
             "/api/config",
-            get(moltis_gateway::tools_routes::config_get)
-                .post(moltis_gateway::tools_routes::config_save),
+            get(moltis_httpd::tools_routes::config_get)
+                .post(moltis_httpd::tools_routes::config_save),
         )
         .route(
             "/api/config/validate",
-            axum::routing::post(moltis_gateway::tools_routes::config_validate),
+            axum::routing::post(moltis_httpd::tools_routes::config_validate),
         )
         .route(
             "/api/config/template",
-            get(moltis_gateway::tools_routes::config_template),
+            get(moltis_httpd::tools_routes::config_template),
         )
         .route(
             "/api/restart",
-            axum::routing::post(moltis_gateway::tools_routes::restart),
+            axum::routing::post(moltis_httpd::tools_routes::restart),
         )
         .route(
             "/api/sessions/{session_key}/upload",
-            axum::routing::post(moltis_gateway::upload_routes::session_upload).layer(
-                axum::extract::DefaultBodyLimit::max(
-                    moltis_gateway::upload_routes::MAX_UPLOAD_SIZE,
-                ),
+            axum::routing::post(moltis_httpd::upload_routes::session_upload).layer(
+                axum::extract::DefaultBodyLimit::max(moltis_httpd::upload_routes::MAX_UPLOAD_SIZE),
             ),
         )
         .route(
@@ -159,15 +157,15 @@ fn build_api_routes() -> Router<AppState> {
     let protected = protected
         .route(
             "/api/metrics",
-            get(moltis_gateway::metrics_routes::api_metrics_handler),
+            get(moltis_httpd::metrics_routes::api_metrics_handler),
         )
         .route(
             "/api/metrics/summary",
-            get(moltis_gateway::metrics_routes::api_metrics_summary_handler),
+            get(moltis_httpd::metrics_routes::api_metrics_summary_handler),
         )
         .route(
             "/api/metrics/history",
-            get(moltis_gateway::metrics_routes::api_metrics_history_handler),
+            get(moltis_httpd::metrics_routes::api_metrics_history_handler),
         );
 
     protected
@@ -178,11 +176,11 @@ fn add_feature_routes(routes: Router<AppState>) -> Router<AppState> {
     #[cfg(feature = "tailscale")]
     let routes = routes.nest(
         "/api/tailscale",
-        moltis_gateway::tailscale_routes::tailscale_router(),
+        moltis_httpd::tailscale_routes::tailscale_router(),
     );
 
     #[cfg(feature = "push-notifications")]
-    let routes = routes.nest("/api/push", moltis_gateway::push_routes::push_router());
+    let routes = routes.nest("/api/push", moltis_httpd::push_routes::push_router());
 
     routes
 }

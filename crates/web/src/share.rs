@@ -10,7 +10,7 @@ use {
         CookieJar,
         cookie::{Cookie, SameSite},
     },
-    moltis_gateway::server::AppState,
+    moltis_httpd::AppState,
     tracing::warn,
 };
 

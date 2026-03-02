@@ -5753,6 +5753,7 @@ dependencies = [
  "moltis-config",
  "moltis-cron",
  "moltis-gateway",
+ "moltis-httpd",
  "moltis-memory",
  "moltis-oauth",
  "moltis-onboarding",
@@ -6175,6 +6176,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-httpd"
+version = "0.10.7"
+dependencies = [
+ "moltis-gateway",
+]
+
+[[package]]
 name = "moltis-mcp"
 version = "0.10.7"
 dependencies = [
@@ -6594,6 +6602,7 @@ dependencies = [
  "moltis-agents",
  "moltis-config",
  "moltis-gateway",
+ "moltis-httpd",
  "moltis-network-filter",
  "moltis-projects",
  "moltis-provider-setup",
@@ -6803,6 +6812,7 @@ dependencies = [
  "moltis-config",
  "moltis-cron",
  "moltis-gateway",
+ "moltis-httpd",
  "moltis-media",
  "moltis-skills",
  "moltis-tools",

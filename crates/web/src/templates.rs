@@ -350,7 +350,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         sandbox,
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
-        openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
+        openclaw_detected: moltis_httpd::server::openclaw_detected_for_ui(),
         agents,
         #[cfg(feature = "vault")]
         vault_status: {

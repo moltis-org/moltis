@@ -17,6 +17,7 @@ default-members = [
   "crates/discord",
   "crates/gateway",
   "crates/graphql",
+  "crates/httpd",
   "crates/mcp",
   "crates/media",
   "crates/memory",
@@ -67,6 +68,7 @@ members = [
   "crates/cron",
   "crates/gateway",
   "crates/graphql",
+  "crates/httpd",
   "crates/mcp",
   "crates/media",
   "crates/memory",
@@ -207,10 +209,10 @@ time           = { features = ["serde-human-readable"], version = "0.3" }
 tokio-rustls   = "0.26"
 # Cryptography / authentication
 argon2            = "0.5"
-subtle            = "2"
 chacha20poly1305  = { features = ["std"], version = "0.10" }
 p256              = "0.13"
 password-hash     = "0.5"
+subtle            = "2"
 webauthn-rs       = "0.5"
 webauthn-rs-proto = "0.5"
 # Web / HTTP utilities
@@ -296,6 +298,7 @@ moltis-cron            = { path = "crates/cron" }
 moltis-discord         = { path = "crates/discord" }
 moltis-gateway         = { default-features = false, path = "crates/gateway" }
 moltis-graphql         = { path = "crates/graphql" }
+moltis-httpd           = { default-features = false, path = "crates/httpd" }
 moltis-mcp             = { path = "crates/mcp" }
 moltis-media           = { path = "crates/media" }
 moltis-memory          = { path = "crates/memory" }

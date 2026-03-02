@@ -18,7 +18,7 @@ use {
     },
     base64::Engine as _,
     futures::{SinkExt, StreamExt},
-    moltis_gateway::server::AppState,
+    moltis_httpd::AppState,
     portable_pty::{CommandBuilder, PtySize, native_pty_system},
     tracing::{debug, info, warn},
 };
@@ -766,8 +766,8 @@ async fn websocket_header_authenticated(
     };
 
     matches!(
-        moltis_gateway::auth_middleware::check_auth(store, headers, is_local).await,
-        moltis_gateway::auth_middleware::AuthResult::Allowed(_)
+        moltis_httpd::auth_middleware::check_auth(store, headers, is_local).await,
+        moltis_httpd::auth_middleware::AuthResult::Allowed(_)
     )
 }
 

@@ -518,7 +518,7 @@ async fn ensure_ollama_model(base_url: &str, model: &str) {
     }
 }
 
-fn approval_manager_from_config(config: &moltis_config::MoltisConfig) -> ApprovalManager {
+pub fn approval_manager_from_config(config: &moltis_config::MoltisConfig) -> ApprovalManager {
     let mut manager = ApprovalManager::default();
 
     manager.mode = ApprovalMode::parse(&config.tools.exec.approval_mode).unwrap_or_else(|| {
@@ -1092,6 +1092,61 @@ fn log_startup_config_storage_diagnostics() {
     }
 }
 
+/// Core gateway state produced by [`prepare_gateway_core`].
+///
+/// Contains everything needed to build an HTTP server on top of the core, but
+/// no HTTP/transport-specific types. Non-HTTP consumers (TUI, tests) can stop
+/// at this level.
+pub struct PreparedGatewayCore {
+    /// Shared gateway state (sessions, services, config, etc.).
+    pub state: Arc<GatewayState>,
+    /// RPC method registry.
+    pub methods: Arc<MethodRegistry>,
+    /// WebAuthn registry for passkey auth.
+    pub webauthn_registry: Option<SharedWebAuthnRegistry>,
+    /// MS Teams webhook plugin (always present, may be empty).
+    pub msteams_webhook_plugin: Arc<tokio::sync::RwLock<moltis_msteams::MsTeamsPlugin>>,
+    /// Slack webhook plugin.
+    #[cfg(feature = "slack")]
+    pub slack_webhook_plugin: Arc<tokio::sync::RwLock<moltis_slack::SlackPlugin>>,
+    /// Push notification service.
+    #[cfg(feature = "push-notifications")]
+    pub push_service: Option<Arc<crate::push::PushService>>,
+    /// Network audit buffer (trusted-network proxy).
+    #[cfg(feature = "trusted-network")]
+    pub audit_buffer: Option<crate::network_audit::NetworkAuditBuffer>,
+    /// Sandbox router for container backends.
+    pub sandbox_router: Arc<moltis_tools::sandbox::SandboxRouter>,
+    /// Browser service for lifecycle management.
+    pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
+    /// Cron scheduler service.
+    pub cron_service: Arc<moltis_cron::service::CronService>,
+    /// Log buffer for real-time log streaming.
+    pub log_buffer: Option<crate::logs::LogBuffer>,
+    /// Loaded configuration snapshot.
+    pub config: moltis_config::schema::MoltisConfig,
+    /// Resolved data directory.
+    pub data_dir: PathBuf,
+    /// Human-readable provider summary for the startup banner.
+    pub provider_summary: String,
+    /// Number of configured MCP servers.
+    pub mcp_configured_count: usize,
+    /// OpenClaw detection status string.
+    pub openclaw_status: String,
+    /// One-time setup code (when auth setup is pending).
+    pub setup_code_display: Option<String>,
+    /// Resolved port.
+    pub port: u16,
+    /// Whether TLS is active for this gateway instance.
+    pub tls_enabled: bool,
+    /// Tailscale mode.
+    #[cfg(feature = "tailscale")]
+    pub tailscale_mode: TailscaleMode,
+    /// Whether to reset tailscale on exit.
+    #[cfg(feature = "tailscale")]
+    pub tailscale_reset_on_exit: bool,
+}
+
 /// A fully wired gateway (app router + shared state), ready to be served.
 ///
 /// Created by [`prepare_gateway`]. Callers bind their own TCP listener and
@@ -1114,7 +1169,7 @@ pub struct PreparedGateway {
 }
 
 /// Internal metadata for the startup banner printed by [`start_gateway`].
-pub(crate) struct BannerMeta {
+pub struct BannerMeta {
     pub provider_summary: String,
     pub mcp_configured_count: usize,
     pub method_count: usize,
@@ -1131,16 +1186,14 @@ pub(crate) struct BannerMeta {
     pub tailscale_reset_on_exit: bool,
 }
 
-/// Prepare the full gateway: load config, run migrations, wire services,
-/// spawn background tasks, and return the composed axum application.
+/// Prepare the core gateway: load config, run migrations, wire services,
+/// spawn background tasks, and return the core state without any HTTP layer.
 ///
-/// This is the core setup extracted from [`start_gateway`]. The swift-bridge
-/// calls this directly and manages its own TCP listener + graceful shutdown.
-///
-/// `extra_routes` is an optional callback that returns additional routes
-/// (e.g. the web-UI) to merge before finalization.
+/// This is the transport-agnostic initialisation. Non-HTTP consumers (TUI,
+/// tests) can stop here. HTTP consumers call [`prepare_gateway`] which
+/// delegates to this and then adds the router + middleware.
 #[allow(clippy::expect_used)] // Startup fail-fast: DB, migrations, credential store must succeed.
-pub async fn prepare_gateway(
+pub async fn prepare_gateway_core(
     bind: &str,
     port: u16,
     no_tls: bool,
@@ -1148,9 +1201,8 @@ pub async fn prepare_gateway(
     config_dir: Option<PathBuf>,
     data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
-    extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
-) -> anyhow::Result<PreparedGateway> {
+) -> anyhow::Result<PreparedGatewayCore> {
     let session_event_bus = session_event_bus.unwrap_or_default();
 
     // Apply directory overrides before loading config.
@@ -3593,6 +3645,98 @@ pub async fn prepare_gateway(
         }
     };
 
+    Ok(PreparedGatewayCore {
+        state: Arc::clone(&state),
+        methods: Arc::clone(&methods),
+        webauthn_registry,
+        msteams_webhook_plugin,
+        #[cfg(feature = "slack")]
+        slack_webhook_plugin,
+        #[cfg(feature = "push-notifications")]
+        push_service,
+        #[cfg(feature = "trusted-network")]
+        audit_buffer: audit_buffer_for_broadcast,
+        sandbox_router,
+        browser_for_lifecycle,
+        cron_service,
+        log_buffer,
+        config,
+        data_dir,
+        provider_summary,
+        mcp_configured_count,
+        openclaw_status: openclaw_startup_status,
+        setup_code_display,
+        port,
+        tls_enabled: tls_enabled_for_gateway,
+        #[cfg(feature = "tailscale")]
+        tailscale_mode,
+        #[cfg(feature = "tailscale")]
+        tailscale_reset_on_exit,
+    })
+}
+
+/// Prepare the full gateway: load config, run migrations, wire services,
+/// spawn background tasks, and return the composed axum application.
+///
+/// This is the HTTP layer on top of [`prepare_gateway_core`]. The swift-bridge
+/// calls this directly and manages its own TCP listener + graceful shutdown.
+///
+/// `extra_routes` is an optional callback that returns additional routes
+/// (e.g. the web-UI) to merge before finalization.
+#[allow(clippy::expect_used)]
+pub async fn prepare_gateway(
+    bind: &str,
+    port: u16,
+    no_tls: bool,
+    log_buffer: Option<crate::logs::LogBuffer>,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
+    extra_routes: Option<RouteEnhancer>,
+    session_event_bus: Option<SessionEventBus>,
+) -> anyhow::Result<PreparedGateway> {
+    let core = prepare_gateway_core(
+        bind,
+        port,
+        no_tls,
+        log_buffer,
+        config_dir,
+        data_dir,
+        #[cfg(feature = "tailscale")]
+        tailscale_opts,
+        session_event_bus,
+    )
+    .await?;
+
+    let PreparedGatewayCore {
+        state,
+        methods,
+        webauthn_registry,
+        msteams_webhook_plugin,
+        #[cfg(feature = "slack")]
+        slack_webhook_plugin,
+        #[cfg(feature = "push-notifications")]
+        push_service,
+        #[cfg(feature = "trusted-network")]
+            audit_buffer: audit_buffer_for_broadcast,
+        sandbox_router,
+        browser_for_lifecycle,
+        cron_service,
+        log_buffer,
+        config,
+        data_dir,
+        provider_summary,
+        mcp_configured_count,
+        openclaw_status: openclaw_startup_status,
+        setup_code_display,
+        port,
+        tls_enabled: tls_enabled_for_gateway,
+        #[cfg(feature = "tailscale")]
+        tailscale_mode,
+        #[cfg(feature = "tailscale")]
+        tailscale_reset_on_exit,
+    } = core;
+
     #[cfg(feature = "push-notifications")]
     let (router, app_state) = build_gateway_base(
         Arc::clone(&state),
@@ -5139,7 +5283,7 @@ fn startup_setup_code_lines(code: &str) -> Vec<String> {
 /// Extracts the host portion of the origin URL and compares it to the Host
 /// header.  Accepts `localhost`, `127.0.0.1`, and `[::1]` interchangeably
 /// so that `http://localhost:8080` matches a Host of `127.0.0.1:8080`.
-fn is_same_origin(origin: &str, host: &str) -> bool {
+pub fn is_same_origin(origin: &str, host: &str) -> bool {
     fn default_port_for_scheme(scheme: &str) -> Option<&'static str> {
         match scheme {
             "http" | "ws" => Some("80"),
