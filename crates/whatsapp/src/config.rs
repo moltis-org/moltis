@@ -1,5 +1,8 @@
 use {
-    moltis_channels::gating::{DmPolicy, GroupPolicy},
+    moltis_channels::{
+        config_view::ChannelConfigView,
+        gating::{DmPolicy, GroupPolicy},
+    },
     serde::{Deserialize, Serialize},
     std::path::PathBuf,
 };
@@ -63,6 +66,32 @@ impl std::fmt::Debug for WhatsAppAccountConfig {
             .field("dm_policy", &self.dm_policy)
             .field("group_policy", &self.group_policy)
             .finish_non_exhaustive()
+    }
+}
+
+impl ChannelConfigView for WhatsAppAccountConfig {
+    fn allowlist(&self) -> &[String] {
+        &self.allowlist
+    }
+
+    fn group_allowlist(&self) -> &[String] {
+        &self.group_allowlist
+    }
+
+    fn dm_policy(&self) -> DmPolicy {
+        self.dm_policy.clone()
+    }
+
+    fn group_policy(&self) -> GroupPolicy {
+        self.group_policy.clone()
+    }
+
+    fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    fn model_provider(&self) -> Option<&str> {
+        self.model_provider.as_deref()
     }
 }
 

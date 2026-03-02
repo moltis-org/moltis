@@ -1130,12 +1130,18 @@ pub struct McpOAuthOverrideEntry {
     pub scopes: Vec<String>,
 }
 
+/// Built-in channel type identifiers recognised by the validator.
+///
+/// Kept in `moltis-config` (not `moltis-channels`) so the config crate stays
+/// independent of the channels crate while still validating channel names.
+pub const KNOWN_CHANNEL_TYPES: &[&str] = &["telegram", "whatsapp", "msteams", "discord", "slack"];
+
 /// Channel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChannelsConfig {
     /// Which channel types are offered in the web UI (onboarding + channels page).
-    /// Defaults to `["telegram", "discord"]`. Set to `["telegram", "discord", "msteams"]` to opt in to Teams.
+    /// Defaults to `["telegram", "discord", "slack"]`. Add `"msteams"` or `"whatsapp"` to opt in.
     #[serde(
         default = "default_channels_offered",
         skip_serializing_if = "Vec::is_empty"
@@ -1153,10 +1159,45 @@ pub struct ChannelsConfig {
     /// Discord bot accounts, keyed by account ID.
     #[serde(default)]
     pub discord: HashMap<String, serde_json::Value>,
+    /// Slack bot accounts, keyed by account ID.
+    #[serde(default)]
+    pub slack: HashMap<String, serde_json::Value>,
+    /// Additional channel types not covered by the named fields above.
+    ///
+    /// This allows new channel plugins to be configured without changing
+    /// this struct.
+    #[serde(flatten, default)]
+    pub extra: HashMap<String, HashMap<String, serde_json::Value>>,
+}
+
+impl ChannelsConfig {
+    /// All named channel fields as `(channel_type, accounts)` pairs.
+    ///
+    /// This is the single source of truth for the set of named channel types.
+    /// Keep in sync with the struct fields.
+    fn named_fields(&self) -> [(&str, &HashMap<String, serde_json::Value>); 5] {
+        [
+            ("telegram", &self.telegram),
+            ("whatsapp", &self.whatsapp),
+            ("msteams", &self.msteams),
+            ("discord", &self.discord),
+            ("slack", &self.slack),
+        ]
+    }
+
+    /// Iterate all channel configs (named + extra) as `(channel_type, accounts)` pairs.
+    pub fn all_channel_configs(&self) -> Vec<(&str, &HashMap<String, serde_json::Value>)> {
+        let mut v: Vec<(&str, &HashMap<String, serde_json::Value>)> =
+            self.named_fields().into_iter().collect();
+        for (ct, accounts) in &self.extra {
+            v.push((ct.as_str(), accounts));
+        }
+        v
+    }
 }
 
 fn default_channels_offered() -> Vec<String> {
-    vec!["telegram".into(), "discord".into()]
+    vec!["telegram".into(), "discord".into(), "slack".into()]
 }
 
 impl Default for ChannelsConfig {
@@ -1167,6 +1208,8 @@ impl Default for ChannelsConfig {
             whatsapp: HashMap::new(),
             msteams: HashMap::new(),
             discord: HashMap::new(),
+            slack: HashMap::new(),
+            extra: HashMap::new(),
         }
     }
 }
@@ -2282,11 +2325,12 @@ system_prompt_suffix = "Focus on evidence."
     }
 
     #[test]
-    fn channels_config_defaults_to_telegram_and_discord_offered() {
+    fn channels_config_defaults_to_telegram_discord_slack_offered() {
         let config = ChannelsConfig::default();
         assert_eq!(config.offered, vec![
             "telegram".to_string(),
-            "discord".to_string()
+            "discord".to_string(),
+            "slack".to_string(),
         ]);
     }
 
@@ -2295,7 +2339,8 @@ system_prompt_suffix = "Focus on evidence."
         let config: ChannelsConfig = toml::from_str("").unwrap();
         assert_eq!(config.offered, vec![
             "telegram".to_string(),
-            "discord".to_string()
+            "discord".to_string(),
+            "slack".to_string(),
         ]);
     }
 
@@ -2307,6 +2352,38 @@ system_prompt_suffix = "Focus on evidence."
             "telegram".to_string(),
             "msteams".to_string()
         ]);
+    }
+
+    #[test]
+    fn channels_slack_is_named_field_not_extra() {
+        let toml_str = r#"
+[slack.my-bot]
+token = "xoxb-test"
+"#;
+        let config: ChannelsConfig = toml::from_str(toml_str).unwrap();
+        assert!(
+            config.slack.contains_key("my-bot"),
+            "slack should be in named field"
+        );
+        assert!(
+            !config.extra.contains_key("slack"),
+            "slack should not appear in extra"
+        );
+    }
+
+    #[test]
+    fn channels_all_channel_configs_includes_slack() {
+        let mut config = ChannelsConfig::default();
+        config
+            .slack
+            .insert("bot1".into(), serde_json::json!({"token": "xoxb-test"}));
+        let all = config.all_channel_configs();
+        let slack_entry = all.iter().find(|(ct, _)| *ct == "slack");
+        assert!(
+            slack_entry.is_some(),
+            "all_channel_configs should include slack"
+        );
+        assert!(slack_entry.unwrap().1.contains_key("bot1"));
     }
 
     #[test]

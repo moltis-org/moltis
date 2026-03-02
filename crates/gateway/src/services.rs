@@ -1191,6 +1191,8 @@ pub struct GatewayServices {
     pub project: Arc<dyn ProjectService>,
     pub local_llm: Arc<dyn LocalLlmService>,
     pub network_audit: Arc<dyn crate::network_audit::NetworkAuditService>,
+    /// Optional channel registry for direct plugin access (thread context, etc.).
+    pub channel_registry: Option<Arc<moltis_channels::ChannelRegistry>>,
     /// Optional channel outbound for sending replies back to channels.
     channel_outbound: Option<Arc<dyn moltis_channels::ChannelOutbound>>,
     /// Optional channel stream outbound for edit-in-place channel streaming.
@@ -1223,6 +1225,14 @@ impl GatewayServices {
 
     pub fn with_provider_setup(mut self, ps: Arc<dyn ProviderSetupService>) -> Self {
         self.provider_setup = ps;
+        self
+    }
+
+    pub fn with_channel_registry(
+        mut self,
+        registry: Arc<moltis_channels::ChannelRegistry>,
+    ) -> Self {
+        self.channel_registry = Some(registry);
         self
     }
 
@@ -1278,6 +1288,7 @@ impl GatewayServices {
             project: Arc::new(NoopProjectService),
             local_llm: Arc::new(NoopLocalLlmService),
             network_audit: Arc::new(crate::network_audit::NoopNetworkAuditService),
+            channel_registry: None,
             channel_outbound: None,
             channel_stream_outbound: None,
             session_metadata: None,

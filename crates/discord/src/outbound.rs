@@ -9,11 +9,15 @@ use {
 use {
     moltis_channels::{
         Error as ChannelError, Result as ChannelResult,
-        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver},
+        plugin::{
+            ButtonStyle as ChannelButtonStyle, ChannelOutbound, ChannelStreamOutbound,
+            ChannelThreadContext, InteractiveMessage, StreamEvent, StreamReceiver, ThreadMessage,
+        },
     },
     moltis_common::types::ReplyPayload,
     serenity::all::{
-        ChannelId, CreateAttachment, CreateEmbed, CreateMessage, EditMessage, MessageId,
+        ButtonStyle as SerenityButtonStyle, ChannelId, CreateActionRow, CreateAttachment,
+        CreateButton, CreateEmbed, CreateMessage, EditMessage, GetMessages, MessageId,
         ReactionType,
     },
 };
@@ -588,6 +592,54 @@ impl ChannelOutbound for DiscordOutbound {
         );
         self.send_text(account_id, to, &text, reply_to).await
     }
+
+    async fn send_interactive(
+        &self,
+        account_id: &str,
+        to: &str,
+        message: &InteractiveMessage,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        let http = self.resolve_http(account_id)?;
+        let channel_id = Self::parse_channel_id(to)?;
+        let reference = self.resolve_reference(account_id, reply_to);
+
+        let action_rows: Vec<CreateActionRow> = message
+            .button_rows
+            .iter()
+            .map(|row| {
+                let buttons: Vec<CreateButton> = row
+                    .iter()
+                    .map(|btn| {
+                        let style = match btn.style {
+                            ChannelButtonStyle::Primary => SerenityButtonStyle::Primary,
+                            ChannelButtonStyle::Danger => SerenityButtonStyle::Danger,
+                            ChannelButtonStyle::Default => SerenityButtonStyle::Secondary,
+                        };
+                        CreateButton::new(&btn.callback_data)
+                            .label(&btn.label)
+                            .style(style)
+                    })
+                    .collect();
+                CreateActionRow::Buttons(buttons)
+            })
+            .collect();
+
+        let mut msg = CreateMessage::new()
+            .content(&message.text)
+            .components(action_rows);
+        if let Some(ref_id) = reference {
+            msg = msg.reference_message((channel_id, ref_id));
+        }
+
+        channel_id.send_message(&http, msg).await.map_err(|e| {
+            ChannelError::external(
+                "Discord send interactive",
+                std::io::Error::other(e.to_string()),
+            )
+        })?;
+        Ok(())
+    }
 }
 
 // ── Streaming ────────────────────────────────────────────────────────
@@ -758,6 +810,44 @@ impl ChannelStreamOutbound for DiscordOutbound {
 
     async fn is_stream_enabled(&self, _account_id: &str) -> bool {
         true
+    }
+}
+
+// ── Thread context ──────────────────────────────────────────────────
+
+#[async_trait]
+impl ChannelThreadContext for DiscordOutbound {
+    async fn fetch_thread_messages(
+        &self,
+        account_id: &str,
+        _channel_id: &str,
+        thread_id: &str,
+        limit: usize,
+    ) -> ChannelResult<Vec<ThreadMessage>> {
+        let http = self.resolve_http(account_id)?;
+        // Discord threads are channels, so thread_id is a channel ID.
+        let thread_channel_id = Self::parse_channel_id(thread_id)?;
+
+        let messages = thread_channel_id
+            .messages(&http, GetMessages::new().limit(limit.min(100) as u8))
+            .await
+            .map_err(|e| {
+                ChannelError::unavailable(format!("failed to fetch thread messages: {e}"))
+            })?;
+
+        // Messages come newest-first from Discord; reverse for oldest-first.
+        let mut result: Vec<ThreadMessage> = messages
+            .into_iter()
+            .map(|msg| ThreadMessage {
+                sender_id: msg.author.id.to_string(),
+                is_bot: msg.author.bot,
+                text: msg.content,
+                timestamp: msg.timestamp.to_string(),
+            })
+            .collect();
+        result.reverse();
+
+        Ok(result)
     }
 }
 

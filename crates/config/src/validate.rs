@@ -360,16 +360,18 @@ fn build_schema_map() -> KnownKeys {
                 Map(Box::new(mcp_server_entry())),
             )])),
         ),
-        (
-            "channels",
-            Struct(HashMap::from([
+        ("channels", MapWithFields {
+            // Dynamic keys: extra channel types via #[serde(flatten)]
+            value: Box::new(Map(Box::new(Leaf))),
+            fields: HashMap::from([
                 ("offered", Array(Box::new(Leaf))),
                 ("telegram", Map(Box::new(Leaf))),
                 ("whatsapp", Map(Box::new(Leaf))),
                 ("msteams", Map(Box::new(Leaf))),
                 ("discord", Map(Box::new(Leaf))),
-            ])),
-        ),
+                ("slack", Map(Box::new(Leaf))),
+            ]),
+        }),
         (
             "tls",
             Struct(HashMap::from([
@@ -968,8 +970,12 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     // provider entry somehow comes through with a non-standard string we still
     // want to warn at the TOML level.  The enum is auto/native/text/off.
 
-    // Unknown channel types in channels.offered
-    let valid_channel_types = ["telegram", "msteams", "discord"];
+    // Unknown channel types in channels.offered — accept built-in types plus
+    // any dynamically configured types from `[channels.<type>]` sections.
+    let mut valid_channel_types: Vec<&str> = crate::schema::KNOWN_CHANNEL_TYPES.to_vec();
+    for ct in config.channels.extra.keys() {
+        valid_channel_types.push(ct.as_str());
+    }
     for (idx, entry) in config.channels.offered.iter().enumerate() {
         if !valid_channel_types.contains(&entry.as_str()) {
             diagnostics.push(Diagnostic {
@@ -2091,7 +2097,7 @@ dm_policy = "allowlist"
     fn channels_offered_unknown_type_warned() {
         let toml = r#"
 [channels]
-offered = ["telegram", "slack"]
+offered = ["telegram", "foobar"]
 "#;
         let result = validate_toml_str(toml);
         let warning = result
@@ -2101,6 +2107,64 @@ offered = ["telegram", "slack"]
         assert!(
             warning.is_some(),
             "unknown channel type should produce warning, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_slack_accepted() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "slack"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "channels.offered[1]" && d.category == "unknown-field");
+        assert!(
+            warning.is_none(),
+            "slack should be accepted, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_dynamic_type_accepted() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "slack"]
+
+[channels.slack.my-bot]
+token = "xoxb-test"
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered") && d.category == "unknown-field");
+        assert!(
+            warning.is_none(),
+            "dynamically configured channel type should be accepted in offered, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_extra_config_accepted() {
+        let toml = r#"
+[channels.slack.my-bot]
+token = "xoxb-test"
+dm_policy = "allowlist"
+"#;
+        let result = validate_toml_str(toml);
+        let error = result.diagnostics.iter().find(|d| {
+            d.path.starts_with("channels.slack")
+                && (d.severity == Severity::Error || d.category == "unknown-field")
+        });
+        assert!(
+            error.is_none(),
+            "extra channel config should be accepted without errors, got: {:?}",
             result.diagnostics
         );
     }
