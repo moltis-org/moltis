@@ -5,6 +5,12 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build release packages without publishing artifacts, images, or release assets"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,6 +20,7 @@ permissions: {}
 
 env:
   NIGHTLY_TOOLCHAIN: nightly-2025-11-30
+  RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
 
 jobs:
   zizmor:
@@ -26,7 +33,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Dry-run short-circuit
+        if: ${{ env.RELEASE_DRY_RUN == 'true' }}
+        run: echo "Dry run enabled, skipping workflow security checks"
+
       - uses: zizmorcore/zizmor-action@135698455da5c3b3e55f73f4419e481ab68cdd95 # v0.4.1
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           advanced-security: false
           online-audits: false
@@ -41,11 +53,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Dry-run short-circuit
+        if: ${{ env.RELEASE_DRY_RUN == 'true' }}
+        run: echo "Dry run enabled, skipping biome checks"
       - uses: biomejs/setup-biome@29711cbb52afee00eb13aeb30636592f9edc0088 # v2.7.0
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           version: "2.3.13"
-      - run: biome ci crates/web/src/assets/js/
-      - run: ./scripts/i18n-check.sh
+      - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: biome ci crates/web/src/assets/js/
+      - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: ./scripts/i18n-check.sh
 
   fmt:
     needs: zizmor
@@ -57,11 +75,16 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Dry-run short-circuit
+        if: ${{ env.RELEASE_DRY_RUN == 'true' }}
+        run: echo "Dry run enabled, skipping rustfmt check"
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: rustfmt
-      - run: cargo fmt --all -- --check
+      - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: cargo fmt --all -- --check
 
   clippy:
     needs: [fmt, biome]
@@ -77,18 +100,25 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Dry-run short-circuit
+        if: ${{ env.RELEASE_DRY_RUN == 'true' }}
+        run: echo "Dry run enabled, skipping clippy job"
       - name: Clean up corrupted cargo config
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: rm -f ~/.cargo/config.toml
       - name: Install build dependencies
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           apt-get update
           apt-get install -y curl git cmake build-essential clang libclang-dev pkg-config ca-certificates
           nvcc --version
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: clippy, rustfmt
       - name: Initialize git repo in llama-cpp source to satisfy cmake
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           cargo fetch --locked
           LLAMA_SRC=$(find ~/.cargo/registry/src -name "llama-cpp-sys-2-*" -type d 2>/dev/null | head -1)
@@ -102,10 +132,12 @@ jobs:
             git tag v0.0.0
           fi
       - name: Build Tailwind CSS
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
-      - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
+      - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
   test:
     needs: [fmt, biome]
@@ -117,17 +149,24 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Dry-run short-circuit
+        if: ${{ env.RELEASE_DRY_RUN == 'true' }}
+        run: echo "Dry run enabled, skipping unit test job"
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           toolchain: stable
       - uses: taiki-e/install-action@f176c07a0a40cbfdd08ee9aa8bf1655701d11e69 # v2.67.25
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           tool: cargo-nextest
       - name: Build Tailwind CSS
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
-      - run: cargo nextest run --profile ci
+      - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: cargo nextest run --profile ci
 
   e2e:
     name: E2E Tests
@@ -140,39 +179,50 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Dry-run short-circuit
+        if: ${{ env.RELEASE_DRY_RUN == 'true' }}
+        run: echo "Dry run enabled, skipping E2E job"
+
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           toolchain: stable
 
       - name: Build Tailwind CSS
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
 
       - name: Build moltis binary
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: cargo build --bin moltis
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           node-version: "22"
           package-manager-cache: false
 
       - name: Install npm dependencies
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         working-directory: crates/web/ui
         run: npm ci
 
       - name: Install Playwright browsers
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         working-directory: crates/web/ui
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         working-directory: crates/web/ui
         env:
           CI: "true"
         run: npx playwright test
 
       - name: Upload test results
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2e-test-results-${{ github.run_id }}-${{ github.run_attempt }}
@@ -249,6 +299,7 @@ jobs:
         run: cargo install cargo-deb
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Build Tailwind CSS
@@ -272,12 +323,14 @@ jobs:
         run: cargo deb -p moltis --no-build --target "$BUILD_TARGET"
 
       - name: Sign with Sigstore and generate checksums
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: ./.github/actions/sign-artifacts
         with:
           files: '*.deb'
           working-directory: target/${{ matrix.target }}/debian
 
       - name: Upload .deb artifact
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.deb
@@ -355,6 +408,7 @@ jobs:
         run: cargo install cargo-generate-rpm
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Build Tailwind CSS
@@ -378,12 +432,14 @@ jobs:
         run: cargo generate-rpm -p crates/cli --target "$BUILD_TARGET"
 
       - name: Sign with Sigstore and generate checksums
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: ./.github/actions/sign-artifacts
         with:
           files: '*.rpm'
           working-directory: target/${{ matrix.target }}/generate-rpm
 
       - name: Upload .rpm artifact
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.rpm
@@ -427,6 +483,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fakeroot zstd
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Build Tailwind CSS
@@ -478,11 +535,13 @@ jobs:
           fakeroot -- tar --zstd -cf "../moltis-${VERSION}-1-${MATRIX_ARCH}.pkg.tar.zst" .PKGINFO usr/
 
       - name: Sign with Sigstore and generate checksums
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: ./.github/actions/sign-artifacts
         with:
           files: moltis-${{ steps.version.outputs.version }}-1-${{ matrix.arch }}.pkg.tar.zst
 
       - name: Upload .pkg.tar.zst artifact
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.pkg.tar.zst
@@ -525,6 +584,7 @@ jobs:
           targets: ${{ matrix.target }}, wasm32-wasip2
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Build Tailwind CSS
@@ -599,11 +659,13 @@ jobs:
           ARCH="$MATRIX_ARCH" ./appimagetool --appimage-extract-and-run "$APP_DIR" "moltis-${VERSION}-${MATRIX_ARCH}.AppImage"
 
       - name: Sign with Sigstore and generate checksums
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: ./.github/actions/sign-artifacts
         with:
           files: moltis-${{ steps.version.outputs.version }}-${{ matrix.arch }}.AppImage
 
       - name: Upload AppImage artifact
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.AppImage
@@ -644,17 +706,20 @@ jobs:
           sed -Ei "s/^version:[[:space:]]*'.*'/version: '${VERSION}'/" snap/snapcraft.yaml
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
         id: build-snap
 
       - name: Sign with Sigstore and generate checksums
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: ./.github/actions/sign-artifacts
         with:
           files: ${{ steps.build-snap.outputs.snap }}
 
       - name: Upload Snap artifact
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis.snap
@@ -697,6 +762,7 @@ jobs:
           targets: ${{ matrix.target }}, wasm32-wasip2
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Build Tailwind CSS
@@ -739,11 +805,13 @@ jobs:
           tar czf "moltis-${VERSION}-${BUILD_TARGET}.tar.gz" moltis
 
       - name: Sign with Sigstore and generate checksums
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: ./.github/actions/sign-artifacts
         with:
           files: moltis-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz
 
       - name: Upload binary artifact
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.target }}
@@ -781,6 +849,7 @@ jobs:
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-macos-arm64 ./build.sh
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Build Swift bridge artifacts and generate Xcode project
@@ -822,11 +891,13 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "moltis-${VERSION}-macos.app.zip"
 
       - name: Sign with Sigstore and generate checksums
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: ./.github/actions/sign-artifacts
         with:
           files: moltis-${{ steps.version.outputs.version }}-macos.app.zip
 
       - name: Upload macOS app artifact
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-macos-app
@@ -859,6 +930,7 @@ jobs:
           targets: ${{ env.BUILD_TARGET }}, wasm32-wasip2
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Configure Perl for vendored OpenSSL
@@ -905,11 +977,13 @@ jobs:
           cp "target/$BUILD_TARGET/release/moltis.exe" "moltis-${VERSION}-${BUILD_TARGET}.exe"
 
       - name: Sign with Sigstore and generate checksums
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: ./.github/actions/sign-artifacts
         with:
           files: moltis-${{ steps.version.outputs.version }}-${{ env.BUILD_TARGET }}.exe
 
       - name: Upload .exe artifact
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ env.BUILD_TARGET }}.exe
@@ -921,6 +995,7 @@ jobs:
             *.exe.crt
 
   build-docker:
+    if: ${{ env.RELEASE_DRY_RUN != 'true' }}
     needs: [clippy, test, e2e]
     strategy:
       matrix:
@@ -1046,6 +1121,7 @@ jobs:
           retention-days: 1
 
   merge-docker:
+    if: ${{ env.RELEASE_DRY_RUN != 'true' }}
     needs: build-docker
     runs-on: ubuntu-latest
     name: Merge Docker manifest
@@ -1066,6 +1142,7 @@ jobs:
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Log in to GitHub Container Registry
@@ -1171,7 +1248,7 @@ jobs:
       - build-homebrew-binaries
       - build-macos-app
       - build-windows-exe
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && env.RELEASE_DRY_RUN != 'true'
     runs-on: ubuntu-latest
     name: Upload release assets
     permissions:
@@ -1211,7 +1288,7 @@ jobs:
     needs:
       - upload-release
       - merge-docker
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && env.RELEASE_DRY_RUN != 'true'
     runs-on: ubuntu-latest
     name: Generate Release SBOM
     permissions:
@@ -1224,6 +1301,7 @@ jobs:
           persist-credentials: false
 
       - name: Install cosign
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Install cargo-sbom
@@ -1257,7 +1335,7 @@ jobs:
     needs:
       - upload-release
       - merge-docker
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && env.RELEASE_DRY_RUN != 'true'
     runs-on: ubuntu-latest
     name: Update Homebrew tap
     permissions:
@@ -1360,7 +1438,7 @@ jobs:
 
   update-deploy-tags:
     needs: merge-docker
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && env.RELEASE_DRY_RUN != 'true'
     runs-on: ubuntu-latest
     name: Update deploy template tags
     permissions:
