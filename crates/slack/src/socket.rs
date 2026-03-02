@@ -212,8 +212,8 @@ async fn push_events_callback(
         SlackEventCallbackBody::ReactionAdded(reaction_event) => {
             handle_reaction_event(
                 &listener_state.account_id,
-                &reaction_event.user.to_string(),
-                &reaction_event.reaction.to_string(),
+                reaction_event.user.as_ref(),
+                reaction_event.reaction.as_ref(),
                 &reaction_event.item,
                 true,
                 &listener_state.accounts,
@@ -223,8 +223,8 @@ async fn push_events_callback(
         SlackEventCallbackBody::ReactionRemoved(reaction_event) => {
             handle_reaction_event(
                 &listener_state.account_id,
-                &reaction_event.user.to_string(),
-                &reaction_event.reaction.to_string(),
+                reaction_event.user.as_ref(),
+                reaction_event.reaction.as_ref(),
                 &reaction_event.item,
                 false,
                 &listener_state.accounts,

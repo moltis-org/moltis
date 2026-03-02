@@ -160,7 +160,7 @@ pub async fn stream_completes_on_error_signal(plugin: &mut dyn ChannelPlugin) ->
 pub async fn probe_unknown_account_returns_disconnected(plugin: &dyn ChannelPlugin) -> Result<()> {
     let status = plugin
         .status()
-        .expect("status() must return Some for probe tests");
+        .ok_or_else(|| crate::Error::unavailable("status() must return Some for probe tests"))?;
     let snap = status.probe("nonexistent-probe-acct").await?;
     assert!(
         !snap.connected,
@@ -177,7 +177,7 @@ pub async fn probe_started_account_returns_connected(plugin: &mut dyn ChannelPlu
     plugin.start_account(id, config).await?;
     let status = plugin
         .status()
-        .expect("status() must return Some for probe tests");
+        .ok_or_else(|| crate::Error::unavailable("status() must return Some for probe tests"))?;
     let snap = status.probe(id).await?;
     assert!(
         snap.connected,

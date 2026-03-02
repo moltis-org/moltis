@@ -127,17 +127,13 @@ impl SlackOutbound {
                     // Throttle appends to avoid rate limits.
                     if last_append.elapsed() >= throttle {
                         let text = markdown_to_slack(&std::mem::take(&mut pending));
-                        if !text.is_empty() {
-                            if let Err(e) =
+                        if !text.is_empty()
+                            && let Err(e) =
                                 append_native_stream(&http, &bot_token, &stream_id, &text).await
-                            {
-                                debug!(
-                                    account_id,
-                                    to, "chat.appendStream failed (will retry): {e}"
-                                );
-                                // Put the text back for next attempt.
-                                pending = text;
-                            }
+                        {
+                            debug!(account_id, to, "chat.appendStream failed (will retry): {e}");
+                            // Put the text back for next attempt.
+                            pending = text;
                         }
                         last_append = tokio::time::Instant::now();
                     }
@@ -790,7 +786,7 @@ impl ChannelStreamOutbound for SlackOutbound {
                     let final_text = markdown_to_slack(&accumulated);
                     for chunk in chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN) {
                         if let Err(e) =
-                            post_message(&client, &token, to, &chunk, thread_ts.as_deref()).await
+                            post_message(&client, &token, to, chunk, thread_ts.as_deref()).await
                         {
                             warn!(account_id, to, "failed to send stream message: {e}");
                         }
@@ -854,6 +850,7 @@ impl ChannelThreadContext for SlackOutbound {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

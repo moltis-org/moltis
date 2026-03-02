@@ -131,7 +131,7 @@ impl ChannelPlugin for SlackPlugin {
                 if cfg
                     .signing_secret
                     .as_ref()
-                    .map_or(true, |s| s.expose_secret().is_empty())
+                    .is_none_or(|s| s.expose_secret().is_empty())
                 {
                     return Err(ChannelError::invalid_input(
                         "Slack signing_secret is required for Events API mode",
