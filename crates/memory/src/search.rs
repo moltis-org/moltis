@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, labels, memory as mem_metrics};
+use tracing::instrument;
 
 use crate::{
     config::{CitationMode, MergeStrategy},
@@ -52,6 +53,7 @@ impl SearchResult {
 }
 
 /// Perform hybrid search: embed the query, run vector + keyword search, merge with weights.
+#[instrument(skip(store, embedder), fields(query_len = query.len(), limit))]
 pub async fn hybrid_search(
     store: &dyn MemoryStore,
     embedder: &dyn EmbeddingProvider,
@@ -108,6 +110,7 @@ pub async fn hybrid_search(
 }
 
 /// Keyword-only search when no embedding provider is available.
+#[instrument(skip(store), fields(query_len = query.len(), limit))]
 pub async fn keyword_only_search(
     store: &dyn MemoryStore,
     query: &str,

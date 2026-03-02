@@ -84,6 +84,14 @@ impl MsTeamsOutbound {
                 std::io::Error::other(format!("{status}: {body}")),
             ));
         }
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_SENT_TOTAL,
+            moltis_metrics::labels::CHANNEL => "msteams"
+        )
+        .increment(1);
+
         Ok(())
     }
 }

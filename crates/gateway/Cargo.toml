@@ -138,12 +138,18 @@ local-llm = [
 local-llm-cuda = ["local-llm", "moltis-providers/local-llm-cuda"]
 local-llm-metal = ["local-llm", "moltis-providers/local-llm-metal"]
 mdns = ["dep:mdns-sd"]
-metrics = ["dep:moltis-metrics", "moltis-chat/metrics", "moltis-metrics/sqlite"]
+metrics = [
+  "dep:moltis-metrics",
+  "moltis-chat/metrics",
+  "moltis-discord/metrics",
+  "moltis-metrics/sqlite",
+  "moltis-msteams/metrics",
+]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
 qmd = ["dep:moltis-qmd"]
-slack = ["dep:moltis-slack"]
+slack = ["dep:moltis-slack", "moltis-slack/metrics"]
 tailscale = ["dep:moltis-tailscale"]
 tls = [
   "dep:axum-server",
@@ -162,7 +168,7 @@ vault = ["dep:moltis-vault", "moltis-auth/vault"]
 voice = ["dep:moltis-voice"]
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
-whatsapp = ["dep:moltis-whatsapp", "dep:qrcode"]
+whatsapp = ["dep:moltis-whatsapp", "dep:qrcode", "moltis-whatsapp/metrics"]
 
 [dev-dependencies]
 moltis-web        = { workspace = true }

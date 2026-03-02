@@ -3,7 +3,11 @@ use std::{
     sync::{Arc, RwLock as StdRwLock},
 };
 
-use {async_trait::async_trait, tokio::sync::RwLock, tracing::warn};
+use {
+    async_trait::async_trait,
+    tokio::sync::RwLock,
+    tracing::{instrument, warn},
+};
 
 use {
     super::plugin::{
@@ -50,6 +54,7 @@ impl ChannelRegistry {
     }
 
     /// Register a plugin by its `id()`.
+    #[instrument(skip(self, plugin))]
     pub async fn register(&mut self, plugin: Arc<RwLock<dyn ChannelPlugin>>) {
         let id = {
             let p = plugin.read().await;
@@ -71,6 +76,7 @@ impl ChannelRegistry {
     }
 
     /// Start an account on the appropriate plugin and update the index.
+    #[instrument(skip(self, config), fields(channel_type, account_id))]
     pub async fn start_account(
         &self,
         channel_type: &str,
@@ -110,6 +116,7 @@ impl ChannelRegistry {
     }
 
     /// Stop an account and remove it from the index.
+    #[instrument(skip(self), fields(channel_type, account_id))]
     pub async fn stop_account(&self, channel_type: &str, account_id: &str) -> Result<()> {
         let plugin = self
             .plugins
@@ -163,6 +170,7 @@ impl ChannelRegistry {
     }
 
     /// Probe health of all accounts across all plugins.
+    #[instrument(skip(self))]
     pub async fn status_all(&self) -> Vec<ChannelHealthSnapshot> {
         let mut results = Vec::new();
         for (channel_type, plugin) in &self.plugins {
@@ -927,6 +935,14 @@ mod tests {
     async fn contract_stream_completes_on_error_signal() {
         let mut plugin = TestPlugin::new("test");
         crate::contract::stream_completes_on_error_signal(&mut plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_outbound_error_classification() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::outbound_error_classification(&mut plugin)
             .await
             .unwrap();
     }

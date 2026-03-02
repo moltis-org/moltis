@@ -296,6 +296,13 @@ impl MsTeamsPlugin {
             return Ok(());
         }
 
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_RECEIVED_TOTAL,
+            moltis_metrics::labels::CHANNEL => "msteams"
+        )
+        .increment(1);
+
         sink.dispatch_to_chat(&text, reply_to, ChannelMessageMeta {
             channel_type: ChannelType::MsTeams,
             sender_name,
