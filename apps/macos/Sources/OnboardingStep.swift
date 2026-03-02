@@ -25,45 +25,60 @@ enum OnboardingStep: Int, CaseIterable {
     var label: String {
         switch self {
         case .llm:
-            return "LLM"
+            return NSLocalizedString("LLM", comment: "Onboarding step label")
         case .voice:
-            return "Voice"
+            return NSLocalizedString("Voice", comment: "Onboarding step label")
         case .channels:
-            return "Channels"
+            return NSLocalizedString("Channels", comment: "Onboarding step label")
         case .identity:
-            return "Identity"
+            return NSLocalizedString("Identity", comment: "Onboarding step label")
         case .summary:
-            return "Summary"
+            return NSLocalizedString("Summary", comment: "Onboarding step label")
         }
     }
 
     var title: String {
         switch self {
         case .llm:
-            return "Language Model"
+            return NSLocalizedString("Language Model", comment: "Onboarding step title")
         case .voice:
-            return "Voice"
+            return NSLocalizedString("Voice", comment: "Onboarding step title")
         case .channels:
-            return "Channels"
+            return NSLocalizedString("Channels", comment: "Onboarding step title")
         case .identity:
-            return "Assistant Identity"
+            return NSLocalizedString("Assistant Identity", comment: "Onboarding step title")
         case .summary:
-            return "Ready to Go"
+            return NSLocalizedString("Ready to Go", comment: "Onboarding step title")
         }
     }
 
     var subtitle: String {
         switch self {
         case .llm:
-            return "Choose your preferred model and provider."
+            return NSLocalizedString(
+                "Choose your preferred model and provider.",
+                comment: "Onboarding step subtitle"
+            )
         case .voice:
-            return "Optionally enable voice interaction."
+            return NSLocalizedString(
+                "Optionally enable voice interaction.",
+                comment: "Onboarding step subtitle"
+            )
         case .channels:
-            return "Configure channel routing and sender policies."
+            return NSLocalizedString(
+                "Configure channel routing and sender policies.",
+                comment: "Onboarding step subtitle"
+            )
         case .identity:
-            return "Give your assistant a name and personality."
+            return NSLocalizedString(
+                "Give your assistant a name and personality.",
+                comment: "Onboarding step subtitle"
+            )
         case .summary:
-            return "Everything looks good. You're all set."
+            return NSLocalizedString(
+                "Everything looks good. You're all set.",
+                comment: "Onboarding step subtitle"
+            )
         }
     }
 

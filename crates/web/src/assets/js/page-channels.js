@@ -144,6 +144,7 @@ function ChannelCard(props) {
 	        <span class="text-sm text-[var(--text-strong)]">${ch.name || ch.account_id || channelLabel(ch.type)}</span>
         ${ch.details && html`<span class="text-xs text-[var(--muted)]">${ch.details}</span>`}
         ${sessionLine && html`<span class="text-xs text-[var(--muted)]">${sessionLine}</span>`}
+        ${channelType(ch.type) === "telegram" && ch.account_id && html`<a href="https://t.me/${ch.account_id}" target="_blank" class="text-xs text-[var(--accent)] underline">t.me/${ch.account_id}</a>`}
       </div>
       <span class="provider-item-badge ${statusClass}">${ch.status || "unknown"}</span>
     </div>
@@ -444,6 +445,13 @@ function AddTelegramModal() {
 	      <input data-field="credential" type="password" placeholder="123456:ABC-DEF..." class="channel-input"
 	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
 	        name="telegram_bot_token" />
+	      ${
+					accountDraft.value.trim() &&
+					html`<div class="flex items-center gap-1.5 text-xs py-1">
+	        <span class="text-[var(--muted)]">Chat with your bot:</span>
+	        <a href="https://t.me/${accountDraft.value.trim()}" target="_blank" class="text-[var(--accent)] underline">t.me/${accountDraft.value.trim()}</a>
+	      </div>`
+				}
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
@@ -948,6 +956,7 @@ function EditChannelModal() {
 	}} title=${`Edit ${channelLabel(ch.type)} Channel`}>
 	    <div class="channel-form">
 	      <div class="text-sm text-[var(--text-strong)]">${ch.name || ch.account_id}</div>
+	      ${isTelegram && ch.account_id && html`<a href="https://t.me/${ch.account_id}" target="_blank" class="text-xs text-[var(--accent)] underline">t.me/${ch.account_id}</a>`}
 	      ${
 					isTeams &&
 					html`<div>

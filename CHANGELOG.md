@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **macOS settings backend**: all settings panels (Identity, Heartbeat, Memory, Security, Tailscale, Monitoring, GraphQL, Sandbox, Voice, Channels, Hooks, MCP, Skills) now load from and persist to the Rust config backend via 6 new FFI functions (`moltis_get_config`, `moltis_save_config`, `moltis_get_soul`, `moltis_save_soul`, `moltis_save_identity`, `moltis_save_user_profile`)
+- **macOS environment variables settings**: Settings > Environment now supports add/update/delete via the same credential-store path as web UI (`moltis_list_env_vars`, `moltis_set_env_var`, `moltis_delete_env_var`), including encrypted/plaintext status and vault-state messaging
+
 ### Changed
 
 ### Deprecated

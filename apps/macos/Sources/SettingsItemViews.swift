@@ -4,9 +4,15 @@ import SwiftUI
 
 extension SettingsSectionContent {
     func channelLabel(item: Binding<ChannelItem>) -> some View {
-        HStack {
-            Text(item.wrappedValue.name.isEmpty ? "Untitled Channel" : item.wrappedValue.name)
-            Text(item.wrappedValue.channelType)
+        let channelType = item.wrappedValue.channelType
+        let name = item.wrappedValue.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let accountId = item.wrappedValue.accountId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = ChannelItem.displayName(for: channelType)
+        let title = !name.isEmpty ? name : (!accountId.isEmpty ? accountId : "New \(displayName) Channel")
+
+        return HStack {
+            Text(title)
+            Text(displayName)
                 .font(.caption)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -23,14 +29,97 @@ extension SettingsSectionContent {
 
     func channelFields(item: Binding<ChannelItem>) -> some View {
         Group {
-            TextField("Name", text: item.name)
-            Picker("Type", selection: item.channelType) {
-                ForEach(ChannelItem.channelTypes, id: \.self) { type in
-                    Text(type.capitalized).tag(type)
-                }
+            TextField("Name", text: item.name, prompt: Text("e.g. My Support Bot"))
+
+            LabeledContent("Channel Type") {
+                Text(ChannelItem.displayName(for: item.wrappedValue.channelType))
+                    .foregroundStyle(.secondary)
             }
-            SecureField("Bot Token", text: item.botToken)
+
+            channelTypeFields(item: item)
         }
+    }
+
+    @ViewBuilder
+    func channelTypeFields(item: Binding<ChannelItem>) -> some View {
+        switch item.wrappedValue.channelType {
+        case "telegram":
+            channelHelpText(
+                title: "How to create a Telegram bot",
+                steps: [
+                    "Open @BotFather in Telegram",
+                    "Send /newbot and follow the prompts",
+                    "Copy the bot token and paste it below"
+                ]
+            )
+            TextField("Bot Username", text: item.accountId, prompt: Text("e.g. my_assistant_bot"))
+            SecureField("Bot Token", text: item.credential, prompt: Text("123456:ABC-DEF\u{2026}"))
+            telegramChatLink(username: item.wrappedValue.accountId)
+
+        case "msteams":
+            channelHelpText(
+                title: "Microsoft Teams setup",
+                steps: [
+                    "Create an Azure Bot registration \u{2014} copy the App ID and App Password",
+                    "Use Bootstrap Teams to generate the messaging endpoint",
+                    "CLI shortcut: moltis channels teams bootstrap"
+                ]
+            )
+            TextField("App ID / Account ID", text: item.accountId, prompt: Text("Azure App ID or alias"))
+            TextField("App ID override", text: item.appId, prompt: Text("Separate App ID if different"))
+            SecureField("App Password", text: item.credential, prompt: Text("Azure client secret"))
+            TextField("Webhook Secret", text: item.webhookSecret, prompt: Text("Optional verification secret"))
+
+        case "discord":
+            channelHelpText(
+                title: "How to set up a Discord bot",
+                steps: [
+                    "Go to the Discord Developer Portal",
+                    "Create Application \u{2192} Bot tab \u{2192} copy the bot token",
+                    "Enable 'Message Content Intent' under Privileged Gateway Intents",
+                    "Paste the token below"
+                ]
+            )
+            TextField("Account ID", text: item.accountId, prompt: Text("Discord bot or app ID"))
+            SecureField("Bot Token", text: item.credential, prompt: Text("Bot token from Developer Portal"))
+
+        case "whatsapp":
+            TextField("Account ID", text: item.accountId, prompt: Text("WhatsApp phone number or ID"))
+            Text("Pairing is done from the web UI or CLI. No bot token needed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+        default:
+            TextField("Bot Username / Account ID", text: item.accountId, prompt: Text("Bot username or account ID"))
+            SecureField("Bot Token", text: item.credential, prompt: Text("Bot token or API key"))
+        }
+    }
+
+    @ViewBuilder
+    func telegramChatLink(username: String) -> some View {
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, let url = URL(string: "https://t.me/\(trimmed)") {
+            HStack(spacing: 4) {
+                Image(systemName: "paperplane.fill")
+                    .font(.caption2)
+                Link("Open t.me/\(trimmed) to chat with your bot", destination: url)
+            }
+            .font(.caption)
+        }
+    }
+
+    func channelHelpText(title: String, steps: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.medium)
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                Text("\(index + 1). \(step)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -176,7 +265,13 @@ extension SettingsSectionContent {
                     .font(.system(.body, design: .monospaced))
             case .interval:
                 Stepper(
-                    "Every \(item.wrappedValue.intervalMinutes) min",
+                    String(
+                        format: NSLocalizedString(
+                            "Every %d min",
+                            comment: "Cron interval minutes"
+                        ),
+                        item.wrappedValue.intervalMinutes
+                    ),
                     value: item.intervalMinutes,
                     in: 1 ... 1440
                 )
@@ -192,7 +287,13 @@ extension SettingsSectionContent {
         case .cron:
             return item.cronExpr.isEmpty ? "no schedule" : item.cronExpr
         case .interval:
-            return "every \(item.intervalMinutes)m"
+            return String(
+                format: NSLocalizedString(
+                    "every %dm",
+                    comment: "Cron summary interval with minute suffix"
+                ),
+                item.intervalMinutes
+            )
         case .oneShot:
             return "one-shot"
         }
