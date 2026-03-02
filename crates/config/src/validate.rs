@@ -113,6 +113,7 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("api_key", Leaf),
             ("base_url", Leaf),
+            ("url", Leaf),
             ("models", Leaf),
             ("fetch_models", Leaf),
             ("stream_transport", Leaf),
@@ -2221,6 +2222,25 @@ tool_mode = "text"
         assert!(
             unknown.is_none(),
             "tool_mode should be a known field, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn url_field_accepted_in_provider_entry() {
+        let toml = r#"
+[providers.ollama]
+enabled = true
+url = "http://192.168.0.9:11434"
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path.contains("providers.ollama.url"));
+        assert!(
+            unknown.is_none(),
+            "url should be accepted as a provider field alias, got: {:?}",
             result.diagnostics
         );
     }
