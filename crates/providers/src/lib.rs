@@ -865,6 +865,14 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         supports_model_discovery: true,
     },
     OpenAiCompatDef {
+        config_name: "lmstudio",
+        env_key: "LMSTUDIO_API_KEY",
+        env_base_url_key: "LMSTUDIO_BASE_URL",
+        default_base_url: "http://127.0.0.1:1234/v1",
+        models: &[],
+        supports_model_discovery: true,
+    },
+    OpenAiCompatDef {
         config_name: "gemini",
         env_key: "GEMINI_API_KEY",
         env_base_url_key: "GEMINI_BASE_URL",
@@ -1675,10 +1683,10 @@ impl ProviderRegistry {
 
             let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
 
-            // Ollama doesn't require an API key — use a dummy value.
+            // Ollama and LM Studio don't require an API key — use a dummy value.
             // Gemini accepts both GEMINI_API_KEY and GOOGLE_API_KEY.
-            let key = if def.config_name == "ollama" {
-                key.or_else(|| Some(secrecy::Secret::new("ollama".into())))
+            let key = if def.config_name == "ollama" || def.config_name == "lmstudio" {
+                key.or_else(|| Some(secrecy::Secret::new(def.config_name.into())))
             } else if def.config_name == "gemini" {
                 key.or_else(|| env_value(env_overrides, "GOOGLE_API_KEY").map(secrecy::Secret::new))
             } else {
@@ -1703,8 +1711,8 @@ impl ProviderRegistry {
                 .map(|entry| entry.stream_transport)
                 .unwrap_or(ProviderStreamTransport::Sse);
             let preferred = configured_models_for_provider(config, def.config_name);
-            if def.config_name == "ollama" {
-                let has_explicit_entry = config.get("ollama").is_some();
+            if def.config_name == "ollama" || def.config_name == "lmstudio" {
+                let has_explicit_entry = config.get(def.config_name).is_some();
                 let has_env_base_url = env_value(env_overrides, def.env_base_url_key).is_some();
                 if !has_explicit_entry && !has_env_base_url && preferred.is_empty() {
                     continue;
@@ -1716,6 +1724,7 @@ impl ProviderRegistry {
             let skip_discovery = def.models.is_empty()
                 && preferred.is_empty()
                 && def.config_name != "ollama"
+                && def.config_name != "lmstudio"
                 && (def.config_name == "venice" || cfg!(test));
             // Respect `supports_model_discovery`: providers whose API lacks a
             // /models endpoint (e.g. MiniMax) skip live fetch unless the user
