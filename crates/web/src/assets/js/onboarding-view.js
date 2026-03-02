@@ -2732,17 +2732,42 @@ function OpenClawImportStep({ onNext, onBack }) {
 
 	useEffect(() => {
 		var cancelled = false;
-		sendRpc("openclaw.scan", {}).then((res) => {
+		var attempts = 0;
+		var retryTimer = null;
+
+		function loadScan() {
 			if (cancelled) return;
-			if (res?.ok) {
-				setScan(res.payload);
-			} else {
-				setError("Failed to scan OpenClaw installation");
-			}
-			setLoading(false);
-		});
+			sendRpc("openclaw.scan", {}).then((res) => {
+				if (cancelled) return;
+				if (res?.ok) {
+					setScan(res.payload);
+					setLoading(false);
+					return;
+				}
+
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
+					attempts += 1;
+					ensureWsConnected();
+					retryTimer = window.setTimeout(loadScan, WS_RETRY_DELAY_MS);
+					return;
+				}
+
+				setError(res?.error?.message || "Failed to scan OpenClaw installation");
+				setLoading(false);
+			});
+		}
+
+		ensureWsConnected();
+		loadScan();
 		return () => {
 			cancelled = true;
+			if (retryTimer) {
+				window.clearTimeout(retryTimer);
+				retryTimer = null;
+			}
 		};
 	}, []);
 
