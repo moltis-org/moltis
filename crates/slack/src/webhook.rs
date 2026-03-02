@@ -178,6 +178,104 @@ pub async fn handle_webhook(
     Ok(None)
 }
 
+/// Handle an already-verified Events API webhook request.
+///
+/// The caller (channel webhook middleware) has already verified the signature,
+/// checked timestamp staleness, and performed idempotency dedup.
+///
+/// Returns `Ok(Some(challenge))` for URL verification, `Ok(None)` for events.
+pub async fn handle_verified_webhook(
+    account_id: &str,
+    body: &[u8],
+    accounts: &AccountStateMap,
+) -> moltis_channels::Result<Option<String>> {
+    let payload: serde_json::Value = serde_json::from_slice(body)?;
+
+    // URL verification challenge.
+    if payload.get("type").and_then(|v| v.as_str()) == Some("url_verification") {
+        let challenge = payload
+            .get("challenge")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        return Ok(Some(challenge));
+    }
+
+    // Event callback.
+    if payload.get("type").and_then(|v| v.as_str()) == Some("event_callback") {
+        dispatch_event_callback(account_id, &payload, accounts).await;
+    }
+
+    Ok(None)
+}
+
+/// Handle an already-verified interaction webhook request.
+///
+/// The caller (channel webhook middleware) has already verified the signature.
+pub async fn handle_verified_interaction_webhook(
+    account_id: &str,
+    body: &[u8],
+    accounts: &AccountStateMap,
+) -> moltis_channels::Result<()> {
+    // Parse form-encoded body to extract `payload` field.
+    let body_str = std::str::from_utf8(body)
+        .map_err(|e| moltis_channels::Error::invalid_input(format!("invalid utf-8: {e}")))?;
+
+    let payload_json = extract_form_payload(body_str).ok_or_else(|| {
+        moltis_channels::Error::invalid_input("missing payload field in interaction")
+    })?;
+
+    let payload: serde_json::Value = serde_json::from_str(&payload_json)?;
+
+    let interaction_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    if interaction_type != "block_actions" {
+        debug!(account_id, interaction_type, "unhandled interaction type");
+        return Ok(());
+    }
+
+    let action_id = payload
+        .get("actions")
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.first())
+        .and_then(|a| a.get("action_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let channel_id = payload
+        .get("channel")
+        .and_then(|c| c.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if action_id.is_empty() || channel_id.is_empty() {
+        debug!(account_id, "interaction missing action_id or channel");
+        return Ok(());
+    }
+
+    let event_sink = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts.get(account_id).and_then(|s| s.event_sink.clone())
+    };
+
+    if let Some(sink) = event_sink {
+        let reply_to = ChannelReplyTarget {
+            channel_type: ChannelType::Slack,
+            account_id: account_id.to_string(),
+            chat_id: channel_id.to_string(),
+            message_id: None,
+        };
+        match sink.dispatch_interaction(action_id, reply_to).await {
+            Ok(_) => {},
+            Err(e) => {
+                debug!(account_id, action_id, "interaction dispatch failed: {e}");
+            },
+        }
+    }
+
+    Ok(())
+}
+
 /// Dispatch an event_callback payload to the appropriate handler.
 async fn dispatch_event_callback(
     account_id: &str,
