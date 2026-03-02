@@ -4,14 +4,18 @@
 //! `x-moltis-webhook-secret` header by the gateway route handler) with
 //! constant-time comparison.
 
-use bytes::Bytes;
-use http::HeaderMap;
-use moltis_channels::channel_webhook_middleware::{
-    ChannelWebhookRejection, ChannelWebhookVerifier, VerifiedChannelWebhook,
+use {
+    bytes::Bytes,
+    http::HeaderMap,
+    moltis_channels::{
+        channel_webhook_middleware::{
+            ChannelWebhookRejection, ChannelWebhookVerifier, VerifiedChannelWebhook,
+        },
+        plugin::ChannelType,
+    },
+    secrecy::{ExposeSecret, Secret},
+    subtle::ConstantTimeEq,
 };
-use moltis_channels::plugin::ChannelType;
-use secrecy::{ExposeSecret, Secret};
-use subtle::ConstantTimeEq;
 
 /// Teams webhook verifier using shared-secret comparison.
 ///
@@ -48,8 +52,8 @@ impl ChannelWebhookVerifier for TeamsChannelWebhookVerifier {
                 .get("x-moltis-webhook-secret")
                 .and_then(|v| v.to_str().ok());
 
-            let matches = provided
-                .map_or(false, |p| p.as_bytes().ct_eq(expected.as_bytes()).into());
+            let matches =
+                provided.map_or(false, |p| p.as_bytes().ct_eq(expected.as_bytes()).into());
 
             if !matches {
                 return Err(ChannelWebhookRejection::BadSignature(
@@ -92,10 +96,8 @@ mod tests {
 
     #[test]
     fn valid_secret_passes() {
-        let verifier = TeamsChannelWebhookVerifier::new(
-            Some(Secret::new("my-secret".into())),
-            true,
-        );
+        let verifier =
+            TeamsChannelWebhookVerifier::new(Some(Secret::new("my-secret".into())), true);
         let body = br#"{"id":"act-123","type":"message","text":"hello"}"#;
         let headers = headers_with_secret("my-secret");
 
@@ -109,10 +111,8 @@ mod tests {
 
     #[test]
     fn wrong_secret_rejects() {
-        let verifier = TeamsChannelWebhookVerifier::new(
-            Some(Secret::new("correct-secret".into())),
-            true,
-        );
+        let verifier =
+            TeamsChannelWebhookVerifier::new(Some(Secret::new("correct-secret".into())), true);
         let headers = headers_with_secret("wrong-secret");
 
         let result = verifier.verify(&headers, b"{}");
@@ -124,10 +124,8 @@ mod tests {
 
     #[test]
     fn missing_secret_header_rejects() {
-        let verifier = TeamsChannelWebhookVerifier::new(
-            Some(Secret::new("my-secret".into())),
-            true,
-        );
+        let verifier =
+            TeamsChannelWebhookVerifier::new(Some(Secret::new("my-secret".into())), true);
         let headers = HeaderMap::new();
 
         let result = verifier.verify(&headers, b"{}");
@@ -164,10 +162,7 @@ mod tests {
 
     #[test]
     fn empty_secret_configured_and_not_required_passes() {
-        let verifier = TeamsChannelWebhookVerifier::new(
-            Some(Secret::new(String::new())),
-            false,
-        );
+        let verifier = TeamsChannelWebhookVerifier::new(Some(Secret::new(String::new())), false);
         let headers = HeaderMap::new();
 
         let result = verifier.verify(&headers, b"{}");
@@ -194,19 +189,14 @@ mod tests {
     #[test]
     fn contract_rejects_empty_signature() {
         // With require_secret=true, missing headers → BadSignature.
-        let verifier = TeamsChannelWebhookVerifier::new(
-            Some(Secret::new("secret".into())),
-            true,
-        );
+        let verifier = TeamsChannelWebhookVerifier::new(Some(Secret::new("secret".into())), true);
         moltis_channels::contract::channel_webhook_verifier_rejects_empty_signature(&verifier);
     }
 
     #[test]
     fn contract_rejects_bad_signature() {
-        let verifier = TeamsChannelWebhookVerifier::new(
-            Some(Secret::new("correct-secret".into())),
-            true,
-        );
+        let verifier =
+            TeamsChannelWebhookVerifier::new(Some(Secret::new("correct-secret".into())), true);
         let headers = headers_with_secret("wrong-secret");
         moltis_channels::contract::channel_webhook_verifier_rejects_bad_signature(
             &verifier, &headers,

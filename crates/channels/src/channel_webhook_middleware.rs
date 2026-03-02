@@ -8,8 +8,7 @@
 
 use std::time::Duration;
 
-use bytes::Bytes;
-use http::HeaderMap;
+use {bytes::Bytes, http::HeaderMap};
 
 use crate::plugin::ChannelType;
 
@@ -89,18 +88,13 @@ pub enum ChannelWebhookRejection {
     /// Signature verification failed (bad HMAC, wrong secret, missing header).
     BadSignature(String),
     /// The request timestamp is too old or too far in the future.
-    StaleTimestamp {
-        age_seconds: u64,
-        max_seconds: u64,
-    },
+    StaleTimestamp { age_seconds: u64, max_seconds: u64 },
     /// Required headers are missing.
     MissingHeaders(String),
     /// The request is a duplicate (idempotency key already seen).
     Duplicate,
     /// Per-account rate limit exceeded.
-    RateLimited {
-        retry_after: Duration,
-    },
+    RateLimited { retry_after: Duration },
 }
 
 impl ChannelWebhookRejection {
@@ -131,7 +125,7 @@ impl std::fmt::Display for ChannelWebhookRejection {
             Self::Duplicate => write!(f, "duplicate request"),
             Self::RateLimited { retry_after } => {
                 write!(f, "rate limited (retry after {}s)", retry_after.as_secs())
-            }
+            },
         }
     }
 }
@@ -274,7 +268,10 @@ mod tests {
             ChannelWebhookRejection::MissingHeaders("x-sig".into()).reason_label(),
             "missing_headers"
         );
-        assert_eq!(ChannelWebhookRejection::Duplicate.reason_label(), "duplicate");
+        assert_eq!(
+            ChannelWebhookRejection::Duplicate.reason_label(),
+            "duplicate"
+        );
         assert_eq!(
             ChannelWebhookRejection::RateLimited {
                 retry_after: Duration::from_secs(30),

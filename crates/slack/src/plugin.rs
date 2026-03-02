@@ -101,8 +101,7 @@ impl SlackPlugin {
         account_id: &str,
         body: &[u8],
     ) -> ChannelResult<()> {
-        crate::webhook::handle_verified_interaction_webhook(account_id, body, &self.accounts)
-            .await
+        crate::webhook::handle_verified_interaction_webhook(account_id, body, &self.accounts).await
     }
 }
 

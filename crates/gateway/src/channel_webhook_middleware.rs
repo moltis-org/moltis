@@ -8,16 +8,20 @@
 //! 3. Per-(channel, account) rate limiting
 //! 4. Idempotency deduplication
 
-use axum::http::StatusCode;
-use axum::response::{IntoResponse as _, Response};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse as _, Response},
+};
 
 use moltis_channels::channel_webhook_middleware::{
     ChannelWebhookDedupeResult, ChannelWebhookRejection, ChannelWebhookVerifier, TimestampGuard,
     VerifiedChannelWebhook,
 };
 
-use crate::channel_webhook_dedup::ChannelWebhookDedupeStore;
-use crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter;
+use crate::{
+    channel_webhook_dedup::ChannelWebhookDedupeStore,
+    channel_webhook_rate_limit::ChannelWebhookRateLimiter,
+};
 
 /// Run the full channel webhook verification pipeline.
 ///
@@ -102,9 +106,11 @@ pub fn channel_webhook_gate(
     }
 
     // Step 3: Per-(channel, account) rate limiting.
-    if let Err(rejection) =
-        rate_limiter.check(verifier.channel_type().as_str(), account_id, &verifier.rate_policy())
-    {
+    if let Err(rejection) = rate_limiter.check(
+        verifier.channel_type().as_str(),
+        account_id,
+        &verifier.rate_policy(),
+    ) {
         #[cfg(feature = "metrics")]
         {
             use moltis_metrics::{counter, labels};
@@ -198,9 +204,7 @@ pub fn rejection_into_response(rejection: ChannelWebhookRejection) -> Response {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
-    use bytes::Bytes;
-    use moltis_channels::plugin::ChannelType;
+    use {super::*, bytes::Bytes, moltis_channels::plugin::ChannelType};
 
     /// Dummy verifier that always passes for testing the pipeline.
     struct PassVerifier;
@@ -302,13 +306,11 @@ mod tests {
         let headers = axum::http::HeaderMap::new();
 
         let (_, d1) =
-            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body)
-                .unwrap();
+            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body).unwrap();
         assert_eq!(d1, ChannelWebhookDedupeResult::New);
 
         let (_, d2) =
-            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body)
-                .unwrap();
+            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body).unwrap();
         assert_eq!(d2, ChannelWebhookDedupeResult::Duplicate);
     }
 
@@ -320,21 +322,18 @@ mod tests {
         let headers = axum::http::HeaderMap::new();
 
         let (_, d1) =
-            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body)
-                .unwrap();
+            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body).unwrap();
         assert_eq!(d1, ChannelWebhookDedupeResult::New);
 
         // Same body without id — still New (no dedup key)
         let (_, d2) =
-            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body)
-                .unwrap();
+            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body).unwrap();
         assert_eq!(d2, ChannelWebhookDedupeResult::New);
     }
 
     #[test]
     fn rejection_into_response_status_codes() {
-        let bad_sig =
-            rejection_into_response(ChannelWebhookRejection::BadSignature("test".into()));
+        let bad_sig = rejection_into_response(ChannelWebhookRejection::BadSignature("test".into()));
         assert_eq!(bad_sig.status(), StatusCode::UNAUTHORIZED);
 
         let stale = rejection_into_response(ChannelWebhookRejection::StaleTimestamp {
@@ -355,9 +354,7 @@ mod tests {
         });
         assert_eq!(rate.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(
-            rate.headers()
-                .get(axum::http::header::RETRY_AFTER)
-                .unwrap(),
+            rate.headers().get(axum::http::header::RETRY_AFTER).unwrap(),
             "30"
         );
     }
@@ -386,12 +383,14 @@ mod tests {
                     timestamp_epoch: Some(now),
                 })
             }
+
             fn rate_policy(&self) -> moltis_channels::ChannelWebhookRatePolicy {
                 moltis_channels::ChannelWebhookRatePolicy {
                     max_requests_per_minute: 6,
                     burst: 0,
                 }
             }
+
             fn channel_type(&self) -> ChannelType {
                 ChannelType::Slack
             }

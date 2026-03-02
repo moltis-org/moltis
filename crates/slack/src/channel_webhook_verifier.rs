@@ -3,13 +3,17 @@
 //! Uses HMAC-SHA256 with the app's signing secret, following the
 //! [Slack verification protocol](https://api.slack.com/authentication/verifying-requests-from-slack).
 
-use bytes::Bytes;
-use http::HeaderMap;
-use moltis_channels::channel_webhook_middleware::{
-    ChannelWebhookRejection, ChannelWebhookVerifier, VerifiedChannelWebhook,
+use {
+    bytes::Bytes,
+    http::HeaderMap,
+    moltis_channels::{
+        channel_webhook_middleware::{
+            ChannelWebhookRejection, ChannelWebhookVerifier, VerifiedChannelWebhook,
+        },
+        plugin::ChannelType,
+    },
+    secrecy::{ExposeSecret, Secret},
 };
-use moltis_channels::plugin::ChannelType;
-use secrecy::{ExposeSecret, Secret};
 
 use crate::webhook::verify_signature;
 
@@ -43,9 +47,7 @@ impl ChannelWebhookVerifier for SlackChannelWebhookVerifier {
         let signature = headers
             .get("x-slack-signature")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                ChannelWebhookRejection::MissingHeaders("x-slack-signature".into())
-            })?;
+            .ok_or_else(|| ChannelWebhookRejection::MissingHeaders("x-slack-signature".into()))?;
 
         if !verify_signature(
             self.signing_secret.expose_secret(),
@@ -89,15 +91,16 @@ impl ChannelWebhookVerifier for SlackChannelWebhookVerifier {
 mod tests {
     use super::*;
 
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
+    use {
+        hmac::{Hmac, Mac},
+        sha2::Sha256,
+    };
 
     const TEST_SECRET: &str = "test_signing_secret_123";
 
     /// Build valid Slack signature headers for a given body and timestamp.
     fn make_signed_headers(secret: &str, timestamp: &str, body: &[u8]) -> HeaderMap {
-        let mut mac =
-            Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("valid HMAC key");
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("valid HMAC key");
         mac.update(b"v0:");
         mac.update(timestamp.as_bytes());
         mac.update(b":");

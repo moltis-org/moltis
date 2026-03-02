@@ -403,8 +403,7 @@ pub struct GatewayState {
         std::sync::RwLock<crate::channel_webhook_dedup::ChannelWebhookDedupeStore>,
 
     /// Per-(channel, account) rate limiter for channel webhooks.
-    pub channel_webhook_rate_limiter:
-        crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter,
+    pub channel_webhook_rate_limiter: crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter,
 
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     /// Monotonically increasing sequence counter for broadcast events.
