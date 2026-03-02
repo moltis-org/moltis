@@ -4609,4 +4609,51 @@ mod tests {
         assert_eq!(sanitize_tool_name("\"exec"), "\"exec");
         assert_eq!(sanitize_tool_name("exec\""), "exec\"");
     }
+
+    /// All real tool names used in production must survive sanitization unchanged.
+    #[test]
+    fn sanitize_tool_name_noop_on_real_tool_names() {
+        let real_names = [
+            "exec",
+            "web_search",
+            "web_fetch",
+            "memory_save",
+            "memory_search",
+            "file_read",
+            "file_write",
+            "calc",
+            "mcp-server_tool-name",
+        ];
+        for name in real_names {
+            assert_eq!(
+                sanitize_tool_name(name),
+                name,
+                "sanitize_tool_name must be no-op on valid tool name '{name}'"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_tool_name_empty_string() {
+        assert_eq!(sanitize_tool_name(""), "");
+        assert_eq!(sanitize_tool_name("  "), "");
+    }
+
+    #[test]
+    fn sanitize_tool_name_only_quotes() {
+        // `""` → stripped to empty
+        assert_eq!(sanitize_tool_name("\"\""), "");
+    }
+
+    #[test]
+    fn sanitize_tool_name_preserves_internal_quotes() {
+        // Quotes in the middle are NOT stripped — only surrounding pair.
+        assert_eq!(sanitize_tool_name("my\"tool"), "my\"tool");
+    }
+
+    #[test]
+    fn sanitize_tool_name_single_quotes_not_stripped() {
+        // Only double quotes are stripped.
+        assert_eq!(sanitize_tool_name("'exec'"), "'exec'");
+    }
 }

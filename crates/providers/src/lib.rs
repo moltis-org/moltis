@@ -3441,6 +3441,72 @@ mod tests {
     }
 
     #[test]
+    fn resolve_ollama_tool_mode_no_probe_result_falls_back_to_name_heuristic() {
+        use moltis_config::ToolMode;
+        // No probe result at all — falls back to model name matching.
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "llama3.1:8b", None),
+            ToolMode::Native
+        );
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "unknown-model:latest", None),
+            ToolMode::Text
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_explicit_overrides_capabilities() {
+        use moltis_config::ToolMode;
+        // Even with capabilities saying "tools", explicit Text override wins.
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("minimax".into()),
+                families: None,
+            },
+            capabilities: vec!["tools".into()],
+        };
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Text, "MiniMax-M2.5:latest", Some(&show_resp)),
+            ToolMode::Text
+        );
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Off, "MiniMax-M2.5:latest", Some(&show_resp)),
+            ToolMode::Off
+        );
+    }
+
+    /// Verify OllamaShowResponse deserializes from Ollama >= 0.5.x JSON with capabilities.
+    #[test]
+    fn ollama_show_response_deserializes_with_capabilities() {
+        let json = r#"{
+            "details": {"family": "minimax", "families": null},
+            "capabilities": ["completion", "tools"]
+        }"#;
+        let resp: OllamaShowResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.details.family.as_deref(), Some("minimax"));
+        assert_eq!(resp.capabilities, vec!["completion", "tools"]);
+    }
+
+    /// Verify OllamaShowResponse deserializes from old Ollama without capabilities field.
+    #[test]
+    fn ollama_show_response_deserializes_without_capabilities() {
+        let json = r#"{"details": {"family": "llama3.1", "families": ["llama3.1"]}}"#;
+        let resp: OllamaShowResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.details.family.as_deref(), Some("llama3.1"));
+        assert!(
+            resp.capabilities.is_empty(),
+            "missing field should default to empty vec"
+        );
+    }
+
+    /// Capabilities with only "tools" (single item).
+    #[test]
+    fn ollama_capabilities_single_tools_entry() {
+        let caps = vec!["tools".into()];
+        assert_eq!(ollama_capabilities_support_tools(&caps), Some(true));
+    }
+
+    #[test]
     fn openai_provider_supports_tools_respects_override() {
         use moltis_config::ToolMode;
         let make = |mode: ToolMode| {

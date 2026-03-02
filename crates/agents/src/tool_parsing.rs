@@ -653,4 +653,161 @@ Done."#;
         assert_eq!(extract_xml_attr(r#" name="exec" id="1""#, "id"), Some("1"));
         assert_eq!(extract_xml_attr(r#" name="exec""#, "missing"), None);
     }
+
+    // ── Backward compatibility: existing formats unaffected by invoke parser ──
+
+    /// Fenced blocks must still work identically after adding the invoke parser.
+    #[test]
+    fn backward_compat_fenced_still_works() {
+        let text = r#"```tool_call
+{"tool": "exec", "arguments": {"command": "pwd"}}
+```"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "exec");
+        assert_eq!(calls[0].arguments["command"], "pwd");
+        assert!(
+            remaining.is_none() || remaining.as_deref() == Some(""),
+            "remaining: {remaining:?}"
+        );
+    }
+
+    /// XML <function=...> format must still work identically.
+    #[test]
+    fn backward_compat_function_xml_still_works() {
+        let text = r#"<function=exec>
+<parameter=command>ls</parameter>
+</function>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "exec");
+        assert_eq!(calls[0].arguments["command"], "ls");
+        assert!(
+            remaining.is_none() || remaining.as_deref() == Some(""),
+            "remaining: {remaining:?}"
+        );
+    }
+
+    /// Bare JSON must still work identically.
+    #[test]
+    fn backward_compat_bare_json_still_works() {
+        let text = r#"Let me run: {"tool": "exec", "arguments": {"command": "whoami"}}"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "exec");
+        let rem = remaining.unwrap();
+        assert!(rem.contains("Let me run:"));
+    }
+
+    // ── Invoke parser edge cases ──────────────────────────────────────
+
+    /// Invoke without any <arg> children should NOT produce a tool call.
+    #[test]
+    fn invoke_without_args_not_parsed() {
+        let text = r#"<invoke name="exec"></invoke>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert!(
+            calls.is_empty(),
+            "invoke with no args should not produce a call"
+        );
+        assert_eq!(remaining.as_deref(), Some(text));
+    }
+
+    /// Invoke with missing closing tag is gracefully skipped.
+    #[test]
+    fn invoke_unclosed_skipped() {
+        let text = r#"before <invoke name="exec"><arg name="cmd">ls</arg> after"#;
+        let (calls, _remaining) = parse_tool_calls_from_text(text);
+        assert!(
+            calls.is_empty(),
+            "unclosed invoke should not produce a call"
+        );
+    }
+
+    /// Invoke without name attribute is skipped.
+    #[test]
+    fn invoke_missing_name_attr_skipped() {
+        let text = r#"<invoke><arg name="cmd">ls</arg></invoke>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+    }
+
+    /// Invoke with empty name is skipped.
+    #[test]
+    fn invoke_empty_name_skipped() {
+        let text = r#"<invoke name=""><arg name="cmd">ls</arg></invoke>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+    }
+
+    /// Invoke with JSON value in arg body is parsed as structured value.
+    #[test]
+    fn invoke_json_arg_value() {
+        let text = r#"<invoke name="exec"><arg name="config">{"verbose": true}</arg></invoke>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments["config"]["verbose"], true);
+    }
+
+    /// Invoke with multiline arg value.
+    #[test]
+    fn invoke_multiline_arg_value() {
+        let text = r#"<invoke name="exec"><arg name="command">echo "hello
+world"</arg></invoke>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments["command"], "echo \"hello\nworld\"");
+    }
+
+    // ── Mixed format: invoke does not interfere with other parsers ────
+
+    /// Fenced block + invoke block together: both parsed correctly.
+    #[test]
+    fn mixed_fenced_and_invoke() {
+        let text = r#"Step 1:
+```tool_call
+{"tool": "exec", "arguments": {"command": "mkdir test"}}
+```
+Step 2:
+<invoke name="exec"><arg name="command">cd test</arg></invoke>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].arguments["command"], "mkdir test");
+        assert_eq!(calls[1].name, "exec");
+        assert_eq!(calls[1].arguments["command"], "cd test");
+        let rem = remaining.unwrap();
+        assert!(rem.contains("Step 1:"));
+        assert!(rem.contains("Step 2:"));
+    }
+
+    /// Multiple invoke blocks in one text.
+    #[test]
+    fn multiple_invoke_blocks() {
+        let text = r#"<invoke name="exec"><arg name="command">ls</arg></invoke>
+<invoke name="web_search"><arg name="query">rust</arg></invoke>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "exec");
+        assert_eq!(calls[1].name, "web_search");
+    }
+
+    // ── looks_like_failed_tool_call: no false positives ──────────────
+
+    /// English prose containing "invoke" must NOT be flagged as a failed tool call.
+    #[test]
+    fn looks_like_failed_invoke_no_false_positive_english() {
+        // No `<invoke` — just the word "invoke" in prose.
+        assert!(!looks_like_failed_tool_call(&Some(
+            "I'll invoke the API to get results.".into()
+        )));
+    }
+
+    /// Valid invoke block that is successfully parsed should NOT be flagged.
+    #[test]
+    fn looks_like_failed_invoke_valid_block_not_flagged() {
+        // This is a well-formed invoke that parses successfully — parse_tool_call_from_text
+        // returns Some, so looks_like_failed_tool_call returns false.
+        let valid = r#"<invoke name="exec"><arg name="command">ls</arg></invoke>"#;
+        assert!(!looks_like_failed_tool_call(&Some(valid.into())));
+    }
 }
