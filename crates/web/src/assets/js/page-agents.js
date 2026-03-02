@@ -221,7 +221,9 @@ function AgentForm({ agent, onSave, onCancel }) {
 					<span style="font-size:0.6rem;">${presetOpen ? "\u25BC" : "\u25B6"}</span>
 					Spawn Settings (TOML)
 				</button>
-				${presetOpen && html`
+				${
+					presetOpen &&
+					html`
 					<p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0;">
 						Configure how this agent behaves when spawned as a sub-agent via spawn_agent.
 					</p>
@@ -233,7 +235,8 @@ function AgentForm({ agent, onSave, onCancel }) {
 						rows="6"
 						style="resize:vertical;font-family:var(--font-mono);font-size:0.7rem;white-space:pre;overflow-x:auto;"
 					/>
-				`}
+				`
+				}
 			</div>
 
 			${error && html`<span class="text-xs" style="color:var(--error);">${error}</span>`}
@@ -327,14 +330,21 @@ function PresetCard({ preset }) {
 					onClick=${() => setExpanded(!expanded)}
 				>${expanded ? "Hide" : "View"}</button>
 			</div>
-			${preset.theme && html`
+			${
+				preset.theme &&
+				html`
 				<div class="text-xs text-[var(--muted)] mt-1">${preset.theme}</div>
-			`}
-			${expanded && preset.toml && html`
+			`
+			}
+			${
+				expanded &&
+				preset.toml &&
+				html`
 				<pre class="text-xs mt-2 p-2 rounded"
 					style="background:var(--bg-offset);font-family:var(--font-mono);white-space:pre-wrap;overflow-x:auto;max-height:200px;overflow-y:auto;"
 				>${preset.toml}</pre>
-			`}
+			`
+			}
 		</div>
 	`;
 }
@@ -470,13 +480,14 @@ function AgentsPage({ subPath }) {
 				)}
 		</div>
 
-		${configPresets.length > 0 && html`
+		${
+			configPresets.length > 0 &&
+			html`
 			<div class="flex flex-col gap-2 mt-2" style="max-width:600px;">
 				<h3 class="text-xs font-medium text-[var(--muted)]">Config-only Presets</h3>
-				${configPresets.map(
-					(preset) => html`<${PresetCard} key=${preset.id} preset=${preset} />`,
-				)}
+				${configPresets.map((preset) => html`<${PresetCard} key=${preset.id} preset=${preset} />`)}
 			</div>
-		`}
+		`
+		}
 	</div>`;
 }
