@@ -1130,6 +1130,12 @@ pub struct McpOAuthOverrideEntry {
     pub scopes: Vec<String>,
 }
 
+/// Built-in channel type identifiers recognised by the validator.
+///
+/// Kept in `moltis-config` (not `moltis-channels`) so the config crate stays
+/// independent of the channels crate while still validating channel names.
+pub const KNOWN_CHANNEL_TYPES: &[&str] = &["telegram", "whatsapp", "msteams", "discord", "slack"];
+
 /// Channel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

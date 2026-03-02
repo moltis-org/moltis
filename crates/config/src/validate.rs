@@ -971,8 +971,7 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
 
     // Unknown channel types in channels.offered — accept built-in types plus
     // any dynamically configured types from `[channels.<type>]` sections.
-    let mut valid_channel_types: Vec<&str> =
-        vec!["telegram", "msteams", "discord", "whatsapp", "slack"];
+    let mut valid_channel_types: Vec<&str> = crate::schema::KNOWN_CHANNEL_TYPES.to_vec();
     for ct in config.channels.extra.keys() {
         valid_channel_types.push(ct.as_str());
     }

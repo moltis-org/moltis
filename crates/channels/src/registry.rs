@@ -7,8 +7,8 @@ use {async_trait::async_trait, tokio::sync::RwLock, tracing::warn};
 
 use {
     super::plugin::{
-        ChannelOutbound, ChannelPlugin, ChannelStreamOutbound, InteractiveMessage, StreamReceiver,
-        ThreadMessage,
+        ChannelDescriptor, ChannelOutbound, ChannelPlugin, ChannelStreamOutbound, ChannelType,
+        InteractiveMessage, StreamReceiver, ThreadMessage,
     },
     crate::{Error, Result, config_view::ChannelConfigView, plugin::ChannelHealthSnapshot},
 };
@@ -252,6 +252,18 @@ impl ChannelRegistry {
         let p = plugin.read().await;
         p.update_account_config(account_id, config)
     }
+
+    /// Returns descriptors for all registered channel types.
+    ///
+    /// Parses each registered plugin ID as a [`ChannelType`] and returns its
+    /// static descriptor. Unknown plugin IDs are silently skipped.
+    pub fn descriptors(&self) -> Vec<ChannelDescriptor> {
+        self.plugins
+            .keys()
+            .filter_map(|id| id.parse::<ChannelType>().ok())
+            .map(|ct| ct.descriptor())
+            .collect()
+    }
 }
 
 // ── RegistryOutboundRouter ──────────────────────────────────────────────────
@@ -464,14 +476,48 @@ impl ChannelStreamOutbound for RegistryOutboundRouter {
 mod tests {
     use {
         super::*,
-        crate::plugin::{ChannelStatus, StreamEvent},
+        crate::{
+            gating::{DmPolicy, GroupPolicy},
+            plugin::{ChannelStatus, StreamEvent},
+        },
         tokio::sync::mpsc,
     };
+
+    /// Minimal config view for testing contract tests.
+    #[derive(Debug)]
+    struct TestConfigView;
+
+    impl ChannelConfigView for TestConfigView {
+        fn allowlist(&self) -> &[String] {
+            &[]
+        }
+
+        fn group_allowlist(&self) -> &[String] {
+            &[]
+        }
+
+        fn dm_policy(&self) -> DmPolicy {
+            DmPolicy::default()
+        }
+
+        fn group_policy(&self) -> GroupPolicy {
+            GroupPolicy::default()
+        }
+
+        fn model(&self) -> Option<&str> {
+            None
+        }
+
+        fn model_provider(&self) -> Option<&str> {
+            None
+        }
+    }
 
     /// Minimal plugin for testing.
     struct TestPlugin {
         id: String,
         accounts: std::sync::Mutex<HashMap<String, serde_json::Value>>,
+        outbound: NullOutbound,
     }
 
     impl TestPlugin {
@@ -479,6 +525,7 @@ mod tests {
             Self {
                 id: id.to_string(),
                 accounts: std::sync::Mutex::new(HashMap::new()),
+                outbound: NullOutbound,
             }
         }
     }
@@ -511,11 +558,11 @@ mod tests {
         }
 
         fn outbound(&self) -> Option<&dyn ChannelOutbound> {
-            None
+            Some(&self.outbound)
         }
 
         fn status(&self) -> Option<&dyn ChannelStatus> {
-            None
+            Some(self)
         }
 
         fn has_account(&self, account_id: &str) -> bool {
@@ -526,8 +573,12 @@ mod tests {
             self.accounts.lock().unwrap().keys().cloned().collect()
         }
 
-        fn account_config(&self, _account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
-            None
+        fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+            if self.has_account(account_id) {
+                Some(Box::new(TestConfigView))
+            } else {
+                None
+            }
         }
 
         fn update_account_config(
@@ -544,6 +595,17 @@ mod tests {
 
         fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
             Arc::new(NullStreamOutbound)
+        }
+    }
+
+    #[async_trait]
+    impl ChannelStatus for TestPlugin {
+        async fn probe(&self, account_id: &str) -> Result<ChannelHealthSnapshot> {
+            Ok(ChannelHealthSnapshot {
+                connected: self.has_account(account_id),
+                account_id: account_id.to_string(),
+                details: None,
+            })
         }
     }
 
@@ -776,5 +838,64 @@ mod tests {
     async fn resolve_stream_returns_none_for_unknown() {
         let registry = ChannelRegistry::new();
         assert!(registry.resolve_stream("unknown").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn descriptors_returns_registered_types() {
+        let mut registry = ChannelRegistry::new();
+        registry
+            .register(Arc::new(RwLock::new(TestPlugin::new("telegram"))))
+            .await;
+        registry
+            .register(Arc::new(RwLock::new(TestPlugin::new("discord"))))
+            .await;
+
+        let mut descs: Vec<String> = registry
+            .descriptors()
+            .iter()
+            .map(|d| d.channel_type.to_string())
+            .collect();
+        descs.sort();
+        assert_eq!(descs, vec!["discord", "telegram"]);
+    }
+
+    #[test]
+    fn descriptors_empty_registry() {
+        let registry = ChannelRegistry::new();
+        assert!(registry.descriptors().is_empty());
+    }
+
+    // ── Contract tests ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn contract_lifecycle_start_stop() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::lifecycle_start_stop(&mut plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_double_start_same_account() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::double_start_same_account(&mut plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_stop_unknown_account() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::stop_unknown_account(&mut plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_config_view_after_start() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::config_view_after_start(&mut plugin)
+            .await
+            .unwrap();
     }
 }

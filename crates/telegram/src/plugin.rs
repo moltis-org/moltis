@@ -514,4 +514,23 @@ mod tests {
             "test:fake_token_for_unit_tests"
         );
     }
+
+    #[test]
+    fn descriptor_coherence() {
+        use moltis_channels::{ChannelType, InboundMode};
+        let plugin = TelegramPlugin::new();
+        let desc = ChannelType::Telegram.descriptor();
+
+        assert_eq!(desc.channel_type, ChannelType::Telegram);
+        assert_eq!(desc.display_name, "Telegram");
+        assert_eq!(desc.capabilities.inbound_mode, InboundMode::Polling);
+
+        // OTP: Telegram implements ChannelOtpProvider
+        assert!(desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_some());
+
+        // Threads: Telegram does NOT implement ChannelThreadContext
+        assert!(!desc.capabilities.supports_threads);
+        assert!(plugin.thread_context().is_none());
+    }
 }

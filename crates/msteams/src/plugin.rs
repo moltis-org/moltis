@@ -450,3 +450,30 @@ impl ChannelStatus for MsTeamsPlugin {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use {
+        super::*,
+        moltis_channels::{InboundMode, plugin::ChannelType},
+    };
+
+    #[test]
+    fn descriptor_coherence() {
+        let plugin = MsTeamsPlugin::new();
+        let desc = ChannelType::MsTeams.descriptor();
+
+        assert_eq!(desc.channel_type, ChannelType::MsTeams);
+        assert_eq!(desc.display_name, "Microsoft Teams");
+        assert_eq!(desc.capabilities.inbound_mode, InboundMode::Webhook);
+
+        // OTP: MsTeams does NOT implement ChannelOtpProvider
+        assert!(!desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_none());
+
+        // Threads: MsTeams does NOT implement ChannelThreadContext
+        assert!(!desc.capabilities.supports_threads);
+        assert!(plugin.thread_context().is_none());
+    }
+}

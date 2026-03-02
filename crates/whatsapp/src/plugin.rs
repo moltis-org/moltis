@@ -348,4 +348,26 @@ mod tests {
         let plugin = WhatsAppPlugin::new(PathBuf::from("/tmp/test"));
         assert!(plugin.latest_qr("nonexistent").is_none());
     }
+
+    #[test]
+    fn descriptor_coherence() {
+        use moltis_channels::{ChannelType, InboundMode};
+        let plugin = WhatsAppPlugin::new(PathBuf::from("/tmp/test"));
+        let desc = ChannelType::Whatsapp.descriptor();
+
+        assert_eq!(desc.channel_type, ChannelType::Whatsapp);
+        assert_eq!(desc.display_name, "WhatsApp");
+        assert_eq!(desc.capabilities.inbound_mode, InboundMode::GatewayLoop);
+
+        // OTP: WhatsApp implements ChannelOtpProvider
+        assert!(desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_some());
+
+        // Pairing: WhatsApp supports pairing
+        assert!(desc.capabilities.supports_pairing);
+
+        // Threads: WhatsApp does NOT implement ChannelThreadContext
+        assert!(!desc.capabilities.supports_threads);
+        assert!(plugin.thread_context().is_none());
+    }
 }

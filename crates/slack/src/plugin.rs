@@ -328,4 +328,29 @@ mod tests {
         assert!(!snap.connected);
         assert_eq!(snap.details.as_deref(), Some("account not started"));
     }
+
+    #[test]
+    fn descriptor_coherence() {
+        use moltis_channels::{ChannelType, InboundMode};
+        let plugin = SlackPlugin::new();
+        let desc = ChannelType::Slack.descriptor();
+
+        assert_eq!(desc.channel_type, ChannelType::Slack);
+        assert_eq!(desc.display_name, "Slack");
+        assert_eq!(desc.capabilities.inbound_mode, InboundMode::SocketMode);
+
+        // Threads: Slack implements ChannelThreadContext
+        assert!(desc.capabilities.supports_threads);
+        assert!(plugin.thread_context().is_some());
+
+        // OTP: Slack does NOT implement ChannelOtpProvider
+        assert!(!desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_none());
+
+        // Reactions: Slack supports reactions
+        assert!(desc.capabilities.supports_reactions);
+
+        // Interactive: Slack supports interactive messages
+        assert!(desc.capabilities.supports_interactive);
+    }
 }

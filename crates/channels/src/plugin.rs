@@ -66,6 +66,143 @@ impl std::str::FromStr for ChannelType {
     }
 }
 
+impl ChannelType {
+    /// All known channel types.
+    pub const ALL: &[ChannelType] = &[
+        Self::Telegram,
+        Self::Whatsapp,
+        Self::MsTeams,
+        Self::Discord,
+        Self::Slack,
+    ];
+
+    /// Returns the static descriptor for this channel type.
+    #[must_use]
+    pub fn descriptor(&self) -> ChannelDescriptor {
+        match self {
+            Self::Telegram => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Telegram",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::Polling,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: true,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: true,
+                },
+            },
+            Self::Whatsapp => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "WhatsApp",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: true,
+                    supports_pairing: true,
+                    supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: false,
+                },
+            },
+            Self::MsTeams => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Microsoft Teams",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::Webhook,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: false,
+                    supports_reactions: false,
+                    supports_location: true,
+                },
+            },
+            Self::Discord => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Discord",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: true,
+                    supports_threads: true,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: false,
+                    supports_reactions: false,
+                    supports_location: true,
+                },
+            },
+            Self::Slack => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Slack",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::SocketMode,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: true,
+                    supports_threads: true,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: false,
+                    supports_reactions: true,
+                    supports_location: false,
+                },
+            },
+        }
+    }
+}
+
+// ── Channel capabilities ──────────────────────────────────────────────────
+
+/// How a channel receives inbound messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InboundMode {
+    /// Long-polling loop (Telegram).
+    Polling,
+    /// Persistent gateway/WebSocket connection (Discord, WhatsApp).
+    GatewayLoop,
+    /// Socket Mode connection (Slack).
+    SocketMode,
+    /// HTTP webhook endpoint (Microsoft Teams).
+    Webhook,
+}
+
+/// Static capability flags for a channel type.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ChannelCapabilities {
+    pub inbound_mode: InboundMode,
+    pub supports_outbound: bool,
+    pub supports_streaming: bool,
+    pub supports_interactive: bool,
+    pub supports_threads: bool,
+    pub supports_voice_ingest: bool,
+    pub supports_pairing: bool,
+    pub supports_otp: bool,
+    pub supports_reactions: bool,
+    pub supports_location: bool,
+}
+
+/// Full descriptor for a channel type, including capabilities.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChannelDescriptor {
+    pub channel_type: ChannelType,
+    pub display_name: &'static str,
+    pub capabilities: ChannelCapabilities,
+}
+
 // ── Channel events (pub/sub) ────────────────────────────────────────────────
 
 /// Events emitted by channel plugins for real-time UI updates.
@@ -834,5 +971,63 @@ mod tests {
                 serde_json::from_str(&json).unwrap_or_else(|e| panic!("deserialize: {e}"));
             assert_eq!(ct, back);
         }
+    }
+
+    #[test]
+    fn all_covers_every_variant() {
+        // If a new variant is added to ChannelType, this test forces updating ALL.
+        assert_eq!(ChannelType::ALL.len(), 5);
+        for ct in ChannelType::ALL {
+            // descriptor() must not panic
+            let desc = ct.descriptor();
+            assert_eq!(desc.channel_type, *ct);
+        }
+    }
+
+    #[test]
+    fn descriptor_returns_correct_display_names() {
+        assert_eq!(ChannelType::Telegram.descriptor().display_name, "Telegram");
+        assert_eq!(ChannelType::Whatsapp.descriptor().display_name, "WhatsApp");
+        assert_eq!(
+            ChannelType::MsTeams.descriptor().display_name,
+            "Microsoft Teams"
+        );
+        assert_eq!(ChannelType::Discord.descriptor().display_name, "Discord");
+        assert_eq!(ChannelType::Slack.descriptor().display_name, "Slack");
+    }
+
+    #[test]
+    fn descriptor_channel_type_matches() {
+        for ct in ChannelType::ALL {
+            let desc = ct.descriptor();
+            assert_eq!(
+                desc.channel_type, *ct,
+                "descriptor channel_type mismatch for {ct}"
+            );
+            assert_eq!(desc.display_name, ct.display_name());
+        }
+    }
+
+    #[test]
+    fn descriptor_serialization_does_not_panic() {
+        for ct in ChannelType::ALL {
+            let desc = ct.descriptor();
+            let json = serde_json::to_value(&desc)
+                .unwrap_or_else(|e| panic!("serialize descriptor for {ct}: {e}"));
+            assert_eq!(json["channel_type"], ct.as_str());
+            assert!(json["capabilities"]["inbound_mode"].is_string());
+        }
+    }
+
+    #[test]
+    fn inbound_mode_serialization() {
+        let json = serde_json::to_string(&InboundMode::Polling).unwrap();
+        assert_eq!(json, "\"polling\"");
+        let json = serde_json::to_string(&InboundMode::GatewayLoop).unwrap();
+        assert_eq!(json, "\"gateway_loop\"");
+        let json = serde_json::to_string(&InboundMode::SocketMode).unwrap();
+        assert_eq!(json, "\"socket_mode\"");
+        let json = serde_json::to_string(&InboundMode::Webhook).unwrap();
+        assert_eq!(json, "\"webhook\"");
     }
 }

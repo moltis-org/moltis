@@ -303,3 +303,33 @@ impl ChannelStatus for DiscordPlugin {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use {
+        super::*,
+        moltis_channels::{ChannelType, InboundMode},
+    };
+
+    #[test]
+    fn descriptor_coherence() {
+        let plugin = DiscordPlugin::new();
+        let desc = ChannelType::Discord.descriptor();
+
+        assert_eq!(desc.channel_type, ChannelType::Discord);
+        assert_eq!(desc.display_name, "Discord");
+        assert_eq!(desc.capabilities.inbound_mode, InboundMode::GatewayLoop);
+
+        // Threads: Discord implements ChannelThreadContext
+        assert!(desc.capabilities.supports_threads);
+        assert!(plugin.thread_context().is_some());
+
+        // OTP: Discord does NOT implement ChannelOtpProvider
+        assert!(!desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_none());
+
+        // Interactive: Discord supports interactive messages
+        assert!(desc.capabilities.supports_interactive);
+    }
+}

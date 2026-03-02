@@ -5,6 +5,8 @@
 //! messaging, status, and gateway lifecycle.
 
 pub mod config_view;
+#[cfg(test)]
+pub mod contract;
 pub mod error;
 pub mod gating;
 pub mod message_log;
@@ -17,11 +19,12 @@ pub use {
     config_view::ChannelConfigView,
     error::{Error, Result},
     plugin::{
-        ButtonRow, ButtonStyle, ChannelAttachment, ChannelEvent, ChannelEventSink,
-        ChannelHealthSnapshot, ChannelMessageKind, ChannelMessageMeta, ChannelOtpProvider,
-        ChannelOutbound, ChannelPlugin, ChannelReplyTarget, ChannelStatus, ChannelStreamOutbound,
-        ChannelThreadContext, ChannelType, InteractiveButton, InteractiveMessage, StreamEvent,
-        StreamReceiver, StreamSender, ThreadMessage,
+        ButtonRow, ButtonStyle, ChannelAttachment, ChannelCapabilities, ChannelDescriptor,
+        ChannelEvent, ChannelEventSink, ChannelHealthSnapshot, ChannelMessageKind,
+        ChannelMessageMeta, ChannelOtpProvider, ChannelOutbound, ChannelPlugin, ChannelReplyTarget,
+        ChannelStatus, ChannelStreamOutbound, ChannelThreadContext, ChannelType, InboundMode,
+        InteractiveButton, InteractiveMessage, StreamEvent, StreamReceiver, StreamSender,
+        ThreadMessage,
     },
     registry::{ChannelRegistry, RegistryOutboundRouter},
 };
