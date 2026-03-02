@@ -7,7 +7,7 @@ Thanks for contributing. This project is a local-first AI gateway written in Rus
 - Keep changes focused and easy to review.
 - Prefer small PRs over large rewrites.
 - Add or update tests for every behavior change.
-- If you are changing user-facing behavior, update `CHANGELOG.md` under `[Unreleased]`.
+- Use conventional commit messages. Do not edit `CHANGELOG.md` in normal PRs, CI blocks manual edits.
 - Never commit secrets, tokens, or private keys.
 
 For security issues, do not open a public issue. Follow `SECURITY.md` instead.
@@ -19,6 +19,7 @@ Prerequisites:
 - Rust toolchain (stable)
 - `rustup` with nightly `nightly-2025-11-30` available
 - `just` task runner
+- `git-cliff` changelog generator
 - Node.js (for web UI e2e tests)
 - `gh` CLI (optional, needed for PR status publishing via local validation)
 
@@ -64,6 +65,18 @@ Core checks:
 just format-check
 just release-preflight
 just test
+```
+
+Changelog preview (for unreleased commits since the last tag):
+
+```bash
+just changelog-unreleased
+```
+
+Optional local guard check (matches CI behavior):
+
+```bash
+bash ./scripts/check-changelog-guard.sh origin/main HEAD
 ```
 
 For web UI changes, run e2e tests:
@@ -116,7 +129,7 @@ See also:
 - [ ] `just release-preflight` passes
 - [ ] `just test` passes
 - [ ] `just ui-e2e` run for web UI changes
-- [ ] `CHANGELOG.md` updated when user-facing behavior changed
+- [ ] Commit messages follow conventional commit style
 - [ ] Full session/context shared (or clear explanation if partial)
 - [ ] Shared session/logs are redacted (no API keys, private keys, tokens, passwords)
 - [ ] No secrets or sensitive data in the diff

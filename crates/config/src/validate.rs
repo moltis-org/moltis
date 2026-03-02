@@ -302,6 +302,16 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let agent_preset = || {
+        Struct(HashMap::from([
+            ("model", Leaf),
+            ("allow_tools", Leaf),
+            ("deny_tools", Leaf),
+            ("delegate_only", Leaf),
+            ("system_prompt_suffix", Leaf),
+        ]))
+    };
+
     Struct(HashMap::from([
         (
             "server",
@@ -324,6 +334,13 @@ fn build_schema_map() -> KnownKeys {
                 ("message_queue_mode", Leaf),
                 ("priority_models", Leaf),
                 ("allowed_models", Leaf),
+            ])),
+        ),
+        (
+            "agents",
+            Struct(HashMap::from([
+                ("default_preset", Leaf),
+                ("presets", Map(Box::new(agent_preset()))),
             ])),
         ),
         ("tools", tools()),
@@ -404,6 +421,7 @@ fn build_schema_map() -> KnownKeys {
                 ("api_key", Leaf),
                 ("citations", Leaf),
                 ("llm_reranking", Leaf),
+                ("search_merge_strategy", Leaf),
                 ("session_export", Leaf),
                 ("qmd", qmd()),
             ])),
@@ -428,6 +446,9 @@ fn build_schema_map() -> KnownKeys {
                 ("prompt", Leaf),
                 ("ack_max_chars", Leaf),
                 ("active_hours", active_hours()),
+                ("deliver", Leaf),
+                ("channel", Leaf),
+                ("to", Leaf),
                 ("sandbox_enabled", Leaf),
                 ("sandbox_image", Leaf),
             ])),
@@ -905,6 +926,20 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         });
     }
 
+    // agents.default_preset should reference an existing preset key.
+    if let Some(default_preset) = config.agents.default_preset.as_deref()
+        && !config.agents.presets.contains_key(default_preset)
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "agents.default_preset".into(),
+            message: format!(
+                "default preset \"{default_preset}\" is not defined in agents.presets"
+            ),
+        });
+    }
+
     // SSRF allowlist CIDR validation
     for (idx, entry) in config.tools.web.fetch.ssrf_allowlist.iter().enumerate() {
         if entry.parse::<ipnet::IpNet>().is_err() {
@@ -1029,6 +1064,22 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 message: format!(
                     "unknown memory provider \"{provider}\"; expected one of: {}",
                     valid_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown search merge strategy
+    if let Some(ref strategy) = config.memory.search_merge_strategy {
+        let valid_strategies = ["rrf", "linear"];
+        if !valid_strategies.contains(&strategy.to_lowercase().as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "memory.search_merge_strategy".into(),
+                message: format!(
+                    "unknown search merge strategy \"{strategy}\"; expected one of: {}",
+                    valid_strategies.join(", ")
                 ),
             });
         }

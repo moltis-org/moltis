@@ -197,6 +197,9 @@ function collectHeartbeatForm(form) {
 		model: heartbeatModel.value || null,
 		prompt: form.querySelector("[data-hb=prompt]").value.trim() || null,
 		ack_max_chars: parseInt(form.querySelector("[data-hb=ackMax]").value, 10) || 300,
+		deliver: form.querySelector("[data-hb=deliver]").checked,
+		channel: form.querySelector("[data-hb=channel]").value.trim() || null,
+		to: form.querySelector("[data-hb=to]").value.trim() || null,
 		active_hours: {
 			start: form.querySelector("[data-hb=ahStart]").value.trim() || "08:00",
 			end: form.querySelector("[data-hb=ahEnd]").value.trim() || "24:00",
@@ -318,9 +321,9 @@ function HeartbeatSection() {
       </div>
     </div>
 
-    <!-- Prompt -->
-    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
-      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Prompt</h3>
+	    <!-- Prompt -->
+	    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
+	      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Prompt</h3>
       <label class="block text-xs text-[var(--muted)] mb-1">Custom Prompt (optional)</label>
       <textarea data-hb="prompt" class="provider-key-input textarea-sm" placeholder="Leave blank to use default heartbeat prompt">${cfg.prompt || ""}</textarea>
       <p class="text-xs text-[var(--muted)] mt-2">Leave this empty to use <code>HEARTBEAT.md</code> in your workspace root. If that file exists but is empty/comments-only, heartbeat LLM runs are skipped to save tokens.</p>
@@ -331,10 +334,36 @@ function HeartbeatSection() {
           <input data-hb="ackMax" class="provider-key-input" type="number" min="50" value=${cfg.ack_max_chars || 300} />
         </div>
       </div>
-    </div>
+	    </div>
 
-    <!-- Active Hours -->
-    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
+	    <!-- Delivery -->
+	    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
+	      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Delivery</h3>
+	      <p class="text-xs text-[var(--muted)] mb-3">Send heartbeat replies to a channel/chat destination.</p>
+	      <div class="flex items-center gap-3 mb-3">
+	        <label class="cron-toggle">
+	          <input data-hb="deliver" type="checkbox" checked=${cfg.deliver === true} />
+	          <span class="cron-slider"></span>
+	        </label>
+	        <span class="text-sm text-[var(--text)]">Deliver to channel</span>
+	      </div>
+	      <div class="grid gap-4" style="grid-template-columns:1fr 1fr;">
+	        <div>
+	          <label class="block text-xs text-[var(--muted)] mb-1">Channel Account</label>
+	          <input data-hb="channel" class="provider-key-input" placeholder="my-bot" value=${cfg.channel || ""} />
+	        </div>
+	        <div>
+	          <label class="block text-xs text-[var(--muted)] mb-1">Chat ID</label>
+	          <input data-hb="to" class="provider-key-input" placeholder="123456789" value=${cfg.to || ""} />
+	        </div>
+	      </div>
+	      <p class="text-xs text-[var(--muted)] mt-2">
+	        Required when delivery is enabled. Account is your configured channel account id, chat ID is the destination recipient/group id.
+	      </p>
+	    </div>
+
+	    <!-- Active Hours -->
+	    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
       <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Active Hours</h3>
       <p class="text-xs text-[var(--muted)] mb-3">Only run heartbeat during these hours.</p>
       <div class="grid gap-4" style="grid-template-columns:1fr 1fr;">

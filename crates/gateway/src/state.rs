@@ -339,6 +339,9 @@ pub struct GatewayInner {
     pub channel_command_mode_sessions: HashSet<String>,
     /// Which channel types are offered in the web UI (from config).
     pub channels_offered: Vec<String>,
+    /// Hostnames that were discovered after passkeys already existed.
+    /// Users should sign in with password and register a fresh passkey on these hosts.
+    pub passkey_host_update_pending: HashSet<String>,
 }
 
 impl GatewayInner {
@@ -372,6 +375,7 @@ impl GatewayInner {
             channel_status_log: HashMap::new(),
             channel_command_mode_sessions: HashSet::new(),
             channels_offered: vec!["telegram".into()],
+            passkey_host_update_pending: HashSet::new(),
         }
     }
 
@@ -713,6 +717,51 @@ impl GatewayState {
             .await
             .channel_command_mode_sessions
             .contains(session_key)
+    }
+
+    /// Mark a hostname as needing passkey refresh.
+    pub async fn add_passkey_host_update_pending(&self, host: &str) {
+        let normalized = crate::auth_webauthn::normalize_host(host);
+        if normalized.is_empty() {
+            return;
+        }
+        self.inner
+            .write()
+            .await
+            .passkey_host_update_pending
+            .insert(normalized);
+    }
+
+    /// Clear the passkey-refresh marker for a hostname.
+    pub async fn clear_passkey_host_update_pending(&self, host: &str) {
+        let normalized = crate::auth_webauthn::normalize_host(host);
+        if normalized.is_empty() {
+            return;
+        }
+        self.inner
+            .write()
+            .await
+            .passkey_host_update_pending
+            .remove(&normalized);
+    }
+
+    /// Clear all pending passkey host update markers.
+    pub async fn clear_all_passkey_host_update_pending(&self) {
+        self.inner.write().await.passkey_host_update_pending.clear();
+    }
+
+    /// Return sorted hostnames that currently require a passkey refresh.
+    pub async fn passkey_host_update_pending(&self) -> Vec<String> {
+        let mut hosts = self
+            .inner
+            .read()
+            .await
+            .passkey_host_update_pending
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        hosts.sort();
+        hosts
     }
 
     /// Send an RPC request to a connected client and await its response (v4 bidirectional RPC).

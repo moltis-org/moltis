@@ -56,11 +56,63 @@ pub struct ResponsesApiTool {
     pub strict: bool,
 }
 
+/// Make a JSON Schema node nullable by adding `"null"` to its type.
+///
+/// For schemas using `"type": "string"` (or any single type), this converts to
+/// `"type": ["string", "null"]`.  For schemas using `anyOf`/`oneOf`, it appends
+/// a `{"type": "null"}` variant.  Already-nullable schemas are left unchanged.
+fn make_nullable(schema: &mut serde_json::Value) {
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+
+    // If it already has a "null" type, nothing to do.
+    if let Some(ty) = obj.get("type") {
+        if ty.as_str() == Some("null") {
+            return;
+        }
+        if let Some(arr) = ty.as_array()
+            && arr.iter().any(|v| v.as_str() == Some("null"))
+        {
+            return;
+        }
+    }
+
+    // Case 1: has a `type` field — convert to array form with "null".
+    if let Some(ty) = obj.get("type").cloned() {
+        if let Some(s) = ty.as_str() {
+            obj.insert("type".to_string(), serde_json::json!([s, "null"]));
+        } else if let Some(arr) = ty.as_array() {
+            let mut new_arr = arr.clone();
+            new_arr.push(serde_json::json!("null"));
+            obj.insert("type".to_string(), serde_json::Value::Array(new_arr));
+        }
+        return;
+    }
+
+    // Case 2: uses anyOf/oneOf — append a null variant.
+    for key in ["anyOf", "oneOf"] {
+        if let Some(variants) = obj.get_mut(key).and_then(|v| v.as_array_mut()) {
+            let has_null = variants
+                .iter()
+                .any(|v| v.get("type").and_then(|t| t.as_str()) == Some("null"));
+            if !has_null {
+                variants.push(serde_json::json!({"type": "null"}));
+            }
+            return;
+        }
+    }
+}
+
 /// Recursively patch schema for OpenAI strict mode compliance.
 ///
 /// OpenAI's strict mode requires:
 /// 1. `additionalProperties: false` on every object in the schema tree
 /// 2. All properties must be listed in the `required` array
+///
+/// Properties not in the original `required` array are made nullable so the
+/// model can send `null` for unused optional fields instead of fabricating
+/// placeholder values.
 ///
 /// This function recursively patches nested objects in `properties`, array
 /// `items`, `anyOf`/`oneOf`/`allOf` variants, etc.
@@ -69,17 +121,38 @@ pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
         return;
     };
 
+    // Collect originally-optional property names so we can make them nullable
+    // AFTER recursion (otherwise changing "type":"object" to ["object","null"]
+    // would prevent the recursive pass from recognising nested objects).
+    let mut optional_props: Vec<String> = Vec::new();
+
     // If this is an object type, apply strict mode requirements
     if obj.get("type").and_then(|t| t.as_str()) == Some("object") {
         // Add additionalProperties: false
         obj.insert("additionalProperties".to_string(), serde_json::json!(false));
 
-        // Ensure all properties are in required array
-        // Objects without properties need empty properties + empty required
-        if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
+        // Ensure all properties are in required array.
+        if let Some(props) = obj.get("properties").and_then(|p| p.as_object()).cloned() {
+            let originally_required: std::collections::HashSet<String> = obj
+                .get("required")
+                .and_then(|r| r.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
             let all_prop_names: Vec<serde_json::Value> =
                 props.keys().map(|k| serde_json::json!(k)).collect();
             obj.insert("required".to_string(), serde_json::json!(all_prop_names));
+
+            // Remember which properties need to be made nullable (deferred).
+            for key in props.keys() {
+                if !originally_required.contains(key) {
+                    optional_props.push(key.clone());
+                }
+            }
         } else {
             // Object without properties - add empty properties and required
             obj.insert("properties".to_string(), serde_json::json!({}));
@@ -113,6 +186,19 @@ pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
         && additional.is_object()
     {
         patch_schema_for_strict_mode(additional);
+    }
+
+    // Now that recursion is done, make originally-optional properties nullable
+    // so the model can send `null` instead of fabricating placeholder values
+    // (e.g. empty strings) that downstream MCP servers reject.
+    if !optional_props.is_empty()
+        && let Some(props) = obj.get_mut("properties").and_then(|p| p.as_object_mut())
+    {
+        for key in &optional_props {
+            if let Some(prop_schema) = props.get_mut(key) {
+                make_nullable(prop_schema);
+            }
+        }
     }
 }
 
@@ -733,6 +819,19 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
         }
     }
 
+    // Detect error finish reasons (e.g. "network_error", "content_filter").
+    // Normal reasons (null, "stop", "tool_calls", "length") are not errors.
+    if let Some(reason) = evt["choices"][0]["finish_reason"].as_str() {
+        match reason {
+            "stop" | "tool_calls" | "length" | "function_call" => {},
+            error_reason => {
+                events.push(StreamEvent::Error(format!(
+                    "Provider stream ended with finish_reason: {error_reason}"
+                )));
+            },
+        }
+    }
+
     SseLineResult::Events(events)
 }
 
@@ -890,12 +989,16 @@ mod tests {
         // First variant is string, no additionalProperties needed
         // Second variant is object, should have additionalProperties: false
         assert_eq!(any_of[1]["additionalProperties"], false);
+
+        // "value" is not in original required, so a null variant is appended
+        assert_eq!(any_of.len(), 3);
+        assert_eq!(any_of[2], serde_json::json!({"type": "null"}));
     }
 
     #[test]
-    fn test_to_openai_tools_all_properties_required() {
-        // Test that all properties are added to the required array
-        // This is the case that was failing for web_fetch with extract_mode
+    fn test_to_openai_tools_all_properties_required_and_optional_nullable() {
+        // All properties are in `required`, but originally-optional ones
+        // become nullable so the model can send null instead of empty strings.
         let tools = vec![serde_json::json!({
             "name": "web_fetch",
             "description": "Fetch a URL",
@@ -918,6 +1021,71 @@ mod tests {
         assert!(required.contains(&serde_json::json!("url")));
         assert!(required.contains(&serde_json::json!("extract_mode")));
         assert!(required.contains(&serde_json::json!("max_chars")));
+
+        // Originally-required "url" keeps its original type
+        assert_eq!(params["properties"]["url"]["type"], "string");
+
+        // Originally-optional properties become nullable
+        let em_type = params["properties"]["extract_mode"]["type"]
+            .as_array()
+            .unwrap();
+        assert!(em_type.contains(&serde_json::json!("string")));
+        assert!(em_type.contains(&serde_json::json!("null")));
+
+        let mc_type = params["properties"]["max_chars"]["type"]
+            .as_array()
+            .unwrap();
+        assert!(mc_type.contains(&serde_json::json!("integer")));
+        assert!(mc_type.contains(&serde_json::json!("null")));
+    }
+
+    #[test]
+    fn test_strict_mode_no_required_field_all_become_nullable() {
+        // When the schema has no `required` field at all, every property is
+        // optional and should become nullable.
+        let tools = vec![serde_json::json!({
+            "name": "add_task",
+            "description": "Add a task",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string"},
+                    "description": {"type": "string"},
+                    "due_date": {"type": "string"}
+                }
+            }
+        })];
+        let converted = to_openai_tools(&tools);
+        let params = &converted[0]["function"]["parameters"];
+
+        for key in ["content", "description", "due_date"] {
+            let ty = params["properties"][key]["type"].as_array().unwrap();
+            assert!(
+                ty.contains(&serde_json::json!("null")),
+                "{key} should be nullable"
+            );
+        }
+    }
+
+    #[test]
+    fn test_strict_mode_already_nullable_not_doubled() {
+        let tools = vec![serde_json::json!({
+            "name": "test",
+            "description": "test",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "opt": {"type": ["string", "null"]}
+                },
+                "required": []
+            }
+        })];
+        let converted = to_openai_tools(&tools);
+        let ty = converted[0]["function"]["parameters"]["properties"]["opt"]["type"]
+            .as_array()
+            .unwrap();
+        // Should still be exactly ["string", "null"], not ["string", "null", "null"]
+        assert_eq!(ty.len(), 2);
     }
 
     #[test]
@@ -1296,9 +1464,12 @@ mod tests {
         assert!(required.contains(&serde_json::json!("action")));
         assert!(required.contains(&serde_json::json!("patch")));
 
-        // The "patch" object should have empty properties and empty required
+        // The "patch" object should have empty properties and empty required.
+        // Because "patch" was not in the original `required`, it is also nullable.
         let patch = &params["properties"]["patch"];
-        assert_eq!(patch["type"], "object");
+        let patch_type = patch["type"].as_array().unwrap();
+        assert!(patch_type.contains(&serde_json::json!("object")));
+        assert!(patch_type.contains(&serde_json::json!("null")));
         assert_eq!(patch["additionalProperties"], false);
         assert_eq!(patch["properties"], serde_json::json!({}));
         assert_eq!(patch["required"], serde_json::json!([]));
@@ -1770,6 +1941,84 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(visible, "The answer");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_network_error_emits_stream_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":"network_error","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let errors: Vec<&str> = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Error(msg) => Some(msg.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(errors.len(), 1);
+                assert!(errors[0].contains("network_error"));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_content_filter_emits_stream_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{},"finish_reason":"content_filter","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let has_error = events.iter().any(|e| matches!(e, StreamEvent::Error(_)));
+                assert!(has_error, "content_filter should emit error");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_stop_does_not_emit_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"done"},"finish_reason":"stop","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let has_error = events.iter().any(|e| matches!(e, StreamEvent::Error(_)));
+                assert!(!has_error, "stop should not emit error");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_tool_calls_does_not_emit_error() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let has_error = events.iter().any(|e| matches!(e, StreamEvent::Error(_)));
+                assert!(!has_error, "tool_calls should not emit error");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn finish_reason_length_does_not_emit_error() {
+        let mut state = StreamingToolState::default();
+        let data =
+            r#"{"choices":[{"delta":{"content":"trunca"},"finish_reason":"length","index":0}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let has_error = events.iter().any(|e| matches!(e, StreamEvent::Error(_)));
+                assert!(!has_error, "length should not emit error");
             },
             _ => panic!("Expected Events"),
         }

@@ -55,6 +55,19 @@ pub struct PromptHostRuntimeContext {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub session_key: Option<String>,
+    /// Runtime surface the assistant is currently operating in
+    /// (for example: "web", "telegram", "discord", "cron", "heartbeat").
+    pub surface: Option<String>,
+    /// High-level session kind (`web`, `channel`, `cron`).
+    pub session_kind: Option<String>,
+    /// Active channel type when running in a channel-bound session.
+    pub channel_type: Option<String>,
+    /// Active channel account identifier when running in a channel-bound session.
+    pub channel_account_id: Option<String>,
+    /// Active channel chat/recipient ID when running in a channel-bound session.
+    pub channel_chat_id: Option<String>,
+    /// Best-effort channel chat type (for example `private`, `group`, `channel`).
+    pub channel_chat_type: Option<String>,
     /// Persistent Moltis workspace root (`data_dir`), e.g. `~/.moltis`
     /// or `/home/moltis/.moltis` in containerized deploys.
     pub data_dir: Option<String>,
@@ -623,6 +636,12 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         ("provider", host.provider.as_deref()),
         ("model", host.model.as_deref()),
         ("session", host.session_key.as_deref()),
+        ("surface", host.surface.as_deref()),
+        ("session_kind", host.session_kind.as_deref()),
+        ("channel_type", host.channel_type.as_deref()),
+        ("channel_account", host.channel_account_id.as_deref()),
+        ("channel_chat_id", host.channel_chat_id.as_deref()),
+        ("channel_chat_type", host.channel_chat_type.as_deref()),
         ("data_dir", host.data_dir.as_deref()),
     ] {
         push_non_empty_runtime_field(&mut parts, key, value);
@@ -926,6 +945,12 @@ mod tests {
                 provider: Some("openai".into()),
                 model: Some("gpt-5".into()),
                 session_key: Some("main".into()),
+                surface: None,
+                session_kind: None,
+                channel_type: None,
+                channel_account_id: None,
+                channel_chat_id: None,
+                channel_chat_type: None,
                 data_dir: Some("/home/moltis/.moltis".into()),
                 sudo_non_interactive: Some(true),
                 sudo_status: Some("passwordless".into()),
@@ -1012,6 +1037,45 @@ mod tests {
         );
 
         assert!(prompt.contains("location=48.8566,2.3522"));
+    }
+
+    #[test]
+    fn test_runtime_context_includes_channel_surface_fields_when_set() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                session_key: Some("telegram:bot-main:123456".into()),
+                surface: Some("telegram".into()),
+                session_kind: Some("channel".into()),
+                channel_type: Some("telegram".into()),
+                channel_account_id: Some("bot-main".into()),
+                channel_chat_id: Some("123456".into()),
+                channel_chat_type: Some("private".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("surface=telegram"));
+        assert!(prompt.contains("session_kind=channel"));
+        assert!(prompt.contains("channel_type=telegram"));
+        assert!(prompt.contains("channel_account=bot-main"));
+        assert!(prompt.contains("channel_chat_id=123456"));
+        assert!(prompt.contains("channel_chat_type=private"));
     }
 
     #[test]

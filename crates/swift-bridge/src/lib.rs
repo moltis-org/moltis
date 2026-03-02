@@ -1,7 +1,5 @@
 //! C ABI bridge for embedding Moltis Rust functionality into native Swift apps.
 
-#![allow(unsafe_code)]
-
 use std::{
     collections::HashMap,
     ffi::{CStr, CString, c_char, c_void},
@@ -193,6 +191,7 @@ struct HttpdStatusResponse {
 
 /// Callback type for forwarding log events to Swift. Rust owns the
 /// `log_json` pointer — the callback must copy the data before returning.
+#[allow(unsafe_code)]
 type LogCallback = unsafe extern "C" fn(log_json: *const c_char);
 
 static LOG_CALLBACK: OnceLock<LogCallback> = OnceLock::new();
@@ -211,6 +210,7 @@ fn emit_log(level: &str, target: &str, message: &str) {
     emit_log_with_fields(level, target, message, None);
 }
 
+#[allow(unsafe_code)]
 fn emit_log_with_fields(
     level: &str,
     target: &str,
@@ -241,6 +241,7 @@ fn emit_log_with_fields(
 /// Callback type for forwarding session events to Swift.
 /// Rust owns the `event_json` pointer — the callback must copy the data
 /// before returning.
+#[allow(unsafe_code)]
 type SessionEventCallback = unsafe extern "C" fn(event_json: *const c_char);
 
 static SESSION_EVENT_CALLBACK: OnceLock<SessionEventCallback> = OnceLock::new();
@@ -253,6 +254,7 @@ struct BridgeSessionEvent {
     session_key: String,
 }
 
+#[allow(unsafe_code)]
 fn emit_session_event(event: &SessionEvent) {
     if let Some(callback) = SESSION_EVENT_CALLBACK.get() {
         let (kind, session_key) = match event {
@@ -278,6 +280,7 @@ fn emit_session_event(event: &SessionEvent) {
 /// Callback type for forwarding network audit events to Swift.
 /// Rust owns the `event_json` pointer — the callback must copy the data
 /// before returning.
+#[allow(unsafe_code)]
 type NetworkAuditCallback = unsafe extern "C" fn(event_json: *const c_char);
 
 static NETWORK_AUDIT_CALLBACK: OnceLock<NetworkAuditCallback> = OnceLock::new();
@@ -296,6 +299,7 @@ struct BridgeNetworkAuditEvent {
     url: Option<String>,
 }
 
+#[allow(unsafe_code)]
 fn emit_network_audit(entry: &moltis_network_filter::NetworkAuditEntry) {
     if let Some(callback) = NETWORK_AUDIT_CALLBACK.get() {
         let source = match &entry.approval_source {
@@ -846,6 +850,7 @@ fn parse_ffi_request<T: serde::de::DeserializeOwned>(
     })
 }
 
+#[allow(unsafe_code)]
 fn read_c_string(ptr: *const c_char) -> Result<String, String> {
     if ptr.is_null() {
         return Err("request_json pointer was null".to_owned());
@@ -1097,6 +1102,7 @@ fn build_chat_response(request: ChatRequest) -> String {
 
 /// Callback type for streaming events. Rust owns the `event_json` pointer —
 /// the callback must copy the data before returning; Rust drops it afterwards.
+#[allow(unsafe_code)]
 type StreamCallback = unsafe extern "C" fn(event_json: *const c_char, user_data: *mut c_void);
 
 /// JSON-serializable event sent to Swift via the callback.
@@ -1132,8 +1138,10 @@ struct StreamCallbackCtx {
 
 // SAFETY: See struct doc — Swift retains `StreamContext` via
 // `Unmanaged.passRetained` and the callback itself is a plain function pointer.
+#[allow(unsafe_code)]
 unsafe impl Send for StreamCallbackCtx {}
 
+#[allow(unsafe_code)]
 impl StreamCallbackCtx {
     fn send(&self, event: &BridgeStreamEvent) {
         let json = encode_json(event);
@@ -1160,6 +1168,7 @@ impl StreamCallbackCtx {
 ///   lifetime of the stream.
 /// * `user_data` must remain valid until the callback receives a terminal
 ///   event (done or error).
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn moltis_chat_stream(
     request_json: *const c_char,
@@ -1321,6 +1330,7 @@ fn trace_call(_function: &'static str) {}
 
 // ── FFI exports ────────────────────────────────────────────────────────────
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_version() -> *mut c_char {
     record_call("moltis_version");
@@ -1345,6 +1355,7 @@ pub extern "C" fn moltis_version() -> *mut c_char {
     })
 }
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_get_identity() -> *mut c_char {
     record_call("moltis_get_identity");
@@ -1357,6 +1368,7 @@ pub extern "C" fn moltis_get_identity() -> *mut c_char {
     })
 }
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_chat_json(request_json: *const c_char) -> *mut c_char {
     record_call("moltis_chat_json");
@@ -1373,6 +1385,7 @@ pub extern "C" fn moltis_chat_json(request_json: *const c_char) -> *mut c_char {
 }
 
 /// Returns JSON array of all known providers.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_known_providers() -> *mut c_char {
     record_call("moltis_known_providers");
@@ -1402,6 +1415,7 @@ pub extern "C" fn moltis_known_providers() -> *mut c_char {
 }
 
 /// Returns JSON array of auto-detected provider sources.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_detect_providers() -> *mut c_char {
     record_call("moltis_detect_providers");
@@ -1430,6 +1444,7 @@ pub extern "C" fn moltis_detect_providers() -> *mut c_char {
 }
 
 /// Saves provider configuration (API key, base URL, models).
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *mut c_char {
     record_call("moltis_save_provider_config");
@@ -1466,6 +1481,7 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
 }
 
 /// Lists all discovered models from the current provider registry.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_list_models() -> *mut c_char {
     record_call("moltis_list_models");
@@ -1490,6 +1506,7 @@ pub extern "C" fn moltis_list_models() -> *mut c_char {
 }
 
 /// Rebuilds the global provider registry from saved config + env.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_refresh_registry() -> *mut c_char {
     record_call("moltis_refresh_registry");
@@ -1505,6 +1522,7 @@ pub extern "C" fn moltis_refresh_registry() -> *mut c_char {
     })
 }
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 /// # Safety
 ///
@@ -1529,6 +1547,7 @@ pub unsafe extern "C" fn moltis_free_string(ptr: *mut c_char) {
 ///
 /// `callback` must be a valid function pointer that remains valid for
 /// the lifetime of the process.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn moltis_set_log_callback(callback: LogCallback) {
     let _ = LOG_CALLBACK.set(callback);
@@ -1544,6 +1563,7 @@ pub unsafe extern "C" fn moltis_set_log_callback(callback: LogCallback) {
 ///
 /// `callback` must be a valid function pointer that remains valid for
 /// the lifetime of the process.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn moltis_set_session_event_callback(callback: SessionEventCallback) {
     if SESSION_EVENT_CALLBACK.set(callback).is_ok() {
@@ -1583,6 +1603,7 @@ pub unsafe extern "C" fn moltis_set_session_event_callback(callback: SessionEven
 ///
 /// `callback` must be a valid function pointer that remains valid for
 /// the lifetime of the process.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn moltis_set_network_audit_callback(callback: NetworkAuditCallback) {
     let _ = NETWORK_AUDIT_CALLBACK.set(callback);
@@ -1592,6 +1613,7 @@ pub unsafe extern "C" fn moltis_set_network_audit_callback(callback: NetworkAudi
 /// Starts the embedded HTTP server with the full Moltis gateway.
 /// Returns JSON with `{"running": true, "addr": "..."}`.
 /// If already running, returns the current status without restarting.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char {
     record_call("moltis_start_httpd");
@@ -1735,6 +1757,7 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
 }
 
 /// Stops the embedded HTTP server. Returns `{"running": false}`.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_stop_httpd() -> *mut c_char {
     record_call("moltis_stop_httpd");
@@ -1764,6 +1787,7 @@ pub extern "C" fn moltis_stop_httpd() -> *mut c_char {
 }
 
 /// Returns the current httpd server status.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_httpd_status() -> *mut c_char {
     record_call("moltis_httpd_status");
@@ -1788,6 +1812,7 @@ pub extern "C" fn moltis_httpd_status() -> *mut c_char {
 
 /// Abort the active generation for a session. Requires the gateway to be
 /// running (via `moltis_start_httpd`). Returns JSON with `{"aborted": bool}`.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_abort_session(session_key: *const c_char) -> *mut c_char {
     record_call("moltis_abort_session");
@@ -1818,6 +1843,7 @@ pub extern "C" fn moltis_abort_session(session_key: *const c_char) -> *mut c_cha
 
 /// Peek at the current activity for a session. Requires the gateway to be
 /// running. Returns JSON with `{"active": bool, ...}`.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_peek_session(session_key: *const c_char) -> *mut c_char {
     record_call("moltis_peek_session");
@@ -1849,6 +1875,7 @@ pub extern "C" fn moltis_peek_session(session_key: *const c_char) -> *mut c_char
 // ── Session FFI exports ─────────────────────────────────────────────────
 
 /// Returns JSON array of all session entries (sorted by created_at ASC, matching web UI).
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_list_sessions() -> *mut c_char {
     record_call("moltis_list_sessions");
@@ -1868,6 +1895,7 @@ pub extern "C" fn moltis_list_sessions() -> *mut c_char {
 
 /// Switches to a session by key. Returns entry + message history.
 /// If the session doesn't exist yet, it will be created.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_switch_session(request_json: *const c_char) -> *mut c_char {
     record_call("moltis_switch_session");
@@ -1937,6 +1965,7 @@ pub extern "C" fn moltis_switch_session(request_json: *const c_char) -> *mut c_c
 }
 
 /// Creates a new session with an optional label. Returns the entry.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_create_session(request_json: *const c_char) -> *mut c_char {
     record_call("moltis_create_session");
@@ -1981,6 +2010,7 @@ pub extern "C" fn moltis_create_session(request_json: *const c_char) -> *mut c_c
 /// # Safety
 ///
 /// Same requirements as `moltis_chat_stream`.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn moltis_session_chat_stream(
     request_json: *const c_char,
@@ -3612,6 +3642,7 @@ pub extern "C" fn moltis_sandbox_restart_daemon() -> *mut c_char {
     })
 }
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_shutdown() {
     record_call("moltis_shutdown");
@@ -3632,6 +3663,7 @@ pub extern "C" fn moltis_shutdown() {
     emit_log("INFO", "bridge", "Shutdown complete");
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod tests {
     use {super::*, serde_json::Value};

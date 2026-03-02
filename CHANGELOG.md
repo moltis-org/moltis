@@ -22,6 +22,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.6] - 2026-03-01
+### Fixed
+- [web] Fix Shiki highlighter init failures in E2E tests
+- [web] Make thinking stop button smaller with left spacing
+- [chat] Surface error when LLM returns empty response with zero tokens
+- [providers] Emit StreamEvent::Error on non-success finish_reason
+
+## [0.10.5] - 2026-03-01
+### Fixed
+- [web] Lazy-load Shiki to prevent blocking page mount
+
+## [0.10.4] - 2026-03-01
+### Added
+- [web] Add Shiki syntax highlighting to code blocks
+
+## [0.10.3] - 2026-03-01
+### Added
+- Add channel-aware heartbeat delivery and send_message agent tool (#270)
+- [memory] Add tree-sitter code splitter and RRF search merge
+
+
+### Changed
+- [ffi] Tighten unsafe_code allowances
+
+
+### Fixed
+- [sandbox] Make apple container keepalive portable (#269)
+- [local-llm] Combine compile-time and runtime Metal detection
+- [auth] Auto-detect new WebAuthn hosts and prompt passkey refresh (#268)
+- [web] Replace rg with grep in changelog guard and deduplicate passkey status refresh
+
+## [0.10.2] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Release packaging now installs cross-compilation targets on the active nightly toolchain in the Homebrew binary job, fixing `error[E0463]: can't find crate for core` during macOS binary builds.
+- Docker release builds now copy `apps/courier` into the image build context so Cargo workspace metadata resolves correctly during WASM component builds.
+### Security
+
+## [0.10.1] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
 ## [0.10.0] - 2026-02-28
 
 

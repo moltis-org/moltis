@@ -184,6 +184,21 @@ message_queue_mode = "followup"   # Default: process queued messages one-by-one 
 # allowed_models = ["gpt 5.2"]  # Legacy field (currently ignored).
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SPAWN PRESETS (OPTIONAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Configure reusable presets for the `spawn_agent` tool.
+#
+# [agents]
+# default_preset = "research"      # Optional: used when spawn_agent.preset is omitted
+#
+# [agents.presets.research]
+# model = "openai/gpt-5.2"
+# allow_tools = ["web_search", "web_fetch", "sessions_send", "task_list"]
+# deny_tools = ["exec"]
+# delegate_only = false
+# system_prompt_suffix = "Focus on gathering and summarizing evidence."
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -472,6 +487,9 @@ every = "30m"                     # Interval between heartbeats (e.g., "30m", "1
 # model = "anthropic/claude-sonnet-4-20250514"  # Override model for heartbeats
 # prompt = "..."                  # Custom heartbeat prompt (default: built-in)
 ack_max_chars = 300               # Max characters for acknowledgment reply
+deliver = false                   # Deliver heartbeat replies to a channel account
+# channel = "my-bot"              # Channel account identifier (required when deliver = true)
+# to = "123456789"                # Chat/recipient ID (required when deliver = true)
 sandbox_enabled = true            # Run heartbeat commands in sandbox
 # sandbox_image = "..."           # Override sandbox image for heartbeats
 

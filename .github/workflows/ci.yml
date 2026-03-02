@@ -58,6 +58,23 @@ jobs:
           REQUIRED_CONTEXT: ${{ matrix.context }}
         run: python3 scripts/check-local-status.py
 
+  changelog-guard:
+    name: Changelog Guard
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Block manual CHANGELOG.md edits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash ./scripts/check-changelog-guard.sh "$BASE_SHA" "$HEAD_SHA"
+
   zizmor:
     name: Workflow Security
     if: ${{ github.event_name != 'pull_request' }}

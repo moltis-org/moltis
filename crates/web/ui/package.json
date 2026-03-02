@@ -2,6 +2,7 @@
   "private": true,
   "scripts": {
     "build": "tailwindcss -i input.css -o ../src/assets/style.css --minify",
+    "build:shiki": "node build-shiki.mjs",
     "watch": "tailwindcss -i input.css -o ../src/assets/style.css --watch",
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
@@ -13,6 +14,8 @@
     "@tailwindcss/cli": "^4.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "esbuild": "^0.25.0",
+    "shiki": "^3.0.0",
     "tailwindcss": "^4.1.0"
   }
 }

@@ -384,6 +384,46 @@
   padding: 0;
 }
 
+/* ── Syntax highlighting (Shiki) ── */
+
+.code-block {
+  position: relative;
+}
+
+.code-lang-badge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 0.7em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  user-select: none;
+  pointer-events: none;
+  font-family: var(--font-mono);
+}
+
+/* Shiki dual-theme: dark mode uses --shiki-dark colors */
+[data-theme="dark"] .shiki,
+[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: transparent !important;
+}
+
+/* Light mode uses default --shiki-light colors */
+[data-theme="light"] .shiki,
+[data-theme="light"] .shiki span {
+  color: var(--shiki-light) !important;
+  background-color: transparent !important;
+}
+
+/* Reset Shiki container to match existing pre styling */
+.msg pre .shiki {
+  background: transparent !important;
+  margin: 0;
+  padding: 0;
+}
+
 .msg strong {
   color: var(--text-strong);
   font-weight: 600;

@@ -1,10 +1,13 @@
 //! Sub-agent tool: lets the LLM delegate tasks to a child agent loop.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use {async_trait::async_trait, tracing::info};
 
-use crate::error::Error;
+use crate::{
+    error::Error,
+    params::{bool_param, str_param, u64_param},
+};
 
 use {
     moltis_agents::{
@@ -12,6 +15,7 @@ use {
         runner::{RunnerEvent, run_agent_loop_with_context},
         tool_registry::{AgentTool, ToolRegistry},
     },
+    moltis_config::schema::{AgentPresetConfig, AgentsConfig},
     moltis_providers::ProviderRegistry,
 };
 
@@ -20,6 +24,15 @@ const MAX_SPAWN_DEPTH: u64 = 3;
 
 /// Tool parameter injected via `tool_context` to track nesting depth.
 const SPAWN_DEPTH_KEY: &str = "_spawn_depth";
+
+/// Minimal delegate-only toolset for coordinator-style sub-agents.
+const DELEGATE_TOOLS: &[&str] = &[
+    "spawn_agent",
+    "sessions_list",
+    "sessions_history",
+    "sessions_send",
+    "task_list",
+];
 
 /// A tool that spawns a sub-agent running its own agent loop.
 ///
@@ -34,6 +47,7 @@ pub struct SpawnAgentTool {
     provider_registry: Arc<tokio::sync::RwLock<ProviderRegistry>>,
     default_provider: Arc<dyn LlmProvider>,
     tool_registry: Arc<ToolRegistry>,
+    agents_config: Option<Arc<tokio::sync::RwLock<AgentsConfig>>>,
     on_event: Option<OnSpawnEvent>,
 }
 
@@ -47,6 +61,7 @@ impl SpawnAgentTool {
             provider_registry,
             default_provider,
             tool_registry,
+            agents_config: None,
             on_event: None,
         }
     }
@@ -57,10 +72,97 @@ impl SpawnAgentTool {
         self
     }
 
+    /// Attach agent preset config for `preset` lookups.
+    pub fn with_agents_config(
+        mut self,
+        agents_config: Arc<tokio::sync::RwLock<AgentsConfig>>,
+    ) -> Self {
+        self.agents_config = Some(agents_config);
+        self
+    }
+
     fn emit(&self, event: RunnerEvent) {
         if let Some(ref cb) = self.on_event {
             cb(event);
         }
+    }
+
+    fn parse_tool_name_array(params: &serde_json::Value, key: &str) -> crate::Result<Vec<String>> {
+        let Some(raw) = params.get(key) else {
+            return Ok(Vec::new());
+        };
+        let arr = raw
+            .as_array()
+            .ok_or_else(|| Error::message(format!("parameter '{key}' must be an array")))?;
+        let mut out = Vec::new();
+        for (idx, item) in arr.iter().enumerate() {
+            let name = item.as_str().ok_or_else(|| {
+                Error::message(format!("parameter '{key}[{idx}]' must be a string"))
+            })?;
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                return Err(Error::message(format!(
+                    "parameter '{key}[{idx}]' cannot be empty"
+                )));
+            }
+            out.push(trimmed.to_string());
+        }
+        Ok(out)
+    }
+
+    fn build_sub_tools(
+        &self,
+        allow_tools: &[String],
+        deny_tools: &[String],
+        delegate_only: bool,
+    ) -> ToolRegistry {
+        let mut sub_tools = if delegate_only {
+            let allowed: HashSet<&str> = DELEGATE_TOOLS.iter().copied().collect();
+            self.tool_registry
+                .clone_allowed_by(|name| allowed.contains(name))
+        } else if !allow_tools.is_empty() {
+            let allowed: HashSet<&str> = allow_tools.iter().map(String::as_str).collect();
+            self.tool_registry
+                .clone_allowed_by(|name| name != "spawn_agent" && allowed.contains(name))
+        } else {
+            // Default behavior preserves old semantics.
+            self.tool_registry.clone_without(&["spawn_agent"])
+        };
+
+        if !deny_tools.is_empty() {
+            let deny: HashSet<&str> = deny_tools.iter().map(String::as_str).collect();
+            sub_tools = sub_tools.clone_allowed_by(|name| !deny.contains(name));
+        }
+
+        sub_tools
+    }
+
+    async fn resolve_preset(
+        &self,
+        params: &serde_json::Value,
+    ) -> crate::Result<(Option<String>, Option<AgentPresetConfig>)> {
+        let explicit_name = str_param(params, "preset").map(String::from);
+
+        let Some(ref agents_config) = self.agents_config else {
+            if explicit_name.is_some() {
+                return Err(Error::message(
+                    "spawn preset requested but agents presets are not configured",
+                ));
+            }
+            return Ok((None, None));
+        };
+
+        let agents = agents_config.read().await;
+        let preset_name = explicit_name.or_else(|| agents.default_preset.clone());
+        let Some(preset_name) = preset_name else {
+            return Ok((None, None));
+        };
+        let preset = agents.get_preset(&preset_name).cloned().ok_or_else(|| {
+            Error::message(format!(
+                "spawn preset '{preset_name}' not found in config.agents.presets"
+            ))
+        })?;
+        Ok((Some(preset_name), Some(preset)))
     }
 }
 
@@ -74,7 +176,7 @@ impl AgentTool for SpawnAgentTool {
         "Spawn a sub-agent to handle a complex, multi-step task autonomously. \
          The sub-agent runs its own agent loop with access to tools and returns \
          the result when done. Use this to delegate tasks that require multiple \
-         tool calls or independent reasoning."
+         tool calls or independent reasoning. Supports optional tool policy controls."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -89,9 +191,27 @@ impl AgentTool for SpawnAgentTool {
                     "type": "string",
                     "description": "Additional context for the sub-agent (optional)"
                 },
+                "preset": {
+                    "type": "string",
+                    "description": "Optional spawn preset from config.agents.presets."
+                },
                 "model": {
                     "type": "string",
                     "description": "Model ID to use (e.g. a cheaper model). If not specified, uses the parent's current model."
+                },
+                "allow_tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional whitelist of tool names for the sub-agent. spawn_agent is always excluded unless delegate_only is true."
+                },
+                "deny_tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional blacklist of tool names for the sub-agent."
+                },
+                "delegate_only": {
+                    "type": "boolean",
+                    "description": "If true, sub-agent is restricted to delegation/session/task tools."
                 }
             },
             "required": ["task"]
@@ -99,17 +219,43 @@ impl AgentTool for SpawnAgentTool {
     }
 
     async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let task = params["task"]
-            .as_str()
+        let task = str_param(&params, "task")
             .ok_or_else(|| Error::message("missing required parameter: task"))?;
-        let context = params["context"].as_str().unwrap_or("");
-        let model_id = params["model"].as_str();
+        let context = str_param(&params, "context").unwrap_or("");
+        let (preset_name, preset) = self.resolve_preset(&params).await?;
+        let explicit_model = str_param(&params, "model").map(String::from);
+        let model_id = explicit_model
+            .clone()
+            .or_else(|| preset.as_ref().and_then(|p| p.model.clone()));
+
+        let explicit_allow_tools = Self::parse_tool_name_array(&params, "allow_tools")?;
+        let allow_tools = if explicit_allow_tools.is_empty() {
+            preset
+                .as_ref()
+                .map(|p| p.allow_tools.clone())
+                .unwrap_or_default()
+        } else {
+            explicit_allow_tools
+        };
+
+        let explicit_deny_tools = Self::parse_tool_name_array(&params, "deny_tools")?;
+        let deny_tools = if explicit_deny_tools.is_empty() {
+            preset
+                .as_ref()
+                .map(|p| p.deny_tools.clone())
+                .unwrap_or_default()
+        } else {
+            explicit_deny_tools
+        };
+
+        let delegate_only = bool_param(
+            &params,
+            "delegate_only",
+            preset.as_ref().map(|p| p.delegate_only).unwrap_or(false),
+        );
 
         // Check nesting depth.
-        let depth = params
-            .get(SPAWN_DEPTH_KEY)
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let depth = u64_param(&params, SPAWN_DEPTH_KEY, 0);
         if depth >= MAX_SPAWN_DEPTH {
             return Err(Error::message(format!(
                 "maximum sub-agent nesting depth ({MAX_SPAWN_DEPTH}) exceeded"
@@ -120,7 +266,7 @@ impl AgentTool for SpawnAgentTool {
         // Resolve provider.
         let provider = if let Some(id) = model_id {
             let reg = self.provider_registry.read().await;
-            reg.get(id)
+            reg.get(&id)
                 .ok_or_else(|| Error::message(format!("unknown model: {id}")))?
         } else {
             Arc::clone(&self.default_provider)
@@ -133,6 +279,7 @@ impl AgentTool for SpawnAgentTool {
             task = %task,
             depth = depth,
             model = %model_id,
+            preset = ?preset_name,
             "spawning sub-agent"
         );
 
@@ -142,11 +289,11 @@ impl AgentTool for SpawnAgentTool {
             depth,
         });
 
-        // Build filtered tool registry (no spawn_agent to prevent recursive spawning).
-        let sub_tools = self.tool_registry.clone_without(&["spawn_agent"]);
+        // Build filtered tool registry from policy knobs.
+        let sub_tools = self.build_sub_tools(&allow_tools, &deny_tools, delegate_only);
 
         // Build system prompt.
-        let system_prompt = if context.is_empty() {
+        let mut system_prompt = if context.is_empty() {
             format!(
                 "You are a sub-agent spawned to handle a specific task. \
                  Complete the task thoroughly and return a clear result.\n\n\
@@ -156,9 +303,18 @@ impl AgentTool for SpawnAgentTool {
             format!(
                 "You are a sub-agent spawned to handle a specific task. \
                  Complete the task thoroughly and return a clear result.\n\n\
-                 Task: {task}\n\nContext: {context}"
+                Task: {task}\n\nContext: {context}"
             )
         };
+        if let Some(extra) = preset
+            .as_ref()
+            .and_then(|p| p.system_prompt_suffix.as_ref())
+            .map(|suffix| suffix.trim())
+            .filter(|v| !v.is_empty())
+        {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(extra);
+        }
 
         // Build tool context with incremented depth and propagated session key.
         let mut tool_context = serde_json::json!({
@@ -268,6 +424,53 @@ mod tests {
         Arc::new(tokio::sync::RwLock::new(
             ProviderRegistry::from_env_with_config(&Default::default()),
         ))
+    }
+
+    struct DummyNamedTool {
+        name: String,
+    }
+
+    #[async_trait]
+    impl AgentTool for DummyNamedTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            "dummy"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+
+        async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+            Ok(params)
+        }
+    }
+
+    fn registry_with_tools(names: &[&str]) -> Arc<ToolRegistry> {
+        let mut registry = ToolRegistry::new();
+        for name in names {
+            registry.register(Box::new(DummyNamedTool {
+                name: (*name).to_string(),
+            }));
+        }
+        Arc::new(registry)
+    }
+
+    fn agents_config_with_presets(
+        default_preset: Option<&str>,
+        presets: &[(&str, AgentPresetConfig)],
+    ) -> Arc<tokio::sync::RwLock<AgentsConfig>> {
+        let mut cfg = AgentsConfig {
+            default_preset: default_preset.map(String::from),
+            ..Default::default()
+        };
+        for (name, preset) in presets {
+            cfg.presets.insert((*name).to_string(), preset.clone());
+        }
+        Arc::new(tokio::sync::RwLock::new(cfg))
     }
 
     #[tokio::test]
@@ -421,5 +624,145 @@ mod tests {
         let result = spawn_tool.execute(serde_json::json!({})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("task"));
+    }
+
+    #[tokio::test]
+    async fn test_build_sub_tools_applies_allow_and_deny() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(MockProvider {
+            response: "ok".into(),
+            model_id: "mock".into(),
+        });
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            registry_with_tools(&["spawn_agent", "exec", "web_fetch", "task_list"]),
+        );
+
+        let filtered = spawn_tool.build_sub_tools(
+            &[
+                "exec".to_string(),
+                "task_list".to_string(),
+                "spawn_agent".to_string(),
+            ],
+            &["task_list".to_string()],
+            false,
+        );
+        assert!(filtered.get("exec").is_some());
+        assert!(filtered.get("task_list").is_none());
+        assert!(filtered.get("spawn_agent").is_none());
+        assert!(filtered.get("web_fetch").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_build_sub_tools_delegate_only_uses_delegate_set() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(MockProvider {
+            response: "ok".into(),
+            model_id: "mock".into(),
+        });
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            registry_with_tools(&[
+                "spawn_agent",
+                "sessions_list",
+                "sessions_history",
+                "sessions_send",
+                "task_list",
+                "exec",
+            ]),
+        );
+
+        let filtered = spawn_tool.build_sub_tools(&[], &[], true);
+        assert!(filtered.get("spawn_agent").is_some());
+        assert!(filtered.get("sessions_list").is_some());
+        assert!(filtered.get("sessions_history").is_some());
+        assert!(filtered.get("sessions_send").is_some());
+        assert!(filtered.get("task_list").is_some());
+        assert!(filtered.get("exec").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_preset_uses_explicit_name() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(MockProvider {
+            response: "ok".into(),
+            model_id: "mock".into(),
+        });
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_agents_config(agents_config_with_presets(Some("default"), &[(
+            "research",
+            AgentPresetConfig {
+                delegate_only: true,
+                ..Default::default()
+            },
+        )]));
+
+        let (name, preset) = spawn_tool
+            .resolve_preset(&serde_json::json!({ "preset": "research" }))
+            .await
+            .expect("resolve preset");
+        assert_eq!(name.as_deref(), Some("research"));
+        assert_eq!(preset.as_ref().map(|p| p.delegate_only), Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_preset_uses_default_when_missing() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(MockProvider {
+            response: "ok".into(),
+            model_id: "mock".into(),
+        });
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_agents_config(agents_config_with_presets(Some("default"), &[(
+            "default",
+            AgentPresetConfig {
+                allow_tools: vec!["task_list".to_string()],
+                ..Default::default()
+            },
+        )]));
+
+        let (name, preset) = spawn_tool
+            .resolve_preset(&serde_json::json!({}))
+            .await
+            .expect("resolve default preset");
+        assert_eq!(name.as_deref(), Some("default"));
+        assert_eq!(
+            preset
+                .as_ref()
+                .map(|p| p.allow_tools.clone())
+                .unwrap_or_default(),
+            vec!["task_list".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_preset_errors_when_name_missing() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(MockProvider {
+            response: "ok".into(),
+            model_id: "mock".into(),
+        });
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_agents_config(agents_config_with_presets(None, &[]));
+
+        let result = spawn_tool
+            .resolve_preset(&serde_json::json!({ "preset": "missing" }))
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .map(|e| e.to_string().contains("not found"))
+                .unwrap_or(false)
+        );
     }
 }

@@ -10,6 +10,7 @@ pub mod approval;
 pub mod branch_session;
 
 pub mod error;
+pub mod params;
 pub use error::{Error, Result};
 
 static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
@@ -58,9 +59,12 @@ pub mod sandbox;
 pub mod sandbox_packages;
 pub mod send_image;
 pub mod session_state;
+pub mod sessions_communicate;
+pub mod sessions_manage;
 pub mod skill_tools;
 pub mod spawn_agent;
 pub mod ssrf;
+pub mod task_list;
 #[cfg(feature = "wasm")]
 pub mod wasm_component;
 #[cfg(feature = "wasm")]

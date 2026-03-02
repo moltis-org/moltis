@@ -134,55 +134,82 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 	test("containers list fetches on page mount", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		const fetchPromise = page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.status() === 200);
-		await page.goto("/settings/sandboxes");
-		const response = await fetchPromise;
-		const data = await response.json();
-		expect(data).toHaveProperty("containers");
+		var containersFetched = false;
+
+		// Track the containers fetch via route interceptor so it can't race
+		// with page.goto — the route is registered before navigation starts.
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				containersFetched = true;
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		expect(containersFetched).toBe(true);
 
 		expect(pageErrors).toEqual([]);
 	});
 
 	test("shows 'No containers found' when list is empty", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		const containersResponse = page.waitForResponse(
-			(r) => r.url().includes("/api/sandbox/containers") && r.request().method() === "GET",
-		);
-		await navigateAndWait(page, "/settings/sandboxes");
-		await containersResponse;
 
-		// If no containers are running, we should see the empty state
-		const containerRows = page.locator(".provider-item");
-		const noContainersText = page.getByText("No containers found.");
-		// Either containers exist or the empty message shows
-		const hasContainers = (await containerRows.count()) > 0;
-		if (!hasContainers) {
-			await expect(noContainersText).toBeVisible();
-		}
+		// Mock an empty container list to make the test deterministic.
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		await expect(page.getByText("No containers found.")).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
 
 	test("disk usage fetches on page mount", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		const fetchPromise = page.waitForResponse((r) => r.url().includes("/api/sandbox/disk-usage"));
-		await page.goto("/settings/sandboxes");
-		const response = await fetchPromise;
-		const data = await response.json();
-		// Response should have a usage object (or error if no backend)
-		expect(data).toBeDefined();
+		var diskUsageFetched = false;
+
+		// Track via route interceptor to avoid waitForResponse race with goto.
+		await page.route("**/api/sandbox/disk-usage", (route) => {
+			diskUsageFetched = true;
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		expect(diskUsageFetched).toBe(true);
 
 		expect(pageErrors).toEqual([]);
 	});
 
 	test("refresh button also fetches disk usage", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+		var diskFetchCount = 0;
+
+		// Track disk-usage fetches so we can assert the refresh triggered one.
+		await page.route("**/api/sandbox/disk-usage", (route) => {
+			diskFetchCount++;
+			return route.continue();
+		});
+
 		await navigateAndWait(page, "/settings/sandboxes");
+		const refreshBtn = page.getByRole("button", { name: "Refresh", exact: true });
+		await expect(refreshBtn).toBeVisible();
+
+		// Page mount fires the first disk-usage fetch.
+		const mountCount = diskFetchCount;
 
 		const diskPromise = page.waitForResponse((r) => r.url().includes("/api/sandbox/disk-usage"));
-		await page.getByRole("button", { name: "Refresh", exact: true }).click();
+		await refreshBtn.click();
 		await diskPromise;
 
+		expect(diskFetchCount).toBeGreaterThan(mountCount);
 		expect(pageErrors).toEqual([]);
 	});
 

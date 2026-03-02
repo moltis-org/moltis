@@ -3,6 +3,7 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { chatAddMsg, chatAddMsgWithImages, updateCommandInputUI } from "./chat-ui.js";
+import { highlightCodeBlocks } from "./code-highlight.js";
 import { SessionHeader } from "./components/session-header.js";
 import { formatBytes, formatTokens, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
 import {
@@ -877,6 +878,8 @@ function sendChat() {
 	var msg = buildChatMessage(outgoingText, S.chatSeq, text);
 	var chatParams = msg.params;
 	var userEl = msg.el;
+	// Highlight code blocks in the user message (if any).
+	if (userEl) highlightCodeBlocks(userEl);
 
 	var selectedModel = S.selectedModelId;
 	if (selectedModel) {

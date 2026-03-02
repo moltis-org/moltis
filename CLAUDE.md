@@ -207,8 +207,10 @@ New crate: add `run_migrations()` to `lib.rs`, call from `server.rs` in dependen
 
 ## Changelog
 
-Update `[Unreleased]` in `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/))
-for user-facing changes: Added, Changed, Deprecated, Removed, Fixed, Security.
+- Do **not** add manual `CHANGELOG.md` entries in normal PRs.
+- `CHANGELOG.md` entries are generated from commit history via `git-cliff` (`cliff.toml`).
+- Use conventional commits and preview unreleased notes with `just changelog-unreleased`.
+- PR CI enforces this via `scripts/check-changelog-guard.sh`.
 
 ## Git Workflow
 
