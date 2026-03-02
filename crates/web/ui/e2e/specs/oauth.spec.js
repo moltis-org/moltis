@@ -53,9 +53,15 @@ function resetRuntimeAuthState() {
 	removeIfExists(path.join(runtimeHomeConfigDir, "provider_keys.json"));
 }
 
+async function openProvidersSettingsPage(page) {
+	await navigateAndWait(page, "/settings/providers");
+	await expect.poll(() => new URL(page.url()).pathname).toBe("/settings/providers");
+	await expect(page.locator("#providersTitle")).toBeVisible();
+}
+
 async function openProviderPicker(page) {
 	await waitForWsConnected(page);
-	await page.getByRole("button", { name: "Add LLM" }).click();
+	await page.locator("#providersAddLlmBtn").click();
 	var codexCard = page.locator("#providerModalBody .provider-item").filter({ hasText: "OpenAI Codex" }).first();
 	await expect(codexCard).toBeVisible();
 	return codexCard;
@@ -78,9 +84,7 @@ test.describe("OAuth provider connection", () => {
 
 	test("provider list shows OAuth providers", async ({ page }) => {
 		var pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
-
-		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();
+		await openProvidersSettingsPage(page);
 
 		// Click "Add LLM" to see available providers.
 		var codexCard = await openProviderPicker(page);
@@ -91,7 +95,7 @@ test.describe("OAuth provider connection", () => {
 
 	test("OAuth PKCE flow completes successfully", async ({ page, context }) => {
 		var pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
+		await openProvidersSettingsPage(page);
 
 		// Click "Add LLM" to open provider modal.
 		var codexCard = await openProviderPicker(page);
@@ -155,7 +159,7 @@ test.describe("OAuth provider connection", () => {
 
 	test("disconnect removes provider tokens", async ({ page, context }) => {
 		var pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
+		await openProvidersSettingsPage(page);
 
 		// First, connect the provider.
 		var codexCard = await openProviderPicker(page);
@@ -182,7 +186,7 @@ test.describe("OAuth provider connection", () => {
 		await expect(page.locator("#providerModal")).toHaveClass(/hidden/);
 
 		// Navigate to providers page to see the connected provider.
-		await navigateAndWait(page, "/settings/providers");
+		await openProvidersSettingsPage(page);
 		await expectPageContentMounted(page);
 
 		// The provider should appear in the list. Delete it and confirm.
@@ -199,7 +203,7 @@ test.describe("OAuth provider connection", () => {
 
 	test("token exchange failure shows error", async ({ page, context }) => {
 		var pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
+		await openProvidersSettingsPage(page);
 
 		// Configure mock to fail token exchange
 		await configureMock(mockPort, { token_should_fail: "true" });

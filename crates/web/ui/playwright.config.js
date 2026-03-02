@@ -59,6 +59,7 @@ module.exports = defineConfig({
 	reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
 	use: {
 		baseURL: baseURL,
+		locale: "en-US",
 		trace: "retain-on-failure",
 		screenshot: "only-on-failure",
 		video: "retain-on-failure",
