@@ -6136,10 +6136,15 @@ mod tests {
     #[test]
     fn sync_persona_preserves_existing_preset_fields() {
         let mut agents = moltis_config::AgentsConfig::default();
-        let mut existing = moltis_config::AgentPreset::default();
-        existing.model = Some("haiku".into());
-        existing.timeout_secs = Some(30);
-        existing.tools.deny = vec!["exec".into()];
+        let existing = moltis_config::AgentPreset {
+            model: Some("haiku".into()),
+            timeout_secs: Some(30),
+            tools: moltis_config::PresetToolPolicy {
+                deny: vec!["exec".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         agents.presets.insert("coder".into(), existing);
 
         let persona = crate::agent_persona::AgentPersona {
