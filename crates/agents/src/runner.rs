@@ -37,6 +37,16 @@ fn resolve_agent_max_iterations(configured: usize) -> usize {
     configured
 }
 
+/// Sanitize a tool name from model output: trim whitespace and strip
+/// surrounding quotes that some models wrap around tool names.
+fn sanitize_tool_name(name: &str) -> &str {
+    let trimmed = name.trim();
+    trimmed
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(trimmed)
+}
+
 /// Error patterns that indicate the context window has been exceeded.
 const CONTEXT_WINDOW_PATTERNS: &[&str] = &[
     "context_length_exceeded",
@@ -942,7 +952,7 @@ pub async fn run_agent_loop_with_context(
             .tool_calls
             .iter()
             .map(|tc| {
-                let tool = tools.get(&tc.name);
+                let tool = tools.get(sanitize_tool_name(&tc.name));
                 let mut args = tc.arguments.clone();
 
                 // Dispatch BeforeToolCall hook — may block or modify arguments.
@@ -1603,7 +1613,7 @@ pub async fn run_agent_loop_streaming(
         let tool_futures: Vec<_> = tool_calls
             .iter()
             .map(|tc| {
-                let tool = tools.get(&tc.name);
+                let tool = tools.get(sanitize_tool_name(&tc.name));
                 let mut args = tc.arguments.clone();
 
                 let hook_registry = hook_registry.clone();
@@ -4572,5 +4582,78 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(retry_events.len(), 2, "expected two retry events");
         assert!(retry_events.iter().all(|delay| *delay >= 1));
+    }
+
+    // ── sanitize_tool_name ────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_tool_name_clean_input() {
+        assert_eq!(sanitize_tool_name("exec"), "exec");
+    }
+
+    #[test]
+    fn sanitize_tool_name_trims_whitespace() {
+        assert_eq!(sanitize_tool_name("  exec  "), "exec");
+        assert_eq!(sanitize_tool_name("\texec\n"), "exec");
+    }
+
+    #[test]
+    fn sanitize_tool_name_strips_quotes() {
+        assert_eq!(sanitize_tool_name("\"exec\""), "exec");
+        assert_eq!(sanitize_tool_name("  \"web_search\"  "), "web_search");
+    }
+
+    #[test]
+    fn sanitize_tool_name_partial_quotes_unchanged() {
+        // Only strip when both quotes are present.
+        assert_eq!(sanitize_tool_name("\"exec"), "\"exec");
+        assert_eq!(sanitize_tool_name("exec\""), "exec\"");
+    }
+
+    /// All real tool names used in production must survive sanitization unchanged.
+    #[test]
+    fn sanitize_tool_name_noop_on_real_tool_names() {
+        let real_names = [
+            "exec",
+            "web_search",
+            "web_fetch",
+            "memory_save",
+            "memory_search",
+            "file_read",
+            "file_write",
+            "calc",
+            "mcp-server_tool-name",
+        ];
+        for name in real_names {
+            assert_eq!(
+                sanitize_tool_name(name),
+                name,
+                "sanitize_tool_name must be no-op on valid tool name '{name}'"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_tool_name_empty_string() {
+        assert_eq!(sanitize_tool_name(""), "");
+        assert_eq!(sanitize_tool_name("  "), "");
+    }
+
+    #[test]
+    fn sanitize_tool_name_only_quotes() {
+        // `""` → stripped to empty
+        assert_eq!(sanitize_tool_name("\"\""), "");
+    }
+
+    #[test]
+    fn sanitize_tool_name_preserves_internal_quotes() {
+        // Quotes in the middle are NOT stripped — only surrounding pair.
+        assert_eq!(sanitize_tool_name("my\"tool"), "my\"tool");
+    }
+
+    #[test]
+    fn sanitize_tool_name_single_quotes_not_stripped() {
+        // Only double quotes are stripped.
+        assert_eq!(sanitize_tool_name("'exec'"), "'exec'");
     }
 }
