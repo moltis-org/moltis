@@ -263,6 +263,8 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
             // tool_result entries are UI-only metadata (persisted tool execution
             // output); they are not part of the LLM conversation context.
             "tool_result" => continue,
+            // notice entries are UI-only informational messages.
+            "notice" => continue,
             other => {
                 tracing::warn!(
                     index = i,
@@ -282,6 +284,10 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
 pub enum StreamEvent {
     /// Text content delta.
     Delta(String),
+    /// Raw provider event payload (for debugging API responses).
+    ProviderRaw(serde_json::Value),
+    /// Reasoning/planning text delta (not user-visible final answer text).
+    ReasoningDelta(String),
     /// A tool call has started (content_block_start with tool_use).
     ToolCallStart {
         /// Tool call ID from the provider.
@@ -343,6 +349,14 @@ pub trait LlmProvider: Send + Sync {
         false
     }
 
+    /// Configured tool mode for this provider, if any.
+    ///
+    /// Returns `None` when the provider has no explicit tool mode override
+    /// (the caller should fall back to `Auto` behavior based on `supports_tools()`).
+    fn tool_mode(&self) -> Option<moltis_config::ToolMode> {
+        None
+    }
+
     /// Stream a completion, yielding delta/done/error events.
     fn stream(
         &self,
@@ -363,6 +377,18 @@ pub trait LlmProvider: Send + Sync {
         _tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream(messages)
+    }
+
+    /// Fetch runtime model metadata from the provider API.
+    ///
+    /// The default implementation returns a `ModelMetadata` derived from the
+    /// static `context_window()` value. Providers that support a `/models`
+    /// endpoint can override this to fetch the actual context length at runtime.
+    async fn model_metadata(&self) -> anyhow::Result<ModelMetadata> {
+        Ok(ModelMetadata {
+            id: self.id().to_string(),
+            context_length: self.context_window(),
+        })
     }
 }
 
@@ -387,6 +413,13 @@ pub struct Usage {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_write_tokens: u32,
+}
+
+/// Runtime model metadata fetched from provider APIs.
+#[derive(Debug, Clone)]
+pub struct ModelMetadata {
+    pub id: String,
+    pub context_length: u32,
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -653,5 +686,61 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert!(matches!(&msgs[0], ChatMessage::User { .. }));
         assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn convert_skips_notice_entries() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "before"}),
+            serde_json::json!({"role": "notice", "content": "shared cutoff marker"}),
+            serde_json::json!({"role": "assistant", "content": "after"}),
+        ];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 2);
+        assert!(matches!(&msgs[0], ChatMessage::User { .. }));
+        assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+    }
+
+    // ── ModelMetadata default trait impl ────────────────────────────
+
+    /// Minimal provider to test default `model_metadata()` behavior.
+    struct StubProvider;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for StubProvider {
+        fn name(&self) -> &str {
+            "stub"
+        }
+
+        fn id(&self) -> &str {
+            "stub-model"
+        }
+
+        fn context_window(&self) -> u32 {
+            42_000
+        }
+
+        async fn complete(
+            &self,
+            _: &[ChatMessage],
+            _: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            anyhow::bail!("not implemented")
+        }
+
+        fn stream(
+            &self,
+            _: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn default_model_metadata_returns_context_window() {
+        let provider = StubProvider;
+        let meta = provider.model_metadata().await.unwrap();
+        assert_eq!(meta.id, "stub-model");
+        assert_eq!(meta.context_length, 42_000);
     }
 }

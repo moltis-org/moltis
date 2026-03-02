@@ -119,7 +119,8 @@ mod tests {
 
     #[test]
     fn open_dm_allows_all() {
-        let c = cfg();
+        let mut c = cfg();
+        c.dm_policy = DmPolicy::Open;
         assert!(check_access(&c, &ChatType::Dm, "anyone", None, None, false).is_ok());
     }
 

@@ -14,13 +14,28 @@ use crate::{
     model::{
         ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
     },
+    response_sanitizer::{clean_response, recover_tool_calls_from_content},
+    tool_parsing::{
+        looks_like_failed_tool_call, new_synthetic_tool_call_id, parse_tool_calls_from_text,
+    },
     tool_registry::ToolRegistry,
 };
 
 use futures::StreamExt;
 
-/// Maximum number of tool-call loop iterations before giving up.
-const MAX_ITERATIONS: usize = 25;
+/// Fallback loop limit when config is missing or invalid.
+const DEFAULT_AGENT_MAX_ITERATIONS: usize = 25;
+
+fn resolve_agent_max_iterations(configured: usize) -> usize {
+    if configured == 0 {
+        warn!(
+            default = DEFAULT_AGENT_MAX_ITERATIONS,
+            "tools.agent_max_iterations was 0; falling back to default"
+        );
+        return DEFAULT_AGENT_MAX_ITERATIONS;
+    }
+    configured
+}
 
 /// Error patterns that indicate the context window has been exceeded.
 const CONTEXT_WINDOW_PATTERNS: &[&str] = &[
@@ -42,7 +57,7 @@ fn is_context_window_error(msg: &str) -> bool {
 }
 
 /// Error patterns that indicate a transient server error worth retrying.
-const RETRYABLE_PATTERNS: &[&str] = &[
+const RETRYABLE_SERVER_PATTERNS: &[&str] = &[
     "http 500",
     "http 502",
     "http 503",
@@ -58,12 +73,152 @@ const RETRYABLE_PATTERNS: &[&str] = &[
 /// Check if an error looks like a transient provider failure that may
 /// succeed on retry (5xx, overloaded, etc.).
 fn is_retryable_server_error(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    RETRYABLE_PATTERNS.iter().any(|p| lower.contains(p))
+    let lower = msg.to_ascii_lowercase();
+    RETRYABLE_SERVER_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
-/// Delay before retrying a failed LLM call.
-const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+/// Error patterns that indicate provider-side rate limiting.
+const RATE_LIMIT_PATTERNS: &[&str] = &[
+    "http 429",
+    "status=429",
+    "status 429",
+    "status: 429",
+    "too many requests",
+    "rate limit",
+    "rate_limit",
+];
+
+fn is_rate_limit_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    RATE_LIMIT_PATTERNS.iter().any(|p| lower.contains(p))
+}
+
+/// Error patterns that indicate the account is out of credits/quota.
+/// These are not retryable in the short term and should surface directly.
+const BILLING_QUOTA_PATTERNS: &[&str] = &[
+    "insufficient_quota",
+    "quota exceeded",
+    "current quota",
+    "billing details",
+    "billing limit",
+    "credit balance",
+];
+
+fn is_billing_quota_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    BILLING_QUOTA_PATTERNS.iter().any(|p| lower.contains(p))
+}
+
+/// Base delay for non-rate-limit transient retries.
+const SERVER_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Rate-limit retries use exponential backoff with a cap.
+const RATE_LIMIT_INITIAL_RETRY_MS: u64 = 2_000;
+const RATE_LIMIT_MAX_RETRY_MS: u64 = 60_000;
+const RATE_LIMIT_MAX_RETRIES: u8 = 10;
+
+fn next_rate_limit_retry_ms(previous_ms: Option<u64>) -> u64 {
+    previous_ms
+        .map(|ms| ms.saturating_mul(2))
+        .unwrap_or(RATE_LIMIT_INITIAL_RETRY_MS)
+        .clamp(RATE_LIMIT_INITIAL_RETRY_MS, RATE_LIMIT_MAX_RETRY_MS)
+}
+
+fn parse_retry_delay_ms_from_fragment(
+    fragment: &str,
+    unit_default_ms: bool,
+    max_ms: u64,
+) -> Option<u64> {
+    let start = fragment.find(|c: char| c.is_ascii_digit())?;
+    let tail = &fragment[start..];
+    let digits_len = tail.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits_len == 0 {
+        return None;
+    }
+    let amount = tail[..digits_len].parse::<u64>().ok()?;
+    let unit = tail[digits_len..].trim_start();
+
+    let ms = if unit.starts_with("ms") || unit.starts_with("millisecond") {
+        amount
+    } else if unit.starts_with("sec") || unit.starts_with("second") || unit.starts_with('s') {
+        amount.saturating_mul(1_000)
+    } else if unit.starts_with("min") || unit.starts_with("minute") || unit.starts_with('m') {
+        amount.saturating_mul(60_000)
+    } else if unit_default_ms {
+        amount
+    } else {
+        amount.saturating_mul(1_000)
+    };
+
+    Some(ms.clamp(1, max_ms))
+}
+
+/// Extract retry delay hints embedded in provider error messages.
+///
+/// Supports patterns like:
+/// - `retry_after_ms=1234`
+/// - `Retry-After: 30`
+/// - `retry after 30s`
+/// - `retry in 45 seconds`
+fn extract_retry_after_ms(msg: &str, max_ms: u64) -> Option<u64> {
+    let lower = msg.to_ascii_lowercase();
+    for (needle, default_ms) in [
+        ("retry_after_ms=", true),
+        ("retry-after-ms=", true),
+        ("retry_after=", false),
+        ("retry-after:", false),
+        ("retry after ", false),
+        ("retry in ", false),
+    ] {
+        if let Some(idx) = lower.find(needle) {
+            let fragment = &lower[idx + needle.len()..];
+            if let Some(ms) = parse_retry_delay_ms_from_fragment(fragment, default_ms, max_ms) {
+                return Some(ms);
+            }
+        }
+    }
+    None
+}
+
+fn next_retry_delay_ms(
+    msg: &str,
+    server_retries_remaining: &mut u8,
+    rate_limit_retries_remaining: &mut u8,
+    rate_limit_backoff_ms: &mut Option<u64>,
+) -> Option<u64> {
+    // Account/billing quota exhaustion is not transient; don't auto-retry.
+    if is_billing_quota_error(msg) {
+        return None;
+    }
+
+    if is_rate_limit_error(msg) {
+        if *rate_limit_retries_remaining == 0 {
+            return None;
+        }
+        *rate_limit_retries_remaining -= 1;
+
+        // Keep exponential state advancing even when the provider gives a
+        // Retry-After hint, so future retries remain bounded and predictable.
+        let current_backoff = *rate_limit_backoff_ms;
+        *rate_limit_backoff_ms = Some(next_rate_limit_retry_ms(current_backoff));
+
+        let hinted_ms = extract_retry_after_ms(msg, RATE_LIMIT_MAX_RETRY_MS);
+        let delay_ms = hinted_ms
+            .or(*rate_limit_backoff_ms)
+            .unwrap_or(RATE_LIMIT_INITIAL_RETRY_MS);
+        return Some(delay_ms.clamp(1, RATE_LIMIT_MAX_RETRY_MS));
+    }
+
+    if is_retryable_server_error(msg) {
+        if *server_retries_remaining == 0 {
+            return None;
+        }
+        *server_retries_remaining -= 1;
+        return Some(SERVER_RETRY_DELAY.as_millis() as u64);
+    }
+
+    None
+}
 
 /// Typed errors from the agent loop.
 #[derive(Debug, thiserror::Error)]
@@ -82,7 +237,11 @@ pub struct AgentRunResult {
     pub text: String,
     pub iterations: usize,
     pub tool_calls_made: usize,
+    /// Sum of usage across all LLM requests in this run.
     pub usage: Usage,
+    /// Usage for the final LLM request in this run.
+    pub request_usage: Usage,
+    pub raw_llm_responses: Vec<serde_json::Value>,
 }
 
 /// Callback for streaming events out of the runner.
@@ -124,61 +283,52 @@ pub enum RunnerEvent {
         tool_calls_made: usize,
     },
     /// A transient LLM error occurred and the runner will retry.
-    RetryingAfterError(String),
+    RetryingAfterError {
+        error: String,
+        delay_ms: u64,
+    },
 }
 
-/// Try to parse a tool call from the LLM's text response.
+/// Detect an explicit shell command in the latest user turn.
 ///
-/// Providers without native tool-calling support are instructed (via the system
-/// prompt) to emit a fenced block like:
+/// Only `/sh ...` commands are treated as explicit shell execution requests.
+/// This keeps normal chat turns (`hey`, `hello`, etc.) out of the forced-exec path.
 ///
-/// ```tool_call
-/// {"tool": "exec", "arguments": {"command": "ls"}}
-/// ```
-///
-/// This function extracts that JSON and returns a synthetic `ToolCall` plus the
-/// remaining text (if any) outside the fence.
-fn parse_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
-    // Look for ```tool_call ... ``` blocks.
-    let start_marker = "```tool_call";
-    let start = text.find(start_marker)?;
-    let after_marker = start + start_marker.len();
-    let rest = &text[after_marker..];
-    let end = rest.find("```")?;
-    let json_str = rest[..end].trim();
-
-    let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
-    let tool_name = parsed["tool"].as_str()?.to_string();
-    let arguments = parsed
-        .get("arguments")
-        .cloned()
-        .unwrap_or(serde_json::json!({}));
-
-    let id = format!("text-{}", uuid::Uuid::new_v4());
-
-    // Collect any text outside the tool_call block.
-    let before = text[..start].trim();
-    let after_end = after_marker + end + 3; // skip closing ```
-    let after = text.get(after_end..).unwrap_or("").trim();
-
-    let remaining = if before.is_empty() && after.is_empty() {
-        None
-    } else if before.is_empty() {
-        Some(after.to_string())
-    } else if after.is_empty() {
-        Some(before.to_string())
-    } else {
-        Some(format!("{before}\n{after}"))
+/// Supported forms:
+/// - `/sh pwd`
+/// - `/sh@mybot uname -a`
+fn explicit_shell_command_from_user_content(user_content: &UserContent) -> Option<String> {
+    let text = match user_content {
+        UserContent::Text(text) => text.trim(),
+        UserContent::Multimodal(_) => return None,
     };
 
-    Some((
-        ToolCall {
-            id,
-            name: tool_name,
-            arguments,
-        },
-        remaining,
-    ))
+    if text.is_empty() || text.len() > 4096 || text.contains('\n') || text.contains('\r') {
+        return None;
+    }
+
+    let rest = text.strip_prefix('/')?;
+    let split_idx = rest.find(char::is_whitespace)?;
+    let head = &rest[..split_idx];
+    let command = rest[split_idx..].trim_start();
+    if command.is_empty() {
+        return None;
+    }
+
+    let head_lower = head.to_ascii_lowercase();
+    let is_sh_prefix = if head_lower == "sh" {
+        true
+    } else {
+        head_lower
+            .strip_prefix("sh@")
+            .is_some_and(|mention| !mention.is_empty())
+    };
+
+    if !is_sh_prefix {
+        return None;
+    }
+
+    Some(command.to_string())
 }
 
 // ── Tool result sanitization ────────────────────────────────────────────
@@ -445,9 +595,9 @@ pub async fn run_agent_loop_with_context(
     hook_registry: Option<Arc<HookRegistry>>,
 ) -> Result<AgentRunResult, AgentRunError> {
     let native_tools = provider.supports_tools();
-    let max_tool_result_bytes = moltis_config::discover_and_load()
-        .tools
-        .max_tool_result_bytes;
+    let config = moltis_config::discover_and_load();
+    let max_tool_result_bytes = config.tools.max_tool_result_bytes;
+    let max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
     let tool_schemas = tools.list_schemas();
 
     let is_multimodal = matches!(user_content, UserContent::Multimodal(_));
@@ -470,6 +620,7 @@ pub async fn run_agent_loop_with_context(
     messages.push(ChatMessage::User {
         content: user_content.clone(),
     });
+    let explicit_shell_command = explicit_shell_command_from_user_content(user_content);
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -490,12 +641,16 @@ pub async fn run_agent_loop_with_context(
     let mut total_tool_calls = 0;
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
-    let mut retries_remaining: u8 = 1;
+    let mut server_retries_remaining: u8 = 1;
+    let mut rate_limit_retries_remaining: u8 = RATE_LIMIT_MAX_RETRIES;
+    let mut rate_limit_backoff_ms: Option<u64> = None;
+    let mut last_answer_text = String::new();
+    let mut malformed_retry_count: u8 = 0;
 
     loop {
         iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            warn!("agent loop exceeded max iterations ({})", MAX_ITERATIONS);
+        if iterations > max_iterations {
+            warn!("agent loop exceeded max iterations ({})", max_iterations);
             return Err(AgentRunError::Other(anyhow::anyhow!(
                 "agent loop exceeded max iterations"
             )));
@@ -553,18 +708,27 @@ pub async fn run_agent_loop_with_context(
                     if is_context_window_error(&msg) {
                         return Err(AgentRunError::ContextWindowExceeded(msg));
                     }
-                    if retries_remaining > 0 && is_retryable_server_error(&msg) {
-                        retries_remaining -= 1;
+                    if let Some(delay_ms) = next_retry_delay_ms(
+                        &msg,
+                        &mut server_retries_remaining,
+                        &mut rate_limit_retries_remaining,
+                        &mut rate_limit_backoff_ms,
+                    ) {
                         iterations -= 1;
                         warn!(
                             error = %msg,
-                            retries_remaining,
+                            delay_ms,
+                            server_retries_remaining,
+                            rate_limit_retries_remaining,
                             "transient LLM error, retrying after delay"
                         );
                         if let Some(cb) = on_event {
-                            cb(RunnerEvent::RetryingAfterError(msg));
+                            cb(RunnerEvent::RetryingAfterError {
+                                error: msg,
+                                delay_ms,
+                            });
                         }
-                        tokio::time::sleep(RETRY_DELAY).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         continue;
                     }
                     return Err(AgentRunError::Other(e));
@@ -590,18 +754,80 @@ pub async fn run_agent_loop_with_context(
             trace!(iteration = iterations, text = %text, "LLM response text");
         }
 
-        // For providers without native tool calling, try parsing tool calls from text.
+        // Fallback: parse tool calls from model text if the provider returned
+        // no structured tool calls (some providers/models emit text-based calls).
+        if response.tool_calls.is_empty()
+            && let Some(ref text) = response.text
+        {
+            let (parsed, remaining) = parse_tool_calls_from_text(text);
+            if !parsed.is_empty() {
+                info!(
+                    native_tools,
+                    count = parsed.len(),
+                    first_tool = %parsed[0].name,
+                    "parsed tool call(s) from text fallback"
+                );
+                response.text = remaining;
+                response.tool_calls = parsed;
+            }
+        }
+
+        // One-shot retry for malformed tool calls: if the text looks like a
+        // failed tool call attempt, ask the model to retry with exact format.
+        if response.tool_calls.is_empty()
+            && looks_like_failed_tool_call(&response.text)
+            && malformed_retry_count == 0
+        {
+            malformed_retry_count += 1;
+            info!("detected malformed tool call, requesting retry");
+            messages.push(ChatMessage::assistant(
+                response.text.as_deref().unwrap_or(""),
+            ));
+            messages.push(ChatMessage::user(
+                "Your tool call was malformed. Retry with exact format:\n\
+                 ```tool_call\n{\"tool\": \"name\", \"arguments\": {...}}\n```",
+            ));
+            continue;
+        }
+
+        // Fallback: recover tool calls from XML blocks (<function_call>, <tool_call>).
         if !native_tools
             && response.tool_calls.is_empty()
             && let Some(ref text) = response.text
-            && let Some((tc, remaining_text)) = parse_tool_call_from_text(text)
         {
-            info!(
-                tool = %tc.name,
-                "parsed tool call from text (non-native provider)"
-            );
-            response.text = remaining_text;
-            response.tool_calls = vec![tc];
+            let (cleaned, recovered) = recover_tool_calls_from_content(text);
+            if !recovered.is_empty() {
+                info!(
+                    count = recovered.len(),
+                    "recovered tool calls from XML blocks in response text"
+                );
+                response.text = if cleaned.is_empty() {
+                    None
+                } else {
+                    Some(cleaned)
+                };
+                response.tool_calls = recovered;
+            }
+        }
+
+        // Final fallback: if the user turn is an explicit `/sh ...` command and
+        // the model returned plain text, force one exec tool call so this path
+        // is deterministic in the UI.
+        if response.tool_calls.is_empty()
+            && iterations == 1
+            && total_tool_calls == 0
+            && let Some(command) = explicit_shell_command.as_ref()
+            && tools.get("exec").is_some()
+        {
+            info!(command = %command, "forcing exec tool call from explicit /sh command");
+            // Preserve the model's planning/reasoning text on the assistant
+            // tool-call message. Some providers (e.g. Moonshot thinking mode)
+            // require this history field for follow-up tool turns.
+            response.tool_calls = vec![ToolCall {
+                id: new_synthetic_tool_call_id("forced"),
+                name: "exec".to_string(),
+                arguments: serde_json::json!({ "command": command }),
+            }];
         }
 
         for tc in &response.tool_calls {
@@ -655,7 +881,12 @@ pub async fn run_agent_loop_with_context(
 
         // If no tool calls, return the text response.
         if response.tool_calls.is_empty() {
-            let text = response.text.unwrap_or_default();
+            let text = clean_response(
+                &response
+                    .text
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or(std::mem::take(&mut last_answer_text)),
+            );
 
             info!(
                 iterations,
@@ -671,14 +902,20 @@ pub async fn run_agent_loop_with_context(
                     output_tokens: total_output_tokens,
                     ..Default::default()
                 },
+                request_usage: response.usage.clone(),
+                raw_llm_responses: Vec::new(),
             });
         }
 
         // Append assistant message with tool calls.
+        // Save any answer text for fallback — when the final iteration returns
+        // empty, this becomes the result. Don't emit as ThinkingText because
+        // it may be the actual answer (e.g. a table produced before a cleanup
+        // tool call like `browser close`).
         if let Some(ref text) = response.text
-            && let Some(cb) = on_event
+            && !text.is_empty()
         {
-            cb(RunnerEvent::ThinkingText(text.clone()));
+            last_answer_text.clone_from(text);
         }
         messages.push(ChatMessage::assistant_with_tools(
             response.text.clone(),
@@ -883,9 +1120,9 @@ pub async fn run_agent_loop_streaming(
     hook_registry: Option<Arc<HookRegistry>>,
 ) -> Result<AgentRunResult, AgentRunError> {
     let native_tools = provider.supports_tools();
-    let max_tool_result_bytes = moltis_config::discover_and_load()
-        .tools
-        .max_tool_result_bytes;
+    let config = moltis_config::discover_and_load();
+    let max_tool_result_bytes = config.tools.max_tool_result_bytes;
+    let max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
     let tool_schemas = tools.list_schemas();
 
     let is_multimodal = matches!(user_content, UserContent::Multimodal(_));
@@ -908,6 +1145,7 @@ pub async fn run_agent_loop_streaming(
     messages.push(ChatMessage::User {
         content: user_content.clone(),
     });
+    let explicit_shell_command = explicit_shell_command_from_user_content(user_content);
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -935,14 +1173,22 @@ pub async fn run_agent_loop_streaming(
     let mut total_tool_calls = 0;
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
-    let mut retries_remaining: u8 = 1;
+    let mut server_retries_remaining: u8 = 1;
+    let mut rate_limit_retries_remaining: u8 = RATE_LIMIT_MAX_RETRIES;
+    let mut rate_limit_backoff_ms: Option<u64> = None;
+    let mut raw_llm_responses: Vec<serde_json::Value> = Vec::new();
+    // Track answer text from iterations that also contained tool calls.
+    // When the final iteration is empty (e.g. model stop after browser close),
+    // this is used as the final response text instead of returning silent.
+    let mut last_answer_text = String::new();
+    let mut malformed_retry_count: u8 = 0;
 
     loop {
         iterations += 1;
-        if iterations > MAX_ITERATIONS {
+        if iterations > max_iterations {
             warn!(
                 "streaming agent loop exceeded max iterations ({})",
-                MAX_ITERATIONS
+                max_iterations
             );
             return Err(AgentRunError::Other(anyhow::anyhow!(
                 "agent loop exceeded max iterations"
@@ -998,8 +1244,9 @@ pub async fn run_agent_loop_streaming(
         let iter_start = std::time::Instant::now();
         let mut stream = provider.stream_with_tools(messages.clone(), schemas_for_api.clone());
 
-        // Accumulate text and tool calls from the stream.
+        // Accumulate answer text, reasoning text, and tool calls from the stream.
         let mut accumulated_text = String::new();
+        let mut accumulated_reasoning = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         // Map streaming index → accumulated JSON args string.
         let mut tool_call_args: std::collections::HashMap<usize, String> =
@@ -1020,6 +1267,17 @@ pub async fn run_agent_loop_streaming(
                     accumulated_text.push_str(&text);
                     if let Some(cb) = on_event {
                         cb(RunnerEvent::TextDelta(text));
+                    }
+                },
+                StreamEvent::ProviderRaw(raw) => {
+                    if raw_llm_responses.len() < 256 {
+                        raw_llm_responses.push(raw);
+                    }
+                },
+                StreamEvent::ReasoningDelta(text) => {
+                    accumulated_reasoning.push_str(&text);
+                    if let Some(cb) = on_event {
+                        cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
                     }
                 },
                 StreamEvent::ToolCallStart { id, name, index } => {
@@ -1102,24 +1360,33 @@ pub async fn run_agent_loop_streaming(
             cb(RunnerEvent::ThinkingDone);
         }
 
-        // Handle stream error — retry once on transient server failures.
+        // Handle stream errors — retry on transient failures/rate limits.
         if let Some(err) = stream_error {
             if is_context_window_error(&err) {
                 return Err(AgentRunError::ContextWindowExceeded(err));
             }
-            if retries_remaining > 0 && is_retryable_server_error(&err) {
-                retries_remaining -= 1;
+            if let Some(delay_ms) = next_retry_delay_ms(
+                &err,
+                &mut server_retries_remaining,
+                &mut rate_limit_retries_remaining,
+                &mut rate_limit_backoff_ms,
+            ) {
                 // Don't count the failed attempt as an iteration.
                 iterations -= 1;
                 warn!(
                     error = %err,
-                    retries_remaining,
+                    delay_ms,
+                    server_retries_remaining,
+                    rate_limit_retries_remaining,
                     "transient LLM error, retrying after delay"
                 );
                 if let Some(cb) = on_event {
-                    cb(RunnerEvent::RetryingAfterError(err));
+                    cb(RunnerEvent::RetryingAfterError {
+                        error: err,
+                        delay_ms,
+                    });
                 }
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                 continue;
             }
             return Err(AgentRunError::Other(anyhow::anyhow!(err)));
@@ -1150,18 +1417,68 @@ pub async fn run_agent_loop_streaming(
             "streaming LLM response complete"
         );
 
-        // For providers without native tool calling, try parsing tool calls from text.
-        if !native_tools
-            && tool_calls.is_empty()
-            && !accumulated_text.is_empty()
-            && let Some((tc, remaining_text)) = parse_tool_call_from_text(&accumulated_text)
+        // Fallback: parse tool calls from model text if the provider returned
+        // no structured tool calls (some providers/models emit text-based calls).
+        if tool_calls.is_empty() && !accumulated_text.is_empty() {
+            let (parsed, remaining) = parse_tool_calls_from_text(&accumulated_text);
+            if !parsed.is_empty() {
+                info!(
+                    native_tools,
+                    count = parsed.len(),
+                    first_tool = %parsed[0].name,
+                    "parsed tool call(s) from text fallback"
+                );
+                accumulated_text = remaining.unwrap_or_default();
+                tool_calls = parsed;
+            }
+        }
+
+        // One-shot retry for malformed tool calls in streaming mode.
+        if tool_calls.is_empty()
+            && looks_like_failed_tool_call(&Some(accumulated_text.clone()))
+            && malformed_retry_count == 0
         {
-            info!(
-                tool = %tc.name,
-                "parsed tool call from text (non-native provider)"
-            );
-            accumulated_text = remaining_text.unwrap_or_default();
-            tool_calls = vec![tc];
+            malformed_retry_count += 1;
+            info!("detected malformed tool call in stream, requesting retry");
+            messages.push(ChatMessage::assistant(&accumulated_text));
+            messages.push(ChatMessage::user(
+                "Your tool call was malformed. Retry with exact format:\n\
+                 ```tool_call\n{\"tool\": \"name\", \"arguments\": {...}}\n```",
+            ));
+            continue;
+        }
+
+        // Fallback: recover tool calls from XML blocks (<function_call>, <tool_call>).
+        if !native_tools && tool_calls.is_empty() && !accumulated_text.is_empty() {
+            let (cleaned, recovered) = recover_tool_calls_from_content(&accumulated_text);
+            if !recovered.is_empty() {
+                info!(
+                    count = recovered.len(),
+                    "recovered tool calls from XML blocks in streamed text"
+                );
+                accumulated_text = cleaned;
+                tool_calls = recovered;
+            }
+        }
+
+        // Final fallback: if the user turn is an explicit `/sh ...` command and
+        // the model returned plain text, force one exec tool call so this path
+        // is deterministic in the UI.
+        if tool_calls.is_empty()
+            && iterations == 1
+            && total_tool_calls == 0
+            && let Some(command) = explicit_shell_command.as_ref()
+            && tools.get("exec").is_some()
+        {
+            info!(command = %command, "forcing exec tool call from explicit /sh command");
+            // Preserve streamed reasoning/planning text on the assistant tool
+            // message so providers that validate thinking history accept the
+            // next iteration.
+            tool_calls = vec![ToolCall {
+                id: new_synthetic_tool_call_id("forced"),
+                name: "exec".to_string(),
+                arguments: serde_json::json!({ "command": command }),
+            }];
         }
 
         // Dispatch AfterLLMCall hook — may block tool execution.
@@ -1209,13 +1526,20 @@ pub async fn run_agent_loop_streaming(
 
         // If no tool calls, return the text response.
         if tool_calls.is_empty() {
+            // When the final iteration produced no text but a previous iteration
+            // streamed answer text alongside tool calls, use that as the response.
+            let final_text = if accumulated_text.is_empty() && !last_answer_text.is_empty() {
+                std::mem::take(&mut last_answer_text)
+            } else {
+                accumulated_text
+            };
             info!(
                 iterations,
                 tool_calls = total_tool_calls,
                 "streaming agent loop complete — returning text"
             );
             return Ok(AgentRunResult {
-                text: accumulated_text,
+                text: clean_response(&final_text),
                 iterations,
                 tool_calls_made: total_tool_calls,
                 usage: Usage {
@@ -1223,18 +1547,38 @@ pub async fn run_agent_loop_streaming(
                     output_tokens: total_output_tokens,
                     ..Default::default()
                 },
+                request_usage: Usage {
+                    input_tokens,
+                    output_tokens,
+                    ..Default::default()
+                },
+                raw_llm_responses,
             });
         }
 
         // Append assistant message with tool calls.
-        let text_for_msg = if accumulated_text.is_empty() {
-            None
+        //
+        // When the model emits explicit reasoning (extended thinking), use
+        // that as the planning text and emit it as ThinkingText for the UI.
+        // When there is only regular text alongside tool calls (no separate
+        // reasoning), preserve it on the message for history but do NOT emit
+        // it as ThinkingText — it was already streamed as TextDelta and is
+        // likely the actual answer (e.g. a search result table produced
+        // before a `browser close` cleanup call).
+        let (text_for_msg, is_actual_reasoning) = if !accumulated_reasoning.is_empty() {
+            (Some(accumulated_reasoning), true)
+        } else if !accumulated_text.is_empty() {
+            last_answer_text.clone_from(&accumulated_text);
+            (Some(accumulated_text), false)
         } else {
-            if let Some(cb) = on_event {
-                cb(RunnerEvent::ThinkingText(accumulated_text.clone()));
-            }
-            Some(accumulated_text)
+            (None, false)
         };
+        if let Some(ref text) = text_for_msg
+            && is_actual_reasoning
+            && let Some(cb) = on_event
+        {
+            cb(RunnerEvent::ThinkingText(text.clone()));
+        }
         messages.push(ChatMessage::assistant_with_tools(
             text_for_msg,
             tool_calls.clone(),
@@ -1414,15 +1758,16 @@ pub async fn run_agent_loop_streaming(
 mod tests {
     use {
         super::*,
-        crate::model::{
-            ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage,
+        crate::{
+            model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+            tool_parsing::parse_tool_call_from_text,
         },
         async_trait::async_trait,
         std::pin::Pin,
         tokio_stream::Stream,
     };
 
-    // ── parse_tool_call_from_text tests ──────────────────────────────
+    // ── parse_tool_call_from_text tests (delegates to tool_parsing) ──
 
     #[test]
     fn test_parse_tool_call_basic() {
@@ -1430,7 +1775,8 @@ mod tests {
         let (tc, remaining) = parse_tool_call_from_text(text).unwrap();
         assert_eq!(tc.name, "exec");
         assert_eq!(tc.arguments["command"], "ls");
-        assert!(remaining.is_none());
+        assert!(tc.id.len() <= 40);
+        assert!(remaining.is_none() || remaining.as_deref() == Some(""));
     }
 
     #[test]
@@ -1453,6 +1799,75 @@ mod tests {
     fn test_parse_tool_call_invalid_json() {
         let text = "```tool_call\nnot json\n```";
         assert!(parse_tool_call_from_text(text).is_none());
+    }
+
+    #[test]
+    fn test_parse_tool_call_function_block() {
+        let text = "<function=process>\n<parameter=action>\nstart\n</parameter>\n<parameter=command>\npwd\n</parameter>\n</function>";
+        let (tc, remaining) = parse_tool_call_from_text(text).unwrap();
+        assert_eq!(tc.name, "process");
+        assert_eq!(tc.arguments["action"], "start");
+        assert_eq!(tc.arguments["command"], "pwd");
+        assert!(tc.id.len() <= 40);
+        assert!(remaining.is_none() || remaining.as_deref() == Some(""));
+    }
+
+    #[test]
+    fn test_new_synthetic_tool_call_id_is_openai_compatible() {
+        let id = new_synthetic_tool_call_id("forced");
+        assert!(id.starts_with("forced_"));
+        assert!(id.len() <= 40);
+
+        let long_prefix_id = new_synthetic_tool_call_id(
+            "prefix_that_is_intentionally_way_too_long_for_openai_tool_call_ids",
+        );
+        assert!(long_prefix_id.len() <= 40);
+    }
+
+    #[test]
+    fn test_parse_tool_call_function_block_with_wrapper_and_text() {
+        let text = "I'll do it.\n<tool_call>\n<function=process>\n<parameter=action>start</parameter>\n<parameter=command>pwd</parameter>\n</function>\n</tool_call>\nDone.";
+        let (tc, remaining) = parse_tool_call_from_text(text).unwrap();
+        assert_eq!(tc.name, "process");
+        assert_eq!(tc.arguments["action"], "start");
+        assert_eq!(tc.arguments["command"], "pwd");
+        let remaining = remaining.unwrap();
+        assert!(remaining.contains("I'll do it."));
+        assert!(remaining.contains("Done."));
+        assert!(!remaining.contains("<tool_call>"));
+        assert!(!remaining.contains("</tool_call>"));
+    }
+
+    #[test]
+    fn test_explicit_shell_command_requires_sh_prefix() {
+        let uc = UserContent::text("pwd");
+        assert!(explicit_shell_command_from_user_content(&uc).is_none());
+    }
+
+    #[test]
+    fn test_explicit_shell_command_extracts_command() {
+        let uc = UserContent::text("/sh pwd");
+        assert_eq!(
+            explicit_shell_command_from_user_content(&uc).as_deref(),
+            Some("pwd")
+        );
+    }
+
+    #[test]
+    fn test_explicit_shell_command_supports_telegram_style_bot_mention() {
+        let uc = UserContent::text("/sh@MoltisBot uname -a");
+        assert_eq!(
+            explicit_shell_command_from_user_content(&uc).as_deref(),
+            Some("uname -a")
+        );
+    }
+
+    #[test]
+    fn test_resolve_agent_max_iterations_falls_back_for_zero() {
+        assert_eq!(
+            resolve_agent_max_iterations(0),
+            DEFAULT_AGENT_MAX_ITERATIONS
+        );
     }
 
     // ── Mock helpers ─────────────────────────────────────────────────
@@ -1688,6 +2103,36 @@ mod tests {
         }
     }
 
+    /// Minimal process tool for testing `<function=process>` parsing.
+    struct TestProcessTool;
+
+    #[async_trait]
+    impl crate::tool_registry::AgentTool for TestProcessTool {
+        fn name(&self) -> &str {
+            "process"
+        }
+
+        fn description(&self) -> &str {
+            "Process tool for tests"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string" },
+                    "command": { "type": "string" }
+                }
+            })
+        }
+
+        async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({
+                "received": params,
+            }))
+        }
+    }
+
     // ── Tests ────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -1896,6 +2341,317 @@ mod tests {
             evts.iter()
                 .any(|e| matches!(e, RunnerEvent::ToolCallEnd { success: true, .. }))
         );
+    }
+
+    /// Native-tool provider that returns plain text (no structured tool call)
+    /// on the first turn for a command-like prompt.
+    struct DirectCommandNoToolProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for DirectCommandNoToolProvider {
+        fn name(&self) -> &str {
+            "mock-direct-command"
+        }
+
+        fn id(&self) -> &str {
+            "mock-direct-command"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Ok(CompletionResponse {
+                    text: Some("I'll summarize the command output for you.".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 10,
+                        ..Default::default()
+                    },
+                })
+            } else {
+                let assistant_tool_text = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Assistant {
+                            content,
+                            tool_calls,
+                        } = m
+                        {
+                            if tool_calls.is_empty() {
+                                return None;
+                            }
+                            return content.as_deref();
+                        }
+                        None
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !assistant_tool_text.is_empty(),
+                    "forced exec should preserve assistant reasoning text"
+                );
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !tool_content.is_empty(),
+                    "forced exec should append a tool result message"
+                );
+                Ok(CompletionResponse {
+                    text: Some("done".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_explicit_sh_command_forces_exec_non_streaming() {
+        let provider = Arc::new(DirectCommandNoToolProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestExecTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let uc = UserContent::text("/sh pwd");
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &uc,
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.tool_calls_made, 1);
+        assert_eq!(result.text, "done");
+
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                name, arguments, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should emit ToolCallStart");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "exec");
+        assert_eq!(args["command"], "pwd");
+    }
+
+    #[tokio::test]
+    async fn test_unprefixed_command_like_text_does_not_force_exec_non_streaming() {
+        let provider = Arc::new(MockProvider {
+            response_text: "plain response".to_string(),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestExecTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let uc = UserContent::text("pwd");
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &uc,
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 1);
+        assert_eq!(result.tool_calls_made, 0);
+        assert_eq!(result.text, "plain response");
+
+        let evts = events.lock().unwrap();
+        assert!(
+            !evts
+                .iter()
+                .any(|e| matches!(e, RunnerEvent::ToolCallStart { .. })),
+            "should not emit ToolCallStart for unprefixed command-like text"
+        );
+    }
+
+    /// Native-tool provider that emits XML-like function text instead of
+    /// structured tool calls. We should still execute it via text fallback.
+    struct NativeTextFunctionProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for NativeTextFunctionProvider {
+        fn name(&self) -> &str {
+            "mock-native-function"
+        }
+
+        fn id(&self) -> &str {
+            "mock-native-function"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Ok(CompletionResponse {
+                    text: Some(
+                        "<function=process>\n<parameter=action>\nstart\n</parameter>\n<parameter=command>\npwd\n</parameter>\n</function>\n</tool_call>"
+                            .into(),
+                    ),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 20,
+                        ..Default::default()
+                    },
+                })
+            } else {
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                assert!(
+                    tool_content.contains("\"action\":\"start\""),
+                    "tool result should include action=start, got: {tool_content}"
+                );
+                assert!(
+                    tool_content.contains("\"command\":\"pwd\""),
+                    "tool result should include command=pwd, got: {tool_content}"
+                );
+
+                Ok(CompletionResponse {
+                    text: Some("Process started for pwd".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 30,
+                        output_tokens: 10,
+                        ..Default::default()
+                    },
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_native_text_function_tool_calling_non_streaming() {
+        let provider = Arc::new(NativeTextFunctionProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestProcessTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let uc = UserContent::text("execute pwd");
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &uc,
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.text.contains("pwd"), "got: {}", result.text);
+        assert_eq!(result.iterations, 2, "should take 2 iterations");
+        assert_eq!(result.tool_calls_made, 1, "should execute 1 tool call");
+
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                arguments, name, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should emit ToolCallStart");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "process");
+        assert_eq!(args["action"], "start");
+        assert_eq!(args["command"], "pwd");
     }
 
     // ── Parallel tool execution tests ────────────────────────────────
@@ -2697,6 +3453,500 @@ mod tests {
         assert_eq!(arr[1]["type"], "image_url");
     }
 
+    /// Native streaming provider that emits XML-like function text instead of
+    /// structured tool events on the first pass.
+    struct NativeTextFunctionStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for NativeTextFunctionStreamProvider {
+        fn name(&self) -> &str {
+            "mock-native-function-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-native-function-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta(
+                        "<function=process>\n<parameter=action>\nstart\n</parameter>\n<parameter=command>\npwd\n</parameter>\n</function>\n</tool_call>"
+                            .into(),
+                    ),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 15,
+                        ..Default::default()
+                    }),
+                ]))
+            } else {
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                assert!(
+                    tool_content.contains("\"action\":\"start\""),
+                    "tool result should include action=start, got: {tool_content}"
+                );
+                assert!(
+                    tool_content.contains("\"command\":\"pwd\""),
+                    "tool result should include command=pwd, got: {tool_content}"
+                );
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Process executed in fallback mode".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 5,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ]))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_native_text_function_tool_calling() {
+        let provider = Arc::new(NativeTextFunctionStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestProcessTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("execute pwd".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            result.text.contains("fallback mode"),
+            "got: {}",
+            result.text
+        );
+        assert_eq!(result.tool_calls_made, 1, "should execute 1 tool call");
+        assert_eq!(result.iterations, 2, "tool call + final text");
+
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                arguments, name, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should have ToolCallStart");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "process");
+        assert_eq!(args["action"], "start");
+        assert_eq!(args["command"], "pwd");
+    }
+
+    /// Streaming provider that returns plain text only (no tool calls) on
+    /// an explicit `/sh` prompt. Runner should force an exec call on iteration 1.
+    struct DirectCommandNoToolStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for DirectCommandNoToolStreamProvider {
+        fn name(&self) -> &str {
+            "mock-direct-command-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-direct-command-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::ReasoningDelta("I can summarize that command output.".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 10,
+                        ..Default::default()
+                    }),
+                ]))
+            } else {
+                let assistant_tool_text = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Assistant {
+                            content,
+                            tool_calls,
+                        } = m
+                        {
+                            if tool_calls.is_empty() {
+                                return None;
+                            }
+                            return content.as_deref();
+                        }
+                        None
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !assistant_tool_text.is_empty(),
+                    "forced exec should preserve streamed assistant reasoning text"
+                );
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !tool_content.is_empty(),
+                    "forced exec should append a tool result message"
+                );
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("stream done".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 5,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ]))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_explicit_sh_command_forces_exec_streaming() {
+        let provider = Arc::new(DirectCommandNoToolStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestExecTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("/sh uname -a".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.tool_calls_made, 1);
+        assert_eq!(result.text, "stream done");
+
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                name, arguments, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should emit ToolCallStart");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "exec");
+        assert_eq!(args["command"], "uname -a");
+    }
+
+    struct PlainTextOnlyStreamProvider;
+
+    #[async_trait]
+    impl LlmProvider for PlainTextOnlyStreamProvider {
+        fn name(&self) -> &str {
+            "mock-plain-text-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-plain-text-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::iter(vec![
+                StreamEvent::Delta("plain response".into()),
+                StreamEvent::Done(Usage {
+                    input_tokens: 2,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            ]))
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream(messages)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unprefixed_command_like_text_does_not_force_exec_streaming() {
+        let provider = Arc::new(PlainTextOnlyStreamProvider);
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestExecTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("pwd".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 1);
+        assert_eq!(result.tool_calls_made, 0);
+        assert_eq!(result.text, "plain response");
+
+        let evts = events.lock().unwrap();
+        assert!(
+            !evts
+                .iter()
+                .any(|e| matches!(e, RunnerEvent::ToolCallStart { .. })),
+            "should not emit ToolCallStart for unprefixed command-like text"
+        );
+    }
+
+    struct ReasoningThenAnswerStreamProvider;
+
+    #[async_trait]
+    impl LlmProvider for ReasoningThenAnswerStreamProvider {
+        fn name(&self) -> &str {
+            "mock-reasoning-then-answer"
+        }
+
+        fn id(&self) -> &str {
+            "mock-reasoning-then-answer"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::iter(vec![
+                StreamEvent::ReasoningDelta("internal plan".into()),
+                StreamEvent::Delta("visible answer".into()),
+                StreamEvent::Done(Usage {
+                    input_tokens: 2,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            ]))
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream(messages)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_reasoning_not_in_final_text() {
+        let provider = Arc::new(ReasoningThenAnswerStreamProvider);
+        let tools = ToolRegistry::new();
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("hello".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "visible answer");
+        assert!(!result.text.contains("internal plan"));
+
+        let evts = events.lock().unwrap();
+        let text_deltas: String = evts
+            .iter()
+            .filter_map(|e| {
+                if let RunnerEvent::TextDelta(t) = e {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(text_deltas, "visible answer");
+
+        let thinking_texts: Vec<&str> = evts
+            .iter()
+            .filter_map(|e| {
+                if let RunnerEvent::ThinkingText(t) = e {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            thinking_texts.contains(&"internal plan"),
+            "expected reasoning to be exposed via ThinkingText"
+        );
+    }
+
     // ── Streaming tool-call index mapping tests ─────────────────────
 
     /// Mock streaming provider that emits text + a tool call at a non-zero
@@ -3025,9 +4275,75 @@ mod tests {
         assert!(!is_retryable_server_error("invalid API key"));
     }
 
+    #[test]
+    fn test_is_rate_limit_error() {
+        assert!(is_rate_limit_error("HTTP 429 Too Many Requests"));
+        assert!(is_rate_limit_error("status=429 upstream limit"));
+        assert!(is_rate_limit_error("rate_limit_exceeded"));
+        assert!(!is_rate_limit_error("HTTP 500 Internal Server Error"));
+        assert!(!is_rate_limit_error("insufficient_quota"));
+    }
+
+    #[test]
+    fn test_is_billing_quota_error() {
+        assert!(is_billing_quota_error(
+            "You exceeded your current quota, please check your plan and billing details."
+        ));
+        assert!(is_billing_quota_error("insufficient_quota"));
+        assert!(is_billing_quota_error("quota exceeded"));
+        assert!(!is_billing_quota_error("HTTP 429 Too Many Requests"));
+    }
+
+    #[test]
+    fn test_next_retry_delay_skips_billing_quota_errors() {
+        let mut server_retries_remaining = 2u8;
+        let mut rate_limit_retries_remaining = 2u8;
+        let mut rate_limit_backoff_ms = None;
+        let delay = next_retry_delay_ms(
+            r#"HTTP 429: {"error":{"message":"You exceeded your current quota","type":"insufficient_quota","code":"insufficient_quota"}}"#,
+            &mut server_retries_remaining,
+            &mut rate_limit_retries_remaining,
+            &mut rate_limit_backoff_ms,
+        );
+        assert!(delay.is_none());
+        assert_eq!(server_retries_remaining, 2);
+        assert_eq!(rate_limit_retries_remaining, 2);
+        assert_eq!(rate_limit_backoff_ms, None);
+    }
+
+    #[test]
+    fn test_extract_retry_after_ms() {
+        assert_eq!(
+            extract_retry_after_ms("Anthropic API error (retry_after_ms=1234)", 60_000),
+            Some(1234)
+        );
+        assert_eq!(
+            extract_retry_after_ms("HTTP 429 Retry-After: 15", 60_000),
+            Some(15_000)
+        );
+        assert_eq!(
+            extract_retry_after_ms("rate limit exceeded, retry in 7 seconds", 60_000),
+            Some(7_000)
+        );
+    }
+
+    #[test]
+    fn test_next_rate_limit_retry_ms_doubles_and_caps() {
+        assert_eq!(next_rate_limit_retry_ms(None), 2_000);
+        assert_eq!(next_rate_limit_retry_ms(Some(2_000)), 4_000);
+        assert_eq!(next_rate_limit_retry_ms(Some(30_000)), 60_000);
+        assert_eq!(next_rate_limit_retry_ms(Some(60_000)), 60_000);
+    }
+
     /// Provider that fails with a 500 on the first call, succeeds on the second.
     struct TransientFailProvider {
         call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    /// Provider that fails with 429 for the first N calls, then succeeds.
+    struct RateLimitFailProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+        fail_count: usize,
     }
 
     #[async_trait]
@@ -3083,6 +4399,59 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl LlmProvider for RateLimitFailProvider {
+        fn name(&self) -> &str {
+            "rate-limit-fail"
+        }
+
+        fn id(&self) -> &str {
+            "rate-limit-fail-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count < self.fail_count {
+                bail!("HTTP 429 Too Many Requests: retry_after_ms=1")
+            } else {
+                Ok(CompletionResponse {
+                    text: Some("Recovered from rate limit".into()),
+                    tool_calls: vec![],
+                    usage: Usage::default(),
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count < self.fail_count {
+                Box::pin(tokio_stream::once(StreamEvent::Error(
+                    "HTTP 429 Too Many Requests: retry_after_ms=1".into(),
+                )))
+            } else {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Recovered from rate limit".into()),
+                    StreamEvent::Done(Usage::default()),
+                ]))
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_retry_on_transient_error_non_streaming() {
         let provider: Arc<dyn LlmProvider> = Arc::new(TransientFailProvider {
@@ -3123,5 +4492,85 @@ mod tests {
         .await;
         assert!(result.is_ok(), "should recover after retry: {result:?}");
         assert_eq!(result.unwrap().text, "Recovered!");
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_rate_limit_non_streaming() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(RateLimitFailProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            fail_count: 2,
+        });
+        let tools = ToolRegistry::new();
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "sys",
+            &UserContent::text("hello"),
+            Some(&on_event),
+            None,
+        )
+        .await;
+        assert!(result.is_ok(), "should recover after retries: {result:?}");
+        assert_eq!(result.unwrap().text, "Recovered from rate limit");
+
+        let retry_events = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                RunnerEvent::RetryingAfterError { delay_ms, .. } => Some(*delay_ms),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(retry_events.len(), 2, "expected two retry events");
+        assert!(retry_events.iter().all(|delay| *delay >= 1));
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_rate_limit_streaming() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(RateLimitFailProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            fail_count: 2,
+        });
+        let tools = ToolRegistry::new();
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "sys",
+            &UserContent::text("hello"),
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_ok(), "should recover after retries: {result:?}");
+        assert_eq!(result.unwrap().text, "Recovered from rate limit");
+
+        let retry_events = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                RunnerEvent::RetryingAfterError { delay_ms, .. } => Some(*delay_ms),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(retry_events.len(), 2, "expected two retry events");
+        assert!(retry_events.iter().all(|delay| *delay >= 1));
     }
 }

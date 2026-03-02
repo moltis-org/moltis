@@ -501,7 +501,8 @@ fn check_providers(config: &MoltisConfig) -> Section {
             .iter()
             .find(|(pname, ..)| *pname == name.as_str());
 
-        let has_env_key = env_info.is_some_and(|(_, env, _)| std::env::var(env).is_ok());
+        let has_env_key = env_info.is_some_and(|(_, env, _)| std::env::var(env).is_ok())
+            || (name == "gemini" && std::env::var("GOOGLE_API_KEY").is_ok());
         let is_optional = env_info.is_some_and(|(_, _, opt)| *opt);
 
         if has_config_key || has_env_key {
@@ -837,6 +838,7 @@ mod tests {
             enabled: false,
             transport: String::new(),
             url: None,
+            oauth: None,
         };
         config.mcp.servers.insert("test".to_string(), entry);
 
@@ -856,6 +858,7 @@ mod tests {
             enabled: true,
             transport: String::new(),
             url: None,
+            oauth: None,
         };
         config.mcp.servers.insert("broken".to_string(), entry);
 
@@ -875,6 +878,7 @@ mod tests {
             enabled: true,
             transport: "sse".to_string(),
             url: Some("http://localhost:3000/sse".to_string()),
+            oauth: None,
         };
         config.mcp.servers.insert("remote".to_string(), entry);
 
@@ -894,6 +898,7 @@ mod tests {
             enabled: true,
             transport: "sse".to_string(),
             url: None,
+            oauth: None,
         };
         config.mcp.servers.insert("broken-sse".to_string(), entry);
 
@@ -916,6 +921,7 @@ mod tests {
             enabled: true,
             transport: String::new(),
             url: None,
+            oauth: None,
         };
         config.mcp.servers.insert("bad".to_string(), entry);
 

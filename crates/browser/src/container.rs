@@ -1,14 +1,58 @@
 //! Container management for sandboxed browser instances.
 //!
-//! Supports both Docker and Apple Container backends, auto-detecting the best
-//! available option (prefers Apple Container on macOS when available).
+//! Supports Docker, Podman, and Apple Container backends, auto-detecting the
+//! best available option (Apple Container on macOS → Podman → Docker).
 
-use std::process::Command;
+use std::{fmt::Display, process::Command};
 
 use {
-    anyhow::{Context, Result, bail},
+    crate::error::Error,
     tracing::{debug, info, warn},
 };
+
+type Result<T> = std::result::Result<T, Error>;
+
+trait ContextExt<T> {
+    fn context(self, context: impl Into<String>) -> Result<T>;
+
+    fn with_context<C, F>(self, f: F) -> Result<T>
+    where
+        C: Into<String>,
+        F: FnOnce() -> C;
+}
+
+impl<T, E> ContextExt<T> for std::result::Result<T, E>
+where
+    E: Display,
+{
+    fn context(self, context: impl Into<String>) -> Result<T> {
+        let context = context.into();
+        self.map_err(|source| Error::LaunchFailed(format!("{context}: {source}")))
+    }
+
+    fn with_context<C, F>(self, f: F) -> Result<T>
+    where
+        C: Into<String>,
+        F: FnOnce() -> C,
+    {
+        let context = f().into();
+        self.map_err(|source| Error::LaunchFailed(format!("{context}: {source}")))
+    }
+}
+
+impl<T> ContextExt<T> for Option<T> {
+    fn context(self, context: impl Into<String>) -> Result<T> {
+        self.ok_or_else(|| Error::LaunchFailed(context.into()))
+    }
+
+    fn with_context<C, F>(self, f: F) -> Result<T>
+    where
+        C: Into<String>,
+        F: FnOnce() -> C,
+    {
+        self.ok_or_else(|| Error::LaunchFailed(f().into()))
+    }
+}
 
 fn browser_container_name_prefix(container_prefix: &str) -> String {
     format!("{container_prefix}-")
@@ -26,6 +70,7 @@ fn new_browser_container_name(container_prefix: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerBackend {
     Docker,
+    Podman,
     #[cfg(target_os = "macos")]
     AppleContainer,
 }
@@ -35,6 +80,7 @@ impl ContainerBackend {
     fn cli(&self) -> &'static str {
         match self {
             Self::Docker => "docker",
+            Self::Podman => "podman",
             #[cfg(target_os = "macos")]
             Self::AppleContainer => "container",
         }
@@ -43,6 +89,59 @@ impl ContainerBackend {
     /// Check if this backend is available.
     fn is_available(&self) -> bool {
         is_cli_available(self.cli())
+    }
+}
+
+fn stop_container_by_id(backend: ContainerBackend, container_id: &str) {
+    let cli = backend.cli();
+    let result = Command::new(cli).args(["stop", container_id]).output();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            debug!(container_id, backend = cli, "browser container stopped");
+        },
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                container_id,
+                backend = cli,
+                error = %stderr.trim(),
+                "failed to stop browser container"
+            );
+        },
+        Err(e) => {
+            warn!(
+                container_id,
+                backend = cli,
+                error = %e,
+                "failed to run {} stop",
+                cli
+            );
+        },
+    }
+
+    // Apple Container requires explicit deletion after stop.
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer {
+        match Command::new("container")
+            .args(["rm", container_id])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                debug!(container_id, "browser container removed");
+            },
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(
+                    container_id,
+                    error = %stderr.trim(),
+                    "failed to remove browser container"
+                );
+            },
+            Err(e) => {
+                warn!(container_id, error = %e, "failed to run container rm");
+            },
+        }
     }
 }
 
@@ -63,11 +162,15 @@ impl BrowserContainer {
     /// Start a new browser container using the auto-detected backend.
     ///
     /// Returns a container instance with the host port for CDP connections.
+    /// When `profile_dir` is `Some`, the host directory is mounted into the
+    /// container so that browser profile data persists across sessions.
     pub fn start(
         image: &str,
         container_prefix: &str,
         viewport_width: u32,
         viewport_height: u32,
+        low_memory_threshold_mb: u64,
+        profile_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
         let backend = detect_backend()?;
         Self::start_with_backend(
@@ -76,6 +179,8 @@ impl BrowserContainer {
             container_prefix,
             viewport_width,
             viewport_height,
+            low_memory_threshold_mb,
+            profile_dir,
         )
     }
 
@@ -86,12 +191,16 @@ impl BrowserContainer {
         container_prefix: &str,
         viewport_width: u32,
         viewport_height: u32,
+        low_memory_threshold_mb: u64,
+        profile_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
+        use std::time::Instant;
+
         if !backend.is_available() {
-            bail!(
+            return Err(Error::LaunchFailed(format!(
                 "{} is not available. Please install it to use sandboxed browser.",
                 backend.cli()
-            );
+            )));
         }
 
         // Find an available port
@@ -104,13 +213,17 @@ impl BrowserContainer {
             "starting browser container"
         );
 
+        let t0 = Instant::now();
         let container_id = match backend {
-            ContainerBackend::Docker => start_docker_container(
+            ContainerBackend::Docker | ContainerBackend::Podman => start_oci_container(
+                backend,
                 image,
                 container_prefix,
                 host_port,
                 viewport_width,
                 viewport_height,
+                low_memory_threshold_mb,
+                profile_dir,
             )?,
             #[cfg(target_os = "macos")]
             ContainerBackend::AppleContainer => start_apple_container(
@@ -119,23 +232,37 @@ impl BrowserContainer {
                 host_port,
                 viewport_width,
                 viewport_height,
+                low_memory_threshold_mb,
+                profile_dir,
             )?,
         };
-
-        debug!(
-            container_id,
-            host_port,
-            backend = backend.cli(),
-            "browser container started"
-        );
-
-        // Wait for the container to be ready
-        wait_for_ready(host_port)?;
 
         info!(
             container_id,
             host_port,
             backend = backend.cli(),
+            elapsed_ms = t0.elapsed().as_millis() as u64,
+            "browser container process started, waiting for Chrome readiness"
+        );
+
+        // Wait for the container to be ready
+        if let Err(error) = wait_for_ready(host_port) {
+            warn!(
+                container_id,
+                host_port,
+                backend = backend.cli(),
+                error = %error,
+                "browser container failed readiness check, cleaning up"
+            );
+            stop_container_by_id(backend, &container_id);
+            return Err(error);
+        }
+
+        info!(
+            container_id,
+            host_port,
+            backend = backend.cli(),
+            total_startup_ms = t0.elapsed().as_millis() as u64,
             "browser container ready"
         );
 
@@ -167,41 +294,7 @@ impl BrowserContainer {
             backend = self.backend.cli(),
             "stopping browser container"
         );
-
-        let cli = self.backend.cli();
-        let result = Command::new(cli)
-            .args(["stop", &self.container_id])
-            .output();
-
-        match result {
-            Ok(output) if output.status.success() => {
-                debug!(container_id = %self.container_id, "browser container stopped");
-            },
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!(
-                    container_id = %self.container_id,
-                    error = %stderr.trim(),
-                    "failed to stop browser container"
-                );
-            },
-            Err(e) => {
-                warn!(
-                    container_id = %self.container_id,
-                    error = %e,
-                    "failed to run {} stop",
-                    cli
-                );
-            },
-        }
-
-        // For Apple Container, we also need to remove the container
-        #[cfg(target_os = "macos")]
-        if self.backend == ContainerBackend::AppleContainer {
-            let _ = Command::new("container")
-                .args(["rm", &self.container_id])
-                .output();
-        }
+        stop_container_by_id(self.backend, &self.container_id);
     }
 
     /// Get the container ID.
@@ -223,47 +316,124 @@ impl Drop for BrowserContainer {
     }
 }
 
+/// Path inside the container where the browser profile is mounted.
+const CONTAINER_PROFILE_PATH: &str = "/data/browser-profile";
+
+/// Build the `DEFAULT_LAUNCH_ARGS` env-var value for containerised Chrome.
+///
+/// Always includes `--window-size`; appends low-memory flags when the host
+/// system RAM is below the given threshold. Adds `--user-data-dir` when a
+/// container-side profile path is provided.
+fn build_container_launch_args(
+    viewport_width: u32,
+    viewport_height: u32,
+    low_memory_threshold_mb: u64,
+    container_profile_dir: Option<&str>,
+    backend: ContainerBackend,
+) -> String {
+    use crate::pool::low_memory_chrome_args;
+
+    let mut args = vec![format!("--window-size={viewport_width},{viewport_height}")];
+
+    if let Some(profile_dir) = container_profile_dir {
+        args.push(format!("--user-data-dir={profile_dir}"));
+    }
+
+    // Apple Container VMs may not provide /dev/shm reliably; tell Chrome to
+    // write shared-memory segments to /tmp instead.
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer {
+        args.push("--disable-dev-shm-usage".to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = backend;
+
+    if low_memory_threshold_mb > 0 {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let total_mb = sys.total_memory() / (1024 * 1024);
+        for flag in low_memory_chrome_args(total_mb, low_memory_threshold_mb) {
+            args.push((*flag).to_string());
+        }
+    }
+
+    let joined = args
+        .iter()
+        .map(|a| format!("\"{a}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("DEFAULT_LAUNCH_ARGS=[{joined}]")
+}
+
 /// Start a Docker container for the browser.
-fn start_docker_container(
+fn start_oci_container(
+    backend: ContainerBackend,
     image: &str,
     container_prefix: &str,
     host_port: u16,
     viewport_width: u32,
     viewport_height: u32,
+    low_memory_threshold_mb: u64,
+    profile_dir: Option<&std::path::Path>,
 ) -> Result<String> {
+    let cli = backend.cli();
     let container_name = new_browser_container_name(container_prefix);
 
-    let output = Command::new("docker")
-        .args([
-            "run",
-            "-d",   // Detached
-            "--rm", // Auto-remove on stop
-            "--name",
-            &container_name,
-            "-p",
-            &format!("{}:3000", host_port), // Map CDP port
-            "-e",
-            &format!(
-                "DEFAULT_LAUNCH_ARGS=[\"--window-size={},{}\"]",
-                viewport_width, viewport_height
-            ),
-            "-e",
-            "MAX_CONCURRENT_SESSIONS=1", // One session per container
-            "-e",
-            "PREBOOT_CHROME=true", // Pre-launch Chrome for faster first connection
-            "--shm-size=2gb",      // Chrome needs shared memory
-            image,
-        ])
+    let container_profile_dir = profile_dir.map(|_| CONTAINER_PROFILE_PATH);
+    let launch_args = build_container_launch_args(
+        viewport_width,
+        viewport_height,
+        low_memory_threshold_mb,
+        container_profile_dir,
+        backend,
+    );
+
+    let mut run_args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--rm".to_string(),
+        "--name".to_string(),
+        container_name.clone(),
+        "-p".to_string(),
+        format!("{}:3000", host_port),
+        "-e".to_string(),
+        launch_args,
+        "-e".to_string(),
+        "MAX_CONCURRENT_SESSIONS=1".to_string(),
+        "-e".to_string(),
+        "PREBOOT_CHROME=true".to_string(),
+        "--shm-size=2gb".to_string(),
+    ];
+
+    // Mount the profile directory if persistence is enabled
+    if let Some(host_path) = profile_dir {
+        run_args.push("-v".to_string());
+        run_args.push(format!(
+            "{}:{}:rw",
+            host_path.display(),
+            CONTAINER_PROFILE_PATH
+        ));
+    }
+
+    run_args.push(image.to_string());
+
+    let output = Command::new(cli)
+        .args(&run_args)
         .output()
-        .context("failed to run docker command")?;
+        .with_context(|| format!("failed to run {cli} command"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("failed to start docker container: {}", stderr.trim());
+        return Err(Error::LaunchFailed(format!(
+            "failed to start {cli} container: {}",
+            stderr.trim()
+        )));
     }
 
     if container_name.is_empty() {
-        bail!("docker container name is empty");
+        return Err(Error::LaunchFailed(format!(
+            "{cli} container name is empty"
+        )));
     }
 
     Ok(container_name)
@@ -277,35 +447,62 @@ fn start_apple_container(
     host_port: u16,
     viewport_width: u32,
     viewport_height: u32,
+    low_memory_threshold_mb: u64,
+    profile_dir: Option<&std::path::Path>,
 ) -> Result<String> {
     let container_name = new_browser_container_name(container_prefix);
 
-    // Apple Container uses different syntax for port mapping and env vars
+    let container_profile_dir = profile_dir.map(|_| CONTAINER_PROFILE_PATH);
+    let launch_args = build_container_launch_args(
+        viewport_width,
+        viewport_height,
+        low_memory_threshold_mb,
+        container_profile_dir,
+        ContainerBackend::AppleContainer,
+    );
+
+    let mut container_args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--name".to_string(),
+        container_name.clone(),
+        "-p".to_string(),
+        format!("{}:3000", host_port),
+        "-e".to_string(),
+        launch_args,
+        "-e".to_string(),
+        "MAX_CONCURRENT_SESSIONS=1".to_string(),
+        "-e".to_string(),
+        "PREBOOT_CHROME=true".to_string(),
+        // Chrome requires shared memory for rendering; Docker uses --shm-size=2gb,
+        // Apple Container doesn't support --shm-size so mount tmpfs at /dev/shm.
+        "--tmpfs".to_string(),
+        "/dev/shm".to_string(),
+    ];
+
+    // Mount the profile directory if persistence is enabled
+    if let Some(host_path) = profile_dir {
+        container_args.push("-v".to_string());
+        container_args.push(format!(
+            "{}:{}",
+            host_path.display(),
+            CONTAINER_PROFILE_PATH
+        ));
+    }
+
+    container_args.push(image.to_string());
+
     let output = Command::new("container")
-        .args([
-            "run",
-            "-d",
-            "--name",
-            &container_name,
-            "-p",
-            &format!("{}:3000", host_port),
-            "-e",
-            &format!(
-                "DEFAULT_LAUNCH_ARGS=[\"--window-size={},{}\"]",
-                viewport_width, viewport_height
-            ),
-            "-e",
-            "MAX_CONCURRENT_SESSIONS=1",
-            "-e",
-            "PREBOOT_CHROME=true",
-            image,
-        ])
+        .args(&container_args)
         .output()
         .context("failed to run container command")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("failed to start apple container: {}", stderr.trim());
+        return Err(Error::LaunchFailed(format!(
+            "failed to start apple container: {}",
+            stderr.trim()
+        )));
     }
 
     Ok(container_name)
@@ -314,7 +511,7 @@ fn start_apple_container(
 /// Detect the best available container backend.
 ///
 /// Prefers Apple Container on macOS when available and functional (VM-isolated),
-/// falls back to Docker otherwise.
+/// then Podman (daemonless), then Docker.
 pub fn detect_backend() -> Result<ContainerBackend> {
     #[cfg(target_os = "macos")]
     {
@@ -324,15 +521,20 @@ pub fn detect_backend() -> Result<ContainerBackend> {
         }
     }
 
+    if ContainerBackend::Podman.is_available() {
+        info!("browser sandbox backend: podman (daemonless)");
+        return Ok(ContainerBackend::Podman);
+    }
+
     if is_docker_available() {
         info!("browser sandbox backend: docker");
         return Ok(ContainerBackend::Docker);
     }
 
-    bail!(
-        "No container runtime available. Please install Docker \
-         to use sandboxed browser mode."
-    )
+    Err(Error::LaunchFailed(
+        "No container runtime available. Please install Docker or Podman to use sandboxed browser mode."
+            .to_string(),
+    ))
 }
 
 /// Check if Apple Container is actually functional (has required plugins).
@@ -384,28 +586,66 @@ fn wait_for_ready(port: u16) -> Result<()> {
     let url = format!("http://127.0.0.1:{}/json/version", port);
     let timeout = Duration::from_secs(60);
     let start = Instant::now();
+    let mut attempts: u32 = 0;
 
-    debug!(url, "waiting for browser container to be ready");
+    info!(
+        url,
+        timeout_secs = 60,
+        "waiting for browser container Chrome readiness"
+    );
 
     loop {
-        if start.elapsed() > timeout {
-            bail!(
+        let elapsed = start.elapsed();
+        if elapsed > timeout {
+            warn!(
+                attempts,
+                elapsed_ms = elapsed.as_millis() as u64,
                 "browser container failed to become ready within {}s",
                 timeout.as_secs()
             );
+            return Err(Error::LaunchFailed(format!(
+                "browser container failed to become ready within {}s ({} probe attempts)",
+                timeout.as_secs(),
+                attempts
+            )));
         }
+
+        attempts += 1;
 
         // Try HTTP GET /json/version - this endpoint returns 200 when Chrome is ready
         match probe_http_endpoint(port) {
             Ok(true) => {
-                debug!("browser container Chrome endpoint is ready");
+                info!(
+                    attempts,
+                    elapsed_ms = elapsed.as_millis() as u64,
+                    "browser container Chrome endpoint is ready"
+                );
                 return Ok(());
             },
             Ok(false) => {
-                debug!("Chrome endpoint not ready yet, retrying");
+                // Log progress every 10 attempts (~5 seconds)
+                if attempts.is_multiple_of(10) {
+                    info!(
+                        attempts,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        "Chrome endpoint not ready yet, still probing"
+                    );
+                } else {
+                    debug!(attempts, "Chrome endpoint not ready yet, retrying");
+                }
             },
             Err(e) => {
-                debug!(error = %e, "probe failed, retrying");
+                // Log progress every 10 attempts (~5 seconds)
+                if attempts.is_multiple_of(10) {
+                    info!(
+                        attempts,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        error = %e,
+                        "probe failed, still retrying"
+                    );
+                } else {
+                    debug!(attempts, error = %e, "probe failed, retrying");
+                }
             },
         }
 
@@ -424,7 +664,7 @@ fn probe_http_endpoint(port: u16) -> Result<bool> {
     let addr = format!("127.0.0.1:{}", port);
     let socket_addr = addr
         .parse()
-        .map_err(|e| anyhow::anyhow!("invalid address {addr}: {e}"))?;
+        .map_err(|e| Error::LaunchFailed(format!("invalid address {addr}: {e}")))?;
     let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -438,8 +678,15 @@ fn probe_http_endpoint(port: u16) -> Result<bool> {
     let mut status_line = String::new();
     reader.read_line(&mut status_line)?;
 
-    // Check for HTTP 200 response
-    Ok(status_line.contains("200"))
+    let ready = status_line.contains("200");
+    debug!(
+        port,
+        status_line = status_line.trim(),
+        ready,
+        "probe response"
+    );
+
+    Ok(ready)
 }
 
 /// Check if Docker is available.
@@ -520,10 +767,10 @@ fn cleanup_stale_docker_browser_containers(container_prefix: &str) -> Result<usi
         .context("failed to list docker containers")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
+        return Err(Error::LaunchFailed(format!(
             "docker ps failed while cleaning stale browser containers: {}",
             stderr.trim()
-        );
+        )));
     }
 
     let names = parse_docker_container_names(&output.stdout, container_prefix);
@@ -560,10 +807,10 @@ fn cleanup_stale_apple_browser_containers(container_prefix: &str) -> Result<usiz
         .context("failed to list apple containers")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
+        return Err(Error::LaunchFailed(format!(
             "container list failed while cleaning stale browser containers: {}",
             stderr.trim()
-        );
+        )));
     }
 
     let names = parse_apple_container_names_for_prefix(&output.stdout, container_prefix)?;
@@ -647,7 +894,7 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
         .context("failed to check for image")?;
 
     if output.success() {
-        debug!(
+        info!(
             image,
             backend = cli,
             "browser container image already present"
@@ -658,7 +905,9 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
     info!(image, backend = cli, "pulling browser container image");
 
     let output = match backend {
-        ContainerBackend::Docker => Command::new(cli).args(["pull", image]).output(),
+        ContainerBackend::Docker | ContainerBackend::Podman => {
+            Command::new(cli).args(["pull", image]).output()
+        },
         #[cfg(target_os = "macos")]
         ContainerBackend::AppleContainer => {
             Command::new(cli).args(["image", "pull", image]).output()
@@ -668,7 +917,10 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("failed to pull browser image: {}", stderr.trim());
+        return Err(Error::LaunchFailed(format!(
+            "failed to pull browser image: {}",
+            stderr.trim()
+        )));
     }
 
     info!(
@@ -754,5 +1006,45 @@ mod tests {
         } else {
             assert!(result.is_err());
         }
+    }
+
+    #[test]
+    fn test_build_container_launch_args_without_low_memory() {
+        let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
+        assert_eq!(args, r#"DEFAULT_LAUNCH_ARGS=["--window-size=1920,1080"]"#);
+    }
+
+    #[test]
+    fn test_build_container_launch_args_with_profile_dir() {
+        let args = build_container_launch_args(
+            1920,
+            1080,
+            0,
+            Some("/data/browser-profile"),
+            ContainerBackend::Docker,
+        );
+        assert!(args.contains("--user-data-dir=/data/browser-profile"));
+        assert!(args.contains("--window-size=1920,1080"));
+    }
+
+    #[test]
+    fn test_build_container_launch_args_without_profile_dir() {
+        let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
+        assert!(!args.contains("--user-data-dir"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_build_container_launch_args_apple_container_has_disable_shm() {
+        let args =
+            build_container_launch_args(1920, 1080, 0, None, ContainerBackend::AppleContainer);
+        assert!(args.contains("--disable-dev-shm-usage"));
+        assert!(args.contains("--window-size=1920,1080"));
+    }
+
+    #[test]
+    fn test_build_container_launch_args_docker_no_disable_shm() {
+        let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
+        assert!(!args.contains("--disable-dev-shm-usage"));
     }
 }

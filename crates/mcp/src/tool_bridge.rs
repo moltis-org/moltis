@@ -2,12 +2,37 @@
 
 use std::sync::Arc;
 
-use {anyhow::Result, async_trait::async_trait};
+use async_trait::async_trait;
 
 use crate::{
+    error::{Error, Result},
     traits::McpClientTrait,
     types::{McpToolDef, ToolContent},
 };
+
+/// Recursively strip null values from nested objects and arrays.
+///
+/// Top-level null stripping is handled by the caller; this recurses into
+/// values that are themselves objects or arrays.
+fn strip_nulls_recursive(map: &mut serde_json::Map<String, serde_json::Value>) {
+    for value in map.values_mut() {
+        match value {
+            serde_json::Value::Object(inner) => {
+                inner.retain(|_, v| !v.is_null());
+                strip_nulls_recursive(inner);
+            },
+            serde_json::Value::Array(arr) => {
+                for item in arr.iter_mut() {
+                    if let serde_json::Value::Object(inner) = item {
+                        inner.retain(|_, v| !v.is_null());
+                        strip_nulls_recursive(inner);
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+}
 
 /// An `AgentTool` implementation that delegates to an MCP server via `McpClient`.
 pub struct McpToolBridge {
@@ -91,6 +116,21 @@ impl McpAgentTool for McpToolBridge {
     }
 
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+        // Clean up arguments before forwarding to the MCP server:
+        // 1. Strip internal metadata keys (e.g. _session_key) injected by the
+        //    agent runner — these break servers with strict validation.
+        // 2. Strip null values — these arise from strict-mode schema patching
+        //    that makes optional properties nullable.  MCP servers expect
+        //    optional fields to be absent, not null.
+        let params = match params {
+            serde_json::Value::Object(mut map) => {
+                map.retain(|k, v| !k.starts_with('_') && !v.is_null());
+                strip_nulls_recursive(&mut map);
+                serde_json::Value::Object(map)
+            },
+            other => other,
+        };
+
         let client = self.client.read().await;
         let result = client.call_tool(&self.original_name, params).await?;
 
@@ -104,7 +144,7 @@ impl McpAgentTool for McpToolBridge {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            anyhow::bail!("MCP tool error: {text}");
+            return Err(Error::message(format!("MCP tool error: {text}")));
         }
 
         // Flatten text content into a single JSON value.
@@ -131,8 +171,59 @@ impl McpAgentTool for McpToolBridge {
 
 #[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
-    use super::*;
+    use {
+        super::*,
+        crate::{
+            client::McpClientState,
+            types::{McpToolDef, ToolContent, ToolsCallResult},
+        },
+        std::sync::Arc,
+        tokio::sync::RwLock,
+    };
+
+    /// Mock MCP client that records the arguments passed to `call_tool`.
+    struct MockMcpClient {
+        received_args: Arc<tokio::sync::Mutex<Option<serde_json::Value>>>,
+    }
+
+    #[async_trait]
+    impl McpClientTrait for MockMcpClient {
+        fn server_name(&self) -> &str {
+            "mock"
+        }
+
+        fn state(&self) -> McpClientState {
+            McpClientState::Ready
+        }
+
+        fn tools(&self) -> &[McpToolDef] {
+            &[]
+        }
+
+        async fn list_tools(&mut self) -> Result<&[McpToolDef]> {
+            Ok(&[])
+        }
+
+        async fn call_tool(
+            &self,
+            _name: &str,
+            arguments: serde_json::Value,
+        ) -> Result<ToolsCallResult> {
+            *self.received_args.lock().await = Some(arguments);
+            Ok(ToolsCallResult {
+                content: vec![ToolContent::Text {
+                    text: "ok".to_string(),
+                }],
+                is_error: false,
+            })
+        }
+
+        async fn is_alive(&self) -> bool {
+            true
+        }
+
+        async fn shutdown(&mut self) {}
+    }
 
     #[test]
     fn test_prefixed_name_format() {
@@ -146,5 +237,165 @@ mod tests {
         let name = "mcp__my-server__read_file";
         let parts: Vec<&str> = name.splitn(3, "__").collect();
         assert_eq!(parts, vec!["mcp", "my-server", "read_file"]);
+    }
+
+    #[tokio::test]
+    async fn test_execute_strips_internal_metadata() {
+        let received = Arc::new(tokio::sync::Mutex::new(None));
+        let client = MockMcpClient {
+            received_args: Arc::clone(&received),
+        };
+        let client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(client));
+
+        let tool_def = McpToolDef {
+            name: "read_file".to_string(),
+            description: Some("Read a file".to_string()),
+            input_schema: serde_json::json!({"type": "object"}),
+        };
+        let bridge = McpToolBridge::new("fs", &tool_def, client);
+
+        let params = serde_json::json!({
+            "path": "/tmp/test.txt",
+            "_session_key": "abc123",
+            "_accept_language": "en",
+            "_conn_id": "conn-42",
+            "encoding": "utf-8"
+        });
+
+        let result = bridge.execute(params).await;
+        assert!(result.is_ok());
+
+        let forwarded = received.lock().await.take().expect("call_tool was called");
+        let map = forwarded.as_object().expect("args should be an object");
+
+        // Real parameters are forwarded.
+        assert_eq!(
+            map.get("path").and_then(|v| v.as_str()),
+            Some("/tmp/test.txt")
+        );
+        assert_eq!(map.get("encoding").and_then(|v| v.as_str()), Some("utf-8"));
+
+        // Internal metadata keys are stripped.
+        assert!(!map.contains_key("_session_key"));
+        assert!(!map.contains_key("_accept_language"));
+        assert!(!map.contains_key("_conn_id"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_passes_non_object_params_unchanged() {
+        let received = Arc::new(tokio::sync::Mutex::new(None));
+        let client = MockMcpClient {
+            received_args: Arc::clone(&received),
+        };
+        let client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(client));
+
+        let tool_def = McpToolDef {
+            name: "echo".to_string(),
+            description: Some("Echo".to_string()),
+            input_schema: serde_json::json!({"type": "string"}),
+        };
+        let bridge = McpToolBridge::new("test", &tool_def, client);
+
+        let params = serde_json::json!("hello");
+        let result = bridge.execute(params).await;
+        assert!(result.is_ok());
+
+        let forwarded = received.lock().await.take().expect("call_tool was called");
+        assert_eq!(forwarded, serde_json::json!("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_strips_null_values() {
+        let received = Arc::new(tokio::sync::Mutex::new(None));
+        let client = MockMcpClient {
+            received_args: Arc::clone(&received),
+        };
+        let client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(client));
+
+        let tool_def = McpToolDef {
+            name: "add_task".to_string(),
+            description: Some("Add a task".to_string()),
+            input_schema: serde_json::json!({"type": "object"}),
+        };
+        let bridge = McpToolBridge::new("todoist", &tool_def, client);
+
+        // Simulate what the LLM sends when optional fields are nullable:
+        // real values for used fields, null for unused optional fields.
+        let params = serde_json::json!({
+            "content": "Buy milk",
+            "due_string": "today",
+            "description": null,
+            "deadline_date": null,
+            "parent_id": null
+        });
+
+        let result = bridge.execute(params).await;
+        assert!(result.is_ok());
+
+        let forwarded = received.lock().await.take().expect("call_tool was called");
+        let map = forwarded.as_object().expect("args should be an object");
+
+        // Real values are forwarded.
+        assert_eq!(
+            map.get("content").and_then(|v| v.as_str()),
+            Some("Buy milk")
+        );
+        assert_eq!(
+            map.get("due_string").and_then(|v| v.as_str()),
+            Some("today")
+        );
+
+        // Null values are stripped.
+        assert!(!map.contains_key("description"));
+        assert!(!map.contains_key("deadline_date"));
+        assert!(!map.contains_key("parent_id"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_strips_nulls_in_nested_objects() {
+        let received = Arc::new(tokio::sync::Mutex::new(None));
+        let client = MockMcpClient {
+            received_args: Arc::clone(&received),
+        };
+        let client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(client));
+
+        let tool_def = McpToolDef {
+            name: "create".to_string(),
+            description: Some("Create".to_string()),
+            input_schema: serde_json::json!({"type": "object"}),
+        };
+        let bridge = McpToolBridge::new("svc", &tool_def, client);
+
+        let params = serde_json::json!({
+            "tasks": [
+                {
+                    "content": "Test",
+                    "due": "today",
+                    "parent_id": null,
+                    "section_id": null
+                }
+            ],
+            "project": {
+                "name": "Inbox",
+                "color": null
+            }
+        });
+
+        let result = bridge.execute(params).await;
+        assert!(result.is_ok());
+
+        let forwarded = received.lock().await.take().expect("call_tool was called");
+
+        // Array item nulls stripped
+        let task = &forwarded["tasks"][0];
+        assert_eq!(task["content"], "Test");
+        assert_eq!(task["due"], "today");
+        assert!(task.get("parent_id").is_none());
+        assert!(task.get("section_id").is_none());
+
+        // Nested object nulls stripped
+        let project = &forwarded["project"];
+        assert_eq!(project["name"], "Inbox");
+        assert!(project.get("color").is_none());
     }
 }

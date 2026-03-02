@@ -98,6 +98,7 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "moonshot",
     "venice",
     "ollama",
+    "lmstudio",
 ];
 
 /// Static metadata keys allowed directly under `[providers]`.
@@ -112,8 +113,11 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("api_key", Leaf),
             ("base_url", Leaf),
-            ("model", Leaf),
+            ("models", Leaf),
+            ("fetch_models", Leaf),
+            ("stream_transport", Leaf),
             ("alias", Leaf),
+            ("tool_mode", Leaf),
         ]))
     };
 
@@ -125,17 +129,34 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let wasm_tool_limit_override = || Struct(HashMap::from([("fuel", Leaf), ("memory", Leaf)]));
+
+    let wasm_tool_limits = || {
+        Struct(HashMap::from([
+            ("default_memory", Leaf),
+            ("default_fuel", Leaf),
+            ("tool_overrides", Map(Box::new(wasm_tool_limit_override()))),
+        ]))
+    };
+
     let sandbox = || {
         Struct(HashMap::from([
             ("mode", Leaf),
             ("scope", Leaf),
             ("workspace_mount", Leaf),
+            ("home_persistence", Leaf),
+            ("shared_home_dir", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
+            ("network", Leaf),
+            ("trusted_domains", Array(Box::new(Leaf))),
             ("backend", Leaf),
             ("resource_limits", resource_limits()),
             ("packages", Leaf),
+            ("wasm_fuel_limit", Leaf),
+            ("wasm_epoch_interval_ms", Leaf),
+            ("wasm_tool_limits", wasm_tool_limits()),
         ]))
     };
 
@@ -155,6 +176,7 @@ fn build_schema_map() -> KnownKeys {
             ("max_results", Leaf),
             ("timeout_seconds", Leaf),
             ("cache_ttl_minutes", Leaf),
+            ("duckduckgo_fallback", Leaf),
             ("perplexity", perplexity()),
         ]))
     };
@@ -167,6 +189,7 @@ fn build_schema_map() -> KnownKeys {
             ("cache_ttl_minutes", Leaf),
             ("max_redirects", Leaf),
             ("readability", Leaf),
+            ("ssrf_allowlist", Leaf),
         ]))
     };
 
@@ -198,6 +221,9 @@ fn build_schema_map() -> KnownKeys {
             ("sandbox", Leaf),
             ("sandbox_image", Leaf),
             ("allowed_domains", Leaf),
+            ("low_memory_threshold_mb", Leaf),
+            ("persist_profile", Leaf),
+            ("profile_dir", Leaf),
         ]))
     };
 
@@ -220,8 +246,19 @@ fn build_schema_map() -> KnownKeys {
                     ("fetch", web_fetch()),
                 ])),
             ),
+            ("maps", Struct(HashMap::from([("provider", Leaf)]))),
             ("agent_timeout_secs", Leaf),
+            ("agent_max_iterations", Leaf),
             ("max_tool_result_bytes", Leaf),
+        ]))
+    };
+
+    let mcp_oauth_override = || {
+        Struct(HashMap::from([
+            ("client_id", Leaf),
+            ("auth_url", Leaf),
+            ("token_url", Leaf),
+            ("scopes", Leaf),
         ]))
     };
 
@@ -233,6 +270,7 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("transport", Leaf),
             ("url", Leaf),
+            ("oauth", mcp_oauth_override()),
         ]))
     };
 
@@ -265,6 +303,16 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let agent_preset = || {
+        Struct(HashMap::from([
+            ("model", Leaf),
+            ("allow_tools", Leaf),
+            ("deny_tools", Leaf),
+            ("delegate_only", Leaf),
+            ("system_prompt_suffix", Leaf),
+        ]))
+    };
+
     Struct(HashMap::from([
         (
             "server",
@@ -273,6 +321,7 @@ fn build_schema_map() -> KnownKeys {
                 ("port", Leaf),
                 ("http_request_logs", Leaf),
                 ("ws_request_logs", Leaf),
+                ("log_buffer_size", Leaf),
                 ("update_repository_url", Leaf),
             ])),
         ),
@@ -286,6 +335,13 @@ fn build_schema_map() -> KnownKeys {
                 ("message_queue_mode", Leaf),
                 ("priority_models", Leaf),
                 ("allowed_models", Leaf),
+            ])),
+        ),
+        (
+            "agents",
+            Struct(HashMap::from([
+                ("default_preset", Leaf),
+                ("presets", Map(Box::new(agent_preset()))),
             ])),
         ),
         ("tools", tools()),
@@ -306,7 +362,13 @@ fn build_schema_map() -> KnownKeys {
         ),
         (
             "channels",
-            Struct(HashMap::from([("telegram", Map(Box::new(Leaf)))])),
+            Struct(HashMap::from([
+                ("offered", Array(Box::new(Leaf))),
+                ("telegram", Map(Box::new(Leaf))),
+                ("whatsapp", Map(Box::new(Leaf))),
+                ("msteams", Map(Box::new(Leaf))),
+                ("discord", Map(Box::new(Leaf))),
+            ])),
         ),
         (
             "tls",
@@ -320,11 +382,13 @@ fn build_schema_map() -> KnownKeys {
             ])),
         ),
         ("auth", Struct(HashMap::from([("disabled", Leaf)]))),
+        ("graphql", Struct(HashMap::from([("enabled", Leaf)]))),
         (
             "metrics",
             Struct(HashMap::from([
                 ("enabled", Leaf),
                 ("prometheus_endpoint", Leaf),
+                ("history_points", Leaf),
                 ("labels", Map(Box::new(Leaf))),
             ])),
         ),
@@ -333,8 +397,7 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("name", Leaf),
                 ("emoji", Leaf),
-                ("creature", Leaf),
-                ("vibe", Leaf),
+                ("theme", Leaf),
             ])),
         ),
         (
@@ -353,11 +416,13 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("backend", Leaf),
                 ("provider", Leaf),
+                ("disable_rag", Leaf),
                 ("base_url", Leaf),
                 ("model", Leaf),
                 ("api_key", Leaf),
                 ("citations", Leaf),
                 ("llm_reranking", Leaf),
+                ("search_merge_strategy", Leaf),
                 ("session_export", Leaf),
                 ("qmd", qmd()),
             ])),
@@ -382,6 +447,9 @@ fn build_schema_map() -> KnownKeys {
                 ("prompt", Leaf),
                 ("ack_max_chars", Leaf),
                 ("active_hours", active_hours()),
+                ("deliver", Leaf),
+                ("channel", Leaf),
+                ("to", Leaf),
                 ("sandbox_enabled", Leaf),
                 ("sandbox_image", Leaf),
             ])),
@@ -391,6 +459,24 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("rate_limit_max", Leaf),
                 ("rate_limit_window_secs", Leaf),
+            ])),
+        ),
+        ("env", Map(Box::new(Leaf))),
+        (
+            "caldav",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("default_account", Leaf),
+                (
+                    "accounts",
+                    Map(Box::new(Struct(HashMap::from([
+                        ("url", Leaf),
+                        ("username", Leaf),
+                        ("password", Leaf),
+                        ("provider", Leaf),
+                        ("timeout_seconds", Leaf),
+                    ])))),
+                ),
             ])),
         ),
         (
@@ -423,7 +509,9 @@ fn build_schema_map() -> KnownKeys {
                             Struct(HashMap::from([
                                 ("api_key", Leaf),
                                 ("language_code", Leaf),
-                                ("voice_name", Leaf),
+                                ("voice", Leaf),
+                                ("speaking_rate", Leaf),
+                                ("pitch", Leaf),
                             ])),
                         ),
                         ("piper", Struct(HashMap::from([("model_path", Leaf)]))),
@@ -749,6 +837,10 @@ fn check_provider_names(
         if PROVIDERS_META_KEYS.contains(&name.as_str()) {
             continue;
         }
+        // Custom providers (user-added OpenAI-compatible endpoints) are valid.
+        if name.starts_with("custom-") {
+            continue;
+        }
         if !KNOWN_PROVIDER_NAMES.contains(&name.as_str()) {
             let suggestion = suggest(name, KNOWN_PROVIDER_NAMES, 3);
             let msg = if let Some(s) = suggestion {
@@ -825,6 +917,73 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         });
     }
 
+    // Loop limit must be positive to avoid immediate run failures.
+    if config.tools.agent_max_iterations == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.agent_max_iterations".into(),
+            message: "tools.agent_max_iterations must be at least 1".into(),
+        });
+    }
+
+    // agents.default_preset should reference an existing preset key.
+    if let Some(default_preset) = config.agents.default_preset.as_deref()
+        && !config.agents.presets.contains_key(default_preset)
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "agents.default_preset".into(),
+            message: format!(
+                "default preset \"{default_preset}\" is not defined in agents.presets"
+            ),
+        });
+    }
+
+    // SSRF allowlist CIDR validation
+    for (idx, entry) in config.tools.web.fetch.ssrf_allowlist.iter().enumerate() {
+        if entry.parse::<ipnet::IpNet>().is_err() {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "security",
+                path: format!("tools.web.fetch.ssrf_allowlist[{idx}]"),
+                message: format!(
+                    "\"{entry}\" is not a valid CIDR range (expected e.g. \"172.22.0.0/16\")"
+                ),
+            });
+        }
+    }
+    if !config.tools.web.fetch.ssrf_allowlist.is_empty() {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "security",
+            path: "tools.web.fetch.ssrf_allowlist".into(),
+            message: "ssrf_allowlist is set — SSRF protection is relaxed for the listed ranges. Ensure these are trusted networks.".into(),
+        });
+    }
+
+    // Unknown tool_mode values on provider entries
+    // Note: serde rejects truly invalid values at deserialization, but if a
+    // provider entry somehow comes through with a non-standard string we still
+    // want to warn at the TOML level.  The enum is auto/native/text/off.
+
+    // Unknown channel types in channels.offered
+    let valid_channel_types = ["telegram", "msteams", "discord"];
+    for (idx, entry) in config.channels.offered.iter().enumerate() {
+        if !valid_channel_types.contains(&entry.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("channels.offered[{idx}]"),
+                message: format!(
+                    "unknown channel type \"{entry}\"; expected one of: {}",
+                    valid_channel_types.join(", ")
+                ),
+            });
+        }
+    }
+
     // Unknown tailscale mode
     let valid_ts_modes = ["off", "serve", "funnel"];
     if !valid_ts_modes.contains(&config.tailscale.mode.as_str()) {
@@ -841,7 +1000,14 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     }
 
     // Unknown sandbox backend
-    let valid_sandbox_backends = ["auto", "docker", "apple-container"];
+    let valid_sandbox_backends = [
+        "auto",
+        "docker",
+        "podman",
+        "apple-container",
+        "restricted-host",
+        "wasm",
+    ];
     if !valid_sandbox_backends.contains(&config.tools.exec.sandbox.backend.as_str()) {
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,
@@ -853,6 +1019,23 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 valid_sandbox_backends.join(", ")
             ),
         });
+    }
+
+    // Unknown sandbox network policy
+    if !config.tools.exec.sandbox.network.is_empty() {
+        let valid_network_policies = ["blocked", "trusted", "bypass"];
+        if !valid_network_policies.contains(&config.tools.exec.sandbox.network.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "tools.exec.sandbox.network".into(),
+                message: format!(
+                    "unknown sandbox network policy \"{}\"; expected one of: {}",
+                    config.tools.exec.sandbox.network,
+                    valid_network_policies.join(", ")
+                ),
+            });
+        }
     }
 
     // Unknown memory backend
@@ -882,6 +1065,40 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 message: format!(
                     "unknown memory provider \"{provider}\"; expected one of: {}",
                     valid_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown search merge strategy
+    if let Some(ref strategy) = config.memory.search_merge_strategy {
+        let valid_strategies = ["rrf", "linear"];
+        if !valid_strategies.contains(&strategy.to_lowercase().as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "memory.search_merge_strategy".into(),
+                message: format!(
+                    "unknown search merge strategy \"{strategy}\"; expected one of: {}",
+                    valid_strategies.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown CalDAV provider
+    let valid_caldav_providers = ["fastmail", "icloud", "generic"];
+    for (name, account) in &config.caldav.accounts {
+        if let Some(ref provider) = account.provider
+            && !valid_caldav_providers.contains(&provider.as_str())
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("caldav.accounts.{name}.provider"),
+                message: format!(
+                    "unknown CalDAV provider \"{provider}\"; expected one of: {}",
+                    valid_caldav_providers.join(", ")
                 ),
             });
         }
@@ -989,6 +1206,18 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 }
             }
         }
+    }
+
+    // Browser profile_dir should be an absolute path
+    if let Some(ref dir) = config.tools.browser.profile_dir
+        && !Path::new(dir).is_absolute()
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.browser.profile_dir".into(),
+            message: "profile_dir should be an absolute path".into(),
+        });
     }
 
     // port == 0
@@ -1200,7 +1429,7 @@ port = 8080
 
 [providers.anthropic]
 enabled = true
-model = "claude-sonnet-4-20250514"
+models = ["claude-sonnet-4-20250514"]
 
 [auth]
 disabled = false
@@ -1413,7 +1642,41 @@ provider = "pinecone"
     }
 
     #[test]
+    fn memory_disable_rag_is_valid_field() {
+        let toml = r#"
+[memory]
+disable_rag = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path == "memory.disable_rag");
+        assert!(
+            unknown.is_none(),
+            "memory.disable_rag should be accepted as a known field"
+        );
+    }
+
+    #[test]
     fn unknown_sandbox_backend_warned() {
+        let toml = r#"
+[tools.exec.sandbox]
+backend = "lxc"
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "tools.exec.sandbox.backend");
+        assert!(
+            warning.is_some(),
+            "expected warning for unknown sandbox backend"
+        );
+    }
+
+    #[test]
+    fn podman_sandbox_backend_accepted() {
         let toml = r#"
 [tools.exec.sandbox]
 backend = "podman"
@@ -1424,8 +1687,8 @@ backend = "podman"
             .iter()
             .find(|d| d.path == "tools.exec.sandbox.backend");
         assert!(
-            warning.is_some(),
-            "expected warning for unknown sandbox backend"
+            warning.is_none(),
+            "podman should be accepted as a valid sandbox backend"
         );
     }
 
@@ -1683,5 +1946,203 @@ enabled = true
             warnings.is_empty(),
             "known providers should not be warned about: {warnings:?}"
         );
+    }
+
+    #[test]
+    fn env_section_passes_validation() {
+        let toml = r#"
+[env]
+BRAVE_API_KEY = "test-key"
+OPENROUTER_API_KEY = "sk-or-test"
+CUSTOM_VAR = "some-value"
+"#;
+        let result = validate_toml_str(toml);
+        let errors: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "env section should not produce errors: {errors:?}"
+        );
+        let unknown_fields: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-field" && d.path.starts_with("env"))
+            .collect();
+        assert!(
+            unknown_fields.is_empty(),
+            "env keys should not be flagged as unknown: {unknown_fields:?}"
+        );
+    }
+
+    #[test]
+    fn custom_provider_prefix_suppresses_unknown_provider_warning() {
+        let toml = r#"
+[providers.custom-together-ai]
+enabled = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown_providers: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-provider")
+            .collect();
+        assert!(
+            unknown_providers.is_empty(),
+            "custom- prefix should not trigger unknown-provider warning: {unknown_providers:?}"
+        );
+    }
+
+    #[test]
+    fn non_custom_unknown_provider_still_warns() {
+        let toml = r#"
+[providers.typo-anthropc]
+enabled = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown_providers: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-provider")
+            .collect();
+        assert!(
+            !unknown_providers.is_empty(),
+            "misspelled provider should trigger unknown-provider warning"
+        );
+    }
+
+    #[test]
+    fn tools_agent_max_iterations_must_be_positive() {
+        let toml = r#"
+[tools]
+agent_max_iterations = 0
+"#;
+        let result = validate_toml_str(toml);
+        let invalid = result.diagnostics.iter().find(|d| {
+            d.path == "tools.agent_max_iterations"
+                && d.severity == Severity::Error
+                && d.category == "invalid-value"
+        });
+        assert!(
+            invalid.is_some(),
+            "expected tools.agent_max_iterations invalid-value error, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_accepted_without_warning() {
+        let toml = r#"
+[channels]
+offered = ["telegram"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered"));
+        assert!(
+            warning.is_none(),
+            "valid channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_discord_accepted() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "discord"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered") && d.category == "unknown-field");
+        assert!(
+            warning.is_none(),
+            "discord in channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_discord_config_accepted() {
+        let toml = r#"
+[channels.discord.my_bot]
+token = "test-token"
+dm_policy = "allowlist"
+"#;
+        let result = validate_toml_str(toml);
+        let error = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.discord") && d.severity == Severity::Error);
+        assert!(
+            error.is_none(),
+            "discord channel config should be accepted, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_unknown_type_warned() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "slack"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "channels.offered[1]" && d.category == "unknown-field");
+        assert!(
+            warning.is_some(),
+            "unknown channel type should produce warning, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn tool_mode_field_accepted_in_provider_entry() {
+        let toml = r#"
+[providers.ollama]
+enabled = true
+tool_mode = "text"
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path.contains("tool_mode"));
+        assert!(
+            unknown.is_none(),
+            "tool_mode should be a known field, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn tool_mode_all_values_parse_correctly() {
+        for mode in ["auto", "native", "text", "off"] {
+            let toml = format!(
+                r#"
+[providers.anthropic]
+tool_mode = "{mode}"
+"#
+            );
+            let result = validate_toml_str(&toml);
+            let type_error = result
+                .diagnostics
+                .iter()
+                .find(|d| d.category == "type-error");
+            assert!(
+                type_error.is_none(),
+                "tool_mode = \"{mode}\" should parse without type error, got: {:?}",
+                result.diagnostics
+            );
+        }
     }
 }

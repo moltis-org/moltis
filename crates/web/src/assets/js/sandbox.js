@@ -1,0 +1,215 @@
+// ── Sandbox toggle + image selector ─────────────────────────
+
+import { updateCommandInputUI, updateTokenBar } from "./chat-ui.js";
+import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
+import * as S from "./state.js";
+
+var SANDBOX_DISABLED_HINT = () => t("chat:sandboxDisabledHint");
+
+function sandboxRuntimeAvailable() {
+	return (S.sandboxInfo?.backend || "none") !== "none";
+}
+
+/** Truncate long hash suffixes: "repo:abcdef…uvwxyz" */
+function truncateHash(str) {
+	var idx = str.lastIndexOf(":");
+	if (idx !== -1) {
+		var suffix = str.slice(idx + 1);
+		if (suffix.length > 12) {
+			return `${str.slice(0, idx + 1) + suffix.slice(0, 6)}\u2026${suffix.slice(-6)}`;
+		}
+	}
+	if (str.length > 24 && str.indexOf(":") === -1) {
+		return `${str.slice(0, 6)}\u2026${str.slice(-6)}`;
+	}
+	return str;
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI state management with multiple controls
+function applySandboxControlAvailability() {
+	var available = sandboxRuntimeAvailable();
+	var title = available ? null : SANDBOX_DISABLED_HINT();
+
+	if (S.sandboxToggleBtn) {
+		S.sandboxToggleBtn.disabled = !available;
+		S.sandboxToggleBtn.style.opacity = available ? "" : "0.55";
+		S.sandboxToggleBtn.style.cursor = available ? "pointer" : "not-allowed";
+		if (title) {
+			S.sandboxToggleBtn.title = title;
+		} else {
+			S.sandboxToggleBtn.title = t("chat:sandboxToggleTooltip");
+		}
+	}
+
+	if (S.sandboxImageBtn) {
+		S.sandboxImageBtn.disabled = !available;
+		S.sandboxImageBtn.style.opacity = available ? "" : "0.55";
+		S.sandboxImageBtn.style.cursor = available ? "pointer" : "not-allowed";
+		if (title) {
+			S.sandboxImageBtn.title = title;
+		} else {
+			S.sandboxImageBtn.title = t("chat:sandboxImageTooltip");
+		}
+	}
+
+	if (!available && S.sandboxImageDropdown) {
+		S.sandboxImageDropdown.classList.add("hidden");
+	}
+
+	return available;
+}
+
+// ── Sandbox enabled/disabled toggle ─────────────────────────
+
+export function updateSandboxUI(enabled) {
+	S.setSessionSandboxEnabled(!!enabled);
+	var effectiveSandboxRoute = !!enabled && sandboxRuntimeAvailable();
+	S.setSessionExecMode(effectiveSandboxRoute ? "sandbox" : "host");
+	S.setSessionExecPromptSymbol(effectiveSandboxRoute || S.hostExecIsRoot ? "#" : "$");
+	updateCommandInputUI();
+	updateTokenBar();
+	if (!(S.sandboxLabel && S.sandboxToggleBtn)) return;
+	if (!applySandboxControlAvailability()) {
+		S.sandboxLabel.textContent = t("chat:sandboxDisabled");
+		S.sandboxToggleBtn.style.borderColor = "";
+		S.sandboxToggleBtn.style.color = "var(--muted)";
+		return;
+	}
+	if (S.sessionSandboxEnabled) {
+		S.sandboxLabel.textContent = t("chat:sandboxed");
+		S.sandboxToggleBtn.style.borderColor = "var(--accent, #f59e0b)";
+		S.sandboxToggleBtn.style.color = "var(--accent, #f59e0b)";
+	} else {
+		S.sandboxLabel.textContent = t("chat:sandboxDirect");
+		S.sandboxToggleBtn.style.borderColor = "";
+		S.sandboxToggleBtn.style.color = "var(--muted)";
+	}
+}
+
+export function bindSandboxToggleEvents() {
+	if (!S.sandboxToggleBtn) return;
+	S.sandboxToggleBtn.addEventListener("click", () => {
+		if (!sandboxRuntimeAvailable()) return;
+		var newVal = !S.sessionSandboxEnabled;
+		sendRpc("sessions.patch", {
+			key: S.activeSessionKey,
+			sandboxEnabled: newVal,
+		}).then((res) => {
+			if (res?.result) {
+				updateSandboxUI(res.result.sandbox_enabled);
+			} else {
+				updateSandboxUI(newVal);
+			}
+		});
+	});
+}
+
+// ── Sandbox image selector ──────────────────────────────────
+
+var DEFAULT_IMAGE = "ubuntu:25.10";
+
+export function updateSandboxImageUI(image) {
+	S.setSessionSandboxImage(image || null);
+	if (!S.sandboxImageLabel) return;
+	if (!applySandboxControlAvailability()) {
+		S.sandboxImageLabel.textContent = t("chat:sandboxUnavailable");
+		return;
+	}
+	S.sandboxImageLabel.textContent = truncateHash(image || DEFAULT_IMAGE);
+}
+
+export function bindSandboxImageEvents() {
+	if (!S.sandboxImageBtn) return;
+
+	S.sandboxImageBtn.addEventListener("click", (e) => {
+		if (!sandboxRuntimeAvailable()) return;
+		e.stopPropagation();
+		toggleImageDropdown();
+	});
+
+	document.addEventListener("click", () => {
+		if (S.sandboxImageDropdown) {
+			S.sandboxImageDropdown.classList.add("hidden");
+		}
+	});
+}
+
+function toggleImageDropdown() {
+	if (!S.sandboxImageDropdown) return;
+	var isHidden = S.sandboxImageDropdown.classList.contains("hidden");
+	if (isHidden) {
+		populateImageDropdown();
+		S.sandboxImageDropdown.classList.remove("hidden");
+	} else {
+		S.sandboxImageDropdown.classList.add("hidden");
+	}
+}
+
+function populateImageDropdown() {
+	if (!S.sandboxImageDropdown) return;
+	S.sandboxImageDropdown.textContent = "";
+
+	// Default option
+	addImageOption(DEFAULT_IMAGE, !S.sessionSandboxImage);
+
+	// Fetch cached images
+	fetch("/api/images/cached")
+		.then((r) => r.json())
+		.then((data) => {
+			var images = data.images || [];
+			for (var img of images) {
+				var isCurrent = S.sessionSandboxImage === img.tag;
+				addImageOption(img.tag, isCurrent, `${img.skill_name} (${img.size})`);
+			}
+		})
+		.catch(() => {
+			// Silently ignore fetch errors for image list
+		});
+}
+
+function addImageOption(tag, isActive, subtitle) {
+	var opt = document.createElement("div");
+	opt.className = "px-3 py-2 text-xs cursor-pointer hover:bg-[var(--surface2)] transition-colors";
+	if (isActive) {
+		opt.style.color = "var(--accent, #f59e0b)";
+		opt.style.fontWeight = "600";
+	}
+
+	var label = document.createElement("div");
+	label.textContent = truncateHash(tag);
+	label.title = tag;
+	opt.appendChild(label);
+
+	if (subtitle) {
+		var sub = document.createElement("div");
+		sub.textContent = subtitle;
+		sub.style.color = "var(--muted)";
+		sub.style.fontSize = "0.65rem";
+		opt.appendChild(sub);
+	}
+
+	opt.addEventListener("click", (e) => {
+		e.stopPropagation();
+		selectImage(tag === DEFAULT_IMAGE ? null : tag);
+	});
+
+	S.sandboxImageDropdown.appendChild(opt);
+}
+
+function selectImage(tag) {
+	var value = tag || "";
+	sendRpc("sessions.patch", {
+		key: S.activeSessionKey,
+		sandboxImage: value,
+	}).then((res) => {
+		if (res?.result) {
+			updateSandboxImageUI(res.result.sandbox_image);
+		} else {
+			updateSandboxImageUI(tag);
+		}
+	});
+	if (S.sandboxImageDropdown) {
+		S.sandboxImageDropdown.classList.add("hidden");
+	}
+}

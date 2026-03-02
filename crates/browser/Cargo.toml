@@ -4,7 +4,6 @@ name              = "moltis-browser"
 version.workspace = true
 
 [dependencies]
-anyhow         = { workspace = true }
 async-trait    = "0.1"
 base64         = { workspace = true }
 chromiumoxide  = { default-features = false, features = ["tokio-runtime"], version = "0.8" }

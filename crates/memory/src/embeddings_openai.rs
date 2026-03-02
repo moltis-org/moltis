@@ -29,9 +29,34 @@ fn compute_provider_key(base_url: &str, model: &str) -> String {
     format!("{:x}", hasher.finalize())[..16].to_string()
 }
 
+fn normalize_base_url(url: &str) -> String {
+    url.trim_end_matches('/').to_string()
+}
+
+fn has_version_suffix(base_url: &str) -> bool {
+    let Some(last_segment) = base_url.rsplit('/').next() else {
+        return false;
+    };
+    let Some(rest) = last_segment.strip_prefix('v') else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit())
+}
+
+fn embeddings_endpoint(base_url: &str) -> String {
+    let normalized = normalize_base_url(base_url);
+    if normalized.ends_with("/embeddings") {
+        return normalized;
+    }
+    if normalized.ends_with("/v1") || has_version_suffix(&normalized) {
+        return format!("{normalized}/embeddings");
+    }
+    format!("{normalized}/v1/embeddings")
+}
+
 impl OpenAiEmbeddingProvider {
     pub fn new(api_key: String) -> Self {
-        let base_url = "https://api.openai.com".to_string();
+        let base_url = normalize_base_url("https://api.openai.com");
         let model = "text-embedding-3-small".to_string();
         let provider_key = compute_provider_key(&base_url, &model);
         Self {
@@ -52,7 +77,7 @@ impl OpenAiEmbeddingProvider {
     }
 
     pub fn with_base_url(mut self, url: String) -> Self {
-        self.base_url = url;
+        self.base_url = normalize_base_url(&url);
         self.provider_key = compute_provider_key(&self.base_url, &self.model);
         self
     }
@@ -98,7 +123,7 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
 
         let result = self
             .client
-            .post(format!("{}/v1/embeddings", self.base_url))
+            .post(embeddings_endpoint(&self.base_url))
             .bearer_auth(self.api_key.expose_secret())
             .json(&req)
             .send()
@@ -128,5 +153,42 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
 
     fn provider_key(&self) -> &str {
         &self.provider_key
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::embeddings_endpoint;
+
+    #[test]
+    fn endpoint_from_host_base_uses_v1_embeddings() {
+        assert_eq!(
+            embeddings_endpoint("https://api.openai.com"),
+            "https://api.openai.com/v1/embeddings"
+        );
+    }
+
+    #[test]
+    fn endpoint_from_v1_base_appends_embeddings_once() {
+        assert_eq!(
+            embeddings_endpoint("https://bb.llpanel.com/v1"),
+            "https://bb.llpanel.com/v1/embeddings"
+        );
+    }
+
+    #[test]
+    fn endpoint_from_custom_version_suffix_keeps_version() {
+        assert_eq!(
+            embeddings_endpoint("https://open.bigmodel.cn/api/paas/v4"),
+            "https://open.bigmodel.cn/api/paas/v4/embeddings"
+        );
+    }
+
+    #[test]
+    fn endpoint_preserves_explicit_embeddings_url() {
+        assert_eq!(
+            embeddings_endpoint("https://api.example.com/v1/embeddings"),
+            "https://api.example.com/v1/embeddings"
+        );
     }
 }

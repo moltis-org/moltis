@@ -1,0 +1,21 @@
+[package]
+edition.workspace = true
+name              = "moltis-wasm-web-search"
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde_json     = { workspace = true }
+url            = { workspace = true }
+wit-bindgen    = { workspace = true }
+wit-bindgen-rt = { workspace = true }
+
+[lints.rust]
+unsafe_code           = "allow"
+unused_qualifications = "deny"
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
