@@ -7,7 +7,6 @@ struct ConnectView: View {
     @StateObject private var bonjourBrowser = BonjourBrowser()
 
     @State private var serverURL = ""
-    @State private var serverName = ""
     @State private var password = ""
     @State private var apiKey = ""
     @State private var authStatus: AuthStatusResponse?
@@ -15,6 +14,7 @@ struct ConnectView: View {
     @State private var errorMessage = ""
     @State private var authMode: AuthMode = .check
     @State private var serverTrustStates: [String: ServerTrustState] = [:]
+    @State private var serverPublicIdentity: [String: ServerPublicIdentity] = [:]
 
     enum AuthMode {
         case check
@@ -51,7 +51,12 @@ struct ConnectView: View {
                                 } label: {
                                     HStack {
                                         VStack(alignment: .leading) {
-                                            Text(server.name)
+                                            HStack(spacing: 6) {
+                                                if let emoji = discoveredDisplayEmoji(for: server) {
+                                                    Text(emoji)
+                                                }
+                                                Text(discoveredDisplayName(for: server))
+                                            }
                                             Text("\(server.host):\(server.port)")
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
@@ -119,8 +124,6 @@ struct ConnectView: View {
                         .keyboardType(.URL)
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
-
-                    TextField("Display Name", text: $serverName)
 
                     switch authMode {
                     case .check:
@@ -237,10 +240,16 @@ struct ConnectView: View {
             .navigationTitle("Connect")
             .onAppear {
                 bonjourBrowser.start()
-                Task { await refreshNearbyServerTrustStates(force: true) }
+                Task {
+                    await refreshNearbyServerTrustStates(force: true)
+                    await refreshNearbyServerPublicIdentity(force: true)
+                }
             }
             .onChange(of: bonjourBrowser.servers.map(\.id)) { _, _ in
-                Task { await refreshNearbyServerTrustStates(force: false) }
+                Task {
+                    await refreshNearbyServerTrustStates(force: false)
+                    await refreshNearbyServerPublicIdentity(force: false)
+                }
             }
             .onDisappear { bonjourBrowser.stop() }
             .alert("Connection Error", isPresented: $showError) {
@@ -259,7 +268,6 @@ struct ConnectView: View {
         } else {
             serverURL = "https://\(server.host):\(server.port)"
         }
-        serverName = server.name
         authMode = .check
         Task { await checkServer() }
     }
@@ -313,13 +321,15 @@ struct ConnectView: View {
             showError(message: "Invalid URL")
             return
         }
-        let name = serverName.isEmpty ? url.host ?? "Server" : serverName
+        let identity = await authManager.fetchPublicIdentity(url: url)
+        let name = identity?.normalizedName ?? url.host ?? "Server"
 
         do {
             let server = try await authManager.loginWithPasskeyAndCreateApiKey(
                 serverURL: url,
                 serverName: name
             )
+            authManager.updateServerEmoji(identity?.normalizedEmoji, forURL: url)
             await connectionStore.connect(to: server, authManager: authManager)
         } catch {
             showError(message: error.localizedDescription)
@@ -331,12 +341,14 @@ struct ConnectView: View {
             showError(message: "Invalid URL")
             return
         }
-        let name = serverName.isEmpty ? url.host ?? "Server" : serverName
+        let identity = await authManager.fetchPublicIdentity(url: url)
+        let name = identity?.normalizedName ?? url.host ?? "Server"
 
         do {
             let server = try await authManager.loginAndCreateApiKey(
                 serverURL: url, password: password, serverName: name
             )
+            authManager.updateServerEmoji(identity?.normalizedEmoji, forURL: url)
             await connectionStore.connect(to: server, authManager: authManager)
         } catch {
             showError(message: error.localizedDescription)
@@ -348,12 +360,14 @@ struct ConnectView: View {
             showError(message: "Invalid URL")
             return
         }
-        let name = serverName.isEmpty ? url.host ?? "Server" : serverName
+        let identity = await authManager.fetchPublicIdentity(url: url)
+        let name = identity?.normalizedName ?? url.host ?? "Server"
 
         do {
             let server = try await authManager.connectWithApiKey(
                 serverURL: url, apiKey: apiKey, serverName: name
             )
+            authManager.updateServerEmoji(identity?.normalizedEmoji, forURL: url)
             await connectionStore.connect(to: server, authManager: authManager)
         } catch {
             showError(message: error.localizedDescription)
@@ -381,6 +395,18 @@ struct ConnectView: View {
         serverTrustStates[server.id] ?? .unknown
     }
 
+    private func discoveredPublicIdentity(for server: DiscoveredServer) -> ServerPublicIdentity? {
+        serverPublicIdentity[server.id]
+    }
+
+    private func discoveredDisplayName(for server: DiscoveredServer) -> String {
+        discoveredPublicIdentity(for: server)?.normalizedName ?? server.name
+    }
+
+    private func discoveredDisplayEmoji(for server: DiscoveredServer) -> String? {
+        discoveredPublicIdentity(for: server)?.normalizedEmoji
+    }
+
     private func downloadCACertificate(for server: DiscoveredServer) {
         guard let caCertURL = server.caCertURL else { return }
         openURL(caCertURL)
@@ -401,6 +427,29 @@ struct ConnectView: View {
 
             serverTrustStates[server.id] = .checking
             serverTrustStates[server.id] = await detectTrustState(for: server)
+        }
+    }
+
+    private func refreshNearbyServerPublicIdentity(force: Bool) async {
+        let servers = bonjourBrowser.servers
+        let visibleIDs = Set(servers.map(\.id))
+        serverPublicIdentity = serverPublicIdentity.filter { visibleIDs.contains($0.key) }
+
+        for server in servers {
+            if !force, serverPublicIdentity[server.id] != nil {
+                continue
+            }
+            guard let serverURL = server.url else {
+                continue
+            }
+
+            let identity = await authManager.fetchPublicIdentity(url: serverURL)
+            guard let identity else {
+                continue
+            }
+
+            serverPublicIdentity[server.id] = identity
+            authManager.updateServerEmoji(identity.normalizedEmoji, forURL: serverURL)
         }
     }
 

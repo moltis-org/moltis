@@ -84,6 +84,7 @@ final class ConnectionStore: ObservableObject {
 
             // Fetch identity
             await fetchIdentity()
+            authManager.updateServerEmoji(agentEmoji, for: server.id)
 
             // Load initial data
             await sessionStore.loadSessions()

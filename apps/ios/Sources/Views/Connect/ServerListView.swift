@@ -8,8 +8,11 @@ struct ServerListView: View {
         ForEach(authManager.servers) { server in
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(server.name)
-                        .font(.body)
+                    HStack(spacing: 6) {
+                        Text(server.displayEmoji)
+                        Text(server.name)
+                    }
+                    .font(.body)
                     Text(server.url.absoluteString)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -41,8 +44,9 @@ struct ServerListView: View {
                 Button(role: .destructive) {
                     authManager.removeServer(server)
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Image(systemName: "trash")
                 }
+                .accessibilityLabel("Delete")
             }
         }
     }
