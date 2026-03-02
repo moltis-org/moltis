@@ -910,19 +910,11 @@ impl Default for CronConfig {
 }
 
 /// Channel webhook middleware configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebhooksConfig {
     /// Per-account rate limiting settings.
     pub rate_limit: WebhookRateLimitConfig,
-}
-
-impl Default for WebhooksConfig {
-    fn default() -> Self {
-        Self {
-            rate_limit: WebhookRateLimitConfig::default(),
-        }
-    }
 }
 
 /// Rate limiting configuration for channel webhooks.
