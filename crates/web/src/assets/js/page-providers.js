@@ -6,6 +6,7 @@ import { render } from "preact";
 import { useEffect } from "preact/hooks";
 import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { fetchModels } from "./models.js";
 import { updateNavCount } from "./nav-counts.js";
 import { openModelSelectorForProvider, openProviderModal } from "./providers.js";
@@ -61,7 +62,7 @@ function handleModelsUpdatedEvent(payload) {
 	}
 	if (payload.phase === "error") {
 		detectingModels.value = false;
-		detectError.value = payload.error || "Model detection failed.";
+		detectError.value = payload.error || t("providers:modelDetectionFailed");
 	}
 }
 
@@ -129,7 +130,7 @@ async function runDetectAllModels() {
 
 		var res = await sendRpc("models.detect_supported", {});
 		if (!res?.ok) {
-			detectError.value = res?.error?.message || "Failed to detect model availability.";
+			detectError.value = res?.error?.message || t("providers:failedToDetectModels");
 			detectingModels.value = false;
 			return;
 		}
@@ -195,7 +196,7 @@ function ProviderSection(props) {
 
 	function onDeleteProvider() {
 		if (deletingProvider.value) return;
-		requestConfirm(`Remove ${group.providerDisplayName} and all its credentials?`).then((yes) => {
+		requestConfirm(t("providers:removeProviderConfirm", { name: group.providerDisplayName })).then((yes) => {
 			if (!yes) return;
 			deletingProvider.value = group.provider;
 			providerActionError.value = "";
@@ -207,10 +208,10 @@ function ProviderSection(props) {
 						fetchProviders();
 						return;
 					}
-					providerActionError.value = res?.error?.message || "Failed to delete provider.";
+					providerActionError.value = res?.error?.message || t("providers:failedToDeleteProvider");
 				})
 				.catch(() => {
-					providerActionError.value = "Failed to delete provider.";
+					providerActionError.value = t("providers:failedToDeleteProvider");
 				})
 				.finally(() => {
 					deletingProvider.value = "";
@@ -229,7 +230,7 @@ function ProviderSection(props) {
 				fetchModels();
 				fetchProviders();
 			} else {
-				providerActionError.value = res?.error?.message || "Failed to update model state.";
+				providerActionError.value = res?.error?.message || t("providers:failedToUpdateModel");
 			}
 		});
 	}
@@ -243,39 +244,39 @@ function ProviderSection(props) {
 			<div class="flex items-center gap-2 min-w-0">
 				<h3 class="text-base font-semibold text-[var(--text-strong)] truncate">${group.providerDisplayName}</h3>
 				<span class="provider-item-badge ${group.authType}">
-					${group.authType === "oauth" ? "OAuth" : group.authType === "local" ? "Local" : "API Key"}
+					${group.authType === "oauth" ? t("providers:oauth") : group.authType === "local" ? t("providers:local") : t("providers:apiKey")}
 				</span>
 			</div>
 			<div class="flex gap-2 shrink-0">
-				${group.models.length > 0 ? html`<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onSelectModels}>Preferred Models</button>` : null}
+				${group.models.length > 0 ? html`<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onSelectModels}>${t("providers:preferredModels")}</button>` : null}
 				<button
 					class="provider-btn provider-btn-danger provider-btn-sm"
 					disabled=${deletingProvider.value === group.provider}
 					onClick=${onDeleteProvider}
 				>
-					${deletingProvider.value === group.provider ? "Deleting..." : "Delete"}
+					${deletingProvider.value === group.provider ? t("common:status.deleting") : t("common:actions.delete")}
 				</button>
 			</div>
 		</div>
 		<div class="mt-2 border-b border-[var(--border)]"></div>
 		${
 			group.models.length === 0
-				? html`<div class="mt-2 text-xs text-[var(--muted)]">No active models.</div>`
+				? html`<div class="mt-2 text-xs text-[var(--muted)]">${t("providers:noActiveModels")}</div>`
 				: html`<div class="mt-2 flex flex-col gap-2">
 					${group.models.map(
 						(model) => html`<div key=${model.id} class="flex items-start justify-between gap-3 py-1">
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2 min-w-0">
 									<div class="text-sm font-medium text-[var(--text-strong)] truncate">${model.displayName || model.id}</div>
-									${model.unsupported ? html`<span class="provider-item-badge warning" title=${model.unsupportedReason || "Model is not supported for this account"}>Unsupported</span>` : null}
-									${model.supportsTools ? null : html`<span class="provider-item-badge warning">Chat only</span>`}
-									${model.disabled ? html`<span class="provider-item-badge muted">Disabled</span>` : null}
+									${model.unsupported ? html`<span class="provider-item-badge warning" title=${model.unsupportedReason || t("providers:modelNotSupported")}>${t("providers:unsupported")}</span>` : null}
+									${model.supportsTools ? null : html`<span class="provider-item-badge warning">${t("providers:chatOnly")}</span>`}
+									${model.disabled ? html`<span class="provider-item-badge muted">${t("providers:disabled")}</span>` : null}
 								</div>
 								<div class="mt-1 text-xs text-[var(--muted)] font-mono opacity-75">${model.id}</div>
 								${model.createdAt ? html`<time class="mt-0.5 text-xs text-[var(--muted)] opacity-60 block" data-epoch-ms=${model.createdAt * 1000} data-format="year-month"></time>` : null}
 							</div>
 							<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${() => onToggleModel(model)}>
-								${model.disabled ? "Enable" : "Disable"}
+								${model.disabled ? t("common:actions.enable") : t("common:actions.disable")}
 							</button>
 						</div>`,
 					)}
@@ -302,25 +303,25 @@ function ProvidersPage() {
 	return html`
 		<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<div class="flex items-center gap-3">
-					<h2 class="text-lg font-medium text-[var(--text-strong)]">LLMs</h2>
+					<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("providers:title")}</h2>
 					<button
 						class="provider-btn"
 						onClick=${() => {
 							if (connected.value) openProviderModal();
 						}}
 					>
-						Add LLM
+						${t("providers:addLlm")}
 					</button>
 					<button
 						class="provider-btn provider-btn-secondary"
 						disabled=${!connected.value || detectingModels.value}
 						onClick=${runDetectAllModels}
 					>
-						${detectingModels.value ? "Detecting Models..." : "Detect All Models"}
+						${detectingModels.value ? t("providers:detectingModels") : t("providers:detectAllModels")}
 					</button>
 				</div>
 				<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
-					Configure LLM providers for chat and agent tasks. You can add multiple providers and switch between models.
+					${t("providers:description")}
 				</p>
 				${
 					detectError.value || providerActionError.value
@@ -337,12 +338,12 @@ function ProvidersPage() {
 								></div>
 							</div>
 							<div class="mt-1 text-xs text-[var(--muted)]">
-								Probing models: ${progressValue.checked}/${progressValue.total} (${progressPercent}%)
+								${t("providers:probingModels", { checked: progressValue.checked, total: progressValue.total, pct: progressPercent })}
 							</div>
 						</div>`
 						: detectSummary.value
 							? html`<div class="text-xs text-[var(--muted)] max-w-form">
-								Detected ${detectSummary.value.supported || 0} supported, ${detectSummary.value.unsupported || 0} unsupported out of ${detectSummary.value.total || 0} models.
+								${t("providers:detectSummary", { supported: detectSummary.value.supported || 0, unsupported: detectSummary.value.unsupported || 0, total: detectSummary.value.total || 0 })}
 							</div>`
 							: null
 				}
@@ -350,10 +351,10 @@ function ProvidersPage() {
 				${(() => {
 					var groups = groupProviderRows(configuredModels.value, providerMetaSig.value);
 					if (loading.value && configuredModels.value.length === 0) {
-						return html`<div class="text-xs text-[var(--muted)]">Loading…</div>`;
+						return html`<div class="text-xs text-[var(--muted)]">${t("common:status.loading")}</div>`;
 					}
 					if (configuredModels.value.length === 0) {
-						return html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">No LLM providers configured yet.</div>`;
+						return html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">${t("providers:noProvidersConfigured")}</div>`;
 					}
 					return html`<div style="max-width:600px;">
 						${

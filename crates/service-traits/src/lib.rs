@@ -92,6 +92,7 @@ pub trait SessionService: Send + Sync {
     async fn search(&self, params: Value) -> ServiceResult;
     async fn fork(&self, params: Value) -> ServiceResult;
     async fn branches(&self, params: Value) -> ServiceResult;
+    async fn run_detail(&self, params: Value) -> ServiceResult;
     async fn clear_all(&self) -> ServiceResult;
     async fn mark_seen(&self, key: &str);
 }
@@ -154,6 +155,10 @@ impl SessionService for NoopSessionService {
 
     async fn branches(&self, _p: Value) -> ServiceResult {
         Ok(serde_json::json!([]))
+    }
+
+    async fn run_detail(&self, _p: Value) -> ServiceResult {
+        Ok(serde_json::json!({}))
     }
 
     async fn clear_all(&self) -> ServiceResult {
@@ -339,6 +344,11 @@ pub trait ChatService: Send + Sync {
     /// so the frontend can restore `voicePending` state after a page reload.
     async fn active_voice_pending(&self, _session_key: &str) -> bool {
         false
+    }
+    /// Return a snapshot of the current activity for a session: thinking text,
+    /// active tool calls, and whether the session is actively generating.
+    async fn peek(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "active": false }))
     }
 }
 
@@ -771,6 +781,9 @@ pub trait OnboardingService: Send + Sync {
     async fn identity_get(&self) -> ServiceResult;
     async fn identity_update(&self, params: Value) -> ServiceResult;
     async fn identity_update_soul(&self, soul: Option<String>) -> ServiceResult;
+    async fn openclaw_detect(&self) -> ServiceResult;
+    async fn openclaw_scan(&self) -> ServiceResult;
+    async fn openclaw_import(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopOnboardingService;
@@ -803,6 +816,18 @@ impl OnboardingService for NoopOnboardingService {
 
     async fn identity_update_soul(&self, _soul: Option<String>) -> ServiceResult {
         Ok(serde_json::json!({}))
+    }
+
+    async fn openclaw_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    async fn openclaw_scan(&self) -> ServiceResult {
+        Err("onboarding service not configured".into())
+    }
+
+    async fn openclaw_import(&self, _params: Value) -> ServiceResult {
+        Err("onboarding service not configured".into())
     }
 }
 

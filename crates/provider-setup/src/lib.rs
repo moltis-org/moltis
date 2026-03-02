@@ -245,7 +245,7 @@ impl KeyStore {
         HashMap::new()
     }
 
-    fn load_all_configs(&self) -> HashMap<String, ProviderConfig> {
+    pub fn load_all_configs(&self) -> HashMap<String, ProviderConfig> {
         let guard = self.lock();
         Self::load_all_configs_from_path(&guard.path)
     }
@@ -321,7 +321,7 @@ impl KeyStore {
     }
 
     /// Load a provider's full config.
-    fn load_config(&self, provider: &str) -> Option<ProviderConfig> {
+    pub fn load_config(&self, provider: &str) -> Option<ProviderConfig> {
         self.load_all_configs().get(provider).cloned()
     }
 
@@ -345,7 +345,7 @@ impl KeyStore {
     }
 
     /// Save a provider's full configuration.
-    fn save_config(
+    pub fn save_config(
         &self,
         provider: &str,
         api_key: Option<String>,
@@ -696,14 +696,14 @@ fn ollama_models_payload(models: &[String]) -> Vec<Value> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuthType {
+pub enum AuthType {
     ApiKey,
     Oauth,
     Local,
 }
 
 impl AuthType {
-    const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::ApiKey => "api-key",
             Self::Oauth => "oauth",
@@ -719,21 +719,21 @@ impl std::fmt::Display for AuthType {
 }
 
 /// Known provider definitions used to populate the "available providers" list.
-struct KnownProvider {
-    name: &'static str,
-    display_name: &'static str,
-    auth_type: AuthType,
-    env_key: Option<&'static str>,
+pub struct KnownProvider {
+    pub name: &'static str,
+    pub display_name: &'static str,
+    pub auth_type: AuthType,
+    pub env_key: Option<&'static str>,
     /// Default base URL for this provider (for OpenAI-compatible providers).
-    default_base_url: Option<&'static str>,
+    pub default_base_url: Option<&'static str>,
     /// Whether this provider requires a model to be specified.
-    requires_model: bool,
+    pub requires_model: bool,
     /// Whether the API key is optional (e.g. Ollama runs locally without auth).
-    key_optional: bool,
+    pub key_optional: bool,
 }
 
 /// Build the known providers list at runtime, including local-llm if enabled.
-fn known_providers() -> Vec<KnownProvider> {
+pub fn known_providers() -> Vec<KnownProvider> {
     let providers = vec![
         KnownProvider {
             name: "anthropic",
@@ -758,7 +758,7 @@ fn known_providers() -> Vec<KnownProvider> {
             display_name: "Google Gemini",
             auth_type: AuthType::ApiKey,
             env_key: Some("GEMINI_API_KEY"),
-            default_base_url: Some("https://generativelanguage.googleapis.com/v1beta"),
+            default_base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai"),
             requires_model: false,
             key_optional: false,
         },
@@ -1218,6 +1218,10 @@ pub struct LiveProviderSetupService {
     env_overrides: HashMap<String, String>,
     /// Injected error parser for interpreting provider API errors.
     error_parser: ErrorParser,
+    /// Address the OAuth callback server binds to. Defaults to `127.0.0.1`
+    /// for local development; set to `0.0.0.0` in Docker / remote
+    /// deployments so the callback port is reachable from the host.
+    callback_bind_addr: String,
 }
 
 #[derive(Clone)]
@@ -1245,6 +1249,7 @@ impl LiveProviderSetupService {
             registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
             env_overrides: HashMap::new(),
             error_parser: default_error_parser,
+            callback_bind_addr: "127.0.0.1".to_string(),
         }
     }
 
@@ -1256,6 +1261,16 @@ impl LiveProviderSetupService {
     /// Set a custom error parser for interpreting provider API errors.
     pub fn with_error_parser(mut self, parser: ErrorParser) -> Self {
         self.error_parser = parser;
+        self
+    }
+
+    /// Set the bind address for the OAuth callback server.
+    ///
+    /// Defaults to `127.0.0.1`. Pass `0.0.0.0` when the gateway is
+    /// bound to all interfaces (e.g. Docker) so the OAuth callback port
+    /// is reachable from the host.
+    pub fn with_callback_bind_addr(mut self, addr: String) -> Self {
+        self.callback_bind_addr = addr;
         self
     }
 
@@ -1898,8 +1913,15 @@ impl ProviderSetupService for LiveProviderSetupService {
                 .await;
         }
 
-        let use_server_callback = redirect_uri.is_some();
-        if let Some(uri) = redirect_uri {
+        // Providers with a pre-registered redirect_uri (e.g. openai-codex
+        // registered as http://localhost:1455/auth/callback with OpenAI)
+        // must always use that URI in the authorization request.
+        // Overriding it with the gateway URL causes OAuth providers to
+        // reject the request with "unknown_error".
+        // For these providers we always use the local callback server.
+        let has_registered_redirect = !oauth_config.redirect_uri.is_empty();
+        let use_server_callback = redirect_uri.is_some() && !has_registered_redirect;
+        if !has_registered_redirect && let Some(uri) = redirect_uri {
             oauth_config.redirect_uri = uri;
         }
 
@@ -1934,8 +1956,9 @@ impl ProviderSetupService for LiveProviderSetupService {
         let registry = Arc::clone(&self.registry);
         let config = self.effective_config();
         let env_overrides = self.env_overrides.clone();
+        let bind_addr = self.callback_bind_addr.clone();
         tokio::spawn(async move {
-            match CallbackServer::wait_for_code(port, expected_state).await {
+            match CallbackServer::wait_for_code(port, expected_state, &bind_addr).await {
                 Ok(code) => {
                     match flow.exchange(&code, &verifier).await {
                         Ok(tokens) => {
@@ -2290,7 +2313,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         let temp_registry = self.build_registry(&temp_config);
 
         // Filter models for this provider.
-        let models: Vec<_> = temp_registry
+        let mut models: Vec<_> = temp_registry
             .list_models()
             .iter()
             .filter(|m| {
@@ -2335,8 +2358,11 @@ impl ProviderSetupService for LiveProviderSetupService {
         .await;
 
         const VALIDATION_MAX_MODEL_PROBES: usize = 8;
-        const VALIDATION_MAX_TIMEOUTS: usize = 2;
+        const VALIDATION_MAX_TIMEOUTS: usize = 3;
         const VALIDATION_PROBE_TIMEOUT_SECS: u64 = 10;
+
+        reorder_models_for_validation(&mut models);
+
         let total_probe_attempts = models.len().min(VALIDATION_MAX_MODEL_PROBES);
 
         let probe = [ChatMessage::user("ping")];
@@ -2739,6 +2765,52 @@ impl ProviderSetupService for LiveProviderSetupService {
             "displayName": display_name,
         }))
     }
+}
+
+// ── Validation probe ordering ────────────────────────────────────────────────
+
+/// Reorder models so that known-fast, reliable models appear first for
+/// validation probing.  We only need *one* successful response to prove the
+/// API key works, so prefer the cheapest/fastest endpoints.
+fn reorder_models_for_validation(models: &mut [moltis_providers::ModelInfo]) {
+    /// Known-fast model substrings, ordered by preference.
+    /// These are small/cheap models that respond quickly on every major provider.
+    const FAST_PATTERNS: &[&str] = &[
+        "gpt-4o-mini",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "claude-3-haiku",
+        "claude-3.5-haiku",
+        "gemini-2.0-flash",
+        "gemini-flash",
+        "llama-3",
+        "mistral-small",
+        "deepseek-chat",
+    ];
+
+    /// Known-slow or experimental model substrings to deprioritize.
+    const SLOW_PATTERNS: &[&str] = &["search-preview", "seed-", "preview", "experimental"];
+
+    models.sort_by(|a, b| {
+        let a_rank = probe_priority_rank(&a.id, FAST_PATTERNS, SLOW_PATTERNS);
+        let b_rank = probe_priority_rank(&b.id, FAST_PATTERNS, SLOW_PATTERNS);
+        a_rank.cmp(&b_rank)
+    });
+}
+
+fn probe_priority_rank(model_id: &str, fast: &[&str], slow: &[&str]) -> u8 {
+    let raw = raw_model_id(model_id);
+    for pattern in fast {
+        if raw.contains(pattern) {
+            return 0; // probe first
+        }
+    }
+    for pattern in slow {
+        if raw.contains(pattern) {
+            return 2; // probe last
+        }
+    }
+    1 // default: middle tier
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -3392,6 +3464,7 @@ mod tests {
             registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
             env_overrides: HashMap::new(),
             error_parser: default_error_parser,
+            callback_bind_addr: "127.0.0.1".to_string(),
         };
 
         let result = svc.available().await.unwrap();
@@ -3448,6 +3521,7 @@ mod tests {
             registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
             env_overrides: HashMap::new(),
             error_parser: default_error_parser,
+            callback_bind_addr: "127.0.0.1".to_string(),
         };
 
         let result = svc.available().await.expect("providers.available");
@@ -3551,17 +3625,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_start_uses_redirect_uri_override() {
+    async fn oauth_start_ignores_redirect_uri_override_for_registered_provider() {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
         let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
-        let redirect_uri = "https://example.com/auth/callback";
 
         let result = svc
             .oauth_start(serde_json::json!({
                 "provider": "openai-codex",
-                "redirectUri": redirect_uri,
+                "redirectUri": "https://example.com/auth/callback",
             }))
             .await
             .expect("oauth start should succeed");
@@ -3583,7 +3656,11 @@ mod tests {
             .find(|(k, _)| k == "redirect_uri")
             .map(|(_, v)| v.into_owned());
 
-        assert_eq!(redirect.as_deref(), Some(redirect_uri));
+        // openai-codex has a pre-registered redirect_uri; client override is ignored.
+        assert_eq!(
+            redirect.as_deref(),
+            Some("http://localhost:1455/auth/callback")
+        );
     }
 
     #[tokio::test]
@@ -4242,5 +4319,115 @@ mod tests {
             "  anthropic/claude-sonnet-4-5  ".into(),
         ]);
         assert_eq!(models, vec!["gpt-5.2", "anthropic/claude-sonnet-4-5"]);
+    }
+
+    fn make_model(id: &str) -> moltis_providers::ModelInfo {
+        moltis_providers::ModelInfo {
+            id: id.to_string(),
+            provider: "test".to_string(),
+            display_name: id.to_string(),
+            created_at: None,
+        }
+    }
+
+    #[test]
+    fn reorder_models_for_validation_fast_first_slow_last() {
+        let mut models = vec![
+            make_model("bytedance-seed/seed-2.0-mini"),
+            make_model("some-regular-model"),
+            make_model("gpt-4o-mini"),
+            make_model("gpt-4o-search-preview"),
+            make_model("claude-3.5-haiku-20241022"),
+            make_model("experimental-model-v1"),
+            make_model("deepseek-chat"),
+        ];
+
+        reorder_models_for_validation(&mut models);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+
+        // Fast models should be at the front
+        assert!(
+            ids.iter().position(|id| *id == "gpt-4o-mini").unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
+            "fast model gpt-4o-mini should come before regular model, got: {ids:?}"
+        );
+        assert!(
+            ids.iter()
+                .position(|id| *id == "claude-3.5-haiku-20241022")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
+            "fast model claude-3.5-haiku should come before regular model, got: {ids:?}"
+        );
+        assert!(
+            ids.iter().position(|id| *id == "deepseek-chat").unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "some-regular-model")
+                    .unwrap(),
+            "fast model deepseek-chat should come before regular model, got: {ids:?}"
+        );
+
+        // Slow models should be at the end
+        assert!(
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "gpt-4o-search-preview")
+                    .unwrap(),
+            "regular model should come before slow model search-preview, got: {ids:?}"
+        );
+        assert!(
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "bytedance-seed/seed-2.0-mini")
+                    .unwrap(),
+            "regular model should come before slow model seed-, got: {ids:?}"
+        );
+        assert!(
+            ids.iter()
+                .position(|id| *id == "some-regular-model")
+                .unwrap()
+                < ids
+                    .iter()
+                    .position(|id| *id == "experimental-model-v1")
+                    .unwrap(),
+            "regular model should come before slow model experimental, got: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn reorder_models_for_validation_with_namespaced_ids() {
+        let mut models = vec![
+            make_model("openrouter::gpt-4o-search-preview"),
+            make_model("openrouter::gpt-4o-mini"),
+            make_model("openrouter::some-model"),
+        ];
+
+        reorder_models_for_validation(&mut models);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+
+        assert_eq!(
+            ids[0], "openrouter::gpt-4o-mini",
+            "fast namespaced model should be first, got: {ids:?}"
+        );
+        assert_eq!(
+            ids[1], "openrouter::some-model",
+            "regular model should be middle, got: {ids:?}"
+        );
+        assert_eq!(
+            ids[2], "openrouter::gpt-4o-search-preview",
+            "slow namespaced model should be last, got: {ids:?}"
+        );
     }
 }

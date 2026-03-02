@@ -179,6 +179,10 @@ impl moltis_service_traits::SessionService for MockSession {
         self.0.call("sessions.branches", p)
     }
 
+    async fn run_detail(&self, p: Value) -> ServiceResult {
+        self.0.call("sessions.run_detail", p)
+    }
+
     async fn clear_all(&self) -> ServiceResult {
         self.0.call("sessions.clear_all", json!({}))
     }
@@ -575,6 +579,18 @@ impl moltis_service_traits::OnboardingService for MockOnboarding {
     async fn identity_update_soul(&self, soul: Option<String>) -> ServiceResult {
         self.0
             .call("agent.identity.update_soul", json!({ "soul": soul }))
+    }
+
+    async fn openclaw_detect(&self) -> ServiceResult {
+        self.0.call("openclaw.detect", json!({}))
+    }
+
+    async fn openclaw_scan(&self) -> ServiceResult {
+        self.0.call("openclaw.scan", json!({}))
+    }
+
+    async fn openclaw_import(&self, p: Value) -> ServiceResult {
+        self.0.call("openclaw.import", p)
     }
 }
 
@@ -1067,6 +1083,53 @@ async fn chat_send_mutation() {
     let (method, params) = mock.last_call().expect("should have called");
     assert_eq!(method, "chat.send");
     assert_eq!(params["message"], "Hello");
+}
+
+#[tokio::test]
+async fn agents_update_identity_mutation_returns_ok_on_success() {
+    let mock = MockDispatch::new();
+    mock.set_response(
+        "agent.identity.update",
+        json!({
+            "name": "Rex",
+            "user_name": "Alice",
+        }),
+    );
+    let (schema, _) = build_test_schema(mock.clone());
+
+    let res = schema
+        .execute(Request::new(
+            r#"mutation { agents { updateIdentity(input: { user_location: { latitude: 37.7749, longitude: -122.4194 } }) { ok } } }"#,
+        ))
+        .await;
+
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    let data = res.data.into_json().expect("json");
+    assert_eq!(data["agents"]["updateIdentity"]["ok"], true);
+
+    let (method, params) = mock.last_call().expect("should have called");
+    assert_eq!(method, "agent.identity.update");
+    assert_eq!(params["user_location"]["latitude"], 37.7749);
+    assert_eq!(params["user_location"]["longitude"], -122.4194);
+}
+
+#[tokio::test]
+async fn agents_update_identity_accepts_json_string_payload() {
+    let mock = MockDispatch::new();
+    mock.set_response("agent.identity.update", json!({ "name": "Rex" }));
+    let (schema, _) = build_test_schema(mock.clone());
+
+    let res = schema
+        .execute(Request::new(
+            "mutation { agents { updateIdentity(input: \"{\\\"user_location\\\":{\\\"latitude\\\":37.0,\\\"longitude\\\":-122.0}}\") { ok } } }",
+        ))
+        .await;
+
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    let (method, params) = mock.last_call().expect("should have called");
+    assert_eq!(method, "agent.identity.update");
+    assert_eq!(params["user_location"]["latitude"], 37.0);
+    assert_eq!(params["user_location"]["longitude"], -122.0);
 }
 
 #[tokio::test]

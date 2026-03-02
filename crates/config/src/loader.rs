@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     env_subst::substitute_env,
-    schema::{AgentIdentity, MoltisConfig, UserProfile},
+    schema::{AgentIdentity, MoltisConfig, ResolvedIdentity, UserProfile},
 };
 
 /// Generate a random available port by binding to port 0 and reading the assigned port.
@@ -287,6 +287,11 @@ pub fn memory_path() -> PathBuf {
     data_dir().join("MEMORY.md")
 }
 
+/// Return the workspace directory for a named agent: `data_dir()/agents/<id>`.
+pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
+    data_dir().join("agents").join(agent_id)
+}
+
 /// Load identity values from `IDENTITY.md` frontmatter if present.
 pub fn load_identity() -> Option<AgentIdentity> {
     let path = identity_path();
@@ -298,6 +303,57 @@ pub fn load_identity() -> Option<AgentIdentity> {
     } else {
         Some(identity)
     }
+}
+
+/// Load identity values for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/IDENTITY.md` first and
+/// falls back to the root `IDENTITY.md`.
+pub fn load_identity_for_agent(agent_id: &str) -> Option<AgentIdentity> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("IDENTITY.md");
+        if let Some(identity) = load_identity_from_path(&main_path) {
+            return Some(identity);
+        }
+        return load_identity();
+    }
+    load_identity_from_path(&agent_workspace_dir(agent_id).join("IDENTITY.md"))
+}
+
+/// Build a fully-resolved identity by merging all sources:
+/// `moltis.toml` `[identity]` + `IDENTITY.md` frontmatter + `USER.md` + `SOUL.md`.
+///
+/// This is the single source of truth used by both the gateway (`identity_get`)
+/// and the Swift FFI bridge.
+pub fn resolve_identity() -> ResolvedIdentity {
+    let config = discover_and_load();
+    resolve_identity_from_config(&config)
+}
+
+/// Like [`resolve_identity`] but accepts a pre-loaded config.
+pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
+    let mut id = ResolvedIdentity::from_config(config);
+
+    if let Some(file_identity) = load_identity() {
+        if let Some(name) = file_identity.name {
+            id.name = name;
+        }
+        if let Some(emoji) = file_identity.emoji {
+            id.emoji = Some(emoji);
+        }
+        if let Some(theme) = file_identity.theme {
+            id.theme = Some(theme);
+        }
+    }
+
+    if let Some(file_user) = load_user()
+        && let Some(name) = file_user.name
+    {
+        id.user_name = Some(name);
+    }
+
+    id.soul = load_soul();
+    id
 }
 
 /// Load user values from `USER.md` frontmatter if present.
@@ -390,6 +446,21 @@ pub fn load_soul() -> Option<String> {
     }
 }
 
+/// Load SOUL.md for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/SOUL.md` first and
+/// falls back to the root `SOUL.md`.
+pub fn load_soul_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("SOUL.md");
+        if let Some(soul) = load_workspace_markdown(main_path) {
+            return Some(soul);
+        }
+        return load_soul();
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("SOUL.md"))
+}
+
 /// Write `DEFAULT_SOUL` to `SOUL.md` when the file doesn't already exist.
 fn write_default_soul() -> crate::Result<()> {
     let path = soul_path();
@@ -409,9 +480,21 @@ pub fn load_agents_md() -> Option<String> {
     load_workspace_markdown(agents_path())
 }
 
+/// Load AGENTS.md for a specific agent, falling back to the root file.
+pub fn load_agents_md_for_agent(agent_id: &str) -> Option<String> {
+    let agent_path = agent_workspace_dir(agent_id).join("AGENTS.md");
+    load_workspace_markdown(agent_path).or_else(load_agents_md)
+}
+
 /// Load TOOLS.md from the workspace root (`data_dir`) if present and non-empty.
 pub fn load_tools_md() -> Option<String> {
     load_workspace_markdown(tools_path())
+}
+
+/// Load TOOLS.md for a specific agent, falling back to the root file.
+pub fn load_tools_md_for_agent(agent_id: &str) -> Option<String> {
+    let agent_path = agent_workspace_dir(agent_id).join("TOOLS.md");
+    load_workspace_markdown(agent_path).or_else(load_tools_md)
 }
 
 /// Load HEARTBEAT.md from the workspace root (`data_dir`) if present and non-empty.
@@ -422,6 +505,21 @@ pub fn load_heartbeat_md() -> Option<String> {
 /// Load MEMORY.md from the workspace root (`data_dir`) if present and non-empty.
 pub fn load_memory_md() -> Option<String> {
     load_workspace_markdown(memory_path())
+}
+
+/// Load MEMORY.md for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/MEMORY.md` first and
+/// falls back to the root `MEMORY.md`.
+pub fn load_memory_md_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("MEMORY.md");
+        if let Some(memory) = load_workspace_markdown(main_path) {
+            return Some(memory);
+        }
+        return load_memory_md();
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("MEMORY.md"))
 }
 
 /// Persist SOUL.md in the workspace root (`data_dir`).
@@ -483,6 +581,38 @@ pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     Ok(path)
 }
 
+/// Persist identity values for a non-main agent into its workspace.
+pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crate::Result<PathBuf> {
+    let dir = agent_workspace_dir(agent_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("IDENTITY.md");
+
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
+
+    if !has_values {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        return Ok(path);
+    }
+
+    let mut yaml_lines = Vec::new();
+    if let Some(name) = identity.name.as_deref() {
+        yaml_lines.push(format!("name: {}", yaml_scalar(name)));
+    }
+    if let Some(emoji) = identity.emoji.as_deref() {
+        yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
+    }
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
+    }
+
+    let content = format!("---\n{}\n---\n", yaml_lines.join("\n"));
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
 /// Persist user values to `USER.md` using YAML frontmatter.
 pub fn save_user(user: &UserProfile) -> crate::Result<PathBuf> {
     let path = user_path();
@@ -525,7 +655,7 @@ pub fn save_user(user: &UserProfile) -> crate::Result<PathBuf> {
     Ok(path)
 }
 
-fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
+pub fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return None;
@@ -538,6 +668,10 @@ fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
 
 fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
     let mut identity = AgentIdentity::default();
+    // Legacy fields for backward compat with old IDENTITY.md files.
+    let mut creature: Option<String> = None;
+    let mut vibe: Option<String> = None;
+
     for raw in frontmatter.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -554,11 +688,25 @@ fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
         match key {
             "name" => identity.name = Some(value.to_string()),
             "emoji" => identity.emoji = Some(value.to_string()),
-            // Accept "creature" and "vibe" as backward-compat aliases for "theme".
-            "theme" | "creature" | "vibe" => identity.theme = Some(value.to_string()),
+            "theme" => identity.theme = Some(value.to_string()),
+            // Backward compat: compose legacy creature/vibe into theme.
+            "creature" => creature = Some(value.to_string()),
+            "vibe" => vibe = Some(value.to_string()),
             _ => {},
         }
     }
+
+    // If no explicit `theme` was set, compose from legacy creature/vibe.
+    if identity.theme.is_none() {
+        let composed = match (vibe, creature) {
+            (Some(v), Some(c)) => Some(format!("{v} {c}")),
+            (Some(v), None) => Some(v),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        };
+        identity.theme = composed;
+    }
+
     identity
 }
 
@@ -640,6 +788,17 @@ fn load_workspace_markdown(path: PathBuf) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+fn load_identity_from_path(path: &Path) -> Option<AgentIdentity> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let frontmatter = extract_yaml_frontmatter(&content)?;
+    let identity = parse_identity_frontmatter(frontmatter);
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
+        None
+    } else {
+        Some(identity)
     }
 }
 
@@ -1276,7 +1435,7 @@ name = "Rex"
         let identity = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: Some("🐶".to_string()),
-            theme: Some("chill dog".to_string()),
+            theme: Some("chill dog golden retriever".to_string()),
         };
 
         let path = save_identity(&identity).expect("save identity");
@@ -1286,7 +1445,7 @@ name = "Rex"
         let loaded = load_identity().expect("load identity");
         assert_eq!(loaded.name.as_deref(), Some("Rex"));
         assert_eq!(loaded.emoji.as_deref(), Some("🐶"), "raw file:\n{raw}");
-        assert_eq!(loaded.theme.as_deref(), Some("chill dog"));
+        assert_eq!(loaded.theme.as_deref(), Some("chill dog golden retriever"));
 
         clear_data_dir();
     }

@@ -45,6 +45,7 @@ test.describe("Settings navigation", () => {
 		{ id: "voice", heading: "Voice" },
 		{ id: "security", heading: "Security" },
 		{ id: "tailscale", heading: "Tailscale" },
+		{ id: "network-audit", heading: "Network Audit" },
 		{ id: "notifications", heading: "Notifications" },
 		{ id: "providers", heading: "LLMs" },
 		{ id: "channels", heading: "Channels" },
@@ -60,8 +61,7 @@ test.describe("Settings navigation", () => {
 	for (const section of settingsSections) {
 		test(`settings/${section.id} loads without errors`, async ({ page }) => {
 			const pageErrors = watchPageErrors(page);
-			await page.goto(`/settings/${section.id}`);
-			await expectPageContentMounted(page);
+			await navigateAndWait(page, `/settings/${section.id}`);
 
 			await expect(page).toHaveURL(new RegExp(`/settings/${section.id}$`));
 
@@ -238,11 +238,11 @@ test.describe("Settings navigation", () => {
 		await navigateAndWait(page, "/settings/channels");
 		await waitForWsConnected(page);
 
-		const addButton = page.getByRole("button", { name: "+ Add Telegram Bot", exact: true });
+		const addButton = page.getByRole("button", { name: "Connect Telegram", exact: true });
 		await expect(addButton).toBeVisible();
 		await addButton.click();
 
-		await expect(page.getByRole("heading", { name: "Add Telegram Bot", exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Connect Telegram", exact: true })).toBeVisible();
 		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
 		await expect(tokenInput).toHaveAttribute("type", "password");
 		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");
@@ -306,22 +306,19 @@ test.describe("Settings navigation", () => {
 		const navItems = (await page.locator(".settings-nav-item").allTextContents()).map((text) => text.trim());
 		const expectedPrefix = [
 			"Identity",
+			"Agents",
 			"Environment",
 			"Memory",
 			"Notifications",
 			"Crons",
 			"Heartbeat",
 			"Authentication",
-			"Encryption",
-			"Tailscale",
-			"Channels",
-			"Hooks",
-			"LLMs",
-			"MCP",
-			"Skills",
 		];
-		const expectedSystem = ["Terminal", "Sandboxes", "Monitoring", "Logs"];
+		if (navItems.includes("Encryption")) expectedPrefix.push("Encryption");
+		expectedPrefix.push("Tailscale", "Network Audit", "Sandboxes", "Channels", "Hooks", "LLMs", "MCP", "Skills");
+		const expectedSystem = ["Terminal", "Monitoring", "Logs"];
 		const expected = [...expectedPrefix];
+		if (navItems.includes("OpenClaw Import")) expected.push("OpenClaw Import");
 		if (navItems.includes("Voice")) expected.push("Voice");
 		expected.push(...expectedSystem);
 		if (navItems.includes("GraphQL")) expected.push("GraphQL");

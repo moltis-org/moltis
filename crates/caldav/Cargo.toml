@@ -1,0 +1,36 @@
+[package]
+edition.workspace    = true
+name                 = "moltis-caldav"
+repository.workspace = true
+version.workspace    = true
+
+[dependencies]
+anyhow        = { workspace = true }
+async-trait   = { workspace = true }
+http          = { workspace = true }
+hyper         = { workspace = true }
+hyper-rustls  = { workspace = true }
+hyper-util    = { workspace = true }
+icalendar     = { workspace = true }
+libdav        = { workspace = true }
+moltis-agents = { workspace = true }
+moltis-config = { workspace = true }
+secrecy       = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+tokio         = { workspace = true }
+tower-http    = { features = ["auth"], workspace = true }
+tower-service = { workspace = true }
+tracing       = { workspace = true }
+uuid          = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[features]
+default = ["tracing"]
+metrics = []
+tracing = []
+
+[lints]
+workspace = true

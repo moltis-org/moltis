@@ -2,6 +2,7 @@
 // Handles drag-and-drop image upload, clipboard paste, and
 // image preview strip above the chat input area.
 
+import { t } from "./i18n.js";
 import * as S from "./state.js";
 
 var pendingImages = [];
@@ -75,7 +76,7 @@ function renderPreview() {
 		var removeBtn = document.createElement("button");
 		removeBtn.className = "media-preview-remove";
 		removeBtn.textContent = "\u2715";
-		removeBtn.title = "Remove";
+		removeBtn.title = t("common:actions.remove");
 		removeBtn.dataset.idx = String(i);
 		removeBtn.addEventListener("click", (e) => {
 			var idx = Number.parseInt(e.currentTarget.dataset.idx, 10);

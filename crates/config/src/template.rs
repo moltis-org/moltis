@@ -88,6 +88,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   base_url  - Override API endpoint
 #   models    - Preferred models shown first (optional)
 #   fetch_models - Discover models from provider API when available (default: true)
+#   stream_transport - Streaming transport: "sse", "websocket", or "auto" (default: "sse")
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
@@ -113,14 +114,17 @@ offered = ["local-llm", "github-copilot", "openai-codex", "openai", "anthropic",
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
 models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 # fetch_models = true
+# stream_transport = "sse"                     # "sse" | "websocket" | "auto"
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
 
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]
 # enabled = true
-# api_key = "..."                             # Or set GOOGLE_API_KEY env var
-# models = ["gemini-2.0-flash"]
+# api_key = "..."                             # Or set GEMINI_API_KEY / GOOGLE_API_KEY env var
+# models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+# fetch_models = true
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 # alias = "gemini"
 
 # ── Groq ──────────────────────────────────────────────────────
@@ -180,6 +184,21 @@ message_queue_mode = "followup"   # Default: process queued messages one-by-one 
 # allowed_models = ["gpt 5.2"]  # Legacy field (currently ignored).
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SPAWN PRESETS (OPTIONAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Configure reusable presets for the `spawn_agent` tool.
+#
+# [agents]
+# default_preset = "research"      # Optional: used when spawn_agent.preset is omitted
+#
+# [agents.presets.research]
+# model = "openai/gpt-5.2"
+# allow_tools = ["web_search", "web_fetch", "sessions_send", "task_list"]
+# deny_tools = ["exec"]
+# delegate_only = false
+# system_prompt_suffix = "Focus on gathering and summarizing evidence."
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -228,6 +247,11 @@ workspace_mount = "ro"            # How to mount workspace in sandbox:
                                   #   "ro"   - Read-only (safe)
                                   #   "rw"   - Read-write (can modify files)
                                   #   "none" - No mount
+home_persistence = "shared"       # Persist /home/sandbox across container recreation:
+                                  #   "off"     - Ephemeral home
+                                  #   "session" - Per-session persisted home
+                                  #   "shared"  - One shared persisted home (default)
+# shared_home_dir = "/path/to/shared-home"  # Host dir for shared persistence (default: data_dir()/sandbox/home/shared)
 backend = "auto"                  # Container backend:
                                   #   "auto"            - Auto-detect (prefers Apple Container on macOS)
                                   #   "docker"          - Use Docker
@@ -258,6 +282,7 @@ packages = [
     "npm",
     "ruby",
     "ruby-dev",
+    "golang-go",
     # Build toolchain & native deps
     "build-essential",
     "clang",
@@ -462,6 +487,9 @@ every = "30m"                     # Interval between heartbeats (e.g., "30m", "1
 # model = "anthropic/claude-sonnet-4-20250514"  # Override model for heartbeats
 # prompt = "..."                  # Custom heartbeat prompt (default: built-in)
 ack_max_chars = 300               # Max characters for acknowledgment reply
+deliver = false                   # Deliver heartbeat replies to a channel account
+# channel = "my-bot"              # Channel account identifier (required when deliver = true)
+# to = "123456789"                # Chat/recipient ID (required when deliver = true)
 sandbox_enabled = true            # Run heartbeat commands in sandbox
 # sandbox_image = "..."           # Override sandbox image for heartbeats
 
@@ -547,6 +575,29 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # [channels.telegram.my-bot]
 # token = "..."                   # Bot token from @BotFather
 # allowed_users = []              # Telegram user IDs allowed to chat (empty = all)
+
+# Microsoft Teams bots
+# [channels.msteams.my-bot]
+# app_id = "..."                  # Azure Bot App ID
+# app_password = "..."            # Azure Bot App Password (client secret)
+# webhook_secret = "..."          # Optional query secret for webhook URL (?secret=...)
+# allowlist = []                  # User IDs allowed to DM (empty = all unless dm_policy=allowlist)
+
+# Discord bots
+# [channels.discord.my-bot]
+# token = "..."                   # Bot token from Discord Developer Portal
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Discord user IDs allowed to DM
+# guild_allowlist = []            # Discord guild/server IDs (empty = all)
+# reply_to_message = false        # Send responses as Discord replies
+# ack_reaction = "👀"             # Emoji reaction while processing (omit to disable)
+# activity = "with AI"            # Bot activity status text
+# activity_type = "custom"        # "playing", "listening", "watching", "competing", or "custom"
+# status = "online"               # "online", "idle", "dnd", or "invisible"
+# otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS

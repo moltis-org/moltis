@@ -28,18 +28,25 @@ agent_max_iterations = 25       # Max tool call iterations per run
 
 ## LLM Providers
 
-Provider API keys are stored separately in `~/.config/moltis/provider_keys.json` for security. Configure them through the web UI or directly in the JSON file.
+Configure providers through the web UI or directly in `moltis.toml`. API keys can be set
+via environment variables (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or
+in the config file.
 
 ```toml
 [providers]
-offered = ["openai", "anthropic", "local-llm"]
+offered = ["anthropic", "openai", "gemini"]
+
+[providers.anthropic]
+enabled = true
 
 [providers.openai]
 enabled = true
 models = ["gpt-5.3", "gpt-5.2"]
+stream_transport = "sse"        # "sse", "websocket", or "auto"
 
-[providers.anthropic]
+[providers.gemini]
 enabled = true
+models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
 
 [providers.local-llm]
 enabled = true
@@ -49,9 +56,7 @@ models = ["qwen2.5-coder-7b-q4_k_m"]
 priority_models = ["gpt-5.2"]
 ```
 
-See [Providers](providers.md) for detailed provider configuration.
-
-*More providers are coming soon.*
+See [Providers](providers.md) for the full list of supported providers and configuration options.
 
 ## Sandbox Configuration
 
@@ -62,6 +67,8 @@ Commands run inside isolated containers for security:
 mode = "all"                    # "off", "non-main", or "all"
 scope = "session"               # "command", "session", or "global"
 workspace_mount = "ro"          # "ro", "rw", or "none"
+home_persistence = "shared"     # "off", "session", or "shared" (default: "shared")
+# shared_home_dir = "/path/to/shared-home"  # Optional path for shared mode
 backend = "auto"                # "auto", "docker", or "apple-container"
 no_network = true
 
@@ -74,6 +81,7 @@ packages = [
     "python3-pip",
     "nodejs",
     "npm",
+    "golang-go",
 ]
 ```
 
@@ -192,6 +200,21 @@ token = "123456:ABC..."
 allowed_users = [123456789]     # Telegram user IDs allowed to chat
 ```
 
+## Discord Integration
+
+```toml
+[channels]
+offered = ["telegram", "discord"]
+
+[channels.discord.my-bot]
+token = "MTIzNDU2Nzg5.example.bot-token"
+dm_policy = "allowlist"
+mention_mode = "mention"
+allowlist = ["your_username"]
+```
+
+See [Discord](discord.md) for full configuration reference and setup instructions.
+
 ## TLS / HTTPS
 
 ```toml
@@ -284,15 +307,17 @@ agent_timeout_secs = 600
 agent_max_iterations = 25
 
 [providers]
-offered = ["openai", "anthropic", "local-llm"]
+offered = ["anthropic", "openai", "gemini"]
 
 [tools.exec.sandbox]
 mode = "all"
 scope = "session"
 workspace_mount = "ro"
+home_persistence = "session"
+# shared_home_dir = "/path/to/shared-home"
 backend = "auto"
 no_network = true
-packages = ["curl", "git", "jq", "python3", "nodejs"]
+packages = ["curl", "git", "jq", "python3", "nodejs", "golang-go"]
 
 [memory]
 backend = "builtin"

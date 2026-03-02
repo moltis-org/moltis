@@ -1,5 +1,14 @@
 // ── Helpers ──────────────────────────────────────────────────
+import { hasTranslation, t } from "./i18n.js";
 import * as S from "./state.js";
+
+function translatedOrFallback(key, opts, fallback) {
+	if (!key) return fallback;
+	if (!hasTranslation(key, opts)) return fallback;
+	var translated = t(key, opts);
+	if (translated) return translated;
+	return fallback;
+}
 
 export function nextId() {
 	S.setReqId(S.reqId + 1);
@@ -144,14 +153,19 @@ function renderTables(s) {
 export function renderMarkdown(raw) {
 	var s = esc(raw);
 	var codeBlocks = [];
-	s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => `@@MOLTIS_CODE_BLOCK_${codeBlocks.push(code) - 1}@@`);
+	s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+		codeBlocks.push({ lang: lang, code: code });
+		return `@@MOLTIS_CODE_BLOCK_${codeBlocks.length - 1}@@`;
+	});
 	s = renderTables(s);
 	s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
 	s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
 	s = s.replace(/@@MOLTIS_CODE_BLOCK_(\d+)@@/g, (_, idx) => {
-		var code = codeBlocks[Number(idx)];
-		if (typeof code !== "string") return "";
-		return `<pre><code>${code}</code></pre>`;
+		var block = codeBlocks[Number(idx)];
+		if (!block) return "";
+		var langAttr = block.lang ? ` data-lang="${block.lang}"` : "";
+		var badge = block.lang ? `<div class="code-lang-badge">${block.lang}</div>` : "";
+		return `<pre class="code-block">${badge}<code${langAttr}>${block.code}</code></pre>`;
 	});
 	return s;
 }
@@ -159,13 +173,69 @@ export function renderMarkdown(raw) {
 export function sendRpc(method, params) {
 	return new Promise((resolve) => {
 		if (!S.ws || S.ws.readyState !== WebSocket.OPEN) {
-			resolve({ ok: false, error: { message: "WebSocket not connected" } });
+			resolve({
+				ok: false,
+				error: {
+					code: "UNAVAILABLE",
+					message: localizedRpcErrorMessage({
+						code: "UNAVAILABLE",
+						message: "WebSocket not connected",
+					}),
+				},
+			});
 			return;
 		}
 		var id = nextId();
 		S.pending[id] = resolve;
 		S.ws.send(JSON.stringify({ type: "req", id: id, method: method, params: params }));
 	});
+}
+
+export function localizedRpcErrorMessage(error) {
+	if (!error) return t("errors:generic.title");
+	if (error.code) {
+		var key = `errors:codes.${error.code}`;
+		var translated = t(key);
+		if (translated && translated !== key) {
+			return translated;
+		}
+	}
+	return error.message || t("errors:generic.title");
+}
+
+export function localizedApiErrorMessage(payload, fallbackMessage) {
+	if (payload && typeof payload.error === "object") {
+		return localizedRpcErrorMessage(payload.error);
+	}
+	if (payload?.code) {
+		var key = `errors:codes.${payload.code}`;
+		var translated = t(key);
+		if (translated && translated !== key) {
+			return translated;
+		}
+	}
+	if (payload && typeof payload.error === "string" && payload.error.trim()) {
+		return payload.error;
+	}
+	if (payload && typeof payload.message === "string" && payload.message.trim()) {
+		return payload.message;
+	}
+	return fallbackMessage || t("errors:generic.title");
+}
+
+export function localizeRpcError(error) {
+	if (!error) return error;
+	var message = localizedRpcErrorMessage(error);
+	if (error.message === message) return error;
+	return Object.assign({}, error, { message: message });
+}
+
+export function localizeStructuredError(error) {
+	if (!error) return error;
+	var title = translatedOrFallback(error.title_key, error.title_params, error.title || t("errors:generic.title"));
+	var detail = translatedOrFallback(error.detail_key, error.detail_params, error.detail || "");
+	if (title === error.title && detail === (error.detail || "")) return error;
+	return Object.assign({}, error, { title: title, detail: detail });
 }
 
 export function formatTokens(n) {
@@ -206,28 +276,59 @@ export function formatBytes(b) {
 	return `${b} B`;
 }
 
+function getResetsAtMs(errObj) {
+	return errObj.resetsAt || (errObj.resets_at ? errObj.resets_at * 1000 : null);
+}
+
+function classifyStructuredError(errObj, resetsAt) {
+	if (!(errObj.title_key || errObj.detail_key)) return null;
+	return localizeStructuredError({
+		icon: errObj.icon || "\u26A0\uFE0F",
+		title: errObj.title || t("errors:generic.title"),
+		detail: errObj.detail || errObj.message || "",
+		provider: errObj.provider,
+		resetsAt: resetsAt,
+		title_key: errObj.title_key,
+		detail_key: errObj.detail_key,
+		title_params: errObj.title_params,
+		detail_params: errObj.detail_params,
+	});
+}
+
+function classifyUsageLimitError(errObj, resetsAt) {
+	if (!(errObj.type === "usage_limit_reached" || (errObj.message && errObj.message.indexOf("usage limit") !== -1))) {
+		return null;
+	}
+	return {
+		icon: "",
+		title: t("errors:usageLimitReached.title"),
+		detail: t("errors:usageLimitReached.detail", { planType: errObj.plan_type || "current" }),
+		resetsAt: resetsAt,
+	};
+}
+
+function classifyRateLimitError(errObj, resetsAt) {
+	if (!(errObj.type === "rate_limit_exceeded" || (errObj.message && errObj.message.indexOf("rate limit") !== -1))) {
+		return null;
+	}
+	return {
+		icon: "\u26A0\uFE0F",
+		title: t("errors:rateLimited.title"),
+		detail: errObj.message || t("errors:rateLimited.detail"),
+		resetsAt: resetsAt,
+	};
+}
+
 function classifyJsonErrorObj(errObj) {
-	var resetsAt = errObj.resets_at ? errObj.resets_at * 1000 : null;
-	if (errObj.type === "usage_limit_reached" || (errObj.message && errObj.message.indexOf("usage limit") !== -1)) {
-		return {
-			icon: "",
-			title: "Usage limit reached",
-			detail: `Your ${errObj.plan_type || "current"} plan limit has been reached.`,
-			resetsAt: resetsAt,
-		};
-	}
-	if (errObj.type === "rate_limit_exceeded" || (errObj.message && errObj.message.indexOf("rate limit") !== -1)) {
-		return {
-			icon: "\u26A0\uFE0F",
-			title: "Rate limited",
-			detail: errObj.message || "Too many requests. Please wait a moment.",
-			resetsAt: resetsAt,
-		};
-	}
-	if (errObj.message) {
-		return { icon: "\u26A0\uFE0F", title: "Error", detail: errObj.message, resetsAt: null };
-	}
-	return null;
+	var resetsAt = getResetsAtMs(errObj);
+	return (
+		classifyStructuredError(errObj, resetsAt) ||
+		classifyUsageLimitError(errObj, resetsAt) ||
+		classifyRateLimitError(errObj, resetsAt) ||
+		(errObj.message
+			? { icon: "\u26A0\uFE0F", title: t("errors:generic.title"), detail: errObj.message, resetsAt: null }
+			: null)
+	);
 }
 
 function parseJsonError(message) {
@@ -248,22 +349,22 @@ function parseHttpStatusError(message) {
 	if (code === 401 || code === 403)
 		return {
 			icon: "\uD83D\uDD12",
-			title: "Authentication error",
-			detail: "Your session may have expired.",
+			title: t("errors:authError.title"),
+			detail: t("errors:authError.detail"),
 			resetsAt: null,
 		};
 	if (code === 429)
 		return {
 			icon: "",
-			title: "Rate limited",
-			detail: "Too many requests.",
+			title: t("errors:rateLimited.title"),
+			detail: t("errors:rateLimited.detailShort"),
 			resetsAt: null,
 		};
 	if (code >= 500)
 		return {
 			icon: "\uD83D\uDEA8",
-			title: "Server error",
-			detail: "The upstream provider returned an error.",
+			title: t("errors:serverError.title"),
+			detail: t("errors:serverError.detail"),
 			resetsAt: null,
 		};
 	return null;
@@ -274,7 +375,7 @@ export function parseErrorMessage(message) {
 		parseJsonError(message) ||
 		parseHttpStatusError(message) || {
 			icon: "\u26A0\uFE0F",
-			title: "Error",
+			title: t("errors:generic.title"),
 			detail: message,
 			resetsAt: null,
 		}
@@ -285,7 +386,7 @@ export function updateCountdown(el, resetsAtMs) {
 	var now = Date.now();
 	var diff = resetsAtMs - now;
 	if (diff <= 0) {
-		el.textContent = "Limit should be reset now \u2014 try again!";
+		el.textContent = t("errors:countdown.resetReady");
 		el.className = "error-countdown reset-ready";
 		return true;
 	}
@@ -294,7 +395,7 @@ export function updateCountdown(el, resetsAtMs) {
 	var parts = [];
 	if (hours > 0) parts.push(`${hours}h`);
 	parts.push(`${mins}m`);
-	el.textContent = `Resets in ${parts.join(" ")}`;
+	el.textContent = t("errors:countdown.resetsIn", { time: parts.join(" ") });
 	return false;
 }
 
@@ -784,6 +885,20 @@ export function renderMapPointGroups(container, points, fallbackLabel) {
 		if (renderMapLinks(container, point.map_links, label, heading)) rendered = true;
 	}
 	return rendered;
+}
+
+/**
+ * Parse the payload from `agents.list` into `{ defaultId, agents }`.
+ * Handles both array (legacy) and object shapes.
+ */
+export function parseAgentsListPayload(payload) {
+	if (Array.isArray(payload)) {
+		return { defaultId: "main", agents: payload };
+	}
+	return {
+		defaultId: typeof payload?.default_id === "string" ? payload.default_id : "main",
+		agents: Array.isArray(payload?.agents) ? payload.agents : [],
+	};
 }
 
 export function createEl(tag, attrs, children) {

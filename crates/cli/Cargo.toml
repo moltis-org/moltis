@@ -7,11 +7,6 @@ name              = "moltis"
 repository        = "https://github.com/moltis-org/moltis"
 version.workspace = true
 
-[package.metadata.binstall]
-bin-dir = "{ bin }{ binary-ext }"
-pkg-fmt = "tgz"
-pkg-url = "{ repo }/releases/download/v{ version }/moltis-{ version }-{ target }.tar.gz"
-
 [package.metadata.deb]
 assets     = [["target/release/moltis", "usr/bin/", "755"]]
 copyright  = "2025, Moltis Contributors"
@@ -33,34 +28,36 @@ name = "moltis"
 path = "src/main.rs"
 
 [dependencies]
-anyhow             = { workspace = true }
-clap               = { workspace = true }
-dotenvy            = { workspace = true }
-moltis-agents      = { workspace = true }
-moltis-browser     = { workspace = true }
-moltis-common      = { workspace = true }
-moltis-config      = { workspace = true }
-moltis-cron        = { workspace = true }
-moltis-gateway     = { workspace = true }
-moltis-memory      = { workspace = true }
-moltis-oauth       = { workspace = true }
-moltis-onboarding  = { workspace = true }
-moltis-plugins     = { workspace = true }
-moltis-projects    = { workspace = true }
-moltis-sessions    = { workspace = true }
-moltis-skills      = { workspace = true }
-moltis-tools       = { workspace = true }
-moltis-web         = { optional = true, workspace = true }
-open               = { workspace = true }
-reqwest            = { workspace = true }
-secrecy            = { workspace = true }
-serde_json         = { workspace = true }
-sqlx               = { workspace = true }
-time               = { workspace = true }
-tokio              = { workspace = true }
-tracing            = { workspace = true }
-tracing-subscriber = { workspace = true }
-which              = { workspace = true }
+anyhow                 = { workspace = true }
+clap                   = { workspace = true }
+dotenvy                = { workspace = true }
+moltis-agents          = { workspace = true }
+moltis-browser         = { workspace = true }
+moltis-common          = { workspace = true }
+moltis-config          = { workspace = true }
+moltis-cron            = { workspace = true }
+moltis-gateway         = { workspace = true }
+moltis-memory          = { workspace = true }
+moltis-oauth           = { workspace = true }
+moltis-onboarding      = { workspace = true }
+moltis-openclaw-import = { optional = true, workspace = true }
+moltis-plugins         = { workspace = true }
+moltis-projects        = { workspace = true }
+moltis-sessions        = { workspace = true }
+moltis-skills          = { workspace = true }
+moltis-tools           = { workspace = true }
+moltis-web             = { optional = true, workspace = true }
+open                   = { workspace = true }
+rand                   = { workspace = true }
+reqwest                = { workspace = true }
+secrecy                = { workspace = true }
+serde_json             = { workspace = true }
+sqlx                   = { workspace = true }
+time                   = { workspace = true }
+tokio                  = { workspace = true }
+tracing                = { workspace = true }
+tracing-subscriber     = { workspace = true }
+which                  = { workspace = true }
 
 [target.'cfg(all(not(target_os = "windows"), not(all(target_os = "linux", target_arch = "aarch64"))))'.dependencies]
 tikv-jemallocator = { optional = true, workspace = true }
@@ -69,39 +66,69 @@ tikv-jemallocator = { optional = true, workspace = true }
 tempfile = { workspace = true }
 
 [features]
+agent = ["moltis-gateway/agent", "moltis-web?/agent"]
+caldav = ["moltis-gateway/caldav"]
 default = [
+  "agent",
+  "caldav",
+  "code-splitter",
   "file-watcher",
   "graphql",
   "jemalloc",
   "local-llm",
+  "local-llm-metal",
+  "mdns",
   "metrics",
+  "openclaw-import",
   "prometheus",
   "push-notifications",
   "qmd",
   "tailscale",
   "tls",
+  "trusted-network",
   "vault",
   "voice",
+  "wasm",
   "web-ui",
+  "whatsapp",
 ]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
-file-watcher = ["moltis-gateway/file-watcher"]
-graphql      = ["moltis-gateway/graphql", "moltis-web?/graphql"]
-jemalloc     = ["dep:tikv-jemallocator"]
+code-splitter   = ["moltis-memory/code-splitter"]
+file-watcher    = ["moltis-gateway/file-watcher"]
+graphql         = ["moltis-gateway/graphql", "moltis-web?/graphql"]
+jemalloc        = ["dep:tikv-jemallocator"]
+lang-bash       = ["moltis-memory/lang-bash"]
+lang-c          = ["moltis-memory/lang-c"]
+lang-cpp        = ["moltis-memory/lang-cpp"]
+lang-css        = ["moltis-memory/lang-css"]
+lang-html       = ["moltis-memory/lang-html"]
+lang-java       = ["moltis-memory/lang-java"]
+lang-json       = ["moltis-memory/lang-json"]
+lang-markdown   = ["moltis-memory/lang-markdown"]
+lang-ruby       = ["moltis-memory/lang-ruby"]
+lang-toml       = ["moltis-memory/lang-toml"]
+lang-typescript = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
 lightweight        = ["jemalloc", "tls", "web-ui"]
 local-llm          = ["moltis-gateway/local-llm"]
+local-llm-cuda     = ["local-llm", "moltis-gateway/local-llm-cuda"]
+local-llm-metal    = ["local-llm", "moltis-gateway/local-llm-metal"]
+mdns               = ["moltis-gateway/mdns"]
 metrics            = ["moltis-gateway/metrics", "moltis-web?/metrics"]
+openclaw-import    = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
 prometheus         = ["moltis-gateway/prometheus"]
 push-notifications = ["moltis-gateway/push-notifications", "moltis-web?/push-notifications"]
 qmd                = ["moltis-gateway/qmd"]
 tailscale          = ["moltis-gateway/tailscale", "moltis-web?/tailscale"]
 tls                = ["moltis-gateway/tls"]
+trusted-network    = ["moltis-gateway/trusted-network"]
 vault              = ["moltis-gateway/vault", "moltis-web?/vault"]
 voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
+wasm               = ["moltis-tools/wasm"]
 web-ui             = ["dep:moltis-web", "moltis-gateway/web-ui"]
+whatsapp           = ["moltis-gateway/whatsapp"]
 
 [lints]
 workspace = true

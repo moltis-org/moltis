@@ -1190,6 +1190,7 @@ pub struct GatewayServices {
     pub provider_setup: Arc<dyn ProviderSetupService>,
     pub project: Arc<dyn ProjectService>,
     pub local_llm: Arc<dyn LocalLlmService>,
+    pub network_audit: Arc<dyn crate::network_audit::NetworkAuditService>,
     /// Optional channel outbound for sending replies back to channels.
     channel_outbound: Option<Arc<dyn moltis_channels::ChannelOutbound>>,
     /// Optional channel stream outbound for edit-in-place channel streaming.
@@ -1200,6 +1201,8 @@ pub struct GatewayServices {
     pub session_store: Option<Arc<moltis_sessions::store::SessionStore>>,
     /// Optional session share store for immutable snapshot links.
     pub session_share_store: Option<Arc<crate::share_store::ShareStore>>,
+    /// Optional agent persona store for multi-agent support.
+    pub agent_persona_store: Option<Arc<crate::agent_persona::AgentPersonaStore>>,
 }
 
 impl GatewayServices {
@@ -1274,16 +1277,26 @@ impl GatewayServices {
             provider_setup: Arc::new(NoopProviderSetupService),
             project: Arc::new(NoopProjectService),
             local_llm: Arc::new(NoopLocalLlmService),
+            network_audit: Arc::new(crate::network_audit::NoopNetworkAuditService),
             channel_outbound: None,
             channel_stream_outbound: None,
             session_metadata: None,
             session_store: None,
             session_share_store: None,
+            agent_persona_store: None,
         }
     }
 
     pub fn with_local_llm(mut self, local_llm: Arc<dyn LocalLlmService>) -> Self {
         self.local_llm = local_llm;
+        self
+    }
+
+    pub fn with_network_audit(
+        mut self,
+        svc: Arc<dyn crate::network_audit::NetworkAuditService>,
+    ) -> Self {
+        self.network_audit = svc;
         self
     }
 
@@ -1312,6 +1325,14 @@ impl GatewayServices {
 
     pub fn with_session_share_store(mut self, store: Arc<crate::share_store::ShareStore>) -> Self {
         self.session_share_store = Some(store);
+        self
+    }
+
+    pub fn with_agent_persona_store(
+        mut self,
+        store: Arc<crate::agent_persona::AgentPersonaStore>,
+    ) -> Self {
+        self.agent_persona_store = Some(store);
         self
     }
 

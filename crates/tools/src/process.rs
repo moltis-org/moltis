@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     tracing::{debug, info, warn},
@@ -121,7 +120,7 @@ impl ProcessTool {
         session_key: &str,
         tmux_args: &str,
         timeout_secs: u64,
-    ) -> Result<crate::exec::ExecResult> {
+    ) -> anyhow::Result<crate::exec::ExecResult> {
         let command = format!("tmux {tmux_args}");
         let opts = ExecOpts {
             timeout: std::time::Duration::from_secs(timeout_secs),
@@ -136,12 +135,12 @@ impl ProcessTool {
                 let image = router.resolve_image(session_key, None).await;
                 let backend = router.backend();
                 backend.ensure_ready(&id, Some(&image)).await?;
-                return backend.exec(&id, &command, &opts).await;
+                return Ok(backend.exec(&id, &command, &opts).await?);
             }
         }
 
         // Fallback: run directly on host (for non-sandboxed or no router).
-        crate::exec::exec_command(&command, &opts).await
+        Ok(crate::exec::exec_command(&command, &opts).await?)
     }
 
     /// Resolve the sandbox ID for a session key (for logging).
@@ -394,7 +393,7 @@ impl AgentTool for ProcessTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         #[cfg(feature = "metrics")]
         let start = Instant::now();
 
@@ -697,7 +696,7 @@ mod tests {
     #[test]
     fn test_process_action_invalid_action() {
         let json = serde_json::json!({ "action": "invalid" });
-        let result: std::result::Result<ProcessAction, _> = serde_json::from_value(json);
+        let result: Result<ProcessAction, _> = serde_json::from_value(json);
         assert!(result.is_err());
     }
 
@@ -705,12 +704,12 @@ mod tests {
     fn test_process_action_missing_required_field() {
         // start without command
         let json = serde_json::json!({ "action": "start" });
-        let result: std::result::Result<ProcessAction, _> = serde_json::from_value(json);
+        let result: Result<ProcessAction, _> = serde_json::from_value(json);
         assert!(result.is_err());
 
         // poll without session_name
         let json = serde_json::json!({ "action": "poll" });
-        let result: std::result::Result<ProcessAction, _> = serde_json::from_value(json);
+        let result: Result<ProcessAction, _> = serde_json::from_value(json);
         assert!(result.is_err());
     }
 

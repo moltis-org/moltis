@@ -11,10 +11,14 @@ use crate::{Error, Result};
 pub struct CallbackServer;
 
 impl CallbackServer {
-    /// Listen on `127.0.0.1:{port}` for a GET `/auth/callback` with `code` and `state` params.
+    /// Listen on `{bind_addr}:{port}` for a GET `/auth/callback` with `code` and `state` params.
     /// Validates state matches `expected_state`, returns the authorization code.
     /// Times out after 60 seconds.
-    pub async fn wait_for_code(port: u16, expected_state: String) -> Result<String> {
+    pub async fn wait_for_code(
+        port: u16,
+        expected_state: String,
+        bind_addr: &str,
+    ) -> Result<String> {
         let (tx, rx) = oneshot::channel::<Result<String>>();
         let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
@@ -50,7 +54,7 @@ impl CallbackServer {
             }),
         );
 
-        let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await?;
+        let listener = tokio::net::TcpListener::bind(format!("{bind_addr}:{port}")).await?;
         let server = axum::serve(listener, app);
 
         tokio::select! {

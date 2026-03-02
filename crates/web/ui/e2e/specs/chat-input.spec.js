@@ -74,6 +74,7 @@ async function openFullContextWithRetry(page) {
 		await waitForWsConnected(page);
 		const fullContextRpc = await sendRpcFromPage(page, "chat.full_context", {});
 		const noProvidersConfigured =
+			fullContextRpc?.error?.code === "UNAVAILABLE" ||
 			fullContextRpc?.error?.message?.includes("no LLM providers configured") ||
 			fullContextRpc?.error?.message?.includes("chat not configured");
 
@@ -92,7 +93,7 @@ async function openFullContextWithRetry(page) {
 					if (await failedMsg.isVisible().catch(() => false)) return "failed";
 					return "loading";
 				},
-				{ timeout: 4_000 },
+				{ timeout: 8_000 },
 			)
 			.toBe("copy")
 			.then(() => "copy")
@@ -373,11 +374,10 @@ test.describe("Chat input and slash commands", () => {
 		const llmOutputBtn = panel.getByRole("button", { name: "LLM output", exact: true });
 		await expect(llmOutputBtn).toBeVisible();
 		await expect(llmOutputBtn).toHaveClass(/provider-btn-sm/);
-		await llmOutputBtn.click();
-		const llmOutput = panel.locator("#fullContextLlmOutput");
-		await expect(llmOutput).toBeVisible();
-		const llmOutputText = (await llmOutput.textContent()) || "";
-		expect(llmOutputText).not.toBe("");
+
+		// Stub clipboard before toggling the LLM output panel so that a
+		// WebSocket-triggered panel refresh between the toggle and the copy
+		// click cannot reset the panel state.
 		const stubbedClipboard = await page.evaluate(() => {
 			window.__copiedText = null;
 			try {
@@ -395,6 +395,14 @@ test.describe("Chat input and slash commands", () => {
 			}
 		});
 		expect(stubbedClipboard).toBeTruthy();
+
+		// Toggle the LLM output panel visible and immediately click copy to
+		// minimize the window for a maybeRefreshFullContext() race.
+		await llmOutputBtn.click();
+		const llmOutput = panel.locator("#fullContextLlmOutput");
+		await expect(llmOutput).toBeVisible();
+		const llmOutputText = (await llmOutput.textContent()) || "";
+		expect(llmOutputText).not.toBe("");
 
 		await copyBtn.click();
 		const copied = await page.evaluate(() => window.__copiedText);

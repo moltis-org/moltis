@@ -8,6 +8,7 @@ async-trait    = { workspace = true }
 moltis-common  = { workspace = true }
 moltis-config  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
+rand           = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 thiserror      = { workspace = true }

@@ -189,6 +189,7 @@ pub struct MoltisConfig {
     pub providers: ProvidersConfig,
     pub chat: ChatConfig,
     pub tools: ToolsConfig,
+    pub agents: AgentsConfig,
     pub skills: SkillsConfig,
     pub mcp: McpConfig,
     pub channels: ChannelsConfig,
@@ -205,11 +206,49 @@ pub struct MoltisConfig {
     pub heartbeat: HeartbeatConfig,
     pub voice: VoiceConfig,
     pub cron: CronConfig,
+    pub caldav: CalDavConfig,
     /// Environment variables injected into the Moltis process at startup.
     /// Useful for API keys in Docker where you can't easily set env vars.
     /// Process env vars take precedence (existing vars are not overwritten).
     #[serde(default)]
     pub env: HashMap<String, String>,
+}
+
+/// Agent spawn presets used by tools like `spawn_agent`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentsConfig {
+    /// Optional default preset name used when `spawn_agent.preset` is omitted.
+    pub default_preset: Option<String>,
+    /// Named spawn presets.
+    #[serde(default)]
+    pub presets: HashMap<String, AgentPresetConfig>,
+}
+
+impl AgentsConfig {
+    /// Return a preset by name.
+    pub fn get_preset(&self, name: &str) -> Option<&AgentPresetConfig> {
+        self.presets.get(name)
+    }
+}
+
+/// Spawn policy preset for sub-agents.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPresetConfig {
+    /// Optional model override for this preset.
+    pub model: Option<String>,
+    /// Optional allowlist of tools available to the sub-agent.
+    #[serde(default)]
+    pub allow_tools: Vec<String>,
+    /// Optional denylist of tools removed from the sub-agent.
+    #[serde(default)]
+    pub deny_tools: Vec<String>,
+    /// Restrict sub-agent to delegation/session/task tools only.
+    #[serde(default)]
+    pub delegate_only: bool,
+    /// Optional extra instructions appended to sub-agent system prompt.
+    pub system_prompt_suffix: Option<String>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -707,6 +746,13 @@ pub struct HeartbeatConfig {
     pub ack_max_chars: usize,
     /// Active hours window — heartbeats only run during this window.
     pub active_hours: ActiveHoursConfig,
+    /// Whether heartbeat replies should be delivered to a channel account.
+    #[serde(default)]
+    pub deliver: bool,
+    /// Channel account identifier for heartbeat delivery (e.g. a Telegram bot account id).
+    pub channel: Option<String>,
+    /// Destination chat/recipient id for heartbeat delivery.
+    pub to: Option<String>,
     /// Whether heartbeat runs inside a sandbox. Defaults to true.
     #[serde(default = "default_true")]
     pub sandbox_enabled: bool,
@@ -723,6 +769,9 @@ impl Default for HeartbeatConfig {
             prompt: None,
             ack_max_chars: 300,
             active_hours: ActiveHoursConfig::default(),
+            deliver: false,
+            channel: None,
+            to: None,
             sandbox_enabled: true,
             sandbox_image: None,
         }
@@ -769,6 +818,70 @@ impl Default for CronConfig {
             rate_limit_window_secs: 60,
         }
     }
+}
+
+/// CalDAV integration configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalDavConfig {
+    /// Whether CalDAV integration is enabled.
+    pub enabled: bool,
+    /// Default account name to use when none is specified.
+    pub default_account: Option<String>,
+    /// Named CalDAV accounts.
+    #[serde(default)]
+    pub accounts: HashMap<String, CalDavAccountConfig>,
+}
+
+/// Configuration for a single CalDAV account.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalDavAccountConfig {
+    /// CalDAV server URL (e.g. "https://caldav.fastmail.com/dav/calendars").
+    pub url: Option<String>,
+    /// Username for authentication.
+    pub username: Option<String>,
+    /// Password or app-specific password.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub password: Option<Secret<String>>,
+    /// Provider hint: "fastmail", "icloud", or "generic".
+    pub provider: Option<String>,
+    /// HTTP request timeout in seconds.
+    #[serde(default = "default_caldav_timeout")]
+    pub timeout_seconds: u64,
+}
+
+impl Default for CalDavAccountConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            username: None,
+            password: None,
+            provider: None,
+            timeout_seconds: default_caldav_timeout(),
+        }
+    }
+}
+
+impl std::fmt::Debug for CalDavAccountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CalDavAccountConfig")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("provider", &self.provider)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
+}
+
+fn default_caldav_timeout() -> u64 {
+    30
 }
 
 /// Tailscale Serve/Funnel configuration.
@@ -821,6 +934,8 @@ pub struct MemoryEmbeddingConfig {
     /// Enable LLM reranking for hybrid search results.
     #[serde(default)]
     pub llm_reranking: bool,
+    /// Merge strategy for hybrid search: "rrf" (default) or "linear".
+    pub search_merge_strategy: Option<String>,
     /// Enable session export to memory for cross-run recall.
     #[serde(default)]
     pub session_export: bool,
@@ -1016,18 +1131,44 @@ pub struct McpOAuthOverrideEntry {
 }
 
 /// Channel configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChannelsConfig {
+    /// Which channel types are offered in the web UI (onboarding + channels page).
+    /// Defaults to `["telegram", "discord"]`. Set to `["telegram", "discord", "msteams"]` to opt in to Teams.
+    #[serde(
+        default = "default_channels_offered",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub offered: Vec<String>,
     /// Telegram bot accounts, keyed by account ID.
     #[serde(default)]
     pub telegram: HashMap<String, serde_json::Value>,
-    /// Slack workspace accounts, keyed by account ID.
+    /// WhatsApp linked-device accounts, keyed by account ID.
     #[serde(default)]
-    pub slack: HashMap<String, serde_json::Value>,
+    pub whatsapp: HashMap<String, serde_json::Value>,
+    /// Microsoft Teams bot accounts, keyed by account ID.
+    #[serde(default)]
+    pub msteams: HashMap<String, serde_json::Value>,
     /// Discord bot accounts, keyed by account ID.
     #[serde(default)]
     pub discord: HashMap<String, serde_json::Value>,
+}
+
+fn default_channels_offered() -> Vec<String> {
+    vec!["telegram".into(), "discord".into()]
+}
+
+impl Default for ChannelsConfig {
+    fn default() -> Self {
+        Self {
+            offered: default_channels_offered(),
+            telegram: HashMap::new(),
+            whatsapp: HashMap::new(),
+            msteams: HashMap::new(),
+            discord: HashMap::new(),
+        }
+    }
 }
 
 /// TLS configuration for the gateway HTTPS server.
@@ -1410,6 +1551,69 @@ pub struct ResourceLimitsConfig {
     pub pids_max: Option<u32>,
 }
 
+/// Optional per-tool overrides for WASM fuel and memory.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolLimitOverrideConfig {
+    pub fuel: Option<u64>,
+    pub memory: Option<u64>,
+}
+
+/// Configurable WASM tool limits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WasmToolLimitsConfig {
+    pub default_memory: u64,
+    pub default_fuel: u64,
+    pub tool_overrides: HashMap<String, ToolLimitOverrideConfig>,
+}
+
+fn default_wasm_tool_overrides() -> HashMap<String, ToolLimitOverrideConfig> {
+    let mb = 1024_u64 * 1024_u64;
+    HashMap::from([
+        ("calc".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(100_000),
+            memory: Some(2 * mb),
+        }),
+        ("web_fetch".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(10_000_000),
+            memory: Some(32 * mb),
+        }),
+        ("web_search".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(10_000_000),
+            memory: Some(32 * mb),
+        }),
+        ("show_map".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(10_000_000),
+            memory: Some(64 * mb),
+        }),
+        ("location".to_string(), ToolLimitOverrideConfig {
+            fuel: Some(5_000_000),
+            memory: Some(16 * mb),
+        }),
+    ])
+}
+
+impl Default for WasmToolLimitsConfig {
+    fn default() -> Self {
+        Self {
+            default_memory: 16 * 1024 * 1024,
+            default_fuel: 1_000_000,
+            tool_overrides: default_wasm_tool_overrides(),
+        }
+    }
+}
+
+/// Persistence strategy for `/home/sandbox` in sandbox containers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HomePersistenceConfig {
+    Off,
+    Session,
+    #[default]
+    Shared,
+}
+
 /// Sandbox configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1417,17 +1621,37 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Persistence strategy for `/home/sandbox`: off, session, or shared.
+    pub home_persistence: HomePersistenceConfig,
+    /// Optional host directory for shared `/home/sandbox` persistence.
+    /// Relative paths are resolved against `data_dir()`.
+    pub shared_home_dir: Option<String>,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
-    /// Backend: "auto" (default), "docker", or "apple-container".
-    /// "auto" prefers Apple Container on macOS when available, falls back to Docker.
+    /// Network policy: "blocked" (no network), "trusted" (proxy-filtered), "bypass" (unrestricted, no audit).
+    #[serde(default)]
+    pub network: String,
+    /// Domains allowed through the proxy in `trusted` mode.
+    #[serde(default)]
+    pub trusted_domains: Vec<String>,
+    /// Backend: "auto" (default), "docker", "podman", "apple-container",
+    /// "restricted-host", or "wasm".
+    /// "auto" prefers Apple Container on macOS, then Podman, then Docker,
+    /// then restricted-host. "wasm" uses Wasmtime + WASI for real sandboxed
+    /// execution.
     pub backend: String,
     pub resource_limits: ResourceLimitsConfig,
     /// Packages to install via `apt-get` in the sandbox image.
     /// Set to an empty list to skip provisioning.
     #[serde(default = "default_sandbox_packages")]
     pub packages: Vec<String>,
+    /// Fuel limit for WASM sandbox execution (default: 1 billion instructions).
+    pub wasm_fuel_limit: Option<u64>,
+    /// Epoch interruption interval in milliseconds for WASM sandbox (default: 100ms).
+    pub wasm_epoch_interval_ms: Option<u64>,
+    /// Optional per-tool WASM limits (fuel + memory).
+    pub wasm_tool_limits: Option<WasmToolLimitsConfig>,
 }
 
 /// Default packages installed in sandbox containers.
@@ -1454,6 +1678,14 @@ fn default_sandbox_packages() -> Vec<String> {
         "npm",
         "ruby",
         "ruby-dev",
+        "golang-go",
+        "php-cli",
+        "php-mbstring",
+        "php-xml",
+        "php-curl",
+        "default-jdk",
+        "maven",
+        "perl",
         // Build toolchain & native deps
         "build-essential",
         "clang",
@@ -1471,6 +1703,8 @@ fn default_sandbox_packages() -> Vec<String> {
         "flex",
         "dpkg-dev",
         "fakeroot",
+        "cmake",
+        "ninja-build",
         // Compression & archiving
         "zip",
         "unzip",
@@ -1494,6 +1728,11 @@ fn default_sandbox_packages() -> Vec<String> {
         "tzdata",
         "shellcheck",
         "patchelf",
+        "git-lfs",
+        "gettext",
+        "lsb-release",
+        "software-properties-common",
+        "yamllint",
         // Text processing & search
         "ripgrep",
         "fd-find",
@@ -1555,6 +1794,11 @@ fn default_sandbox_packages() -> Vec<String> {
         "dos2unix",
         "miller",
         "datamash",
+        // Database clients
+        "postgresql-client",
+        "default-mysql-client",
+        // DevOps
+        "ansible",
         // GIS / OpenStreetMap / map generation
         "gdal-bin",
         "mapnik-utils",
@@ -1592,12 +1836,19 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            home_persistence: HomePersistenceConfig::default(),
+            shared_home_dir: None,
             image: None,
             container_prefix: None,
-            no_network: true,
+            no_network: false,
+            network: "trusted".into(),
+            trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimitsConfig::default(),
             packages: default_sandbox_packages(),
+            wasm_fuel_limit: None,
+            wasm_epoch_interval_ms: None,
+            wasm_tool_limits: None,
         }
     }
 }
@@ -1645,6 +1896,38 @@ pub struct ProvidersConfig {
     pub local_models: Vec<String>,
 }
 
+/// How tool calling is handled for a provider.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolMode {
+    /// Detect automatically: native tool API if supported, else text-based fallback.
+    #[default]
+    Auto,
+    /// Force native tool calling API (provider must support it).
+    Native,
+    /// Force text-based tool calling (prompt injection + parse).
+    Text,
+    /// Disable all tool support for this provider.
+    Off,
+}
+
+const fn is_default_tool_mode(v: &ToolMode) -> bool {
+    matches!(v, ToolMode::Auto)
+}
+
+/// Streaming transport for provider response streams.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderStreamTransport {
+    /// Use HTTP + SSE streaming (current default).
+    #[default]
+    Sse,
+    /// Use WebSocket mode when supported by the provider API.
+    Websocket,
+    /// Try WebSocket first, then fall back to SSE on transport/setup failure.
+    Auto,
+}
+
 /// Configuration for a single LLM provider.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1672,6 +1955,12 @@ pub struct ProviderEntry {
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub fetch_models: bool,
 
+    /// Streaming transport for this provider (`sse`, `websocket`, `auto`).
+    ///
+    /// Defaults to `sse` for compatibility.
+    #[serde(default, skip_serializing_if = "is_default_provider_stream_transport")]
+    pub stream_transport: ProviderStreamTransport,
+
     /// Optional alias for this provider instance.
     ///
     /// When set, this alias is used in metrics labels instead of the provider name.
@@ -1679,6 +1968,16 @@ pub struct ProviderEntry {
     /// (e.g., "anthropic-work", "anthropic-personal").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
+
+    /// How tool calling is handled for this provider.
+    ///
+    /// - `auto` (default): use native tool API if the provider supports it,
+    ///   otherwise fall back to text-based prompt injection.
+    /// - `native`: force native tool calling.
+    /// - `text`: force text-based tool calling.
+    /// - `off`: disable all tools for this provider.
+    #[serde(default, skip_serializing_if = "is_default_tool_mode")]
+    pub tool_mode: ToolMode,
 }
 
 impl std::fmt::Debug for ProviderEntry {
@@ -1689,7 +1988,9 @@ impl std::fmt::Debug for ProviderEntry {
             .field("base_url", &self.base_url)
             .field("models", &self.models)
             .field("fetch_models", &self.fetch_models)
+            .field("stream_transport", &self.stream_transport)
             .field("alias", &self.alias)
+            .field("tool_mode", &self.tool_mode)
             .finish()
     }
 }
@@ -1702,7 +2003,9 @@ impl Default for ProviderEntry {
             base_url: None,
             models: Vec::new(),
             fetch_models: true,
+            stream_transport: ProviderStreamTransport::Sse,
             alias: None,
+            tool_mode: ToolMode::Auto,
         }
     }
 }
@@ -1729,6 +2032,10 @@ where
 
 const fn is_true(value: &bool) -> bool {
     *value
+}
+
+const fn is_default_provider_stream_transport(value: &ProviderStreamTransport) -> bool {
+    matches!(value, ProviderStreamTransport::Sse)
 }
 
 impl ProvidersConfig {
@@ -1861,6 +2168,39 @@ OPENROUTER_API_KEY = "sk-or-test"
     }
 
     #[test]
+    fn agents_config_defaults_empty() {
+        let config: MoltisConfig = toml::from_str("").unwrap();
+        assert!(config.agents.default_preset.is_none());
+        assert!(config.agents.presets.is_empty());
+    }
+
+    #[test]
+    fn agents_config_parses_presets() {
+        let toml = r#"
+[agents]
+default_preset = "research"
+
+[agents.presets.research]
+model = "openai/gpt-5.2"
+allow_tools = ["web_search", "web_fetch"]
+deny_tools = ["exec"]
+delegate_only = false
+system_prompt_suffix = "Focus on evidence."
+"#;
+        let config: MoltisConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.agents.default_preset.as_deref(), Some("research"));
+        let preset = config.agents.get_preset("research").unwrap();
+        assert_eq!(preset.model.as_deref(), Some("openai/gpt-5.2"));
+        assert_eq!(preset.allow_tools.len(), 2);
+        assert_eq!(preset.deny_tools, vec!["exec".to_string()]);
+        assert!(!preset.delegate_only);
+        assert_eq!(
+            preset.system_prompt_suffix.as_deref(),
+            Some("Focus on evidence.")
+        );
+    }
+
+    #[test]
     fn chat_config_default_queue_mode_is_followup() {
         let cfg = ChatConfig::default();
         assert_eq!(cfg.message_queue_mode, MessageQueueMode::Followup);
@@ -1939,5 +2279,173 @@ OPENROUTER_API_KEY = "sk-or-test"
         let entry = ProviderEntry::default();
         assert!(entry.fetch_models);
         assert!(entry.models.is_empty());
+    }
+
+    #[test]
+    fn channels_config_defaults_to_telegram_and_discord_offered() {
+        let config = ChannelsConfig::default();
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "discord".to_string()
+        ]);
+    }
+
+    #[test]
+    fn channels_config_empty_toml_defaults_offered() {
+        let config: ChannelsConfig = toml::from_str("").unwrap();
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "discord".to_string()
+        ]);
+    }
+
+    #[test]
+    fn channels_config_explicit_offered() {
+        let config: ChannelsConfig =
+            toml::from_str(r#"offered = ["telegram", "msteams"]"#).unwrap();
+        assert_eq!(config.offered, vec![
+            "telegram".to_string(),
+            "msteams".to_string()
+        ]);
+    }
+
+    #[test]
+    fn sandbox_defaults_include_go_runtime() {
+        let sandbox = SandboxConfig::default();
+        assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
+        assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
+        assert!(sandbox.wasm_tool_limits.is_none());
+    }
+
+    #[test]
+    fn wasm_tool_limits_config_defaults() {
+        let limits = WasmToolLimitsConfig::default();
+        assert_eq!(limits.default_memory, 16 * 1024 * 1024);
+        assert_eq!(limits.default_fuel, 1_000_000);
+        assert!(limits.tool_overrides.contains_key("calc"));
+    }
+
+    #[test]
+    fn sandbox_wasm_tool_limits_deserialize() {
+        let config: SandboxConfig = toml::from_str(
+            r#"
+mode = "all"
+scope = "session"
+workspace_mount = "ro"
+
+[wasm_tool_limits]
+default_memory = 2048
+default_fuel = 5000
+
+[wasm_tool_limits.tool_overrides.calc]
+fuel = 100
+memory = 300
+"#,
+        )
+        .unwrap();
+
+        let limits = config.wasm_tool_limits.unwrap();
+        assert_eq!(limits.default_memory, 2048);
+        assert_eq!(limits.default_fuel, 5000);
+        assert_eq!(
+            limits
+                .tool_overrides
+                .get("calc")
+                .and_then(|override_cfg| override_cfg.fuel),
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn tool_mode_serde_round_trip() {
+        for (variant, expected_str) in [
+            (ToolMode::Auto, r#""auto""#),
+            (ToolMode::Native, r#""native""#),
+            (ToolMode::Text, r#""text""#),
+            (ToolMode::Off, r#""off""#),
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, expected_str, "serialize {variant:?}");
+            let parsed: ToolMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, variant, "deserialize {expected_str}");
+        }
+    }
+
+    #[test]
+    fn tool_mode_toml_round_trip() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Wrapper {
+            mode: ToolMode,
+        }
+
+        for variant in [
+            ToolMode::Auto,
+            ToolMode::Native,
+            ToolMode::Text,
+            ToolMode::Off,
+        ] {
+            let w = Wrapper { mode: variant };
+            let toml_str = toml::to_string(&w).unwrap();
+            let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
+            assert_eq!(parsed.mode, variant, "toml round-trip {variant:?}");
+        }
+    }
+
+    #[test]
+    fn tool_mode_default_is_auto() {
+        assert_eq!(ToolMode::default(), ToolMode::Auto);
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_defaults_to_auto() {
+        let entry = ProviderEntry::default();
+        assert_eq!(entry.tool_mode, ToolMode::Auto);
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_skipped_when_default() {
+        let entry = ProviderEntry::default();
+        let toml_str = toml::to_string(&entry).unwrap();
+        assert!(
+            !toml_str.contains("tool_mode"),
+            "tool_mode should be skipped when default: {toml_str}"
+        );
+    }
+
+    #[test]
+    fn provider_entry_tool_mode_persisted_when_non_default() {
+        let entry = ProviderEntry {
+            tool_mode: ToolMode::Text,
+            ..ProviderEntry::default()
+        };
+        let toml_str = toml::to_string(&entry).unwrap();
+        assert!(
+            toml_str.contains("tool_mode"),
+            "tool_mode should be present when non-default: {toml_str}"
+        );
+        let parsed: ProviderEntry = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.tool_mode, ToolMode::Text);
+    }
+
+    #[test]
+    fn full_config_with_tool_mode() {
+        let toml_str = r#"
+[providers.ollama]
+enabled = true
+tool_mode = "text"
+
+[providers.anthropic]
+enabled = true
+tool_mode = "native"
+"#;
+        let config: MoltisConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.providers.get("ollama").unwrap().tool_mode,
+            ToolMode::Text
+        );
+        assert_eq!(
+            config.providers.get("anthropic").unwrap().tool_mode,
+            ToolMode::Native
+        );
     }
 }

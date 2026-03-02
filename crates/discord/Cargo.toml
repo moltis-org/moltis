@@ -4,21 +4,24 @@ name              = "moltis-discord"
 version.workspace = true
 
 [dependencies]
-async-trait       = "0.1"
-moltis-auto-reply = { workspace = true }
-moltis-channels   = { workspace = true }
-moltis-common     = { workspace = true }
-reqwest           = { workspace = true }
-secrecy           = { workspace = true }
-serde             = { workspace = true }
-serde_json        = { workspace = true }
-serenity          = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend", "cache"] }
-tokio             = { workspace = true }
-tokio-util        = { workspace = true }
-tracing           = { workspace = true }
-
-[dev-dependencies]
-tokio = { workspace = true }
+anyhow          = { workspace = true }
+async-trait     = { workspace = true }
+base64          = { workspace = true }
+moltis-channels = { workspace = true }
+moltis-common   = { workspace = true }
+moltis-media    = { workspace = true }
+reqwest         = { workspace = true }
+secrecy         = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+serenity        = { workspace = true }
+thiserror       = { workspace = true }
+tokio           = { workspace = true }
+tokio-util      = { workspace = true }
+tracing         = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+image = { workspace = true }

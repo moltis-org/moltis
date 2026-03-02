@@ -4,11 +4,12 @@
 //! This tool intentionally does not support variables, functions, or assignments.
 
 use {
-    anyhow::{Result, bail},
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     serde_json::{Value, json},
 };
+
+use crate::{Result, error::Error};
 
 const MAX_EXPRESSION_CHARS: usize = 512;
 const MAX_TOKENS: usize = 256;
@@ -106,7 +107,9 @@ fn is_zero(value: f64) -> bool {
 
 fn ensure_finite(value: f64, context: &str) -> Result<f64> {
     if !value.is_finite() || value.abs() > MAX_ABS_RESULT {
-        bail!("{context} produced a non-finite result");
+        return Err(Error::message(format!(
+            "{context} produced a non-finite result"
+        )));
     }
     Ok(normalize_negative_zero(value))
 }
@@ -123,7 +126,9 @@ fn parse_number_token(expression: &str, start: usize) -> Result<(Token, usize)> 
             i += 1;
         }
         if !saw_digit {
-            bail!("invalid number literal at byte {start}");
+            return Err(Error::message(format!(
+                "invalid number literal at byte {start}"
+            )));
         }
     } else {
         while bytes.get(i).is_some_and(u8::is_ascii_digit) {
@@ -140,7 +145,9 @@ fn parse_number_token(expression: &str, start: usize) -> Result<(Token, usize)> 
     }
 
     if !saw_digit {
-        bail!("invalid number literal at byte {start}");
+        return Err(Error::message(format!(
+            "invalid number literal at byte {start}"
+        )));
     }
 
     if matches!(bytes.get(i), Some(b'e' | b'E')) {
@@ -154,14 +161,16 @@ fn parse_number_token(expression: &str, start: usize) -> Result<(Token, usize)> 
             i += 1;
         }
         if exponent_start == i {
-            bail!("invalid exponent in number literal at byte {exponent_marker}");
+            return Err(Error::message(format!(
+                "invalid exponent in number literal at byte {exponent_marker}"
+            )));
         }
     }
 
     let repr = expression[start..i].to_string();
     let value = repr
         .parse::<f64>()
-        .map_err(|_| anyhow::anyhow!("invalid number literal `{repr}`"))?;
+        .map_err(|_| Error::message(format!("invalid number literal `{repr}`")))?;
     let value = ensure_finite(value, "number literal")?;
 
     Ok((Token::Number { value, repr }, i))
@@ -216,17 +225,21 @@ fn tokenize(expression: &str) -> Result<Vec<Token>> {
             },
             _ => {
                 let ch = expression[i..].chars().next().unwrap_or('\u{FFFD}');
-                bail!("unsupported character `{ch}` in expression");
+                return Err(Error::message(format!(
+                    "unsupported character `{ch}` in expression"
+                )));
             },
         }
 
         if tokens.len() > MAX_TOKENS {
-            bail!("expression is too long (maximum {MAX_TOKENS} tokens)");
+            return Err(Error::message(format!(
+                "expression is too long (maximum {MAX_TOKENS} tokens)"
+            )));
         }
     }
 
     if tokens.is_empty() {
-        bail!("expression is empty");
+        return Err(Error::message("expression is empty"));
     }
 
     Ok(tokens)
@@ -247,19 +260,21 @@ fn apply_binary(op: Operator, lhs: f64, rhs: f64) -> Result<f64> {
         Operator::Multiply => lhs * rhs,
         Operator::Divide => {
             if is_zero(rhs) {
-                bail!("division by zero is not allowed");
+                return Err(Error::message("division by zero is not allowed"));
             }
             lhs / rhs
         },
         Operator::Modulo => {
             if is_zero(rhs) {
-                bail!("modulo by zero is not allowed");
+                return Err(Error::message("modulo by zero is not allowed"));
             }
             lhs % rhs
         },
         Operator::Power => {
             if !rhs.is_finite() || rhs.abs() > MAX_ABS_EXPONENT {
-                bail!("exponent out of allowed range (+/-{MAX_ABS_EXPONENT})");
+                return Err(Error::message(format!(
+                    "exponent out of allowed range (+/-{MAX_ABS_EXPONENT})"
+                )));
             }
             lhs.powf(rhs)
         },
@@ -286,7 +301,10 @@ impl<'a> Evaluator<'a> {
     fn evaluate(mut self) -> Result<f64> {
         let value = self.parse_expression(0, 0)?;
         if let Some(token) = self.peek() {
-            bail!("unexpected token `{}`", token.repr());
+            return Err(Error::message(format!(
+                "unexpected token `{}`",
+                token.repr()
+            )));
         }
         ensure_finite(value, "expression")
     }
@@ -316,7 +334,9 @@ impl<'a> Evaluator<'a> {
 
     fn parse_prefix(&mut self, depth: usize) -> Result<f64> {
         if depth > MAX_AST_DEPTH {
-            bail!("expression nesting is too deep (maximum {MAX_AST_DEPTH})");
+            return Err(Error::message(format!(
+                "expression nesting is too deep (maximum {MAX_AST_DEPTH})"
+            )));
         }
 
         match self.peek() {
@@ -343,11 +363,14 @@ impl<'a> Evaluator<'a> {
                         self.pos = self.pos.saturating_add(1);
                         Ok(value)
                     },
-                    _ => bail!("missing closing `)`"),
+                    _ => Err(Error::message("missing closing `)` ")),
                 }
             },
-            Some(other) => bail!("unexpected token `{}`", other.repr()),
-            None => bail!("unexpected end of expression"),
+            Some(other) => Err(Error::message(format!(
+                "unexpected token `{}`",
+                other.repr()
+            ))),
+            None => Err(Error::message("unexpected end of expression")),
         }
     }
 
@@ -370,7 +393,9 @@ impl<'a> Evaluator<'a> {
     fn bump_operation_count(&mut self) -> Result<()> {
         self.operations = self.operations.saturating_add(1);
         if self.operations > MAX_OPERATIONS {
-            bail!("expression is too complex (maximum {MAX_OPERATIONS} operations)");
+            return Err(Error::message(format!(
+                "expression is too complex (maximum {MAX_OPERATIONS} operations)"
+            )));
         }
         Ok(())
     }
@@ -383,13 +408,15 @@ fn result_to_json(value: f64) -> Result<Value> {
     }
 
     let number = serde_json::Number::from_f64(normalized)
-        .ok_or_else(|| anyhow::anyhow!("result is not a finite JSON number"))?;
+        .ok_or_else(|| Error::message("result is not a finite JSON number"))?;
     Ok(Value::Number(number))
 }
 
 fn evaluate_expression(expression: &str) -> Result<(f64, String)> {
     if expression.len() > MAX_EXPRESSION_CHARS {
-        bail!("expression is too long (maximum {MAX_EXPRESSION_CHARS} characters)");
+        return Err(Error::message(format!(
+            "expression is too long (maximum {MAX_EXPRESSION_CHARS} characters)"
+        )));
     }
 
     let tokens = tokenize(expression)?;
@@ -426,12 +453,12 @@ impl AgentTool for CalcTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let expression = params
             .get("expression")
             .or_else(|| params.get("expr"))
             .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("missing 'expression' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'expression' parameter"))?;
 
         let (result, normalized_expr) = evaluate_expression(expression)?;
         Ok(json!({

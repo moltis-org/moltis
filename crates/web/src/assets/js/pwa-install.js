@@ -1,5 +1,6 @@
 // PWA Install Banner - handles "Add to Homescreen" prompts
 
+import { t } from "./i18n.js";
 import { canPromptInstall, isAndroid, isIOS, isStandalone, promptInstall, setupInstallPrompt } from "./pwa.js";
 
 var DISMISS_KEY = "pwa-install-dismissed";
@@ -69,7 +70,7 @@ function renderIOSInstructions(container) {
 
 	var title = document.createElement("p");
 	title.className = "text-sm font-medium text-[var(--text-strong)] mb-2";
-	title.textContent = "Install moltis on your device";
+	title.textContent = t("pwa:install.title");
 	container.appendChild(title);
 
 	var steps = document.createElement("ol");
@@ -77,16 +78,16 @@ function renderIOSInstructions(container) {
 
 	var step1 = document.createElement("li");
 	step1.className = "flex items-center gap-1.5";
-	step1.appendChild(document.createTextNode("Tap the "));
+	step1.appendChild(document.createTextNode(t("pwa:ios.step1")));
 	var strong1 = document.createElement("strong");
-	strong1.textContent = "Share";
+	strong1.textContent = t("pwa:ios.step1Button");
 	step1.appendChild(strong1);
-	step1.appendChild(document.createTextNode(" button "));
+	step1.appendChild(document.createTextNode(t("pwa:ios.step1After")));
 	step1.appendChild(createShareIcon());
 	steps.appendChild(step1);
 
 	var step2 = document.createElement("li");
-	step2.textContent = 'Scroll down and tap "Add to Home Screen"';
+	step2.textContent = t("pwa:ios.step2");
 	steps.appendChild(step2);
 
 	container.appendChild(steps);
@@ -94,7 +95,7 @@ function renderIOSInstructions(container) {
 	if (!isIOSSafari()) {
 		var note = document.createElement("p");
 		note.className = "text-xs text-[var(--muted)] mt-2";
-		note.textContent = "Tip: Open this page in Safari for the best experience.";
+		note.textContent = t("pwa:ios.safariTip");
 		container.appendChild(note);
 	}
 }
@@ -105,7 +106,7 @@ function renderAndroidInstructions(container) {
 
 	var title = document.createElement("p");
 	title.className = "text-sm font-medium text-[var(--text-strong)] mb-2";
-	title.textContent = "Install moltis on your device";
+	title.textContent = t("pwa:install.title");
 	container.appendChild(title);
 
 	var steps = document.createElement("ol");
@@ -113,12 +114,12 @@ function renderAndroidInstructions(container) {
 
 	var step1 = document.createElement("li");
 	step1.className = "flex items-center gap-1.5";
-	step1.appendChild(document.createTextNode("Tap the menu button "));
+	step1.appendChild(document.createTextNode(t("pwa:android.step1")));
 	step1.appendChild(createMenuIcon());
 	steps.appendChild(step1);
 
 	var step2 = document.createElement("li");
-	step2.textContent = 'Select "Add to Home Screen" or "Install App"';
+	step2.textContent = t("pwa:android.step2");
 	steps.appendChild(step2);
 
 	container.appendChild(steps);
@@ -130,12 +131,12 @@ function renderNativePrompt(container) {
 
 	var title = document.createElement("p");
 	title.className = "text-sm font-medium text-[var(--text-strong)]";
-	title.textContent = "Install moltis for quick access";
+	title.textContent = t("pwa:install.quickAccessTitle");
 	container.appendChild(title);
 
 	var desc = document.createElement("p");
 	desc.className = "text-xs text-[var(--muted)] mt-1";
-	desc.textContent = "Get a native app experience with offline support.";
+	desc.textContent = t("pwa:install.quickAccessDesc");
 	container.appendChild(desc);
 }
 

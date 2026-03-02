@@ -1,31 +1,31 @@
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
-    time::Instant,
 };
 
 use {
     async_trait::async_trait,
     secrecy::ExposeSecret,
-    serenity::all::{Client, Http},
-    tracing::{error, info, warn},
+    tracing::{info, warn},
 };
 
 use moltis_channels::{
-    ChannelEventSink, Error as ChannelError, Result as ChannelResult,
+    Error as ChannelError, Result as ChannelResult,
     message_log::MessageLog,
-    plugin::{ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus},
+    plugin::{
+        ChannelEventSink, ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus,
+        ChannelStreamOutbound,
+    },
 };
+
+use moltis_channels::otp::OtpState;
 
 use crate::{
     config::DiscordAccountConfig,
-    handler::DiscordHandler,
+    handler::{Handler, required_intents},
     outbound::DiscordOutbound,
     state::{AccountState, AccountStateMap},
 };
-
-/// Cache TTL for probe results (30 seconds).
-const PROBE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Discord channel plugin.
 pub struct DiscordPlugin {
@@ -33,7 +33,6 @@ pub struct DiscordPlugin {
     outbound: DiscordOutbound,
     message_log: Option<Arc<dyn MessageLog>>,
     event_sink: Option<Arc<dyn ChannelEventSink>>,
-    probe_cache: RwLock<HashMap<String, (ChannelHealthSnapshot, Instant)>>,
 }
 
 impl DiscordPlugin {
@@ -47,7 +46,6 @@ impl DiscordPlugin {
             outbound,
             message_log: None,
             event_sink: None,
-            probe_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -61,25 +59,48 @@ impl DiscordPlugin {
         self
     }
 
-    /// Get a shared reference to the outbound sender (for use outside the plugin).
     pub fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
         Arc::new(DiscordOutbound {
             accounts: Arc::clone(&self.accounts),
         })
     }
 
-    /// List all active account IDs.
+    pub fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
+        Arc::new(DiscordOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
+    }
+
     pub fn account_ids(&self) -> Vec<String> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts.keys().cloned().collect()
     }
 
-    /// Get the config for a specific account (serialized to JSON).
+    pub fn has_account(&self, account_id: &str) -> bool {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.contains_key(account_id)
+    }
+
     pub fn account_config(&self, account_id: &str) -> Option<serde_json::Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .and_then(|s| serde_json::to_value(&s.config).ok())
+    }
+
+    pub fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
+        let parsed: DiscordAccountConfig = serde_json::from_value(config)?;
+        let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get_mut(account_id) {
+            state.config = parsed;
+            Ok(())
+        } else {
+            Err(ChannelError::unknown_account(account_id))
+        }
     }
 }
 
@@ -104,94 +125,77 @@ impl ChannelPlugin for DiscordPlugin {
         account_id: &str,
         config: serde_json::Value,
     ) -> ChannelResult<()> {
-        let discord_config: DiscordAccountConfig = serde_json::from_value(config)?;
-
-        if discord_config.token.expose_secret().is_empty() {
-            return Err(ChannelError::invalid_input("discord bot token is required"));
+        let cfg: DiscordAccountConfig = serde_json::from_value(config)?;
+        if cfg.token.expose_secret().is_empty() {
+            return Err(ChannelError::invalid_input("Discord bot token is required"));
         }
 
         info!(account_id, "starting discord account");
 
-        let token = discord_config.token.expose_secret().clone();
-        let accounts = Arc::clone(&self.accounts);
-        let account_id_owned = account_id.to_string();
-        let config_clone = discord_config.clone();
-        let message_log = self.message_log.clone();
-        let event_sink = self.event_sink.clone();
-
-        // Create cancellation token
         let cancel = tokio_util::sync::CancellationToken::new();
-        let cancel_clone = cancel.clone();
+        let accounts_clone = Arc::clone(&self.accounts);
+        let account_id_owned = account_id.to_string();
+        let token = cfg.token.expose_secret().clone();
 
-        // Create outbound sender
-        let outbound = Arc::new(DiscordOutbound {
-            accounts: Arc::clone(&accounts),
-        });
-
-        // Create HTTP client for initial setup
-        let http = Arc::new(Http::new(&token));
-
-        // Store initial state (will be updated when ready event fires)
         {
-            let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
-            accts.insert(account_id.to_string(), AccountState {
-                http: Arc::clone(&http),
-                bot_user_id: None,
+            let otp_cooldown = cfg.otp_cooldown_secs;
+            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+            accounts.insert(account_id.to_string(), AccountState {
                 account_id: account_id.to_string(),
-                config: discord_config,
-                outbound,
+                config: cfg,
+                message_log: self.message_log.clone(),
+                event_sink: self.event_sink.clone(),
                 cancel: cancel.clone(),
-                message_log: message_log.clone(),
-                event_sink: event_sink.clone(),
-                pending_replies: HashMap::new(),
+                bot_user_id: None,
+                http: None,
+                otp: std::sync::Mutex::new(OtpState::new(otp_cooldown)),
             });
         }
 
-        // Spawn Discord client
+        // Spawn the serenity client in a background task.
+        let cancel_for_task = cancel.clone();
         tokio::spawn(async move {
-            let handler = DiscordHandler {
+            let handler = Handler {
                 account_id: account_id_owned.clone(),
-                config: config_clone,
-                accounts: accounts.clone(),
-                message_log,
-                event_sink,
+                accounts: Arc::clone(&accounts_clone),
             };
 
-            let intents = DiscordHandler::intents();
-
-            let client_result = Client::builder(&token, intents)
+            let mut client = match serenity::Client::builder(&token, required_intents())
                 .event_handler(handler)
-                .await;
-
-            match client_result {
-                Ok(mut client) => {
-                    tokio::select! {
-                        result = client.start() => {
-                            if let Err(e) = result {
-                                error!(
-                                    account_id = %account_id_owned,
-                                    error = %e,
-                                    "discord client error"
-                                );
-                            }
-                        }
-                        _ = cancel_clone.cancelled() => {
-                            info!(account_id = %account_id_owned, "discord client cancelled");
-                        }
-                    }
-                },
+                .await
+            {
+                Ok(c) => c,
                 Err(e) => {
-                    error!(
+                    warn!(
                         account_id = %account_id_owned,
-                        error = %e,
-                        "failed to create discord client"
+                        "failed to build Discord client: {e}"
                     );
+                    return;
                 },
+            };
+
+            // Store the Http handle so outbound messages can use it.
+            {
+                let mut accounts = accounts_clone.write().unwrap_or_else(|e| e.into_inner());
+                if let Some(state) = accounts.get_mut(&account_id_owned) {
+                    state.http = Some(Arc::clone(&client.http));
+                }
             }
 
-            // Clean up on exit
-            let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
-            accts.remove(&account_id_owned);
+            tokio::select! {
+                result = client.start() => {
+                    if let Err(e) = result {
+                        warn!(
+                            account_id = %account_id_owned,
+                            "Discord client stopped with error: {e}"
+                        );
+                    }
+                }
+                () = cancel_for_task.cancelled() => {
+                    info!(account_id = %account_id_owned, "Discord client shutting down");
+                    client.shard_manager.shutdown_all().await;
+                }
+            }
         });
 
         Ok(())
@@ -199,19 +203,14 @@ impl ChannelPlugin for DiscordPlugin {
 
     async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
         let cancel = {
-            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-            accounts.get(account_id).map(|s| s.cancel.clone())
-        };
-
-        if let Some(cancel) = cancel {
-            info!(account_id, "stopping discord account");
-            cancel.cancel();
             let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
-            accounts.remove(account_id);
+            accounts.remove(account_id).map(|s| s.cancel)
+        };
+        if let Some(cancel) = cancel {
+            cancel.cancel();
         } else {
-            warn!(account_id, "discord account not found");
+            warn!(account_id, "Discord account not found");
         }
-
         Ok(())
     }
 
@@ -227,43 +226,25 @@ impl ChannelPlugin for DiscordPlugin {
 #[async_trait]
 impl ChannelStatus for DiscordPlugin {
     async fn probe(&self, account_id: &str) -> ChannelResult<ChannelHealthSnapshot> {
-        // Return cached result if fresh enough
-        if let Ok(cache) = self.probe_cache.read()
-            && let Some((snap, ts)) = cache.get(account_id)
-            && ts.elapsed() < PROBE_CACHE_TTL
-        {
-            return Ok(snap.clone());
-        }
-
-        let http = {
-            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-            accounts.get(account_id).map(|s| s.http.clone())
-        };
-
-        let result = match http {
-            Some(http) => match http.get_current_user().await {
-                Ok(user) => ChannelHealthSnapshot {
-                    connected: true,
-                    account_id: account_id.to_string(),
-                    details: Some(format!("Bot: {} ({})", user.name, user.id)),
-                },
-                Err(e) => ChannelHealthSnapshot {
-                    connected: false,
-                    account_id: account_id.to_string(),
-                    details: Some(format!("API error: {e}")),
-                },
-            },
-            None => ChannelHealthSnapshot {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get(account_id) {
+            let connected = state.bot_user_id.is_some();
+            let details = if connected {
+                "gateway connected".to_string()
+            } else {
+                "connecting to Discord gateway...".to_string()
+            };
+            Ok(ChannelHealthSnapshot {
+                connected,
+                account_id: state.account_id.clone(),
+                details: Some(details),
+            })
+        } else {
+            Ok(ChannelHealthSnapshot {
                 connected: false,
                 account_id: account_id.to_string(),
                 details: Some("account not started".into()),
-            },
-        };
-
-        if let Ok(mut cache) = self.probe_cache.write() {
-            cache.insert(account_id.to_string(), (result.clone(), Instant::now()));
+            })
         }
-
-        Ok(result)
     }
 }

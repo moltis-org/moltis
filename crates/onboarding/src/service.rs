@@ -2,7 +2,10 @@
 
 use std::{path::PathBuf, sync::Mutex};
 
-use serde_json::{Value, json};
+use {
+    serde_json::{Value, json},
+    tracing::info,
+};
 
 use moltis_config::{AgentIdentity, MoltisConfig, UserProfile};
 
@@ -192,18 +195,54 @@ impl LiveOnboardingService {
             trimmed.parse::<moltis_config::Timezone>().ok().map(Some)
         }
 
+        /// Extract optional location field from either `user_location` or `location`.
+        ///
+        /// Accepted shape:
+        /// `{ latitude: f64, longitude: f64, place?: String }`.
+        /// - Missing key => None (no-op)
+        /// - null => Some(None) (clear location)
+        /// - invalid payload => None (ignore)
+        fn location_field(params: &Value) -> Option<Option<moltis_config::GeoLocation>> {
+            let raw = params
+                .get("user_location")
+                .or_else(|| params.get("location"))?;
+
+            if raw.is_null() {
+                return Some(None);
+            }
+
+            let latitude = raw.get("latitude").and_then(|v| v.as_f64())?;
+            let longitude = raw.get("longitude").and_then(|v| v.as_f64())?;
+            let place = raw
+                .get("place")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+
+            Some(Some(moltis_config::GeoLocation::now(
+                latitude, longitude, place,
+            )))
+        }
+
         if let Some(v) = str_field(&params, "name") {
             identity.name = v;
         }
         if let Some(v) = str_field(&params, "emoji") {
             identity.emoji = v;
         }
-        // Accept "theme" directly, or "creature"/"vibe" as backward-compat aliases.
-        if let Some(v) = str_field(&params, "theme")
-            .or_else(|| str_field(&params, "creature"))
-            .or_else(|| str_field(&params, "vibe"))
-        {
+        if let Some(v) = str_field(&params, "theme") {
             identity.theme = v;
+        }
+        // Backward compat: accept creature/vibe and compose into theme.
+        if let Some(creature) = str_field(&params, "creature") {
+            let vibe = str_field(&params, "vibe").flatten();
+            identity.theme = match (vibe, creature) {
+                (Some(v), Some(c)) => Some(format!("{v} {c}")),
+                (Some(v), None) => Some(v),
+                (None, Some(c)) => Some(c),
+                (None, None) => None,
+            };
+        } else if let Some(vibe) = str_field(&params, "vibe") {
+            identity.theme = vibe;
         }
         if let Some(v) = params.get("soul") {
             let soul = if v.is_null() {
@@ -220,6 +259,9 @@ impl LiveOnboardingService {
             timezone_field(&params, "user_timezone").or_else(|| timezone_field(&params, "timezone"))
         {
             user.timezone = v;
+        }
+        if let Some(v) = location_field(&params) {
+            user.location = v;
         }
 
         config.identity = identity.clone();
@@ -241,6 +283,12 @@ impl LiveOnboardingService {
             "soul": moltis_config::load_soul(),
             "user_name": user.name,
             "user_timezone": user.timezone.as_ref().map(|tz| tz.name()),
+            "user_location": user.location.as_ref().map(|loc| json!({
+                "latitude": loc.latitude,
+                "longitude": loc.longitude,
+                "place": loc.place,
+                "updated_at": loc.updated_at,
+            })),
         }))
     }
 
@@ -252,41 +300,30 @@ impl LiveOnboardingService {
 
     /// Read identity from the config file (for `agent.identity.get`).
     pub fn identity_get(&self) -> moltis_config::ResolvedIdentity {
-        if self.config_path.exists()
+        let id = if self.config_path.exists()
             && let Ok(cfg) = moltis_config::loader::load_config(&self.config_path)
         {
-            let mut id = moltis_config::ResolvedIdentity::from_config(&cfg);
-            if let Some(file_identity) = moltis_config::load_identity() {
-                if let Some(name) = file_identity.name {
-                    id.name = name;
-                }
-                if let Some(emoji) = file_identity.emoji {
-                    id.emoji = Some(emoji);
-                }
-                if let Some(theme) = file_identity.theme {
-                    id.theme = Some(theme);
-                }
-            }
-            if let Some(file_user) = moltis_config::load_user()
-                && let Some(name) = file_user.name
-            {
-                id.user_name = Some(name);
-            }
-            id.soul = moltis_config::load_soul();
-            return id;
-        }
-        let mut id = moltis_config::ResolvedIdentity::default();
-        if let Some(file_identity) = moltis_config::load_identity() {
-            if let Some(name) = file_identity.name {
-                id.name = name;
-            }
-            id.emoji = file_identity.emoji;
-            id.theme = file_identity.theme;
-        }
-        if let Some(file_user) = moltis_config::load_user() {
-            id.user_name = file_user.name;
-        }
-        id.soul = moltis_config::load_soul();
+            info!(
+                config_path = %self.config_path.display(),
+                config_name = ?cfg.identity.name,
+                config_theme = ?cfg.identity.theme,
+                "identity_get: loaded config"
+            );
+            moltis_config::resolve_identity_from_config(&cfg)
+        } else {
+            info!(
+                config_path = %self.config_path.display(),
+                "identity_get: config not found, using defaults"
+            );
+            moltis_config::resolve_identity_from_config(&MoltisConfig::default())
+        };
+        info!(
+            resolved_name = %id.name,
+            resolved_emoji = ?id.emoji,
+            resolved_theme = ?id.theme,
+            resolved_user_name = ?id.user_name,
+            "identity_get: resolved identity"
+        );
         id
     }
 }
@@ -495,6 +532,63 @@ mod tests {
 
         // Reports as onboarded
         assert_eq!(svc.wizard_status()["onboarded"], true);
+
+        moltis_config::clear_data_dir();
+    }
+
+    #[test]
+    fn identity_update_location_fields() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
+        let svc = LiveOnboardingService::new(dir.path().join("moltis.toml"));
+
+        let res = svc
+            .identity_update(json!({
+                "user_location": {
+                    "latitude": 37.7749,
+                    "longitude": -122.4194,
+                    "place": "San Francisco",
+                }
+            }))
+            .unwrap();
+
+        assert_eq!(res["user_location"]["latitude"], 37.7749);
+        assert_eq!(res["user_location"]["longitude"], -122.4194);
+        assert_eq!(res["user_location"]["place"], "San Francisco");
+        assert!(res["user_location"]["updated_at"].is_number());
+
+        let user = moltis_config::load_user().expect("load user");
+        let location = user.location.expect("location should be persisted");
+        assert_eq!(location.latitude, 37.7749);
+        assert_eq!(location.longitude, -122.4194);
+        assert_eq!(location.place.as_deref(), Some("San Francisco"));
+
+        moltis_config::clear_data_dir();
+    }
+
+    #[test]
+    fn identity_update_location_null_clears_existing_value() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
+        let svc = LiveOnboardingService::new(dir.path().join("moltis.toml"));
+
+        svc.identity_update(json!({
+            "user_location": {
+                "latitude": 37.7749,
+                "longitude": -122.4194
+            }
+        }))
+        .unwrap();
+
+        let res = svc
+            .identity_update(json!({ "user_location": null }))
+            .unwrap();
+        assert!(res["user_location"].is_null());
+
+        let user = moltis_config::load_user();
+        assert!(user.as_ref().and_then(|u| u.location.as_ref()).is_none());
 
         moltis_config::clear_data_dir();
     }

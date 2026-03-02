@@ -4,6 +4,7 @@ import { signal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
+import { localizedApiErrorMessage } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { sandboxInfo } from "./signals.js";
 
@@ -24,11 +25,33 @@ var diskUsage = signal(null);
 var cleaningAll = signal(false);
 var restarting = signal(false);
 var containerError = signal("");
+var sharedHomeEnabled = signal(false);
+var sharedHomeMode = signal("off");
+var sharedHomePath = signal("");
+var sharedHomeConfiguredPath = signal("");
+var sharedHomeLoading = signal(false);
+var sharedHomeSaving = signal(false);
+var sharedHomeMsg = signal("");
+var sharedHomeErr = signal("");
 var SANDBOX_DISABLED_HINT =
 	"Sandboxes are disabled on cloud deploys without a container runtime. Install on a VM with Docker or Apple Container to enable this feature.";
 
 function sandboxRuntimeAvailable() {
 	return (sandboxInfo.value?.backend || "none") !== "none";
+}
+
+async function responseErrorMessage(response, fallback) {
+	try {
+		var payload = await response.json();
+		return localizedApiErrorMessage(payload, fallback);
+	} catch {
+		try {
+			var text = await response.text();
+			return text || fallback;
+		} catch {
+			return fallback;
+		}
+	}
 }
 
 function fetchImages() {
@@ -82,7 +105,7 @@ function doBuild(name, base, pkgs) {
 		.then((r) => r.json())
 		.then((data) => {
 			if (data.error) {
-				buildStatus.value = `Error: ${data.error}`;
+				buildStatus.value = `Error: ${localizedApiErrorMessage(data, "Failed to build image.")}`;
 			} else {
 				buildStatus.value = `Built: ${data.tag}`;
 				buildName.value = "";
@@ -173,11 +196,11 @@ function stopContainer(name) {
 
 function removeContainer(name) {
 	fetch(`/api/sandbox/containers/${encodeURIComponent(name)}`, { method: "DELETE" })
-		.then((r) => {
+		.then(async (r) => {
 			if (!r.ok) {
-				return r.text().then((t) => {
-					containerError.value = `Failed to delete ${name}: ${t || r.statusText}`;
-				});
+				var msg = await responseErrorMessage(r, r.statusText);
+				containerError.value = `Failed to delete ${name}: ${msg}`;
+				return;
 			}
 			fetchContainers();
 		})
@@ -200,11 +223,11 @@ function fetchDiskUsage() {
 function cleanAllContainers() {
 	cleaningAll.value = true;
 	fetch("/api/sandbox/containers/clean", { method: "POST" })
-		.then((r) => {
+		.then(async (r) => {
 			if (!r.ok) {
-				return r.text().then((t) => {
-					containerError.value = `Failed to clean containers: ${t || r.statusText}`;
-				});
+				var msg = await responseErrorMessage(r, r.statusText);
+				containerError.value = `Failed to clean containers: ${msg}`;
+				return;
 			}
 			fetchContainers();
 			fetchDiskUsage();
@@ -220,11 +243,11 @@ function cleanAllContainers() {
 function restartDaemon() {
 	restarting.value = true;
 	fetch("/api/sandbox/daemon/restart", { method: "POST" })
-		.then((r) => {
+		.then(async (r) => {
 			if (!r.ok) {
-				return r.text().then((t) => {
-					containerError.value = `Failed to restart daemon: ${t || r.statusText}`;
-				});
+				var msg = await responseErrorMessage(r, r.statusText);
+				containerError.value = `Failed to restart daemon: ${msg}`;
+				return;
 			}
 			fetchContainers();
 			fetchDiskUsage();
@@ -234,6 +257,73 @@ function restartDaemon() {
 		})
 		.finally(() => {
 			restarting.value = false;
+		});
+}
+
+function applySharedHomeConfig(config) {
+	var payload = config || {};
+	sharedHomeEnabled.value = payload.enabled === true;
+	sharedHomeMode.value = payload.mode || "off";
+	sharedHomePath.value = payload.path || "";
+	sharedHomeConfiguredPath.value = payload.configured_path || "";
+}
+
+function fetchSharedHomeConfig() {
+	sharedHomeLoading.value = true;
+	sharedHomeErr.value = "";
+	sharedHomeMsg.value = "";
+	fetch("/api/sandbox/shared-home")
+		.then(async (r) => {
+			if (!r.ok) {
+				throw new Error(await responseErrorMessage(r, "Failed to load shared folder settings."));
+			}
+			return r.json();
+		})
+		.then((data) => {
+			applySharedHomeConfig(data);
+		})
+		.catch((e) => {
+			sharedHomeErr.value = e.message;
+		})
+		.finally(() => {
+			sharedHomeLoading.value = false;
+		});
+}
+
+function saveSharedHomeConfig() {
+	sharedHomeSaving.value = true;
+	sharedHomeErr.value = "";
+	sharedHomeMsg.value = "";
+	fetch("/api/sandbox/shared-home", {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			enabled: sharedHomeEnabled.value,
+			path: sharedHomePath.value || "",
+		}),
+	})
+		.then(async (r) => {
+			if (!r.ok) {
+				throw new Error(await responseErrorMessage(r, "Failed to save shared folder settings."));
+			}
+			return r.json();
+		})
+		.then((data) => {
+			applySharedHomeConfig(data?.config || {});
+			sharedHomeMsg.value = "Saved. Restart Moltis to apply shared folder changes.";
+			if (sandboxInfo.value) {
+				sandboxInfo.value = {
+					...sandboxInfo.value,
+					shared_home_enabled: sharedHomeEnabled.value,
+					shared_home_dir: sharedHomePath.value,
+				};
+			}
+		})
+		.catch((e) => {
+			sharedHomeErr.value = e.message;
+		})
+		.finally(() => {
+			sharedHomeSaving.value = false;
 		});
 }
 
@@ -370,6 +460,8 @@ var BACKEND_LABELS = {
 	"apple-container": "Apple Container (VM-isolated)",
 	docker: "Docker",
 	cgroup: "cgroup (systemd-run)",
+	"restricted-host": "Restricted Host (env + rlimits)",
+	wasm: "Wasmtime (WASM-isolated)",
 	none: "None (host execution)",
 };
 
@@ -412,6 +504,20 @@ function backendRecommendation(info) {
 		};
 	}
 
+	if (backend === "restricted-host") {
+		return {
+			level: "info",
+			text: "Using restricted host execution (env clearing, rlimits). For stronger isolation, install Docker or Apple Container.",
+		};
+	}
+
+	if (backend === "wasm") {
+		return {
+			level: "info",
+			text: "Using WASM sandbox with filesystem isolation. For container-level isolation, install Docker or Apple Container.",
+		};
+	}
+
 	return null;
 }
 
@@ -423,7 +529,15 @@ function SandboxBanner() {
 	var rec = backendRecommendation(info);
 
 	var badgeColor =
-		info.backend === "none" ? "var(--error)" : info.backend === "apple-container" ? "var(--accent)" : "var(--muted)";
+		info.backend === "none"
+			? "var(--error)"
+			: info.backend === "apple-container"
+				? "var(--accent)"
+				: info.backend === "wasm"
+					? "var(--success)"
+					: info.backend === "restricted-host"
+						? "var(--warning, var(--muted))"
+						: "var(--muted)";
 
 	return html`<div class="max-w-form">
     <div class="info-bar" style="margin-bottom:8px;">
@@ -494,6 +608,66 @@ function DefaultImageSelector() {
   </div>`;
 }
 
+function SharedHomeSection() {
+	var modeLabel = sharedHomeMode.value === "shared" ? "enabled" : `disabled (${sharedHomeMode.value})`;
+
+	return html`<div class="max-w-form" style="border-top:1px solid var(--border);padding-top:16px;">
+    <h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Shared home folder</h3>
+    <p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0 0 10px;">
+      Controls where <code>/home/sandbox</code> is persisted when shared home mode is enabled.
+    </p>
+    <div class="text-xs text-[var(--muted)]" style="margin-bottom:10px;">
+      Status: <span style="color:${sharedHomeMode.value === "shared" ? "var(--accent)" : "var(--muted)"}">${modeLabel}</span>
+    </div>
+    ${
+			sharedHomeLoading.value
+				? html`<div class="text-xs text-[var(--muted)]">Loading…</div>`
+				: html`<div style="display:flex;flex-direction:column;gap:8px;">
+          <label for="sandboxSharedHomeEnabled" class="text-xs text-[var(--text)]" style="display:flex;align-items:center;gap:8px;">
+            <input
+              id="sandboxSharedHomeEnabled"
+              type="checkbox"
+              checked=${sharedHomeEnabled.value}
+              onInput=${(e) => {
+								sharedHomeEnabled.value = e.target.checked;
+							}}
+            />
+            <span>Enable shared home folder</span>
+          </label>
+          <label for="sandboxSharedHomePath" class="text-xs text-[var(--muted)]">Shared folder location</label>
+          <input
+            id="sandboxSharedHomePath"
+            type="text"
+            class="provider-key-input"
+            placeholder="data_dir()/sandbox/home/shared"
+            value=${sharedHomePath.value}
+            onInput=${(e) => {
+							sharedHomePath.value = e.target.value;
+						}}
+            style="font-family:var(--font-mono);font-size:.75rem;"
+          />
+          ${
+						sharedHomeConfiguredPath.value
+							? html`<div class="text-xs text-[var(--muted)]">Configured path: <code>${sharedHomeConfiguredPath.value}</code></div>`
+							: html`<div class="text-xs text-[var(--muted)]">Configured path: <em>default</em></div>`
+					}
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="provider-btn" onClick=${saveSharedHomeConfig} disabled=${sharedHomeSaving.value}>
+              ${sharedHomeSaving.value ? "Saving…" : "Save"}
+            </button>
+            ${
+							sharedHomeErr.value
+								? html`<span class="text-xs" style="color:var(--error);">${sharedHomeErr.value}</span>`
+								: sharedHomeMsg.value
+									? html`<span class="text-xs" style="color:var(--accent);">${sharedHomeMsg.value}</span>`
+									: null
+						}
+          </div>
+        </div>`
+		}
+  </div>`;
+}
+
 function ImageRow(props) {
 	var img = props.image;
 	var sandboxAvailable = props.sandboxAvailable;
@@ -521,6 +695,7 @@ function ImagesPage() {
 		fetchImages();
 		fetchContainers();
 		fetchDiskUsage();
+		fetchSharedHomeConfig();
 	}, []);
 
 	return html`
@@ -547,6 +722,8 @@ function ImagesPage() {
       <${RunningContainersSection} />
 
       <${DefaultImageSelector} />
+
+      <${SharedHomeSection} />
 
       <!-- Cached images list -->
       <div class="max-w-form">
@@ -618,6 +795,14 @@ export function initImages(container) {
 	buildStatus.value = "";
 	buildWarning.value = "";
 	containerError.value = "";
+	sharedHomeEnabled.value = false;
+	sharedHomeMode.value = "off";
+	sharedHomePath.value = "";
+	sharedHomeConfiguredPath.value = "";
+	sharedHomeLoading.value = false;
+	sharedHomeSaving.value = false;
+	sharedHomeMsg.value = "";
+	sharedHomeErr.value = "";
 	render(html`<${ImagesPage} />`, container);
 }
 

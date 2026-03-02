@@ -94,8 +94,12 @@ pids_max = 256
 
 ### Network Isolation
 
-Sandbox containers have limited network access by default. Outbound connections
-are allowed but the sandbox cannot bind to host ports.
+Sandbox containers have no network access by default (`no_network = true`).
+
+For tasks that need internet access, [trusted network mode](trusted-network.md)
+provides a proxy-filtered allowlist — only connections to explicitly approved
+domains are permitted. All requests (allowed and denied) are recorded in the
+network audit log for review.
 
 ## Channel Authorization
 

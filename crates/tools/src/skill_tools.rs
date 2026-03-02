@@ -4,11 +4,12 @@
 use std::path::{Path, PathBuf};
 
 use {
-    anyhow::{Result, bail},
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     serde_json::{Value, json},
 };
+
+use crate::error::Error;
 
 /// Tool that creates a new personal skill in `<data_dir>/skills/`.
 pub struct CreateSkillTool {
@@ -63,19 +64,19 @@ impl AgentTool for CreateSkillTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let name = params
             .get("name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
+            .ok_or_else(|| Error::message("missing 'name'"))?;
         let description = params
             .get("description")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'description'"))?;
+            .ok_or_else(|| Error::message("missing 'description'"))?;
         let body = params
             .get("body")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'body'"))?;
+            .ok_or_else(|| Error::message("missing 'body'"))?;
         let allowed_tools: Vec<String> = params
             .get("allowed_tools")
             .and_then(|v| v.as_array())
@@ -87,12 +88,18 @@ impl AgentTool for CreateSkillTool {
             .unwrap_or_default();
 
         if !moltis_skills::parse::validate_name(name) {
-            bail!("invalid skill name '{name}': must be 1-64 lowercase alphanumeric/hyphen chars");
+            return Err(Error::message(format!(
+                "invalid skill name '{name}': must be 1-64 lowercase alphanumeric/hyphen chars"
+            ))
+            .into());
         }
 
         let skill_dir = self.skills_dir().join(name);
         if skill_dir.exists() {
-            bail!("skill '{name}' already exists; use update_skill to modify it");
+            return Err(Error::message(format!(
+                "skill '{name}' already exists; use update_skill to modify it"
+            ))
+            .into());
         }
 
         let content = build_skill_md(name, description, body, &allowed_tools);
@@ -156,19 +163,19 @@ impl AgentTool for UpdateSkillTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let name = params
             .get("name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
+            .ok_or_else(|| Error::message("missing 'name'"))?;
         let description = params
             .get("description")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'description'"))?;
+            .ok_or_else(|| Error::message("missing 'description'"))?;
         let body = params
             .get("body")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'body'"))?;
+            .ok_or_else(|| Error::message("missing 'body'"))?;
         let allowed_tools: Vec<String> = params
             .get("allowed_tools")
             .and_then(|v| v.as_array())
@@ -180,12 +187,18 @@ impl AgentTool for UpdateSkillTool {
             .unwrap_or_default();
 
         if !moltis_skills::parse::validate_name(name) {
-            bail!("invalid skill name '{name}': must be 1-64 lowercase alphanumeric/hyphen chars");
+            return Err(Error::message(format!(
+                "invalid skill name '{name}': must be 1-64 lowercase alphanumeric/hyphen chars"
+            ))
+            .into());
         }
 
         let skill_dir = self.skills_dir().join(name);
         if !skill_dir.exists() {
-            bail!("skill '{name}' does not exist; use create_skill first");
+            return Err(Error::message(format!(
+                "skill '{name}' does not exist; use create_skill first"
+            ))
+            .into());
         }
 
         let content = build_skill_md(name, description, body, &allowed_tools);
@@ -236,14 +249,14 @@ impl AgentTool for DeleteSkillTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let name = params
             .get("name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
+            .ok_or_else(|| Error::message("missing 'name'"))?;
 
         if !moltis_skills::parse::validate_name(name) {
-            bail!("invalid skill name '{name}'");
+            return Err(Error::message(format!("invalid skill name '{name}'")).into());
         }
 
         let skill_dir = self.skills_dir().join(name);
@@ -257,11 +270,11 @@ impl AgentTool for DeleteSkillTool {
             .canonicalize()
             .unwrap_or_else(|_| skill_dir.clone());
         if !canonical_target.starts_with(&canonical_base) {
-            bail!("can only delete personal skills");
+            return Err(Error::message("can only delete personal skills").into());
         }
 
         if !skill_dir.exists() {
-            bail!("skill '{name}' not found");
+            return Err(Error::message(format!("skill '{name}' not found")).into());
         }
 
         tokio::fs::remove_dir_all(&skill_dir).await?;
@@ -286,7 +299,7 @@ fn build_skill_md(name: &str, description: &str, body: &str, allowed_tools: &[St
     frontmatter
 }
 
-async fn write_skill(skill_dir: &Path, content: &str) -> Result<()> {
+async fn write_skill(skill_dir: &Path, content: &str) -> crate::Result<()> {
     tokio::fs::create_dir_all(skill_dir).await?;
     tokio::fs::write(skill_dir.join("SKILL.md"), content).await?;
     Ok(())

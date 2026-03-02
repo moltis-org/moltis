@@ -74,6 +74,7 @@ async fn start_auth_server_impl(
         18789,
         false,
         None,
+        None, // session_event_bus
         #[cfg(feature = "metrics")]
         None,
         #[cfg(feature = "metrics")]
@@ -142,6 +143,7 @@ async fn start_localhost_server_with_vault() -> (
         18789,
         false,
         None,
+        None, // session_event_bus
         #[cfg(feature = "metrics")]
         None,
         #[cfg(feature = "metrics")]
@@ -906,6 +908,33 @@ async fn localhost_with_passkey_requires_login() {
         .await
         .unwrap();
     assert_eq!(protected.status(), 401);
+}
+
+/// When a new passkey host is detected after passkeys already exist, status
+/// should expose a host-update warning for the UI banner.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn status_reports_passkey_host_update_warning() {
+    let (addr, store, state) = start_localhost_server().await;
+    store
+        .store_passkey(b"cred-1", "MacBook Touch ID", b"serialized-passkey")
+        .await
+        .unwrap();
+
+    state
+        .add_passkey_host_update_pending("mybox.tail12345.ts.net")
+        .await;
+
+    let status = reqwest::get(format!("http://{addr}/api/auth/status"))
+        .await
+        .unwrap();
+    assert_eq!(status.status(), 200);
+    let body: serde_json::Value = status.json().await.unwrap();
+    assert_eq!(body["passkey_host_update_required"], true);
+    assert_eq!(
+        body["passkey_host_update_hosts"],
+        serde_json::json!(["mybox.tail12345.ts.net"])
+    );
 }
 
 // ── Three-tier model tests ──────────────────────────────────────────────────

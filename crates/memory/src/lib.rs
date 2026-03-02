@@ -14,6 +14,7 @@ pub mod reranking;
 pub mod schema;
 pub mod search;
 pub mod session_export;
+pub(crate) mod splitter;
 pub mod store;
 pub mod store_sqlite;
 pub mod tools;

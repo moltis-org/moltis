@@ -11,10 +11,12 @@ import {
 	stripChannelPrefix,
 	updateTokenBar,
 } from "./chat-ui.js";
+import { highlightCodeBlocks } from "./code-highlight.js";
 import { eventListeners } from "./events.js";
 import {
 	formatTokenSpeed,
 	formatTokens,
+	localizeStructuredError,
 	renderAudioPlayer,
 	renderMapLinks,
 	renderMapPointGroups,
@@ -43,7 +45,7 @@ import {
 } from "./sessions.js";
 import * as S from "./state.js";
 import { sessionStore } from "./stores/session-store.js";
-import { connectWs, forceReconnect } from "./ws-connect.js";
+import { connectWs, forceReconnect, subscribeEvents } from "./ws-connect.js";
 
 // ── Chat event handlers ──────────────────────────────────────
 
@@ -112,6 +114,20 @@ function moveFirstQueuedToChat() {
 	if (!tray.querySelector(".msg")) tray.classList.add("hidden");
 }
 
+function makeThinkingStopBtn(sessionKey) {
+	var btn = document.createElement("button");
+	btn.className = "thinking-stop-btn";
+	btn.type = "button";
+	btn.title = "Stop generation";
+	btn.textContent = "Stop";
+	btn.addEventListener("click", () => {
+		btn.disabled = true;
+		btn.textContent = "Stopping…";
+		sendRpc("chat.abort", { sessionKey }).catch(() => {});
+	});
+	return btn;
+}
+
 function handleChatThinking(p, isActive, isChatPage, eventSession) {
 	updateSessionRunId(eventSession, p.runId);
 	setSessionReplying(eventSession, true);
@@ -123,6 +139,7 @@ function handleChatThinking(p, isActive, isChatPage, eventSession) {
 	thinkEl.className = "msg assistant thinking";
 	thinkEl.id = "thinkingIndicator";
 	thinkEl.appendChild(makeThinkingDots());
+	thinkEl.appendChild(makeThinkingStopBtn(eventSession));
 	S.chatMsgBox.appendChild(thinkEl);
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
@@ -133,11 +150,13 @@ function handleChatThinkingText(p, isActive, isChatPage, eventSession) {
 	if (!(isActive && isChatPage)) return;
 	var indicator = document.getElementById("thinkingIndicator");
 	if (indicator) {
+		var existingBtn = indicator.querySelector(".thinking-stop-btn");
 		while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
 		var textEl = document.createElement("span");
 		textEl.className = "thinking-text";
 		textEl.textContent = p.text;
 		indicator.appendChild(textEl);
+		indicator.appendChild(existingBtn || makeThinkingStopBtn(eventSession));
 		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	}
 }
@@ -657,6 +676,10 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	S.setLastToolOutput("");
 	S.setVoicePending(false);
 	maybeRefreshFullContext();
+	// Syntax-highlight any code blocks in the completed message.
+	if (S.chatMsgBox?.lastElementChild) {
+		highlightCodeBlocks(S.chatMsgBox.lastElementChild);
+	}
 	// Move the next queued message from the tray AFTER the response is
 	// fully rendered. This ensures correct ordering: user-msg → response →
 	// next-user-msg → next-response (never next-user-msg before response).
@@ -731,10 +754,28 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	removeThinking();
 	clearStaleRunningToolCards();
 	if (p.error?.title) {
-		chatAddErrorCard(p.error);
+		chatAddErrorCard(localizeStructuredError(p.error));
 	} else {
 		chatAddErrorMsg(p.message || "unknown");
 	}
+	S.setStreamEl(null);
+	S.setStreamText("");
+	S.setVoicePending(false);
+	moveFirstQueuedToChat();
+}
+
+function handleChatAborted(p, isActive, isChatPage, eventSession) {
+	clearPendingToolCallEndsForSession(eventSession);
+	setSessionReplying(eventSession, false);
+	setSessionActiveRunId(eventSession, null);
+	var abortSession = sessionStore.getByKey(eventSession);
+	if (abortSession) abortSession.resetStreamState();
+	if (!(isActive && isChatPage)) {
+		S.setVoicePending(false);
+		return;
+	}
+	removeThinking();
+	clearStaleRunningToolCards();
 	S.setStreamEl(null);
 	S.setStreamText("");
 	S.setVoicePending(false);
@@ -804,6 +845,7 @@ var chatHandlers = {
 	auto_compact: handleChatAutoCompact,
 	retrying: handleChatRetrying,
 	error: handleChatError,
+	aborted: handleChatAborted,
 	notice: handleChatNotice,
 	queue_cleared: handleChatQueueCleared,
 	session_cleared: handleChatSessionCleared,
@@ -855,6 +897,33 @@ function handleLogEntry(payload) {
 function updateSandboxBuildingFlag(building) {
 	var info = S.sandboxInfo;
 	if (info) S.setSandboxInfo({ ...info, image_building: building });
+}
+
+var sandboxPrepareIndicatorEl = null;
+function handleSandboxPrepare(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+
+	if (payload.phase === "start") {
+		if (sandboxPrepareIndicatorEl) {
+			sandboxPrepareIndicatorEl.remove();
+			sandboxPrepareIndicatorEl = null;
+		}
+		sandboxPrepareIndicatorEl = chatAddMsg(
+			"system",
+			"Preparing sandbox environment (first run may take a minute)\u2026",
+		);
+		return;
+	}
+
+	if (sandboxPrepareIndicatorEl) {
+		sandboxPrepareIndicatorEl.remove();
+		sandboxPrepareIndicatorEl = null;
+	}
+
+	if (payload.phase === "error") {
+		chatAddMsg("error", `Sandbox setup failed: ${payload.error || "unknown"}`);
+	}
 }
 
 function handleSandboxImageBuild(payload) {
@@ -1070,6 +1139,10 @@ function handleLocationRequest(payload) {
 	);
 }
 
+function handleNetworkAuditEntry(payload) {
+	if (S.networkAuditEventHandler) S.networkAuditEventHandler(payload);
+}
+
 function handleAuthCredentialsChanged(payload) {
 	if (payload?.reason === "password_changed" && window.__moltisSuppressNextPasswordChangedRedirect === true) {
 		window.__moltisSuppressNextPasswordChangedRedirect = false;
@@ -1086,6 +1159,7 @@ var eventHandlers = {
 	"auth.credentials_changed": handleAuthCredentialsChanged,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
+	"sandbox.prepare": handleSandboxPrepare,
 	"sandbox.image.build": handleSandboxImageBuild,
 	"sandbox.image.provision": handleSandboxImageProvision,
 	"sandbox.host.provision": handleSandboxHostProvision,
@@ -1093,16 +1167,21 @@ var eventHandlers = {
 	"local-llm.download": handleLocalLlmDownload,
 	"models.updated": handleModelsUpdated,
 	"location.request": handleLocationRequest,
+	"network.audit.entry": handleNetworkAuditEntry,
 };
 
 function dispatchFrame(frame) {
 	if (frame.type !== "event") return;
+	var streamMeta =
+		frame.stream != null || frame.done != null
+			? { stream: frame.stream, done: frame.done, channel: frame.channel }
+			: null;
 	var listeners = eventListeners[frame.event] || [];
 	listeners.forEach((h) => {
-		h(frame.payload || {});
+		h(frame.payload || {}, streamMeta);
 	});
 	var handler = eventHandlers[frame.event];
-	if (handler) handler(frame.payload || {});
+	if (handler) handler(frame.payload || {}, streamMeta);
 }
 
 var connectOpts = {
@@ -1119,6 +1198,29 @@ var connectOpts = {
 		if (S.sandboxInfo?.image_building) {
 			chatAddMsg("system", "Building sandbox image (installing packages)\u2026");
 		}
+		// Subscribe to all needed events (v4 protocol).
+		subscribeEvents(
+			Object.keys(eventHandlers).concat([
+				"tick",
+				"shutdown",
+				"auth.credentials_changed",
+				"exec.approval.requested",
+				"exec.approval.resolved",
+				"device.pair.requested",
+				"device.pair.resolved",
+				"node.pair.requested",
+				"node.pair.resolved",
+				"node.invoke.request",
+				"session",
+				"update.available",
+				"hooks.status",
+				"push.subscriptions",
+				"channel",
+				"metrics.update",
+				"skills.install.progress",
+				"mcp.status",
+			]),
+		);
 		fetchModels();
 		fetchSessions();
 		fetchProjects();

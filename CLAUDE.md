@@ -242,8 +242,10 @@ New crate: add `run_migrations()` to `lib.rs`, call from `server.rs` in dependen
 
 ## Changelog
 
-Update `[Unreleased]` in `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/))
-for user-facing changes: Added, Changed, Deprecated, Removed, Fixed, Security.
+- Do **not** add manual `CHANGELOG.md` entries in normal PRs.
+- `CHANGELOG.md` entries are generated from commit history via `git-cliff` (`cliff.toml`).
+- Use conventional commits and preview unreleased notes with `just changelog-unreleased`.
+- PR CI enforces this via `scripts/check-changelog-guard.sh`.
 
 ## Git Workflow
 
@@ -269,6 +271,8 @@ Exact commands (must match `local-validate.sh`):
 - Fmt: `cargo +nightly-2025-11-30 fmt --all -- --check`
 - Clippy: `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`
 - macOS without `nvcc`: clippy without `--all-features`
+- macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate build`
+- iOS app (Darwin hosts): `cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build`
 
 ### PR Descriptions
 

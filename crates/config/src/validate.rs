@@ -98,6 +98,7 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "moonshot",
     "venice",
     "ollama",
+    "lmstudio",
 ];
 
 /// Static metadata keys allowed directly under `[providers]`.
@@ -114,7 +115,9 @@ fn build_schema_map() -> KnownKeys {
             ("base_url", Leaf),
             ("models", Leaf),
             ("fetch_models", Leaf),
+            ("stream_transport", Leaf),
             ("alias", Leaf),
+            ("tool_mode", Leaf),
         ]))
     };
 
@@ -126,17 +129,34 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let wasm_tool_limit_override = || Struct(HashMap::from([("fuel", Leaf), ("memory", Leaf)]));
+
+    let wasm_tool_limits = || {
+        Struct(HashMap::from([
+            ("default_memory", Leaf),
+            ("default_fuel", Leaf),
+            ("tool_overrides", Map(Box::new(wasm_tool_limit_override()))),
+        ]))
+    };
+
     let sandbox = || {
         Struct(HashMap::from([
             ("mode", Leaf),
             ("scope", Leaf),
             ("workspace_mount", Leaf),
+            ("home_persistence", Leaf),
+            ("shared_home_dir", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
+            ("network", Leaf),
+            ("trusted_domains", Array(Box::new(Leaf))),
             ("backend", Leaf),
             ("resource_limits", resource_limits()),
             ("packages", Leaf),
+            ("wasm_fuel_limit", Leaf),
+            ("wasm_epoch_interval_ms", Leaf),
+            ("wasm_tool_limits", wasm_tool_limits()),
         ]))
     };
 
@@ -283,6 +303,16 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let agent_preset = || {
+        Struct(HashMap::from([
+            ("model", Leaf),
+            ("allow_tools", Leaf),
+            ("deny_tools", Leaf),
+            ("delegate_only", Leaf),
+            ("system_prompt_suffix", Leaf),
+        ]))
+    };
+
     Struct(HashMap::from([
         (
             "server",
@@ -307,6 +337,13 @@ fn build_schema_map() -> KnownKeys {
                 ("allowed_models", Leaf),
             ])),
         ),
+        (
+            "agents",
+            Struct(HashMap::from([
+                ("default_preset", Leaf),
+                ("presets", Map(Box::new(agent_preset()))),
+            ])),
+        ),
         ("tools", tools()),
         (
             "skills",
@@ -326,8 +363,10 @@ fn build_schema_map() -> KnownKeys {
         (
             "channels",
             Struct(HashMap::from([
+                ("offered", Array(Box::new(Leaf))),
                 ("telegram", Map(Box::new(Leaf))),
-                ("slack", Map(Box::new(Leaf))),
+                ("whatsapp", Map(Box::new(Leaf))),
+                ("msteams", Map(Box::new(Leaf))),
                 ("discord", Map(Box::new(Leaf))),
             ])),
         ),
@@ -383,6 +422,7 @@ fn build_schema_map() -> KnownKeys {
                 ("api_key", Leaf),
                 ("citations", Leaf),
                 ("llm_reranking", Leaf),
+                ("search_merge_strategy", Leaf),
                 ("session_export", Leaf),
                 ("qmd", qmd()),
             ])),
@@ -407,6 +447,9 @@ fn build_schema_map() -> KnownKeys {
                 ("prompt", Leaf),
                 ("ack_max_chars", Leaf),
                 ("active_hours", active_hours()),
+                ("deliver", Leaf),
+                ("channel", Leaf),
+                ("to", Leaf),
                 ("sandbox_enabled", Leaf),
                 ("sandbox_image", Leaf),
             ])),
@@ -419,6 +462,23 @@ fn build_schema_map() -> KnownKeys {
             ])),
         ),
         ("env", Map(Box::new(Leaf))),
+        (
+            "caldav",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("default_account", Leaf),
+                (
+                    "accounts",
+                    Map(Box::new(Struct(HashMap::from([
+                        ("url", Leaf),
+                        ("username", Leaf),
+                        ("password", Leaf),
+                        ("provider", Leaf),
+                        ("timeout_seconds", Leaf),
+                    ])))),
+                ),
+            ])),
+        ),
         (
             "voice",
             Struct(HashMap::from([
@@ -867,6 +927,20 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         });
     }
 
+    // agents.default_preset should reference an existing preset key.
+    if let Some(default_preset) = config.agents.default_preset.as_deref()
+        && !config.agents.presets.contains_key(default_preset)
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "agents.default_preset".into(),
+            message: format!(
+                "default preset \"{default_preset}\" is not defined in agents.presets"
+            ),
+        });
+    }
+
     // SSRF allowlist CIDR validation
     for (idx, entry) in config.tools.web.fetch.ssrf_allowlist.iter().enumerate() {
         if entry.parse::<ipnet::IpNet>().is_err() {
@@ -889,6 +963,27 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         });
     }
 
+    // Unknown tool_mode values on provider entries
+    // Note: serde rejects truly invalid values at deserialization, but if a
+    // provider entry somehow comes through with a non-standard string we still
+    // want to warn at the TOML level.  The enum is auto/native/text/off.
+
+    // Unknown channel types in channels.offered
+    let valid_channel_types = ["telegram", "msteams", "discord"];
+    for (idx, entry) in config.channels.offered.iter().enumerate() {
+        if !valid_channel_types.contains(&entry.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("channels.offered[{idx}]"),
+                message: format!(
+                    "unknown channel type \"{entry}\"; expected one of: {}",
+                    valid_channel_types.join(", ")
+                ),
+            });
+        }
+    }
+
     // Unknown tailscale mode
     let valid_ts_modes = ["off", "serve", "funnel"];
     if !valid_ts_modes.contains(&config.tailscale.mode.as_str()) {
@@ -905,7 +1000,14 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
     }
 
     // Unknown sandbox backend
-    let valid_sandbox_backends = ["auto", "docker", "apple-container"];
+    let valid_sandbox_backends = [
+        "auto",
+        "docker",
+        "podman",
+        "apple-container",
+        "restricted-host",
+        "wasm",
+    ];
     if !valid_sandbox_backends.contains(&config.tools.exec.sandbox.backend.as_str()) {
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,
@@ -917,6 +1019,23 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 valid_sandbox_backends.join(", ")
             ),
         });
+    }
+
+    // Unknown sandbox network policy
+    if !config.tools.exec.sandbox.network.is_empty() {
+        let valid_network_policies = ["blocked", "trusted", "bypass"];
+        if !valid_network_policies.contains(&config.tools.exec.sandbox.network.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "tools.exec.sandbox.network".into(),
+                message: format!(
+                    "unknown sandbox network policy \"{}\"; expected one of: {}",
+                    config.tools.exec.sandbox.network,
+                    valid_network_policies.join(", ")
+                ),
+            });
+        }
     }
 
     // Unknown memory backend
@@ -946,6 +1065,40 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 message: format!(
                     "unknown memory provider \"{provider}\"; expected one of: {}",
                     valid_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown search merge strategy
+    if let Some(ref strategy) = config.memory.search_merge_strategy {
+        let valid_strategies = ["rrf", "linear"];
+        if !valid_strategies.contains(&strategy.to_lowercase().as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "memory.search_merge_strategy".into(),
+                message: format!(
+                    "unknown search merge strategy \"{strategy}\"; expected one of: {}",
+                    valid_strategies.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown CalDAV provider
+    let valid_caldav_providers = ["fastmail", "icloud", "generic"];
+    for (name, account) in &config.caldav.accounts {
+        if let Some(ref provider) = account.provider
+            && !valid_caldav_providers.contains(&provider.as_str())
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("caldav.accounts.{name}.provider"),
+                message: format!(
+                    "unknown CalDAV provider \"{provider}\"; expected one of: {}",
+                    valid_caldav_providers.join(", ")
                 ),
             });
         }
@@ -1509,7 +1662,7 @@ disable_rag = true
     fn unknown_sandbox_backend_warned() {
         let toml = r#"
 [tools.exec.sandbox]
-backend = "podman"
+backend = "lxc"
 "#;
         let result = validate_toml_str(toml);
         let warning = result
@@ -1519,6 +1672,23 @@ backend = "podman"
         assert!(
             warning.is_some(),
             "expected warning for unknown sandbox backend"
+        );
+    }
+
+    #[test]
+    fn podman_sandbox_backend_accepted() {
+        let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "tools.exec.sandbox.backend");
+        assert!(
+            warning.is_none(),
+            "podman should be accepted as a valid sandbox backend"
         );
     }
 
@@ -1860,5 +2030,119 @@ agent_max_iterations = 0
             "expected tools.agent_max_iterations invalid-value error, got: {:?}",
             result.diagnostics
         );
+    }
+
+    #[test]
+    fn channels_offered_accepted_without_warning() {
+        let toml = r#"
+[channels]
+offered = ["telegram"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered"));
+        assert!(
+            warning.is_none(),
+            "valid channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_discord_accepted() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "discord"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.offered") && d.category == "unknown-field");
+        assert!(
+            warning.is_none(),
+            "discord in channels.offered should not produce warnings, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_discord_config_accepted() {
+        let toml = r#"
+[channels.discord.my_bot]
+token = "test-token"
+dm_policy = "allowlist"
+"#;
+        let result = validate_toml_str(toml);
+        let error = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.starts_with("channels.discord") && d.severity == Severity::Error);
+        assert!(
+            error.is_none(),
+            "discord channel config should be accepted, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn channels_offered_unknown_type_warned() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "slack"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "channels.offered[1]" && d.category == "unknown-field");
+        assert!(
+            warning.is_some(),
+            "unknown channel type should produce warning, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn tool_mode_field_accepted_in_provider_entry() {
+        let toml = r#"
+[providers.ollama]
+enabled = true
+tool_mode = "text"
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path.contains("tool_mode"));
+        assert!(
+            unknown.is_none(),
+            "tool_mode should be a known field, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn tool_mode_all_values_parse_correctly() {
+        for mode in ["auto", "native", "text", "off"] {
+            let toml = format!(
+                r#"
+[providers.anthropic]
+tool_mode = "{mode}"
+"#
+            );
+            let result = validate_toml_str(&toml);
+            let type_error = result
+                .diagnostics
+                .iter()
+                .find(|d| d.category == "type-error");
+            assert!(
+                type_error.is_none(),
+                "tool_mode = \"{mode}\" should parse without type error, got: {:?}",
+                result.diagnostics
+            );
+        }
     }
 }

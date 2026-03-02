@@ -31,6 +31,11 @@ const HOST_TERMINAL_TMUX_CONFIG_PATH: &str = "/dev/null";
 const HOST_TERMINAL_MAX_INPUT_BYTES: usize = 8 * 1024;
 const HOST_TERMINAL_DEFAULT_COLS: u16 = 220;
 const HOST_TERMINAL_DEFAULT_ROWS: u16 = 56;
+const TERMINAL_SESSION_INIT_FAILED: &str = "TERMINAL_SESSION_INIT_FAILED";
+const TERMINAL_WINDOWS_LIST_FAILED: &str = "TERMINAL_WINDOWS_LIST_FAILED";
+const TERMINAL_TMUX_UNAVAILABLE: &str = "TERMINAL_TMUX_UNAVAILABLE";
+const TERMINAL_WINDOW_NAME_INVALID: &str = "TERMINAL_WINDOW_NAME_INVALID";
+const TERMINAL_WINDOW_CREATE_FAILED: &str = "TERMINAL_WINDOW_CREATE_FAILED";
 
 // ── Data structures ──────────────────────────────────────────────────────────
 
@@ -107,6 +112,13 @@ impl From<&str> for TerminalError {
 type TerminalResult<T> = Result<T, TerminalError>;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+fn terminal_error(code: &str, error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
+        "error": error.into(),
+    })
+}
 
 fn host_terminal_working_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -843,7 +855,10 @@ pub async fn api_terminal_windows_handler() -> impl IntoResponse {
     if let Err(err) = host_terminal_ensure_tmux_session() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
+            Json(terminal_error(
+                TERMINAL_SESSION_INIT_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response();
     }
@@ -856,7 +871,10 @@ pub async fn api_terminal_windows_handler() -> impl IntoResponse {
         .into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
+            Json(terminal_error(
+                TERMINAL_WINDOWS_LIST_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response(),
     }
@@ -868,9 +886,10 @@ pub async fn api_terminal_windows_create_handler(
     if !host_terminal_tmux_available() {
         return (
             StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "tmux is not available on host terminal",
-            })),
+            Json(terminal_error(
+                TERMINAL_TMUX_UNAVAILABLE,
+                "tmux is not available on host terminal",
+            )),
         )
             .into_response();
     }
@@ -884,7 +903,10 @@ pub async fn api_terminal_windows_create_handler(
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": err.to_string() })),
+                Json(terminal_error(
+                    TERMINAL_WINDOW_NAME_INVALID,
+                    err.to_string(),
+                )),
             )
                 .into_response();
         },
@@ -892,7 +914,10 @@ pub async fn api_terminal_windows_create_handler(
     if let Err(err) = host_terminal_ensure_tmux_session() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
+            Json(terminal_error(
+                TERMINAL_SESSION_INIT_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response();
     }
@@ -914,13 +939,19 @@ pub async fn api_terminal_windows_create_handler(
             },
             Err(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": err.to_string() })),
+                Json(terminal_error(
+                    TERMINAL_WINDOWS_LIST_FAILED,
+                    err.to_string(),
+                )),
             )
                 .into_response(),
         },
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
+            Json(terminal_error(
+                TERMINAL_WINDOW_CREATE_FAILED,
+                err.to_string(),
+            )),
         )
             .into_response(),
     }
@@ -965,7 +996,10 @@ pub async fn api_terminal_ws_upgrade_handler(
     if !header_authenticated {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "not authenticated" })),
+            Json(terminal_error(
+                "AUTH_NOT_AUTHENTICATED",
+                "not authenticated",
+            )),
         )
             .into_response();
     }

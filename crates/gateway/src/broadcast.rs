@@ -27,6 +27,12 @@ fn event_scope_guards() -> HashMap<&'static str, &'static [&'static str]> {
 pub struct BroadcastOpts {
     pub drop_if_slow: bool,
     pub state_version: Option<StateVersion>,
+    /// Stream group ID for chunked delivery (v4).
+    pub stream: Option<String>,
+    /// End-of-stream marker (v4).
+    pub done: bool,
+    /// Logical channel for multiplexing (v4).
+    pub channel: Option<String>,
 }
 
 // ── Broadcaster ──────────────────────────────────────────────────────────────
@@ -40,12 +46,18 @@ pub async fn broadcast(
     opts: BroadcastOpts,
 ) {
     let seq = state.next_seq();
+    let stream = opts.stream.clone();
+    let done = opts.done.then_some(true);
+    let channel = opts.channel.clone();
     let frame = EventFrame {
         r#type: "event".into(),
         event: event.into(),
         payload: Some(payload),
         seq: Some(seq),
         state_version: opts.state_version,
+        stream,
+        done,
+        channel,
     };
     let json = match serde_json::to_string(&frame) {
         Ok(j) => j,
@@ -82,6 +94,19 @@ pub async fn broadcast(
             if !has {
                 continue;
             }
+        }
+
+        // Subscription filter (v4): skip clients not subscribed to this event.
+        if !client.is_subscribed_to(event) {
+            continue;
+        }
+
+        // Channel filter (v4): if event is scoped to a channel, skip clients
+        // that haven't joined it.
+        if let Some(ref ch) = opts.channel
+            && !client.is_in_channel(ch)
+        {
+            continue;
         }
 
         if !client.send(&json) && opts.drop_if_slow {

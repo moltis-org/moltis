@@ -8,8 +8,10 @@ import { EmojiPicker } from "./emoji-picker.js";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
-import { sendRpc } from "./helpers.js";
+import { localizedApiErrorMessage, sendRpc } from "./helpers.js";
+import { setLocale } from "./i18n.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
+import { initAgents, teardownAgents } from "./page-agents.js";
 // Moved page init/teardown imports
 import { initChannels, teardownChannels } from "./page-channels.js";
 import { initCrons, teardownCrons } from "./page-crons.js";
@@ -18,6 +20,7 @@ import { initImages, teardownImages } from "./page-images.js";
 import { initLogs, teardownLogs } from "./page-logs.js";
 import { initMcp, teardownMcp } from "./page-mcp.js";
 import { initMonitoring, teardownMonitoring } from "./page-metrics.js";
+import { initNetworkAudit, teardownNetworkAudit } from "./page-network-audit.js";
 import { initProviders, teardownProviders } from "./page-providers.js";
 import { initSkills, teardownSkills } from "./page-skills.js";
 import { initTerminal, teardownTerminal } from "./page-terminal.js";
@@ -42,6 +45,7 @@ import {
 var identity = signal(null);
 var loading = signal(true);
 var activeSection = signal("identity");
+var activeSubPath = signal("");
 var mobileSidebarVisible = signal(true);
 var mounted = false;
 var containerRef = null;
@@ -63,9 +67,23 @@ function isSafariBrowser() {
 	return /Apple/i.test(vendor) || ua.includes("Safari/");
 }
 
+function isMissingMethodError(res) {
+	var message = res?.error?.message;
+	if (typeof message !== "string") return false;
+	var lower = message.toLowerCase();
+	return lower.includes("method") && (lower.includes("not found") || lower.includes("unknown"));
+}
+
+function fetchMainIdentity() {
+	return sendRpc("agents.identity.get", { agent_id: "main" }).then((res) => {
+		if (res?.ok || !isMissingMethodError(res)) return res;
+		return sendRpc("agent.identity.get", {});
+	});
+}
+
 function fetchIdentity() {
 	if (!mounted) return;
-	sendRpc("agent.identity.get", {}).then((res) => {
+	fetchMainIdentity().then((res) => {
 		if (res?.ok) {
 			identity.value = res.payload;
 			loading.value = false;
@@ -87,6 +105,12 @@ var sections = [
 		id: "identity",
 		label: "Identity",
 		icon: html`<span class="icon icon-person"></span>`,
+	},
+	{
+		id: "agents",
+		label: "Agents",
+		icon: html`<span class="icon icon-users"></span>`,
+		page: true,
 	},
 	{
 		id: "environment",
@@ -131,6 +155,18 @@ var sections = [
 		label: "Tailscale",
 		icon: html`<span class="icon icon-globe"></span>`,
 	},
+	{
+		id: "network-audit",
+		label: "Network Audit",
+		icon: html`<span class="icon icon-globe"></span>`,
+		page: true,
+	},
+	{
+		id: "sandboxes",
+		label: "Sandboxes",
+		icon: html`<span class="icon icon-cube"></span>`,
+		page: true,
+	},
 	{ group: "Integrations" },
 	{
 		id: "channels",
@@ -163,6 +199,11 @@ var sections = [
 		page: true,
 	},
 	{
+		id: "import",
+		label: "OpenClaw Import",
+		icon: html`<span class="icon icon-link"></span>`,
+	},
+	{
 		id: "voice",
 		label: "Voice",
 		icon: html`<span class="icon icon-microphone"></span>`,
@@ -172,12 +213,6 @@ var sections = [
 		id: "terminal",
 		label: "Terminal",
 		icon: html`<span class="icon icon-terminal"></span>`,
-		page: true,
-	},
-	{
-		id: "sandboxes",
-		label: "Sandboxes",
-		icon: html`<span class="icon icon-cube"></span>`,
 		page: true,
 	},
 	{
@@ -209,6 +244,7 @@ function getVisibleSections() {
 	return sections.filter((s) => {
 		if (!s.id) return true;
 		if (s.id === "graphql" && !gon.get("graphql_enabled")) return false;
+		if (s.id === "import" && !gon.get("openclaw_detected")) return false;
 		if (s.id === "vault" && (!vs || vs === "disabled")) return false;
 		return true;
 	});
@@ -276,19 +312,24 @@ var DEFAULT_SOUL =
 function IdentitySection() {
 	var id = identity.value;
 	var isNew = !(id && (id.name || id.user_name));
+	var storedLocale = localStorage.getItem("moltis-locale");
 
 	var [name, setName] = useState(id?.name || "");
 	var [emoji, setEmoji] = useState(id?.emoji || "");
 	var [theme, setTheme] = useState(id?.theme || "");
 	var [userName, setUserName] = useState(id?.user_name || "");
 	var [soul, setSoul] = useState(id?.soul || "");
+	var [uiLanguage, setUiLanguage] = useState(storedLocale || "auto");
 	var [saving, setSaving] = useState(false);
 	var [emojiSaving, setEmojiSaving] = useState(false);
 	var [nameSaving, setNameSaving] = useState(false);
 	var [userNameSaving, setUserNameSaving] = useState(false);
+	var [languageSaving, setLanguageSaving] = useState(false);
 	var [saved, setSaved] = useState(false);
+	var [languageSaved, setLanguageSaved] = useState(false);
 	var [showFaviconReloadHint, setShowFaviconReloadHint] = useState(false);
 	var [error, setError] = useState(null);
+	var [languageError, setLanguageError] = useState(null);
 
 	// Sync state when identity loads asynchronously
 	useEffect(() => {
@@ -300,9 +341,12 @@ function IdentitySection() {
 		setSoul(id.soul || "");
 	}, [id]);
 
+	var savedTimerRef = useRef(null);
 	function flashSaved() {
+		if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
 		setSaved(true);
-		setTimeout(() => {
+		savedTimerRef.current = setTimeout(() => {
+			savedTimerRef.current = null;
 			setSaved(false);
 			rerender();
 		}, 2000);
@@ -325,13 +369,16 @@ function IdentitySection() {
 		setSaving(true);
 		setSaved(false);
 
-		updateIdentity({
-			name: name.trim(),
-			emoji: emoji.trim() || "",
-			theme: theme.trim() || "",
-			soul: soul.trim() || null,
-			user_name: userName.trim(),
-		}).then((res) => {
+		updateIdentity(
+			{
+				name: name.trim(),
+				emoji: emoji.trim() || "",
+				theme: theme.trim() || "",
+				soul: soul.trim() || null,
+				user_name: userName.trim(),
+			},
+			{ agentId: "main" },
+		).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
 				identity.value = res.payload;
@@ -352,7 +399,7 @@ function IdentitySection() {
 		setError(null);
 		setSaved(false);
 		setEmojiSaving(true);
-		updateIdentity({ emoji: nextEmoji.trim() || "" }).then((res) => {
+		updateIdentity({ emoji: nextEmoji.trim() || "" }, { agentId: "main" }).then((res) => {
 			setEmojiSaving(false);
 			if (res?.ok) {
 				identity.value = res.payload;
@@ -390,7 +437,7 @@ function IdentitySection() {
 
 		var payload = {};
 		payload[field] = trimmed;
-		updateIdentity(payload).then((res) => {
+		updateIdentity(payload, { agentId: "main" }).then((res) => {
 			if (field === "name") {
 				setNameSaving(false);
 			} else {
@@ -411,12 +458,12 @@ function IdentitySection() {
 		});
 	}
 
-	function onNameBlur() {
-		autoSaveNameField("name", name);
+	function onNameBlur(e) {
+		autoSaveNameField("name", e.target.value);
 	}
 
-	function onUserNameBlur() {
-		autoSaveNameField("user_name", userName);
+	function onUserNameBlur(e) {
+		autoSaveNameField("user_name", e.target.value);
 	}
 
 	function onResetSoul() {
@@ -426,6 +473,32 @@ function IdentitySection() {
 
 	function onReloadForFavicon() {
 		window.location.reload();
+	}
+
+	function onApplyLanguage() {
+		setLanguageSaving(true);
+		setLanguageSaved(false);
+		setLanguageError(null);
+
+		var nextLanguage = uiLanguage === "auto" ? navigator.language || "en" : uiLanguage;
+		setLocale(nextLanguage)
+			.then(() => {
+				if (uiLanguage === "auto") {
+					localStorage.removeItem("moltis-locale");
+				}
+				setLanguageSaving(false);
+				setLanguageSaved(true);
+				setTimeout(() => {
+					setLanguageSaved(false);
+					rerender();
+				}, 2000);
+				rerender();
+			})
+			.catch((err) => {
+				setLanguageSaving(false);
+				setLanguageError(err?.message || "Failed to update language");
+				rerender();
+			});
 	}
 
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
@@ -480,6 +553,43 @@ function IdentitySection() {
 							placeholder="e.g. Alice" />
 					</div>
 				</div>
+
+			<!-- Language section -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Language</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Choose the UI language for this browser.</p>
+				<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+					<label for="identityLanguageSelect" class="text-xs text-[var(--muted)]">UI language</label>
+					<select
+						id="identityLanguageSelect"
+						class="provider-key-input"
+						style="max-width:220px;"
+						value=${uiLanguage}
+						onChange=${(e) => {
+							setUiLanguage(e.target.value);
+							setLanguageSaved(false);
+							setLanguageError(null);
+							rerender();
+						}}
+					>
+						<option value="auto">Browser default</option>
+						<option value="en">English</option>
+						<option value="fr">French</option>
+						<option value="zh">简体中文</option>
+					</select>
+					<button
+						type="button"
+						id="identityLanguageApplyBtn"
+						class="provider-btn provider-btn-secondary"
+						disabled=${languageSaving}
+						onClick=${onApplyLanguage}
+					>
+						${languageSaving ? "Applying..." : "Apply language"}
+					</button>
+					${languageSaved ? html`<span class="text-xs" style="color:var(--accent);">Language updated</span>` : null}
+					${languageError ? html`<span class="text-xs" style="color:var(--error);">${languageError}</span>` : null}
+				</div>
+			</div>
 
 			<!-- Soul section -->
 			<div>
@@ -576,7 +686,7 @@ function EnvironmentSection() {
 					}, 2000);
 					fetchEnvVars();
 				} else {
-					return r.json().then((d) => setEnvErr(d.error || "Failed to save"));
+					return r.json().then((d) => setEnvErr(localizedApiErrorMessage(d, "Failed to save")));
 				}
 				setSaving(false);
 				rerender();
@@ -765,6 +875,7 @@ function SecuritySection() {
 	var [editingPk, setEditingPk] = useState(null);
 	var [editingPkName, setEditingPkName] = useState("");
 	var [passkeyOrigins, setPasskeyOrigins] = useState([]);
+	var [passkeyHostUpdateHosts, setPasskeyHostUpdateHosts] = useState([]);
 
 	var [apiKeys, setApiKeys] = useState([]);
 	var [akLabel, setAkLabel] = useState("");
@@ -793,6 +904,16 @@ function SecuritySection() {
 	// A credential added while localhost-bypass is active can immediately make the
 	// current session unauthenticated (no session cookie). Reload so middleware
 	// can route to /login in that transition.
+	function refreshPasskeyHostStatus() {
+		return fetch("/api/auth/status")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((status) => {
+				if (Array.isArray(status?.passkey_host_update_hosts))
+					setPasskeyHostUpdateHosts(status.passkey_host_update_hosts);
+				if (Array.isArray(status?.passkey_origins)) setPasskeyOrigins(status.passkey_origins);
+			});
+	}
+
 	function reloadIfAuthNowRequiresLogin({ reload = true } = {}) {
 		return fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
@@ -811,12 +932,13 @@ function SecuritySection() {
 		fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
 			.then((d) => {
-				if (d?.auth_disabled) setAuthDisabled(true);
-				if (d?.localhost_only) setLocalhostOnly(true);
-				if (d?.has_password === false) setHasPassword(false);
-				if (d?.has_passkeys === true) setHasPasskeys(true);
-				if (d?.setup_complete) setSetupComplete(true);
-				if (d?.passkey_origins) setPasskeyOrigins(d.passkey_origins);
+				if (typeof d?.auth_disabled === "boolean") setAuthDisabled(d.auth_disabled);
+				if (typeof d?.localhost_only === "boolean") setLocalhostOnly(d.localhost_only);
+				if (typeof d?.has_password === "boolean") setHasPassword(d.has_password);
+				if (typeof d?.has_passkeys === "boolean") setHasPasskeys(d.has_passkeys);
+				if (typeof d?.setup_complete === "boolean") setSetupComplete(d.setup_complete);
+				if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d.passkey_origins);
+				if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d.passkey_host_update_hosts);
 				setAuthLoading(false);
 				rerender();
 			})
@@ -969,9 +1091,11 @@ function SecuritySection() {
 								setHasPasskeys((d.passkeys || []).length > 0);
 								setSetupComplete(true);
 								setAuthDisabled(false);
-								setPkMsg("Passkey added.");
-								notifyAuthStatusChanged();
-								rerender();
+								return refreshPasskeyHostStatus().then(() => {
+									setPkMsg("Passkey added.");
+									notifyAuthStatusChanged();
+									rerender();
+								});
 							});
 					});
 				} else
@@ -1025,8 +1149,10 @@ function SecuritySection() {
 			.then((d) => {
 				setPasskeys(d.passkeys || []);
 				setHasPasskeys((d.passkeys || []).length > 0);
-				notifyAuthStatusChanged();
-				rerender();
+				return refreshPasskeyHostStatus().then(() => {
+					notifyAuthStatusChanged();
+					rerender();
+				});
 			});
 	}
 
@@ -1233,6 +1359,14 @@ function SecuritySection() {
 		<div style="max-width:600px;border-top:1px solid var(--border);padding-top:16px;">
 			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Passkeys</h3>
 			${passkeyOrigins.length > 1 && html`<div class="text-xs text-[var(--muted)]" style="margin-bottom:8px;">Passkeys will work when visiting: ${passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", ")}</div>`}
+			${
+				hasPasskeys && passkeyHostUpdateHosts.length > 0
+					? html`<div class="alert-warning-text max-w-form" style="margin-bottom:8px;">
+						<span class="alert-label-warning">Passkey update needed: </span>
+						New host detected (${passkeyHostUpdateHosts.join(", ")}). Sign in with your password on that host, then register a new passkey there.
+					</div>`
+					: null
+			}
 			${
 				pkLoading
 					? html`<div class="text-xs text-[var(--muted)]">Loading\u2026</div>`
@@ -1483,9 +1617,17 @@ function VaultSection() {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Encryption</h2>
 
 		<div style="max-width:600px;">
-			<p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0 0 12px;">
-				Your API keys and secrets are encrypted before being stored in the database. The vault locks automatically when the server restarts and unlocks when you log in.
-			</p>
+			<div class="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 mb-4">
+				<p class="text-xs text-[var(--muted)] leading-relaxed m-0 mb-1.5">
+					Your API keys and secrets are encrypted at rest using <strong class="text-[var(--text)]">XChaCha20-Poly1305</strong> AEAD with keys derived from your password via <strong class="text-[var(--text)]">Argon2id</strong>.
+				</p>
+				<p class="text-xs text-[var(--muted)] leading-relaxed m-0 mb-1.5">
+					The vault uses a two-layer key hierarchy: your password derives a Key Encryption Key (KEK) which unwraps a random 256-bit Data Encryption Key (DEK). Changing your password only re-wraps the DEK \u2014 all encrypted data stays intact. A recovery key (shown once at setup) provides emergency access if you forget your password.
+				</p>
+				<p class="text-xs text-[var(--muted)] leading-relaxed m-0">
+					The vault locks automatically when the server restarts and unlocks when you log in.
+				</p>
+			</div>
 
 			<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
 				<span class="provider-item-badge ${vaultStatus === "unsealed" ? "configured" : vaultStatus === "sealed" ? "warning" : "muted"}">
@@ -1553,6 +1695,184 @@ function bufToB64(buf) {
 	var str = "";
 	for (var b of bytes) str += String.fromCharCode(b);
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ── OpenClaw Import section ───────────────────────────────────
+
+function OpenClawImportSection() {
+	var [importLoading, setImportLoading] = useState(true);
+	var [scan, setScan] = useState(null);
+	var [importing, setImporting] = useState(false);
+	var [done, setDone] = useState(false);
+	var [result, setResult] = useState(null);
+	var [error, setError] = useState(null);
+	var [selection, setSelection] = useState({
+		identity: true,
+		providers: true,
+		skills: true,
+		memory: true,
+		channels: true,
+		sessions: true,
+	});
+
+	useEffect(() => {
+		var cancelled = false;
+		sendRpc("openclaw.scan", {}).then((res) => {
+			if (cancelled) return;
+			if (res?.ok) setScan(res.payload);
+			else setError("Failed to scan OpenClaw installation");
+			setImportLoading(false);
+			rerender();
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	function toggleCategory(key) {
+		setSelection((prev) => {
+			var next = Object.assign({}, prev);
+			next[key] = !prev[key];
+			return next;
+		});
+	}
+
+	function doImport() {
+		setImporting(true);
+		setError(null);
+		sendRpc("openclaw.import", selection).then((res) => {
+			setImporting(false);
+			if (res?.ok) {
+				setResult(res.payload);
+				setDone(true);
+			} else {
+				setError(res?.error?.message || "Import failed");
+			}
+			rerender();
+		});
+	}
+
+	if (importLoading) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+			<div class="text-xs text-[var(--muted)]">Scanning\u2026</div>
+		</div>`;
+	}
+
+	if (!scan?.detected) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+			<div class="text-xs text-[var(--muted)]">No OpenClaw installation detected.</div>
+		</div>`;
+	}
+
+	var telegramAccounts = Number(scan.telegram_accounts) || 0;
+	var discordAccounts = Number(scan.discord_accounts) || 0;
+	var channelParts = [];
+	if (telegramAccounts > 0) channelParts.push(`${telegramAccounts} Telegram account(s)`);
+	if (discordAccounts > 0) channelParts.push(`${discordAccounts} Discord account(s)`);
+	var channelDetail = channelParts.length > 0 ? channelParts.join(", ") : null;
+	var unsupportedChannels = (scan.unsupported_channels || []).filter(
+		(channel) => String(channel).toLowerCase() !== "discord",
+	);
+
+	var categories = [
+		{ key: "identity", label: "Identity", available: scan.identity_available },
+		{ key: "providers", label: "Providers", available: scan.providers_available },
+		{ key: "skills", label: "Skills", available: scan.skills_count > 0, detail: `${scan.skills_count} skill(s)` },
+		{
+			key: "memory",
+			label: "Memory",
+			available: scan.memory_available,
+			detail: `${scan.memory_files_count} memory file(s)`,
+		},
+		{
+			key: "channels",
+			label: "Channels",
+			available: scan.channels_available,
+			detail: channelDetail,
+		},
+		{
+			key: "sessions",
+			label: "Sessions",
+			available: scan.sessions_count > 0,
+			detail: `${scan.sessions_count} session(s)`,
+		},
+	];
+	var anySelected = categories.some((c) => c.available && selection[c.key]);
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
+			Import data from your OpenClaw installation at <code class="text-[var(--text)]">${scan.home_dir}</code>.
+			This is a read-only copy \u2014 your OpenClaw files will not be modified or removed.
+			You can keep using both side by side and re-import whenever you like.
+		</p>
+		${
+			error
+				? html`<div role="alert" class="alert-error-text whitespace-pre-line" style="max-width:600px;">
+			<span class="text-[var(--error)] font-medium">Error:</span> ${error}
+		</div>`
+				: null
+		}
+			${
+				done && result
+					? html`<div class="flex flex-col gap-2" style="max-width:600px;">
+						<div class="text-sm font-medium text-[var(--ok)]">Import complete: ${(result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0)} item(s) imported.</div>
+						${
+							result.categories
+								? html`<div class="flex flex-col gap-1">
+								${result.categories.map(
+									(cat) => html`<div key=${cat.category} class="text-xs text-[var(--text)]">
+										<span class="font-mono">[${cat.status === "success" ? "\u2713" : cat.status === "partial" ? "~" : cat.status === "skipped" ? "-" : "!"}]</span>
+										${cat.category}: ${cat.items_imported} imported, ${cat.items_skipped} skipped
+									</div>`,
+								)}
+							</div>`
+								: null
+						}
+					<button class="provider-btn provider-btn-secondary mt-2" style="width:fit-content;" onClick=${() => {
+						setDone(false);
+						setResult(null);
+						rerender();
+					}}>
+						Import Again
+					</button>
+				</div>`
+					: html`<div class="flex flex-col gap-2" style="max-width:400px;">
+					${categories.map(
+						(cat) => html`<label
+							key=${cat.key}
+							class="flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}">
+							<input
+								type="checkbox"
+								checked=${selection[cat.key] && cat.available}
+								disabled=${!cat.available || importing}
+								onChange=${() => toggleCategory(cat.key)}
+							/>
+							<span>${cat.label}</span>
+							${cat.detail && cat.available ? html`<span class="text-xs text-[var(--muted)]">(${cat.detail})</span>` : null}
+							${cat.available ? null : html`<span class="text-xs text-[var(--muted)]">(not found)</span>`}
+						</label>`,
+					)}
+				</div>
+				${
+					unsupportedChannels.length > 0
+						? html`<p class="text-xs text-[var(--muted)]" style="max-width:600px;">
+							Unsupported channels (coming soon): ${unsupportedChannels.join(", ")}
+						</p>`
+						: null
+				}
+				<button
+					class="provider-btn mt-2"
+					style="width:fit-content;"
+					onClick=${doImport}
+					disabled=${!anySelected || importing}
+				>
+					${importing ? "Importing\u2026" : "Import Selected"}
+				</button>`
+			}
+	</div>`;
 }
 
 // ── Configuration section ─────────────────────────────────────
@@ -2042,6 +2362,7 @@ function TailscaleSection() {
 	var ref = useRef(null);
 	var [tsStatus, setTsStatus] = useState(null);
 	var [tsError, setTsError] = useState(null);
+	var [tsWarning, setTsWarning] = useState(null);
 	var [tsLoading, setTsLoading] = useState(true);
 	var [configuring, setConfiguring] = useState(false);
 	var [configuringMode, setConfiguringMode] = useState(null);
@@ -2068,6 +2389,7 @@ function TailscaleSection() {
 				} else {
 					setTsStatus(data);
 					setTsError(null);
+					setTsWarning(data.passkey_warning || null);
 				}
 				setTsLoading(false);
 				rerender();
@@ -2082,6 +2404,7 @@ function TailscaleSection() {
 	function setMode(mode) {
 		setConfiguring(true);
 		setTsError(null);
+		setTsWarning(null);
 		setConfiguringMode(mode);
 		rerender();
 		fetch("/api/tailscale/configure", {
@@ -2094,6 +2417,7 @@ function TailscaleSection() {
 				if (data.error) {
 					setTsError(data.error);
 				} else {
+					setTsWarning(data.passkey_warning || null);
 					fetchTsStatus();
 				}
 				setConfiguring(false);
@@ -2243,6 +2567,13 @@ function TailscaleSection() {
 		}
 	}
 
+	function renderTsWarning(container) {
+		var warningEl = document.createElement("div");
+		warningEl.className = "alert-warning-text max-w-form";
+		warningEl.textContent = tsWarning;
+		container.appendChild(warningEl);
+	}
+
 	function renderNotInstalled(container) {
 		var notInst = cloneHidden("ts-not-installed");
 		if (notInst) {
@@ -2266,6 +2597,7 @@ function TailscaleSection() {
 		}
 		if (tsStatus?.installed) renderInstalledBar(container, tsStatus);
 		if (tsError) renderTsError(container);
+		if (tsWarning) renderTsWarning(container);
 		if (tsStatus?.installed === false) {
 			if (!tsError) renderNotInstalled(container);
 			return;
@@ -3297,15 +3629,15 @@ function MemorySection() {
 							</div>
 							<div class="text-xs text-[var(--muted)]" style="line-height:1.6;">
 								<strong style="color:var(--text);">Installation:</strong><br/>
-								<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">npm install -g @anthropic/qmd</code>
-								<span style="margin:0 4px;">or</span>
-								<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">bun install -g @anthropic/qmd</code>
+									<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">npm install -g @tobilu/qmd</code>
+									<span style="margin:0 4px;">or</span>
+									<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">bun install -g @tobilu/qmd</code>
 								<br/><br/>
 								Then start the QMD daemon:
 								<code style="display:block;margin-top:4px;font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">qmd daemon</code>
 								<br/>
-								<a href="https://github.com/anthropics/qmd" target="_blank" rel="noopener"
-									style="color:var(--accent);">View documentation \u2192</a>
+									<a href="https://github.com/tobi/qmd" target="_blank" rel="noopener"
+										style="color:var(--accent);">View documentation \u2192</a>
 							</div>
 						`
 						}
@@ -3605,6 +3937,7 @@ var pageSectionHandlers = {
 	mcp: { init: initMcp, teardown: teardownMcp },
 	hooks: { init: initHooks, teardown: teardownHooks },
 	skills: { init: initSkills, teardown: teardownSkills },
+	agents: { init: initAgents, teardown: teardownAgents },
 	terminal: { init: initTerminal, teardown: teardownTerminal },
 	sandboxes: { init: initImages, teardown: teardownImages },
 	monitoring: {
@@ -3612,17 +3945,18 @@ var pageSectionHandlers = {
 		teardown: teardownMonitoring,
 	},
 	logs: { init: initLogs, teardown: teardownLogs },
+	"network-audit": { init: initNetworkAudit, teardown: teardownNetworkAudit },
 };
 
 /** Wrapper that mounts a page init/teardown pair into a ref div. */
-function PageSection({ initFn, teardownFn }) {
+function PageSection({ initFn, teardownFn, subPath }) {
 	var ref = useRef(null);
 	useEffect(() => {
-		if (ref.current) initFn(ref.current);
+		if (ref.current) initFn(ref.current, subPath);
 		return () => {
 			if (teardownFn) teardownFn();
 		};
-	}, []);
+	}, [initFn, teardownFn, subPath]);
 	return html`<div
 		ref=${ref}
 		class="flex-1 flex flex-col min-w-0 overflow-hidden"
@@ -3637,6 +3971,7 @@ function SettingsPage() {
 	}, []);
 
 	var section = activeSection.value;
+	var subPath = activeSubPath.value;
 	var ps = pageSectionHandlers[section];
 	var mobile = isMobileViewport();
 	var showSidebar = !mobile || mobileSidebarVisible.value;
@@ -3673,7 +4008,11 @@ function SettingsPage() {
 							</div>`
 							: null
 					}
-					${ps ? html`<${PageSection} key=${section} initFn=${ps.init} teardownFn=${ps.teardown} />` : null}
+					${
+						ps
+							? html`<${PageSection} key=${`${section}:${subPath}`} initFn=${ps.init} teardownFn=${ps.teardown} subPath=${subPath} />`
+							: null
+					}
 					${section === "identity" ? html`<${IdentitySection} />` : null}
 					${section === "memory" ? html`<${MemorySection} />` : null}
 					${section === "environment" ? html`<${EnvironmentSection} />` : null}
@@ -3693,6 +4032,7 @@ function SettingsPage() {
 								: null
 						}
 						${section === "notifications" ? html`<${NotificationsSection} />` : null}
+						${section === "import" ? html`<${OpenClawImportSection} />` : null}
 						${section === "graphql" ? html`<${GraphqlSection} />` : null}
 						${section === "config" ? html`<${ConfigSection} />` : null}
 					</div>`
@@ -3709,9 +4049,13 @@ registerPrefix(
 		mounted = true;
 		containerRef = container;
 		container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
-		var isValidSection = param && getSectionItems().some((s) => s.id === param);
-		var section = isValidSection ? param : DEFAULT_SECTION;
+		var parts = (param || "").replace(/:/g, "/").split("/").filter(Boolean);
+		var requestedSection = parts[0] || "";
+		var subPath = parts.slice(1).join("/");
+		var isValidSection = requestedSection && getSectionItems().some((s) => s.id === requestedSection);
+		var section = isValidSection ? requestedSection : DEFAULT_SECTION;
 		activeSection.value = section;
+		activeSubPath.value = isValidSection ? subPath : "";
 		mobileSidebarVisible.value = !isMobileViewport();
 		if (!isValidSection) {
 			history.replaceState(null, "", settingsPath(section));
@@ -3726,6 +4070,7 @@ registerPrefix(
 		identity.value = null;
 		loading.value = true;
 		activeSection.value = DEFAULT_SECTION;
+		activeSubPath.value = "";
 		mobileSidebarVisible.value = true;
 	},
 );

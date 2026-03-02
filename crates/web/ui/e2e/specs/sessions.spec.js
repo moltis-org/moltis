@@ -255,15 +255,19 @@ test.describe("Session management", () => {
 		await page.goto("/");
 		await waitForWsConnected(page);
 		await expectPageContentMounted(page);
+		await createSession(page);
 
-		const stopBtn = page.locator('button[title="Stop generation"]');
+		const sessionPath = new URL(page.url()).pathname;
+		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
+
+		const stopBtn = page.locator('#sessionHeaderMount button[title="Stop generation"]');
 		await expect(stopBtn).toHaveCount(0);
-		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
+		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
-				sessionKey: "main",
+				sessionKey,
 				state: "thinking",
 				runId: "run-stop-e2e",
 			},
@@ -272,7 +276,7 @@ test.describe("Session management", () => {
 		await expect(stopBtn).toBeVisible();
 		await stopBtn.click();
 		await expect(stopBtn).toHaveCount(0);
-		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
+		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -443,6 +447,10 @@ test.describe("Session management", () => {
 		const searchInput = page.locator("#sessionSearch");
 		// searchInput may be hidden until focused or may always be visible
 		if (await searchInput.isVisible()) {
+			// Wait for session list to populate before capturing baseline count
+			await expect(page.locator("#sessionList .session-item").first()).toBeVisible({
+				timeout: 5_000,
+			});
 			const countBefore = await page.locator("#sessionList .session-item").count();
 
 			// Type a string that won't match any session
@@ -503,37 +511,36 @@ test.describe("Session management", () => {
 		await createSession(page);
 		const sessionUrl = page.url();
 
-		// Simulate an unmodified fork: set forkPoint = messageCount = 5
-		// so the session looks like a fork with messages but no new ones added.
+		// Simulate an unmodified fork and click Delete in the same page tick
+		// to avoid races with background session refreshes.
 		await expect
 			.poll(
 				() =>
 					page.evaluate(() => {
 						const store = window.__moltis_stores?.sessionStore;
 						const session = store?.activeSession?.value;
-						if (!session) return false;
+						const deleteBtn = document.querySelector('button[title="Delete session"]');
+						if (!(session && deleteBtn)) return false;
 						session.forkPoint = 5;
 						session.messageCount = 5;
-						// Bump dataVersion to trigger re-render
 						session.dataVersion.value++;
+						deleteBtn.click();
 						return true;
 					}),
 				{ timeout: 10_000 },
 			)
 			.toBe(true);
 
-		// Click the Delete button — should NOT show a confirmation dialog
-		const deleteBtn = page.locator('button[title="Delete session"]');
-		await expect(deleteBtn).toBeVisible();
-		await deleteBtn.click();
+		// The confirmation dialog should NOT be visible.
+		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
 
 		// The session should be deleted immediately (no dialog appeared)
-		// so we should navigate away from the current session URL
-		await page.waitForURL((url) => url.href !== sessionUrl, { timeout: 5_000 });
-		await expectPageContentMounted(page);
-
-		// The confirmation dialog should NOT be visible
-		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
+		// so we should navigate away from the current session URL.
+		// switchSession uses history.replaceState (no navigation event),
+		// so poll the URL rather than using waitForURL which waits for "load".
+		await expect
+			.poll(() => page.url(), { timeout: 10_000 })
+			.not.toBe(sessionUrl);
 
 		expect(pageErrors).toEqual([]);
 	});

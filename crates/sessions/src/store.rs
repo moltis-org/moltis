@@ -133,6 +133,16 @@ impl SessionStore {
         .await?
     }
 
+    /// Read all messages from a session that match a given `run_id`.
+    pub async fn read_by_run_id(&self, key: &str, run_id: &str) -> Result<Vec<serde_json::Value>> {
+        let all = self.read(key).await?;
+        let run_id = run_id.to_string();
+        Ok(all
+            .into_iter()
+            .filter(|msg| msg.get("run_id").and_then(|v| v.as_str()) == Some(&run_id))
+            .collect())
+    }
+
     /// Read the last N messages from a session file.
     pub async fn read_last_n(&self, key: &str, n: usize) -> Result<Vec<serde_json::Value>> {
         let path = self.path_for(key);

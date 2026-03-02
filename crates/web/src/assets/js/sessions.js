@@ -12,10 +12,12 @@ import {
 	updateCommandInputUI,
 	updateTokenBar,
 } from "./chat-ui.js";
+import { highlightCodeBlocks } from "./code-highlight.js";
 import * as gon from "./gon.js";
 import {
 	formatTokenSpeed,
 	formatTokens,
+	parseAgentsListPayload,
 	renderAudioPlayer,
 	renderMarkdown,
 	renderScreenshot,
@@ -26,6 +28,7 @@ import {
 import { attachMessageVoiceControl } from "./message-voice.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
+import { settingsPath } from "./routes.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import * as S from "./state.js";
 import { modelStore } from "./stores/model-store.js";
@@ -286,7 +289,12 @@ function updateClearAllVisibility() {
 	if (!clearAllBtn) return;
 	var allSessions = sessionStore.sessions.value;
 	var hasClearable = allSessions.some(
-		(s) => s.key !== "main" && !s.key.startsWith("cron:") && !s.key.startsWith("telegram:") && !s.channelBinding,
+		(s) =>
+			s.key !== "main" &&
+			!s.key.startsWith("cron:") &&
+			!s.key.startsWith("telegram:") &&
+			!s.key.startsWith("msteams:") &&
+			!s.channelBinding,
 	);
 	clearAllBtn.classList.toggle("hidden", !hasClearable);
 }
@@ -295,11 +303,16 @@ if (clearAllBtn) {
 	clearAllBtn.addEventListener("click", () => {
 		var allSessions = sessionStore.sessions.value;
 		var count = allSessions.filter(
-			(s) => s.key !== "main" && !s.key.startsWith("cron:") && !s.key.startsWith("telegram:") && !s.channelBinding,
+			(s) =>
+				s.key !== "main" &&
+				!s.key.startsWith("cron:") &&
+				!s.key.startsWith("telegram:") &&
+				!s.key.startsWith("msteams:") &&
+				!s.channelBinding,
 		).length;
 		if (count === 0) return;
 		confirmDialog(
-			`Delete ${count} session${count !== 1 ? "s" : ""}? Main, Telegram and cron sessions will be kept.`,
+			`Delete ${count} session${count !== 1 ? "s" : ""}? Main, channel-bound, and cron sessions will be kept.`,
 		).then((yes) => {
 			if (!yes) return;
 			clearAllBtn.disabled = true;
@@ -316,6 +329,7 @@ if (clearAllBtn) {
 						active.key === "main" ||
 						active.key.startsWith("cron:") ||
 						active.key.startsWith("telegram:") ||
+						active.key.startsWith("msteams:") ||
 						active.channelBinding;
 					if (!wasKept) {
 						switchSession("main");
@@ -663,6 +677,71 @@ export function updateChatSessionHeader() {
 	// Retained for backward compat call sites; Preact handles rendering.
 }
 
+function renderWelcomeAgentPicker(card, activeAgentId, onActiveAgentResolved) {
+	var container = card.querySelector("[data-welcome-agents]");
+	if (!container) return;
+
+	sendRpc("agents.list", {}).then((res) => {
+		if (!card.isConnected) return;
+		if (!res?.ok) {
+			container.classList.add("hidden");
+			return;
+		}
+		var parsed = parseAgentsListPayload(res.payload);
+		var agents = parsed.agents || [];
+		var defaultId = parsed.defaultId || "main";
+		var effectiveActive = activeAgentId || defaultId;
+
+		container.textContent = "";
+		container.classList.remove("hidden");
+		container.classList.add("flex");
+
+		var activeAgent = null;
+		for (const agent of agents) {
+			if (!agent?.id) continue;
+			if (agent.id === effectiveActive) activeAgent = agent;
+			var chip = document.createElement("button");
+			chip.type = "button";
+			chip.className = agent.id === effectiveActive ? "provider-btn" : "provider-btn provider-btn-secondary";
+			chip.style.fontSize = "0.7rem";
+			chip.style.padding = "3px 8px";
+			var labelPrefix = agent.emoji ? `${agent.emoji} ` : "";
+			chip.textContent = `${labelPrefix}${agent.name || agent.id}`;
+			chip.addEventListener("click", () => {
+				var key = sessionStore.activeSessionKey.value || S.activeSessionKey || "main";
+				sendRpc("agents.set_session", { session_key: key, agent_id: agent.id }).then((setRes) => {
+					if (!setRes?.ok) return;
+					var live = sessionStore.getByKey(key);
+					if (live) {
+						live.agent_id = agent.id;
+						live.dataVersion.value++;
+					}
+					fetchSessions();
+					var welcome = S.chatMsgBox?.querySelector("#welcomeCard");
+					if (welcome) {
+						welcome.remove();
+						showWelcomeCard();
+					}
+				});
+			});
+			container.appendChild(chip);
+		}
+
+		var hatchBtn = document.createElement("button");
+		hatchBtn.type = "button";
+		hatchBtn.className = "provider-btn provider-btn-secondary";
+		hatchBtn.style.fontSize = "0.7rem";
+		hatchBtn.style.padding = "3px 8px";
+		hatchBtn.textContent = "\u{1F95A} Hatch a new agent";
+		hatchBtn.addEventListener("click", () => {
+			navigate(settingsPath("agents/new"));
+		});
+		container.appendChild(hatchBtn);
+
+		onActiveAgentResolved(activeAgent);
+	});
+}
+
 function showWelcomeCard() {
 	if (!S.chatMsgBox) return;
 
@@ -688,6 +767,12 @@ function showWelcomeCard() {
 	if (emojiEl) emojiEl.textContent = botEmoji;
 	var nameEl = card.querySelector("[data-welcome-bot-name]");
 	if (nameEl) nameEl.textContent = botName;
+	var activeAgentId = sessionStore.activeSession.value?.agent_id || "main";
+	renderWelcomeAgentPicker(card, activeAgentId, (activeAgent) => {
+		if (!activeAgent) return;
+		if (emojiEl) emojiEl.textContent = activeAgent.emoji || "";
+		if (nameEl) nameEl.textContent = activeAgent.name || botName;
+	});
 
 	S.chatMsgBox.appendChild(card);
 }
@@ -823,6 +908,8 @@ function renderHistory(key, history, searchContext, thinkingText) {
 		}
 	});
 	S.setChatBatchLoading(false);
+	// Syntax-highlight all code blocks in the rendered history.
+	if (S.chatMsgBox) highlightCodeBlocks(S.chatMsgBox);
 	var historyTailIndex = computeHistoryTailIndex(history);
 	syncHistoryState(key, history, historyTailIndex);
 

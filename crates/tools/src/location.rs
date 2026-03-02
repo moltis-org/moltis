@@ -9,12 +9,13 @@
 use std::sync::Arc;
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     moltis_config::GeoLocation,
     serde::{Deserialize, Serialize},
     tracing::warn,
 };
+
+use crate::{Result, error::Error};
 
 // ── Precision ───────────────────────────────────────────────────────────────
 
@@ -304,7 +305,7 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         // Fast path: return cached location.
         if let Some(loc) = self.requester.cached_location() {
             let geocoded = match loc.place {
@@ -366,7 +367,9 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
 
         // No browser connection — try channel-based location request.
         if let Some(session_key) = params.get("_session_key").and_then(|v| v.as_str())
-            && (session_key.starts_with("telegram:") || session_key.starts_with("discord:"))
+            && (session_key.starts_with("telegram:")
+                || session_key.starts_with("msteams:")
+                || session_key.starts_with("discord:"))
         {
             let result = self.requester.request_channel_location(session_key).await?;
             return match result.location {
@@ -394,9 +397,7 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
             };
         }
 
-        Err(anyhow::anyhow!(
-            "no client connection available for location request"
-        ))
+        Err(Error::message("no client connection available for location request").into())
     }
 }
 

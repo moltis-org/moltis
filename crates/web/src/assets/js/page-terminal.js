@@ -1,5 +1,7 @@
 // Settings > Terminal (host shell via PTY + xterm.js over WebSocket)
 
+import { localizedApiErrorMessage } from "./helpers.js";
+
 var _container = null;
 var resizeObserver = null;
 var themeObserver = null;
@@ -173,7 +175,7 @@ function normalizeWindowPayload(payloadWindow) {
 }
 
 function windowLabel(windowInfo) {
-	var title = windowInfo.name && windowInfo.name.trim() ? windowInfo.name.trim() : "shell";
+	var title = windowInfo.name?.trim() ? windowInfo.name.trim() : "shell";
 	return `${windowInfo.index}: ${title}`;
 }
 
@@ -250,7 +252,7 @@ async function fetchTerminalWindows() {
 		payload = {};
 	}
 	if (!response.ok) {
-		throw new Error(payload?.error || "Failed to list tmux windows");
+		throw new Error(localizedApiErrorMessage(payload, "Failed to list tmux windows"));
 	}
 	return payload;
 }
@@ -345,7 +347,7 @@ async function createTerminalWindow() {
 			payload = {};
 		}
 		if (!response.ok) {
-			throw new Error(payload?.error || "Failed to create tmux window");
+			throw new Error(localizedApiErrorMessage(payload, "Failed to create tmux window"));
 		}
 		var createdWindowId = payload?.window?.id || payload?.windowId || null;
 		if (Array.isArray(payload?.windows)) {
@@ -404,7 +406,7 @@ function applyTheme() {
 }
 
 function registerOscStabilityGuards() {
-	if (!(xterm && xterm.parser && typeof xterm.parser.registerOscHandler === "function")) {
+	if (!(xterm?.parser && typeof xterm.parser.registerOscHandler === "function")) {
 		return;
 	}
 	var swallow = () => true;

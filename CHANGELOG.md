@@ -9,6 +9,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **macOS settings backend**: all settings panels (Identity, Heartbeat, Memory, Security, Tailscale, Monitoring, GraphQL, Sandbox, Voice, Channels, Hooks, MCP, Skills) now load from and persist to the Rust config backend via 6 new FFI functions (`moltis_get_config`, `moltis_save_config`, `moltis_get_soul`, `moltis_save_soul`, `moltis_save_identity`, `moltis_save_user_profile`)
+- **macOS environment variables settings**: Settings > Environment now supports add/update/delete via the same credential-store path as web UI (`moltis_list_env_vars`, `moltis_set_env_var`, `moltis_delete_env_var`), including encrypted/plaintext status and vault-state messaging
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.10.6] - 2026-03-01
+### Fixed
+- [web] Fix Shiki highlighter init failures in E2E tests
+- [web] Make thinking stop button smaller with left spacing
+- [chat] Surface error when LLM returns empty response with zero tokens
+- [providers] Emit StreamEvent::Error on non-success finish_reason
+
+## [0.10.5] - 2026-03-01
+### Fixed
+- [web] Lazy-load Shiki to prevent blocking page mount
+
+## [0.10.4] - 2026-03-01
+### Added
+- [web] Add Shiki syntax highlighting to code blocks
+
+## [0.10.3] - 2026-03-01
+### Added
+- Add channel-aware heartbeat delivery and send_message agent tool (#270)
+- [memory] Add tree-sitter code splitter and RRF search merge
+
+
+### Changed
+- [ffi] Tighten unsafe_code allowances
+
+
+### Fixed
+- [sandbox] Make apple container keepalive portable (#269)
+- [local-llm] Combine compile-time and runtime Metal detection
+- [auth] Auto-detect new WebAuthn hosts and prompt passkey refresh (#268)
+- [web] Replace rg with grep in changelog guard and deduplicate passkey status refresh
+
+## [0.10.2] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Release packaging now installs cross-compilation targets on the active nightly toolchain in the Homebrew binary job, fixing `error[E0463]: can't find crate for core` during macOS binary builds.
+- Docker release builds now copy `apps/courier` into the image build context so Cargo workspace metadata resolves correctly during WASM component builds.
+### Security
+
+## [0.10.1] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.10.0] - 2026-02-28
+
+
+### Added
+
+- **Gemini first-class provider**: Google Gemini is now registered via the OpenAI-compatible endpoint with native tool calling, vision/multimodal support, streaming, and model discovery. Replaces the previous genai-backed fallback that lacked tool support. Supports both `GEMINI_API_KEY` and `GOOGLE_API_KEY` environment variables
+- **Podman sandbox backend** — Podman as a first-class sandbox backend. Set `backend = "podman"` or let auto-detection prefer it over Docker (Apple Container → Podman → Docker → restricted-host). Uses the `podman` CLI directly (no socket compatibility needed)
+- **Trusted network mode**: sandbox containers now default to `sandbox.network = "trusted"`, routing outbound traffic through an HTTP CONNECT proxy with full audit logging. When `trusted_domains` is empty (the default), all domains are allowed (audit-only mode); when configured, only listed domains pass without approval. Includes real-time network audit log with domain, protocol, and action filtering via Settings > Network Audit. Configurable via `sandbox.trusted_domains` in `moltis.toml`. Proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) are now automatically injected into both Docker and Apple Container sandboxes, and the proxy binds to `0.0.0.0` so it is reachable from container VMs. The proxy rejects connections from non-private IPs (only loopback, RFC 1918, link-local, and CGNAT ranges are accepted)
+- **New `moltis-network-filter` crate**: domain filtering, proxy, and audit buffer logic extracted from `moltis-tools` and `moltis-gateway` into a standalone crate with feature flags (`proxy`, `service`, `metrics`). The macOS app can now depend on it directly for network audit log display via `moltis-swift-bridge`
+- **macOS Network Audit pane**: new Settings > Network Audit section with real-time log display, action filtering (allowed/denied), search, pause/resume, clipboard export, and JSONL download — matching the web UI pattern. New FFI callback `moltis_set_network_audit_callback` bridges Rust audit entries to Swift
+- **Proxy-compliant HTTP tools**: all HTTP tools (`web_fetch`, `web_search`, `location`, `map`) now route through the trusted-network proxy when active, so their traffic appears in the Network Audit log and respects domain filtering. The shared `reqwest` client is initialized with proxy config at gateway startup; `web_fetch` uses a per-tool proxy setting for its custom redirect-following client
+- **Network policy rename**: `sandbox.network = "open"` has been renamed to `"bypass"` to make explicit that traffic bypasses the proxy entirely (no audit logging)
+- **Real WASM sandbox** (`wasm` feature, default on) — Wasmtime + WASI sandbox with filesystem isolation, fuel metering, epoch-based timeouts, and ~20 built-in coreutils (echo, cat, ls, mkdir, rm, cp, mv, etc.). Two execution tiers: built-in commands operate on a sandboxed directory tree; `.wasm` modules run via Wasmtime with preopened dirs and captured I/O. Backend: `"wasm"` in config
+- **Restricted-host sandbox** — new `"restricted-host"` backend (extracted from the old `WasmtimeSandbox`) providing honest naming for what it does: env clearing, restricted PATH, and `ulimit` resource wrappers without containers or WASM. Always compiled (no feature gate)
+- **Docker security hardening** — containers now launch with `--cap-drop ALL`, `--security-opt no-new-privileges`, tmpfs mounts for `/tmp` and `/run`, and `--read-only` root filesystem for prebuilt images
+- **Generic sandbox failover chain** — auto-detection now tries Apple Container → Docker → Restricted Host. Failover uses restricted-host as the final fallback instead of NoSandbox
+- Discord channel integration via new `moltis-discord` crate using serenity Gateway API (persistent WebSocket, no public URL required). Supports DM and group messaging with allowlist/OTP gating, mention mode, guild allowlist, and 2000-char message chunking. Web UI: connect/edit/remove Discord bots in Settings > Channels and onboarding flow
+- Discord reply-to-message support: set `reply_to_message = true` to have the bot send responses as Discord threaded replies to the user's message
+- Discord ack reactions: set `ack_reaction = "👀"` to add an emoji reaction while processing (removed on completion)
+- Discord bot token import from OpenClaw installations during onboarding (both flat and multi-account configs)
+- Discord bot presence/activity: configure `activity`, `activity_type` (playing/listening/watching/competing/custom), and `status` (online/idle/dnd/invisible) in bot config
+- Discord OTP self-approval for DMs: non-allowlisted users receive a 6-digit challenge code (visible in web UI) to self-approve access, matching Telegram's existing OTP flow
+- Discord native slash commands: `/new`, `/clear`, `/compact`, `/context`, `/model`, `/sessions`, `/agent`, `/help` registered as Discord application commands with ephemeral responses
+- OTP module moved from `moltis-telegram` to shared `moltis-channels` crate for cross-platform reuse
+- Real-time session sync between macOS app and web UI via `SessionEventBus` (`tokio::sync::broadcast`). Sessions created, deleted, or patched in one UI instantly appear in the other. New FFI callback `moltis_set_session_event_callback` and WebSocket `"session"` events for create/delete/fork operations.
+- Swift bridge: persistent session storage via FFI — `moltis_list_sessions`, `moltis_switch_session`, `moltis_create_session`, `moltis_session_chat_stream` functions backed by JSONL files and shared SQLite metadata (`moltis.db`) across all UIs (macOS app, web, TUI)
+- **Internationalization (i18n)**: web UI now supports runtime language switching via `i18next` with English and French locales. Error codes use structured constants with locale-aware error messages across API handlers, terminal, chat, and environment routes. Onboarding step labels, navigation buttons, and page strings use translation keys (`t()` calls)
 - **Vault UI**: recovery key display during onboarding password setup, vault status/unlock controls in Settings > Security, encrypted/plaintext badges on environment variables
 - **Encryption-at-rest vault** (`vault` feature, default on) — environment variables are encrypted with XChaCha20-Poly1305 AEAD using Argon2id-derived keys. Vault is initialized on first password setup and auto-unsealed on login. Recovery key provided at initialization for emergency access. API: `/api/auth/vault/status`, `/api/auth/vault/unlock`, `/api/auth/vault/recovery`
 - `send_image` tool for sending local image files (PNG, JPEG, GIF, WebP) to channel targets like Telegram, with optional caption support
@@ -18,6 +121,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `graphql` feature flag (default on) in gateway and CLI crates for compile-time opt-out
 - Settings > GraphQL page embedding GraphiQL playground at `/settings/graphql`
 - Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
+- Swift embedding POC scaffold with a new `moltis-swift-bridge` static library crate, XcodeGen YAML project (`apps/macos/project.yml`), and SwiftLint wiring for SwiftUI frontend code quality
+- New `moltis-openclaw-import` crate for detecting OpenClaw installations and selectively importing identity, providers, skills, memory files, Telegram channels, sessions, and MCP servers
+- New onboarding RPC methods: `openclaw.detect`, `openclaw.scan`, and `openclaw.import`
+- New `moltis import` CLI commands (`detect`, `all`, `select`) with `--dry-run` and `--json` output options
+- Onboarding now includes a conditional OpenClaw Import step with category selection, import execution, and detailed per-category results/TODO reporting
+- Settings now includes an OpenClaw Import section (shown only when OpenClaw is detected) for scan-and-import workflows after onboarding
+- Microsoft Teams channel integration via new `moltis-msteams` plugin crate with webhook ingress and OAuth client-credentials outbound messaging
+- Teams channel management in the web UI (add/edit/remove accounts, sender review, session/channel badges)
+- Guided Teams bootstrap tooling via `moltis channels teams bootstrap` plus an in-UI endpoint generator in Settings → Channels
+- Multi-agent personas with per-agent workspaces (`data_dir()/agents/<id>/`), `agents.*` RPC methods, and session-level `agent_id` binding/switching across web + Telegram flows
+- `chat.peek` RPC method returning real-time session state (active flag, thinking text, active tool calls) for any session key
+- Active tool call tracking per-session in `LiveChatService` with camelCase-serialized `ActiveToolCall` structs
+- Web UI: inline red "Stop" button inside thinking indicator, `aborted` broadcast handler that cleans up streaming state
+- Channel commands: `/peek` (shows thinking text and active tool calls) and `/stop` (aborts active generation)
 ### Changed
 
 - **Crate restructure**: gateway crate reduced from ~42K to ~29K lines by extracting `moltis-chat` (chat engine, agent orchestration), `moltis-auth` (password + passkey auth), `moltis-tls` (TLS/HTTPS termination), `moltis-service-traits` (shared service interfaces), and moving share rendering into `moltis-web`
@@ -31,7 +148,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GraphQL gateway now builds its schema once at startup and reuses it for HTTP and WebSocket requests
 - GraphQL resolvers now share common RPC helper macros and use typed response objects for `node.describe`, `voice.config`, `voice.voxtral_requirements`, `skills.security_status`, `skills.security_scan`, and `memory.config`
 - GraphQL `logs.ack` mutation now matches backend behavior and no longer takes an `ids` argument
+- Gateway startup diagnostics now report OpenClaw detection status and pass detection state to web gon data for conditional UI rendering
+- Gateway and CLI now enable the `openclaw-import` feature in default builds
+- Providers now support `stream_transport = "sse" | "websocket" | "auto"` in config. OpenAI can stream via Responses API WebSocket mode, and `auto` falls back to SSE when WebSocket setup is unavailable.
 - Agent Identity emoji picker now includes 🐰 🐹 🦀 🦞 🦝 🦭 🧠 🧭 options
+- Added architecture docs for a native Swift UI app embedding Moltis Rust core through a C FFI bridge (`docs/src/native-swift-embedding.md`)
+- Channel persistence and message-log queries are now channel-type scoped (`channel_type + account_id`) so Telegram and Teams accounts can share the same account IDs safely
+- Chat/system prompt resolution is now agent-aware, loading `IDENTITY.md`, `SOUL.md`, `MEMORY.md`, `AGENTS.md`, and `TOOLS.md` from the active session agent workspace with backward-compatible fallbacks
+- Memory tool operations and compaction memory writes are now agent-scoped, preventing cross-agent memory leakage during search/read/write flows
+- Default sandbox package set now includes `golang-go`, and pre-built sandbox images install the latest `gog` (`steipete/gogcli`) as `gog` and `gogcli`
+- Sandbox config now supports `/home/sandbox` persistence strategies (`off`, `session`, `shared`), with `shared` as the default and a shared host folder mounted from `data_dir()/sandbox/home/shared`
+- Settings → Sandboxes now includes shared-home controls (enabled + folder path), and sandbox config supports `tools.exec.sandbox.shared_home_dir` for custom shared persistence location
 
 ### Deprecated
 
@@ -39,7 +166,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenAI Codex OAuth in Docker**: the web UI no longer overrides the provider's pre-registered `redirect_uri`, which caused OpenAI to reject the authorization request with `unknown_error`. The OAuth callback server now also respects the gateway bind address (`0.0.0.0` in Docker) so the callback port (1455) is reachable from the host. Docker image now exposes port 1455 for OAuth callbacks (#207)
+- **Slow SQLite writes**: `moltis.db` and `memory.db` now use `journal_mode=WAL` and `synchronous=NORMAL` (matching `metrics.db`), eliminating multi-second write contention that caused 3–10 s INSERT times under concurrent access
 - Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
+- Docker image now installs Docker CLI from Docker’s official Debian repository (`docker-ce-cli`), avoiding API mismatches with newer host daemons during sandbox builds/exec
+- Chat UI now shows a first-run sandbox preparation status message before container/image setup begins, so startup delays are visible while sandbox resources are created
 - OpenAI TTS and Whisper STT now correctly reuse OpenAI credentials from
   voice config, `OPENAI_API_KEY`, or the LLM OpenAI provider config.
 - Voice provider parsing now accepts `openai-tts` and `google-tts` aliases
@@ -905,6 +1036,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests and blocks all package builds (deb, rpm, arch, AppImage, snap,
   Homebrew, Docker) if they fail.
 
+### Added
+
+- **XML tag stripping**: Strip internal XML tags from LLM responses to prevent
+  tag leakage in chat (thinking, reasoning, scratchpad, etc.)
+- **Runtime model metadata**: Fetch model metadata from provider APIs for
+  accurate context window detection during auto-compaction
+- **Run detail UI**: Panel showing tool calls and message flow for agent runs,
+  accessible via expandable button on assistant messages
+
 ### Fixed
 
 - **Docker TLS setup**: All Docker examples now expose port 13132 for CA
@@ -1052,6 +1192,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CalDAV integration**: New `moltis-caldav` crate providing calendar CRUD
+  operations (list calendars, list/create/update/delete events) via the CalDAV
+  protocol. Supports Fastmail, iCloud, and generic CalDAV servers with
+  multi-account configuration under `[caldav.accounts.<name>]`. Enabled by
+  default via the `caldav` feature flag.
 - **`BeforeLLMCall` / `AfterLLMCall` hooks**: New modifying hook events that fire
   before sending prompts to the LLM provider and after receiving responses
   (before tool execution). Enables prompt injection filtering, PII redaction,

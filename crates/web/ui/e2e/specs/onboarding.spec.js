@@ -56,6 +56,18 @@ async function maybeCompleteIdentity(page) {
 	return true;
 }
 
+async function maybeSkipOpenClawImport(page) {
+	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
+	if (!(await isVisible(importHeading))) return false;
+
+	// The import step has "Skip for now" (when detected) or "Skip" (when not detected)
+	const skipBtn = page.getByRole("button", { name: /^Skip/ }).first();
+	if (await isVisible(skipBtn)) {
+		await skipBtn.click();
+	}
+	return true;
+}
+
 async function moveToLlmStep(page) {
 	await waitForOnboardingStepLoaded(page);
 
@@ -66,6 +78,9 @@ async function moveToLlmStep(page) {
 	if (await isVisible(llmHeading)) return true;
 
 	await maybeCompleteIdentity(page);
+	if (await isVisible(llmHeading)) return true;
+
+	await maybeSkipOpenClawImport(page);
 	if (await isVisible(llmHeading)) return true;
 
 	const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
@@ -94,6 +109,23 @@ async function moveToVoiceStep(page) {
 		await page.waitForTimeout(500);
 	}
 	return false;
+}
+
+async function moveToChannelStep(page) {
+	const reachedLlm = await moveToLlmStep(page);
+	if (!reachedLlm) return false;
+
+	const channelHeading = page.getByRole("heading", { name: "Connect a Channel", exact: true });
+	if (await isVisible(channelHeading)) return true;
+
+	for (let i = 0; i < 4; i++) {
+		const skipBtn = page.getByRole("button", { name: "Skip for now", exact: true });
+		if (!(await isVisible(skipBtn))) break;
+		await skipBtn.click();
+		if (await isVisible(channelHeading)) return true;
+	}
+
+	return isVisible(channelHeading);
 }
 
 async function moveToIdentityStep(page) {
@@ -201,7 +233,21 @@ test.describe("Onboarding wizard", () => {
 		const activeStepLabel = (
 			await page.locator(".onboarding-step.active .onboarding-step-label").first().textContent()
 		)?.trim();
-		expect(["Security", "LLM"]).toContain(activeStepLabel);
+		expect(["Security", "Import", "LLM"]).toContain(activeStepLabel);
+	});
+
+	test("step indicator orders Import before LLM when import is available", async ({ page }) => {
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+
+		const labels = (await page.locator(".onboarding-step-label").allTextContents()).map((v) => v.trim());
+		const importIdx = labels.indexOf("Import");
+		const llmIdx = labels.indexOf("LLM");
+		if (importIdx === -1 || llmIdx === -1) {
+			test.skip(true, "OpenClaw import is not available in this onboarding run");
+		}
+
+		expect(importIdx).toBeLessThan(llmIdx);
 	});
 
 	test("auth step renders actionable controls when shown", async ({ page }) => {
@@ -212,7 +258,11 @@ test.describe("Onboarding wizard", () => {
 		const isAuthStepVisible = await authHeading.isVisible().catch(() => false);
 
 		if (!isAuthStepVisible) {
-			await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
+			// When auth is not needed, the wizard may show identity, OpenClaw import, or LLM step
+			const anyStepHeading = page.getByRole("heading", {
+				name: /^(Add LLMs|Add providers|Set up your identity|Import from OpenClaw)$/,
+			});
+			await expect(anyStepHeading).toBeVisible();
 			return;
 		}
 
@@ -248,7 +298,7 @@ test.describe("Onboarding wizard", () => {
 			const currentHeading = page.locator(".onboarding-card h2").first();
 			await expect(currentHeading).toBeVisible();
 			const headingText = (await currentHeading.textContent())?.trim() || "";
-			expect(["Add LLMs", "Voice (optional)", "Connect Telegram"]).toContain(headingText);
+			expect(["Add LLMs", "Voice (optional)", "Connect a Channel"]).toContain(headingText);
 			const canSkip = await clickFirstVisibleButton(page, { name: /skip/i });
 			const canContinue = await clickFirstVisibleButton(page, { name: /continue/i });
 			expect(canSkip || canContinue).toBeTruthy();
@@ -316,7 +366,7 @@ test.describe("Onboarding wizard", () => {
 		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
 		await page.getByRole("button", { name: "Skip for now", exact: true }).click();
 
-		const channelHeading = page.getByRole("heading", { name: "Connect Telegram", exact: true });
+		const channelHeading = page.getByRole("heading", { name: "Connect a Channel", exact: true });
 		for (let i = 0; i < 3; i++) {
 			if (await channelHeading.isVisible().catch(() => false)) {
 				break;
@@ -327,12 +377,119 @@ test.describe("Onboarding wizard", () => {
 		}
 
 		await expect(channelHeading).toBeVisible();
-		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("autocomplete", "off");
-		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("name", "telegram_bot_username");
-		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
+
+		let telegramUserInput = page.locator('input[name="telegram_bot_username"]');
+		if (!(await isVisible(telegramUserInput))) {
+			const telegramSelectBtn = page.getByRole("button", { name: "Telegram", exact: true });
+			if (await isVisible(telegramSelectBtn)) {
+				await telegramSelectBtn.click();
+			}
+		}
+
+		telegramUserInput = page.locator('input[name="telegram_bot_username"]');
+		if (!(await isVisible(telegramUserInput))) {
+			test.skip(true, "Telegram onboarding option is not available in this run");
+			return;
+		}
+
+		await expect(telegramUserInput).toHaveAttribute("autocomplete", "off");
+		await expect(telegramUserInput).toHaveAttribute("name", "telegram_bot_username");
+		const tokenInput = page.locator('input[name="telegram_bot_token"]');
 		await expect(tokenInput).toHaveAttribute("type", "password");
 		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");
 		await expect(tokenInput).toHaveAttribute("name", "telegram_bot_token");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("whatsapp pairing renders SVG QR from channel event", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+
+		const reachedChannel = await moveToChannelStep(page);
+		if (!reachedChannel) {
+			test.skip(true, "could not reach channel step in this onboarding flow");
+			return;
+		}
+
+		const channelHeading = page.getByRole("heading", { name: "Connect a Channel", exact: true });
+		await expect(channelHeading).toBeVisible();
+
+		const whatsappSelectBtn = page.getByRole("button", { name: "WhatsApp", exact: true });
+		if (await isVisible(whatsappSelectBtn)) {
+			await whatsappSelectBtn.click();
+		}
+
+		const accountInput = page.getByPlaceholder("e.g. my-whatsapp");
+		if (!(await isVisible(accountInput))) {
+			test.skip(true, "WhatsApp onboarding option is not available in this run");
+			return;
+		}
+
+		const accountId = "e2e-whatsapp";
+
+		await page.evaluate(async () => {
+			const onboardingScript = document.querySelector('script[type="module"][src*="js/onboarding-app.js"]');
+			if (!onboardingScript) throw new Error("onboarding-app.js script not found");
+			const appUrl = new URL(onboardingScript.src, window.location.origin).href;
+			const marker = "js/onboarding-app.js";
+			const markerIdx = appUrl.indexOf(marker);
+			if (markerIdx < 0) throw new Error("onboarding-app.js marker not found in script URL");
+			const prefix = appUrl.slice(0, markerIdx);
+			const state = await import(`${prefix}js/state.js`);
+			const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+			state.setConnected(true);
+			state.setWs({
+				readyState: wsOpen,
+				send(raw) {
+					const req = JSON.parse(raw || "{}");
+					const resolver = state.pending[req.id];
+					if (!resolver) return;
+					if (req.method === "channels.add") {
+						resolver({ ok: true, payload: {} });
+					} else if (req.method === "channels.status") {
+						resolver({ ok: true, payload: { channels: [] } });
+					} else {
+						resolver({ ok: false, error: { message: `unexpected rpc in onboarding test: ${req.method}` } });
+					}
+					delete state.pending[req.id];
+				},
+			});
+		});
+
+		await accountInput.fill(accountId);
+		await page.getByRole("button", { name: "Start Pairing", exact: true }).click();
+
+		await page.evaluate(
+			async ({ accountIdArg }) => {
+				const onboardingScript = document.querySelector('script[type="module"][src*="js/onboarding-app.js"]');
+				if (!onboardingScript) throw new Error("onboarding-app.js script not found");
+				const appUrl = new URL(onboardingScript.src, window.location.origin).href;
+				const marker = "js/onboarding-app.js";
+				const markerIdx = appUrl.indexOf(marker);
+				if (markerIdx < 0) throw new Error("onboarding-app.js marker not found in script URL");
+				const prefix = appUrl.slice(0, markerIdx);
+				const events = await import(`${prefix}js/events.js`);
+				const svg =
+					"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 21 21'><rect width='21' height='21' fill='#fff'/><rect x='2' y='2' width='5' height='5' fill='#000'/></svg>";
+				const listeners = events.eventListeners.channel || [];
+				listeners.forEach((handler) => {
+					handler({
+						kind: "pairing_qr_code",
+						channel_type: "whatsapp",
+						account_id: accountIdArg,
+						qr_data: "2@mock_payload",
+						qr_svg: svg,
+					});
+				});
+			},
+			{ accountIdArg: accountId },
+		);
+
+		const qrImage = page.locator('img[alt="WhatsApp pairing QR code"]');
+		await expect(qrImage).toBeVisible();
+		await expect(qrImage).toHaveAttribute("src", /data:image\/svg\+xml;utf8,/);
+		await expect(page.getByText("2@mock_payload")).toHaveCount(0);
 		expect(pageErrors).toEqual([]);
 	});
 

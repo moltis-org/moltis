@@ -9,7 +9,9 @@ use crate::{Error, Result};
 #[serde(rename_all = "lowercase")]
 pub enum ChannelType {
     Telegram,
-    Slack,
+    Whatsapp,
+    #[serde(rename = "msteams")]
+    MsTeams,
     Discord,
 }
 
@@ -18,8 +20,19 @@ impl ChannelType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Telegram => "telegram",
-            Self::Slack => "slack",
+            Self::Whatsapp => "whatsapp",
+            Self::MsTeams => "msteams",
             Self::Discord => "discord",
+        }
+    }
+
+    /// Human-readable display name for UI labels.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Telegram => "Telegram",
+            Self::Whatsapp => "WhatsApp",
+            Self::MsTeams => "Microsoft Teams",
+            Self::Discord => "Discord",
         }
     }
 }
@@ -36,7 +49,8 @@ impl std::str::FromStr for ChannelType {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "telegram" => Ok(Self::Telegram),
-            "slack" => Ok(Self::Slack),
+            "whatsapp" => Ok(Self::Whatsapp),
+            "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
             "discord" => Ok(Self::Discord),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
@@ -83,6 +97,26 @@ pub enum ChannelEvent {
         peer_id: String,
         username: Option<String>,
         resolution: String,
+    },
+    /// A QR code was generated for device pairing (e.g. WhatsApp Linked Devices).
+    PairingQrCode {
+        channel_type: ChannelType,
+        account_id: String,
+        /// Raw QR data string to be rendered as a QR code image.
+        qr_data: String,
+    },
+    /// Device pairing completed successfully.
+    PairingComplete {
+        channel_type: ChannelType,
+        account_id: String,
+        /// Display name of the paired device/account.
+        display_name: Option<String>,
+    },
+    /// Device pairing failed.
+    PairingFailed {
+        channel_type: ChannelType,
+        account_id: String,
+        reason: String,
     },
 }
 
@@ -157,6 +191,20 @@ pub trait ChannelEventSink: Send + Sync {
     ///
     /// Returns `true` if a pending tool-triggered location request was resolved.
     async fn update_location(
+        &self,
+        _reply_to: &ChannelReplyTarget,
+        _latitude: f64,
+        _longitude: f64,
+    ) -> bool {
+        false
+    }
+
+    /// Resolve a pending tool-triggered location request from channel text/link input.
+    ///
+    /// Unlike `update_location`, this should not update cached location state
+    /// when there is no pending request. Returns `true` only when a pending
+    /// request was found and resolved.
+    async fn resolve_pending_location(
         &self,
         _reply_to: &ChannelReplyTarget,
         _latitude: f64,
@@ -391,6 +439,7 @@ pub trait ChannelStreamOutbound: Send + Sync {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -443,6 +492,74 @@ mod tests {
         assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
     }
 
+    #[test]
+    fn channel_type_whatsapp_roundtrip() {
+        let ct = ChannelType::Whatsapp;
+        assert_eq!(ct.as_str(), "whatsapp");
+        assert_eq!(ct.to_string(), "whatsapp");
+        assert_eq!("whatsapp".parse::<ChannelType>().unwrap(), ct);
+    }
+
+    #[test]
+    fn channel_type_serde_roundtrip() {
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::Whatsapp,
+            ChannelType::MsTeams,
+            ChannelType::Discord,
+        ] {
+            let json = serde_json::to_string(&ct).unwrap();
+            let parsed: ChannelType = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, ct);
+        }
+    }
+
+    #[test]
+    fn channel_type_discord_roundtrip() {
+        let ct = ChannelType::Discord;
+        assert_eq!(ct.as_str(), "discord");
+        assert_eq!(ct.to_string(), "discord");
+        assert_eq!("discord".parse::<ChannelType>().unwrap(), ct);
+    }
+
+    #[test]
+    fn pairing_qr_code_event_serialization() {
+        let event = ChannelEvent::PairingQrCode {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            qr_data: "2@abc123".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_qr_code");
+        assert_eq!(json["channel_type"], "whatsapp");
+        assert_eq!(json["account_id"], "wa1");
+        assert_eq!(json["qr_data"], "2@abc123");
+    }
+
+    #[test]
+    fn pairing_complete_event_serialization() {
+        let event = ChannelEvent::PairingComplete {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            display_name: Some("My Phone".into()),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_complete");
+        assert_eq!(json["display_name"], "My Phone");
+    }
+
+    #[test]
+    fn pairing_failed_event_serialization() {
+        let event = ChannelEvent::PairingFailed {
+            channel_type: ChannelType::Whatsapp,
+            account_id: "wa1".into(),
+            reason: "timeout".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "pairing_failed");
+        assert_eq!(json["reason"], "timeout");
+    }
+
     struct DummyOutbound;
 
     #[async_trait]
@@ -475,5 +592,39 @@ mod tests {
             .send_location("acct", "42", 48.8566, 2.3522, Some("Eiffel Tower"), None)
             .await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn channel_type_round_trip() {
+        for (s, expected) in [
+            ("telegram", ChannelType::Telegram),
+            ("msteams", ChannelType::MsTeams),
+            ("discord", ChannelType::Discord),
+        ] {
+            let parsed: ChannelType = s.parse().unwrap_or_else(|e| panic!("parse {s}: {e}"));
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.as_str(), s);
+            assert_eq!(parsed.to_string(), s);
+        }
+    }
+
+    #[test]
+    fn channel_type_from_str_invalid() {
+        assert!("slack".parse::<ChannelType>().is_err());
+        assert!("".parse::<ChannelType>().is_err());
+    }
+
+    #[test]
+    fn channel_type_serde_round_trip() {
+        for ct in [
+            ChannelType::Telegram,
+            ChannelType::MsTeams,
+            ChannelType::Discord,
+        ] {
+            let json = serde_json::to_string(&ct).unwrap_or_else(|e| panic!("serialize: {e}"));
+            let back: ChannelType =
+                serde_json::from_str(&json).unwrap_or_else(|e| panic!("deserialize: {e}"));
+            assert_eq!(ct, back);
+        }
     }
 }

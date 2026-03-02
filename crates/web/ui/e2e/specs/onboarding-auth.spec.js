@@ -29,7 +29,7 @@ async function detectOnboardingStep(page) {
 	if (headingText === "Set up your identity") return "identity";
 	if (/^(Add LLMs|Add providers)$/.test(headingText)) return "providers";
 	if (headingText === "Voice (optional)") return "voice";
-	if (headingText === "Connect Telegram") return "channel";
+	if (headingText === "Connect a Channel") return "channel";
 	if (headingText === "Setup Summary") return "summary";
 	return "pending";
 }

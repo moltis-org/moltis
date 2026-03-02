@@ -501,7 +501,8 @@ fn check_providers(config: &MoltisConfig) -> Section {
             .iter()
             .find(|(pname, ..)| *pname == name.as_str());
 
-        let has_env_key = env_info.is_some_and(|(_, env, _)| std::env::var(env).is_ok());
+        let has_env_key = env_info.is_some_and(|(_, env, _)| std::env::var(env).is_ok())
+            || (name == "gemini" && std::env::var("GOOGLE_API_KEY").is_ok());
         let is_optional = env_info.is_some_and(|(_, _, opt)| *opt);
 
         if has_config_key || has_env_key {

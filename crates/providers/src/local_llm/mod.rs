@@ -144,14 +144,13 @@ impl LlmProvider for LocalLlmProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        // Local models don't support tool calling yet
-        false
+        true
     }
 
     async fn complete(
         &self,
         messages: &[ChatMessage],
-        _tools: &[serde_json::Value],
+        tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         self.ensure_loaded().await?;
 
@@ -159,7 +158,11 @@ impl LlmProvider for LocalLlmProvider {
         let backend = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("backend should be loaded after ensure_loaded"))?;
-        backend.complete(messages).await
+        if tools.is_empty() {
+            backend.complete(messages).await
+        } else {
+            backend.complete_with_tools(messages, tools).await
+        }
     }
 
     fn stream(

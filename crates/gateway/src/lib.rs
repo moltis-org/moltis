@@ -10,6 +10,7 @@
 //! All domain logic (agents, channels, etc.) lives in other crates and is
 //! invoked through method handlers registered in `methods.rs`.
 
+pub mod agent_persona;
 pub mod approval;
 pub mod auth;
 pub mod auth_middleware;
@@ -17,7 +18,9 @@ pub mod auth_routes;
 pub mod auth_webauthn;
 pub mod broadcast;
 pub mod channel;
+pub mod channel_agent_tools;
 pub mod channel_events;
+pub mod channel_outbound;
 pub mod channel_store;
 pub mod chat;
 pub mod chat_error;
@@ -30,12 +33,15 @@ pub mod local_llm_setup;
 pub mod logs;
 pub mod mcp_health;
 pub mod mcp_service;
+#[cfg(feature = "mdns")]
+pub mod mdns;
 pub mod message_log_store;
 pub mod methods;
 #[cfg(feature = "metrics")]
 pub mod metrics_middleware;
 #[cfg(feature = "metrics")]
 pub mod metrics_routes;
+pub mod network_audit;
 pub mod nodes;
 pub mod onboarding;
 pub mod pairing;
