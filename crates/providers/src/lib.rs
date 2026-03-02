@@ -304,6 +304,9 @@ fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<DiscoveredModel>
 struct OllamaShowResponse {
     #[serde(default)]
     details: OllamaModelDetails,
+    /// Ollama >= 0.5.x returns a list of model capabilities (e.g. `["tools"]`).
+    #[serde(default)]
+    capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -354,6 +357,18 @@ fn ollama_model_supports_native_tools(model_name: &str, details: &OllamaModelDet
         .any(|known| name_lower.contains(known))
 }
 
+/// Check if Ollama's `capabilities` list indicates native tool support.
+///
+/// Returns `Some(true)` if `"tools"` is present, `Some(false)` if capabilities
+/// exist but don't include tools, and `None` if the list is empty (pre-0.5.x
+/// Ollama versions that don't report capabilities).
+fn ollama_capabilities_support_tools(capabilities: &[String]) -> Option<bool> {
+    if capabilities.is_empty() {
+        return None;
+    }
+    Some(capabilities.iter().any(|c| c == "tools"))
+}
+
 /// Probe the Ollama `/api/show` endpoint for a specific model to get its family
 /// and details. Returns `Ok(response)` on success, error on timeout/failure.
 async fn probe_ollama_model_info(
@@ -380,7 +395,9 @@ async fn probe_ollama_model_info(
 /// Resolve the effective tool mode for an Ollama model.
 ///
 /// - If the user configured an explicit `tool_mode`, use that.
-/// - Otherwise, probe the model and decide based on its family.
+/// - Otherwise, check the model's `capabilities` list from Ollama (>= 0.5.x).
+/// - Fall back to the hardcoded family whitelist only when capabilities are
+///   unavailable (pre-0.5.x Ollama).
 fn resolve_ollama_tool_mode(
     config_tool_mode: moltis_config::ToolMode,
     model_name: &str,
@@ -391,6 +408,17 @@ fn resolve_ollama_tool_mode(
     match config_tool_mode {
         ToolMode::Native | ToolMode::Text | ToolMode::Off => config_tool_mode,
         ToolMode::Auto => {
+            // Prefer Ollama's own capabilities field when available.
+            if let Some(resp) = probe_result
+                && let Some(supports) = ollama_capabilities_support_tools(&resp.capabilities)
+            {
+                return if supports {
+                    ToolMode::Native
+                } else {
+                    ToolMode::Text
+                };
+            }
+            // Fallback: family whitelist (pre-0.5.x Ollama without capabilities).
             let details = probe_result
                 .map(|r| &r.details)
                 .cloned()
@@ -3316,6 +3344,7 @@ mod tests {
                 family: Some("llama3.1".into()),
                 families: None,
             },
+            ..Default::default()
         };
         assert_eq!(
             resolve_ollama_tool_mode(ToolMode::Auto, "llama3.1:8b", Some(&show_resp)),
@@ -3331,11 +3360,150 @@ mod tests {
                 family: Some("starcoder2".into()),
                 families: None,
             },
+            ..Default::default()
         };
         assert_eq!(
             resolve_ollama_tool_mode(ToolMode::Auto, "starcoder2:3b", Some(&show_resp)),
             ToolMode::Text
         );
+    }
+
+    // ── Ollama capabilities-based tool detection ──────────────────────
+
+    #[test]
+    fn ollama_capabilities_with_tools() {
+        let caps = vec!["completion".into(), "tools".into()];
+        assert_eq!(ollama_capabilities_support_tools(&caps), Some(true));
+    }
+
+    #[test]
+    fn ollama_capabilities_without_tools() {
+        let caps = vec!["completion".into(), "vision".into()];
+        assert_eq!(ollama_capabilities_support_tools(&caps), Some(false));
+    }
+
+    #[test]
+    fn ollama_capabilities_empty_returns_none() {
+        let caps: Vec<String> = vec![];
+        assert_eq!(ollama_capabilities_support_tools(&caps), None);
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_capabilities_override_family() {
+        use moltis_config::ToolMode;
+        // Model is NOT in the family whitelist but Ollama reports "tools" capability.
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("minimax".into()),
+                families: None,
+            },
+            capabilities: vec!["completion".into(), "tools".into()],
+        };
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "MiniMax-M2.5:latest", Some(&show_resp)),
+            ToolMode::Native
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_capabilities_no_tools() {
+        use moltis_config::ToolMode;
+        // Model has capabilities but "tools" is not among them.
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("llama3.1".into()),
+                families: None,
+            },
+            capabilities: vec!["completion".into()],
+        };
+        // Even though family matches, capabilities say no tools.
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "llama3.1:8b", Some(&show_resp)),
+            ToolMode::Text
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_empty_capabilities_falls_back_to_family() {
+        use moltis_config::ToolMode;
+        // Empty capabilities (pre-0.5.x Ollama) — falls back to family whitelist.
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("llama3.1".into()),
+                families: None,
+            },
+            capabilities: vec![],
+        };
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "llama3.1:8b", Some(&show_resp)),
+            ToolMode::Native
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_no_probe_result_falls_back_to_name_heuristic() {
+        use moltis_config::ToolMode;
+        // No probe result at all — falls back to model name matching.
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "llama3.1:8b", None),
+            ToolMode::Native
+        );
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Auto, "unknown-model:latest", None),
+            ToolMode::Text
+        );
+    }
+
+    #[test]
+    fn resolve_ollama_tool_mode_explicit_overrides_capabilities() {
+        use moltis_config::ToolMode;
+        // Even with capabilities saying "tools", explicit Text override wins.
+        let show_resp = OllamaShowResponse {
+            details: OllamaModelDetails {
+                family: Some("minimax".into()),
+                families: None,
+            },
+            capabilities: vec!["tools".into()],
+        };
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Text, "MiniMax-M2.5:latest", Some(&show_resp)),
+            ToolMode::Text
+        );
+        assert_eq!(
+            resolve_ollama_tool_mode(ToolMode::Off, "MiniMax-M2.5:latest", Some(&show_resp)),
+            ToolMode::Off
+        );
+    }
+
+    /// Verify OllamaShowResponse deserializes from Ollama >= 0.5.x JSON with capabilities.
+    #[test]
+    fn ollama_show_response_deserializes_with_capabilities() {
+        let json = r#"{
+            "details": {"family": "minimax", "families": null},
+            "capabilities": ["completion", "tools"]
+        }"#;
+        let resp: OllamaShowResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.details.family.as_deref(), Some("minimax"));
+        assert_eq!(resp.capabilities, vec!["completion", "tools"]);
+    }
+
+    /// Verify OllamaShowResponse deserializes from old Ollama without capabilities field.
+    #[test]
+    fn ollama_show_response_deserializes_without_capabilities() {
+        let json = r#"{"details": {"family": "llama3.1", "families": ["llama3.1"]}}"#;
+        let resp: OllamaShowResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.details.family.as_deref(), Some("llama3.1"));
+        assert!(
+            resp.capabilities.is_empty(),
+            "missing field should default to empty vec"
+        );
+    }
+
+    /// Capabilities with only "tools" (single item).
+    #[test]
+    fn ollama_capabilities_single_tools_entry() {
+        let caps = vec!["tools".into()];
+        assert_eq!(ollama_capabilities_support_tools(&caps), Some(true));
     }
 
     #[test]
