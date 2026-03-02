@@ -161,6 +161,7 @@ pub struct HostProvisionResult {
 ///
 /// This is **non-fatal**: failures are logged as warnings and do not block
 /// startup.
+#[tracing::instrument(skip(packages), fields(package_count = packages.len()))]
 pub async fn provision_host_packages(packages: &[String]) -> Result<Option<HostProvisionResult>> {
     if packages.is_empty() || !is_debian_host() {
         return Ok(None);

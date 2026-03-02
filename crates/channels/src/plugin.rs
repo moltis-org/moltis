@@ -170,6 +170,8 @@ impl ChannelType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InboundMode {
+    /// Send-only channel with no inbound capability (e.g. email, SMS).
+    None,
     /// Long-polling loop (Telegram).
     Polling,
     /// Persistent gateway/WebSocket connection (Discord, WhatsApp).
@@ -1021,6 +1023,8 @@ mod tests {
 
     #[test]
     fn inbound_mode_serialization() {
+        let json = serde_json::to_string(&InboundMode::None).unwrap();
+        assert_eq!(json, "\"none\"");
         let json = serde_json::to_string(&InboundMode::Polling).unwrap();
         assert_eq!(json, "\"polling\"");
         let json = serde_json::to_string(&InboundMode::GatewayLoop).unwrap();

@@ -463,6 +463,13 @@ impl ChannelOutbound for SlackOutbound {
             post_message(&client, &token, to, chunk, thread_ts.as_deref()).await?;
         }
 
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_SENT_TOTAL,
+            moltis_metrics::labels::CHANNEL => "slack"
+        )
+        .increment(1);
+
         Ok(())
     }
 

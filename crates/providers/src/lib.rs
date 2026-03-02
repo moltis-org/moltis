@@ -1,6 +1,8 @@
 //! LLM provider implementations and registry.
 
 pub mod anthropic;
+#[cfg(test)]
+pub mod contract;
 pub mod error;
 pub mod openai;
 pub mod openai_compat;

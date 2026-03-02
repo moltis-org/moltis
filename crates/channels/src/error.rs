@@ -36,6 +36,16 @@ pub enum Error {
 }
 
 impl Error {
+    /// Whether this error is transient and the operation may succeed if retried.
+    ///
+    /// - `External` errors are assumed retryable (network/transient failures).
+    /// - `Unavailable` errors are retryable (service may become ready).
+    /// - `UnknownAccount`, `InvalidInput`, parse, and serde errors are fatal.
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::External { .. } | Self::Unavailable { .. })
+    }
+
     #[must_use]
     pub fn invalid_input(message: impl std::fmt::Display) -> Self {
         Self::InvalidInput {

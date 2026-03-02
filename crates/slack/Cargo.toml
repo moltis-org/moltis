@@ -9,6 +9,7 @@ base64          = { workspace = true }
 hmac            = { workspace = true }
 moltis-channels = { workspace = true }
 moltis-common   = { workspace = true }
+moltis-metrics  = { optional = true, workspace = true }
 reqwest         = { workspace = true }
 secrecy         = { workspace = true }
 serde           = { workspace = true }
@@ -18,6 +19,9 @@ slack-morphism  = { workspace = true }
 tokio           = { workspace = true }
 tokio-util      = { workspace = true }
 tracing         = { workspace = true }
+
+[features]
+metrics = ["dep:moltis-metrics"]
 
 [lints]
 workspace = true

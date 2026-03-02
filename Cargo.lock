@@ -6044,6 +6044,7 @@ dependencies = [
  "moltis-channels",
  "moltis-common",
  "moltis-media",
+ "moltis-metrics",
  "reqwest 0.12.28",
  "secrecy 0.8.0",
  "serde",
@@ -6275,6 +6276,7 @@ dependencies = [
  "base64 0.22.1",
  "moltis-channels",
  "moltis-common",
+ "moltis-metrics",
  "reqwest 0.12.28",
  "secrecy 0.8.0",
  "serde",
@@ -6555,13 +6557,14 @@ dependencies = [
 
 [[package]]
 name = "moltis-slack"
-version = "0.10.3"
+version = "0.10.6"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "hmac",
  "moltis-channels",
  "moltis-common",
+ "moltis-metrics",
  "reqwest 0.12.28",
  "secrecy 0.8.0",
  "serde",
