@@ -409,14 +409,14 @@ fn resolve_ollama_tool_mode(
         ToolMode::Native | ToolMode::Text | ToolMode::Off => config_tool_mode,
         ToolMode::Auto => {
             // Prefer Ollama's own capabilities field when available.
-            if let Some(resp) = probe_result {
-                if let Some(supports) = ollama_capabilities_support_tools(&resp.capabilities) {
-                    return if supports {
-                        ToolMode::Native
-                    } else {
-                        ToolMode::Text
-                    };
-                }
+            if let Some(resp) = probe_result
+                && let Some(supports) = ollama_capabilities_support_tools(&resp.capabilities)
+            {
+                return if supports {
+                    ToolMode::Native
+                } else {
+                    ToolMode::Text
+                };
             }
             // Fallback: family whitelist (pre-0.5.x Ollama without capabilities).
             let details = probe_result
