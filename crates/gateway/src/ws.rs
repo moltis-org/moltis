@@ -71,14 +71,12 @@ pub async fn handle_connection(
         Ok(Ok(result)) => result,
         Ok(Err(e)) => {
             warn!(conn_id = %conn_id, error = %e, "ws: handshake failed");
-            drop(client_tx);
-            write_handle.abort();
+            graceful_writer_shutdown(client_tx, write_handle).await;
             return;
         },
         Err(_) => {
             warn!(conn_id = %conn_id, "ws: handshake timeout");
-            drop(client_tx);
-            write_handle.abort();
+            graceful_writer_shutdown(client_tx, write_handle).await;
             return;
         },
     };
@@ -106,6 +104,13 @@ pub async fn handle_connection(
 
     // Validate protocol version.
     if params.min_protocol > PROTOCOL_VERSION || params.max_protocol < PROTOCOL_VERSION {
+        warn!(
+            conn_id = %conn_id,
+            min_protocol = params.min_protocol,
+            max_protocol = params.max_protocol,
+            server_protocol = PROTOCOL_VERSION,
+            "ws: protocol mismatch"
+        );
         let err = ResponseFrame::err(
             &request_id,
             ErrorShape::new(
@@ -118,8 +123,7 @@ pub async fn handle_connection(
         );
         #[allow(clippy::unwrap_used)] // serializing known-valid struct
         let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
-        drop(client_tx);
-        write_handle.abort();
+        graceful_writer_shutdown(client_tx, write_handle).await;
         return;
     }
 
@@ -224,8 +228,7 @@ pub async fn handle_connection(
         );
         #[allow(clippy::unwrap_used)] // serializing known-valid struct
         let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
-        drop(client_tx);
-        write_handle.abort();
+        graceful_writer_shutdown(client_tx, write_handle).await;
         return;
     }
 
@@ -251,8 +254,7 @@ pub async fn handle_connection(
             );
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
             let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
-            drop(client_tx);
-            write_handle.abort();
+            graceful_writer_shutdown(client_tx, write_handle).await;
             return;
         },
         None => {
@@ -565,6 +567,14 @@ struct ConnectResult {
     request_id: String,
     params: ConnectParams,
     is_v4: bool,
+}
+
+async fn graceful_writer_shutdown(
+    client_tx: mpsc::Sender<String>,
+    write_handle: tokio::task::JoinHandle<()>,
+) {
+    drop(client_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(200), write_handle).await;
 }
 
 /// Wait for the first `connect` request frame. Tries v4 format first, falls back to v3.

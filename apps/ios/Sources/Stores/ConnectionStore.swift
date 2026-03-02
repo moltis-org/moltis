@@ -186,6 +186,10 @@ final class ConnectionStore: ObservableObject {
             }
         }
 
+        if error.localizedDescription.lowercased().contains("protocol mismatch") {
+            return "Client/server protocol mismatch. Update the iOS app and restart the Moltis gateway."
+        }
+
         if isCertificateTrustError(nsError) {
             return "TLS certificate is not trusted yet. Download and trust the Moltis Local CA for this server."
         }
