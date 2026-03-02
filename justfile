@@ -21,8 +21,12 @@ lockfile-check:
 lint: lockfile-check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
+# Build Tailwind CSS for the web UI.
+build-css:
+    cd crates/web/ui && ./build.sh
+
 # Build the project
-build:
+build: build-css
     cargo build
 
 # Build in release mode
@@ -190,7 +194,7 @@ flatpak:
     cd flatpak && flatpak-builder --repo=repo --force-clean builddir org.moltbot.Moltis.yml
 
 # Run all CI checks (format, lint, build, test)
-ci: format-check lint i18n-check build test
+ci: format-check lint i18n-check build-css build test
 
 # Run the same Rust preflight gates used before release packaging.
 release-preflight: lockfile-check
