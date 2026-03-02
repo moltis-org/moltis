@@ -898,4 +898,52 @@ mod tests {
             .await
             .unwrap();
     }
+
+    #[tokio::test]
+    async fn contract_outbound_available_after_start() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::outbound_available_after_start(&mut plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_shared_outbound_send_succeeds_after_start() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::shared_outbound_send_succeeds_after_start(&mut plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_stream_completes_on_done_signal() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::stream_completes_on_done_signal(&mut plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_stream_completes_on_error_signal() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::stream_completes_on_error_signal(&mut plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_probe_unknown_account_returns_disconnected() {
+        let plugin = TestPlugin::new("test");
+        crate::contract::probe_unknown_account_returns_disconnected(&plugin)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_probe_started_account_returns_connected() {
+        let mut plugin = TestPlugin::new("test");
+        crate::contract::probe_started_account_returns_connected(&mut plugin)
+            .await
+            .unwrap();
+    }
 }

@@ -72,12 +72,7 @@ impl LiveChannelService {
 
         // Fall back to store lookup.
         let mut matches = Vec::new();
-        for ct in [
-            ChannelType::Telegram,
-            ChannelType::MsTeams,
-            ChannelType::Discord,
-            ChannelType::Whatsapp,
-        ] {
+        for ct in ChannelType::ALL {
             if self
                 .store
                 .get(ct.as_str(), account_id)
@@ -85,7 +80,7 @@ impl LiveChannelService {
                 .map_err(|e| e.to_string())?
                 .is_some()
             {
-                matches.push(ct);
+                matches.push(*ct);
             }
         }
         match matches.len() {
@@ -111,6 +106,7 @@ impl LiveChannelService {
             "account_id": account_id,
             "status": if snap.connected { "connected" } else { "disconnected" },
             "details": snap.details,
+            "capabilities": channel_type.descriptor().capabilities,
         });
         if let Some(cfg) = config {
             entry["config"] = cfg;
