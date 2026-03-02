@@ -331,7 +331,9 @@ mod tests {
             file_length: 1024,
         };
         let msg = build_media_message("image/png", Some("caption".into()), &upload);
-        let img = msg.image_message.unwrap_or_else(|| panic!("expected image_message"));
+        let img = msg
+            .image_message
+            .unwrap_or_else(|| panic!("expected image_message"));
         assert_eq!(img.mimetype.as_deref(), Some("image/png"));
         assert_eq!(img.caption.as_deref(), Some("caption"));
         assert_eq!(img.url.as_deref(), Some("https://example.com/img"));
@@ -349,7 +351,9 @@ mod tests {
             file_length: 2048,
         };
         let msg = build_media_message("video/mp4", None, &upload);
-        let vid = msg.video_message.unwrap_or_else(|| panic!("expected video_message"));
+        let vid = msg
+            .video_message
+            .unwrap_or_else(|| panic!("expected video_message"));
         assert_eq!(vid.mimetype.as_deref(), Some("video/mp4"));
         assert!(vid.caption.is_none());
     }
@@ -379,7 +383,9 @@ mod tests {
             file_length: 4096,
         };
         let msg = build_media_message("application/pdf", Some("report.pdf".into()), &upload);
-        let doc = msg.document_message.unwrap_or_else(|| panic!("expected document_message"));
+        let doc = msg
+            .document_message
+            .unwrap_or_else(|| panic!("expected document_message"));
         assert_eq!(doc.mimetype.as_deref(), Some("application/pdf"));
         assert_eq!(doc.title.as_deref(), Some("report.pdf"));
     }

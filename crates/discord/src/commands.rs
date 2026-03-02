@@ -133,7 +133,10 @@ async fn handle_component_interaction(
         .create_response(ctx, CreateInteractionResponse::Acknowledge)
         .await
     {
-        warn!(account_id, callback_data, "Failed to acknowledge component interaction: {e}");
+        warn!(
+            account_id,
+            callback_data, "Failed to acknowledge component interaction: {e}"
+        );
         return;
     }
 
@@ -158,7 +161,10 @@ async fn handle_component_interaction(
             // Response already sent by the gateway.
         },
         Err(e) => {
-            debug!(account_id, callback_data, "interaction dispatch failed: {e}");
+            debug!(
+                account_id,
+                callback_data, "interaction dispatch failed: {e}"
+            );
         },
     }
 }

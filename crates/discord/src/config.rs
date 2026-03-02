@@ -538,8 +538,7 @@ mod tests {
         assert_eq!(cfg.user_model_provider("U456"), Some("anthropic"));
 
         // Round-trip preserves overrides
-        let value =
-            serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
+        let value = serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
         let cfg2: DiscordAccountConfig =
             serde_json::from_value(value).unwrap_or_else(|e| panic!("re-parse failed: {e}"));
         assert_eq!(cfg2.channel_model("C123"), Some("gpt-4"));
