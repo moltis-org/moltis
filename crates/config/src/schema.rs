@@ -1722,6 +1722,13 @@ fn default_sandbox_packages() -> Vec<String> {
         "ruby",
         "ruby-dev",
         "golang-go",
+        "php-cli",
+        "php-mbstring",
+        "php-xml",
+        "php-curl",
+        "default-jdk",
+        "maven",
+        "perl",
         // Build toolchain & native deps
         "build-essential",
         "clang",
@@ -1739,6 +1746,8 @@ fn default_sandbox_packages() -> Vec<String> {
         "flex",
         "dpkg-dev",
         "fakeroot",
+        "cmake",
+        "ninja-build",
         // Compression & archiving
         "zip",
         "unzip",
@@ -1762,6 +1771,11 @@ fn default_sandbox_packages() -> Vec<String> {
         "tzdata",
         "shellcheck",
         "patchelf",
+        "git-lfs",
+        "gettext",
+        "lsb-release",
+        "software-properties-common",
+        "yamllint",
         // Text processing & search
         "ripgrep",
         "fd-find",
@@ -1823,6 +1837,11 @@ fn default_sandbox_packages() -> Vec<String> {
         "dos2unix",
         "miller",
         "datamash",
+        // Database clients
+        "postgresql-client",
+        "default-mysql-client",
+        // DevOps
+        "ansible",
         // GIS / OpenStreetMap / map generation
         "gdal-bin",
         "mapnik-utils",

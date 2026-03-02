@@ -388,6 +388,7 @@ run_check_async() {
 
 report_async_result() {
   local context="$1"
+  local pid="$2"
   local safe_context
   local result_file
   local status_word
@@ -398,10 +399,18 @@ report_async_result() {
   if [[ -f "$result_file" ]]; then
     read -r status_word duration <"$result_file"
     rm -f "$result_file"
-    remove_active_pid "$2"
+    remove_active_pid "$pid"
     echo "[$context] total ${duration}s"
     [[ "$status_word" == "ok" ]]
     return
+  fi
+
+  # Rare race fallback: if the child already exited and `wait` has already
+  # observed the status, treat missing timing metadata as non-fatal.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    remove_active_pid "$pid"
+    echo "[$context] total unavailable (timing result missing)"
+    return 0
   fi
 
   echo "[$context] missing timing result" >&2

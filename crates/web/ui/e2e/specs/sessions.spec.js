@@ -535,9 +535,12 @@ test.describe("Session management", () => {
 		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
 
 		// The session should be deleted immediately (no dialog appeared)
-		// so we should navigate away from the current session URL
-		await page.waitForURL((url) => url.href !== sessionUrl, { timeout: 10_000 });
-		await expectPageContentMounted(page);
+		// so we should navigate away from the current session URL.
+		// switchSession uses history.replaceState (no navigation event),
+		// so poll the URL rather than using waitForURL which waits for "load".
+		await expect
+			.poll(() => page.url(), { timeout: 10_000 })
+			.not.toBe(sessionUrl);
 
 		expect(pageErrors).toEqual([]);
 	});

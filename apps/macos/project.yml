@@ -55,6 +55,7 @@ targets:
     scheme:
       testTargets:
         - MoltisTests
+        - MoltisUITests
 
   MoltisTests:
     type: bundle.unit-test
@@ -66,4 +67,16 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.moltis.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+  MoltisUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: Moltis
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.moltis.app.uitests
         GENERATE_INFOPLIST_FILE: YES

@@ -1,29 +1,60 @@
 import Foundation
 
+// MARK: - Environment Variables
+
+struct EnvVarItem: Identifiable, Equatable {
+    let id: Int64
+    var key: String
+    var updatedAt: String
+    var encrypted: Bool
+}
+
 // MARK: - Channels
 
 struct ChannelItem: Identifiable, Equatable {
     let id: UUID
     var name: String
+    var accountId: String
     var channelType: String
-    var botToken: String
+    var credential: String
+    var appId: String
+    var webhookSecret: String
     var enabled: Bool
 
     init(
         id: UUID = UUID(),
         name: String = "",
+        accountId: String = "",
         channelType: String = "telegram",
-        botToken: String = "",
+        credential: String = "",
+        appId: String = "",
+        webhookSecret: String = "",
         enabled: Bool = true
     ) {
         self.id = id
         self.name = name
+        self.accountId = accountId
         self.channelType = channelType
-        self.botToken = botToken
+        self.credential = credential
+        self.appId = appId
+        self.webhookSecret = webhookSecret
         self.enabled = enabled
     }
 
-    static let channelTypes = ["telegram", "slack", "discord"]
+    static let channelTypes = ["telegram", "msteams", "discord", "whatsapp"]
+
+    static func displayName(for type: String) -> String {
+        switch type {
+        case "msteams":
+            return "Microsoft Teams"
+        case "discord":
+            return "Discord"
+        case "whatsapp":
+            return "WhatsApp"
+        default:
+            return "Telegram"
+        }
+    }
 }
 
 // MARK: - Hooks

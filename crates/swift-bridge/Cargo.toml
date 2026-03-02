@@ -10,8 +10,9 @@ version.workspace      = true
 crate-type = ["staticlib"]
 
 [features]
-default = ["metrics", "tracing"]
+default = ["metrics", "tracing", "qmd"]
 metrics = ["dep:metrics"]
+qmd = ["moltis-gateway/qmd"]
 tracing = ["dep:tracing"]
 
 [dependencies]
@@ -26,7 +27,9 @@ moltis-projects       = { workspace = true }
 moltis-provider-setup = { workspace = true }
 moltis-providers      = { workspace = true }
 moltis-sessions       = { workspace = true }
+moltis-tools          = { workspace = true }
 moltis-web            = { workspace = true }
+secrecy               = { workspace = true }
 serde                 = { features = ["derive"], workspace = true }
 serde_json            = { workspace = true }
 sqlx                  = { workspace = true }

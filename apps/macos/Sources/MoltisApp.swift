@@ -71,8 +71,11 @@ struct MoltisApp: App {
             }
         }
         .windowResizability(.contentSize)
+        .commands {
+            SettingsMenuCommand()
+        }
 
-        WindowGroup("Settings", id: "settings") {
+        Window("Settings", id: "settings") {
             SettingsView(
                 settings: settings,
                 providerStore: providerStore,
@@ -82,8 +85,5 @@ struct MoltisApp: App {
         }
         .defaultSize(width: 960, height: 780)
         .windowResizability(.contentMinSize)
-        .commands {
-            SettingsMenuCommand()
-        }
     }
 }

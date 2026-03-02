@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **macOS settings backend**: all settings panels (Identity, Heartbeat, Memory, Security, Tailscale, Monitoring, GraphQL, Sandbox, Voice, Channels, Hooks, MCP, Skills) now load from and persist to the Rust config backend via 6 new FFI functions (`moltis_get_config`, `moltis_save_config`, `moltis_get_soul`, `moltis_save_soul`, `moltis_save_identity`, `moltis_save_user_profile`)
+- **macOS environment variables settings**: Settings > Environment now supports add/update/delete via the same credential-store path as web UI (`moltis_list_env_vars`, `moltis_set_env_var`, `moltis_delete_env_var`), including encrypted/plaintext status and vault-state messaging
+
 ### Changed
 
 ### Deprecated
@@ -18,6 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 ### Security
+
+## [0.10.6] - 2026-03-01
+### Fixed
+- [web] Fix Shiki highlighter init failures in E2E tests
+- [web] Make thinking stop button smaller with left spacing
+- [chat] Surface error when LLM returns empty response with zero tokens
+- [providers] Emit StreamEvent::Error on non-success finish_reason
+
+## [0.10.5] - 2026-03-01
+### Fixed
+- [web] Lazy-load Shiki to prevent blocking page mount
+
+## [0.10.4] - 2026-03-01
+### Added
+- [web] Add Shiki syntax highlighting to code blocks
 
 ## [0.10.3] - 2026-03-01
 ### Added

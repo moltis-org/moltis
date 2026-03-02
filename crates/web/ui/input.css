@@ -305,10 +305,10 @@
     50% { opacity: 1; }
   }
   .thinking-stop-btn {
-    margin-left: auto;
+    margin-left: 12px;
     flex-shrink: 0;
-    padding: 3px 10px;
-    font-size: 0.75rem;
+    padding: 2px 7px;
+    font-size: 0.65rem;
     font-weight: 600;
     color: #fff;
     background: #ef4444;
