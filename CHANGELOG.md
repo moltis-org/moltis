@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.9] - 2026-03-02
+### Fixed
+- [ci] Harden tailwindcss cli downloads
+
 ## [0.10.8] - 2026-03-02
 ### Changed
 - [gateway] Fetch updates from releases manifest instead of GitHub API
