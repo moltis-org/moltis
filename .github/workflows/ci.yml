@@ -323,6 +323,11 @@ jobs:
       - name: Install Swift build dependencies
         run: brew install xcodegen cbindgen swiftlint
 
+      - name: Build Tailwind CSS
+        run: |
+          npm install -g @tailwindcss/cli
+          cd crates/web/ui && ./build.sh
+
       - name: Build Swift bridge and generate Xcode project
         run: |
           ./scripts/build-swift-bridge.sh

@@ -39,6 +39,9 @@ name: e2e-user
 This file is managed by Moltis settings.
 EOF
 
+# Mark onboarding as complete so the app skips the wizard.
+touch "${DATA_DIR}/.onboarded"
+
 # Start mock OAuth server and capture its port
 MOCK_PORT_FILE=$(mktemp)
 node "${SCRIPT_DIR}/mock-oauth-server.js" > "${MOCK_PORT_FILE}" &
