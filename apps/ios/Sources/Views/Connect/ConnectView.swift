@@ -118,7 +118,7 @@ struct ConnectView: View {
                 }
 
                 // New server
-                Section("Connect to Server") {
+                Section {
                     TextField("Server URL", text: $serverURL)
                         .textContentType(.URL)
                         .keyboardType(.URL)
@@ -136,10 +136,6 @@ struct ConnectView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .disabled(serverURL.isEmpty || authManager.isAuthenticating)
-
-                        Text("Remote access needs auth configured (password or passkey) and GraphQL enabled.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
 
                     case .passkey:
                         Button {
@@ -223,6 +219,17 @@ struct ConnectView: View {
                             Text("Check Connection to detect available sign-in methods.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Connect to Server")
+                            .textCase(nil)
+                        if authMode == .check {
+                            Text("Remote access needs auth configured (password or passkey) and GraphQL enabled.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textCase(nil)
                         }
                     }
                 }
