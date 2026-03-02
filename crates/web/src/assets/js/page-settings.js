@@ -619,6 +619,7 @@ function IdentitySection() {
 				${error ? html`<span class="text-xs" style="color:var(--error);">${error}</span>` : null}
 			</div>
 		</form>
+		${gon.get("version") ? html`<p class="text-xs text-[var(--muted)]" style="margin-top:auto;padding-top:16px;">v${gon.get("version")}</p>` : null}
 	</div>`;
 }
 
