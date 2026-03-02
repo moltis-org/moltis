@@ -3,6 +3,8 @@
 //! These tests validate the timeout, output truncation, and error handling
 //! invariants of the exec subsystem.
 
+#![allow(clippy::unwrap_used)]
+
 use std::time::Duration;
 
 use crate::exec::{ExecOpts, exec_command};
@@ -56,7 +58,6 @@ pub async fn error_returns_structured_result() -> crate::Result<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

@@ -3,6 +3,8 @@
 //! These functions validate that any `MemoryStore` implementation satisfies
 //! the CRUD and search invariants required by the memory system.
 
+#![allow(clippy::unwrap_used)]
+
 use crate::{
     schema::{ChunkRow, FileRow},
     store::MemoryStore,
@@ -132,7 +134,6 @@ pub async fn empty_search_returns_empty(store: &dyn MemoryStore) -> anyhow::Resu
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use {
         super::*,

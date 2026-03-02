@@ -4,6 +4,8 @@
 //! the completion and streaming semantics required by the chat runtime.
 //! Run against `MockLlmProvider` in provider tests.
 
+#![allow(clippy::unwrap_used)]
+
 use std::pin::Pin;
 
 use {
@@ -157,7 +159,6 @@ pub async fn error_classification_maps_401_to_fatal(provider: &dyn LlmProvider) 
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
