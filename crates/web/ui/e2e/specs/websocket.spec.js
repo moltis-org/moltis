@@ -1,4 +1,4 @@
-const { expect, test } = require("@playwright/test");
+const { expect, test } = require("../base-test");
 const { waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {

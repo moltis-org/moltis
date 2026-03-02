@@ -82,10 +82,15 @@ export MOLTIS_SERVER__PORT="${PORT}"
 export HOME="${HOME_DIR}"
 export XDG_CONFIG_HOME="${HOME_DIR}/.config"
 
-# Override OAuth config for openai-codex to point at the mock server
+# Override OAuth config for openai-codex to point at the mock server.
+# Clear the redirect_uri so the gateway's /auth/callback is used instead of
+# spawning a local CallbackServer on port 1455 (the upstream-registered URI).
+# This lets the e2e test observe token-exchange errors in the popup because
+# the gateway completes the exchange synchronously before responding.
 export MOLTIS_OAUTH_OPENAI_CODEX_AUTH_URL="http://127.0.0.1:${MOCK_PORT}/authorize"
 export MOLTIS_OAUTH_OPENAI_CODEX_TOKEN_URL="http://127.0.0.1:${MOCK_PORT}/token"
 export MOLTIS_OAUTH_OPENAI_CODEX_CLIENT_ID="test-client-id"
+export MOLTIS_OAUTH_OPENAI_CODEX_REDIRECT_URI=""
 # Ensure the Add LLM picker shows the OpenAI Codex provider in this e2e project.
 export MOLTIS_PROVIDERS__OFFERED='["openai-codex","openai","github-copilot"]'
 

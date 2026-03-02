@@ -1,4 +1,4 @@
-const { expect, test } = require("@playwright/test");
+const { expect, test } = require("../base-test");
 const { expectPageContentMounted, watchPageErrors } = require("../helpers");
 
 test("app shell loads chat route instead of onboarding", async ({ page }) => {

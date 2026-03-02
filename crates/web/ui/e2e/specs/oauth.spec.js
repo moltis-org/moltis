@@ -1,4 +1,4 @@
-const { expect, test } = require("@playwright/test");
+const { expect, test } = require("../base-test");
 const fs = require("node:fs");
 const path = require("node:path");
 const { navigateAndWait, watchPageErrors, expectPageContentMounted, waitForWsConnected } = require("../helpers");
@@ -213,10 +213,12 @@ test.describe("OAuth provider connection", () => {
 		await page.getByRole("button", { name: "Connect" }).click();
 
 		var popup = await popupPromise;
-		await popup.waitForLoadState("domcontentloaded");
 
-		// The callback should fail because the mock /token returns 400
-		await expect(popup.getByText("Authentication failed")).toBeVisible({ timeout: 10_000 });
+		// The callback should fail because the mock /token returns 400.
+		// Use a generous timeout: the popup navigates through mock /authorize → 302 →
+		// gateway /auth/callback, and the gateway makes a server-side token exchange
+		// request before returning the error page.
+		await expect(popup.getByText("Authentication failed")).toBeVisible({ timeout: 15_000 });
 
 		// The main page should still show the connect button after timeout/failure
 		// (poll will time out since tokens were never stored)
