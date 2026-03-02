@@ -475,6 +475,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string())
                         })?;
                     let agent = store.create(params).await.map_err(ErrorShape::from)?;
+                    // Sync persona into shared agents_config presets.
+                    if let Some(ref agents_config) = ctx.state.services.agents_config {
+                        let mut guard = agents_config.write().await;
+                        crate::server::sync_persona_into_preset(&mut guard, &agent);
+                    }
                     serde_json::to_value(&agent)
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
                 })
@@ -501,6 +506,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string())
                         })?;
                     let agent = store.update(&id, params).await.map_err(ErrorShape::from)?;
+                    // Sync updated persona into shared agents_config presets.
+                    if let Some(ref agents_config) = ctx.state.services.agents_config {
+                        let mut guard = agents_config.write().await;
+                        crate::server::sync_persona_into_preset(&mut guard, &agent);
+                    }
                     serde_json::to_value(&agent)
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
                 })
@@ -538,6 +548,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         }
                     }
                     store.delete(&id).await.map_err(ErrorShape::from)?;
+                    // Remove preset for deleted persona from shared agents_config.
+                    if let Some(ref agents_config) = ctx.state.services.agents_config {
+                        let mut guard = agents_config.write().await;
+                        guard.presets.remove(&id);
+                    }
                     Ok(serde_json::json!({
                         "deleted": true,
                         "reassigned_sessions": reassigned_sessions,
@@ -653,6 +668,13 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     };
                     moltis_config::save_identity_for_agent(&agent_id, &identity)
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    // Sync identity into preset.
+                    if let Some(ref agents_config) = ctx.state.services.agents_config {
+                        let mut guard = agents_config.write().await;
+                        if let Some(entry) = guard.presets.get_mut(&agent_id) {
+                            entry.identity = identity;
+                        }
+                    }
                     Ok(serde_json::json!({ "ok": true }))
                 })
             }),
@@ -667,7 +689,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .get("soul")
                         .and_then(|v| v.as_str())
                         .map(str::to_string);
-                    write_soul_for_agent(&agent_id, soul)?;
+                    write_soul_for_agent(&agent_id, soul.clone())?;
+                    // Sync soul into preset's system_prompt_suffix.
+                    if agent_id != "main"
+                        && let Some(ref agents_config) = ctx.state.services.agents_config
+                    {
+                        let mut guard = agents_config.write().await;
+                        if let Some(entry) = guard.presets.get_mut(&agent_id) {
+                            entry.system_prompt_suffix = soul.filter(|s| !s.trim().is_empty());
+                        }
+                    }
                     Ok(serde_json::json!({ "ok": true }))
                 })
             }),
@@ -783,6 +814,137 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         "agent_id": agent_id,
                         "path": relative_path.to_string_lossy(),
                     }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.preset.get",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    let config = moltis_config::discover_and_load();
+                    let toml_str = match config.agents.presets.get(&id) {
+                        Some(preset) => toml::to_string_pretty(preset).unwrap_or_default(),
+                        None => String::new(),
+                    };
+                    Ok(serde_json::json!({
+                        "id": id,
+                        "toml": toml_str,
+                        "exists": !toml_str.is_empty(),
+                    }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.preset.save",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    let toml_str = ctx
+                        .params
+                        .get("toml")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    // Parse the TOML as a partial AgentPreset to validate it
+                    let partial: moltis_config::AgentPreset = if toml_str.trim().is_empty() {
+                        moltis_config::AgentPreset::default()
+                    } else {
+                        toml::from_str(&toml_str).map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::INVALID_REQUEST,
+                                format!("invalid TOML: {e}"),
+                            )
+                        })?
+                    };
+
+                    // Write to moltis.toml using update_config
+                    moltis_config::update_config(|cfg| {
+                        if toml_str.trim().is_empty() {
+                            cfg.agents.presets.remove(&id);
+                        } else {
+                            // Merge: keep existing identity fields from persona if present,
+                            // let TOML fields override everything else.
+                            if let Some(existing) = cfg.agents.presets.get(&id) {
+                                let mut merged = partial.clone();
+                                // Preserve persona identity if TOML didn't set it
+                                if merged.identity.name.is_none() {
+                                    merged.identity.name = existing.identity.name.clone();
+                                }
+                                if merged.identity.emoji.is_none() {
+                                    merged.identity.emoji = existing.identity.emoji.clone();
+                                }
+                                if merged.identity.theme.is_none() {
+                                    merged.identity.theme = existing.identity.theme.clone();
+                                }
+                                cfg.agents.presets.insert(id.clone(), merged);
+                            } else {
+                                cfg.agents.presets.insert(id.clone(), partial);
+                            }
+                        }
+                    })
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+
+                    // Refresh in-memory agents_config if available
+                    if let Some(ref agents_config) = ctx.state.services.agents_config {
+                        let fresh = moltis_config::discover_and_load();
+                        let mut guard = agents_config.write().await;
+                        *guard = fresh.agents;
+                    }
+
+                    Ok(serde_json::json!({ "ok": true, "id": id }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.presets_list",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let config = moltis_config::discover_and_load();
+                    let persona_ids: std::collections::HashSet<String> =
+                        if let Some(ref store) = ctx.state.services.agent_persona_store {
+                            store
+                                .list()
+                                .await
+                                .map_err(ErrorShape::from)?
+                                .into_iter()
+                                .map(|a| a.id)
+                                .collect()
+                        } else {
+                            std::collections::HashSet::new()
+                        };
+
+                    let config_only: Vec<serde_json::Value> = config
+                        .agents
+                        .presets
+                        .iter()
+                        .filter(|(name, _)| !persona_ids.contains(*name))
+                        .map(|(name, preset)| {
+                            let toml_str = toml::to_string_pretty(preset).unwrap_or_default();
+                            serde_json::json!({
+                                "id": name,
+                                "name": preset.identity.name.as_deref().unwrap_or(name),
+                                "emoji": preset.identity.emoji,
+                                "theme": preset.identity.theme,
+                                "model": preset.model,
+                                "toml": toml_str,
+                                "source": "config",
+                            })
+                        })
+                        .collect();
+
+                    Ok(serde_json::json!({ "presets": config_only }))
                 })
             }),
         );

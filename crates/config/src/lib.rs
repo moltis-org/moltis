@@ -5,6 +5,7 @@
 //!
 //! Supports `${ENV_VAR}` substitution in all string values.
 
+pub mod agent_defs;
 pub mod env_subst;
 pub mod error;
 pub mod loader;
@@ -28,10 +29,11 @@ pub use {
         user_global_config_dir_if_different, user_path,
     },
     schema::{
-        AgentIdentity, AgentPresetConfig, AgentsConfig, AuthConfig, CalDavAccountConfig,
-        CalDavConfig, ChatConfig, GeoLocation, MessageQueueMode, MoltisConfig, ResolvedIdentity,
-        Timezone, ToolMode, UserProfile, VoiceConfig, VoiceElevenLabsConfig, VoiceOpenAiConfig,
-        VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceWhisperConfig,
+        AgentIdentity, AgentPreset, AgentsConfig, AuthConfig, CalDavAccountConfig, CalDavConfig,
+        ChatConfig, GeoLocation, MemoryScope, MessageQueueMode, MoltisConfig, PresetMemoryConfig,
+        PresetToolPolicy, ResolvedIdentity, SessionAccessPolicyConfig, Timezone, ToolMode,
+        UserProfile, VoiceConfig, VoiceElevenLabsConfig, VoiceOpenAiConfig, VoiceSttConfig,
+        VoiceSttProvider, VoiceTtsConfig, VoiceWhisperConfig,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };

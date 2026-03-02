@@ -305,11 +305,36 @@ fn build_schema_map() -> KnownKeys {
 
     let agent_preset = || {
         Struct(HashMap::from([
+            (
+                "identity",
+                Struct(HashMap::from([
+                    ("name", Leaf),
+                    ("emoji", Leaf),
+                    ("theme", Leaf),
+                ])),
+            ),
             ("model", Leaf),
-            ("allow_tools", Leaf),
-            ("deny_tools", Leaf),
+            (
+                "tools",
+                Struct(HashMap::from([("allow", Leaf), ("deny", Leaf)])),
+            ),
             ("delegate_only", Leaf),
             ("system_prompt_suffix", Leaf),
+            ("max_iterations", Leaf),
+            ("timeout_secs", Leaf),
+            (
+                "sessions",
+                Struct(HashMap::from([
+                    ("key_prefix", Leaf),
+                    ("allowed_keys", Leaf),
+                    ("can_send", Leaf),
+                    ("cross_agent", Leaf),
+                ])),
+            ),
+            (
+                "memory",
+                Struct(HashMap::from([("scope", Leaf), ("max_lines", Leaf)])),
+            ),
         ]))
     };
 

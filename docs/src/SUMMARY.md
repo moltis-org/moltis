@@ -65,6 +65,8 @@
 - [SQLite Migrations](sqlite-migration.md)
 - [Metrics & Tracing](metrics-and-tracing.md)
 - [Tool Registry](tool-registry.md)
+- [Agent Presets](agent-presets.md)
+- [Session Tools](session-tools.md)
 
 ---
 

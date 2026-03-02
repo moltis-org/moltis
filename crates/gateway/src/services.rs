@@ -1205,6 +1205,8 @@ pub struct GatewayServices {
     pub session_share_store: Option<Arc<crate::share_store::ShareStore>>,
     /// Optional agent persona store for multi-agent support.
     pub agent_persona_store: Option<Arc<crate::agent_persona::AgentPersonaStore>>,
+    /// Shared agents config (presets) for spawn_agent and RPC sync.
+    pub agents_config: Option<Arc<tokio::sync::RwLock<moltis_config::AgentsConfig>>>,
 }
 
 impl GatewayServices {
@@ -1295,6 +1297,7 @@ impl GatewayServices {
             session_store: None,
             session_share_store: None,
             agent_persona_store: None,
+            agents_config: None,
         }
     }
 
@@ -1344,6 +1347,14 @@ impl GatewayServices {
         store: Arc<crate::agent_persona::AgentPersonaStore>,
     ) -> Self {
         self.agent_persona_store = Some(store);
+        self
+    }
+
+    pub fn with_agents_config(
+        mut self,
+        agents_config: Arc<tokio::sync::RwLock<moltis_config::AgentsConfig>>,
+    ) -> Self {
+        self.agents_config = Some(agents_config);
         self
     }
 

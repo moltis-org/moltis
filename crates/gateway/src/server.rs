@@ -2546,6 +2546,25 @@ pub async fn prepare_gateway(
 
     services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
 
+    // Shared agents config (presets) — used by both SpawnAgentTool and RPC.
+    let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
+
+    // Sync persona identity into presets at startup so spawn_agent sees unified agents.
+    {
+        let personas = agent_persona_store.list().await;
+        if let Ok(personas) = personas {
+            let mut guard = agents_config.write().await;
+            for persona in &personas {
+                if persona.id == "main" {
+                    continue;
+                }
+                sync_persona_into_preset(&mut guard, persona);
+            }
+        }
+    }
+
+    services = services.with_agents_config(Arc::clone(&agents_config));
+
     // ── Hook discovery & registration ─────────────────────────────────────
     seed_default_workspace_markdown_files();
     seed_example_skill();
@@ -3412,7 +3431,6 @@ pub async fn prepare_gateway(
                     broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
                 });
             });
-            let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
             let spawn_tool = moltis_tools::spawn_agent::SpawnAgentTool::new(
                 Arc::clone(&registry),
                 default_provider,
@@ -5169,6 +5187,32 @@ fn seed_skill_if_missing(name: &str, content: &str) {
     }
 }
 
+/// Merge a persona's identity into an `AgentsConfig` preset entry.
+///
+/// If a preset already exists for this persona, identity fields from the persona
+/// take precedence (name/emoji/theme) while TOML-defined fields (model, tools,
+/// timeout, etc.) are preserved. The soul is synced into `system_prompt_suffix`.
+pub(crate) fn sync_persona_into_preset(
+    agents: &mut moltis_config::AgentsConfig,
+    persona: &crate::agent_persona::AgentPersona,
+) {
+    let soul = moltis_config::load_soul_for_agent(&persona.id);
+
+    let entry = agents.presets.entry(persona.id.clone()).or_default();
+
+    // Persona identity always wins for name/emoji/theme.
+    entry.identity.name = Some(persona.name.clone());
+    entry.identity.emoji = persona.emoji.clone();
+    entry.identity.theme = persona.theme.clone();
+
+    // Sync soul into system_prompt_suffix if the persona has one.
+    if let Some(ref soul) = soul
+        && !soul.trim().is_empty()
+    {
+        entry.system_prompt_suffix = Some(soul.clone());
+    }
+}
+
 /// Seed default workspace markdown files in workspace root on first run.
 fn seed_default_workspace_markdown_files() {
     let data_dir = moltis_config::data_dir();
@@ -6133,5 +6177,61 @@ mod tests {
             env_value_with_overrides(&overrides, &unique_key).as_deref(),
             Some("override-value")
         );
+    }
+
+    #[test]
+    fn sync_persona_into_preset_creates_new_entry() {
+        let mut agents = moltis_config::AgentsConfig::default();
+        let persona = crate::agent_persona::AgentPersona {
+            id: "writer".into(),
+            name: "Creative Writer".into(),
+            is_default: false,
+            emoji: Some("\u{270d}\u{fe0f}".into()),
+            theme: Some("poetic".into()),
+            description: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        sync_persona_into_preset(&mut agents, &persona);
+
+        let preset = agents.presets.get("writer").expect("preset should exist");
+        assert_eq!(preset.identity.name.as_deref(), Some("Creative Writer"));
+        assert_eq!(preset.identity.emoji.as_deref(), Some("\u{270d}\u{fe0f}"));
+        assert_eq!(preset.identity.theme.as_deref(), Some("poetic"));
+    }
+
+    #[test]
+    fn sync_persona_preserves_existing_preset_fields() {
+        let mut agents = moltis_config::AgentsConfig::default();
+        let existing = moltis_config::AgentPreset {
+            model: Some("haiku".into()),
+            timeout_secs: Some(30),
+            tools: moltis_config::PresetToolPolicy {
+                deny: vec!["exec".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        agents.presets.insert("coder".into(), existing);
+
+        let persona = crate::agent_persona::AgentPersona {
+            id: "coder".into(),
+            name: "Code Bot".into(),
+            is_default: false,
+            emoji: None,
+            theme: None,
+            description: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        sync_persona_into_preset(&mut agents, &persona);
+
+        let preset = agents.presets.get("coder").expect("preset should exist");
+        assert_eq!(preset.identity.name.as_deref(), Some("Code Bot"));
+        assert_eq!(preset.model.as_deref(), Some("haiku"));
+        assert_eq!(preset.timeout_secs, Some(30));
+        assert_eq!(preset.tools.deny, vec!["exec".to_string()]);
     }
 }

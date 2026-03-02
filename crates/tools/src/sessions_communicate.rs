@@ -32,14 +32,66 @@ pub struct SendToSessionRequest {
 pub type SendToSessionFn =
     Arc<dyn Fn(SendToSessionRequest) -> BoxFuture<'static, crate::Result<Value>> + Send + Sync>;
 
+/// Policy controlling which sessions an agent can access.
+#[derive(Debug, Clone, Default)]
+pub struct SessionAccessPolicy {
+    /// If set, only sessions with keys matching this prefix are visible.
+    pub key_prefix: Option<String>,
+    /// Explicit list of session keys this agent can access (in addition to prefix).
+    pub allowed_keys: Vec<String>,
+    /// If true, agent can send messages to other sessions.
+    pub can_send: bool,
+    /// If true, agent can access sessions from other agents.
+    pub cross_agent: bool,
+}
+
+impl SessionAccessPolicy {
+    /// Check if a session key is accessible under this policy.
+    pub fn can_access(&self, key: &str) -> bool {
+        // Check explicit allowed keys first.
+        if self.allowed_keys.iter().any(|k| k == key) {
+            return true;
+        }
+
+        // Check prefix match.
+        if let Some(ref prefix) = self.key_prefix {
+            return key.starts_with(prefix);
+        }
+
+        // Default: allow all if no restrictions.
+        true
+    }
+}
+
+impl From<&moltis_config::SessionAccessPolicyConfig> for SessionAccessPolicy {
+    fn from(config: &moltis_config::SessionAccessPolicyConfig) -> Self {
+        Self {
+            key_prefix: config.key_prefix.clone(),
+            allowed_keys: config.allowed_keys.clone(),
+            can_send: config.can_send,
+            cross_agent: config.cross_agent,
+        }
+    }
+}
+
 /// Tool for listing known sessions.
 pub struct SessionsListTool {
     metadata: Arc<SqliteSessionMetadata>,
+    policy: Option<SessionAccessPolicy>,
 }
 
 impl SessionsListTool {
     pub fn new(metadata: Arc<SqliteSessionMetadata>) -> Self {
-        Self { metadata }
+        Self {
+            metadata,
+            policy: None,
+        }
+    }
+
+    /// Attach a session access policy for filtering.
+    pub fn with_policy(mut self, policy: SessionAccessPolicy) -> Self {
+        self.policy = Some(policy);
+        self
     }
 }
 
@@ -47,11 +99,22 @@ impl SessionsListTool {
 pub struct SessionsHistoryTool {
     store: Arc<SessionStore>,
     metadata: Arc<SqliteSessionMetadata>,
+    policy: Option<SessionAccessPolicy>,
 }
 
 impl SessionsHistoryTool {
     pub fn new(store: Arc<SessionStore>, metadata: Arc<SqliteSessionMetadata>) -> Self {
-        Self { store, metadata }
+        Self {
+            store,
+            metadata,
+            policy: None,
+        }
+    }
+
+    /// Attach a session access policy for filtering.
+    pub fn with_policy(mut self, policy: SessionAccessPolicy) -> Self {
+        self.policy = Some(policy);
+        self
     }
 }
 
@@ -59,11 +122,22 @@ impl SessionsHistoryTool {
 pub struct SessionsSendTool {
     metadata: Arc<SqliteSessionMetadata>,
     send_fn: SendToSessionFn,
+    policy: Option<SessionAccessPolicy>,
 }
 
 impl SessionsSendTool {
     pub fn new(metadata: Arc<SqliteSessionMetadata>, send_fn: SendToSessionFn) -> Self {
-        Self { metadata, send_fn }
+        Self {
+            metadata,
+            send_fn,
+            policy: None,
+        }
+    }
+
+    /// Attach a session access policy for filtering.
+    pub fn with_policy(mut self, policy: SessionAccessPolicy) -> Self {
+        self.policy = Some(policy);
+        self
     }
 }
 
@@ -103,6 +177,12 @@ impl AgentTool for SessionsListTool {
             .await
             .into_iter()
             .filter(|entry| {
+                // Apply session access policy.
+                if let Some(ref policy) = self.policy
+                    && !policy.can_access(&entry.key)
+                {
+                    return false;
+                }
                 filter.as_ref().is_none_or(|needle| {
                     let key_match = entry.key.to_lowercase().contains(needle);
                     let label_match = entry
@@ -172,6 +252,14 @@ impl AgentTool for SessionsHistoryTool {
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let key = require_str(&params, "key")?;
+
+        // Enforce session access policy.
+        if let Some(ref policy) = self.policy
+            && !policy.can_access(key)
+        {
+            return Err(Error::message(format!("session access denied: {key}")).into());
+        }
+
         let limit = u64_param(&params, "limit", 20).min(100) as usize;
         let offset = u64_param(&params, "offset", 0) as usize;
 
@@ -250,6 +338,18 @@ impl AgentTool for SessionsSendTool {
         let context = owned_str_param(&params, &["context"]);
         let model = owned_str_param(&params, &["model"]);
 
+        // Enforce session access policy.
+        if let Some(ref policy) = self.policy {
+            if !policy.can_access(&key) {
+                return Err(Error::message(format!("session access denied: {key}")).into());
+            }
+            if !policy.can_send {
+                return Err(
+                    Error::message("session policy denies sending messages".to_string()).into(),
+                );
+            }
+        }
+
         let entry = self
             .metadata
             .get(&key)
@@ -280,6 +380,7 @@ impl AgentTool for SessionsSendTool {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -468,6 +569,75 @@ mod tests {
             .err()
             .ok_or_else(|| std::io::Error::other("expected missing target error"))?;
         assert!(err.to_string().contains("session not found"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_list_filtered_by_key_prefix() -> TestResult<()> {
+        let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
+        metadata
+            .upsert("agent:scout:1", Some("Scout 1".into()))
+            .await?;
+        metadata
+            .upsert("agent:scout:2", Some("Scout 2".into()))
+            .await?;
+        metadata
+            .upsert("agent:coder:1", Some("Coder 1".into()))
+            .await?;
+
+        let policy = SessionAccessPolicy {
+            key_prefix: Some("agent:scout:".into()),
+            ..Default::default()
+        };
+        let tool = SessionsListTool::new(metadata).with_policy(policy);
+        let result = tool.execute(serde_json::json!({})).await?;
+
+        assert_eq!(result["count"], 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_send_denied_when_can_send_false() -> TestResult<()> {
+        let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
+        metadata
+            .upsert("session:target", Some("Target".into()))
+            .await?;
+
+        let send_fn: SendToSessionFn =
+            Arc::new(move |_req| Box::pin(async move { Ok(serde_json::json!({"ok": true})) }));
+        let policy = SessionAccessPolicy {
+            can_send: false,
+            ..Default::default()
+        };
+        let tool = SessionsSendTool::new(metadata, send_fn).with_policy(policy);
+
+        let result = tool
+            .execute(serde_json::json!({
+                "key": "session:target",
+                "message": "hello"
+            }))
+            .await;
+
+        let err = result.expect_err("should deny sending");
+        assert!(err.to_string().contains("denies sending"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_no_policy_allows_all() -> TestResult<()> {
+        let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
+        metadata
+            .upsert("agent:scout:1", Some("Scout 1".into()))
+            .await?;
+        metadata
+            .upsert("agent:coder:1", Some("Coder 1".into()))
+            .await?;
+
+        // No policy = all sessions visible.
+        let tool = SessionsListTool::new(metadata);
+        let result = tool.execute(serde_json::json!({})).await?;
+
+        assert_eq!(result["count"], 2);
         Ok(())
     }
 }

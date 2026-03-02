@@ -222,33 +222,121 @@ pub struct AgentsConfig {
     pub default_preset: Option<String>,
     /// Named spawn presets.
     #[serde(default)]
-    pub presets: HashMap<String, AgentPresetConfig>,
+    pub presets: HashMap<String, AgentPreset>,
 }
 
 impl AgentsConfig {
     /// Return a preset by name.
-    pub fn get_preset(&self, name: &str) -> Option<&AgentPresetConfig> {
+    pub fn get_preset(&self, name: &str) -> Option<&AgentPreset> {
         self.presets.get(name)
     }
 }
 
-/// Spawn policy preset for sub-agents.
+/// Tool policy for a preset (allow/deny specific tools).
+///
+/// When both `allow` and `deny` are specified, `allow` acts as a whitelist
+/// and `deny` further removes tools from that list.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct AgentPresetConfig {
+pub struct PresetToolPolicy {
+    /// Tools to allow (whitelist). If empty, all tools are allowed.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Tools to deny (blacklist). Applied after `allow`.
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+/// Scope for per-agent persistent memory.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryScope {
+    /// User-global: `~/.moltis/agent-memory/<preset>/`
+    #[default]
+    User,
+    /// Project-local: `.moltis/agent-memory/<preset>/`
+    Project,
+    /// Untracked local: `.moltis/agent-memory-local/<preset>/`
+    Local,
+}
+
+/// Persistent memory configuration for a preset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PresetMemoryConfig {
+    /// Memory scope: where the MEMORY.md is stored.
+    pub scope: MemoryScope,
+    /// Maximum lines to load from MEMORY.md (default: 200).
+    pub max_lines: usize,
+}
+
+impl Default for PresetMemoryConfig {
+    fn default() -> Self {
+        Self {
+            scope: MemoryScope::default(),
+            max_lines: 200,
+        }
+    }
+}
+
+/// Session access policy configuration for a preset.
+///
+/// Controls which sessions an agent can see and interact with via
+/// the `sessions_list`, `sessions_history`, and `sessions_send` tools.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionAccessPolicyConfig {
+    /// Only see sessions with keys matching this prefix.
+    pub key_prefix: Option<String>,
+    /// Explicit session keys this agent can access (in addition to prefix).
+    #[serde(default)]
+    pub allowed_keys: Vec<String>,
+    /// Whether the agent can send messages to sessions.
+    #[serde(default = "default_true")]
+    pub can_send: bool,
+    /// Whether the agent can access sessions from other agents.
+    #[serde(default)]
+    pub cross_agent: bool,
+}
+
+impl Default for SessionAccessPolicyConfig {
+    fn default() -> Self {
+        Self {
+            key_prefix: None,
+            allowed_keys: Vec::new(),
+            can_send: true,
+            cross_agent: false,
+        }
+    }
+}
+
+/// Spawn policy preset for sub-agents.
+///
+/// Presets allow defining specialized agent configurations that can be
+/// selected when spawning sub-agents. Each preset can override identity,
+/// model, tool policies, and system prompt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPreset {
+    /// Agent identity overrides.
+    pub identity: AgentIdentity,
     /// Optional model override for this preset.
     pub model: Option<String>,
-    /// Optional allowlist of tools available to the sub-agent.
-    #[serde(default)]
-    pub allow_tools: Vec<String>,
-    /// Optional denylist of tools removed from the sub-agent.
-    #[serde(default)]
-    pub deny_tools: Vec<String>,
+    /// Tool policy for this preset (allow/deny specific tools).
+    pub tools: PresetToolPolicy,
     /// Restrict sub-agent to delegation/session/task tools only.
     #[serde(default)]
     pub delegate_only: bool,
     /// Optional extra instructions appended to sub-agent system prompt.
     pub system_prompt_suffix: Option<String>,
+    /// Maximum iterations for agent loop.
+    pub max_iterations: Option<u64>,
+    /// Timeout in seconds for the sub-agent.
+    pub timeout_secs: Option<u64>,
+    /// Session access policy for inter-agent communication.
+    pub sessions: Option<SessionAccessPolicyConfig>,
+    /// Persistent per-agent memory configuration.
+    pub memory: Option<PresetMemoryConfig>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -2225,22 +2313,36 @@ default_preset = "research"
 
 [agents.presets.research]
 model = "openai/gpt-5.2"
-allow_tools = ["web_search", "web_fetch"]
-deny_tools = ["exec"]
 delegate_only = false
 system_prompt_suffix = "Focus on evidence."
+max_iterations = 10
+timeout_secs = 120
+
+[agents.presets.research.identity]
+name = "scout"
+emoji = "🔍"
+theme = "thorough"
+
+[agents.presets.research.tools]
+allow = ["web_search", "web_fetch"]
+deny = ["exec"]
 "#;
         let config: MoltisConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.agents.default_preset.as_deref(), Some("research"));
         let preset = config.agents.get_preset("research").unwrap();
         assert_eq!(preset.model.as_deref(), Some("openai/gpt-5.2"));
-        assert_eq!(preset.allow_tools.len(), 2);
-        assert_eq!(preset.deny_tools, vec!["exec".to_string()]);
+        assert_eq!(preset.tools.allow.len(), 2);
+        assert_eq!(preset.tools.deny, vec!["exec".to_string()]);
         assert!(!preset.delegate_only);
         assert_eq!(
             preset.system_prompt_suffix.as_deref(),
             Some("Focus on evidence.")
         );
+        assert_eq!(preset.identity.name.as_deref(), Some("scout"));
+        assert_eq!(preset.identity.emoji.as_deref(), Some("🔍"));
+        assert_eq!(preset.identity.theme.as_deref(), Some("thorough"));
+        assert_eq!(preset.max_iterations, Some(10));
+        assert_eq!(preset.timeout_secs, Some(120));
     }
 
     #[test]

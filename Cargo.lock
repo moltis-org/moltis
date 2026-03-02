@@ -5979,6 +5979,7 @@ dependencies = [
 name = "moltis-config"
 version = "0.10.6"
 dependencies = [
+ "anyhow",
  "chrono-tz",
  "directories",
  "ipnet",
