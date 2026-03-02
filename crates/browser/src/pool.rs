@@ -367,8 +367,16 @@ impl BrowserPool {
             }
 
             // Start the container (includes readiness polling)
-            BrowserContainer::start(&image, &prefix, vw, vh, low_mem, profile_dir.as_deref(), &container_host)
-                .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))
+            BrowserContainer::start(
+                &image,
+                &prefix,
+                vw,
+                vh,
+                low_mem,
+                profile_dir.as_deref(),
+                &container_host,
+            )
+            .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))
         })
         .await
         .map_err(|e| Error::LaunchFailed(format!("container launch task panicked: {e}")))??;

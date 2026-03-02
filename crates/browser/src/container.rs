@@ -680,7 +680,8 @@ fn probe_http_endpoint(host: &str, port: u16) -> Result<bool> {
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
 
     // Send minimal HTTP request
-    let request = format!("GET /json/version HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    let request =
+        format!("GET /json/version HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes())?;
 
     // Read response status line
