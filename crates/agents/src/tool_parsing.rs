@@ -48,7 +48,10 @@ pub fn parse_tool_calls_from_text(text: &str) -> (Vec<ToolCall>, Option<String>)
     // 2. Find all XML <function=...> blocks.
     collect_function_blocks(text, &mut blocks);
 
-    // 3. Find bare JSON {"tool": ...} blocks.
+    // 3. Find XML <invoke name="..."><arg name="...">value</arg></invoke> blocks.
+    collect_invoke_blocks(text, &mut blocks);
+
+    // 4. Find bare JSON {"tool": ...} blocks.
     collect_bare_json_blocks(text, &mut blocks);
 
     if blocks.is_empty() {
@@ -108,7 +111,10 @@ pub fn looks_like_failed_tool_call(text: &Option<String>) -> bool {
         return false;
     };
     let lower = t.to_ascii_lowercase();
-    (lower.contains("\"tool\"") || lower.contains("tool_call") || lower.contains("<function="))
+    (lower.contains("\"tool\"")
+        || lower.contains("tool_call")
+        || lower.contains("<function=")
+        || lower.contains("<invoke"))
         && parse_tool_call_from_text(t).is_none()
 }
 
@@ -232,6 +238,114 @@ fn collect_function_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
             });
         }
         search_from = final_end;
+    }
+}
+
+// ── XML <invoke> parser ─────────────────────────────────────────────────────
+
+/// Extract the value of a named attribute from an XML attribute string.
+/// E.g. `extract_xml_attr(r#"name="exec" id="1""#, "name")` → `Some("exec")`.
+fn extract_xml_attr<'a>(attr_str: &'a str, attr_name: &str) -> Option<&'a str> {
+    let needle = format!("{attr_name}=\"");
+    let start = attr_str.find(&needle)?;
+    let value_start = start + needle.len();
+    let rest = attr_str.get(value_start..)?;
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
+/// Collect `<invoke name="tool"><arg name="key">value</arg></invoke>` blocks.
+fn collect_invoke_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
+    let start_marker = "<invoke";
+    let mut search_from = 0;
+
+    while let Some(start_rel) = text[search_from..].find(start_marker) {
+        let abs_start = search_from + start_rel;
+        let after_marker = abs_start + start_marker.len();
+        let rest = &text[after_marker..];
+
+        // Find the closing `>` of the opening `<invoke ...>` tag.
+        let Some(open_end_rel) = rest.find('>') else {
+            break;
+        };
+
+        let attr_str = &rest[..open_end_rel];
+        let Some(tool_name) = extract_xml_attr(attr_str, "name") else {
+            search_from = after_marker + open_end_rel + 1;
+            continue;
+        };
+        if tool_name.is_empty()
+            || !tool_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            search_from = after_marker + open_end_rel + 1;
+            continue;
+        }
+
+        let body_start = after_marker + open_end_rel + 1;
+        let Some(after_open) = text.get(body_start..) else {
+            break;
+        };
+        let Some(body_end_rel) = after_open.find("</invoke>") else {
+            search_from = body_start;
+            continue;
+        };
+        let body = &after_open[..body_end_rel];
+        let abs_end = body_start + body_end_rel + "</invoke>".len();
+
+        // Parse <arg name="key">value</arg> pairs.
+        let mut args = serde_json::Map::new();
+        let mut found = false;
+        let mut cursor = 0usize;
+        while let Some(arg_rel) = body[cursor..].find("<arg") {
+            let arg_start = cursor + arg_rel;
+            let after_arg_tag = arg_start + "<arg".len();
+            let Some(arg_rest) = body.get(after_arg_tag..) else {
+                break;
+            };
+            let Some(arg_gt) = arg_rest.find('>') else {
+                break;
+            };
+            let arg_attrs = &arg_rest[..arg_gt];
+            let Some(param_name) = extract_xml_attr(arg_attrs, "name") else {
+                cursor = after_arg_tag + arg_gt + 1;
+                continue;
+            };
+            if param_name.is_empty() {
+                cursor = after_arg_tag + arg_gt + 1;
+                continue;
+            }
+
+            let value_start = after_arg_tag + arg_gt + 1;
+            let Some(value_rest) = body.get(value_start..) else {
+                break;
+            };
+            let Some(value_end_rel) = value_rest.find("</arg>") else {
+                break;
+            };
+            let value_raw = body
+                .get(value_start..value_start + value_end_rel)
+                .unwrap_or("")
+                .trim();
+
+            args.insert(param_name.to_string(), parse_param_value(value_raw));
+            found = true;
+            cursor = value_start + value_end_rel + "</arg>".len();
+        }
+
+        if found {
+            blocks.push(ParsedBlock {
+                tool_call: ToolCall {
+                    id: new_synthetic_tool_call_id("text"),
+                    name: tool_name.to_string(),
+                    arguments: serde_json::Value::Object(args),
+                },
+                start: abs_start,
+                end: abs_end,
+            });
+        }
+        search_from = abs_end;
     }
 }
 
@@ -491,5 +605,52 @@ Step 2:
         let id2 = new_synthetic_tool_call_id("text");
         assert_ne!(id1, id2);
         assert!(id1.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
+    }
+
+    // ── invoke XML format ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_single_invoke_block() {
+        let text = r#"I'll execute the command.
+<invoke name="exec"><arg name="command">ls -la</arg></invoke>
+Done."#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "exec");
+        assert_eq!(calls[0].arguments["command"], "ls -la");
+        let rem = remaining.unwrap();
+        assert!(rem.contains("I'll execute the command."));
+        assert!(rem.contains("Done."));
+    }
+
+    #[test]
+    fn parse_invoke_multiple_args() {
+        let text = r#"<invoke name="web_fetch"><arg name="url">https://example.com</arg><arg name="method">GET</arg></invoke>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web_fetch");
+        assert_eq!(calls[0].arguments["url"], "https://example.com");
+        assert_eq!(calls[0].arguments["method"], "GET");
+        assert!(
+            remaining.is_none() || remaining.as_deref() == Some(""),
+            "remaining: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn looks_like_failed_invoke() {
+        assert!(looks_like_failed_tool_call(&Some(
+            r#"<invoke name="exec"><arg name="command">ls"#.into()
+        )));
+    }
+
+    #[test]
+    fn extract_xml_attr_basic() {
+        assert_eq!(
+            extract_xml_attr(r#" name="exec" id="1""#, "name"),
+            Some("exec")
+        );
+        assert_eq!(extract_xml_attr(r#" name="exec" id="1""#, "id"), Some("1"));
+        assert_eq!(extract_xml_attr(r#" name="exec""#, "missing"), None);
     }
 }

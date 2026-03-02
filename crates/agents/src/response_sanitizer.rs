@@ -23,6 +23,8 @@ const INTERNAL_TAGS: &[&str] = &[
     "internal_thought",
     "function_call",
     "tool_use",
+    "invoke",
+    "tool_calls",
 ];
 
 /// Standalone pipe tokens that should be stripped.
