@@ -189,7 +189,35 @@ pub async fn handle_connection(
     }
 
     if !authenticated {
-        warn!(conn_id = %conn_id, "ws: auth failed");
+        let setup_complete = state
+            .credential_store
+            .as_ref()
+            .is_some_and(|store| store.is_setup_complete());
+        let has_api_key = params
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.api_key.as_ref())
+            .is_some();
+        let has_password = params
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.password.as_ref())
+            .is_some();
+        let has_token = params
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.token.as_ref())
+            .is_some();
+        warn!(
+            conn_id = %conn_id,
+            is_local,
+            header_authenticated,
+            setup_complete,
+            has_api_key,
+            has_password,
+            has_token,
+            "ws: auth failed"
+        );
         let err = ResponseFrame::err(
             &request_id,
             ErrorShape::new(error_codes::UNAUTHORIZED, "authentication failed"),

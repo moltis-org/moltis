@@ -338,6 +338,7 @@ struct ConnectView: View {
             )
             authManager.updateServerEmoji(identity?.normalizedEmoji, forURL: url)
             await connectionStore.connect(to: server, authManager: authManager)
+            showConnectionErrorIfNeeded()
         } catch {
             if let message = passkeyDomainAssociationErrorMessage(error, serverURL: url) {
                 if authStatus?.hasPassword == true {
@@ -364,6 +365,7 @@ struct ConnectView: View {
             )
             authManager.updateServerEmoji(identity?.normalizedEmoji, forURL: url)
             await connectionStore.connect(to: server, authManager: authManager)
+            showConnectionErrorIfNeeded()
         } catch {
             showError(message: error.localizedDescription)
         }
@@ -383,6 +385,7 @@ struct ConnectView: View {
             )
             authManager.updateServerEmoji(identity?.normalizedEmoji, forURL: url)
             await connectionStore.connect(to: server, authManager: authManager)
+            showConnectionErrorIfNeeded()
         } catch {
             showError(message: error.localizedDescription)
         }
@@ -391,6 +394,12 @@ struct ConnectView: View {
     private func showError(message: String) {
         errorMessage = message
         showError = true
+    }
+
+    private func showConnectionErrorIfNeeded() {
+        if case .error(let message) = connectionStore.state {
+            showError(message: message)
+        }
     }
 
     private func normalizeURL(_ input: String) -> String {
