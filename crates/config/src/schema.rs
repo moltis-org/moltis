@@ -775,10 +775,10 @@ pub struct ServerConfig {
     /// Defaults to 1000. Increase for busy servers, decrease for memory-constrained devices.
     #[serde(default = "default_log_buffer_size")]
     pub log_buffer_size: usize,
-    /// Optional GitHub repository URL used by the update checker.
+    /// URL of the releases manifest (`releases.json`) used by the update checker.
     ///
-    /// When unset, Moltis falls back to the package repository metadata.
-    pub update_repository_url: Option<String>,
+    /// Defaults to `https://www.moltis.org/releases.json` when unset.
+    pub update_releases_url: Option<String>,
 }
 
 fn default_log_buffer_size() -> usize {
@@ -793,7 +793,7 @@ impl Default for ServerConfig {
             http_request_logs: false,
             ws_request_logs: false,
             log_buffer_size: default_log_buffer_size(),
-            update_repository_url: None,
+            update_releases_url: None,
         }
     }
 }

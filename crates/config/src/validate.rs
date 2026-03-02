@@ -347,7 +347,7 @@ fn build_schema_map() -> KnownKeys {
                 ("http_request_logs", Leaf),
                 ("ws_request_logs", Leaf),
                 ("log_buffer_size", Leaf),
-                ("update_repository_url", Leaf),
+                ("update_releases_url", Leaf),
             ])),
         ),
         ("providers", MapWithFields {
