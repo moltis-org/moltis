@@ -995,7 +995,7 @@ jobs:
             *.exe.crt
 
   build-docker:
-    if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     needs: [clippy, test, e2e]
     strategy:
       matrix:
@@ -1121,7 +1121,7 @@ jobs:
           retention-days: 1
 
   merge-docker:
-    if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     needs: build-docker
     runs-on: ubuntu-latest
     name: Merge Docker manifest
@@ -1248,7 +1248,7 @@ jobs:
       - build-homebrew-binaries
       - build-macos-app
       - build-windows-exe
-    if: startsWith(github.ref, 'refs/tags/') && env.RELEASE_DRY_RUN != 'true'
+    if: startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ubuntu-latest
     name: Upload release assets
     permissions:
@@ -1288,7 +1288,7 @@ jobs:
     needs:
       - upload-release
       - merge-docker
-    if: startsWith(github.ref, 'refs/tags/') && env.RELEASE_DRY_RUN != 'true'
+    if: startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ubuntu-latest
     name: Generate Release SBOM
     permissions:
@@ -1335,7 +1335,7 @@ jobs:
     needs:
       - upload-release
       - merge-docker
-    if: startsWith(github.ref, 'refs/tags/') && env.RELEASE_DRY_RUN != 'true'
+    if: startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ubuntu-latest
     name: Update Homebrew tap
     permissions:
@@ -1438,7 +1438,7 @@ jobs:
 
   update-deploy-tags:
     needs: merge-docker
-    if: startsWith(github.ref, 'refs/tags/') && env.RELEASE_DRY_RUN != 'true'
+    if: startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ubuntu-latest
     name: Update deploy template tags
     permissions:
