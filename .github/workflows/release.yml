@@ -103,8 +103,7 @@ jobs:
           fi
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
-          chmod +x tailwindcss-linux-x64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
       - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
@@ -126,8 +125,7 @@ jobs:
           tool: cargo-nextest
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
-          chmod +x tailwindcss-linux-x64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
       - run: cargo nextest run --profile ci
 
@@ -148,8 +146,7 @@ jobs:
 
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
-          chmod +x tailwindcss-linux-x64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
 
       - name: Build moltis binary
@@ -258,8 +255,7 @@ jobs:
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
-          curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW"
-          chmod +x "$TW"
+          ./scripts/download-tailwindcss-cli.sh "$TW"
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
@@ -365,8 +361,7 @@ jobs:
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
-          curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW"
-          chmod +x "$TW"
+          ./scripts/download-tailwindcss-cli.sh "$TW"
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
@@ -438,8 +433,7 @@ jobs:
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
-          curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW"
-          chmod +x "$TW"
+          ./scripts/download-tailwindcss-cli.sh "$TW"
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
@@ -537,8 +531,7 @@ jobs:
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
-          curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW"
-          chmod +x "$TW"
+          ./scripts/download-tailwindcss-cli.sh "$TW"
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
@@ -716,8 +709,7 @@ jobs:
             Darwin-arm64)  TW="tailwindcss-macos-arm64";;
             Darwin-x86_64) TW="tailwindcss-macos-x64";;
           esac
-          curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW"
-          chmod +x "$TW"
+          ./scripts/download-tailwindcss-cli.sh "$TW"
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
@@ -785,8 +777,7 @@ jobs:
 
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-macos-arm64
-          chmod +x tailwindcss-macos-arm64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-macos-arm64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-macos-arm64 ./build.sh
 
       - name: Install cosign
@@ -884,7 +875,7 @@ jobs:
       - name: Build Tailwind CSS
         shell: bash
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-windows-x64.exe
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-windows-x64.exe
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-windows-x64.exe ./build.sh
 
       - name: Build WASM components
