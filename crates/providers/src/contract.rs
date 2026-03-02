@@ -157,6 +157,7 @@ pub async fn error_classification_maps_401_to_fatal(provider: &dyn LlmProvider) 
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

@@ -56,6 +56,7 @@ pub async fn error_returns_structured_result() -> crate::Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
