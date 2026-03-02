@@ -445,6 +445,10 @@ pub struct BrowserConfig {
     pub persist_profile: bool,
     /// Custom path for the persistent Chrome profile directory.
     pub profile_dir: Option<String>,
+    /// Hostname or IP used to connect to the browser container.
+    /// Default: "127.0.0.1". Set to e.g. "host.docker.internal" when
+    /// Moltis runs inside Docker alongside a sibling browser container.
+    pub container_host: String,
 }
 
 fn default_sandbox_image() -> String {
@@ -476,6 +480,7 @@ impl Default for BrowserConfig {
             low_memory_threshold_mb: 2048,
             persist_profile: true,
             profile_dir: None,
+            container_host: "127.0.0.1".to_string(),
         }
     }
 }
@@ -518,6 +523,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             low_memory_threshold_mb: cfg.low_memory_threshold_mb,
             persist_profile: cfg.persist_profile,
             profile_dir: cfg.profile_dir.clone(),
+            container_host: cfg.container_host.clone(),
         }
     }
 }

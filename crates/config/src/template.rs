@@ -401,6 +401,8 @@ max_instances = 3                 # Maximum concurrent browser instances
 idle_timeout_secs = 300           # Close idle browsers after this many seconds (5 min)
 navigation_timeout_ms = 30000     # Page load timeout in milliseconds (30 sec)
 sandbox = false                   # Run browser in Docker/Apple Container for isolation
+# container_host = "127.0.0.1"   # Host/IP to reach browser container (default: localhost)
+                                  # Set to "host.docker.internal" when Moltis runs inside Docker
 # chrome_path = "/path/to/chrome" # Custom Chrome/Chromium binary path (auto-detected)
 # user_agent = "Custom UA"        # Custom user agent string
 # chrome_args = []                # Extra Chrome command-line arguments

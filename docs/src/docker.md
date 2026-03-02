@@ -154,6 +154,39 @@ docker compose up -d
 docker compose logs -f moltis  # watch for startup messages
 ```
 
+## Browser Sandbox in Docker
+
+When Moltis runs inside Docker and launches a sandboxed browser, the browser
+container is a sibling container on the host. By default, Moltis connects to
+`127.0.0.1` which only reaches its own loopback, not the browser.
+
+Add `container_host` to your `moltis.toml` so Moltis can reach the browser
+container through the host's port mapping:
+
+```toml
+[tools.browser]
+container_host = "host.docker.internal"
+```
+
+On Linux, add `--add-host` to the Moltis container so `host.docker.internal`
+resolves to the host:
+
+```bash
+docker run -d \
+  --name moltis \
+  --add-host=host.docker.internal:host-gateway \
+  -p 13131:13131 \
+  -p 13132:13132 \
+  -p 1455:1455 \
+  -v moltis-config:/home/moltis/.config/moltis \
+  -v moltis-data:/home/moltis/.moltis \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/moltis-org/moltis:latest
+```
+
+Alternatively, use the Docker bridge gateway IP directly
+(`container_host = "172.17.0.1"` on most Linux setups).
+
 ## Podman Support
 
 Moltis works with Podman using its Docker-compatible API. Mount the Podman
