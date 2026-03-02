@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.11] - 2026-03-02
+
 ## [0.10.10] - 2026-03-02
 ### Fixed
 - [swift-bridge] Stabilize gateway migration and stream tests
