@@ -1,7 +1,7 @@
 import { onEvent } from "./events.js";
 
-export var VALIDATION_HINT_TEXT = "Validation can take up to 20 seconds for some providers.";
-export var VALIDATION_HINT_RUNNING_TEXT = "Validating models... this can take up to 20 seconds.";
+export var VALIDATION_HINT_TEXT = "Validation can take up to 30 seconds for some providers.";
+export var VALIDATION_HINT_RUNNING_TEXT = "Validating models... this can take up to 30 seconds.";
 
 var VALIDATION_PROGRESS_EVENT = "providers.validate.progress";
 
