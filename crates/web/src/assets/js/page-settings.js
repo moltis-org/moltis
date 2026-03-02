@@ -1880,7 +1880,7 @@ function OpenClawImportSection() {
 
 function GraphqlSection() {
 	var [loadingConfig, setLoadingConfig] = useState(true);
-	var [enabled, setEnabled] = useState(true);
+	var [enabled, setEnabled] = useState(false);
 	var [saving, setSaving] = useState(false);
 	var [msg, setMsg] = useState(null);
 	var [err, setErr] = useState(null);
@@ -1890,6 +1890,10 @@ function GraphqlSection() {
 	var wsEndpoint = `${wsProtocol}//${window.location.host}/graphql`;
 
 	function loadGraphqlConfig() {
+		if (!connected.value) {
+			setLoadingConfig(true);
+			return;
+		}
 		setLoadingConfig(true);
 		sendRpc("graphql.config.get", {})
 			.then((res) => {
@@ -1910,10 +1914,21 @@ function GraphqlSection() {
 	}
 
 	useEffect(() => {
-		loadGraphqlConfig();
-	}, []);
+		if (connected.value) {
+			loadGraphqlConfig();
+		} else {
+			setLoadingConfig(true);
+			setSaving(false);
+			setMsg(null);
+		}
+	}, [connected.value]);
 
 	function onToggle(nextEnabled) {
+		if (!connected.value) {
+			setErr("WebSocket not connected");
+			rerender();
+			return;
+		}
 		setSaving(true);
 		setMsg(null);
 		setErr(null);
@@ -1940,6 +1955,12 @@ function GraphqlSection() {
 				setErr(error?.message || "Failed to update GraphQL setting");
 				rerender();
 			});
+	}
+
+	if (!connected.value) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<div class="text-xs text-[var(--muted)]">Connecting…</div>
+		</div>`;
 	}
 
 	if (loadingConfig) {
@@ -1973,7 +1994,7 @@ function GraphqlSection() {
 						id="graphqlEnabledToggle"
 						type="checkbox"
 						checked=${enabled}
-						disabled=${saving}
+						disabled=${saving || loadingConfig || !connected.value}
 						onChange=${(e) => onToggle(e.target.checked)}
 					/>
 					<span class="toggle-slider"></span>
