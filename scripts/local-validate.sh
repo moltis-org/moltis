@@ -176,11 +176,12 @@ biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/
 i18n_cmd="${LOCAL_VALIDATE_I18N_CMD:-./scripts/i18n-check.sh}"
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --min-severity high}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
-test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
+test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo +${nightly_toolchain} nextest run --all-features}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
 macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate build}"
 ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
+build_cmd="${LOCAL_VALIDATE_BUILD_CMD:-cargo +${nightly_toolchain} build --workspace --all-features --all-targets}"
 
 strip_all_features_flag() {
   local cmd="$1"
@@ -196,16 +197,20 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
     lint_cmd="cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings"
   fi
   if [[ -z "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
-    test_cmd="cargo nextest run"
+    test_cmd="cargo +${nightly_toolchain} nextest run"
+  fi
+  if [[ -z "${LOCAL_VALIDATE_BUILD_CMD:-}" ]]; then
+    build_cmd="cargo +${nightly_toolchain} build --workspace --all-targets"
   fi
   if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
     coverage_cmd="cargo +${nightly_toolchain} llvm-cov --workspace --html"
   fi
   lint_cmd="$(strip_all_features_flag "$lint_cmd")"
   test_cmd="$(strip_all_features_flag "$test_cmd")"
+  build_cmd="$(strip_all_features_flag "$build_cmd")"
   coverage_cmd="$(strip_all_features_flag "$coverage_cmd")"
   echo "Detected macOS without nvcc; forcing non-CUDA local validation commands (no --all-features)." >&2
-  echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD / LOCAL_VALIDATE_COVERAGE_CMD if needed." >&2
+  echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD / LOCAL_VALIDATE_BUILD_CMD / LOCAL_VALIDATE_COVERAGE_CMD if needed." >&2
 fi
 
 ensure_zizmor() {
@@ -474,14 +479,13 @@ if rustup target list --installed 2>/dev/null | grep -q wasm32-wasip2; then
   cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 fi
 
-# Build the gateway binary so e2e startup scripts find a fresh binary and
-# skip recompilation. Clippy (lint) compiled dependencies but may not produce
-# a runnable binary with matching fingerprints.
-echo "Building moltis binary for e2e tests..."
-cargo +"${nightly_toolchain}" build --bin moltis
+# Compile all workspace targets (bin + test harnesses) using the same nightly
+# toolchain as clippy. After clippy this is near-instant (shared build cache)
+# and means both nextest and E2E reuse these artifacts without recompilation.
+run_check "local/build" "$build_cmd"
 
-# After lint, run test / macOS app / e2e in parallel — they use independent
-# toolchains (cargo nextest, Xcode, Playwright) and don't contend on resources.
+# After build, run test / macOS app / e2e in parallel — all reuse the compiled
+# artifacts (same nightly toolchain) and don't contend on resources.
 run_check_async "local/test" "$test_cmd"
 test_pid="$RUN_CHECK_ASYNC_PID"
 
