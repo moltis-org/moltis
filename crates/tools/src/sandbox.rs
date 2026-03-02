@@ -1584,10 +1584,41 @@ impl DockerSandbox {
                 // Ensure the container can reach the host proxy on all
                 // platforms (Linux needs --add-host; macOS Docker Desktop
                 // resolves host.docker.internal automatically).
-                vec!["--add-host=host.docker.internal:host-gateway".to_string()]
+                let gateway = self.resolve_host_gateway();
+                vec![format!("--add-host=host.docker.internal:{gateway}")]
             },
             NetworkPolicy::Bypass => Vec::new(),
         }
+    }
+
+    /// Resolve the IP that containers use to reach the host.
+    ///
+    /// Docker (and Podman >= 5.0) support the special `host-gateway` token in
+    /// `--add-host`.  Older Podman versions reject it with:
+    ///
+    ///   Error: invalid IP address in add-host: "host-gateway"
+    ///
+    /// For those we resolve the address ourselves: rootless Podman (< 5.0) uses
+    /// slirp4netns by default, which maps the host to `10.0.2.2`.  Rootful
+    /// Podman uses a bridge whose gateway we can query via
+    /// `podman network inspect`.
+    fn resolve_host_gateway(&self) -> String {
+        if self.cli != "podman" {
+            return "host-gateway".to_string();
+        }
+
+        if podman_supports_host_gateway() {
+            return "host-gateway".to_string();
+        }
+
+        // Podman < 5.0 — resolve the address manually.
+        podman_resolve_host_ip().unwrap_or_else(|| {
+            debug!(
+                "could not resolve host gateway IP for podman; \
+                 falling back to host-gateway (may fail)"
+            );
+            "host-gateway".to_string()
+        })
     }
 
     fn proxy_exec_env_args(&self) -> Vec<String> {
@@ -4982,6 +5013,61 @@ fn is_cli_available(name: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// Return `true` when the installed Podman version supports `host-gateway`
+/// in `--add-host` (added in Podman 5.0).
+fn podman_supports_host_gateway() -> bool {
+    let Ok(output) = std::process::Command::new("podman")
+        .args(["version", "--format", "{{.Client.Version}}"])
+        .output()
+    else {
+        return false;
+    };
+    let version_str = String::from_utf8_lossy(&output.stdout);
+    let major: u32 = version_str
+        .trim()
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    major >= 5
+}
+
+/// Resolve the host IP that a Podman container (< 5.0) can use to reach the
+/// host.  Rootless Podman defaults to slirp4netns where the host is always
+/// `10.0.2.2`.  Rootful Podman uses a bridge network whose gateway we query
+/// with `podman network inspect`.
+fn podman_resolve_host_ip() -> Option<String> {
+    let rootless = std::process::Command::new("podman")
+        .args(["info", "--format", "{{.Host.Security.Rootless}}"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    if rootless.as_deref() == Some("true") {
+        // slirp4netns (default rootless network before Podman 5.0) maps the
+        // host to 10.0.2.2.
+        return Some("10.0.2.2".to_string());
+    }
+
+    // Rootful — ask for the gateway of the default "podman" network.
+    let output = std::process::Command::new("podman")
+        .args([
+            "network",
+            "inspect",
+            "podman",
+            "--format",
+            "{{(index .Subnets 0).Gateway}}",
+        ])
+        .output()
+        .ok()?;
+    let gateway = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if gateway.is_empty() {
+        None
+    } else {
+        Some(gateway)
+    }
+}
+
 /// Events emitted by the sandbox subsystem for UI feedback.
 #[derive(Debug, Clone)]
 pub enum SandboxEvent {
@@ -6779,6 +6865,36 @@ mod tests {
         };
         let docker = DockerSandbox::new(config);
         assert!(docker.proxy_exec_env_args().is_empty());
+    }
+
+    #[test]
+    fn test_docker_resolve_host_gateway_always_returns_host_gateway() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Trusted,
+            ..Default::default()
+        };
+        let docker = DockerSandbox::new(config);
+        // Docker always uses the host-gateway token regardless of version.
+        assert_eq!(docker.resolve_host_gateway(), "host-gateway");
+    }
+
+    #[test]
+    fn test_podman_network_run_args_trusted_contains_add_host() {
+        let config = SandboxConfig {
+            network: NetworkPolicy::Trusted,
+            ..Default::default()
+        };
+        let podman = DockerSandbox::podman(config);
+        let args = podman.network_run_args();
+        // The exact IP depends on the host environment (Podman version and
+        // rootless/rootful mode), but the flag must always start with
+        // `--add-host=host.docker.internal:`.
+        assert_eq!(args.len(), 1);
+        assert!(
+            args[0].starts_with("--add-host=host.docker.internal:"),
+            "unexpected arg: {}",
+            args[0],
+        );
     }
 
     #[cfg(target_os = "macos")]

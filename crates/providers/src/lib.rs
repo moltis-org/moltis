@@ -788,6 +788,15 @@ struct OpenAiCompatDef {
     /// this to `false` so the static catalog is used without a noisy warning.
     /// Users can still override via `fetch_models = true` in config.
     supports_model_discovery: bool,
+    /// When `false`, a dummy API key (the provider name) is used if none is
+    /// configured. Intended for local servers that don't authenticate.
+    requires_api_key: bool,
+    /// Local-only providers (Ollama, LM Studio) are skipped unless the user
+    /// has an explicit `[providers.<name>]` entry, a `_BASE_URL` env var, or
+    /// configured models. This avoids probing localhost when nothing is running.
+    /// Also ensures model discovery is always attempted (never short-circuited
+    /// by the empty-catalog heuristic).
+    local_only: bool,
 }
 
 const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
@@ -798,6 +807,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.mistral.ai/v1",
         models: MISTRAL_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "openrouter",
@@ -806,6 +817,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://openrouter.ai/api/v1",
         models: &[],
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "cerebras",
@@ -814,6 +827,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.cerebras.ai/v1",
         models: CEREBRAS_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "minimax",
@@ -823,6 +838,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: MINIMAX_MODELS,
         // MiniMax API does not expose a /models endpoint (returns 404).
         supports_model_discovery: false,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "moonshot",
@@ -831,6 +848,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.moonshot.ai/v1",
         models: MOONSHOT_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "zai",
@@ -839,6 +858,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.z.ai/api/paas/v4",
         models: ZAI_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "venice",
@@ -847,6 +868,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.venice.ai/api/v1",
         models: &[],
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "deepseek",
@@ -855,6 +878,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.deepseek.com",
         models: DEEPSEEK_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
     OpenAiCompatDef {
         config_name: "ollama",
@@ -863,6 +888,18 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "http://127.0.0.1:11434/v1",
         models: &[],
         supports_model_discovery: true,
+        requires_api_key: false,
+        local_only: true,
+    },
+    OpenAiCompatDef {
+        config_name: "lmstudio",
+        env_key: "LMSTUDIO_API_KEY",
+        env_base_url_key: "LMSTUDIO_BASE_URL",
+        default_base_url: "http://127.0.0.1:1234/v1",
+        models: &[],
+        supports_model_discovery: true,
+        requires_api_key: false,
+        local_only: true,
     },
     OpenAiCompatDef {
         config_name: "gemini",
@@ -871,6 +908,8 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
         models: GEMINI_MODELS,
         supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
     },
 ];
 
@@ -1675,10 +1714,10 @@ impl ProviderRegistry {
 
             let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
 
-            // Ollama doesn't require an API key — use a dummy value.
+            // Local providers don't require an API key — use a dummy value.
             // Gemini accepts both GEMINI_API_KEY and GOOGLE_API_KEY.
-            let key = if def.config_name == "ollama" {
-                key.or_else(|| Some(secrecy::Secret::new("ollama".into())))
+            let key = if !def.requires_api_key {
+                key.or_else(|| Some(secrecy::Secret::new(def.config_name.into())))
             } else if def.config_name == "gemini" {
                 key.or_else(|| env_value(env_overrides, "GOOGLE_API_KEY").map(secrecy::Secret::new))
             } else {
@@ -1703,8 +1742,8 @@ impl ProviderRegistry {
                 .map(|entry| entry.stream_transport)
                 .unwrap_or(ProviderStreamTransport::Sse);
             let preferred = configured_models_for_provider(config, def.config_name);
-            if def.config_name == "ollama" {
-                let has_explicit_entry = config.get("ollama").is_some();
+            if def.local_only {
+                let has_explicit_entry = config.get(def.config_name).is_some();
                 let has_env_base_url = env_value(env_overrides, def.env_base_url_key).is_some();
                 if !has_explicit_entry && !has_env_base_url && preferred.is_empty() {
                     continue;
@@ -1715,7 +1754,7 @@ impl ProviderRegistry {
             // OpenRouter supports `/models`, so we discover dynamically.
             let skip_discovery = def.models.is_empty()
                 && preferred.is_empty()
-                && def.config_name != "ollama"
+                && !def.local_only
                 && (def.config_name == "venice" || cfg!(test));
             // Respect `supports_model_discovery`: providers whose API lacks a
             // /models endpoint (e.g. MiniMax) skip live fetch unless the user

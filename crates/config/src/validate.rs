@@ -98,6 +98,7 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "moonshot",
     "venice",
     "ollama",
+    "lmstudio",
 ];
 
 /// Static metadata keys allowed directly under `[providers]`.
