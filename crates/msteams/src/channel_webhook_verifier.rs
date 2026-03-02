@@ -52,8 +52,7 @@ impl ChannelWebhookVerifier for TeamsChannelWebhookVerifier {
                 .get("x-moltis-webhook-secret")
                 .and_then(|v| v.to_str().ok());
 
-            let matches =
-                provided.is_some_and(|p| p.as_bytes().ct_eq(expected.as_bytes()).into());
+            let matches = provided.is_some_and(|p| p.as_bytes().ct_eq(expected.as_bytes()).into());
 
             if !matches {
                 return Err(ChannelWebhookRejection::BadSignature(

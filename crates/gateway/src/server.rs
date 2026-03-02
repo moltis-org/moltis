@@ -3644,10 +3644,10 @@ pub async fn prepare_gateway(
 
                         // Inject query-param secret as header for the verifier.
                         let mut merged_headers = headers;
-                        if let Some(secret) = query.get("secret") {
-                            if let Ok(val) = secret.parse() {
-                                merged_headers.insert("x-moltis-webhook-secret", val);
-                            }
+                        if let Some(secret) = query.get("secret")
+                            && let Ok(val) = secret.parse()
+                        {
+                            merged_headers.insert("x-moltis-webhook-secret", val);
                         }
 
                         // Run the middleware pipeline.
