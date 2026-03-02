@@ -6,11 +6,11 @@
 
 use std::pin::Pin;
 
-use async_trait::async_trait;
-use moltis_agents::model::{
-    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage,
+use {
+    async_trait::async_trait,
+    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
+    tokio_stream::{Stream, StreamExt},
 };
-use tokio_stream::{Stream, StreamExt};
 
 // ── Mock provider ───────────────────────────────────────────────────────────
 
@@ -60,10 +60,10 @@ impl LlmProvider for MockLlmProvider {
         match &self.complete_error {
             Some(MockError::RateLimit) => {
                 anyhow::bail!("429 Too Many Requests: rate limited")
-            }
+            },
             Some(MockError::AuthFailed) => {
                 anyhow::bail!("401 Unauthorized: invalid API key")
-            }
+            },
             None => Ok(CompletionResponse {
                 text: Some("Hello from mock provider".into()),
                 tool_calls: vec![],
@@ -98,7 +98,9 @@ impl LlmProvider for MockLlmProvider {
 // ── Contract tests ──────────────────────────────────────────────────────────
 
 /// A non-streaming completion must return a response with text and usage data.
-pub async fn non_stream_returns_complete_response(provider: &dyn LlmProvider) -> anyhow::Result<()> {
+pub async fn non_stream_returns_complete_response(
+    provider: &dyn LlmProvider,
+) -> anyhow::Result<()> {
     let messages = vec![ChatMessage::user("Say hello.")];
     let response = provider.complete(&messages, &[]).await?;
 

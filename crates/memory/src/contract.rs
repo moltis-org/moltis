@@ -19,11 +19,8 @@ fn test_file(path: &str) -> FileRow {
 }
 
 fn test_chunk(id: &str, path: &str, text: &str, embedding: Option<Vec<f32>>) -> ChunkRow {
-    let embedding_bytes = embedding.map(|e| {
-        e.iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect::<Vec<u8>>()
-    });
+    let embedding_bytes =
+        embedding.map(|e| e.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>());
     ChunkRow {
         id: id.into(),
         path: path.into(),
@@ -45,7 +42,12 @@ pub async fn ingest_then_search_returns_result(store: &dyn MemoryStore) -> anyho
 
     // Use a simple embedding vector for vector search.
     let embedding = vec![1.0_f32, 0.0, 0.0, 0.0];
-    let chunk = test_chunk("chunk-1", "test/hello.md", "the quick brown fox", Some(embedding));
+    let chunk = test_chunk(
+        "chunk-1",
+        "test/hello.md",
+        "the quick brown fox",
+        Some(embedding),
+    );
     store.upsert_chunks(&[chunk]).await?;
 
     let results = store.keyword_search("quick brown fox", 10).await?;
@@ -75,12 +77,19 @@ pub async fn delete_removes_from_search(store: &dyn MemoryStore) -> anyhow::Resu
     store.upsert_chunks(&[chunk]).await?;
 
     // Verify it's searchable first.
-    let before = store.keyword_search("unique_deletable_content_xyz", 10).await?;
-    assert!(!before.is_empty(), "content must be searchable before delete");
+    let before = store
+        .keyword_search("unique_deletable_content_xyz", 10)
+        .await?;
+    assert!(
+        !before.is_empty(),
+        "content must be searchable before delete"
+    );
 
     // Delete and verify removal.
     store.delete_chunks_for_file("test/delete-me.md").await?;
-    let after = store.keyword_search("unique_deletable_content_xyz", 10).await?;
+    let after = store
+        .keyword_search("unique_deletable_content_xyz", 10)
+        .await?;
     assert!(
         after.is_empty(),
         "deleted content must not appear in search results"
@@ -124,8 +133,10 @@ pub async fn empty_search_returns_empty(store: &dyn MemoryStore) -> anyhow::Resu
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{schema::run_migrations, store_sqlite::SqliteMemoryStore};
+    use {
+        super::*,
+        crate::{schema::run_migrations, store_sqlite::SqliteMemoryStore},
+    };
 
     async fn test_store() -> SqliteMemoryStore {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();

@@ -49,10 +49,7 @@ pub async fn output_is_truncated_at_limit() -> crate::Result<()> {
 pub async fn error_returns_structured_result() -> crate::Result<()> {
     let opts = ExecOpts::default();
     let result = exec_command("exit 42", &opts).await?;
-    assert_eq!(
-        result.exit_code, 42,
-        "exit code must be propagated"
-    );
+    assert_eq!(result.exit_code, 42, "exit code must be propagated");
     // Must return ExecResult, not panic.
     assert!(result.stdout.is_empty() || !result.stdout.is_empty()); // just prove we got a result
     Ok(())

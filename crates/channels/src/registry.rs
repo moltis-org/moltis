@@ -3,7 +3,11 @@ use std::{
     sync::{Arc, RwLock as StdRwLock},
 };
 
-use {async_trait::async_trait, tokio::sync::RwLock, tracing::{instrument, warn}};
+use {
+    async_trait::async_trait,
+    tokio::sync::RwLock,
+    tracing::{instrument, warn},
+};
 
 use {
     super::plugin::{
