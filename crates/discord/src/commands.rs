@@ -6,8 +6,9 @@
 
 use {
     serenity::all::{
-        Command, CommandInteraction, Context, CreateCommand, CreateInteractionResponseFollowup,
-        EditInteractionResponse, Interaction,
+        Command, CommandInteraction, ComponentInteraction, Context, CreateCommand,
+        CreateInteractionResponse, CreateInteractionResponseFollowup, EditInteractionResponse,
+        Interaction,
     },
     tracing::{debug, info, warn},
 };
@@ -46,17 +47,31 @@ pub async fn register_global_commands(ctx: &Context, account_id: &str) {
     }
 }
 
-/// Handle an incoming interaction (slash command, autocomplete, etc.).
+/// Handle an incoming interaction (slash command, button click, etc.).
 pub async fn handle_interaction(
     ctx: &Context,
     interaction: &Interaction,
     account_id: &str,
     accounts: &AccountStateMap,
 ) {
-    let Interaction::Command(command) = interaction else {
-        return;
-    };
+    match interaction {
+        Interaction::Command(command) => {
+            handle_slash_command(ctx, command, account_id, accounts).await;
+        },
+        Interaction::Component(component) => {
+            handle_component_interaction(ctx, component, account_id, accounts).await;
+        },
+        _ => {},
+    }
+}
 
+/// Handle a slash command interaction.
+async fn handle_slash_command(
+    ctx: &Context,
+    command: &CommandInteraction,
+    account_id: &str,
+    accounts: &AccountStateMap,
+) {
     debug!(
         account_id,
         command = %command.data.name,
@@ -95,6 +110,63 @@ pub async fn handle_interaction(
     };
 
     respond_ephemeral(ctx, command, &response_text).await;
+}
+
+/// Handle a component (button click) interaction.
+async fn handle_component_interaction(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    account_id: &str,
+    accounts: &AccountStateMap,
+) {
+    let callback_data = &component.data.custom_id;
+
+    debug!(
+        account_id,
+        callback_data,
+        user = %component.user.name,
+        "Discord component interaction received"
+    );
+
+    // Acknowledge the interaction immediately so Discord doesn't show a failure.
+    if let Err(e) = component
+        .create_response(ctx, CreateInteractionResponse::Acknowledge)
+        .await
+    {
+        warn!(
+            account_id,
+            callback_data, "Failed to acknowledge component interaction: {e}"
+        );
+        return;
+    }
+
+    let event_sink = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts.get(account_id).and_then(|s| s.event_sink.clone())
+    };
+
+    let Some(sink) = event_sink else {
+        return;
+    };
+
+    let reply_to = moltis_channels::plugin::ChannelReplyTarget {
+        channel_type: moltis_channels::ChannelType::Discord,
+        account_id: account_id.to_string(),
+        chat_id: component.channel_id.to_string(),
+        message_id: None,
+    };
+
+    match sink.dispatch_interaction(callback_data, reply_to).await {
+        Ok(_response) => {
+            // Response already sent by the gateway.
+        },
+        Err(e) => {
+            debug!(
+                account_id,
+                callback_data, "interaction dispatch failed: {e}"
+            );
+        },
+    }
 }
 
 /// Send an ephemeral response to a slash command (only visible to the invoker).

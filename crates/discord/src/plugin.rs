@@ -10,11 +10,11 @@ use {
 };
 
 use moltis_channels::{
-    Error as ChannelError, Result as ChannelResult,
+    ChannelConfigView, Error as ChannelError, Result as ChannelResult,
     message_log::MessageLog,
     plugin::{
         ChannelEventSink, ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus,
-        ChannelStreamOutbound,
+        ChannelStreamOutbound, ChannelThreadContext,
     },
 };
 
@@ -221,6 +221,61 @@ impl ChannelPlugin for DiscordPlugin {
     fn status(&self) -> Option<&dyn ChannelStatus> {
         Some(self)
     }
+
+    fn has_account(&self, account_id: &str) -> bool {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.contains_key(account_id)
+    }
+
+    fn account_ids(&self) -> Vec<String> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.keys().cloned().collect()
+    }
+
+    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| Box::new(s.config.clone()) as Box<dyn ChannelConfigView>)
+    }
+
+    fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .and_then(|s| serde_json::to_value(&s.config).ok())
+    }
+
+    fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
+        let parsed: DiscordAccountConfig = serde_json::from_value(config)?;
+        let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get_mut(account_id) {
+            state.config = parsed;
+            Ok(())
+        } else {
+            Err(ChannelError::unknown_account(account_id))
+        }
+    }
+
+    fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
+        Arc::new(DiscordOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
+    }
+
+    fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
+        Arc::new(DiscordOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
+    }
+
+    fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        Some(&self.outbound)
+    }
 }
 
 #[async_trait]
@@ -246,5 +301,35 @@ impl ChannelStatus for DiscordPlugin {
                 details: Some("account not started".into()),
             })
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use {
+        super::*,
+        moltis_channels::{ChannelType, InboundMode},
+    };
+
+    #[test]
+    fn descriptor_coherence() {
+        let plugin = DiscordPlugin::new();
+        let desc = ChannelType::Discord.descriptor();
+
+        assert_eq!(desc.channel_type, ChannelType::Discord);
+        assert_eq!(desc.display_name, "Discord");
+        assert_eq!(desc.capabilities.inbound_mode, InboundMode::GatewayLoop);
+
+        // Threads: Discord implements ChannelThreadContext
+        assert!(desc.capabilities.supports_threads);
+        assert!(plugin.thread_context().is_some());
+
+        // OTP: Discord does NOT implement ChannelOtpProvider
+        assert!(!desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_none());
+
+        // Interactive: Discord supports interactive messages
+        assert!(desc.capabilities.supports_interactive);
     }
 }

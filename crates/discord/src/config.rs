@@ -1,8 +1,31 @@
+use std::collections::HashMap;
+
 use {
-    moltis_channels::gating::{DmPolicy, GroupPolicy, MentionMode},
+    moltis_channels::{
+        config_view::ChannelConfigView,
+        gating::{DmPolicy, GroupPolicy, MentionMode},
+    },
     secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
 };
+
+/// Per-channel model/provider override.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChannelOverride {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+}
+
+/// Per-user model/provider override.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UserOverride {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+}
 
 /// Discord bot activity type for presence display.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +110,14 @@ pub struct DiscordAccountConfig {
 
     /// Cooldown in seconds after 3 failed OTP attempts (default: 300).
     pub otp_cooldown_secs: u64,
+
+    /// Per-channel model/provider overrides (channel_id -> override).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub channel_overrides: HashMap<String, ChannelOverride>,
+
+    /// Per-user model/provider overrides (user_id -> override).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub user_overrides: HashMap<String, UserOverride>,
 }
 
 impl std::fmt::Debug for DiscordAccountConfig {
@@ -107,7 +138,59 @@ impl std::fmt::Debug for DiscordAccountConfig {
             .field("status", &self.status)
             .field("otp_self_approval", &self.otp_self_approval)
             .field("otp_cooldown_secs", &self.otp_cooldown_secs)
+            .field("channel_overrides", &self.channel_overrides)
+            .field("user_overrides", &self.user_overrides)
             .finish()
+    }
+}
+
+impl ChannelConfigView for DiscordAccountConfig {
+    fn allowlist(&self) -> &[String] {
+        &self.allowlist
+    }
+
+    fn group_allowlist(&self) -> &[String] {
+        &self.guild_allowlist
+    }
+
+    fn dm_policy(&self) -> DmPolicy {
+        self.dm_policy.clone()
+    }
+
+    fn group_policy(&self) -> GroupPolicy {
+        self.group_policy.clone()
+    }
+
+    fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    fn model_provider(&self) -> Option<&str> {
+        self.model_provider.as_deref()
+    }
+
+    fn channel_model(&self, channel_id: &str) -> Option<&str> {
+        self.channel_overrides
+            .get(channel_id)
+            .and_then(|o| o.model.as_deref())
+    }
+
+    fn channel_model_provider(&self, channel_id: &str) -> Option<&str> {
+        self.channel_overrides
+            .get(channel_id)
+            .and_then(|o| o.model_provider.as_deref())
+    }
+
+    fn user_model(&self, user_id: &str) -> Option<&str> {
+        self.user_overrides
+            .get(user_id)
+            .and_then(|o| o.model.as_deref())
+    }
+
+    fn user_model_provider(&self, user_id: &str) -> Option<&str> {
+        self.user_overrides
+            .get(user_id)
+            .and_then(|o| o.model_provider.as_deref())
     }
 }
 
@@ -129,6 +212,8 @@ impl Default for DiscordAccountConfig {
             status: None,
             otp_self_approval: true,
             otp_cooldown_secs: 300,
+            channel_overrides: HashMap::new(),
+            user_overrides: HashMap::new(),
         }
     }
 }
@@ -401,6 +486,63 @@ mod tests {
             result.is_err(),
             "invalid activity_type should fail deserialization"
         );
+    }
+
+    #[test]
+    fn config_defaults_include_empty_overrides() {
+        let cfg = DiscordAccountConfig::default();
+        assert!(cfg.channel_overrides.is_empty());
+        assert!(cfg.user_overrides.is_empty());
+    }
+
+    #[test]
+    fn resolve_model_user_overrides_channel() {
+        let mut cfg = DiscordAccountConfig {
+            model: Some("default-model".into()),
+            ..Default::default()
+        };
+        cfg.channel_overrides
+            .insert("C123".into(), ChannelOverride {
+                model: Some("channel-model".into()),
+                ..Default::default()
+            });
+        cfg.user_overrides.insert("U456".into(), UserOverride {
+            model: Some("user-model".into()),
+            ..Default::default()
+        });
+
+        // User override wins
+        assert_eq!(cfg.resolve_model("C123", "U456"), Some("user-model"));
+        // Channel override wins when no user override
+        assert_eq!(cfg.resolve_model("C123", "U999"), Some("channel-model"));
+        // Account default when no overrides
+        assert_eq!(cfg.resolve_model("C999", "U999"), Some("default-model"));
+    }
+
+    #[test]
+    fn overrides_round_trip() {
+        let json = serde_json::json!({
+            "token": "Bot test",
+            "channel_overrides": {
+                "C123": { "model": "gpt-4" }
+            },
+            "user_overrides": {
+                "U456": { "model": "claude-sonnet", "model_provider": "anthropic" }
+            }
+        });
+        let cfg: DiscordAccountConfig =
+            serde_json::from_value(json).unwrap_or_else(|e| panic!("parse failed: {e}"));
+        assert_eq!(cfg.channel_model("C123"), Some("gpt-4"));
+        assert!(cfg.channel_model_provider("C123").is_none());
+        assert_eq!(cfg.user_model("U456"), Some("claude-sonnet"));
+        assert_eq!(cfg.user_model_provider("U456"), Some("anthropic"));
+
+        // Round-trip preserves overrides
+        let value = serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
+        let cfg2: DiscordAccountConfig =
+            serde_json::from_value(value).unwrap_or_else(|e| panic!("re-parse failed: {e}"));
+        assert_eq!(cfg2.channel_model("C123"), Some("gpt-4"));
+        assert_eq!(cfg2.user_model("U456"), Some("claude-sonnet"));
     }
 
     #[test]

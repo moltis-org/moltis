@@ -1,5 +1,8 @@
 use {
-    moltis_channels::gating::{DmPolicy, GroupPolicy, MentionMode},
+    moltis_channels::{
+        config_view::ChannelConfigView,
+        gating::{DmPolicy, GroupPolicy, MentionMode},
+    },
     secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
 };
@@ -89,6 +92,32 @@ fn serialize_option_secret<S: serde::Serializer>(
     match secret {
         Some(s) => serializer.serialize_some(s.expose_secret()),
         None => serializer.serialize_none(),
+    }
+}
+
+impl ChannelConfigView for MsTeamsAccountConfig {
+    fn allowlist(&self) -> &[String] {
+        &self.allowlist
+    }
+
+    fn group_allowlist(&self) -> &[String] {
+        &self.group_allowlist
+    }
+
+    fn dm_policy(&self) -> DmPolicy {
+        self.dm_policy.clone()
+    }
+
+    fn group_policy(&self) -> GroupPolicy {
+        self.group_policy.clone()
+    }
+
+    fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    fn model_provider(&self) -> Option<&str> {
+        self.model_provider.as_deref()
     }
 }
 

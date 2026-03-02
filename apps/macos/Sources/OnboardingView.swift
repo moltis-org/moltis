@@ -88,10 +88,17 @@ private extension OnboardingView {
         Section("Ready to Go") {
             LabeledContent("Provider", value: settings.llmProvider.capitalized)
             LabeledContent("Model", value: settings.llmModel)
-            LabeledContent("Voice", value: settings.voiceEnabled ? "Enabled" : "Disabled")
+            LabeledContent(
+                "Voice",
+                value: settings.voiceEnabled
+                    ? NSLocalizedString("Enabled", comment: "Enabled state")
+                    : NSLocalizedString("Disabled", comment: "Disabled state")
+            )
             LabeledContent(
                 "Name",
-                value: settings.identityName.isEmpty ? "Default" : settings.identityName
+                value: settings.identityName.isEmpty
+                    ? NSLocalizedString("Default", comment: "Default value")
+                    : settings.identityName
             )
 
             if !providerStore.detectedSources.isEmpty {
@@ -119,7 +126,16 @@ private extension OnboardingView {
 private extension OnboardingView {
     var footerBar: some View {
         HStack {
-            Text("Step \(currentStep.stepNumber) of \(OnboardingStep.totalSteps)")
+            Text(
+                String(
+                    format: NSLocalizedString(
+                        "Step %d of %d",
+                        comment: "Onboarding progress text"
+                    ),
+                    currentStep.stepNumber,
+                    OnboardingStep.totalSteps
+                )
+            )
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 

@@ -10,13 +10,13 @@ enum ChatMessageRole: String {
     var title: String {
         switch self {
         case .user:
-            return "You"
+            return NSLocalizedString("You", comment: "Chat role title")
         case .assistant:
-            return "Assistant"
+            return NSLocalizedString("Assistant", comment: "Chat role title")
         case .system:
-            return "System"
+            return NSLocalizedString("System", comment: "Chat role title")
         case .error:
-            return "Error"
+            return NSLocalizedString("Error", comment: "Chat role title")
         }
     }
 }
@@ -122,7 +122,7 @@ struct ChatSession: Identifiable, Equatable {
 
     var previewText: String {
         guard let lastMessage = messages.last else {
-            return "No messages yet"
+            return NSLocalizedString("No messages yet", comment: "Session preview placeholder")
         }
         return lastMessage.text.replacingOccurrences(of: "\n", with: " ")
     }

@@ -137,7 +137,8 @@ private struct ChatDetailView: View {
     var openSettings: () -> Void
 
     private var sessionTitle: String {
-        chatStore.selectedSession?.title ?? "No Session Selected"
+        chatStore.selectedSession?.title
+            ?? NSLocalizedString("No Session Selected", comment: "Missing session title")
     }
 
     private var sessionMessages: [ChatMessage] {
@@ -200,6 +201,7 @@ private struct ChatDetailView: View {
             }
             .buttonStyle(.borderless)
             .help("Settings")
+            .accessibilityIdentifier("open-settings-button")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -295,8 +297,8 @@ private struct ChatDetailView: View {
             parts.append("\(formatTokens(totalIn)) in / \(formatTokens(totalOut)) out")
             parts.append("\(formatTokens(total)) tokens")
         } else {
-            parts.append("0 in / 0 out")
-            parts.append("0 tokens")
+            parts.append(NSLocalizedString("0 in / 0 out", comment: "Empty token bar input/output"))
+            parts.append(NSLocalizedString("0 tokens", comment: "Empty token bar total"))
         }
 
         if let model = providerStore.selectedModelID {

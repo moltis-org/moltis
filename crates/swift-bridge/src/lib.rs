@@ -5,7 +5,7 @@ use std::{
     ffi::{CStr, CString, c_char, c_void},
     net::SocketAddr,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{LazyLock, Mutex, OnceLock, RwLock},
+    sync::{Arc, LazyLock, Mutex, OnceLock, RwLock},
 };
 
 use {
@@ -24,6 +24,8 @@ use {
         session_events::{SessionEvent, SessionEventBus},
         store::SessionStore,
     },
+    moltis_tools::image_cache::ImageBuilder,
+    secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
     tokio_stream::StreamExt,
 };
@@ -35,6 +37,8 @@ struct BridgeState {
     registry: RwLock<ProviderRegistry>,
     session_store: SessionStore,
     session_metadata: SqliteSessionMetadata,
+    credential_store: Arc<moltis_gateway::auth::CredentialStore>,
+    sandbox_default_image_override: RwLock<Option<String>>,
 }
 
 impl BridgeState {
@@ -91,7 +95,34 @@ impl BridgeState {
             pool
         });
         let event_bus = SessionEventBus::new();
-        let session_metadata = SqliteSessionMetadata::with_event_bus(db_pool, event_bus);
+        let session_metadata = SqliteSessionMetadata::with_event_bus(db_pool.clone(), event_bus);
+        let credential_store = runtime.block_on(async {
+            // Keep vault metadata up to date so env var encryption status works
+            // even when the full gateway server is not running.
+            if let Err(e) = moltis_gateway::auth::moltis_vault::run_migrations(&db_pool).await {
+                emit_log("WARN", "bridge", &format!("vault migration: {e}"));
+            }
+
+            let vault = match moltis_gateway::auth::moltis_vault::Vault::new(db_pool.clone()).await
+            {
+                Ok(vault) => Some(Arc::new(vault)),
+                Err(e) => {
+                    emit_log("WARN", "bridge", &format!("vault init failed: {e}"));
+                    None
+                },
+            };
+
+            match moltis_gateway::auth::CredentialStore::with_vault(
+                db_pool.clone(),
+                &moltis_config::discover_and_load().auth,
+                vault,
+            )
+            .await
+            {
+                Ok(store) => Arc::new(store),
+                Err(e) => panic!("failed to init credential store: {e}"),
+            }
+        });
 
         emit_log("INFO", "bridge", "Bridge initialized successfully");
         Self {
@@ -99,6 +130,8 @@ impl BridgeState {
             registry: RwLock::new(registry),
             session_store,
             session_metadata,
+            credential_store,
+            sandbox_default_image_override: RwLock::new(None),
         }
     }
 }
@@ -431,20 +464,335 @@ struct BridgeModelInfo {
     created_at: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct SaveProviderRequest {
     provider: String,
     #[serde(default)]
-    api_key: Option<String>,
+    api_key: Option<Secret<String>>,
     #[serde(default)]
     base_url: Option<String>,
     #[serde(default)]
     models: Option<Vec<String>>,
 }
 
+impl std::fmt::Debug for SaveProviderRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SaveProviderRequest")
+            .field("provider", &self.provider)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("base_url", &self.base_url)
+            .field("models", &self.models)
+            .finish()
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct OkResponse {
     ok: bool,
+}
+
+// ── Config / Identity / Soul request/response types ─────────────────────
+
+#[derive(Debug, Serialize)]
+struct GetConfigResponse {
+    config: serde_json::Value,
+    config_dir: String,
+    data_dir: String,
+}
+
+#[derive(Debug, Serialize)]
+struct GetSoulResponse {
+    soul: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveSoulRequest {
+    #[serde(default)]
+    soul: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveIdentityRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    emoji: Option<String>,
+    #[serde(default)]
+    theme: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveUserProfileRequest {
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetEnvVarRequest {
+    key: String,
+    #[serde(default)]
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteEnvVarRequest {
+    id: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ListEnvVarsResponse {
+    env_vars: Vec<moltis_gateway::auth::EnvVarEntry>,
+    vault_status: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MemoryStatusResponse {
+    available: bool,
+    total_files: usize,
+    total_chunks: usize,
+    db_size: u64,
+    db_size_display: String,
+    embedding_model: String,
+    has_embeddings: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct MemoryConfigResponse {
+    backend: String,
+    citations: String,
+    disable_rag: bool,
+    llm_reranking: bool,
+    session_export: bool,
+    qmd_feature_enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryConfigUpdateRequest {
+    #[serde(default)]
+    backend: Option<String>,
+    #[serde(default)]
+    citations: Option<String>,
+    #[serde(default)]
+    llm_reranking: Option<bool>,
+    #[serde(default)]
+    disable_rag: Option<bool>,
+    #[serde(default)]
+    session_export: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct MemoryQmdStatusResponse {
+    feature_enabled: bool,
+    available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthStatusResponse {
+    auth_disabled: bool,
+    has_password: bool,
+    has_passkeys: bool,
+    setup_complete: bool,
+}
+
+#[derive(Deserialize)]
+struct AuthPasswordChangeRequest {
+    #[serde(default)]
+    current_password: Option<Secret<String>>,
+    new_password: Secret<String>,
+}
+
+impl std::fmt::Debug for AuthPasswordChangeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthPasswordChangeRequest")
+            .field(
+                "current_password",
+                &self.current_password.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("new_password", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct AuthPasswordChangeResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthPasskeysResponse {
+    passkeys: Vec<moltis_gateway::auth::PasskeyEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthPasskeyIdRequest {
+    id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthPasskeyRenameRequest {
+    id: i64,
+    name: String,
+}
+
+const IMAGE_CACHE_DELETE_FAILED: &str = "IMAGE_CACHE_DELETE_FAILED";
+const IMAGE_CACHE_PRUNE_FAILED: &str = "IMAGE_CACHE_PRUNE_FAILED";
+const SANDBOX_CHECK_PACKAGES_FAILED: &str = "SANDBOX_CHECK_PACKAGES_FAILED";
+const SANDBOX_BACKEND_UNAVAILABLE: &str = "SANDBOX_BACKEND_UNAVAILABLE";
+const SANDBOX_IMAGE_NAME_REQUIRED: &str = "SANDBOX_IMAGE_NAME_REQUIRED";
+const SANDBOX_IMAGE_PACKAGES_REQUIRED: &str = "SANDBOX_IMAGE_PACKAGES_REQUIRED";
+const SANDBOX_IMAGE_NAME_INVALID: &str = "SANDBOX_IMAGE_NAME_INVALID";
+const SANDBOX_TMP_DIR_CREATE_FAILED: &str = "SANDBOX_TMP_DIR_CREATE_FAILED";
+const SANDBOX_DOCKERFILE_WRITE_FAILED: &str = "SANDBOX_DOCKERFILE_WRITE_FAILED";
+const SANDBOX_IMAGE_BUILD_FAILED: &str = "SANDBOX_IMAGE_BUILD_FAILED";
+const SANDBOX_CONTAINERS_LIST_FAILED: &str = "SANDBOX_CONTAINERS_LIST_FAILED";
+const SANDBOX_CONTAINER_PREFIX_MISMATCH: &str = "SANDBOX_CONTAINER_PREFIX_MISMATCH";
+const SANDBOX_CONTAINER_STOP_FAILED: &str = "SANDBOX_CONTAINER_STOP_FAILED";
+const SANDBOX_CONTAINER_REMOVE_FAILED: &str = "SANDBOX_CONTAINER_REMOVE_FAILED";
+const SANDBOX_CONTAINERS_CLEAN_FAILED: &str = "SANDBOX_CONTAINERS_CLEAN_FAILED";
+const SANDBOX_DISK_USAGE_FAILED: &str = "SANDBOX_DISK_USAGE_FAILED";
+const SANDBOX_DAEMON_RESTART_FAILED: &str = "SANDBOX_DAEMON_RESTART_FAILED";
+const SANDBOX_SHARED_HOME_SAVE_FAILED: &str = "SANDBOX_SHARED_HOME_SAVE_FAILED";
+const SANDBOX_PACKAGE_NAME_INVALID: &str = "SANDBOX_PACKAGE_NAME_INVALID";
+const SANDBOX_BASE_IMAGE_INVALID: &str = "SANDBOX_BASE_IMAGE_INVALID";
+
+/// Validates a package name to prevent shell injection.
+/// Allows alphanumeric, hyphen, dot, plus, colon (covers dpkg naming conventions).
+fn is_valid_package_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '+' | ':'))
+}
+
+/// Validates a container/base image reference (e.g. "ubuntu:25.10", "docker.io/library/ubuntu").
+/// Allows alphanumeric, hyphen, dot, colon, slash, underscore.
+fn is_valid_image_ref(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':' | '/' | '_'))
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxStatusResponse {
+    backend: String,
+    os: String,
+    default_image: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxImageEntry {
+    tag: String,
+    size: String,
+    created: String,
+    kind: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxImagesResponse {
+    images: Vec<SandboxImageEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxDeleteImageRequest {
+    tag: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxPruneImagesResponse {
+    pruned: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxCheckPackagesRequest {
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    packages: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxCheckPackagesResponse {
+    found: HashMap<String, bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxBuildImageRequest {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    packages: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxBuildImageResponse {
+    tag: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxDefaultImageResponse {
+    image: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxSetDefaultImageRequest {
+    #[serde(default)]
+    image: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxSharedHomeConfigResponse {
+    enabled: bool,
+    mode: String,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    configured_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxSharedHomeUpdateRequest {
+    enabled: bool,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxSharedHomeSaveResponse {
+    ok: bool,
+    restart_required: bool,
+    config_path: String,
+    config: SandboxSharedHomeConfigResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxContainerNameRequest {
+    name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxContainersResponse {
+    containers: Vec<moltis_tools::sandbox::RunningContainer>,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxCleanContainersResponse {
+    ok: bool,
+    removed: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxDiskUsageResponse {
+    usage: moltis_tools::sandbox::ContainerDiskUsage,
 }
 
 // ── Encoding helpers ───────────────────────────────────────────────────────
@@ -485,6 +833,23 @@ where
     }
 }
 
+/// Parses a C string JSON pointer into a typed request, recording errors
+/// against `function` for metrics. Returns `Err(encoded_error_json)` on
+/// failure so callers can early-return from `with_ffi_boundary`.
+fn parse_ffi_request<T: serde::de::DeserializeOwned>(
+    function: &'static str,
+    ptr: *const c_char,
+) -> Result<T, String> {
+    let raw = read_c_string(ptr).map_err(|message| {
+        record_error(function, "null_pointer_or_invalid_utf8");
+        encode_error("null_pointer_or_invalid_utf8", &message)
+    })?;
+    serde_json::from_str::<T>(&raw).map_err(|error| {
+        record_error(function, "invalid_json");
+        encode_error("invalid_json", &error.to_string())
+    })
+}
+
 #[allow(unsafe_code)]
 fn read_c_string(ptr: *const c_char) -> Result<String, String> {
     if ptr.is_null() {
@@ -497,6 +862,18 @@ fn read_c_string(ptr: *const c_char) -> Result<String, String> {
     match c_str.to_str() {
         Ok(text) => Ok(text.to_owned()),
         Err(_) => Err("request_json was not valid UTF-8".to_owned()),
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    match bytes {
+        b if b >= GB => format!("{:.1} GB", b as f64 / GB as f64),
+        b if b >= MB => format!("{:.1} MB", b as f64 / MB as f64),
+        b if b >= KB => format!("{:.1} KB", b as f64 / KB as f64),
+        b => format!("{b} B"),
     }
 }
 
@@ -516,6 +893,82 @@ fn config_dir_string() -> String {
     match moltis_config::config_dir() {
         Some(path) => path.display().to_string(),
         None => "unavailable".to_owned(),
+    }
+}
+
+fn data_dir_string() -> String {
+    moltis_config::data_dir().display().to_string()
+}
+
+fn vault_status_string() -> String {
+    let Some(vault) = BRIDGE.credential_store.vault() else {
+        return "disabled".to_owned();
+    };
+    match BRIDGE.runtime.block_on(async { vault.status().await }) {
+        Ok(status) => format!("{status:?}").to_lowercase(),
+        Err(_) => "error".to_owned(),
+    }
+}
+
+fn sandbox_effective_default_image(config: &moltis_config::MoltisConfig) -> String {
+    if let Some(value) = BRIDGE
+        .sandbox_default_image_override
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        return value;
+    }
+    config
+        .tools
+        .exec
+        .sandbox
+        .image
+        .clone()
+        .unwrap_or_else(|| moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_owned())
+}
+
+fn sandbox_backend_name(config: &moltis_config::MoltisConfig) -> String {
+    let runtime_cfg = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    let backend = moltis_tools::sandbox::create_sandbox(runtime_cfg);
+    backend.backend_name().to_owned()
+}
+
+fn sandbox_status_from_config(config: &moltis_config::MoltisConfig) -> SandboxStatusResponse {
+    SandboxStatusResponse {
+        backend: sandbox_backend_name(config),
+        os: std::env::consts::OS.to_owned(),
+        default_image: sandbox_effective_default_image(config),
+    }
+}
+
+fn sandbox_container_prefix(config: &moltis_config::MoltisConfig) -> String {
+    let runtime_cfg = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    runtime_cfg
+        .container_prefix
+        .unwrap_or_else(|| "moltis-sandbox".to_owned())
+}
+
+fn sandbox_shared_home_config_from_config(
+    config: &moltis_config::MoltisConfig,
+) -> SandboxSharedHomeConfigResponse {
+    let runtime_cfg = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    let mode = match config.tools.exec.sandbox.home_persistence {
+        moltis_config::schema::HomePersistenceConfig::Off => "off",
+        moltis_config::schema::HomePersistenceConfig::Session => "session",
+        moltis_config::schema::HomePersistenceConfig::Shared => "shared",
+    };
+
+    SandboxSharedHomeConfigResponse {
+        enabled: matches!(
+            config.tools.exec.sandbox.home_persistence,
+            moltis_config::schema::HomePersistenceConfig::Shared
+        ),
+        mode: mode.to_owned(),
+        path: moltis_tools::sandbox::shared_home_dir_path(&runtime_cfg)
+            .display()
+            .to_string(),
+        configured_path: config.tools.exec.sandbox.shared_home_dir.clone(),
     }
 }
 
@@ -922,20 +1375,9 @@ pub extern "C" fn moltis_chat_json(request_json: *const c_char) -> *mut c_char {
     trace_call("moltis_chat_json");
 
     with_ffi_boundary(|| {
-        let raw = match read_c_string(request_json) {
-            Ok(value) => value,
-            Err(message) => {
-                record_error("moltis_chat_json", "null_pointer_or_invalid_utf8");
-                return encode_error("null_pointer_or_invalid_utf8", &message);
-            },
-        };
-
-        let request = match serde_json::from_str::<ChatRequest>(&raw) {
+        let request = match parse_ffi_request::<ChatRequest>("moltis_chat_json", request_json) {
             Ok(request) => request,
-            Err(error) => {
-                record_error("moltis_chat_json", "invalid_json");
-                return encode_error("invalid_json", &error.to_string());
-            },
+            Err(e) => return e,
         };
 
         build_chat_response(request)
@@ -1009,23 +1451,12 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
     trace_call("moltis_save_provider_config");
 
     with_ffi_boundary(|| {
-        let raw = match read_c_string(request_json) {
-            Ok(value) => value,
-            Err(message) => {
-                record_error(
-                    "moltis_save_provider_config",
-                    "null_pointer_or_invalid_utf8",
-                );
-                return encode_error("null_pointer_or_invalid_utf8", &message);
-            },
-        };
-
-        let request = match serde_json::from_str::<SaveProviderRequest>(&raw) {
+        let request = match parse_ffi_request::<SaveProviderRequest>(
+            "moltis_save_provider_config",
+            request_json,
+        ) {
             Ok(request) => request,
-            Err(error) => {
-                record_error("moltis_save_provider_config", "invalid_json");
-                return encode_error("invalid_json", &error.to_string());
-            },
+            Err(e) => return e,
         };
 
         emit_log(
@@ -1035,12 +1466,8 @@ pub extern "C" fn moltis_save_provider_config(request_json: *const c_char) -> *m
         );
 
         let key_store = KeyStore::new();
-        match key_store.save_config(
-            &request.provider,
-            request.api_key,
-            request.base_url,
-            request.models,
-        ) {
+        let api_key = request.api_key.map(|s| s.expose_secret().clone());
+        match key_store.save_config(&request.provider, api_key, request.base_url, request.models) {
             Ok(()) => {
                 emit_log("INFO", "bridge.config", "Provider config saved");
                 encode_json(&OkResponse { ok: true })
@@ -1475,14 +1902,12 @@ pub extern "C" fn moltis_switch_session(request_json: *const c_char) -> *mut c_c
     trace_call("moltis_switch_session");
 
     with_ffi_boundary(|| {
-        let raw = match read_c_string(request_json) {
-            Ok(value) => value,
-            Err(message) => return encode_error("null_pointer_or_invalid_utf8", &message),
-        };
-
-        let request = match serde_json::from_str::<SwitchSessionRequest>(&raw) {
+        let request = match parse_ffi_request::<SwitchSessionRequest>(
+            "moltis_switch_session",
+            request_json,
+        ) {
             Ok(r) => r,
-            Err(e) => return encode_error("invalid_json", &e.to_string()),
+            Err(e) => return e,
         };
 
         // Ensure metadata entry exists.
@@ -1759,12 +2184,1483 @@ pub unsafe extern "C" fn moltis_session_chat_stream(
     });
 }
 
+// ── Config / Identity / Soul FFI ─────────────────────────────────────────
+
+/// Returns the full `MoltisConfig` as JSON together with `config_dir` and
+/// `data_dir` paths. Swift uses this to populate all settings panels.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_get_config() -> *mut c_char {
+    record_call("moltis_get_config");
+    trace_call("moltis_get_config");
+
+    with_ffi_boundary(|| {
+        emit_log("DEBUG", "bridge", "moltis_get_config called");
+        let config = moltis_config::discover_and_load();
+        let config_value = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => return encode_error("serialization_error", &e.to_string()),
+        };
+        let response = GetConfigResponse {
+            config: config_value,
+            config_dir: config_dir_string(),
+            data_dir: data_dir_string(),
+        };
+        emit_log("INFO", "bridge", "Config loaded for settings");
+        encode_json(&response)
+    })
+}
+
+/// Accepts a full `MoltisConfig` JSON and saves it via `save_config()`.
+/// The TOML writer preserves existing comments in the config file.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_save_config(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_save_config");
+    trace_call("moltis_save_config");
+
+    with_ffi_boundary(|| {
+        let config = match parse_ffi_request::<moltis_config::MoltisConfig>(
+            "moltis_save_config",
+            request_json,
+        ) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+
+        emit_log("INFO", "bridge.config", "Saving full config from settings");
+        match moltis_config::save_config(&config) {
+            Ok(path) => {
+                emit_log(
+                    "INFO",
+                    "bridge.config",
+                    &format!("Config saved to {}", path.display()),
+                );
+                encode_json(&OkResponse { ok: true })
+            },
+            Err(e) => {
+                emit_log("ERROR", "bridge.config", &format!("Save failed: {e}"));
+                encode_error("save_failed", &e.to_string())
+            },
+        }
+    })
+}
+
+/// Returns memory status (counts + db size) for the settings panel.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_memory_status() -> *mut c_char {
+    record_call("moltis_memory_status");
+    trace_call("moltis_memory_status");
+
+    with_ffi_boundary(|| {
+        use {sqlx::sqlite::SqliteConnectOptions, std::str::FromStr};
+
+        let config = moltis_config::discover_and_load();
+        let embedding_model = config
+            .memory
+            .model
+            .clone()
+            .unwrap_or_else(|| "none".to_owned());
+        let has_embeddings = !config.memory.disable_rag;
+
+        let db_path = moltis_config::data_dir().join("memory.db");
+        let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+
+        if !db_path.exists() {
+            let response = MemoryStatusResponse {
+                available: false,
+                total_files: 0,
+                total_chunks: 0,
+                db_size,
+                db_size_display: format_bytes(db_size),
+                embedding_model,
+                has_embeddings,
+                error: Some("memory.db not found".to_owned()),
+            };
+            return encode_json(&response);
+        }
+
+        let options = match SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+        {
+            Ok(opts) => opts.create_if_missing(false).read_only(true),
+            Err(error) => {
+                let response = MemoryStatusResponse {
+                    available: false,
+                    total_files: 0,
+                    total_chunks: 0,
+                    db_size,
+                    db_size_display: format_bytes(db_size),
+                    embedding_model,
+                    has_embeddings,
+                    error: Some(format!("invalid sqlite path: {error}")),
+                };
+                return encode_json(&response);
+            },
+        };
+
+        let pool = match BRIDGE
+            .runtime
+            .block_on(sqlx::SqlitePool::connect_with(options))
+        {
+            Ok(pool) => pool,
+            Err(error) => {
+                let response = MemoryStatusResponse {
+                    available: false,
+                    total_files: 0,
+                    total_chunks: 0,
+                    db_size,
+                    db_size_display: format_bytes(db_size),
+                    embedding_model,
+                    has_embeddings,
+                    error: Some(format!("failed to open memory.db: {error}")),
+                };
+                return encode_json(&response);
+            },
+        };
+
+        let (total_files, total_chunks) = BRIDGE.runtime.block_on(async {
+            let has_files_table: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'files'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+            let has_chunks_table: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'chunks'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+
+            let files: i64 = if has_files_table > 0 {
+                sqlx::query_scalar("SELECT COUNT(*) FROM files")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            let chunks: i64 = if has_chunks_table > 0 {
+                sqlx::query_scalar("SELECT COUNT(*) FROM chunks")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+
+            let files_count: usize = files.max(0).try_into().unwrap_or(0);
+            let chunk_count: usize = chunks.max(0).try_into().unwrap_or(0);
+            (files_count, chunk_count)
+        });
+        BRIDGE.runtime.block_on(pool.close());
+
+        let response = MemoryStatusResponse {
+            available: true,
+            total_files,
+            total_chunks,
+            db_size,
+            db_size_display: format_bytes(db_size),
+            embedding_model,
+            has_embeddings,
+            error: None,
+        };
+        encode_json(&response)
+    })
+}
+
+/// Returns memory configuration fields used by the settings panel.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_memory_config_get() -> *mut c_char {
+    record_call("moltis_memory_config_get");
+    trace_call("moltis_memory_config_get");
+
+    with_ffi_boundary(|| {
+        let config = moltis_config::discover_and_load();
+        let memory = config.memory;
+        let response = MemoryConfigResponse {
+            backend: memory.backend.unwrap_or_else(|| "builtin".to_owned()),
+            citations: memory.citations.unwrap_or_else(|| "auto".to_owned()),
+            disable_rag: memory.disable_rag,
+            llm_reranking: memory.llm_reranking,
+            session_export: memory.session_export,
+            qmd_feature_enabled: cfg!(feature = "qmd"),
+        };
+        encode_json(&response)
+    })
+}
+
+/// Updates memory configuration fields used by the settings panel.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_memory_config_update(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_memory_config_update");
+    trace_call("moltis_memory_config_update");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<MemoryConfigUpdateRequest>(
+            "moltis_memory_config_update",
+            request_json,
+        ) {
+            Ok(request) => request,
+            Err(e) => return e,
+        };
+
+        let current = moltis_config::discover_and_load().memory;
+        let backend = request
+            .backend
+            .unwrap_or_else(|| current.backend.unwrap_or_else(|| "builtin".to_owned()));
+        let citations = request
+            .citations
+            .unwrap_or_else(|| current.citations.unwrap_or_else(|| "auto".to_owned()));
+        let llm_reranking = request.llm_reranking.unwrap_or(current.llm_reranking);
+        let session_export = request.session_export.unwrap_or(current.session_export);
+        let mut disable_rag = current.disable_rag;
+
+        let backend_value = backend.clone();
+        let citations_value = citations.clone();
+
+        if let Err(error) = moltis_config::update_config(|cfg| {
+            cfg.memory.backend = Some(backend_value.clone());
+            cfg.memory.citations = Some(citations_value.clone());
+            cfg.memory.llm_reranking = llm_reranking;
+            if let Some(value) = request.disable_rag {
+                cfg.memory.disable_rag = value;
+            }
+            cfg.memory.session_export = session_export;
+            disable_rag = cfg.memory.disable_rag;
+        }) {
+            record_error("moltis_memory_config_update", "save_failed");
+            return encode_error("save_failed", &error.to_string());
+        }
+
+        let response = MemoryConfigResponse {
+            backend,
+            citations,
+            disable_rag,
+            llm_reranking,
+            session_export,
+            qmd_feature_enabled: cfg!(feature = "qmd"),
+        };
+        encode_json(&response)
+    })
+}
+
+/// Returns QMD availability (binary detection + optional version).
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_memory_qmd_status() -> *mut c_char {
+    record_call("moltis_memory_qmd_status");
+    trace_call("moltis_memory_qmd_status");
+
+    with_ffi_boundary(|| {
+        if !cfg!(feature = "qmd") {
+            let response = MemoryQmdStatusResponse {
+                feature_enabled: false,
+                available: false,
+                version: None,
+                error: Some("QMD feature is disabled in this build".to_owned()),
+            };
+            return encode_json(&response);
+        }
+
+        let command = moltis_config::discover_and_load()
+            .memory
+            .qmd
+            .command
+            .unwrap_or_else(|| "qmd".to_owned());
+
+        let output = std::process::Command::new(&command)
+            .arg("--version")
+            .output();
+
+        let response = match output {
+            Ok(out) if out.status.success() => {
+                let version = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+                let resolved_version = if version.is_empty() {
+                    None
+                } else {
+                    Some(version)
+                };
+                MemoryQmdStatusResponse {
+                    feature_enabled: true,
+                    available: true,
+                    version: resolved_version,
+                    error: None,
+                }
+            },
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+                let detail = if stderr.is_empty() {
+                    format!("{command} --version exited with status {}", out.status)
+                } else {
+                    stderr
+                };
+                MemoryQmdStatusResponse {
+                    feature_enabled: true,
+                    available: false,
+                    version: None,
+                    error: Some(detail),
+                }
+            },
+            Err(error) => MemoryQmdStatusResponse {
+                feature_enabled: true,
+                available: false,
+                version: None,
+                error: Some(error.to_string()),
+            },
+        };
+
+        encode_json(&response)
+    })
+}
+
+/// Returns the soul text from `SOUL.md`.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_get_soul() -> *mut c_char {
+    record_call("moltis_get_soul");
+    trace_call("moltis_get_soul");
+
+    with_ffi_boundary(|| {
+        emit_log("DEBUG", "bridge", "moltis_get_soul called");
+        let soul = moltis_config::load_soul();
+        encode_json(&GetSoulResponse { soul })
+    })
+}
+
+/// Saves soul text to `SOUL.md`. Pass `{"soul": null}` to clear.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_save_soul(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_save_soul");
+    trace_call("moltis_save_soul");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SaveSoulRequest>("moltis_save_soul", request_json) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        emit_log("INFO", "bridge.config", "Saving soul from settings");
+        match moltis_config::save_soul(request.soul.as_deref()) {
+            Ok(path) => {
+                emit_log(
+                    "INFO",
+                    "bridge.config",
+                    &format!("Soul saved to {}", path.display()),
+                );
+                encode_json(&OkResponse { ok: true })
+            },
+            Err(e) => {
+                emit_log("ERROR", "bridge.config", &format!("Soul save failed: {e}"));
+                encode_error("save_failed", &e.to_string())
+            },
+        }
+    })
+}
+
+/// Saves identity (name, emoji, theme) to `IDENTITY.md`.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_save_identity(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_save_identity");
+    trace_call("moltis_save_identity");
+
+    with_ffi_boundary(|| {
+        let request =
+            match parse_ffi_request::<SaveIdentityRequest>("moltis_save_identity", request_json) {
+                Ok(r) => r,
+                Err(e) => return e,
+            };
+
+        let identity = moltis_config::AgentIdentity {
+            name: request.name,
+            emoji: request.emoji,
+            theme: request.theme,
+        };
+
+        emit_log("INFO", "bridge.config", "Saving identity from settings");
+        match moltis_config::save_identity(&identity) {
+            Ok(path) => {
+                emit_log(
+                    "INFO",
+                    "bridge.config",
+                    &format!("Identity saved to {}", path.display()),
+                );
+                encode_json(&OkResponse { ok: true })
+            },
+            Err(e) => {
+                emit_log(
+                    "ERROR",
+                    "bridge.config",
+                    &format!("Identity save failed: {e}"),
+                );
+                encode_error("save_failed", &e.to_string())
+            },
+        }
+    })
+}
+
+/// Saves user profile (name) to `USER.md`.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_save_user_profile(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_save_user_profile");
+    trace_call("moltis_save_user_profile");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SaveUserProfileRequest>(
+            "moltis_save_user_profile",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let user = moltis_config::UserProfile {
+            name: request.name,
+            ..Default::default()
+        };
+
+        emit_log("INFO", "bridge.config", "Saving user profile from settings");
+        match moltis_config::save_user(&user) {
+            Ok(path) => {
+                emit_log(
+                    "INFO",
+                    "bridge.config",
+                    &format!("User profile saved to {}", path.display()),
+                );
+                encode_json(&OkResponse { ok: true })
+            },
+            Err(e) => {
+                emit_log(
+                    "ERROR",
+                    "bridge.config",
+                    &format!("User profile save failed: {e}"),
+                );
+                encode_error("save_failed", &e.to_string())
+            },
+        }
+    })
+}
+
+/// Returns runtime environment variables from the credential store.
+/// Values are never returned, only metadata (id/key/timestamps/encrypted).
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_list_env_vars() -> *mut c_char {
+    record_call("moltis_list_env_vars");
+    trace_call("moltis_list_env_vars");
+
+    with_ffi_boundary(|| {
+        let env_vars = match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.list_env_vars())
+        {
+            Ok(vars) => vars,
+            Err(e) => {
+                record_error("moltis_list_env_vars", "ENV_LIST_FAILED");
+                return encode_error("ENV_LIST_FAILED", &e.to_string());
+            },
+        };
+
+        encode_json(&ListEnvVarsResponse {
+            env_vars,
+            vault_status: vault_status_string(),
+        })
+    })
+}
+
+/// Set (upsert) an environment variable in the credential store.
+/// Uses vault encryption automatically when the vault is unsealed.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_set_env_var(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_set_env_var");
+    trace_call("moltis_set_env_var");
+
+    with_ffi_boundary(|| {
+        let request =
+            match parse_ffi_request::<SetEnvVarRequest>("moltis_set_env_var", request_json) {
+                Ok(r) => r,
+                Err(e) => return e,
+            };
+
+        let key = request.key.trim();
+        if key.is_empty() {
+            record_error("moltis_set_env_var", "ENV_KEY_REQUIRED");
+            return encode_error("ENV_KEY_REQUIRED", "key is required");
+        }
+        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            record_error("moltis_set_env_var", "ENV_KEY_INVALID");
+            return encode_error(
+                "ENV_KEY_INVALID",
+                "key must contain only letters, digits, and underscores",
+            );
+        }
+
+        match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.set_env_var(key, &request.value))
+        {
+            Ok(_) => encode_json(&OkResponse { ok: true }),
+            Err(e) => {
+                record_error("moltis_set_env_var", "ENV_SET_FAILED");
+                encode_error("ENV_SET_FAILED", &e.to_string())
+            },
+        }
+    })
+}
+
+/// Delete an environment variable by ID.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_delete_env_var(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_delete_env_var");
+    trace_call("moltis_delete_env_var");
+
+    with_ffi_boundary(|| {
+        let request =
+            match parse_ffi_request::<DeleteEnvVarRequest>("moltis_delete_env_var", request_json) {
+                Ok(r) => r,
+                Err(e) => return e,
+            };
+
+        match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.delete_env_var(request.id))
+        {
+            Ok(_) => encode_json(&OkResponse { ok: true }),
+            Err(e) => {
+                record_error("moltis_delete_env_var", "ENV_DELETE_FAILED");
+                encode_error("ENV_DELETE_FAILED", &e.to_string())
+            },
+        }
+    })
+}
+
+/// Returns authentication status for the HTTP server.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_auth_status() -> *mut c_char {
+    record_call("moltis_auth_status");
+    trace_call("moltis_auth_status");
+
+    with_ffi_boundary(|| {
+        let has_password = match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.has_password())
+        {
+            Ok(value) => value,
+            Err(error) => {
+                record_error("moltis_auth_status", "AUTH_STATUS_FAILED");
+                return encode_error("AUTH_STATUS_FAILED", &error.to_string());
+            },
+        };
+
+        let has_passkeys = match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.has_passkeys())
+        {
+            Ok(value) => value,
+            Err(error) => {
+                record_error("moltis_auth_status", "AUTH_STATUS_FAILED");
+                return encode_error("AUTH_STATUS_FAILED", &error.to_string());
+            },
+        };
+
+        encode_json(&AuthStatusResponse {
+            auth_disabled: BRIDGE.credential_store.is_auth_disabled(),
+            has_password,
+            has_passkeys,
+            setup_complete: BRIDGE.credential_store.is_setup_complete(),
+        })
+    })
+}
+
+/// Adds or changes the authentication password.
+///
+/// Accepts JSON:
+/// - `{"new_password":"..."}` to set the first password.
+/// - `{"current_password":"...","new_password":"..."}` to rotate.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_auth_password_change(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_auth_password_change");
+    trace_call("moltis_auth_password_change");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<AuthPasswordChangeRequest>(
+            "moltis_auth_password_change",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        if request.new_password.expose_secret().len() < 8 {
+            record_error("moltis_auth_password_change", "AUTH_PASSWORD_TOO_SHORT");
+            return encode_error(
+                "AUTH_PASSWORD_TOO_SHORT",
+                "new password must be at least 8 characters",
+            );
+        }
+
+        let has_password = match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.has_password())
+        {
+            Ok(value) => value,
+            Err(error) => {
+                record_error("moltis_auth_password_change", "AUTH_STATUS_FAILED");
+                return encode_error("AUTH_STATUS_FAILED", &error.to_string());
+            },
+        };
+
+        let mut recovery_key: Option<String> = None;
+
+        let new_password = request.new_password.expose_secret();
+
+        if has_password {
+            let current_password = request
+                .current_password
+                .as_ref()
+                .map(|s| s.expose_secret().as_str())
+                .unwrap_or("");
+            if let Err(error) = BRIDGE.runtime.block_on(
+                BRIDGE
+                    .credential_store
+                    .change_password(current_password, new_password),
+            ) {
+                let message = error.to_string();
+                if message.contains("incorrect") {
+                    record_error(
+                        "moltis_auth_password_change",
+                        "AUTH_INVALID_CURRENT_PASSWORD",
+                    );
+                    return encode_error("AUTH_INVALID_CURRENT_PASSWORD", &message);
+                }
+                record_error("moltis_auth_password_change", "AUTH_PASSWORD_CHANGE_FAILED");
+                return encode_error("AUTH_PASSWORD_CHANGE_FAILED", &message);
+            }
+
+            if let Some(vault) = BRIDGE.credential_store.vault()
+                && let Err(error) = BRIDGE
+                    .runtime
+                    .block_on(vault.change_password(current_password, new_password))
+            {
+                emit_log(
+                    "WARN",
+                    "bridge.auth",
+                    &format!("Vault password rotation failed: {error}"),
+                );
+            }
+        } else if let Err(error) = BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.add_password(new_password))
+        {
+            record_error("moltis_auth_password_change", "AUTH_PASSWORD_SET_FAILED");
+            return encode_error("AUTH_PASSWORD_SET_FAILED", &error.to_string());
+        } else if let Some(vault) = BRIDGE.credential_store.vault() {
+            match BRIDGE.runtime.block_on(vault.initialize(new_password)) {
+                Ok(key) => {
+                    recovery_key = Some(key.phrase().to_owned());
+                },
+                Err(moltis_gateway::auth::moltis_vault::VaultError::AlreadyInitialized) => {
+                    if let Err(error) = BRIDGE.runtime.block_on(vault.unseal(new_password)) {
+                        emit_log(
+                            "WARN",
+                            "bridge.auth",
+                            &format!("Vault unseal failed after password set: {error}"),
+                        );
+                    }
+                },
+                Err(error) => {
+                    emit_log(
+                        "WARN",
+                        "bridge.auth",
+                        &format!("Vault initialization failed after password set: {error}"),
+                    );
+                },
+            }
+        }
+
+        encode_json(&AuthPasswordChangeResponse {
+            ok: true,
+            recovery_key,
+        })
+    })
+}
+
+/// Removes all authentication credentials (passwords, passkeys, sessions, API keys).
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_auth_reset() -> *mut c_char {
+    record_call("moltis_auth_reset");
+    trace_call("moltis_auth_reset");
+
+    with_ffi_boundary(
+        || match BRIDGE.runtime.block_on(BRIDGE.credential_store.reset_all()) {
+            Ok(()) => encode_json(&OkResponse { ok: true }),
+            Err(error) => {
+                record_error("moltis_auth_reset", "AUTH_RESET_FAILED");
+                encode_error("AUTH_RESET_FAILED", &error.to_string())
+            },
+        },
+    )
+}
+
+/// Lists all registered passkeys.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_auth_list_passkeys() -> *mut c_char {
+    record_call("moltis_auth_list_passkeys");
+    trace_call("moltis_auth_list_passkeys");
+
+    with_ffi_boundary(|| {
+        let passkeys = match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.list_passkeys())
+        {
+            Ok(entries) => entries,
+            Err(error) => {
+                record_error("moltis_auth_list_passkeys", "AUTH_PASSKEY_LIST_FAILED");
+                return encode_error("AUTH_PASSKEY_LIST_FAILED", &error.to_string());
+            },
+        };
+
+        encode_json(&AuthPasskeysResponse { passkeys })
+    })
+}
+
+/// Removes a passkey by database ID.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_auth_remove_passkey(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_auth_remove_passkey");
+    trace_call("moltis_auth_remove_passkey");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<AuthPasskeyIdRequest>(
+            "moltis_auth_remove_passkey",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.remove_passkey(request.id))
+        {
+            Ok(()) => encode_json(&OkResponse { ok: true }),
+            Err(error) => {
+                record_error("moltis_auth_remove_passkey", "AUTH_PASSKEY_REMOVE_FAILED");
+                encode_error("AUTH_PASSKEY_REMOVE_FAILED", &error.to_string())
+            },
+        }
+    })
+}
+
+/// Renames a passkey.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_auth_rename_passkey(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_auth_rename_passkey");
+    trace_call("moltis_auth_rename_passkey");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<AuthPasskeyRenameRequest>(
+            "moltis_auth_rename_passkey",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let name = request.name.trim();
+        if name.is_empty() {
+            record_error("moltis_auth_rename_passkey", "AUTH_PASSKEY_NAME_REQUIRED");
+            return encode_error("AUTH_PASSKEY_NAME_REQUIRED", "name cannot be empty");
+        }
+
+        match BRIDGE
+            .runtime
+            .block_on(BRIDGE.credential_store.rename_passkey(request.id, name))
+        {
+            Ok(()) => encode_json(&OkResponse { ok: true }),
+            Err(error) => {
+                record_error("moltis_auth_rename_passkey", "AUTH_PASSKEY_RENAME_FAILED");
+                encode_error("AUTH_PASSKEY_RENAME_FAILED", &error.to_string())
+            },
+        }
+    })
+}
+
+/// Returns sandbox runtime status used by Settings > Sandboxes.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_status() -> *mut c_char {
+    record_call("moltis_sandbox_status");
+    trace_call("moltis_sandbox_status");
+
+    with_ffi_boundary(|| {
+        let config = moltis_config::discover_and_load();
+        encode_json(&sandbox_status_from_config(&config))
+    })
+}
+
+/// Returns cached tool and sandbox images.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_list_images() -> *mut c_char {
+    record_call("moltis_sandbox_list_images");
+    trace_call("moltis_sandbox_list_images");
+
+    with_ffi_boundary(|| {
+        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let (cached, sandbox) = BRIDGE.runtime.block_on(async {
+            tokio::join!(
+                builder.list_cached(),
+                moltis_tools::sandbox::list_sandbox_images()
+            )
+        });
+
+        let mut images = Vec::new();
+
+        if let Ok(list) = cached {
+            images.extend(list.into_iter().map(|img| SandboxImageEntry {
+                tag: img.tag,
+                size: img.size,
+                created: img.created,
+                kind: "tool".to_owned(),
+            }));
+        }
+
+        if let Ok(list) = sandbox {
+            images.extend(list.into_iter().map(|img| SandboxImageEntry {
+                tag: img.tag,
+                size: img.size,
+                created: img.created,
+                kind: "sandbox".to_owned(),
+            }));
+        }
+
+        encode_json(&SandboxImagesResponse { images })
+    })
+}
+
+/// Deletes one cached image by tag.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_delete_image(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_sandbox_delete_image");
+    trace_call("moltis_sandbox_delete_image");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SandboxDeleteImageRequest>(
+            "moltis_sandbox_delete_image",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let tag = request.tag.trim();
+        if tag.is_empty() {
+            record_error("moltis_sandbox_delete_image", "IMAGE_TAG_REQUIRED");
+            return encode_error("IMAGE_TAG_REQUIRED", "tag is required");
+        }
+
+        let result = BRIDGE.runtime.block_on(async {
+            if tag.contains("-sandbox:") {
+                moltis_tools::sandbox::remove_sandbox_image(tag).await
+            } else {
+                let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+                let full_tag = if tag.starts_with("moltis-cache/") {
+                    tag.to_owned()
+                } else {
+                    format!("moltis-cache/{tag}")
+                };
+                builder.remove_cached(&full_tag).await
+            }
+        });
+
+        match result {
+            Ok(()) => encode_json(&OkResponse { ok: true }),
+            Err(error) => {
+                record_error("moltis_sandbox_delete_image", IMAGE_CACHE_DELETE_FAILED);
+                encode_error(IMAGE_CACHE_DELETE_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Removes all cached tool and sandbox images.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_prune_images() -> *mut c_char {
+    record_call("moltis_sandbox_prune_images");
+    trace_call("moltis_sandbox_prune_images");
+
+    with_ffi_boundary(|| {
+        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let (tool_result, sandbox_result) = BRIDGE.runtime.block_on(async {
+            tokio::join!(
+                builder.prune_all(),
+                moltis_tools::sandbox::clean_sandbox_images()
+            )
+        });
+
+        let mut count = 0usize;
+        if let Ok(n) = tool_result {
+            count += n;
+        }
+        if let Ok(n) = sandbox_result {
+            count += n;
+        }
+
+        if let (Err(e1), Err(e2)) = (&tool_result, &sandbox_result) {
+            let message = format!("tool images: {e1}; sandbox images: {e2}");
+            record_error("moltis_sandbox_prune_images", IMAGE_CACHE_PRUNE_FAILED);
+            return encode_error(IMAGE_CACHE_PRUNE_FAILED, &message);
+        }
+
+        encode_json(&SandboxPruneImagesResponse { pruned: count })
+    })
+}
+
+/// Checks package presence in a base Docker image.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_check_packages(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_sandbox_check_packages");
+    trace_call("moltis_sandbox_check_packages");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SandboxCheckPackagesRequest>(
+            "moltis_sandbox_check_packages",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let base = request
+            .base
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("ubuntu:25.10")
+            .to_owned();
+        let packages: Vec<String> = request
+            .packages
+            .into_iter()
+            .map(|p| p.trim().to_owned())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        if packages.is_empty() {
+            return encode_json(&SandboxCheckPackagesResponse {
+                found: HashMap::new(),
+            });
+        }
+
+        if !is_valid_image_ref(&base) {
+            record_error("moltis_sandbox_check_packages", SANDBOX_BASE_IMAGE_INVALID);
+            return encode_error(
+                SANDBOX_BASE_IMAGE_INVALID,
+                "base image contains invalid characters",
+            );
+        }
+
+        if let Some(bad) = packages.iter().find(|p| !is_valid_package_name(p)) {
+            record_error(
+                "moltis_sandbox_check_packages",
+                SANDBOX_PACKAGE_NAME_INVALID,
+            );
+            return encode_error(
+                SANDBOX_PACKAGE_NAME_INVALID,
+                &format!("invalid package name: {bad}"),
+            );
+        }
+
+        let checks: Vec<String> = packages
+            .iter()
+            .map(|pkg| {
+                format!(
+                    r#"if dpkg -s '{pkg}' >/dev/null 2>&1 || command -v '{pkg}' >/dev/null 2>&1; then echo "FOUND:{pkg}"; fi"#
+                )
+            })
+            .collect();
+        let script = checks.join("\n");
+
+        let output = BRIDGE.runtime.block_on(async {
+            tokio::process::Command::new("docker")
+                .args(["run", "--rm", "--entrypoint", "sh", &base, "-c", &script])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .output()
+                .await
+        });
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut found = HashMap::new();
+                for pkg in packages {
+                    let present = stdout
+                        .lines()
+                        .any(|line| line.trim() == format!("FOUND:{pkg}"));
+                    found.insert(pkg, present);
+                }
+                encode_json(&SandboxCheckPackagesResponse { found })
+            },
+            Err(error) => {
+                record_error(
+                    "moltis_sandbox_check_packages",
+                    SANDBOX_CHECK_PACKAGES_FAILED,
+                );
+                encode_error(SANDBOX_CHECK_PACKAGES_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Builds a sandbox image from base image + apt package list.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_build_image(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_sandbox_build_image");
+    trace_call("moltis_sandbox_build_image");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SandboxBuildImageRequest>(
+            "moltis_sandbox_build_image",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let name = request.name.trim();
+        if name.is_empty() {
+            record_error("moltis_sandbox_build_image", SANDBOX_IMAGE_NAME_REQUIRED);
+            return encode_error(SANDBOX_IMAGE_NAME_REQUIRED, "name is required");
+        }
+
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            record_error("moltis_sandbox_build_image", SANDBOX_IMAGE_NAME_INVALID);
+            return encode_error(
+                SANDBOX_IMAGE_NAME_INVALID,
+                "name must be alphanumeric, dash, or underscore",
+            );
+        }
+
+        let base = request
+            .base
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("ubuntu:25.10")
+            .to_owned();
+        let packages: Vec<String> = request
+            .packages
+            .into_iter()
+            .map(|p| p.trim().to_owned())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        if !is_valid_image_ref(&base) {
+            record_error("moltis_sandbox_build_image", SANDBOX_BASE_IMAGE_INVALID);
+            return encode_error(
+                SANDBOX_BASE_IMAGE_INVALID,
+                "base image contains invalid characters",
+            );
+        }
+
+        if packages.is_empty() {
+            record_error(
+                "moltis_sandbox_build_image",
+                SANDBOX_IMAGE_PACKAGES_REQUIRED,
+            );
+            return encode_error(SANDBOX_IMAGE_PACKAGES_REQUIRED, "packages list is empty");
+        }
+
+        if let Some(bad) = packages.iter().find(|p| !is_valid_package_name(p)) {
+            record_error("moltis_sandbox_build_image", SANDBOX_PACKAGE_NAME_INVALID);
+            return encode_error(
+                SANDBOX_PACKAGE_NAME_INVALID,
+                &format!("invalid package name: {bad}"),
+            );
+        }
+
+        let pkg_list = packages.join(" ");
+        let dockerfile_contents = format!(
+            "FROM {base}\n\
+RUN apt-get update && apt-get install -y {pkg_list}\n\
+RUN mkdir -p /home/sandbox\n\
+ENV HOME=/home/sandbox\n\
+WORKDIR /home/sandbox\n"
+        );
+
+        let tmp_dir = std::env::temp_dir().join(format!("moltis-build-{}", uuid::Uuid::new_v4()));
+        if let Err(error) = std::fs::create_dir_all(&tmp_dir) {
+            record_error("moltis_sandbox_build_image", SANDBOX_TMP_DIR_CREATE_FAILED);
+            return encode_error(SANDBOX_TMP_DIR_CREATE_FAILED, &error.to_string());
+        }
+
+        let dockerfile_path = tmp_dir.join("Dockerfile");
+        if let Err(error) = std::fs::write(&dockerfile_path, &dockerfile_contents) {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            record_error(
+                "moltis_sandbox_build_image",
+                SANDBOX_DOCKERFILE_WRITE_FAILED,
+            );
+            return encode_error(SANDBOX_DOCKERFILE_WRITE_FAILED, &error.to_string());
+        }
+
+        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let result =
+            BRIDGE
+                .runtime
+                .block_on(builder.ensure_image(name, &dockerfile_path, &tmp_dir));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
+        match result {
+            Ok(tag) => encode_json(&SandboxBuildImageResponse { tag }),
+            Err(error) => {
+                record_error("moltis_sandbox_build_image", SANDBOX_IMAGE_BUILD_FAILED);
+                encode_error(SANDBOX_IMAGE_BUILD_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Returns the effective default sandbox image.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_get_default_image() -> *mut c_char {
+    record_call("moltis_sandbox_get_default_image");
+    trace_call("moltis_sandbox_get_default_image");
+
+    with_ffi_boundary(|| {
+        let config = moltis_config::discover_and_load();
+        let image = sandbox_effective_default_image(&config);
+        encode_json(&SandboxDefaultImageResponse { image })
+    })
+}
+
+/// Sets a runtime default sandbox image override.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_set_default_image(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_sandbox_set_default_image");
+    trace_call("moltis_sandbox_set_default_image");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SandboxSetDefaultImageRequest>(
+            "moltis_sandbox_set_default_image",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let config = moltis_config::discover_and_load();
+        if sandbox_backend_name(&config) == "none" {
+            record_error(
+                "moltis_sandbox_set_default_image",
+                SANDBOX_BACKEND_UNAVAILABLE,
+            );
+            return encode_error(SANDBOX_BACKEND_UNAVAILABLE, "no sandbox backend available");
+        }
+
+        let value = request
+            .image
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
+
+        *BRIDGE
+            .sandbox_default_image_override
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = value;
+
+        let image = sandbox_effective_default_image(&config);
+        encode_json(&SandboxDefaultImageResponse { image })
+    })
+}
+
+/// Returns shared `/home/sandbox` persistence config.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_get_shared_home() -> *mut c_char {
+    record_call("moltis_sandbox_get_shared_home");
+    trace_call("moltis_sandbox_get_shared_home");
+
+    with_ffi_boundary(|| {
+        let config = moltis_config::discover_and_load();
+        let response = sandbox_shared_home_config_from_config(&config);
+        encode_json(&response)
+    })
+}
+
+/// Updates shared `/home/sandbox` persistence config.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_set_shared_home(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_sandbox_set_shared_home");
+    trace_call("moltis_sandbox_set_shared_home");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SandboxSharedHomeUpdateRequest>(
+            "moltis_sandbox_set_shared_home",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let path = request
+            .path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+
+        let update_result = moltis_config::update_config(|cfg| {
+            cfg.tools.exec.sandbox.shared_home_dir = path.clone();
+            if request.enabled {
+                cfg.tools.exec.sandbox.home_persistence =
+                    moltis_config::schema::HomePersistenceConfig::Shared;
+            } else if matches!(
+                cfg.tools.exec.sandbox.home_persistence,
+                moltis_config::schema::HomePersistenceConfig::Shared
+            ) {
+                cfg.tools.exec.sandbox.home_persistence =
+                    moltis_config::schema::HomePersistenceConfig::Off;
+            }
+        });
+
+        match update_result {
+            Ok(saved_path) => {
+                let config = moltis_config::discover_and_load();
+                let response = SandboxSharedHomeSaveResponse {
+                    ok: true,
+                    restart_required: true,
+                    config_path: saved_path.display().to_string(),
+                    config: sandbox_shared_home_config_from_config(&config),
+                };
+                encode_json(&response)
+            },
+            Err(error) => {
+                record_error(
+                    "moltis_sandbox_set_shared_home",
+                    SANDBOX_SHARED_HOME_SAVE_FAILED,
+                );
+                encode_error(SANDBOX_SHARED_HOME_SAVE_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Returns running containers for the configured sandbox prefix.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_list_containers() -> *mut c_char {
+    record_call("moltis_sandbox_list_containers");
+    trace_call("moltis_sandbox_list_containers");
+
+    with_ffi_boundary(|| {
+        let config = moltis_config::discover_and_load();
+        let prefix = sandbox_container_prefix(&config);
+        match BRIDGE
+            .runtime
+            .block_on(moltis_tools::sandbox::list_running_containers(&prefix))
+        {
+            Ok(containers) => encode_json(&SandboxContainersResponse { containers }),
+            Err(error) => {
+                record_error(
+                    "moltis_sandbox_list_containers",
+                    SANDBOX_CONTAINERS_LIST_FAILED,
+                );
+                encode_error(SANDBOX_CONTAINERS_LIST_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Stops one sandbox container.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_stop_container(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_sandbox_stop_container");
+    trace_call("moltis_sandbox_stop_container");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SandboxContainerNameRequest>(
+            "moltis_sandbox_stop_container",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let name = request.name.trim();
+        if name.is_empty() {
+            record_error(
+                "moltis_sandbox_stop_container",
+                "SANDBOX_CONTAINER_NAME_REQUIRED",
+            );
+            return encode_error("SANDBOX_CONTAINER_NAME_REQUIRED", "name is required");
+        }
+
+        let config = moltis_config::discover_and_load();
+        let prefix = sandbox_container_prefix(&config);
+        if !name.starts_with(&prefix) {
+            record_error(
+                "moltis_sandbox_stop_container",
+                SANDBOX_CONTAINER_PREFIX_MISMATCH,
+            );
+            return encode_error(
+                SANDBOX_CONTAINER_PREFIX_MISMATCH,
+                "container name does not match expected prefix",
+            );
+        }
+
+        match BRIDGE
+            .runtime
+            .block_on(moltis_tools::sandbox::stop_container(name))
+        {
+            Ok(()) => encode_json(&OkResponse { ok: true }),
+            Err(error) => {
+                record_error(
+                    "moltis_sandbox_stop_container",
+                    SANDBOX_CONTAINER_STOP_FAILED,
+                );
+                encode_error(SANDBOX_CONTAINER_STOP_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Removes one sandbox container.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_remove_container(request_json: *const c_char) -> *mut c_char {
+    record_call("moltis_sandbox_remove_container");
+    trace_call("moltis_sandbox_remove_container");
+
+    with_ffi_boundary(|| {
+        let request = match parse_ffi_request::<SandboxContainerNameRequest>(
+            "moltis_sandbox_remove_container",
+            request_json,
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+
+        let name = request.name.trim();
+        if name.is_empty() {
+            record_error(
+                "moltis_sandbox_remove_container",
+                "SANDBOX_CONTAINER_NAME_REQUIRED",
+            );
+            return encode_error("SANDBOX_CONTAINER_NAME_REQUIRED", "name is required");
+        }
+
+        let config = moltis_config::discover_and_load();
+        let prefix = sandbox_container_prefix(&config);
+        if !name.starts_with(&prefix) {
+            record_error(
+                "moltis_sandbox_remove_container",
+                SANDBOX_CONTAINER_PREFIX_MISMATCH,
+            );
+            return encode_error(
+                SANDBOX_CONTAINER_PREFIX_MISMATCH,
+                "container name does not match expected prefix",
+            );
+        }
+
+        match BRIDGE
+            .runtime
+            .block_on(moltis_tools::sandbox::remove_container(name))
+        {
+            Ok(()) => encode_json(&OkResponse { ok: true }),
+            Err(error) => {
+                record_error(
+                    "moltis_sandbox_remove_container",
+                    SANDBOX_CONTAINER_REMOVE_FAILED,
+                );
+                encode_error(SANDBOX_CONTAINER_REMOVE_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Stops and removes all sandbox containers.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_clean_containers() -> *mut c_char {
+    record_call("moltis_sandbox_clean_containers");
+    trace_call("moltis_sandbox_clean_containers");
+
+    with_ffi_boundary(|| {
+        let config = moltis_config::discover_and_load();
+        let prefix = sandbox_container_prefix(&config);
+        match BRIDGE
+            .runtime
+            .block_on(moltis_tools::sandbox::clean_all_containers(&prefix))
+        {
+            Ok(removed) => encode_json(&SandboxCleanContainersResponse { ok: true, removed }),
+            Err(error) => {
+                record_error(
+                    "moltis_sandbox_clean_containers",
+                    SANDBOX_CONTAINERS_CLEAN_FAILED,
+                );
+                encode_error(SANDBOX_CONTAINERS_CLEAN_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Returns container runtime disk usage.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_disk_usage() -> *mut c_char {
+    record_call("moltis_sandbox_disk_usage");
+    trace_call("moltis_sandbox_disk_usage");
+
+    with_ffi_boundary(|| {
+        match BRIDGE
+            .runtime
+            .block_on(moltis_tools::sandbox::container_disk_usage())
+        {
+            Ok(usage) => encode_json(&SandboxDiskUsageResponse { usage }),
+            Err(error) => {
+                record_error("moltis_sandbox_disk_usage", SANDBOX_DISK_USAGE_FAILED);
+                encode_error(SANDBOX_DISK_USAGE_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
+/// Restarts the container daemon.
+#[unsafe(no_mangle)]
+pub extern "C" fn moltis_sandbox_restart_daemon() -> *mut c_char {
+    record_call("moltis_sandbox_restart_daemon");
+    trace_call("moltis_sandbox_restart_daemon");
+
+    with_ffi_boundary(|| {
+        match BRIDGE
+            .runtime
+            .block_on(moltis_tools::sandbox::restart_container_daemon())
+        {
+            Ok(()) => encode_json(&OkResponse { ok: true }),
+            Err(error) => {
+                record_error(
+                    "moltis_sandbox_restart_daemon",
+                    SANDBOX_DAEMON_RESTART_FAILED,
+                );
+                encode_error(SANDBOX_DAEMON_RESTART_FAILED, &error.to_string())
+            },
+        }
+    })
+}
+
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn moltis_shutdown() {
     record_call("moltis_shutdown");
     trace_call("moltis_shutdown");
     emit_log("INFO", "bridge", "Shutdown requested");
+
+    // Stop the HTTP server if it is running.
+    let mut guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(handle) = guard.take() {
+        emit_log(
+            "INFO",
+            "bridge",
+            &format!("Stopping httpd on {} during shutdown", handle.addr),
+        );
+        let _ = handle.shutdown_tx.send(());
+    }
+
+    emit_log("INFO", "bridge", "Shutdown complete");
 }
 
 #[allow(unsafe_code)]
@@ -2090,5 +3986,370 @@ mod tests {
             payload.get("label").and_then(Value::as_str),
             Some("New Session"),
         );
+    }
+
+    // ── Config / Identity / Soul tests ──────────────────────────────────
+
+    #[test]
+    fn get_config_returns_config_and_paths() {
+        let payload = json_from_ptr(moltis_get_config());
+
+        assert!(
+            payload.get("config").is_some(),
+            "get_config should return a 'config' field"
+        );
+        assert!(
+            payload.get("config_dir").and_then(Value::as_str).is_some(),
+            "get_config should return config_dir"
+        );
+        assert!(
+            payload.get("data_dir").and_then(Value::as_str).is_some(),
+            "get_config should return data_dir"
+        );
+
+        // The config should be an object with expected top-level keys.
+        let config = payload.get("config").unwrap_or_else(|| panic!("no config"));
+        assert!(
+            config.get("server").is_some(),
+            "config should have a 'server' section"
+        );
+    }
+
+    #[test]
+    fn save_config_returns_error_for_null() {
+        let payload = json_from_ptr(moltis_save_config(std::ptr::null()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "null_pointer_or_invalid_utf8");
+    }
+
+    #[test]
+    fn save_config_returns_error_for_invalid_json() {
+        let bad = CString::new("not valid json").unwrap_or_else(|e| panic!("{e}"));
+        let payload = json_from_ptr(moltis_save_config(bad.as_ptr()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "invalid_json");
+    }
+
+    #[test]
+    fn memory_status_returns_expected_fields() {
+        let payload = json_from_ptr(moltis_memory_status());
+
+        assert!(
+            payload.get("available").and_then(Value::as_bool).is_some(),
+            "memory_status should return available"
+        );
+        assert!(
+            payload.get("total_files").and_then(Value::as_u64).is_some(),
+            "memory_status should return total_files"
+        );
+        assert!(
+            payload
+                .get("total_chunks")
+                .and_then(Value::as_u64)
+                .is_some(),
+            "memory_status should return total_chunks"
+        );
+        assert!(
+            payload
+                .get("db_size_display")
+                .and_then(Value::as_str)
+                .is_some(),
+            "memory_status should return db_size_display"
+        );
+    }
+
+    #[test]
+    fn memory_config_get_returns_expected_fields() {
+        let payload = json_from_ptr(moltis_memory_config_get());
+
+        assert!(
+            payload.get("backend").and_then(Value::as_str).is_some(),
+            "memory_config_get should return backend"
+        );
+        assert!(
+            payload.get("citations").and_then(Value::as_str).is_some(),
+            "memory_config_get should return citations"
+        );
+        assert!(
+            payload
+                .get("disable_rag")
+                .and_then(Value::as_bool)
+                .is_some(),
+            "memory_config_get should return disable_rag"
+        );
+        assert!(
+            payload
+                .get("llm_reranking")
+                .and_then(Value::as_bool)
+                .is_some(),
+            "memory_config_get should return llm_reranking"
+        );
+    }
+
+    #[test]
+    fn memory_config_update_returns_error_for_null() {
+        let payload = json_from_ptr(moltis_memory_config_update(std::ptr::null()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "null_pointer_or_invalid_utf8");
+    }
+
+    #[test]
+    fn memory_config_update_round_trip() {
+        let request = serde_json::json!({
+            "backend": "builtin",
+            "citations": "auto",
+            "llm_reranking": false,
+            "session_export": false
+        })
+        .to_string();
+        let c_request = CString::new(request).unwrap_or_else(|e| panic!("{e}"));
+        let payload = json_from_ptr(moltis_memory_config_update(c_request.as_ptr()));
+
+        assert_eq!(
+            payload.get("backend").and_then(Value::as_str),
+            Some("builtin"),
+        );
+        assert_eq!(
+            payload.get("citations").and_then(Value::as_str),
+            Some("auto")
+        );
+    }
+
+    #[test]
+    fn memory_qmd_status_returns_expected_fields() {
+        let payload = json_from_ptr(moltis_memory_qmd_status());
+
+        assert!(
+            payload
+                .get("feature_enabled")
+                .and_then(Value::as_bool)
+                .is_some(),
+            "memory_qmd_status should return feature_enabled"
+        );
+        assert!(
+            payload.get("available").and_then(Value::as_bool).is_some(),
+            "memory_qmd_status should return available"
+        );
+    }
+
+    #[test]
+    fn get_soul_returns_soul_field() {
+        let payload = json_from_ptr(moltis_get_soul());
+
+        // soul field should exist (may be null or a string)
+        assert!(
+            payload.get("soul").is_some(),
+            "get_soul should return a 'soul' field"
+        );
+    }
+
+    #[test]
+    fn save_soul_returns_error_for_null() {
+        let payload = json_from_ptr(moltis_save_soul(std::ptr::null()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "null_pointer_or_invalid_utf8");
+    }
+
+    #[test]
+    fn save_identity_returns_error_for_null() {
+        let payload = json_from_ptr(moltis_save_identity(std::ptr::null()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "null_pointer_or_invalid_utf8");
+    }
+
+    #[test]
+    fn save_user_profile_returns_error_for_null() {
+        let payload = json_from_ptr(moltis_save_user_profile(std::ptr::null()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "null_pointer_or_invalid_utf8");
+    }
+
+    #[test]
+    fn list_env_vars_returns_env_vars_and_vault_status() {
+        let payload = json_from_ptr(moltis_list_env_vars());
+
+        assert!(
+            payload.get("env_vars").and_then(Value::as_array).is_some(),
+            "list_env_vars should return env_vars array"
+        );
+        assert!(
+            payload
+                .get("vault_status")
+                .and_then(Value::as_str)
+                .is_some(),
+            "list_env_vars should return vault_status"
+        );
+    }
+
+    #[test]
+    fn set_env_var_returns_error_for_null() {
+        let payload = json_from_ptr(moltis_set_env_var(std::ptr::null()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "null_pointer_or_invalid_utf8");
+    }
+
+    #[test]
+    fn set_env_var_rejects_invalid_key() {
+        let request = r#"{"key":"BAD-KEY","value":"secret"}"#;
+        let c_request = CString::new(request).unwrap_or_else(|e| panic!("{e}"));
+        let payload = json_from_ptr(moltis_set_env_var(c_request.as_ptr()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "ENV_KEY_INVALID");
+    }
+
+    #[test]
+    fn delete_env_var_returns_error_for_null() {
+        let payload = json_from_ptr(moltis_delete_env_var(std::ptr::null()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "null_pointer_or_invalid_utf8");
+    }
+
+    #[test]
+    fn set_and_delete_env_var_round_trip() {
+        let key = format!("MACOS_TEST_{}", uuid::Uuid::new_v4().simple());
+        let set_request = serde_json::json!({
+            "key": key,
+            "value": "secret-value"
+        })
+        .to_string();
+        let c_set_request = CString::new(set_request).unwrap_or_else(|e| panic!("{e}"));
+        let set_payload = json_from_ptr(moltis_set_env_var(c_set_request.as_ptr()));
+        assert_eq!(set_payload.get("ok").and_then(Value::as_bool), Some(true));
+
+        let list_payload = json_from_ptr(moltis_list_env_vars());
+        let env_vars = list_payload
+            .get("env_vars")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("env_vars missing"));
+        let item = env_vars
+            .iter()
+            .find(|entry| entry.get("key").and_then(Value::as_str) == Some(key.as_str()))
+            .unwrap_or_else(|| panic!("saved env var should appear in list"));
+        let id = item
+            .get("id")
+            .and_then(Value::as_i64)
+            .unwrap_or_else(|| panic!("env var id should be present"));
+
+        let delete_request = serde_json::json!({ "id": id }).to_string();
+        let c_delete_request = CString::new(delete_request).unwrap_or_else(|e| panic!("{e}"));
+        let delete_payload = json_from_ptr(moltis_delete_env_var(c_delete_request.as_ptr()));
+        assert_eq!(
+            delete_payload.get("ok").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn auth_status_returns_expected_fields() {
+        let payload = json_from_ptr(moltis_auth_status());
+
+        assert!(
+            payload
+                .get("auth_disabled")
+                .and_then(Value::as_bool)
+                .is_some(),
+            "auth_status should return auth_disabled"
+        );
+        assert!(
+            payload
+                .get("has_password")
+                .and_then(Value::as_bool)
+                .is_some(),
+            "auth_status should return has_password"
+        );
+        assert!(
+            payload
+                .get("has_passkeys")
+                .and_then(Value::as_bool)
+                .is_some(),
+            "auth_status should return has_passkeys"
+        );
+        assert!(
+            payload
+                .get("setup_complete")
+                .and_then(Value::as_bool)
+                .is_some(),
+            "auth_status should return setup_complete"
+        );
+    }
+
+    #[test]
+    fn auth_list_passkeys_returns_array() {
+        let payload = json_from_ptr(moltis_auth_list_passkeys());
+        assert!(
+            payload.get("passkeys").and_then(Value::as_array).is_some(),
+            "auth_list_passkeys should return passkeys"
+        );
+    }
+
+    #[test]
+    fn auth_password_change_rejects_short_password() {
+        let request = r#"{"new_password":"short"}"#;
+        let c_request = CString::new(request).unwrap_or_else(|e| panic!("{e}"));
+        let payload = json_from_ptr(moltis_auth_password_change(c_request.as_ptr()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "AUTH_PASSWORD_TOO_SHORT");
+    }
+
+    #[test]
+    fn auth_remove_passkey_returns_error_for_null() {
+        let payload = json_from_ptr(moltis_auth_remove_passkey(std::ptr::null()));
+
+        let code = payload
+            .get("error")
+            .and_then(|v| v.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(code, "null_pointer_or_invalid_utf8");
     }
 }

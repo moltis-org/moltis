@@ -55,6 +55,7 @@ moltis-routing         = { workspace = true }
 moltis-service-traits  = { workspace = true }
 moltis-sessions        = { workspace = true }
 moltis-skills          = { workspace = true }
+moltis-slack           = { optional = true, workspace = true }
 moltis-tailscale       = { optional = true, workspace = true }
 moltis-telegram        = { workspace = true }
 moltis-tls             = { optional = true, workspace = true }
@@ -112,6 +113,7 @@ default = [
   "prometheus",
   "push-notifications",
   "qmd",
+  "slack",
   "tailscale",
   "tls",
   "trusted-network",
@@ -141,6 +143,7 @@ openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
 qmd = ["dep:moltis-qmd"]
+slack = ["dep:moltis-slack"]
 tailscale = ["dep:moltis-tailscale"]
 tls = [
   "dep:axum-server",
