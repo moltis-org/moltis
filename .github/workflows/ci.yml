@@ -327,8 +327,9 @@ jobs:
 
       - name: Build Tailwind CSS
         run: |
-          npm install -g @tailwindcss/cli
-          cd crates/web/ui && ./build.sh
+          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-macos-arm64
+          chmod +x tailwindcss-macos-arm64
+          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-macos-arm64 ./build.sh
 
       - name: Build Swift bridge and generate Xcode project
         run: |
