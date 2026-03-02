@@ -53,7 +53,7 @@ impl ChannelWebhookVerifier for TeamsChannelWebhookVerifier {
                 .and_then(|v| v.to_str().ok());
 
             let matches =
-                provided.map_or(false, |p| p.as_bytes().ct_eq(expected.as_bytes()).into());
+                provided.is_some_and(|p| p.as_bytes().ct_eq(expected.as_bytes()).into());
 
             if !matches {
                 return Err(ChannelWebhookRejection::BadSignature(
