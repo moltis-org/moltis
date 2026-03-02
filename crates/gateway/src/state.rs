@@ -402,6 +402,10 @@ pub struct GatewayState {
     pub channel_webhook_dedup:
         std::sync::RwLock<crate::channel_webhook_dedup::ChannelWebhookDedupeStore>,
 
+    /// Per-(channel, account) rate limiter for channel webhooks.
+    pub channel_webhook_rate_limiter:
+        crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter,
+
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     /// Monotonically increasing sequence counter for broadcast events.
     pub seq: AtomicU64,
@@ -489,6 +493,8 @@ impl GatewayState {
             channel_webhook_dedup: std::sync::RwLock::new(
                 crate::channel_webhook_dedup::ChannelWebhookDedupeStore::new(),
             ),
+            channel_webhook_rate_limiter:
+                crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter::new(),
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
             #[cfg(feature = "graphql")]

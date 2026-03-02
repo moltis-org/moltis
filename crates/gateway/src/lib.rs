@@ -21,6 +21,7 @@ pub mod channel;
 pub mod channel_agent_tools;
 pub mod channel_webhook_dedup;
 pub mod channel_webhook_middleware;
+pub mod channel_webhook_rate_limit;
 pub mod channel_events;
 pub mod channel_store;
 pub mod chat;

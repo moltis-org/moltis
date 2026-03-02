@@ -6,7 +6,6 @@
 
 pub mod channel_webhook_middleware;
 pub mod config_view;
-#[cfg(test)]
 pub mod contract;
 pub mod error;
 pub mod gating;

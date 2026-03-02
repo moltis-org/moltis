@@ -3654,6 +3654,8 @@ pub async fn prepare_gateway(
                         match crate::channel_webhook_middleware::channel_webhook_gate(
                             verifier.as_ref(),
                             &gw_state.channel_webhook_dedup,
+                            &gw_state.channel_webhook_rate_limiter,
+                            &account_id,
                             &merged_headers,
                             &body,
                         ) {
@@ -3746,6 +3748,8 @@ pub async fn prepare_gateway(
                         match crate::channel_webhook_middleware::channel_webhook_gate(
                             verifier.as_ref(),
                             &gw_state.channel_webhook_dedup,
+                            &gw_state.channel_webhook_rate_limiter,
+                            &account_id,
                             &headers,
                             &body,
                         ) {
@@ -3828,6 +3832,8 @@ pub async fn prepare_gateway(
                         match crate::channel_webhook_middleware::channel_webhook_gate(
                             verifier.as_ref(),
                             &gw_state.channel_webhook_dedup,
+                            &gw_state.channel_webhook_rate_limiter,
+                            &account_id,
                             &headers,
                             &body,
                         ) {

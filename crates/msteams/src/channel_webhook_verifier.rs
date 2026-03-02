@@ -188,4 +188,46 @@ mod tests {
         let verifier = TeamsChannelWebhookVerifier::new(None, false);
         assert_eq!(verifier.channel_type(), ChannelType::MsTeams);
     }
+
+    // ── Contract tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn contract_rejects_empty_signature() {
+        // With require_secret=true, missing headers → BadSignature.
+        let verifier = TeamsChannelWebhookVerifier::new(
+            Some(Secret::new("secret".into())),
+            true,
+        );
+        moltis_channels::contract::channel_webhook_verifier_rejects_empty_signature(&verifier);
+    }
+
+    #[test]
+    fn contract_rejects_bad_signature() {
+        let verifier = TeamsChannelWebhookVerifier::new(
+            Some(Secret::new("correct-secret".into())),
+            true,
+        );
+        let headers = headers_with_secret("wrong-secret");
+        moltis_channels::contract::channel_webhook_verifier_rejects_bad_signature(
+            &verifier, &headers,
+        );
+    }
+
+    #[test]
+    fn contract_has_channel_type() {
+        let verifier = TeamsChannelWebhookVerifier::new(None, false);
+        moltis_channels::contract::channel_webhook_verifier_has_channel_type(&verifier);
+    }
+
+    #[test]
+    fn contract_has_positive_max_age() {
+        let verifier = TeamsChannelWebhookVerifier::new(None, false);
+        moltis_channels::contract::channel_webhook_verifier_has_positive_max_age(&verifier);
+    }
+
+    #[test]
+    fn contract_has_valid_rate_policy() {
+        let verifier = TeamsChannelWebhookVerifier::new(None, false);
+        moltis_channels::contract::channel_webhook_verifier_has_valid_rate_policy(&verifier);
+    }
 }

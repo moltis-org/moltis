@@ -42,6 +42,13 @@ pub trait ChannelWebhookVerifier: Send + Sync {
         Duration::from_secs(300)
     }
 
+    /// Per-account rate policy for this channel (default: 60 req/min, burst 10).
+    ///
+    /// Channels with higher expected webhook volume can override this.
+    fn rate_policy(&self) -> ChannelWebhookRatePolicy {
+        ChannelWebhookRatePolicy::default()
+    }
+
     /// The channel type this verifier handles. Used for metrics labels.
     fn channel_type(&self) -> ChannelType;
 }

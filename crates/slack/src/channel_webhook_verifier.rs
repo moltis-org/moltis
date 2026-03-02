@@ -72,6 +72,13 @@ impl ChannelWebhookVerifier for SlackChannelWebhookVerifier {
         })
     }
 
+    fn rate_policy(&self) -> moltis_channels::ChannelWebhookRatePolicy {
+        moltis_channels::ChannelWebhookRatePolicy {
+            max_requests_per_minute: 30,
+            burst: 10,
+        }
+    }
+
     fn channel_type(&self) -> ChannelType {
         ChannelType::Slack
     }
@@ -180,5 +187,55 @@ mod tests {
     fn channel_type_is_slack() {
         let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
         assert_eq!(verifier.channel_type(), ChannelType::Slack);
+    }
+
+    #[test]
+    fn rate_policy_is_30_per_minute() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        let policy = verifier.rate_policy();
+        assert_eq!(policy.max_requests_per_minute, 30);
+        assert_eq!(policy.burst, 10);
+    }
+
+    // ── Contract tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn contract_rejects_empty_signature() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        moltis_channels::contract::channel_webhook_verifier_rejects_empty_signature(&verifier);
+    }
+
+    #[test]
+    fn contract_rejects_bad_signature() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-slack-request-timestamp", "1700000000".parse().unwrap());
+        headers.insert(
+            "x-slack-signature",
+            "v0=0000000000000000000000000000000000000000000000000000000000000000"
+                .parse()
+                .unwrap(),
+        );
+        moltis_channels::contract::channel_webhook_verifier_rejects_bad_signature(
+            &verifier, &headers,
+        );
+    }
+
+    #[test]
+    fn contract_has_channel_type() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        moltis_channels::contract::channel_webhook_verifier_has_channel_type(&verifier);
+    }
+
+    #[test]
+    fn contract_has_positive_max_age() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        moltis_channels::contract::channel_webhook_verifier_has_positive_max_age(&verifier);
+    }
+
+    #[test]
+    fn contract_has_valid_rate_policy() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        moltis_channels::contract::channel_webhook_verifier_has_valid_rate_policy(&verifier);
     }
 }
