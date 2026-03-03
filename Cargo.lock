@@ -6194,7 +6194,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-httpd"
-version = "0.10.7"
+version = "0.10.11"
 dependencies = [
  "anyhow",
  "async-graphql",
