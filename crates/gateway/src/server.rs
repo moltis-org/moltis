@@ -1099,6 +1099,20 @@ fn spawn_openclaw_background_init(data_dir: PathBuf) {
 #[cfg(not(feature = "openclaw-import"))]
 fn spawn_openclaw_background_init(_data_dir: PathBuf) {}
 
+fn spawn_post_listener_warmups(
+    browser_service: Arc<dyn crate::services::BrowserService>,
+    browser_tool: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
+) {
+    tokio::spawn(async move {
+        browser_service.warmup().await;
+        if let Some(tool) = browser_tool
+            && let Err(error) = tool.warmup().await
+        {
+            warn!(%error, "browser tool warmup failed");
+        }
+    });
+}
+
 #[cfg(feature = "tailscale")]
 fn spawn_webauthn_tailscale_registration(
     registry: SharedWebAuthnRegistry,
@@ -1298,6 +1312,7 @@ pub(crate) struct BannerMeta {
     pub setup_code_display: Option<String>,
     pub webauthn_registry: Option<SharedWebAuthnRegistry>,
     pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
+    pub browser_tool_for_warmup: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
     pub config: moltis_config::schema::MoltisConfig,
     #[cfg(feature = "tailscale")]
     pub tailscale_mode: TailscaleMode,
@@ -1862,14 +1877,14 @@ pub async fn prepare_gateway(
     };
 
     #[cfg(feature = "tailscale")]
-    if explicit_rp_id.is_none() {
-        if let Some(registry) = webauthn_registry.as_ref() {
-            spawn_webauthn_tailscale_registration(
-                Arc::clone(registry),
-                default_scheme.to_string(),
-                port,
-            );
-        }
+    if explicit_rp_id.is_none()
+        && let Some(registry) = webauthn_registry.as_ref()
+    {
+        spawn_webauthn_tailscale_registration(
+            Arc::clone(registry),
+            default_scheme.to_string(),
+            port,
+        );
     }
 
     // If MOLTIS_PASSWORD is set and no password in DB yet, migrate it.
@@ -3378,6 +3393,8 @@ pub async fn prepare_gateway(
     #[cfg(feature = "graphql")]
     state.set_graphql_enabled(config.graphql.enabled);
 
+    let browser_tool_for_warmup: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>;
+
     // Wire live chat service (needs state reference, so done after state creation).
     {
         let broadcaster = Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
@@ -3734,6 +3751,7 @@ pub async fn prepare_gateway(
         }
 
         let shared_tool_registry = Arc::new(tokio::sync::RwLock::new(tool_registry));
+        browser_tool_for_warmup = shared_tool_registry.read().await.get_arc("browser");
         let mut chat_service = LiveChatService::new(
             Arc::clone(&registry),
             Arc::clone(&model_store),
@@ -4729,6 +4747,7 @@ pub async fn prepare_gateway(
             setup_code_display,
             webauthn_registry,
             browser_for_lifecycle,
+            browser_tool_for_warmup,
             config,
             #[cfg(feature = "tailscale")]
             tailscale_mode,
@@ -4850,6 +4869,8 @@ pub async fn start_gateway(
     let mut rustls_config: Option<rustls::ServerConfig> = None;
 
     let app = prepared.app;
+    let browser_for_warmup = Arc::clone(&banner.browser_for_lifecycle);
+    let browser_tool_for_warmup = banner.browser_tool_for_warmup.as_ref().map(Arc::clone);
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -5121,6 +5142,10 @@ pub async fn start_gateway(
         let tls_cfg = rustls_config.expect("rustls config must be set when TLS is active");
         let tcp_listener = tokio::net::TcpListener::bind(addr).await?;
         spawn_openclaw_background_init(banner.data_dir.clone());
+        spawn_post_listener_warmups(
+            Arc::clone(&browser_for_warmup),
+            browser_tool_for_warmup.as_ref().map(Arc::clone),
+        );
         crate::tls::serve_tls_with_http_redirect(tcp_listener, Arc::new(tls_cfg), app, port, bind)
             .await?;
         return Ok(());
@@ -5129,6 +5154,10 @@ pub async fn start_gateway(
     // Plain HTTP server (existing behavior, or TLS feature disabled).
     let listener = tokio::net::TcpListener::bind(addr).await?;
     spawn_openclaw_background_init(banner.data_dir.clone());
+    spawn_post_listener_warmups(
+        Arc::clone(&browser_for_warmup),
+        browser_tool_for_warmup.as_ref().map(Arc::clone),
+    );
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
