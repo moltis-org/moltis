@@ -5,36 +5,37 @@ repository.workspace = true
 version.workspace    = true
 
 [dependencies]
-askama         = { workspace = true }
-axum           = { workspace = true }
-axum-extra     = { features = ["cookie"], workspace = true }
-base64         = { workspace = true }
-chrono         = { features = ["serde"], workspace = true }
-futures        = { workspace = true }
-gix            = { workspace = true }
-include_dir    = { workspace = true }
+askama          = { workspace = true }
+axum            = { workspace = true }
+axum-extra      = { features = ["cookie"], workspace = true }
+base64          = { workspace = true }
+chrono          = { features = ["serde"], workspace = true }
+futures         = { workspace = true }
+gix             = { workspace = true }
+include_dir     = { optional = true, workspace = true }
 moltis-channels = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-cron     = { workspace = true }
 moltis-gateway  = { workspace = true }
-moltis-media   = { workspace = true }
-moltis-skills  = { workspace = true }
-moltis-tools   = { workspace = true }
-portable-pty   = { workspace = true }
-serde          = { workspace = true }
-serde_json     = { workspace = true }
-sysinfo        = { workspace = true }
-thiserror      = { workspace = true }
-tokio          = { workspace = true }
-tokio-util     = { workspace = true }
-tracing        = { workspace = true }
-url            = { workspace = true }
-uuid           = { workspace = true }
-which          = { workspace = true }
+moltis-media    = { workspace = true }
+moltis-skills   = { workspace = true }
+moltis-tools    = { workspace = true }
+portable-pty    = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+sysinfo         = { workspace = true }
+thiserror       = { workspace = true }
+tokio           = { workspace = true }
+tokio-util      = { workspace = true }
+tracing         = { workspace = true }
+url             = { workspace = true }
+uuid            = { workspace = true }
+which           = { workspace = true }
 
 [features]
 agent              = ["moltis-gateway/agent"]
-default            = []
+default            = ["embedded-assets"]
+embedded-assets    = ["dep:include_dir"]
 graphql            = []
 metrics            = ["moltis-gateway/metrics"]
 push-notifications = ["moltis-gateway/push-notifications"]

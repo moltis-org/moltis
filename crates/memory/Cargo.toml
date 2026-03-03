@@ -33,8 +33,10 @@ metrics          = ["dep:moltis-metrics"]
 [dependencies]
 anyhow                 = { workspace = true }
 async-trait            = { workspace = true }
+bytemuck               = { workspace = true }
 chrono                 = { features = ["serde"], workspace = true }
 directories.workspace  = true
+futures                = { workspace = true }
 llama-cpp-2            = { optional = true, workspace = true }
 moltis-agents          = { workspace = true }
 moltis-common          = { workspace = true }

@@ -171,6 +171,7 @@ toml_edit         = "0.22"
 # LLM provider crates (optional, behind feature flags)
 async-openai = { features = ["chat-completion"], version = "0.32" }
 base64       = "0.22"
+bytemuck     = { features = ["derive"], version = "1" }
 bytes        = "1"
 encoding_rs  = "0.8"
 fd-lock      = "4"
@@ -211,10 +212,10 @@ time           = { features = ["serde-human-readable"], version = "0.3" }
 tokio-rustls   = "0.26"
 # Cryptography / authentication
 argon2            = "0.5"
-subtle            = "2"
 chacha20poly1305  = { features = ["std"], version = "0.10" }
 p256              = "0.13"
 password-hash     = "0.5"
+subtle            = "2"
 webauthn-rs       = "0.5"
 webauthn-rs-proto = "0.5"
 # Web / HTTP utilities

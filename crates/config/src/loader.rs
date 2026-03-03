@@ -29,6 +29,9 @@ static CONFIG_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Override for the data directory, set via `set_data_dir()`.
 static DATA_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// Override for the share directory, set via `set_share_dir()`.
+static SHARE_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 /// Set a custom config directory. When set, config discovery only looks in
 /// this directory (project-local and user-global paths are skipped).
 /// Can be called multiple times (e.g. in tests) — each call replaces the
@@ -69,6 +72,53 @@ fn data_dir_override() -> Option<PathBuf> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
+}
+
+/// Set a custom share directory (for tests or alternative layouts).
+pub fn set_share_dir(path: PathBuf) {
+    *SHARE_DIR_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+}
+
+/// Clear the share directory override, restoring default discovery.
+pub fn clear_share_dir() {
+    *SHARE_DIR_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+fn share_dir_override() -> Option<PathBuf> {
+    SHARE_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// Returns the share directory for external assets (web files, WASM components).
+///
+/// Resolution order:
+/// 1. Programmatic override via `set_share_dir()`
+/// 2. `MOLTIS_SHARE_DIR` env var
+/// 3. `/usr/share/moltis/` (Linux system packages) — only if it exists
+/// 4. `data_dir()/share/` (`~/.moltis/share/`) — only if it exists
+/// 5. `None` (fall back to embedded assets)
+pub fn share_dir() -> Option<PathBuf> {
+    if let Some(dir) = share_dir_override() {
+        return Some(dir);
+    }
+    if let Ok(dir) = std::env::var("MOLTIS_SHARE_DIR")
+        && !dir.is_empty()
+    {
+        return Some(PathBuf::from(dir));
+    }
+    // System packages (Linux)
+    let system = PathBuf::from("/usr/share/moltis");
+    if system.is_dir() {
+        return Some(system);
+    }
+    // User data directory
+    let user = data_dir().join("share");
+    if user.is_dir() {
+        return Some(user);
+    }
+    None
 }
 
 /// Load config from the given path (any supported format).
@@ -1006,8 +1056,8 @@ fn write_default_config(path: &Path, config: &MoltisConfig) -> crate::Result<()>
 ///
 /// The config is serialized to a JSON value, env overrides are merged in,
 /// then deserialized back. Only env vars with the `MOLTIS_` prefix are
-/// considered. `MOLTIS_CONFIG_DIR`, `MOLTIS_DATA_DIR`, `MOLTIS_ASSETS_DIR`,
-/// `MOLTIS_TOKEN`, `MOLTIS_PASSWORD`, `MOLTIS_TAILSCALE`,
+/// considered. `MOLTIS_CONFIG_DIR`, `MOLTIS_DATA_DIR`, `MOLTIS_SHARE_DIR`,
+/// `MOLTIS_ASSETS_DIR`, `MOLTIS_TOKEN`, `MOLTIS_PASSWORD`, `MOLTIS_TAILSCALE`,
 /// `MOLTIS_WEBAUTHN_RP_ID`, and `MOLTIS_WEBAUTHN_ORIGIN` are excluded
 /// (they are handled separately).
 pub fn apply_env_overrides(config: MoltisConfig) -> MoltisConfig {
@@ -1025,6 +1075,7 @@ fn apply_env_overrides_with(
     const EXCLUDED: &[&str] = &[
         "MOLTIS_CONFIG_DIR",
         "MOLTIS_DATA_DIR",
+        "MOLTIS_SHARE_DIR",
         "MOLTIS_ASSETS_DIR",
         "MOLTIS_TOKEN",
         "MOLTIS_PASSWORD",
@@ -1789,6 +1840,47 @@ name = "Rex"
 
         let on_disk = std::fs::read_to_string(dir.path().join("SOUL.md")).unwrap();
         assert_eq!(on_disk, custom);
+
+        clear_data_dir();
+    }
+
+    // ── share_dir tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn share_dir_override_takes_precedence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_share_dir(dir.path().to_path_buf());
+
+        let result = share_dir();
+        assert_eq!(result, Some(dir.path().to_path_buf()));
+
+        clear_share_dir();
+    }
+
+    #[test]
+    fn share_dir_returns_none_when_no_source() {
+        clear_share_dir();
+        // Without an override, env var, or existing directories, share_dir
+        // should return None (unless /usr/share/moltis or ~/.moltis/share
+        // happens to exist on the test machine).
+        let _ = share_dir();
+    }
+
+    #[test]
+    fn share_dir_data_dir_fallback() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+        clear_share_dir();
+
+        // Without the share/ subdirectory, should not return data_dir/share
+        let result = share_dir();
+        assert_ne!(result, Some(dir.path().join("share")));
+
+        // Create the share/ subdirectory
+        std::fs::create_dir(dir.path().join("share")).unwrap();
+        let result = share_dir();
+        assert_eq!(result, Some(dir.path().join("share")));
 
         clear_data_dir();
     }

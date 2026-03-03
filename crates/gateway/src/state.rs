@@ -264,7 +264,8 @@ pub struct GatewayInner {
     /// Auto-update availability state from GitHub releases.
     pub update: crate::update_check::UpdateAvailability,
     /// Last error per run_id (short-lived, for send_sync to retrieve).
-    pub run_errors: HashMap<String, String>,
+    /// Capped at 1000 entries; entries older than 5 minutes are evicted.
+    pub run_errors: HashMap<String, (String, Instant)>,
     /// Historical metrics data for time-series charts (in-memory cache).
     #[cfg(feature = "metrics")]
     pub metrics_history: MetricsHistory,
@@ -627,30 +628,46 @@ impl GatewayState {
     }
 
     /// Record a run error (for send_sync to retrieve).
+    /// Capped at 1000 entries; stale entries (>5 min) are evicted opportunistically.
     pub async fn set_run_error(&self, run_id: &str, error: String) {
-        self.inner
-            .write()
-            .await
-            .run_errors
-            .insert(run_id.to_string(), error);
+        const MAX_RUN_ERRORS: usize = 1000;
+        const TTL: std::time::Duration = std::time::Duration::from_secs(300);
+        let mut inner = self.inner.write().await;
+        let now = Instant::now();
+        // Opportunistic eviction of stale entries
+        if inner.run_errors.len() >= MAX_RUN_ERRORS {
+            inner
+                .run_errors
+                .retain(|_, (_, ts)| now.duration_since(*ts) < TTL);
+        }
+        inner.run_errors.insert(run_id.to_string(), (error, now));
     }
 
     /// Take (and remove) the last error for a run_id.
     pub async fn last_run_error(&self, run_id: &str) -> Option<String> {
-        self.inner.write().await.run_errors.remove(run_id)
+        self.inner
+            .write()
+            .await
+            .run_errors
+            .remove(run_id)
+            .map(|(msg, _)| msg)
     }
 
     /// Append a status line (e.g. tool use, model selection) to the channel
     /// status log for a session. These are drained and appended as a logbook
-    /// when the final response is delivered.
+    /// when the final response is delivered. Capped at 100 entries per session
+    /// to prevent unbounded growth.
     pub async fn push_channel_status_log(&self, session_key: &str, message: String) {
-        self.inner
-            .write()
-            .await
+        const MAX_STATUS_LOG_ENTRIES: usize = 100;
+        let mut inner = self.inner.write().await;
+        let log = inner
             .channel_status_log
             .entry(session_key.to_string())
-            .or_default()
-            .push(message);
+            .or_default();
+        if log.len() >= MAX_STATUS_LOG_ENTRIES {
+            log.drain(..log.len() - MAX_STATUS_LOG_ENTRIES + 1);
+        }
+        log.push(message);
     }
 
     /// Drain all buffered status log entries for a session.

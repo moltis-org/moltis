@@ -779,15 +779,23 @@ pub struct ServerConfig {
     ///
     /// Defaults to `https://www.moltis.org/releases.json` when unset.
     pub update_releases_url: Option<String>,
+    /// Maximum number of SQLite pool connections. Lower values reduce memory
+    /// usage for personal gateways. Defaults to 5.
+    #[serde(default = "default_db_pool_max_connections")]
+    pub db_pool_max_connections: u32,
     /// Base URL for the Shiki syntax-highlighting library loaded by the web UI.
     ///
-    /// Defaults to `https://esm.sh/shiki@3.2.1/bundle/web` when unset.
+    /// Defaults to `https://esm.sh/shiki@3.2.1?bundle` when unset.
     /// Set to an alternative CDN or a self-hosted URL to override.
     pub shiki_cdn_url: Option<String>,
 }
 
 fn default_log_buffer_size() -> usize {
     1000
+}
+
+fn default_db_pool_max_connections() -> u32 {
+    5
 }
 
 impl Default for ServerConfig {
@@ -799,6 +807,7 @@ impl Default for ServerConfig {
             ws_request_logs: false,
             log_buffer_size: default_log_buffer_size(),
             update_releases_url: None,
+            db_pool_max_connections: default_db_pool_max_connections(),
             shiki_cdn_url: None,
         }
     }

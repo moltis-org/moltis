@@ -524,9 +524,13 @@ jobs:
           MATRIX_ARCH: ${{ matrix.arch }}
         run: |
           PKG_DIR="pkg-root"
-          mkdir -p "$PKG_DIR/usr/bin"
+          mkdir -p "$PKG_DIR/usr/bin" "$PKG_DIR/usr/share/moltis/web" "$PKG_DIR/usr/share/moltis/wasm"
           cp "target/$BUILD_TARGET/release/moltis" "$PKG_DIR/usr/bin/moltis"
           chmod 755 "$PKG_DIR/usr/bin/moltis"
+          cp -R crates/web/src/assets/. "$PKG_DIR/usr/share/moltis/web/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" "$PKG_DIR/usr/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" "$PKG_DIR/usr/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" "$PKG_DIR/usr/share/moltis/wasm/"
 
           cat > "$PKG_DIR/.PKGINFO" <<PKGINFO
           pkgname = moltis
@@ -633,9 +637,13 @@ jobs:
 
           # Build AppDir structure
           APP_DIR="moltis.AppDir"
-          mkdir -p "$APP_DIR/usr/bin"
+          mkdir -p "$APP_DIR/usr/bin" "$APP_DIR/usr/share/moltis/web" "$APP_DIR/usr/share/moltis/wasm"
           cp "target/$BUILD_TARGET/release/moltis" "$APP_DIR/usr/bin/moltis"
           chmod 755 "$APP_DIR/usr/bin/moltis"
+          cp -R crates/web/src/assets/. "$APP_DIR/usr/share/moltis/web/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" "$APP_DIR/usr/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" "$APP_DIR/usr/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" "$APP_DIR/usr/share/moltis/wasm/"
 
           # Create .desktop file
           cat > "$APP_DIR/moltis.desktop" <<DESKTOP
@@ -659,6 +667,7 @@ jobs:
           #!/bin/sh
           SELF=$(readlink -f "$0")
           HERE=${SELF%/*}
+          export MOLTIS_SHARE_DIR="$HERE/usr/share/moltis"
           exec "$HERE/usr/bin/moltis" "$@"
           APPRUN
           chmod +x "$APP_DIR/AppRun"
@@ -811,8 +820,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_TARGET: ${{ matrix.target }}
         run: |
-          cp "target/$BUILD_TARGET/release/moltis" moltis
-          tar czf "moltis-${VERSION}-${BUILD_TARGET}.tar.gz" moltis
+          PKG_DIR="moltis-package"
+          mkdir -p "$PKG_DIR/share/moltis/web" "$PKG_DIR/share/moltis/wasm"
+          cp "target/$BUILD_TARGET/release/moltis" "$PKG_DIR/moltis"
+          cp -R crates/web/src/assets/. "$PKG_DIR/share/moltis/web/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" "$PKG_DIR/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" "$PKG_DIR/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" "$PKG_DIR/share/moltis/wasm/"
+          tar czf "moltis-${VERSION}-${BUILD_TARGET}.tar.gz" -C "$PKG_DIR" moltis share
 
       - name: Sign with Sigstore and generate checksums
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
@@ -968,7 +983,7 @@ jobs:
 
       - name: Build release binary
         shell: bash
-        run: cargo build --release --target "$BUILD_TARGET"
+        run: cargo build --release --target "$BUILD_TARGET" --features embedded-assets,embedded-wasm
 
       - name: Determine package version
         id: version
@@ -1426,7 +1441,9 @@ jobs:
             end
 
             def install
-              bin.install "moltis"
+              libexec.install "moltis"
+              share.install "share/moltis"
+              (bin/"moltis").write_env_script libexec/"moltis", MOLTIS_SHARE_DIR: share/"moltis"
             end
 
             test do
