@@ -639,10 +639,7 @@ where
         .await
         .context("creating MLX model cache dir")?;
 
-    info!(
-        hf_repo,
-        "downloading custom MLX model from HuggingFace"
-    );
+    info!(hf_repo, "downloading custom MLX model from HuggingFace");
 
     let files = list_hf_repo_files(hf_repo).await?;
     debug!(file_count = files.len(), "found files in HuggingFace repo");
@@ -1126,7 +1123,9 @@ mod tests {
     #[test]
     fn test_is_hf_repo_id_valid() {
         assert!(is_hf_repo_id("mlx-community/Qwen3.5-4B-MLX-4bit"));
-        assert!(is_hf_repo_id("mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"));
+        assert!(is_hf_repo_id(
+            "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+        ));
         assert!(is_hf_repo_id("bartowski/Llama-3.2-1B-Instruct-GGUF"));
         assert!(is_hf_repo_id("org/model"));
     }
