@@ -14,6 +14,7 @@ import {
 	teardownMediaDrop,
 } from "./media-drop.js";
 import { bindModelComboEvents, setSessionModel } from "./models.js";
+import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "./nodes-selector.js";
 import { registerPrefix, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -975,6 +976,16 @@ var chatPageHTML =
 	'<div id="modelDropdownList" class="model-dropdown-list"></div>' +
 	"</div>" +
 	"</div>" +
+	'<div id="nodeCombo" class="model-combo hidden">' +
+	'<button id="nodeComboBtn" class="model-combo-btn" type="button">' +
+	'<span class="icon icon-sm icon-server" style="flex-shrink:0;"></span>' +
+	'<span id="nodeComboLabel">Local</span>' +
+	'<span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>' +
+	"</button>" +
+	'<div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1">' +
+	'<div id="nodeDropdownList" class="model-dropdown-list"></div>' +
+	"</div>" +
+	"</div>" +
 	'<button id="sandboxToggle" class="sandbox-toggle mobile-toolbar-extra text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;" title="Toggle sandbox mode">' +
 	'<span class="icon icon-md icon-lock" style="flex-shrink:0;"></span>' +
 	'<span id="sandboxLabel">sandboxed</span>' +
@@ -1068,6 +1079,14 @@ registerPrefix(
 		S.setModelSearchInput(S.$("modelSearchInput"));
 		S.setModelDropdownList(S.$("modelDropdownList"));
 		bindModelComboEvents();
+
+		S.setNodeCombo(S.$("nodeCombo"));
+		S.setNodeComboBtn(S.$("nodeComboBtn"));
+		S.setNodeComboLabel(S.$("nodeComboLabel"));
+		S.setNodeDropdown(S.$("nodeDropdown"));
+		S.setNodeDropdownList(S.$("nodeDropdownList"));
+		bindNodeComboEvents();
+		fetchNodes();
 
 		S.setSandboxToggleBtn(S.$("sandboxToggle"));
 		S.setSandboxLabel(S.$("sandboxLabel"));
@@ -1180,6 +1199,7 @@ registerPrefix(
 	function teardownChat() {
 		teardownVoiceInput();
 		teardownMediaDrop();
+		unbindNodeEvents();
 		slashHideMenu();
 		if (mobileToolbarResizeHandler) {
 			window.removeEventListener("resize", mobileToolbarResizeHandler);
@@ -1199,6 +1219,11 @@ registerPrefix(
 		S.setModelDropdown(null);
 		S.setModelSearchInput(null);
 		S.setModelDropdownList(null);
+		S.setNodeCombo(null);
+		S.setNodeComboBtn(null);
+		S.setNodeComboLabel(null);
+		S.setNodeDropdown(null);
+		S.setNodeDropdownList(null);
 		S.setSandboxToggleBtn(null);
 		S.setSandboxLabel(null);
 	},

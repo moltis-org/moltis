@@ -99,7 +99,9 @@ test.describe("Sandboxes page – Shared home settings", () => {
 			enabled: false,
 			path: "/tmp/moltis-new-shared",
 		});
-		await expect(sharedHomeSection.getByText("Saved. Restart Moltis to apply shared folder changes.", { exact: true })).toBeVisible();
+		await expect(
+			sharedHomeSection.getByText("Saved. Restart Moltis to apply shared folder changes.", { exact: true }),
+		).toBeVisible();
 		await expect(sharedHomeSection.getByText("disabled (off)")).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
@@ -146,7 +148,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 		});
 
 		await navigateAndWait(page, "/settings/sandboxes");
-		expect(containersFetched).toBe(true);
+		await expect.poll(() => containersFetched, { timeout: 10_000 }).toBe(true);
 
 		expect(pageErrors).toEqual([]);
 	});

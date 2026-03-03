@@ -55,6 +55,7 @@ pub mod exec;
 pub mod image_cache;
 pub mod location;
 pub mod map;
+pub mod nodes;
 pub mod policy;
 pub mod process;
 pub mod sandbox;

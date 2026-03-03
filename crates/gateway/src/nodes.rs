@@ -8,6 +8,13 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// A provider discovered on a remote node.
+#[derive(Debug, Clone)]
+pub struct NodeProviderEntry {
+    pub provider: String,
+    pub models: Vec<String>,
+}
+
 /// A connected device node (macOS, iOS, Android).
 #[derive(Debug, Clone)]
 pub struct NodeSession {
@@ -22,6 +29,20 @@ pub struct NodeSession {
     pub path_env: Option<String>,
     pub remote_ip: Option<String>,
     pub connected_at: Instant,
+    // ── Telemetry fields (updated by node.telemetry events) ──────────
+    pub mem_total: Option<u64>,
+    pub mem_available: Option<u64>,
+    pub cpu_count: Option<u32>,
+    pub cpu_usage: Option<f32>,
+    pub uptime_secs: Option<u64>,
+    pub services: Vec<String>,
+    pub last_telemetry: Option<Instant>,
+    // ── Extended telemetry (P1) ──────────────────────────────────────
+    pub disk_total: Option<u64>,
+    pub disk_available: Option<u64>,
+    pub runtimes: Vec<String>,
+    // ── Provider discovery (P1) ─────────────────────────────────────
+    pub providers: Vec<NodeProviderEntry>,
 }
 
 /// Registry of connected device nodes and their capabilities.
@@ -61,6 +82,10 @@ impl NodeRegistry {
         self.nodes.get(node_id)
     }
 
+    pub fn get_mut(&mut self, node_id: &str) -> Option<&mut NodeSession> {
+        self.nodes.get_mut(node_id)
+    }
+
     pub fn list(&self) -> Vec<&NodeSession> {
         self.nodes.values().collect()
     }
@@ -74,6 +99,34 @@ impl NodeRegistry {
     pub fn rename(&mut self, node_id: &str, display_name: &str) -> Result<()> {
         let node = self.nodes.get_mut(node_id).ok_or(Error::NodeNotFound)?;
         node.display_name = Some(display_name.to_string());
+        Ok(())
+    }
+
+    /// Update telemetry data for a node.
+    pub fn update_telemetry(
+        &mut self,
+        node_id: &str,
+        mem_total: Option<u64>,
+        mem_available: Option<u64>,
+        cpu_count: Option<u32>,
+        cpu_usage: Option<f32>,
+        uptime_secs: Option<u64>,
+        services: Vec<String>,
+        disk_total: Option<u64>,
+        disk_available: Option<u64>,
+        runtimes: Vec<String>,
+    ) -> Result<()> {
+        let node = self.nodes.get_mut(node_id).ok_or(Error::NodeNotFound)?;
+        node.mem_total = mem_total;
+        node.mem_available = mem_available;
+        node.cpu_count = cpu_count;
+        node.cpu_usage = cpu_usage;
+        node.uptime_secs = uptime_secs;
+        node.services = services;
+        node.disk_total = disk_total;
+        node.disk_available = disk_available;
+        node.runtimes = runtimes;
+        node.last_telemetry = Some(Instant::now());
         Ok(())
     }
 
