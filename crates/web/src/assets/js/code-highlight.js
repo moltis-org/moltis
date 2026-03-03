@@ -6,22 +6,32 @@
 // history messages are loaded.
 
 var highlighter = null;
+var highlighterInitPromise = null;
+var languageLoadPromises = new Map();
 
 /**
  * Initialize the Shiki highlighter. Call once at app startup (fire-and-forget).
  * Safe to call multiple times — subsequent calls are no-ops.
  */
 export async function initHighlighter() {
-	if (highlighter) return;
-	try {
-		var shiki = await import("shiki");
-		highlighter = await shiki.createHighlighter({
-			themes: ["github-dark", "github-light"],
-			langs: Object.keys(shiki.bundledLanguages),
-		});
-	} catch (err) {
-		console.warn("[shiki] failed to initialize highlighter:", err);
+	if (highlighter) return highlighter;
+	if (highlighterInitPromise) {
+		await highlighterInitPromise;
+		return highlighter;
 	}
+	highlighterInitPromise = (async () => {
+		try {
+			var shiki = await import("shiki");
+			// Load only themes at startup; grammars are loaded on demand per language.
+			highlighter = await shiki.createHighlighter({
+				themes: ["github-dark", "github-light"],
+			});
+		} catch (err) {
+			console.warn("[shiki] failed to initialize highlighter:", err);
+		}
+	})();
+	await highlighterInitPromise;
+	return highlighter;
 }
 
 /** Returns whether the highlighter has finished loading. */
@@ -38,48 +48,81 @@ export function isReady() {
  *
  * @param {HTMLElement} containerEl
  */
-export function highlightCodeBlocks(containerEl) {
-	if (!highlighter || !containerEl) return;
+async function ensureLanguageLoaded(lang) {
+	if (!(highlighter && lang)) return false;
+	var loadedLangs = highlighter.getLoadedLanguages();
+	if (loadedLangs.includes(lang)) return true;
+	var inFlight = languageLoadPromises.get(lang);
+	if (!inFlight) {
+		inFlight = highlighter
+			.loadLanguage(lang)
+			.catch(() => {
+				// Unknown/unsupported language — leave code block unhighlighted.
+			})
+			.finally(() => {
+				languageLoadPromises.delete(lang);
+			});
+		languageLoadPromises.set(lang, inFlight);
+	}
+	await inFlight;
+	return highlighter.getLoadedLanguages().includes(lang);
+}
+
+function applyShikiStylesToPre(codeEl, shikiPre) {
+	var parentPre = codeEl.parentElement;
+	if (!(parentPre && parentPre.tagName === "PRE")) return;
+	// Copy Shiki's style attribute to the parent <pre> for theming.
+	parentPre.style.cssText = shikiPre.style.cssText;
+}
+
+function applyShikiMarkupToCode(codeEl, shikiPre) {
+	var shikiCode = shikiPre.querySelector("code");
+	if (!shikiCode) return;
+	codeEl.innerHTML = shikiCode.innerHTML; // eslint-disable-line no-unsanitized/property
+	codeEl.classList.add("shiki");
+	for (var cls of shikiPre.classList) {
+		if (cls !== "shiki") codeEl.classList.add(cls);
+	}
+}
+
+function parseShikiPre(highlightedHtml) {
+	var temp = document.createElement("div");
+	// Safe: codeToHtml produces deterministic syntax-highlighted markup
+	// from plain-text code content. The input (codeEl.textContent) is
+	// already HTML-escaped by renderMarkdown(). Shiki does not pass
+	// through raw user HTML — it tokenizes and wraps in <span> tags.
+	temp.innerHTML = highlightedHtml; // eslint-disable-line no-unsanitized/property
+	return temp.querySelector("pre.shiki");
+}
+
+async function highlightCodeElement(codeEl) {
+	if (codeEl.querySelector(".shiki") || codeEl.classList.contains("shiki")) return;
+	var lang = codeEl.getAttribute("data-lang") || "";
+	if (!(await ensureLanguageLoaded(lang))) return;
+	var raw = codeEl.textContent || "";
+	try {
+		var highlightedHtml = highlighter.codeToHtml(raw, {
+			lang: lang,
+			themes: {
+				light: "github-light",
+				dark: "github-dark",
+			},
+		});
+		var shikiPre = parseShikiPre(highlightedHtml);
+		if (!shikiPre) return;
+		applyShikiStylesToPre(codeEl, shikiPre);
+		applyShikiMarkupToCode(codeEl, shikiPre);
+	} catch (_err) {
+		// Highlighting failed for this block — leave it as plain text.
+	}
+}
+
+export async function highlightCodeBlocks(containerEl) {
+	if (!containerEl) return;
+	await initHighlighter();
+	if (!highlighter) return;
 	var codeEls = containerEl.querySelectorAll("pre code[data-lang]");
 	for (var codeEl of codeEls) {
-		if (codeEl.querySelector(".shiki") || codeEl.classList.contains("shiki")) continue;
-		var lang = codeEl.getAttribute("data-lang") || "";
-		var loadedLangs = highlighter.getLoadedLanguages();
-		if (!loadedLangs.includes(lang)) continue;
-		var raw = codeEl.textContent || "";
-		try {
-			var html = highlighter.codeToHtml(raw, {
-				lang: lang,
-				themes: {
-					light: "github-light",
-					dark: "github-dark",
-				},
-			});
-			// Safe: codeToHtml produces deterministic syntax-highlighted markup
-			// from plain-text code content. The input (codeEl.textContent) is
-			// already HTML-escaped by renderMarkdown(). Shiki does not pass
-			// through raw user HTML — it tokenizes and wraps in <span> tags.
-			var temp = document.createElement("div");
-			temp.innerHTML = html; // eslint-disable-line no-unsanitized/property
-			var shikiPre = temp.querySelector("pre.shiki");
-			if (shikiPre) {
-				// Copy Shiki's style attribute to the parent <pre> for theming
-				var parentPre = codeEl.parentElement;
-				if (parentPre && parentPre.tagName === "PRE") {
-					parentPre.style.cssText = shikiPre.style.cssText;
-				}
-				var shikiCode = shikiPre.querySelector("code");
-				if (shikiCode) {
-					codeEl.innerHTML = shikiCode.innerHTML; // eslint-disable-line no-unsanitized/property
-					codeEl.classList.add("shiki");
-					// Copy shiki theme classes onto code element
-					for (var cls of shikiPre.classList) {
-						if (cls !== "shiki") codeEl.classList.add(cls);
-					}
-				}
-			}
-		} catch (_err) {
-			// Highlighting failed for this block — leave it as plain text.
-		}
+		await highlightCodeElement(codeEl);
 	}
 }

@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, waitForWsConnected } = require("../helpers");
 
 test.describe("Code block syntax highlighting", () => {
 	test("code blocks get data-lang attribute and language badge", async ({ page }) => {
@@ -13,7 +13,7 @@ test.describe("Code block syntax highlighting", () => {
 			var appUrl = new URL(appScript.src, window.location.origin);
 			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			var helpers = await import(`${prefix}js/helpers.js`);
-			var markdown = "Here is some code:\n```rust\nfn main() {\n    println!(\"hello\");\n}\n```";
+			var markdown = 'Here is some code:\n```rust\nfn main() {\n    println!("hello");\n}\n```';
 			var existing = document.getElementById("e2e-code-highlight-fixture");
 			if (existing) existing.remove();
 			var fixture = document.createElement("div");
@@ -43,23 +43,6 @@ test.describe("Code block syntax highlighting", () => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
-		// Wait for the shiki highlighter to initialize
-		await expect
-			.poll(
-				async () => {
-					return page.evaluate(async () => {
-						var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-						if (!appScript) return false;
-						var appUrl = new URL(appScript.src, window.location.origin);
-						var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-						var codeHighlight = await import(`${prefix}js/code-highlight.js`);
-						return codeHighlight.isReady();
-					});
-				},
-				{ timeout: 15_000 },
-			)
-			.toBe(true);
-
 		// Add a message and highlight it
 		await page.evaluate(async () => {
 			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
@@ -67,6 +50,7 @@ test.describe("Code block syntax highlighting", () => {
 			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			var helpers = await import(`${prefix}js/helpers.js`);
 			var codeHighlight = await import(`${prefix}js/code-highlight.js`);
+			await codeHighlight.initHighlighter();
 			var markdown = "```javascript\nconst x = 42;\n```";
 			var existing = document.getElementById("e2e-shiki-fixture");
 			if (existing) existing.remove();
@@ -75,7 +59,7 @@ test.describe("Code block syntax highlighting", () => {
 			fixture.className = "msg assistant";
 			fixture.innerHTML = helpers.renderMarkdown(markdown); // eslint-disable-line no-unsanitized/property
 			document.body.appendChild(fixture);
-			codeHighlight.highlightCodeBlocks(fixture);
+			await codeHighlight.highlightCodeBlocks(fixture);
 		});
 
 		// Verify Shiki classes are applied
