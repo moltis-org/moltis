@@ -119,15 +119,7 @@ pub async fn auth_gate(
             next.run(request).await
         },
         AuthResult::SetupRequired => {
-            if path == "/onboarding" {
-                // Allow the onboarding page through during setup — it is only
-                // public while setup is incomplete. Once credentials are
-                // configured, normal auth applies and prevents access.
-                request.extensions_mut().insert(AuthIdentity {
-                    method: AuthMethod::Loopback,
-                });
-                next.run(request).await
-            } else if path.starts_with("/api/") || path.starts_with("/ws/") {
+            if path.starts_with("/api/") || path.starts_with("/ws/") {
                 if path.starts_with("/ws/") {
                     warn!(
                         path,
@@ -145,7 +137,16 @@ pub async fn auth_gate(
                 )
                     .into_response()
             } else {
-                Redirect::to("/onboarding").into_response()
+                // Allow all page paths through during setup — the SPA
+                // handles onboarding redirects itself (spa_fallback
+                // redirects to /onboarding when not yet onboarded).
+                // This prevents a redirect loop when the instance is
+                // already onboarded but auth credentials haven't been
+                // configured yet (#310).
+                request.extensions_mut().insert(AuthIdentity {
+                    method: AuthMethod::Loopback,
+                });
+                next.run(request).await
             }
         },
         AuthResult::Unauthorized => {

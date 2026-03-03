@@ -31,7 +31,7 @@ pub struct MetricsHistory {
 #[cfg(feature = "metrics")]
 impl MetricsHistory {
     /// Create a new history buffer with the given capacity.
-    /// Default: 360 points = 1 hour at 10-second intervals.
+    /// Default: 360 points = 3 hours at 30-second intervals.
     pub fn new(max_points: usize) -> Self {
         Self {
             points: VecDeque::with_capacity(max_points),
@@ -61,7 +61,7 @@ impl MetricsHistory {
 #[cfg(feature = "metrics")]
 impl Default for MetricsHistory {
     fn default() -> Self {
-        Self::new(360) // 1 hour at 10-second intervals
+        Self::new(360) // 3 hours at 30-second intervals
     }
 }
 
@@ -286,6 +286,8 @@ pub struct GatewayInner {
     /// Hostnames that were discovered after passkeys already existed.
     /// Users should sign in with password and register a fresh passkey on these hosts.
     pub passkey_host_update_pending: HashSet<String>,
+    /// Shiki CDN URL override from config (`server.shiki_cdn_url`), or `None` for default.
+    pub shiki_cdn_url: Option<String>,
 }
 
 impl GatewayInner {
@@ -319,6 +321,7 @@ impl GatewayInner {
             channel_command_mode_sessions: HashSet::new(),
             channels_offered: vec!["telegram".into()],
             passkey_host_update_pending: HashSet::new(),
+            shiki_cdn_url: None,
         }
     }
 

@@ -970,7 +970,7 @@ fn log_directory_write_probe(dir: &FsPath) {
 }
 
 #[cfg(feature = "openclaw-import")]
-fn log_startup_openclaw_detection() -> String {
+fn detect_openclaw_with_startup_logs() -> Option<moltis_openclaw_import::OpenClawDetection> {
     match moltis_openclaw_import::detect() {
         Some(detection) => {
             info!(
@@ -987,7 +987,7 @@ fn log_startup_openclaw_detection() -> String {
                 unsupported_channels = ?detection.unsupported_channels,
                 "startup OpenClaw installation detected"
             );
-            format!("detected ({})", detection.home_dir.display())
+            Some(detection)
         },
         None => {
             info!(
@@ -995,15 +995,206 @@ fn log_startup_openclaw_detection() -> String {
                 openclaw_profile_env = %env_var_or_unset("OPENCLAW_PROFILE"),
                 "startup OpenClaw installation not detected (checked OPENCLAW_HOME and ~/.openclaw)"
             );
-            "not detected".to_string()
+            None
         },
     }
 }
 
+#[cfg(feature = "openclaw-import")]
+fn deferred_openclaw_status() -> String {
+    "background detection pending".to_string()
+}
+
 #[cfg(not(feature = "openclaw-import"))]
-fn log_startup_openclaw_detection() -> String {
-    info!("startup OpenClaw import feature disabled; detection skipped");
+fn deferred_openclaw_status() -> String {
     "feature disabled".to_string()
+}
+
+#[cfg(feature = "openclaw-import")]
+#[cfg_attr(not(feature = "file-watcher"), allow(unused_variables))]
+fn spawn_openclaw_background_init(data_dir: PathBuf) {
+    tokio::spawn(async move {
+        #[cfg_attr(not(feature = "file-watcher"), allow(unused_variables))]
+        let detection = match tokio::task::spawn_blocking(detect_openclaw_with_startup_logs).await {
+            Ok(detection) => detection,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "startup OpenClaw background detection worker failed"
+                );
+                return;
+            },
+        };
+
+        #[cfg(feature = "file-watcher")]
+        if let Some(detection) = detection {
+            let import_agent = if detection.agent_ids.contains(&"main".to_string()) {
+                "main"
+            } else {
+                detection
+                    .agent_ids
+                    .first()
+                    .map(|s| s.as_str())
+                    .unwrap_or("main")
+            };
+            let sessions_dir = detection
+                .home_dir
+                .join("agents")
+                .join(import_agent)
+                .join("agent")
+                .join("sessions");
+            if sessions_dir.is_dir() {
+                match moltis_openclaw_import::watcher::ImportWatcher::start(sessions_dir) {
+                    Ok((_watcher, mut rx)) => {
+                        info!("openclaw: session watcher started");
+                        let watcher_data_dir = data_dir;
+                        tokio::spawn(async move {
+                            let _watcher = _watcher; // keep alive
+                            let mut interval =
+                                tokio::time::interval(std::time::Duration::from_secs(60));
+                            interval.tick().await; // skip first immediate tick
+                            loop {
+                                tokio::select! {
+                                    Some(_event) = rx.recv() => {
+                                        debug!("openclaw: session change detected, running incremental import");
+                                        let report = moltis_openclaw_import::import_sessions_only(
+                                            &detection, &watcher_data_dir,
+                                        );
+                                        if report.items_imported > 0 || report.items_updated > 0 {
+                                            info!(
+                                                imported = report.items_imported,
+                                                updated = report.items_updated,
+                                                skipped = report.items_skipped,
+                                                "openclaw: incremental session sync complete"
+                                            );
+                                        }
+                                    }
+                                    _ = interval.tick() => {
+                                        debug!("openclaw: periodic session sync");
+                                        let report = moltis_openclaw_import::import_sessions_only(
+                                            &detection, &watcher_data_dir,
+                                        );
+                                        if report.items_imported > 0 || report.items_updated > 0 {
+                                            info!(
+                                                imported = report.items_imported,
+                                                updated = report.items_updated,
+                                                skipped = report.items_skipped,
+                                                "openclaw: periodic session sync complete"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    },
+                    Err(error) => {
+                        warn!("openclaw: failed to start session watcher: {error}");
+                    },
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(feature = "openclaw-import"))]
+fn spawn_openclaw_background_init(_data_dir: PathBuf) {}
+
+fn spawn_post_listener_warmups(
+    browser_service: Arc<dyn crate::services::BrowserService>,
+    browser_tool: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
+) {
+    tokio::spawn(async move {
+        browser_service.warmup().await;
+        if let Some(tool) = browser_tool
+            && let Err(error) = tool.warmup().await
+        {
+            warn!(%error, "browser tool warmup failed");
+        }
+    });
+}
+
+#[cfg(feature = "tailscale")]
+fn spawn_webauthn_tailscale_registration(
+    registry: SharedWebAuthnRegistry,
+    default_scheme: String,
+    port: u16,
+) {
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        match CliTailscaleManager::new().hostname().await {
+            Ok(Some(ts_hostname)) => {
+                let ts_host = crate::auth_webauthn::normalize_host(&ts_hostname);
+                if ts_host.is_empty() {
+                    debug!(
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "tailscale hostname is empty, skipping WebAuthn RP registration"
+                    );
+                    return;
+                }
+
+                let ts_origin = format!("{default_scheme}://{ts_host}:{port}");
+                let origin_url = match webauthn_rs::prelude::Url::parse(&ts_origin) {
+                    Ok(origin_url) => origin_url,
+                    Err(error) => {
+                        warn!(
+                            hostname = %ts_hostname,
+                            origin = %ts_origin,
+                            %error,
+                            "invalid Tailscale WebAuthn origin URL"
+                        );
+                        return;
+                    },
+                };
+                let webauthn_state =
+                    match crate::auth_webauthn::WebAuthnState::new(&ts_host, &origin_url, &[]) {
+                        Ok(webauthn_state) => webauthn_state,
+                        Err(error) => {
+                            warn!(
+                                rp_id = %ts_host,
+                                %error,
+                                "failed to initialize Tailscale WebAuthn RP"
+                            );
+                            return;
+                        },
+                    };
+
+                let mut registry = registry.write().await;
+                if registry.contains_host(&ts_host) {
+                    debug!(
+                        rp_id = %ts_host,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "tailscale hostname already registered in WebAuthn registry"
+                    );
+                    return;
+                }
+
+                registry.add(ts_host.clone(), webauthn_state);
+                let origins = registry.get_all_origins();
+                drop(registry);
+
+                info!(
+                    rp_id = %ts_host,
+                    origin = %ts_origin,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "WebAuthn RP registered from Tailscale hostname"
+                );
+                info!(origins = ?origins, "WebAuthn passkeys origins updated");
+            },
+            Ok(None) => {
+                debug!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "tailscale hostname unavailable, skipping WebAuthn RP registration"
+                );
+            },
+            Err(error) => {
+                debug!(
+                    %error,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "tailscale hostname lookup failed, skipping WebAuthn RP registration"
+                );
+            },
+        }
+    });
 }
 
 #[cfg(feature = "openclaw-import")]
@@ -1121,6 +1312,7 @@ pub(crate) struct BannerMeta {
     pub setup_code_display: Option<String>,
     pub webauthn_registry: Option<SharedWebAuthnRegistry>,
     pub browser_for_lifecycle: Arc<dyn crate::services::BrowserService>,
+    pub browser_tool_for_warmup: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
     pub config: moltis_config::schema::MoltisConfig,
     #[cfg(feature = "tailscale")]
     pub tailscale_mode: TailscaleMode,
@@ -1225,9 +1417,12 @@ pub async fn prepare_gateway(
         )
     };
 
-    // Discover LLM providers from env + config + saved keys.
+    // Kick off discovery workers immediately, but build a static startup
+    // registry first so gateway startup does not block on network I/O.
+    let startup_discovery_pending =
+        ProviderRegistry::fire_discoveries(&effective_providers, &config_env_overrides);
     let registry = Arc::new(tokio::sync::RwLock::new(
-        ProviderRegistry::from_env_with_config_and_overrides(
+        ProviderRegistry::from_config_with_static_catalogs(
             &effective_providers,
             &config_env_overrides,
         ),
@@ -1246,7 +1441,7 @@ pub async fn prepare_gateway(
             provider_summary = %provider_summary,
             config_path = %config_path.display(),
             provider_keys_path = %provider_keys_path.display(),
-            "no LLM providers at startup; model/chat services remain active and will pick up providers after credentials are saved"
+            "no LLM providers in static startup catalog; model/chat services remain active and will pick up providers after credentials are saved or background discovery completes"
         );
     }
 
@@ -1449,11 +1644,35 @@ pub async fn prepare_gateway(
     });
     log_startup_config_storage_diagnostics();
 
-    let openclaw_startup_status = log_startup_openclaw_detection();
+    let openclaw_startup_status = deferred_openclaw_status();
 
     // Enable log persistence so entries survive restarts.
     if let Some(ref buf) = log_buffer {
-        buf.enable_persistence(data_dir.join("logs.jsonl"));
+        let log_buffer_for_persistence = buf.clone();
+        let persistence_path = data_dir.join("logs.jsonl");
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            match tokio::task::spawn_blocking(move || {
+                log_buffer_for_persistence.enable_persistence(persistence_path.clone());
+                persistence_path
+            })
+            .await
+            {
+                Ok(path) => {
+                    debug!(
+                        path = %path.display(),
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "startup log persistence initialized"
+                    );
+                },
+                Err(error) => {
+                    warn!(
+                        %error,
+                        "startup log persistence initialization worker failed"
+                    );
+                },
+            }
+        });
     }
     let db_path = data_dir.join("moltis.db");
     let db_pool = {
@@ -1461,17 +1680,31 @@ pub async fn prepare_gateway(
             sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
             std::str::FromStr,
         };
-        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+        let db_exists = db_path.exists();
+        let mut options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
             .expect("invalid database path")
             .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(std::time::Duration::from_secs(5));
-        sqlx::pool::PoolOptions::new()
+        if !db_exists {
+            // Setting journal_mode can briefly require an exclusive lock.
+            // For existing databases, preserve current mode to avoid startup stalls.
+            options = options.journal_mode(SqliteJournalMode::Wal);
+        }
+
+        let started = std::time::Instant::now();
+        let pool = sqlx::pool::PoolOptions::new()
             .max_connections(config.server.db_pool_max_connections)
             .connect_with(options)
             .await
-            .expect("failed to open moltis.db")
+            .expect("failed to open moltis.db");
+        debug!(
+            path = %db_path.display(),
+            db_exists,
+            elapsed_ms = started.elapsed().as_millis(),
+            "startup sqlite pool connected"
+        );
+        pool
     };
 
     // Run database migrations from each crate in dependency order.
@@ -1635,16 +1868,6 @@ pub async fn prepare_gateway(
                     }
                 }
             }
-
-            // Also register active Tailscale DNS host for remote access when available.
-            #[cfg(feature = "tailscale")]
-            if let Ok(Some(ts_hostname)) = CliTailscaleManager::new().hostname().await {
-                let ts_host = crate::auth_webauthn::normalize_host(&ts_hostname);
-                if !ts_host.is_empty() {
-                    let ts_origin = format!("{default_scheme}://{ts_host}:{port}");
-                    try_add(&ts_host, &ts_origin, &[]);
-                }
-            }
         }
 
         if any_ok {
@@ -1654,6 +1877,17 @@ pub async fn prepare_gateway(
             None
         }
     };
+
+    #[cfg(feature = "tailscale")]
+    if explicit_rp_id.is_none()
+        && let Some(registry) = webauthn_registry.as_ref()
+    {
+        spawn_webauthn_tailscale_registration(
+            Arc::clone(registry),
+            default_scheme.to_string(),
+            port,
+        );
+    }
 
     // If MOLTIS_PASSWORD is set and no password in DB yet, migrate it.
     if let Some(ref pw) = password
@@ -3007,11 +3241,12 @@ pub async fn prepare_gateway(
         vault.clone(),
     );
 
-    // Store discovered hook info and disabled set in state for the web UI.
+    // Store discovered hook info, disabled set, and config overrides in state for the web UI.
     {
         let mut inner = state.inner.write().await;
         inner.discovered_hooks = discovered_hooks_info;
         inner.disabled_hooks = persisted_disabled;
+        inner.shiki_cdn_url = config.server.shiki_cdn_url.clone();
         #[cfg(feature = "metrics")]
         {
             inner.metrics_history =
@@ -3073,6 +3308,81 @@ pub async fn prepare_gateway(
         &state,
     )));
 
+    // Finish startup model discovery in the background, then atomically swap
+    // in the fully discovered registry and notify connected clients.
+    if startup_discovery_pending.is_empty() {
+        debug!("startup model discovery skipped, no pending provider discoveries");
+    } else {
+        let registry_for_startup_discovery = Arc::clone(&registry);
+        let state_for_startup_discovery = Arc::clone(&state);
+        let provider_config_for_startup_discovery = effective_providers.clone();
+        let env_overrides_for_startup_discovery = config_env_overrides.clone();
+        tokio::spawn(async move {
+            let startup_discovery_started = std::time::Instant::now();
+            let prefetched = match tokio::task::spawn_blocking(move || {
+                ProviderRegistry::collect_discoveries(startup_discovery_pending)
+            })
+            .await
+            {
+                Ok(prefetched) => prefetched,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "startup background model discovery worker failed while collecting results"
+                    );
+                    return;
+                },
+            };
+
+            let prefetched_models: usize = prefetched.values().map(Vec::len).sum();
+            let new_registry = match tokio::task::spawn_blocking(move || {
+                ProviderRegistry::from_config_with_prefetched(
+                    &provider_config_for_startup_discovery,
+                    &env_overrides_for_startup_discovery,
+                    &prefetched,
+                )
+            })
+            .await
+            {
+                Ok(new_registry) => new_registry,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "startup background model discovery worker failed while rebuilding registry"
+                    );
+                    return;
+                },
+            };
+
+            let provider_summary = new_registry.provider_summary();
+            let model_count = new_registry.list_models().len();
+            {
+                let mut reg = registry_for_startup_discovery.write().await;
+                *reg = new_registry;
+            }
+
+            info!(
+                provider_summary = %provider_summary,
+                models = model_count,
+                prefetched_models,
+                elapsed_ms = startup_discovery_started.elapsed().as_millis(),
+                "startup background model discovery complete, provider registry updated"
+            );
+
+            broadcast(
+                &state_for_startup_discovery,
+                "models.updated",
+                serde_json::json!({
+                    "reason": "startup-discovery",
+                    "models": model_count,
+                    "providerSummary": provider_summary,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+        });
+    }
+
     // Model support probing is triggered on-demand by the web UI when the
     // user opens the model selector (via the `models.detect_supported` RPC).
     // With dynamic model discovery, automatic probing at startup is too
@@ -3087,6 +3397,8 @@ pub async fn prepare_gateway(
     }
     #[cfg(feature = "graphql")]
     state.set_graphql_enabled(config.graphql.enabled);
+
+    let browser_tool_for_warmup: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>;
 
     // Wire live chat service (needs state reference, so done after state creation).
     {
@@ -3444,6 +3756,7 @@ pub async fn prepare_gateway(
         }
 
         let shared_tool_registry = Arc::new(tokio::sync::RwLock::new(tool_registry));
+        browser_tool_for_warmup = shared_tool_registry.read().await.get_arc("browser");
         let mut chat_service = LiveChatService::new(
             Arc::clone(&registry),
             Arc::clone(&model_store),
@@ -3493,77 +3806,6 @@ pub async fn prepare_gateway(
                     .await;
                 }
             });
-        }
-    }
-
-    // Spawn OpenClaw session watcher for automatic background syncing.
-    #[cfg(all(feature = "file-watcher", feature = "openclaw-import"))]
-    {
-        if let Some(detection) = moltis_openclaw_import::detect() {
-            let import_agent = if detection.agent_ids.contains(&"main".to_string()) {
-                "main"
-            } else {
-                detection
-                    .agent_ids
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("main")
-            };
-            let sessions_dir = detection
-                .home_dir
-                .join("agents")
-                .join(import_agent)
-                .join("agent")
-                .join("sessions");
-            if sessions_dir.is_dir() {
-                match moltis_openclaw_import::watcher::ImportWatcher::start(sessions_dir) {
-                    Ok((_watcher, mut rx)) => {
-                        info!("openclaw: session watcher started");
-                        let watcher_data_dir = data_dir.clone();
-                        tokio::spawn(async move {
-                            let _watcher = _watcher; // keep alive
-                            let mut interval =
-                                tokio::time::interval(std::time::Duration::from_secs(60));
-                            interval.tick().await; // skip first immediate tick
-                            loop {
-                                tokio::select! {
-                                    Some(_event) = rx.recv() => {
-                                        debug!("openclaw: session change detected, running incremental import");
-                                        let report = moltis_openclaw_import::import_sessions_only(
-                                            &detection, &watcher_data_dir,
-                                        );
-                                        if report.items_imported > 0 || report.items_updated > 0 {
-                                            info!(
-                                                imported = report.items_imported,
-                                                updated = report.items_updated,
-                                                skipped = report.items_skipped,
-                                                "openclaw: incremental session sync complete"
-                                            );
-                                        }
-                                    }
-                                    _ = interval.tick() => {
-                                        debug!("openclaw: periodic session sync");
-                                        let report = moltis_openclaw_import::import_sessions_only(
-                                            &detection, &watcher_data_dir,
-                                        );
-                                        if report.items_imported > 0 || report.items_updated > 0 {
-                                            info!(
-                                                imported = report.items_imported,
-                                                updated = report.items_updated,
-                                                skipped = report.items_skipped,
-                                                "openclaw: periodic session sync complete"
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    },
-                    Err(e) => {
-                        warn!("openclaw: failed to start session watcher: {e}");
-                    },
-                }
-            }
         }
     }
 
@@ -4059,7 +4301,7 @@ pub async fn prepare_gateway(
         }
     });
 
-    // Spawn metrics history collection and broadcast task (every 10 seconds).
+    // Spawn metrics history collection and broadcast task (every 30 seconds).
     #[cfg(feature = "metrics")]
     {
         let metrics_state = Arc::clone(&state);
@@ -4074,7 +4316,7 @@ pub async fn prepare_gateway(
             if let Some(ref store) = metrics_state.metrics_store {
                 let max_points = metrics_state.inner.read().await.metrics_history.capacity();
                 // Load enough history to fill the in-memory buffer.
-                let window_secs = max_points as u64 * 10; // 10-second intervals
+                let window_secs = max_points as u64 * 30; // 30-second intervals
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -4125,7 +4367,7 @@ pub async fn prepare_gateway(
                 tx
             });
 
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
             let mut cleanup_counter = 0u32;
             loop {
                 interval.tick().await;
@@ -4206,9 +4448,9 @@ pub async fn prepare_gateway(
                         .await;
                     }
 
-                    // Cleanup old data once per hour (360 ticks at 10s interval).
+                    // Cleanup old data once per hour (120 ticks at 30s interval).
                     cleanup_counter += 1;
-                    if cleanup_counter >= 360 {
+                    if cleanup_counter >= 120 {
                         cleanup_counter = 0;
                         if let Some(tx) = metrics_persist_tx.as_ref() {
                             // Keep 7 days of history.
@@ -4357,6 +4599,13 @@ pub async fn prepare_gateway(
             loop {
                 match rx.recv().await {
                     Ok(entry) => {
+                        // Skip entries from the broadcast module to prevent a
+                        // feedback loop: broadcasting a log entry emits a debug
+                        // log which would be re-captured and re-broadcast
+                        // infinitely, pegging the CPU.
+                        if entry.target.starts_with("moltis_gateway::broadcast") {
+                            continue;
+                        }
                         if let Ok(payload) = serde_json::to_value(&entry) {
                             broadcast(&log_state, "logs.entry", payload, BroadcastOpts {
                                 drop_if_slow: true,
@@ -4503,6 +4752,7 @@ pub async fn prepare_gateway(
             setup_code_display,
             webauthn_registry,
             browser_for_lifecycle,
+            browser_tool_for_warmup,
             config,
             #[cfg(feature = "tailscale")]
             tailscale_mode,
@@ -4530,7 +4780,7 @@ pub async fn prepare_gateway_embedded(
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
 ) -> anyhow::Result<PreparedGateway> {
-    prepare_gateway(
+    let prepared = prepare_gateway(
         bind,
         port,
         no_tls,
@@ -4542,7 +4792,11 @@ pub async fn prepare_gateway_embedded(
         extra_routes,
         session_event_bus,
     )
-    .await
+    .await?;
+    // Embedded callers manage their own listener lifecycle, so kick off
+    // OpenClaw background initialization here.
+    spawn_openclaw_background_init(prepared.banner.data_dir.clone());
+    Ok(prepared)
 }
 
 /// Start the gateway HTTP + WebSocket server.
@@ -4620,6 +4874,8 @@ pub async fn start_gateway(
     let mut rustls_config: Option<rustls::ServerConfig> = None;
 
     let app = prepared.app;
+    let browser_for_warmup = Arc::clone(&banner.browser_for_lifecycle);
+    let browser_tool_for_warmup = banner.browser_tool_for_warmup.as_ref().map(Arc::clone);
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -4890,6 +5146,11 @@ pub async fn start_gateway(
         // Plain HTTP requests to this port get a 301 redirect instead of a TLS error.
         let tls_cfg = rustls_config.expect("rustls config must be set when TLS is active");
         let tcp_listener = tokio::net::TcpListener::bind(addr).await?;
+        spawn_openclaw_background_init(banner.data_dir.clone());
+        spawn_post_listener_warmups(
+            Arc::clone(&browser_for_warmup),
+            browser_tool_for_warmup.as_ref().map(Arc::clone),
+        );
         crate::tls::serve_tls_with_http_redirect(tcp_listener, Arc::new(tls_cfg), app, port, bind)
             .await?;
         return Ok(());
@@ -4897,6 +5158,11 @@ pub async fn start_gateway(
 
     // Plain HTTP server (existing behavior, or TLS feature disabled).
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    spawn_openclaw_background_init(banner.data_dir.clone());
+    spawn_post_listener_warmups(
+        Arc::clone(&browser_for_warmup),
+        browser_tool_for_warmup.as_ref().map(Arc::clone),
+    );
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

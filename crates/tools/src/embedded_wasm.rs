@@ -34,7 +34,6 @@ const WEB_SEARCH_COMPONENT_RELEASE_BYTES: &[u8] = include_bytes!(concat!(
 ));
 
 // ── Debug path helper ───────────────────────────────────────────────────────
-
 #[cfg(all(feature = "wasm", debug_assertions))]
 fn component_debug_path(file_name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -108,6 +107,8 @@ pub fn calc_component_bytes() -> Result<Cow<'static, [u8]>> {
 }
 
 /// Load the embedded web_fetch component bytes.
+///
+/// In release builds the resolution order is: external share dir → embedded.
 #[cfg(feature = "wasm")]
 pub fn web_fetch_component_bytes() -> Result<Cow<'static, [u8]>> {
     #[cfg(debug_assertions)]
@@ -134,6 +135,8 @@ pub fn web_fetch_component_bytes() -> Result<Cow<'static, [u8]>> {
 }
 
 /// Load the embedded web_search component bytes.
+///
+/// In release builds the resolution order is: external share dir → embedded.
 #[cfg(feature = "wasm")]
 pub fn web_search_component_bytes() -> Result<Cow<'static, [u8]>> {
     #[cfg(debug_assertions)]
@@ -157,4 +160,13 @@ pub fn web_search_component_bytes() -> Result<Cow<'static, [u8]>> {
             ))
         }
     }
+}
+
+/// Whether the release bytes are pre-compiled (`.cwasm`) or raw (`.wasm`).
+///
+/// Used by `register_wasm_tools()` to choose between `deserialize_component()`
+/// and `compile_component()`.
+#[cfg(feature = "wasm")]
+pub fn is_precompiled() -> bool {
+    false
 }

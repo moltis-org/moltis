@@ -88,7 +88,7 @@ pub struct SqliteMetricsStore {
     pool: sqlx::SqlitePool,
 }
 
-/// Metrics persistence is low-throughput (one write every 10 seconds), so a
+/// Metrics persistence is low-throughput (one write every 30 seconds), so a
 /// single dedicated SQLite connection avoids cross-connection lock contention.
 const METRICS_POOL_MAX_CONNECTIONS: u32 = 1;
 /// Allow lock waits long enough for transient contention while still surfacing

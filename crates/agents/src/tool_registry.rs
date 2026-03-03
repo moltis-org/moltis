@@ -10,6 +10,10 @@ pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> serde_json::Value;
+    /// Opportunistic post-start initialization hook.
+    async fn warmup(&self) -> Result<()> {
+        Ok(())
+    }
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value>;
 }
 
