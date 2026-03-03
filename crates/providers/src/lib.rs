@@ -133,6 +133,10 @@ fn subscription_preference_rank(provider_name: &str) -> usize {
     }
 }
 
+#[cfg_attr(
+    not(any(feature = "provider-openai-codex", feature = "provider-github-copilot")),
+    allow(dead_code)
+)]
 fn oauth_discovery_enabled(config: &ProvidersConfig, provider_name: &str) -> bool {
     config.get(provider_name).is_none_or(|entry| entry.enabled)
 }
@@ -282,7 +286,11 @@ async fn discover_ollama_models_from_api(base_url: String) -> anyhow::Result<Vec
     Ok(models)
 }
 
-fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<DiscoveredModel>> {
+/// Spawn Ollama model discovery in a background thread and return the receiver
+/// immediately, without blocking. Call `.recv()` later to collect the result.
+fn start_ollama_discovery(
+    base_url: &str,
+) -> std::sync::mpsc::Receiver<anyhow::Result<Vec<DiscoveredModel>>> {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let base_url = base_url.to_string();
     std::thread::spawn(move || {
@@ -293,9 +301,7 @@ fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<DiscoveredModel>
             .and_then(|rt| rt.block_on(discover_ollama_models_from_api(base_url)));
         let _ = tx.send(result);
     });
-
-    rx.recv()
-        .map_err(|err| anyhow::anyhow!("ollama model discovery worker failed: {err}"))?
+    rx
 }
 
 // ── Ollama model info probing ────────────────────────────────────────────────
@@ -949,7 +955,6 @@ trait DynamicModelDiscovery {
     fn is_enabled_and_authenticated(&self, config: &ProvidersConfig) -> bool;
     fn configured_models(&self, config: &ProvidersConfig) -> Vec<String>;
     fn should_fetch_models(&self, config: &ProvidersConfig) -> bool;
-    fn available_models(&self) -> Vec<DiscoveredModel>;
     fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>>;
     fn build_provider(&self, model_id: String, config: &ProvidersConfig) -> Arc<dyn LlmProvider>;
     fn display_name(&self, model_id: &str, discovered: &str) -> String;
@@ -974,10 +979,6 @@ impl DynamicModelDiscovery for OpenAiCodexDiscovery {
 
     fn should_fetch_models(&self, config: &ProvidersConfig) -> bool {
         should_fetch_models(config, self.provider_name())
-    }
-
-    fn available_models(&self) -> Vec<DiscoveredModel> {
-        openai_codex::available_models()
     }
 
     fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>> {
@@ -1021,10 +1022,6 @@ impl DynamicModelDiscovery for GitHubCopilotDiscovery {
         should_fetch_models(config, self.provider_name())
     }
 
-    fn available_models(&self) -> Vec<DiscoveredModel> {
-        github_copilot::available_models()
-    }
-
     fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>> {
         github_copilot::live_models()
     }
@@ -1047,6 +1044,12 @@ pub struct ProviderRegistry {
     providers: HashMap<String, Arc<dyn LlmProvider>>,
     models: Vec<ModelInfo>,
 }
+
+/// Pending model discovery handles returned by [`ProviderRegistry::fire_discoveries`].
+pub type PendingDiscoveries = Vec<(
+    String,
+    std::sync::mpsc::Receiver<anyhow::Result<Vec<DiscoveredModel>>>,
+)>;
 
 impl ProviderRegistry {
     #[must_use]
@@ -1257,36 +1260,47 @@ impl ProviderRegistry {
 
     /// Auto-discover providers from config, process env, and optional env
     /// overrides. Process env always wins when both are present.
+    ///
+    /// Model discovery HTTP requests are fired concurrently in Phase 1,
+    /// collected in Phase 2, and the results are used to register providers
+    /// in Phase 3. This reduces startup time from `sum(latencies)` to
+    /// `max(latencies)`.
     pub fn from_env_with_config_and_overrides(
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
     ) -> Self {
-        Self::build_registry(config, env_overrides, false)
+        let pending = Self::fire_discoveries(config, env_overrides);
+        let prefetched = Self::collect_discoveries(pending);
+        Self::from_config_with_prefetched(config, env_overrides, &prefetched)
     }
 
-    /// Like [`Self::from_env_with_config_and_overrides`] but skips all live
-    /// network fetches during registration. Providers are registered with
-    /// their static/fallback model catalogs for instant startup; call
-    /// [`Self::refresh_all_provider_models`] afterwards to backfill with
-    /// live data.
-    pub fn from_env_with_config_and_overrides_deferred(
+    /// Register providers without making any discovery HTTP requests.
+    ///
+    /// This uses static model catalogs plus any explicit/pinned models from
+    /// config and env overrides.
+    pub fn from_config_with_static_catalogs(
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
     ) -> Self {
-        Self::build_registry(config, env_overrides, true)
+        let prefetched = HashMap::new();
+        Self::from_config_with_prefetched(config, env_overrides, &prefetched)
     }
 
-    fn build_registry(
+    /// Register providers using already-collected discovery results.
+    ///
+    /// `prefetched` should come from [`collect_discoveries`], but callers may
+    /// also pass an empty map to register only static catalogs.
+    pub fn from_config_with_prefetched(
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
-        skip_live_fetch: bool,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
     ) -> Self {
         let mut reg = Self::empty();
 
         // Built-in providers first: they support tool calling.
-        reg.register_builtin_providers(config, env_overrides, skip_live_fetch);
-        reg.register_openai_compatible_providers(config, env_overrides, skip_live_fetch);
-        reg.register_custom_providers(config, skip_live_fetch);
+        reg.register_builtin_providers(config, env_overrides, prefetched);
+        reg.register_openai_compatible_providers(config, env_overrides, prefetched);
+        reg.register_custom_providers(config, prefetched);
 
         #[cfg(feature = "provider-async-openai")]
         {
@@ -1302,12 +1316,12 @@ impl ProviderRegistry {
 
         #[cfg(feature = "provider-openai-codex")]
         {
-            reg.register_openai_codex_providers(config, skip_live_fetch);
+            reg.register_openai_codex_providers(config, prefetched);
         }
 
         #[cfg(feature = "provider-github-copilot")]
         {
-            reg.register_github_copilot_providers(config, skip_live_fetch);
+            reg.register_github_copilot_providers(config, prefetched);
         }
 
         #[cfg(feature = "provider-kimi-code")]
@@ -1322,6 +1336,187 @@ impl ProviderRegistry {
         }
 
         reg
+    }
+
+    /// Fire all provider model discovery HTTP requests concurrently.
+    ///
+    /// Returns a vec of `(provider_key, Receiver)` handles. Each receiver
+    /// will eventually yield the discovered model list. Call
+    /// [`collect_discoveries`] to drain them (blocking).
+    #[allow(unused_mut)] // `pending` may be unused when features are disabled
+    pub fn fire_discoveries(
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) -> PendingDiscoveries {
+        let mut pending: PendingDiscoveries = Vec::new();
+
+        // ── OpenAI builtin ───────────────────────────────────────────────
+        if config.is_enabled("openai")
+            && !cfg!(test)
+            && let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides)
+            && should_fetch_models(config, "openai")
+        {
+            let base_url = config
+                .get("openai")
+                .and_then(|e| e.base_url.clone())
+                .or_else(|| env_value(env_overrides, "OPENAI_BASE_URL"))
+                .unwrap_or_else(|| "https://api.openai.com/v1".into());
+            pending.push((
+                "openai".into(),
+                openai::start_model_discovery(key.clone(), base_url),
+            ));
+        }
+
+        // ── OpenAI-compatible providers ──────────────────────────────────
+        for def in OPENAI_COMPAT_PROVIDERS {
+            if !config.is_enabled(def.config_name) {
+                continue;
+            }
+
+            let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
+            let key = if !def.requires_api_key {
+                key.or_else(|| Some(secrecy::Secret::new(def.config_name.into())))
+            } else if def.config_name == "gemini" {
+                key.or_else(|| env_value(env_overrides, "GOOGLE_API_KEY").map(secrecy::Secret::new))
+            } else {
+                key
+            };
+
+            let Some(key) = key else {
+                continue;
+            };
+
+            let base_url = config
+                .get(def.config_name)
+                .and_then(|e| e.base_url.clone())
+                .or_else(|| env_value(env_overrides, def.env_base_url_key))
+                .unwrap_or_else(|| def.default_base_url.into());
+
+            let preferred = configured_models_for_provider(config, def.config_name);
+
+            if def.local_only {
+                let has_explicit_entry = config.get(def.config_name).is_some();
+                let has_env_base_url = env_value(env_overrides, def.env_base_url_key).is_some();
+                if !has_explicit_entry && !has_env_base_url && preferred.is_empty() {
+                    continue;
+                }
+            }
+
+            let skip_discovery = def.models.is_empty()
+                && preferred.is_empty()
+                && !def.local_only
+                && (def.config_name == "venice" || cfg!(test));
+            let user_opted_in = config
+                .get(def.config_name)
+                .is_some_and(|entry| entry.fetch_models);
+            let try_fetch = def.supports_model_discovery || user_opted_in;
+
+            if !skip_discovery && try_fetch && should_fetch_models(config, def.config_name) {
+                if def.config_name == "ollama" {
+                    pending.push((def.config_name.into(), start_ollama_discovery(&base_url)));
+                } else {
+                    pending.push((
+                        def.config_name.into(),
+                        openai::start_model_discovery(key.clone(), base_url),
+                    ));
+                }
+            }
+        }
+
+        // ── Custom providers ─────────────────────────────────────────────
+        for (name, entry) in &config.providers {
+            if !name.starts_with("custom-") || !entry.enabled {
+                continue;
+            }
+            let Some(api_key) = entry
+                .api_key
+                .as_ref()
+                .filter(|k| !k.expose_secret().is_empty())
+            else {
+                continue;
+            };
+            let Some(base_url) = entry.base_url.as_ref().filter(|u| !u.trim().is_empty()) else {
+                continue;
+            };
+            if should_fetch_models(config, name) {
+                pending.push((
+                    name.clone(),
+                    openai::start_model_discovery(api_key.clone(), base_url.clone()),
+                ));
+            }
+        }
+
+        // ── OpenAI Codex ─────────────────────────────────────────────────
+        #[cfg(feature = "provider-openai-codex")]
+        if oauth_discovery_enabled(config, "openai-codex")
+            && openai_codex::has_stored_tokens()
+            && should_fetch_models(config, "openai-codex")
+            && let Some(rx) = openai_codex::start_model_discovery()
+        {
+            pending.push(("openai-codex".into(), rx));
+        }
+
+        // ── GitHub Copilot ───────────────────────────────────────────────
+        #[cfg(feature = "provider-github-copilot")]
+        if oauth_discovery_enabled(config, "github-copilot")
+            && github_copilot::has_stored_tokens()
+            && should_fetch_models(config, "github-copilot")
+        {
+            pending.push((
+                "github-copilot".into(),
+                github_copilot::start_model_discovery(),
+            ));
+        }
+
+        pending
+    }
+
+    /// Drain all pending discovery receivers (blocking on each `recv()`).
+    ///
+    /// Returns a map from provider name to discovered models.
+    pub fn collect_discoveries(
+        pending: PendingDiscoveries,
+    ) -> HashMap<String, Vec<DiscoveredModel>> {
+        let mut results: HashMap<String, Vec<DiscoveredModel>> = HashMap::new();
+        for (key, rx) in pending {
+            match rx.recv() {
+                Ok(Ok(models)) => {
+                    tracing::debug!(
+                        provider = %key,
+                        model_count = models.len(),
+                        "parallel model discovery succeeded"
+                    );
+                    results.insert(key, models);
+                },
+                Ok(Err(err)) => {
+                    let msg = err.to_string();
+                    if msg.contains("not logged in")
+                        || msg.contains("tokens not found")
+                        || msg.contains("not configured")
+                    {
+                        tracing::debug!(
+                            provider = %key,
+                            error = %err,
+                            "provider not configured, skipping model discovery"
+                        );
+                    } else {
+                        tracing::warn!(
+                            provider = %key,
+                            error = %err,
+                            "parallel model discovery failed"
+                        );
+                    }
+                },
+                Err(err) => {
+                    tracing::warn!(
+                        provider = %key,
+                        error = %err,
+                        "parallel model discovery worker crashed"
+                    );
+                },
+            }
+        }
+        results
     }
 
     #[cfg(feature = "provider-genai")]
@@ -1438,12 +1633,26 @@ impl ProviderRegistry {
     }
 
     #[cfg(feature = "provider-openai-codex")]
-    fn register_openai_codex_providers(&mut self, config: &ProvidersConfig, skip_live_fetch: bool) {
+    fn register_openai_codex_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
+    ) {
         let source = OpenAiCodexDiscovery;
-        let catalog = if skip_live_fetch {
-            openai_codex::default_model_catalog()
-        } else if source.should_fetch_models(config) {
-            source.available_models()
+        let catalog = if source.should_fetch_models(config) {
+            // Use pre-fetched live models from parallel discovery.
+            let fallback = openai_codex::default_model_catalog();
+            match prefetched.get("openai-codex") {
+                Some(live) => {
+                    let merged = merge_discovered_with_fallback_catalog(live.clone(), fallback);
+                    tracing::info!(
+                        model_count = merged.len(),
+                        "loaded openai-codex models catalog"
+                    );
+                    merged
+                },
+                None => fallback,
+            }
         } else {
             Vec::new()
         };
@@ -1468,13 +1677,23 @@ impl ProviderRegistry {
     fn register_github_copilot_providers(
         &mut self,
         config: &ProvidersConfig,
-        skip_live_fetch: bool,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
     ) {
         let source = GitHubCopilotDiscovery;
-        let catalog = if skip_live_fetch {
-            github_copilot::default_model_catalog()
-        } else if source.should_fetch_models(config) {
-            source.available_models()
+        let catalog = if source.should_fetch_models(config) {
+            // Use pre-fetched live models from parallel discovery.
+            let fallback = github_copilot::default_model_catalog();
+            match prefetched.get("github-copilot") {
+                Some(live) => {
+                    let merged = merge_discovered_with_fallback_catalog(live.clone(), fallback);
+                    tracing::debug!(
+                        model_count = merged.len(),
+                        "loaded github-copilot models catalog"
+                    );
+                    merged
+                },
+                None => fallback,
+            }
         } else {
             Vec::new()
         };
@@ -1510,35 +1729,6 @@ impl ProviderRegistry {
         {
             let _ = config;
             Vec::new()
-        }
-    }
-
-    /// Perform live model fetches for all provider types and add any newly
-    /// discovered models to the registry.  Intended to be called from a
-    /// background task after a deferred (no-network) startup so that live
-    /// catalogs backfill the static fallbacks without blocking the banner.
-    ///
-    /// Already-registered models are skipped (no duplicates); only brand-new
-    /// live models are appended.
-    pub fn refresh_all_provider_models(
-        &mut self,
-        config: &ProvidersConfig,
-        env_overrides: &HashMap<String, String>,
-    ) {
-        self.register_builtin_providers(config, env_overrides, false);
-        self.register_openai_compatible_providers(config, env_overrides, false);
-        self.register_custom_providers(config, false);
-
-        #[cfg(feature = "provider-openai-codex")]
-        {
-            let source = OpenAiCodexDiscovery;
-            let _ = self.refresh_dynamic_source_models(&source, config);
-        }
-
-        #[cfg(feature = "provider-github-copilot")]
-        {
-            let source = GitHubCopilotDiscovery;
-            let _ = self.refresh_dynamic_source_models(&source, config);
         }
     }
 
@@ -1686,7 +1876,7 @@ impl ProviderRegistry {
         &mut self,
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
-        skip_live_fetch: bool,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
     ) {
         // Anthropic — register all known Claude models when API key is available.
         if config.is_enabled("anthropic")
@@ -1755,10 +1945,17 @@ impl ProviderRegistry {
                 .map(|entry| entry.stream_transport)
                 .unwrap_or(ProviderStreamTransport::Sse);
             let preferred = configured_models_for_provider(config, "openai");
-            let discovered = if skip_live_fetch {
-                openai::default_model_catalog()
-            } else if should_fetch_models(config, "openai") {
-                openai::available_models(&key, &base_url)
+            let discovered = if should_fetch_models(config, "openai") {
+                // Use pre-fetched live models from parallel discovery.
+                let fallback = openai::default_model_catalog();
+                match prefetched.get("openai") {
+                    Some(live) => {
+                        let merged = merge_discovered_with_fallback_catalog(live.clone(), fallback);
+                        tracing::debug!(model_count = merged.len(), "loaded openai models catalog");
+                        merged
+                    },
+                    None => fallback,
+                }
             } else {
                 Vec::new()
             };
@@ -1796,7 +1993,7 @@ impl ProviderRegistry {
         &mut self,
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
-        skip_live_fetch: bool,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
     ) {
         for def in OPENAI_COMPAT_PROVIDERS {
             if !config.is_enabled(def.config_name) {
@@ -1854,63 +2051,25 @@ impl ProviderRegistry {
                 .get(def.config_name)
                 .is_some_and(|entry| entry.fetch_models);
             let try_fetch = def.supports_model_discovery || user_opted_in;
-            let fetch_enabled = should_fetch_models(config, def.config_name);
-            let discovered = if skip_live_fetch {
-                // Use the static catalog without any network calls.
-                if !skip_discovery && try_fetch && fetch_enabled {
-                    def.models
-                        .iter()
-                        .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                        .collect()
-                } else if !def.supports_model_discovery && !def.models.is_empty() && fetch_enabled {
-                    def.models
-                        .iter()
-                        .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                        .collect()
-                } else {
-                    Vec::new()
-                }
-            } else if !skip_discovery && try_fetch && fetch_enabled {
-                if def.config_name == "ollama" {
-                    match discover_ollama_models(&base_url) {
-                        Ok(models) => models,
-                        Err(err) => {
-                            tracing::warn!(
-                                provider = def.config_name,
-                                error = %err,
-                                "failed to fetch live models for provider"
-                            );
-                            def.models
-                                .iter()
-                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                                .collect()
-                        },
-                    }
-                } else {
-                    match openai::live_models(&key, &base_url) {
-                        Ok(models) => models,
-                        Err(err) => {
-                            tracing::warn!(
-                                provider = def.config_name,
-                                error = %err,
-                                "failed to fetch live models for provider"
-                            );
-                            def.models
-                                .iter()
-                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                                .collect()
-                        },
-                    }
-                }
-            } else if !def.supports_model_discovery && !def.models.is_empty() {
-                // Provider has no /models endpoint — use the static catalog.
+            let static_catalog = || -> Vec<DiscoveredModel> {
                 def.models
                     .iter()
                     .map(|(id, name)| DiscoveredModel::new(*id, *name))
                     .collect()
-            } else {
-                Vec::new()
             };
+            let discovered =
+                if !skip_discovery && try_fetch && should_fetch_models(config, def.config_name) {
+                    // Use pre-fetched results from parallel discovery.
+                    match prefetched.get(def.config_name) {
+                        Some(models) => models.clone(),
+                        None => static_catalog(),
+                    }
+                } else if !def.supports_model_discovery && !def.models.is_empty() {
+                    // Provider has no /models endpoint — use the static catalog.
+                    static_catalog()
+                } else {
+                    Vec::new()
+                };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
 
             // Resolve per-provider tool_mode from config (defaults to Auto).
@@ -1924,12 +2083,11 @@ impl ProviderRegistry {
             let is_ollama = def.config_name == "ollama";
 
             // Batch-probe Ollama models for family metadata (best-effort, 3s timeout).
-            let ollama_probes: HashMap<String, OllamaShowResponse> =
-                if is_ollama && !skip_live_fetch {
-                    probe_ollama_models_batch(&base_url, &models)
-                } else {
-                    HashMap::new()
-                };
+            let ollama_probes: HashMap<String, OllamaShowResponse> = if is_ollama {
+                probe_ollama_models_batch(&base_url, &models)
+            } else {
+                HashMap::new()
+            };
 
             for model in models {
                 let (model_id, display_name, created_at) =
@@ -1980,7 +2138,11 @@ impl ProviderRegistry {
 
     /// Register custom OpenAI-compatible providers (names starting with `custom-`).
     /// These are user-added endpoints that may support model discovery via `/v1/models`.
-    fn register_custom_providers(&mut self, config: &ProvidersConfig, skip_live_fetch: bool) {
+    fn register_custom_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
+    ) {
         for (name, entry) in &config.providers {
             if !name.starts_with("custom-") || !entry.enabled {
                 continue;
@@ -2000,20 +2162,11 @@ impl ProviderRegistry {
 
             let preferred = configured_models_for_provider(config, name);
 
-            // Try model discovery, fall back to configured models.
-            let discovered = if skip_live_fetch {
-                Vec::new()
-            } else if should_fetch_models(config, name) {
-                match openai::live_models(api_key, base_url) {
-                    Ok(models) => models,
-                    Err(err) => {
-                        tracing::warn!(
-                            provider = %name,
-                            error = %err,
-                            "failed to fetch live models for custom provider"
-                        );
-                        Vec::new()
-                    },
+            // Use pre-fetched results from parallel discovery.
+            let discovered = if should_fetch_models(config, name) {
+                match prefetched.get(name.as_str()) {
+                    Some(models) => models.clone(),
+                    None => Vec::new(),
                 }
             } else {
                 Vec::new()
@@ -2199,10 +2352,6 @@ mod tests {
 
     fn secret(s: &str) -> secrecy::Secret<String> {
         secrecy::Secret::new(s.into())
-    }
-
-    fn registry_from_config(config: &ProvidersConfig) -> ProviderRegistry {
-        ProviderRegistry::from_env_with_config_and_overrides_deferred(config, &HashMap::new())
     }
 
     #[test]
@@ -2587,13 +2736,13 @@ mod tests {
     #[test]
     fn registry_from_env_does_not_panic() {
         // Just ensure it doesn't panic with no env vars set.
-        let reg = registry_from_config(&ProvidersConfig::default());
+        let reg = ProviderRegistry::from_env();
         let _ = reg.provider_summary();
     }
 
     #[test]
     fn registry_register_and_get() {
-        let mut reg = registry_from_config(&ProvidersConfig::default());
+        let mut reg = ProviderRegistry::from_env_with_config(&ProvidersConfig::default());
         let initial_count = reg.list_models().len();
 
         let provider = Arc::new(openai::OpenAiProvider::new(
@@ -2667,7 +2816,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         // Should have registered Mistral models
         let mistral_models: Vec<_> = reg
             .list_models()
@@ -2694,7 +2843,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         let cerebras_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -2713,7 +2862,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
     }
 
@@ -2725,8 +2874,7 @@ mod tests {
             "sk-test-minimax-override".to_string(),
         )]);
 
-        let reg =
-            ProviderRegistry::from_env_with_config_and_overrides_deferred(&config, &env_overrides);
+        let reg = ProviderRegistry::from_env_with_config_and_overrides(&config, &env_overrides);
         assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
     }
 
@@ -2740,7 +2888,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "zai"));
     }
 
@@ -2754,7 +2902,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "moonshot"));
     }
 
@@ -2768,7 +2916,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         let ds_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -2800,7 +2948,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "openrouter"));
     }
 
@@ -2815,7 +2963,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         let or_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -2839,7 +2987,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(
             reg.list_models()
                 .iter()
@@ -2863,7 +3011,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "ollama"));
         assert!(reg.get("llama3").is_some());
     }
@@ -2878,7 +3026,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "venice"));
     }
 
@@ -2893,7 +3041,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "mistral"));
     }
 
@@ -2919,7 +3067,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "mistral"));
     }
 
@@ -2935,7 +3083,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         let mistral_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -2957,7 +3105,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         let mistral_models: Vec<&str> = reg
             .list_models()
             .iter()
@@ -3143,7 +3291,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
     }
 
@@ -3158,7 +3306,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         let local_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -3180,7 +3328,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
     }
 
@@ -3195,7 +3343,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(
             reg.list_models().iter().any(|m| m.provider == "local-llm"),
             "local-llm alias config key should register local models"
@@ -3214,7 +3362,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = registry_from_config(&config);
+        let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(
             !reg.list_models().iter().any(|m| m.provider == "local-llm"),
             "disabled local-llm alias config should suppress local model registration"
