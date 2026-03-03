@@ -9,9 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **macOS settings backend**: all settings panels (Identity, Heartbeat, Memory, Security, Tailscale, Monitoring, GraphQL, Sandbox, Voice, Channels, Hooks, MCP, Skills) now load from and persist to the Rust config backend via 6 new FFI functions (`moltis_get_config`, `moltis_save_config`, `moltis_get_soul`, `moltis_save_soul`, `moltis_save_identity`, `moltis_save_user_profile`)
-- **macOS environment variables settings**: Settings > Environment now supports add/update/delete via the same credential-store path as web UI (`moltis_list_env_vars`, `moltis_set_env_var`, `moltis_delete_env_var`), including encrypted/plaintext status and vault-state messaging
-
 ### Changed
 
 ### Deprecated
@@ -21,6 +18,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 ### Security
+
+## [0.10.11] - 2026-03-02
+
+## [0.10.10] - 2026-03-02
+### Fixed
+- [swift-bridge] Stabilize gateway migration and stream tests
+
+## [0.10.9] - 2026-03-02
+### Fixed
+- [ci] Harden tailwindcss cli downloads
+
+## [0.10.8] - 2026-03-02
+### Changed
+- [gateway] Fetch updates from releases manifest instead of GitHub API
+
+
+### Fixed
+- [ci] Add Tailwind CSS build step to release workflow, Dockerfile, and snapcraft
+- [e2e] Wait for session history render before DOM injection in chat-abort
+
+## [0.10.7] - 2026-03-02
+### Added
+- [sandbox] Add GitHub runner parity packages and enable corepack (#284)
+- [providers] Add first-class LM Studio provider (#286)
+- [agents] Enrich spawn_agent presets with identity, policies, memory (#271)
+- [web] Show running version at bottom of identity settings
+- [channels] Channel architecture phase 5, contract suites, and observability baseline (#289)
+
+
+### Changed
+- [channels] Registry-driven dispatch for cheap new channels (#277)
+
+
+### Fixed
+- [e2e] Make sandboxes container tests deterministic
+- [e2e] Replace remaining racy waitForResponse with route interceptors
+- [mcp] Make optional MCP tool params nullable to prevent empty string errors (#283)
+- [provider-setup] Reorder validation probes to prefer fast models (#280)
+- [sandbox] Resolve host gateway IP for Podman < 5.0 (#287)
+- [e2e] Fix flaky "deleting unmodified fork" test
+- [ci] Stale lockfile, missing Tailwind in macOS job, OAuth e2e setup
+- [ci] Use standalone Tailwind binary for macOS app job
+- [e2e] Fix OAuth token-exchange failure test and add error-context capture
+- [web] Auto-install node_modules in Tailwind build script
+- [web] Retry openclaw onboarding scan until ws is ready
+
+
+### Security
+- [macos] Wire settings UI to rust config backend (#267)
+- [channels] Shared channel webhook middleware pipeline (#290)
 
 ## [0.10.6] - 2026-03-01
 ### Fixed

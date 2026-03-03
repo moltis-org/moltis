@@ -11,6 +11,8 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Json, Redirect},
 };
+#[cfg(feature = "web-ui")]
+use tracing::warn;
 
 use crate::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
@@ -126,6 +128,14 @@ pub async fn auth_gate(
                 });
                 next.run(request).await
             } else if path.starts_with("/api/") || path.starts_with("/ws/") {
+                if path.starts_with("/ws/") {
+                    warn!(
+                        path,
+                        remote = %addr,
+                        is_local,
+                        "auth reject: setup required for websocket connection"
+                    );
+                }
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({
@@ -140,6 +150,19 @@ pub async fn auth_gate(
         },
         AuthResult::Unauthorized => {
             if path.starts_with("/api/") || path.starts_with("/ws/") {
+                if path.starts_with("/ws/") {
+                    let has_bearer = bearer_token(request.headers()).is_some();
+                    let has_session_cookie = cookie_header(request.headers())
+                        .is_some_and(|h| parse_cookie(h, SESSION_COOKIE).is_some());
+                    warn!(
+                        path,
+                        remote = %addr,
+                        is_local,
+                        has_bearer,
+                        has_session_cookie,
+                        "auth reject: unauthorized websocket connection"
+                    );
+                }
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({
@@ -162,6 +185,7 @@ fn is_public_path(path: &str) -> bool {
         path,
         "/health" | "/auth/callback" | "/manifest.json" | "/sw.js" | "/login"
     ) || path.starts_with("/api/auth/")
+        || path.starts_with("/api/public/")
         || path.starts_with("/api/channels/msteams/")
         || path.starts_with("/assets/")
         || path.starts_with("/share/")
@@ -184,8 +208,12 @@ pub async fn vault_guard(
         return next.run(request).await;
     };
     let path = request.uri().path();
-    // Allow auth, gon, and non-API routes through.
-    if !path.starts_with("/api/") || path.starts_with("/api/auth/") || path == "/api/gon" {
+    // Allow auth, public, gon, and non-API routes through.
+    if !path.starts_with("/api/")
+        || path.starts_with("/api/auth/")
+        || path.starts_with("/api/public/")
+        || path == "/api/gon"
+    {
         return next.run(request).await;
     }
     // Only block when Sealed (not Uninitialized).
@@ -305,5 +333,11 @@ mod tests {
     #[test]
     fn graphql_paths_are_not_public() {
         assert!(!is_public_path("/graphql"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn public_identity_path_is_public() {
+        assert!(is_public_path("/api/public/identity"));
     }
 }

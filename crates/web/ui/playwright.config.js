@@ -42,6 +42,10 @@ const oauthBaseURL = `http://127.0.0.1:${oauthPort}`;
 const onboardingAnthropicPort = resolvePort("MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT", usedPorts);
 const onboardingAnthropicBaseURL =
 	process.env.MOLTIS_E2E_ONBOARDING_ANTHROPIC_BASE_URL || `http://127.0.0.1:${onboardingAnthropicPort}`;
+// Reliability first: fresh local gateway instances by default avoid
+// hidden cross-run state leaks. Set MOLTIS_E2E_REUSE_SERVER=1 to trade
+// determinism for faster startup in ad-hoc local runs.
+const reuseExistingServer = !process.env.CI && process.env.MOLTIS_E2E_REUSE_SERVER === "1";
 module.exports = defineConfig({
 	testDir: "./e2e/specs",
 	timeout: 45_000,
@@ -55,6 +59,7 @@ module.exports = defineConfig({
 	reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
 	use: {
 		baseURL: baseURL,
+		locale: "en-US",
 		trace: "retain-on-failure",
 		screenshot: "only-on-failure",
 		video: "retain-on-failure",
@@ -110,7 +115,7 @@ module.exports = defineConfig({
 			command: "./e2e/start-gateway.sh",
 			cwd: __dirname,
 			url: `${baseURL}/health`,
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: reuseExistingServer,
 			timeout: 300_000,
 			env: {
 				...process.env,
@@ -121,7 +126,7 @@ module.exports = defineConfig({
 			command: "./e2e/start-gateway-onboarding.sh",
 			cwd: __dirname,
 			url: `${onboardingBaseURL}/health`,
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: reuseExistingServer,
 			timeout: 300_000,
 			env: {
 				...process.env,
@@ -132,7 +137,7 @@ module.exports = defineConfig({
 			command: "./e2e/start-gateway-onboarding-auth.sh",
 			cwd: __dirname,
 			url: `${onboardingAuthBaseURL}/health`,
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: reuseExistingServer,
 			timeout: 300_000,
 			env: {
 				...process.env,
@@ -143,7 +148,7 @@ module.exports = defineConfig({
 			command: "./e2e/start-gateway-oauth.sh",
 			cwd: __dirname,
 			url: `${oauthBaseURL}/health`,
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: reuseExistingServer,
 			timeout: 300_000,
 			env: {
 				...process.env,
@@ -154,7 +159,7 @@ module.exports = defineConfig({
 			command: "./e2e/start-gateway-onboarding-anthropic.sh",
 			cwd: __dirname,
 			url: `${onboardingAnthropicBaseURL}/health`,
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: reuseExistingServer,
 			timeout: 300_000,
 			env: {
 				...process.env,

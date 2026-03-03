@@ -66,6 +66,9 @@ navigation_timeout_ms = 30000  # Page load timeout
 # Sandbox image (browser sandbox mode follows session sandbox mode)
 sandbox_image = "browserless/chrome"  # Container image for sandboxed sessions
 # allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
+
+# Container connectivity (for Moltis-in-Docker setups)
+# container_host = "127.0.0.1"  # Default; change when Moltis runs inside Docker
 ```
 
 ### Memory-Based Pool Limits
@@ -301,6 +304,26 @@ Requirements:
 - Docker or Apple Container must be installed and running
 - The container image is pulled automatically on first use
 - Session sandbox mode must be enabled (`[tools.exec.sandbox] mode = "all"`)
+
+### Moltis Inside Docker (Sibling Containers)
+
+When Moltis itself runs inside a Docker container, the browser container is
+launched as a sibling via the host's Docker socket. By default Moltis connects
+to the browser at `127.0.0.1`, which points to the Moltis container's own
+loopback — not the host where the browser port is mapped.
+
+Set `container_host` so Moltis can reach the browser container through the
+host's port mapping:
+
+```toml
+[tools.browser]
+container_host = "host.docker.internal"   # macOS / Windows Docker Desktop
+# container_host = "172.17.0.1"           # Linux Docker bridge gateway IP
+```
+
+On Linux, `host.docker.internal` is not available by default. Use the Docker
+bridge gateway IP (typically `172.17.0.1`) or add `--add-host=host.docker.internal:host-gateway`
+to the Moltis container's `docker run` command.
 
 ### Exec Tool Scripts
 

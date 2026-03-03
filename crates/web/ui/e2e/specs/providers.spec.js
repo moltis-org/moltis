@@ -1,39 +1,31 @@
 const { expect, test } = require("../base-test");
 const { navigateAndWait, watchPageErrors } = require("../helpers");
 
+async function openProvidersPage(page) {
+	await navigateAndWait(page, "/settings/providers");
+	await expect.poll(() => new URL(page.url()).pathname).toBe("/settings/providers");
+	await expect(page.locator("#providersTitle")).toBeVisible();
+}
+
 test.describe("Provider setup page", () => {
 	test("provider page loads", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
-
-		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();
+		await openProvidersPage(page);
 		expect(pageErrors).toEqual([]);
 	});
 
 	test("add provider button exists", async ({ page }) => {
-		await navigateAndWait(page, "/settings/providers");
-
-		// Look for an "Add" button or similar provider action
-		const addBtn = page.getByRole("button", { name: /add/i });
-		const providerItems = page.locator(".provider-item");
-
-		// Either add button or provider items should be visible
-		const hasAdd = await addBtn.isVisible().catch(() => false);
-		const hasItems = (await providerItems.count()) > 0;
-		expect(hasAdd || hasItems).toBeTruthy();
+		await openProvidersPage(page);
+		await expect(page.locator("#providersAddLlmBtn")).toBeVisible();
 	});
 
 	test("detect models button exists", async ({ page }) => {
-		await navigateAndWait(page, "/settings/providers");
-
-		// Detect button may or may not be visible depending on state
-		// Just verify the page rendered properly
-		const content = page.locator("#pageContent");
-		await expect(content).not.toBeEmpty();
+		await openProvidersPage(page);
+		await expect(page.locator("#providersDetectModelsBtn")).toBeVisible();
 	});
 
 	test("no providers shows guidance", async ({ page }) => {
-		await navigateAndWait(page, "/settings/providers");
+		await openProvidersPage(page);
 
 		// On a fresh server with no API keys, should show guidance or empty state
 		const content = page.locator("#pageContent");
@@ -42,14 +34,14 @@ test.describe("Provider setup page", () => {
 
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
+		await openProvidersPage(page);
 		expect(pageErrors).toEqual([]);
 	});
 
 	test("provider modal honors configured provider order", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
-		await page.getByRole("button", { name: "Add LLM" }).click();
+		await openProvidersPage(page);
+		await page.locator("#providersAddLlmBtn").click();
 
 		const providerNames = page.locator(".provider-modal-backdrop .provider-item .provider-item-name");
 		await expect(providerNames.first()).toBeVisible();
@@ -63,8 +55,8 @@ test.describe("Provider setup page", () => {
 
 	test("api key forms include provider key source hints", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
-		await page.getByRole("button", { name: "Add LLM" }).click();
+		await openProvidersPage(page);
+		await page.locator("#providersAddLlmBtn").click();
 
 		const openaiItem = page
 			.locator(".provider-modal-backdrop .provider-item")
@@ -97,8 +89,8 @@ test.describe("Provider setup page", () => {
 
 	test("provider validation errors render in danger panel", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/providers");
-		await page.getByRole("button", { name: "Add LLM" }).click();
+		await openProvidersPage(page);
+		await page.locator("#providersAddLlmBtn").click();
 
 		const openaiItem = page
 			.locator(".provider-modal-backdrop .provider-item")

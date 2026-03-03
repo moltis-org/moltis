@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moltis.org/.well-known/moltis-install.release.schema.json",
+  "title": "Moltis Install Release Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "release_manifest_version",
+    "version",
+    "tag",
+    "published_at",
+    "repo",
+    "artifacts"
+  ],
+  "properties": {
+    "release_manifest_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "version": {
+      "type": "string"
+    },
+    "tag": {
+      "type": "string"
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date"
+    },
+    "repo": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target",
+          "filename",
+          "url",
+          "sha256",
+          "sha256_url"
+        ],
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sha256_url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

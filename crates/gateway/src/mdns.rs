@@ -45,7 +45,12 @@ pub fn register(
 
     let host_label = format!("{host}.local.");
 
-    let properties = [("version", version), ("hostname", &host)];
+    let port_value = port.to_string();
+    let properties = [
+        ("version", version),
+        ("hostname", host.as_str()),
+        ("port", port_value.as_str()),
+    ];
 
     let service = ServiceInfo::new(
         SERVICE_TYPE,

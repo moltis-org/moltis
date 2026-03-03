@@ -23,6 +23,8 @@ const INTERNAL_TAGS: &[&str] = &[
     "internal_thought",
     "function_call",
     "tool_use",
+    "invoke",
+    "tool_calls",
 ];
 
 /// Standalone pipe tokens that should be stripped.
@@ -405,5 +407,48 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, "a");
         assert_eq!(calls[1].name, "b");
+    }
+
+    // ── New INTERNAL_TAGS: invoke, tool_calls ─────────────────────────
+
+    #[test]
+    fn clean_response_strips_invoke_tags() {
+        let input = "Answer here<invoke name=\"exec\"><arg name=\"cmd\">ls</arg></invoke> done";
+        let cleaned = clean_response(input);
+        assert_eq!(cleaned, "Answer here done");
+    }
+
+    #[test]
+    fn clean_response_strips_tool_calls_wrapper() {
+        let input = "<tool_calls>some tool call content</tool_calls>The result is 42.";
+        let cleaned = clean_response(input);
+        assert_eq!(cleaned, "The result is 42.");
+    }
+
+    #[test]
+    fn clean_response_word_invoke_in_prose_preserved() {
+        // The word "invoke" in plain English is NOT inside XML tags — must survive.
+        let input = "You can invoke the function by passing arguments.";
+        assert_eq!(clean_response(input), input);
+    }
+
+    /// Existing tool_call recovery is NOT broken by new INTERNAL_TAGS.
+    /// TOOL_CALL_TAGS ("function_call", "tool_call") are separate from INTERNAL_TAGS.
+    #[test]
+    fn recover_tool_calls_unaffected_by_new_internal_tags() {
+        let input = r#"<tool_call>{"name": "exec", "arguments": {"command": "ls"}}</tool_call>"#;
+        let (cleaned, calls) = recover_tool_calls_from_content(input);
+        assert_eq!(cleaned, "");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "exec");
+    }
+
+    /// clean_response strips leaked <invoke> but does NOT interfere with
+    /// proper tool call recovery (which runs separately in the runner).
+    #[test]
+    fn clean_response_strips_malformed_invoke_leftovers() {
+        let input = "Here is the result. <invoke name=\"exec\">leftover</invoke>";
+        let cleaned = clean_response(input);
+        assert_eq!(cleaned, "Here is the result.");
     }
 }

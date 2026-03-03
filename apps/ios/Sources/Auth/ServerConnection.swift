@@ -4,12 +4,14 @@ struct ServerConnection: Identifiable, Codable, Equatable {
     var id: UUID
     var name: String
     var url: URL
+    var emoji: String?
     var keychainKey: String
 
-    init(id: UUID = UUID(), name: String, url: URL) {
+    init(id: UUID = UUID(), name: String, url: URL, emoji: String? = nil) {
         self.id = id
         self.name = name
         self.url = url
+        self.emoji = emoji
         self.keychainKey = "apikey-\(id.uuidString)"
     }
 
@@ -51,5 +53,13 @@ struct ServerConnection: Identifiable, Codable, Equatable {
     /// GraphQL HTTP endpoint.
     var graphqlURL: URL {
         baseURL.appendingPathComponent("graphql")
+    }
+
+    var displayEmoji: String {
+        let trimmed = emoji?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            return trimmed
+        }
+        return "\u{1F916}"
     }
 }
