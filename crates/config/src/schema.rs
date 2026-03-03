@@ -1643,6 +1643,12 @@ pub struct BrowserConfig {
     /// When set, `persist_profile` is implicitly true.
     /// If not set and `persist_profile` is true, defaults to `data_dir()/browser/profile/`.
     pub profile_dir: Option<String>,
+    /// Hostname or IP used to connect to the browser container from the host.
+    /// Default: "127.0.0.1" (localhost). When running Moltis itself inside Docker,
+    /// set this to "host.docker.internal" or the Docker bridge gateway IP so
+    /// Moltis can reach the sibling browser container via the host's port mapping.
+    #[serde(default = "default_container_host")]
+    pub container_host: String,
 }
 
 fn default_sandbox_image() -> String {
@@ -1655,6 +1661,10 @@ const fn default_low_memory_threshold_mb() -> u64 {
 
 const fn default_persist_profile() -> bool {
     true
+}
+
+fn default_container_host() -> String {
+    "127.0.0.1".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -1677,6 +1687,7 @@ impl Default for BrowserConfig {
             low_memory_threshold_mb: default_low_memory_threshold_mb(),
             persist_profile: default_persist_profile(),
             profile_dir: None,
+            container_host: default_container_host(),
         }
     }
 }

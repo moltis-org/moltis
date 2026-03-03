@@ -225,6 +225,7 @@ fn build_schema_map() -> KnownKeys {
             ("low_memory_threshold_mb", Leaf),
             ("persist_profile", Leaf),
             ("profile_dir", Leaf),
+            ("container_host", Leaf),
         ]))
     };
 
