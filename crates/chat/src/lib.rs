@@ -4789,7 +4789,11 @@ impl ChatService for LiveChatService {
         };
         let (native_tools, tools_enabled, tool_mode) = if let Some(ref p) = provider {
             let tool_mode = effective_tool_mode(&**p);
-            (matches!(tool_mode, ToolMode::Native), !matches!(tool_mode, ToolMode::Off), tool_mode)
+            (
+                matches!(tool_mode, ToolMode::Native),
+                !matches!(tool_mode, ToolMode::Off),
+                tool_mode,
+            )
         } else {
             (false, false, ToolMode::Off)
         };
