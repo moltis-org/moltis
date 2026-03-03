@@ -52,11 +52,21 @@ impl SqliteMemoryStore {
     }
 }
 
-/// Deserialize a BLOB of little-endian f32s.
-fn blob_to_vec(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
+/// Zero-copy cast of a little-endian f32 BLOB to `&[f32]`.
+///
+/// Falls back to byte-by-byte deserialization if alignment or size is wrong.
+fn blob_as_f32_slice(blob: &[u8]) -> std::borrow::Cow<'_, [f32]> {
+    match bytemuck::try_cast_slice(blob) {
+        Ok(slice) => std::borrow::Cow::Borrowed(slice),
+        Err(_) => {
+            // Alignment or size mismatch — fall back to manual deserialization.
+            let vec: Vec<f32> = blob
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            std::borrow::Cow::Owned(vec)
+        },
+    }
 }
 
 /// Serialize a slice of f32s to a BLOB of little-endian bytes.
@@ -82,6 +92,37 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         0.0
     } else {
         dot / denom
+    }
+}
+
+/// A scored result for the top-K min-heap. Ordered by score ascending so the
+/// minimum score is at the top, allowing us to evict the worst candidate.
+struct ScoredResult {
+    score: f32,
+    result: SearchResult,
+}
+
+impl PartialEq for ScoredResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.score == other.score
+    }
+}
+
+impl Eq for ScoredResult {}
+
+impl PartialOrd for ScoredResult {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScoredResult {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Reverse order: smallest score at top of BinaryHeap (min-heap).
+        other
+            .score
+            .partial_cmp(&self.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -259,7 +300,7 @@ impl MemoryStore for SqliteMemoryStore {
         .bind(hash)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|(blob,)| blob_to_vec(&blob)))
+        Ok(row.map(|(blob,)| blob_as_f32_slice(&blob).into_owned()))
     }
 
     async fn put_cached_embedding(
@@ -337,38 +378,64 @@ impl MemoryStore for SqliteMemoryStore {
         query_embedding: &[f32],
         limit: usize,
     ) -> anyhow::Result<Vec<SearchResult>> {
-        // Load all chunks with embeddings and compute cosine similarity in-process
-        let rows: Vec<(String, String, String, i64, i64, Option<Vec<u8>>)> = sqlx::query_as(
+        use {futures::TryStreamExt, std::collections::BinaryHeap};
+
+        // Stream rows one at a time, keeping only the top-K results in a
+        // min-heap. Memory usage is O(limit) instead of O(all_chunks).
+        let mut heap: BinaryHeap<ScoredResult> = BinaryHeap::with_capacity(limit + 1);
+
+        let mut stream = sqlx::query_as::<_, (String, String, String, i64, i64, Option<Vec<u8>>)>(
             "SELECT id, path, source, start_line, end_line, embedding FROM chunks WHERE embedding IS NOT NULL",
         )
-        .fetch_all(&self.pool)
-        .await?;
+        .fetch(&self.pool);
 
-        let mut scored: Vec<SearchResult> = rows
-            .into_iter()
-            .filter_map(|(id, path, source, start_line, end_line, emb)| {
-                let emb = emb?;
-                let vec = blob_to_vec(&emb);
-                let score = cosine_similarity(query_embedding, &vec);
-                Some(SearchResult {
-                    chunk_id: id,
-                    path,
-                    source,
-                    start_line,
-                    end_line,
+        while let Some((id, path, source, start_line, end_line, emb)) = stream.try_next().await? {
+            let Some(emb) = emb else {
+                continue;
+            };
+            let embedding = blob_as_f32_slice(&emb);
+            let score = cosine_similarity(query_embedding, &embedding);
+
+            if heap.len() < limit {
+                heap.push(ScoredResult {
                     score,
-                    text: String::new(), // filled by caller if needed
-                })
-            })
-            .collect();
+                    result: SearchResult {
+                        chunk_id: id,
+                        path,
+                        source,
+                        start_line,
+                        end_line,
+                        score,
+                        text: String::new(),
+                    },
+                });
+            } else if let Some(min) = heap.peek()
+                && score > min.score
+            {
+                heap.pop();
+                heap.push(ScoredResult {
+                    score,
+                    result: SearchResult {
+                        chunk_id: id,
+                        path,
+                        source,
+                        start_line,
+                        end_line,
+                        score,
+                        text: String::new(),
+                    },
+                });
+            }
+        }
 
-        scored.sort_by(|a, b| {
+        // Extract results sorted by score descending.
+        let mut results: Vec<SearchResult> = heap.into_iter().map(|s| s.result).collect();
+        results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        scored.truncate(limit);
-        Ok(scored)
+        Ok(results)
     }
 
     async fn keyword_search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {
@@ -694,7 +761,7 @@ mod tests {
     fn test_blob_roundtrip() {
         let v = vec![0.1f32, 0.2, 0.3, -0.5];
         let blob = vec_to_blob(&v);
-        let back = blob_to_vec(&blob);
+        let back = blob_as_f32_slice(&blob).into_owned();
         for (a, b) in v.iter().zip(back.iter()) {
             assert!((a - b).abs() < 1e-7);
         }

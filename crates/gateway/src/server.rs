@@ -1467,7 +1467,9 @@ pub async fn prepare_gateway(
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(std::time::Duration::from_secs(5));
-        sqlx::SqlitePool::connect_with(options)
+        sqlx::pool::PoolOptions::new()
+            .max_connections(config.server.db_pool_max_connections)
+            .connect_with(options)
             .await
             .expect("failed to open moltis.db")
     };
@@ -2772,7 +2774,10 @@ pub async fn prepare_gateway(
                     .journal_mode(SqliteJournalMode::Wal)
                     .synchronous(SqliteSynchronous::Normal)
                     .busy_timeout(std::time::Duration::from_secs(5));
-            sqlx::SqlitePool::connect_with(options).await
+            sqlx::pool::PoolOptions::new()
+                .max_connections(config.server.db_pool_max_connections)
+                .connect_with(options)
+                .await
         };
         match memory_pool_result {
             Ok(memory_pool) => {

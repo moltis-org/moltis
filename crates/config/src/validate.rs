@@ -350,6 +350,7 @@ fn build_schema_map() -> KnownKeys {
                 ("ws_request_logs", Leaf),
                 ("log_buffer_size", Leaf),
                 ("update_releases_url", Leaf),
+                ("db_pool_max_connections", Leaf),
             ])),
         ),
         ("providers", MapWithFields {
