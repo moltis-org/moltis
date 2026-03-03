@@ -18,6 +18,7 @@
 # Features
 
 - [LLM Providers](providers.md)
+  - [Anthropic OAuth (FAQ)](anthropic-oauth.md)
 - [MCP Servers](mcp.md)
 - [Memory](memory.md)
   - [Moltis vs OpenClaw](memory-comparison.md)
