@@ -2,6 +2,8 @@
 
 pub mod chunker;
 pub mod config;
+#[cfg(test)]
+pub mod contract;
 pub mod embeddings;
 pub mod embeddings_batch;
 pub mod embeddings_fallback;

@@ -113,6 +113,7 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("api_key", Leaf),
             ("base_url", Leaf),
+            ("url", Leaf),
             ("models", Leaf),
             ("fetch_models", Leaf),
             ("stream_transport", Leaf),
@@ -224,6 +225,7 @@ fn build_schema_map() -> KnownKeys {
             ("low_memory_threshold_mb", Leaf),
             ("persist_profile", Leaf),
             ("profile_dir", Leaf),
+            ("container_host", Leaf),
         ]))
     };
 
@@ -362,11 +364,36 @@ fn build_schema_map() -> KnownKeys {
 
     let agent_preset = || {
         Struct(HashMap::from([
+            (
+                "identity",
+                Struct(HashMap::from([
+                    ("name", Leaf),
+                    ("emoji", Leaf),
+                    ("theme", Leaf),
+                ])),
+            ),
             ("model", Leaf),
-            ("allow_tools", Leaf),
-            ("deny_tools", Leaf),
+            (
+                "tools",
+                Struct(HashMap::from([("allow", Leaf), ("deny", Leaf)])),
+            ),
             ("delegate_only", Leaf),
             ("system_prompt_suffix", Leaf),
+            ("max_iterations", Leaf),
+            ("timeout_secs", Leaf),
+            (
+                "sessions",
+                Struct(HashMap::from([
+                    ("key_prefix", Leaf),
+                    ("allowed_keys", Leaf),
+                    ("can_send", Leaf),
+                    ("cross_agent", Leaf),
+                ])),
+            ),
+            (
+                "memory",
+                Struct(HashMap::from([("scope", Leaf), ("max_lines", Leaf)])),
+            ),
         ]))
     };
 
@@ -379,7 +406,7 @@ fn build_schema_map() -> KnownKeys {
                 ("http_request_logs", Leaf),
                 ("ws_request_logs", Leaf),
                 ("log_buffer_size", Leaf),
-                ("update_repository_url", Leaf),
+                ("update_releases_url", Leaf),
             ])),
         ),
         ("providers", MapWithFields {
@@ -538,6 +565,18 @@ fn build_schema_map() -> KnownKeys {
                     ])))),
                 ),
             ])),
+        ),
+        (
+            "webhooks",
+            Struct(HashMap::from([(
+                "rate_limit",
+                Struct(HashMap::from([
+                    ("enabled", Leaf),
+                    ("requests_per_minute", Leaf),
+                    ("burst", Leaf),
+                    ("cleanup_interval_secs", Leaf),
+                ])),
+            )])),
         ),
         (
             "voice",
@@ -2242,6 +2281,25 @@ tool_mode = "text"
         assert!(
             unknown.is_none(),
             "tool_mode should be a known field, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn url_field_accepted_in_provider_entry() {
+        let toml = r#"
+[providers.ollama]
+enabled = true
+url = "http://192.168.0.9:11434"
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path.contains("providers.ollama.url"));
+        assert!(
+            unknown.is_none(),
+            "url should be accepted as a provider field alias, got: {:?}",
             result.diagnostics
         );
     }

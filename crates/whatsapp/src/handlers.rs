@@ -118,6 +118,13 @@ async fn handle_message(
     state: &AccountState,
     accounts: &AccountStateMap,
 ) {
+    #[cfg(feature = "metrics")]
+    moltis_metrics::counter!(
+        moltis_metrics::channels::MESSAGES_RECEIVED_TOTAL,
+        moltis_metrics::labels::CHANNEL => "whatsapp"
+    )
+    .increment(1);
+
     let sender_jid: &Jid = &info.source.sender;
     let chat_jid: &Jid = &info.source.chat;
 

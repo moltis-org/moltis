@@ -26,8 +26,9 @@
 - [Sandbox](sandbox.md)
   - [Trusted Network](trusted-network.md)
 - [Voice](voice.md)
-- [Discord](discord.md)
-- [WhatsApp](whatsapp.md)
+- [Channels](channels.md)
+  - [Discord](discord.md)
+  - [WhatsApp](whatsapp.md)
 - [Browser Automation](browser-automation.md)
 - [CalDAV (Calendars)](caldav.md)
 - [GraphQL API](graphql.md)
@@ -65,6 +66,8 @@
 - [SQLite Migrations](sqlite-migration.md)
 - [Metrics & Tracing](metrics-and-tracing.md)
 - [Tool Registry](tool-registry.md)
+- [Agent Presets](agent-presets.md)
+- [Session Tools](session-tools.md)
 
 ---
 

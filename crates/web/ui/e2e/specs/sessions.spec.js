@@ -1,4 +1,4 @@
-const { expect, test } = require("@playwright/test");
+const { expect, test } = require("../base-test");
 const {
 	expectPageContentMounted,
 	navigateAndWait,

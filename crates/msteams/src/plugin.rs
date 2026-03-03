@@ -121,13 +121,26 @@ impl MsTeamsPlugin {
             .await
     }
 
+    /// Ingest an already-verified webhook activity.
+    ///
+    /// Use this when the caller has already verified the secret via
+    /// the channel webhook middleware pipeline.
+    pub async fn ingest_verified_activity(
+        &self,
+        account_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let activity: TeamsActivity = serde_json::from_value(payload)?;
+        self.process_activity(account_id, activity).await
+    }
+
     async fn handle_activity(
         &self,
         account_id: &str,
         activity: TeamsActivity,
         webhook_secret: Option<&str>,
     ) -> anyhow::Result<()> {
-        let (config, event_sink, message_log, service_urls) = {
+        let (config, _event_sink, _message_log, _service_urls) = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             let state = accounts
                 .get(account_id)
@@ -149,6 +162,28 @@ impl MsTeamsPlugin {
         {
             anyhow::bail!("invalid Teams webhook secret");
         }
+
+        self.process_activity(account_id, activity).await
+    }
+
+    /// Core activity processing logic, called after authentication.
+    async fn process_activity(
+        &self,
+        account_id: &str,
+        activity: TeamsActivity,
+    ) -> anyhow::Result<()> {
+        let (config, event_sink, message_log, service_urls) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let state = accounts
+                .get(account_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown Teams account: {account_id}"))?;
+            (
+                state.config.clone(),
+                state.event_sink.clone(),
+                state.message_log.clone(),
+                Arc::clone(&state.service_urls),
+            )
+        };
 
         if let (Some(conversation_id), Some(service_url)) =
             (activity.conversation_id(), activity.service_url.as_deref())
@@ -296,6 +331,13 @@ impl MsTeamsPlugin {
             return Ok(());
         }
 
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_RECEIVED_TOTAL,
+            moltis_metrics::labels::CHANNEL => "msteams"
+        )
+        .increment(1);
+
         sink.dispatch_to_chat(&text, reply_to, ChannelMessageMeta {
             channel_type: ChannelType::MsTeams,
             sender_name,
@@ -419,6 +461,20 @@ impl ChannelPlugin for MsTeamsPlugin {
         Arc::new(MsTeamsOutbound {
             accounts: Arc::clone(&self.accounts),
         })
+    }
+
+    fn channel_webhook_verifier(
+        &self,
+        account_id: &str,
+    ) -> Option<Box<dyn moltis_channels::channel_webhook_middleware::ChannelWebhookVerifier>> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        let state = accounts.get(account_id)?;
+        Some(Box::new(
+            crate::channel_webhook_verifier::TeamsChannelWebhookVerifier::new(
+                state.config.webhook_secret.clone(),
+                true,
+            ),
+        ))
     }
 }
 

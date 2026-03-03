@@ -175,61 +175,6 @@ impl ConnectedClient {
     }
 }
 
-// ── Dedupe cache ─────────────────────────────────────────────────────────────
-
-struct DedupeEntry {
-    inserted_at: Instant,
-}
-
-/// Simple TTL-based idempotency cache.
-pub struct DedupeCache {
-    entries: HashMap<String, DedupeEntry>,
-    ttl: std::time::Duration,
-    max_entries: usize,
-}
-
-impl Default for DedupeCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl DedupeCache {
-    pub fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            ttl: std::time::Duration::from_millis(moltis_protocol::DEDUPE_TTL_MS),
-            max_entries: moltis_protocol::DEDUPE_MAX_ENTRIES,
-        }
-    }
-
-    /// Returns true if the key is a duplicate (already seen within TTL).
-    pub fn check_and_insert(&mut self, key: &str) -> bool {
-        self.evict_expired();
-        if self.entries.contains_key(key) {
-            return true;
-        }
-        if self.entries.len() >= self.max_entries
-            && let Some(oldest_key) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, v)| v.inserted_at)
-                .map(|(k, _)| k.clone())
-        {
-            self.entries.remove(&oldest_key);
-        }
-        self.entries.insert(key.to_string(), DedupeEntry {
-            inserted_at: Instant::now(),
-        });
-        false
-    }
-
-    fn evict_expired(&mut self) {
-        let cutoff = Instant::now() - self.ttl;
-        self.entries.retain(|_, v| v.inserted_at > cutoff);
-    }
-}
-
 // ── Pending node invoke ─────────────────────────────────────────────────────
 
 /// A pending RPC invocation waiting for a node to respond.
@@ -283,8 +228,6 @@ pub struct DiscoveredHookInfo {
 pub struct GatewayInner {
     /// All connected WebSocket clients, keyed by conn_id.
     pub clients: HashMap<String, ConnectedClient>,
-    /// Idempotency cache.
-    pub dedupe: DedupeCache,
     /// Connected device nodes.
     pub nodes: NodeRegistry,
     /// Device pairing state.
@@ -348,7 +291,6 @@ impl GatewayInner {
     fn new(hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>) -> Self {
         Self {
             clients: HashMap::new(),
-            dedupe: DedupeCache::new(),
             nodes: NodeRegistry::new(),
             pairing: PairingState::new(),
             pending_invokes: HashMap::new(),
@@ -454,6 +396,15 @@ pub struct GatewayState {
     #[cfg(feature = "vault")]
     pub vault: Option<Arc<moltis_vault::Vault>>,
 
+    // ── Channel webhook deduplication (separate lock) ──────────────────────
+    /// Idempotency dedup store for channel webhooks. Uses its own
+    /// `std::sync::RwLock` to avoid contending with the main `inner` lock.
+    pub channel_webhook_dedup:
+        std::sync::RwLock<crate::channel_webhook_dedup::ChannelWebhookDedupeStore>,
+
+    /// Per-(channel, account) rate limiter for channel webhooks.
+    pub channel_webhook_rate_limiter: crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter,
+
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     /// Monotonically increasing sequence counter for broadcast events.
     pub seq: AtomicU64,
@@ -538,6 +489,11 @@ impl GatewayState {
             metrics_store,
             #[cfg(feature = "vault")]
             vault,
+            channel_webhook_dedup: std::sync::RwLock::new(
+                crate::channel_webhook_dedup::ChannelWebhookDedupeStore::new(),
+            ),
+            channel_webhook_rate_limiter:
+                crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter::new(),
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
             #[cfg(feature = "graphql")]

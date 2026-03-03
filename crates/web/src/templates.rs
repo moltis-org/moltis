@@ -54,6 +54,7 @@ pub(crate) static SPA_ROUTES: SpaRoutes = SpaRoutes {
 #[derive(serde::Serialize)]
 pub(crate) struct GonData {
     pub(crate) identity: moltis_config::ResolvedIdentity,
+    version: String,
     port: u16,
     counts: NavCounts,
     crons: Vec<moltis_cron::types::CronJob>,
@@ -331,6 +332,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
 
     GonData {
         identity,
+        version: gw.version.clone(),
         port,
         counts,
         crons,

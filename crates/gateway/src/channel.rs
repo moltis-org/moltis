@@ -142,6 +142,7 @@ impl LiveChannelService {
 
 #[async_trait]
 impl ChannelService for LiveChannelService {
+    #[tracing::instrument(skip(self))]
     async fn status(&self) -> ServiceResult {
         let mut channels = Vec::new();
 
@@ -192,6 +193,7 @@ impl ChannelService for LiveChannelService {
         Ok(serde_json::json!({ "channels": channels }))
     }
 
+    #[tracing::instrument(skip(self, params))]
     async fn add(&self, params: Value) -> ServiceResult {
         let account_id = params
             .get("account_id")
@@ -239,6 +241,7 @@ impl ChannelService for LiveChannelService {
         }))
     }
 
+    #[tracing::instrument(skip(self, params))]
     async fn remove(&self, params: Value) -> ServiceResult {
         let account_id = params
             .get("account_id")
@@ -275,6 +278,7 @@ impl ChannelService for LiveChannelService {
         self.remove(params).await
     }
 
+    #[tracing::instrument(skip(self, params))]
     async fn update(&self, params: Value) -> ServiceResult {
         let account_id = params
             .get("account_id")

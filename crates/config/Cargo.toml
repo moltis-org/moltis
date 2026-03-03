@@ -4,6 +4,7 @@ name              = "moltis-config"
 version.workspace = true
 
 [dependencies]
+anyhow         = { workspace = true }
 chrono-tz      = { workspace = true }
 directories    = { workspace = true }
 ipnet          = { workspace = true }

@@ -130,6 +130,22 @@ pub mod channels {
     pub const ERRORS_TOTAL: &str = "moltis_channel_errors_total";
 }
 
+/// Channel webhook middleware metrics (signature verification, dedup, rate limiting)
+pub mod channel_webhook {
+    /// Total webhook requests received (before verification)
+    pub const REQUESTS_TOTAL: &str = "moltis_channel_webhook_requests_total";
+    /// Webhook requests that passed signature verification
+    pub const VERIFIED_TOTAL: &str = "moltis_channel_webhook_verified_total";
+    /// Webhook requests rejected (label: rejection_reason)
+    pub const REJECTED_TOTAL: &str = "moltis_channel_webhook_rejected_total";
+    /// Webhook requests deduplicated (idempotency key already seen)
+    pub const DEDUPED_TOTAL: &str = "moltis_channel_webhook_deduped_total";
+    /// Webhook signature verification duration in seconds
+    pub const VERIFY_DURATION_SECONDS: &str = "moltis_channel_webhook_verify_duration_seconds";
+    /// Webhook requests rate-limited
+    pub const RATE_LIMITED_TOTAL: &str = "moltis_channel_webhook_rate_limited_total";
+}
+
 /// Memory/embedding metrics
 pub mod memory {
     /// Total number of memory searches performed
@@ -503,6 +519,7 @@ pub mod labels {
     pub const MODE: &str = "mode";
     pub const ACCOUNT_ID: &str = "account_id";
     pub const FILE_TYPE: &str = "file_type";
+    pub const REJECTION_REASON: &str = "rejection_reason";
 }
 
 /// Standard histogram buckets for different metric types

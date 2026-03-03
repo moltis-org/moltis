@@ -61,6 +61,38 @@ function channelLabel(type) {
 	return "Telegram";
 }
 
+function channelDescriptor(type) {
+	var descs = getGon("channel_descriptors") || [];
+	return descs.find((d) => d.channel_type === channelType(type)) || null;
+}
+
+var MODE_LABELS = {
+	none: "Send only",
+	polling: "Polling",
+	gateway_loop: "Gateway",
+	socket_mode: "Socket Mode",
+	webhook: "Webhook",
+};
+
+var MODE_HINTS = {
+	webhook: "Requires a publicly reachable URL. Configure your platform to send events to the endpoint shown below.",
+	polling: "Connects automatically via long-polling. No public URL needed.",
+	gateway_loop: "Maintains a persistent connection. No public URL needed.",
+	socket_mode: "Connects via Socket Mode. No public URL needed.",
+	none: "This channel is send-only and cannot receive inbound messages.",
+};
+
+function ConnectionModeHint({ type }) {
+	var desc = channelDescriptor(type);
+	if (!desc) return null;
+	var hint = MODE_HINTS[desc.capabilities.inbound_mode];
+	if (!hint) return null;
+	return html`<div class="text-xs text-[var(--muted)] mt-1 flex items-center gap-1">
+		<span class="tier-badge">${MODE_LABELS[desc.capabilities.inbound_mode]}</span>
+		<span>${hint}</span>
+	</div>`;
+}
+
 function senderSelectionKey(ch) {
 	return `${channelType(ch.type)}::${ch.account_id}`;
 }
@@ -136,6 +168,8 @@ function ChannelCard(props) {
 				? active.map((s) => `${s.label || s.key} (${s.messageCount} msgs)`).join(", ")
 				: "No active session";
 	}
+	var desc = channelDescriptor(ch.type);
+	var modeLabel = desc ? MODE_LABELS[desc.capabilities.inbound_mode] || desc.capabilities.inbound_mode : null;
 
 	return html`<div class="provider-card p-3 rounded-lg mb-2">
     <div class="flex items-center gap-2.5">
@@ -149,6 +183,7 @@ function ChannelCard(props) {
         ${channelType(ch.type) === "telegram" && ch.account_id && html`<a href="https://t.me/${ch.account_id}" target="_blank" class="text-xs text-[var(--accent)] underline">t.me/${ch.account_id}</a>`}
       </div>
       <span class="provider-item-badge ${statusClass}">${ch.status || "unknown"}</span>
+      ${modeLabel && html`<span class="tier-badge">${modeLabel}</span>`}
     </div>
     <div class="flex gap-2">
       <button class="provider-btn provider-btn-sm provider-btn-secondary" title="Edit ${ch.account_id || "channel"}"
@@ -445,6 +480,7 @@ function AddTelegramModal() {
 	          <div class="text-xs text-[var(--muted)]">3. Copy the bot token and paste it below</div>
 	        </div>
 	      </div>
+	      <${ConnectionModeHint} type="telegram" />
 	      <label class="text-xs text-[var(--muted)]">Bot username</label>
 	      <input data-field="accountId" type="text" placeholder="e.g. my_assistant_bot"
 	        value=${accountDraft.value}
@@ -575,6 +611,7 @@ function AddTeamsModal() {
 	          <div class="text-xs text-[var(--muted)]">3. Optional CLI shortcut: <code>moltis channels teams bootstrap</code>.</div>
 	        </div>
 	      </div>
+	      <${ConnectionModeHint} type="msteams" />
 	      <label class="text-xs text-[var(--muted)]">App ID / Account ID</label>
 	      <input data-field="accountId" type="text" placeholder="Azure App ID or alias"
 	        value=${accountDraft.value}
@@ -708,6 +745,7 @@ function AddDiscordModal() {
 	          <div class="text-xs text-[var(--muted)]">5. You can also DM the bot directly without adding it to a server</div>
 	        </div>
 	      </div>
+	      <${ConnectionModeHint} type="discord" />
 	      <label class="text-xs text-[var(--muted)]">Account ID</label>
 	      <input data-field="accountId" type="text" placeholder="e.g. my-discord-bot"
 	        value=${accountDraft.value}
@@ -828,6 +866,7 @@ function AddSlackModal() {
 	          <div class="text-xs text-[var(--muted)]">5. For Events API: set the Request URL to your server\u2019s webhook endpoint</div>
 	        </div>
 	      </div>
+	      <${ConnectionModeHint} type="slack" />
 	      <label class="text-xs text-[var(--muted)]">Account ID</label>
 	      <input data-field="accountId" type="text" placeholder="e.g. my-slack-bot"
 	        value=${accountDraft.value}
@@ -1006,6 +1045,7 @@ function AddWhatsAppModal() {
             <div class="text-xs text-[var(--muted)]">4. Scan the QR code to connect</div>
           </div>
         </div>
+        <${ConnectionModeHint} type="whatsapp" />
         <label class="text-xs text-[var(--muted)]">Account ID</label>
         <input data-field="accountId" type="text" placeholder="e.g. my-whatsapp" class="channel-input"
           value=${accountDraft.value}

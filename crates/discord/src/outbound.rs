@@ -408,6 +408,14 @@ impl ChannelOutbound for DiscordOutbound {
         send_discord_message(&http, channel_id, text, reference)
             .await
             .map_err(|e| ChannelError::external("Discord send", std::io::Error::other(e)))?;
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_SENT_TOTAL,
+            moltis_metrics::labels::CHANNEL => "discord"
+        )
+        .increment(1);
+
         Ok(())
     }
 

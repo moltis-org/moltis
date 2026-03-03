@@ -170,6 +170,8 @@ impl ChannelType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InboundMode {
+    /// Send-only channel with no inbound capability (e.g. email, SMS).
+    None,
     /// Long-polling loop (Telegram).
     Polling,
     /// Persistent gateway/WebSocket connection (Discord, WhatsApp).
@@ -560,6 +562,15 @@ pub trait ChannelPlugin: Send + Sync {
 
     /// Thread context provider for fetching prior thread messages.
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        None
+    }
+
+    /// Return the webhook verifier for this channel account, if this channel
+    /// uses HTTP webhooks. Channels that use polling/socket modes return `None`.
+    fn channel_webhook_verifier(
+        &self,
+        _account_id: &str,
+    ) -> Option<Box<dyn crate::channel_webhook_middleware::ChannelWebhookVerifier>> {
         None
     }
 }
@@ -1021,6 +1032,8 @@ mod tests {
 
     #[test]
     fn inbound_mode_serialization() {
+        let json = serde_json::to_string(&InboundMode::None).unwrap();
+        assert_eq!(json, "\"none\"");
         let json = serde_json::to_string(&InboundMode::Polling).unwrap();
         assert_eq!(json, "\"polling\"");
         let json = serde_json::to_string(&InboundMode::GatewayLoop).unwrap();

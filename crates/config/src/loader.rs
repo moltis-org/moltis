@@ -103,7 +103,7 @@ pub fn load_config_value(path: &Path) -> crate::Result<serde_json::Value> {
 /// If the config has port 0 (either from defaults or missing `[server]` section),
 /// a random available port is generated and saved to the config file.
 pub fn discover_and_load() -> MoltisConfig {
-    if let Some(path) = find_config_file() {
+    let mut cfg = if let Some(path) = find_config_file() {
         debug!(path = %path.display(), "loading config");
         match load_config(&path) {
             Ok(mut cfg) => {
@@ -122,10 +122,11 @@ pub fn discover_and_load() -> MoltisConfig {
                         warn!(error = %e, "failed to save config with generated port");
                     }
                 }
-                return cfg; // env overrides already applied by load_config
+                cfg // env overrides already applied by load_config
             },
             Err(e) => {
                 warn!(path = %path.display(), error = %e, "failed to load config, using defaults");
+                apply_env_overrides(MoltisConfig::default())
             },
         }
     } else {
@@ -149,9 +150,20 @@ pub fn discover_and_load() -> MoltisConfig {
                 "wrote default config template"
             );
         }
-        return apply_env_overrides(config);
+        apply_env_overrides(config)
+    };
+
+    // Merge markdown agent definitions (TOML presets take precedence).
+    let agent_defs = crate::agent_defs::discover_agent_defs();
+    if !agent_defs.is_empty() {
+        debug!(
+            count = agent_defs.len(),
+            "discovered markdown agent definitions"
+        );
+        crate::agent_defs::merge_agent_defs(&mut cfg.agents.presets, agent_defs);
     }
-    apply_env_overrides(MoltisConfig::default())
+
+    cfg
 }
 
 /// Find the first config file in standard locations.

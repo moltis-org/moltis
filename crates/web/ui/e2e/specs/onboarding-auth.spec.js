@@ -1,4 +1,4 @@
-const { expect, test } = require("@playwright/test");
+const { expect, test } = require("../base-test");
 const { watchPageErrors } = require("../helpers");
 
 function isVisible(locator) {

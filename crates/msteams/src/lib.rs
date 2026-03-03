@@ -5,6 +5,7 @@
 
 pub mod activity;
 pub mod auth;
+pub mod channel_webhook_verifier;
 pub mod config;
 pub mod outbound;
 pub mod plugin;

@@ -1,4 +1,4 @@
-const { expect, test } = require("@playwright/test");
+const { expect, test } = require("../base-test");
 const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {
@@ -39,6 +39,21 @@ test.describe("Chat abort", () => {
 	test.beforeEach(async ({ page }) => {
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
+
+		// Wait for the session switch RPC to finish rendering history.
+		// Without this, renderHistory() can clear #messages after we inject
+		// fake DOM elements, causing flaky "element not found" failures.
+		await page.waitForFunction(
+			async () => {
+				var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+				if (!appScript) return false;
+				var appUrl = new URL(appScript.src, window.location.origin);
+				var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+				var state = await import(`${prefix}js/state.js`);
+				return !state.sessionSwitchInProgress && !state.chatBatchLoading;
+			},
+			{ timeout: 10_000 },
+		);
 	});
 
 	test("thinking indicator shows stop button", async ({ page }) => {

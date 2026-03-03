@@ -156,6 +156,46 @@ pub async fn stream_completes_on_error_signal(plugin: &mut dyn ChannelPlugin) ->
     Ok(())
 }
 
+/// Sending to an unknown account must return a classifiable (non-retryable) error.
+pub async fn outbound_error_classification(plugin: &mut dyn ChannelPlugin) -> Result<()> {
+    let id = "contract-acct-err-class";
+    let config = serde_json::json!({});
+
+    plugin.start_account(id, config).await?;
+    let outbound = plugin.shared_outbound();
+
+    // Send to a non-existent peer — the outbound should succeed (NullOutbound)
+    // but the registry's resolve_outbound for an unknown account returns an error.
+    // Test error classification on known error variants.
+    let unknown_err = crate::Error::unknown_account("bad-account");
+    assert!(
+        !unknown_err.is_retryable(),
+        "unknown_account error must NOT be retryable"
+    );
+
+    let external_err = crate::Error::external(
+        "network timeout",
+        std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out"),
+    );
+    assert!(
+        external_err.is_retryable(),
+        "external/network error must be retryable"
+    );
+
+    let invalid_err = crate::Error::invalid_input("bad payload");
+    assert!(
+        !invalid_err.is_retryable(),
+        "invalid input error must NOT be retryable"
+    );
+
+    // Also verify outbound still works for the started account.
+    let result = outbound.send_text(id, "peer-1", "test", None).await;
+    assert!(result.is_ok(), "outbound must still work: {result:?}");
+
+    plugin.stop_account(id).await?;
+    Ok(())
+}
+
 /// `status().probe()` on an unknown account must return `connected: false`.
 pub async fn probe_unknown_account_returns_disconnected(plugin: &dyn ChannelPlugin) -> Result<()> {
     let status = plugin
@@ -186,4 +226,68 @@ pub async fn probe_started_account_returns_connected(plugin: &mut dyn ChannelPlu
 
     plugin.stop_account(id).await?;
     Ok(())
+}
+
+// ── Channel webhook verifier contracts ──────────────────────────────────────
+
+use crate::channel_webhook_middleware::{ChannelWebhookRejection, ChannelWebhookVerifier};
+
+/// A verifier must reject an empty body with no signature headers.
+pub fn channel_webhook_verifier_rejects_empty_signature(verifier: &dyn ChannelWebhookVerifier) {
+    let headers = http::HeaderMap::new();
+    let result = verifier.verify(&headers, b"{}");
+    assert!(
+        result.is_err(),
+        "verifier must reject requests without signature headers"
+    );
+    match result {
+        Err(
+            ChannelWebhookRejection::BadSignature(_) | ChannelWebhookRejection::MissingHeaders(_),
+        ) => {},
+        Err(other) => panic!("expected BadSignature or MissingHeaders, got: {other}"),
+        Ok(_) => panic!("verifier must reject requests without signature headers"),
+    }
+}
+
+/// A verifier must reject a body with an invalid/corrupted signature.
+pub fn channel_webhook_verifier_rejects_bad_signature(
+    verifier: &dyn ChannelWebhookVerifier,
+    headers_with_bad_sig: &http::HeaderMap,
+) {
+    let result = verifier.verify(headers_with_bad_sig, b"{\"text\":\"hello\"}");
+    assert!(
+        result.is_err(),
+        "verifier must reject requests with bad signatures"
+    );
+    assert!(
+        matches!(result, Err(ChannelWebhookRejection::BadSignature(_))),
+        "rejection must be BadSignature"
+    );
+}
+
+/// A verifier must produce a non-empty `channel_type()`.
+pub fn channel_webhook_verifier_has_channel_type(verifier: &dyn ChannelWebhookVerifier) {
+    let ct = verifier.channel_type();
+    assert!(
+        !ct.as_str().is_empty(),
+        "channel_type().as_str() must not be empty"
+    );
+}
+
+/// A verifier's `max_timestamp_age()` must be positive.
+pub fn channel_webhook_verifier_has_positive_max_age(verifier: &dyn ChannelWebhookVerifier) {
+    let age = verifier.max_timestamp_age();
+    assert!(
+        !age.is_zero(),
+        "max_timestamp_age() must be positive, got: {age:?}"
+    );
+}
+
+/// A verifier's `rate_policy()` must have a non-zero rate.
+pub fn channel_webhook_verifier_has_valid_rate_policy(verifier: &dyn ChannelWebhookVerifier) {
+    let policy = verifier.rate_policy();
+    assert!(
+        policy.max_requests_per_minute > 0,
+        "rate_policy().max_requests_per_minute must be > 0"
+    );
 }

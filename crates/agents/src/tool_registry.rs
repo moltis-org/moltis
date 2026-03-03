@@ -78,6 +78,24 @@ impl ToolRegistry {
         });
     }
 
+    /// Replace an existing tool by name, preserving its source metadata.
+    ///
+    /// Returns `true` if an existing tool was replaced, `false` if this was a new entry.
+    pub fn replace(&mut self, tool: Box<dyn AgentTool>) -> bool {
+        let name = tool.name().to_string();
+        let source = self
+            .tools
+            .get(&name)
+            .map(|entry| entry.source.clone())
+            .unwrap_or(ToolSource::Builtin);
+        self.tools
+            .insert(name, ToolEntry {
+                tool: Arc::from(tool),
+                source,
+            })
+            .is_some()
+    }
+
     pub fn unregister(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
     }

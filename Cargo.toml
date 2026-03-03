@@ -115,7 +115,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/moltis-org/moltis"
 rust-version = "1.91"
-version      = "0.10.6"
+version      = "0.10.11"
 
 [workspace.dependencies]
 # APNS
@@ -146,7 +146,7 @@ clap = { features = ["derive", "env"], version = "4" }
 # Database
 sqlx = { features = ["migrate", "runtime-tokio", "sqlite"], version = "0.8" }
 # HTTP client
-reqwest = { features = ["json", "stream"], version = "0.12" }
+reqwest = { features = ["json", "multipart", "stream"], version = "0.12" }
 # UUID
 uuid = { features = ["v4"], version = "1" }
 # Async
@@ -207,6 +207,7 @@ time           = { features = ["serde-human-readable"], version = "0.3" }
 tokio-rustls   = "0.26"
 # Cryptography / authentication
 argon2            = "0.5"
+subtle            = "2"
 chacha20poly1305  = { features = ["std"], version = "0.10" }
 p256              = "0.13"
 password-hash     = "0.5"

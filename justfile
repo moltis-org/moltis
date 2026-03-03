@@ -196,10 +196,63 @@ flatpak:
 # Run all CI checks (format, lint, build, test)
 ci: format-check lint i18n-check build-css build test
 
+# Compile once, then run Rust tests and E2E tests in parallel.
+# Uses the same nightly toolchain as clippy/local-validate so the build cache
+# is shared — no double-compilation.
+build-test: build-css
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "==> Building all workspace targets (bins + tests)..."
+    cargo +{{nightly_toolchain}} build --workspace --all-features --all-targets
+    echo "==> Build complete. Running Rust tests and E2E tests in parallel..."
+
+    RUST_LOG="$(mktemp)"
+    E2E_LOG="$(mktemp)"
+    trap 'rm -f "${RUST_LOG}" "${E2E_LOG}"' EXIT
+
+    cargo +{{nightly_toolchain}} nextest run --all-features > "${RUST_LOG}" 2>&1 &
+    TEST_PID=$!
+
+    (cd crates/web/ui && npm run e2e) > "${E2E_LOG}" 2>&1 &
+    E2E_PID=$!
+
+    TEST_EXIT=0; E2E_EXIT=0
+    wait "${TEST_PID}" || TEST_EXIT=$?
+    wait "${E2E_PID}" || E2E_EXIT=$?
+
+    if [ "${TEST_EXIT}" -ne 0 ]; then
+        echo "==> Rust tests FAILED (exit ${TEST_EXIT}):"
+        cat "${RUST_LOG}"
+    else
+        echo "==> Rust tests PASSED"
+    fi
+
+    if [ "${E2E_EXIT}" -ne 0 ]; then
+        echo "==> E2E tests FAILED (exit ${E2E_EXIT}):"
+        cat "${E2E_LOG}"
+    else
+        echo "==> E2E tests PASSED"
+    fi
+
+    exit $(( TEST_EXIT > 0 ? TEST_EXIT : E2E_EXIT ))
+
 # Run the same Rust preflight gates used before release packaging.
 release-preflight: lockfile-check
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
+
+# Dispatch release workflow from GitHub Actions (normal mode).
+release-workflow ref='main':
+    gh workflow run release.yml --ref {{ref}} -f dry_run=false
+
+# Dispatch release workflow from GitHub Actions (dry-run mode).
+release-workflow-dry ref='main':
+    gh workflow run release.yml --ref {{ref}} -f dry_run=true
+
+# Dispatch both release workflow modes for the same ref (dry-run then normal).
+release-workflow-both ref='main':
+    gh workflow run release.yml --ref {{ref}} -f dry_run=true
+    gh workflow run release.yml --ref {{ref}} -f dry_run=false
 
 # Regenerate CHANGELOG.md from git history and tags.
 changelog:
@@ -218,9 +271,16 @@ changelog-release version:
 ship commit_message='' pr_title='' pr_body='':
     ./scripts/ship-pr.sh {{ quote(commit_message) }} {{ quote(pr_title) }} {{ quote(pr_body) }}
 
-# Run all tests
+# Run all tests (nightly to share build cache with clippy/lint)
 test:
-    cargo nextest run --all-features
+    cargo +{{nightly_toolchain}} nextest run --all-features
+
+# Run contract test suites (channel, provider, memory, tools)
+contract-tests:
+    cargo test -p moltis-channels contract
+    cargo test -p moltis-providers contract
+    cargo test -p moltis-memory contract
+    cargo test -p moltis-tools contract
 
 # Verify locale key parity across frontend i18n bundles.
 i18n-check:
@@ -232,12 +292,12 @@ ui-e2e-install:
 
 # Run gateway web UI e2e tests (Playwright).
 ui-e2e:
-    cargo build --bin moltis
+    cargo +{{nightly_toolchain}} build --bin moltis
     cd crates/web/ui && npm run e2e
 
 # Run gateway web UI e2e tests with headed browser.
 ui-e2e-headed:
-    cargo build --bin moltis
+    cargo +{{nightly_toolchain}} build --bin moltis
     cd crates/web/ui && npm run e2e:headed
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures

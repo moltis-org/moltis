@@ -1,4 +1,4 @@
-const { expect, test } = require("@playwright/test");
+const { expect, test } = require("../base-test");
 const { watchPageErrors } = require("../helpers");
 
 const LLM_STEP_HEADING = /^(Add LLMs|Add providers)$/;

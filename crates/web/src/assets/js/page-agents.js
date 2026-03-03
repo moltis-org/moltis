@@ -34,6 +34,14 @@ export function teardownAgents() {
 
 // ── Create / Edit form ──────────────────────────────────────
 
+var PRESET_TOML_PLACEHOLDER = `model = "haiku"
+delegate_only = false
+timeout_secs = 30
+
+[tools]
+allow = ["read_file", "grep", "glob"]
+deny = ["exec"]`;
+
 function AgentForm({ agent, onSave, onCancel }) {
 	var isEdit = !!agent;
 	var [id, setId] = useState(agent?.id || "");
@@ -41,6 +49,8 @@ function AgentForm({ agent, onSave, onCancel }) {
 	var [emoji, setEmoji] = useState(agent?.emoji || "");
 	var [theme, setTheme] = useState(agent?.theme || "");
 	var [soul, setSoul] = useState("");
+	var [presetToml, setPresetToml] = useState("");
+	var [presetOpen, setPresetOpen] = useState(false);
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
 
@@ -66,6 +76,17 @@ function AgentForm({ agent, onSave, onCancel }) {
 		load();
 	}, [isEdit, agent?.id]);
 
+	// Load preset TOML for edits
+	useEffect(() => {
+		if (!isEdit) return;
+		sendRpc("agents.preset.get", { id: agent.id }).then((res) => {
+			if (res?.ok && res.payload?.toml) {
+				setPresetToml(res.payload.toml);
+				if (res.payload.toml.trim()) setPresetOpen(true);
+			}
+		});
+	}, [isEdit, agent?.id]);
+
 	function buildParams() {
 		var base = {
 			name: name.trim(),
@@ -78,8 +99,22 @@ function AgentForm({ agent, onSave, onCancel }) {
 
 	function finishSave(agentId) {
 		var trimmedSoul = soul.trim();
+		var pending = [];
 		if (trimmedSoul) {
-			sendRpc("agents.identity.update_soul", { agent_id: agentId, soul: trimmedSoul }).then(() => {
+			pending.push(sendRpc("agents.identity.update_soul", { agent_id: agentId, soul: trimmedSoul }));
+		}
+		// Save preset TOML if the section was opened or has content
+		if (presetToml.trim()) {
+			pending.push(sendRpc("agents.preset.save", { id: agentId, toml: presetToml.trim() }));
+		}
+		if (pending.length > 0) {
+			Promise.all(pending).then((results) => {
+				var tomlResult = presetToml.trim() ? results[results.length - 1] : null;
+				if (tomlResult && !tomlResult?.ok) {
+					setSaving(false);
+					setError(tomlResult?.error?.message || "Failed to save preset TOML");
+					return;
+				}
 				setSaving(false);
 				refreshGon();
 				onSave();
@@ -177,6 +212,33 @@ function AgentForm({ agent, onSave, onCancel }) {
 				/>
 			</label>
 
+			<div class="flex flex-col gap-1">
+				<button
+					type="button"
+					class="text-xs text-[var(--muted)] text-left flex items-center gap-1"
+					onClick=${() => setPresetOpen(!presetOpen)}
+				>
+					<span style="font-size:0.6rem;">${presetOpen ? "\u25BC" : "\u25B6"}</span>
+					Spawn Settings (TOML)
+				</button>
+				${
+					presetOpen &&
+					html`
+					<p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0;">
+						Configure how this agent behaves when spawned as a sub-agent via spawn_agent.
+					</p>
+					<textarea
+						class="provider-key-input"
+						value=${presetToml}
+						onInput=${(e) => setPresetToml(e.target.value)}
+						placeholder=${PRESET_TOML_PLACEHOLDER}
+						rows="6"
+						style="resize:vertical;font-family:var(--font-mono);font-size:0.7rem;white-space:pre;overflow-x:auto;"
+					/>
+				`
+				}
+			</div>
+
 			${error && html`<span class="text-xs" style="color:var(--error);">${error}</span>`}
 
 			<div class="flex gap-2">
@@ -249,10 +311,49 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
 	`;
 }
 
+// ── Config-only preset card (read-only) ─────────────────────
+
+function PresetCard({ preset }) {
+	var [expanded, setExpanded] = useState(false);
+	return html`
+		<div class="backend-card" style="opacity:0.7;">
+			<div class="flex items-center justify-between">
+				<div class="flex items-center gap-2">
+					${preset.emoji && html`<span class="text-lg">${preset.emoji}</span>`}
+					<span class="text-sm font-medium text-[var(--text-strong)]">${preset.name}</span>
+					<span class="tier-badge">config</span>
+					${preset.model && html`<span class="text-xs text-[var(--muted)]">${preset.model}</span>`}
+				</div>
+				<button
+					class="provider-btn provider-btn-secondary"
+					style="font-size:0.7rem;padding:3px 8px;"
+					onClick=${() => setExpanded(!expanded)}
+				>${expanded ? "Hide" : "View"}</button>
+			</div>
+			${
+				preset.theme &&
+				html`
+				<div class="text-xs text-[var(--muted)] mt-1">${preset.theme}</div>
+			`
+			}
+			${
+				expanded &&
+				preset.toml &&
+				html`
+				<pre class="text-xs mt-2 p-2 rounded"
+					style="background:var(--bg-offset);font-family:var(--font-mono);white-space:pre-wrap;overflow-x:auto;max-height:200px;overflow-y:auto;"
+				>${preset.toml}</pre>
+			`
+			}
+		</div>
+	`;
+}
+
 // ── Main page ───────────────────────────────────────────────
 
 function AgentsPage({ subPath }) {
 	var [agents, setAgents] = useState([]);
+	var [configPresets, setConfigPresets] = useState([]);
 	var [defaultId, setDefaultId] = useState("main");
 	var [loading, setLoading] = useState(true);
 	var [editing, setEditing] = useState(null); // null | "new" | AgentPersona
@@ -284,8 +385,17 @@ function AgentsPage({ subPath }) {
 		load();
 	}
 
+	function fetchConfigPresets() {
+		sendRpc("agents.presets_list", {}).then((res) => {
+			if (res?.ok && res.payload?.presets) {
+				setConfigPresets(res.payload.presets);
+			}
+		});
+	}
+
 	useEffect(() => {
 		fetchAgents();
+		fetchConfigPresets();
 		// Auto-open create form when navigating to /settings/agents/new
 		if (subPath === "new") {
 			setEditing("new");
@@ -302,6 +412,7 @@ function AgentsPage({ subPath }) {
 					refreshGon();
 					fetchSessions();
 					fetchAgents();
+					fetchConfigPresets();
 				} else {
 					setError(res?.error?.message || "Failed to delete");
 				}
@@ -333,6 +444,7 @@ function AgentsPage({ subPath }) {
 				onSave=${() => {
 					setEditing(null);
 					fetchAgents();
+					fetchConfigPresets();
 				}}
 				onCancel=${() => setEditing(null)}
 			/>
@@ -367,5 +479,15 @@ function AgentsPage({ subPath }) {
 				`,
 				)}
 		</div>
+
+		${
+			configPresets.length > 0 &&
+			html`
+			<div class="flex flex-col gap-2 mt-2" style="max-width:600px;">
+				<h3 class="text-xs font-medium text-[var(--muted)]">Config-only Presets</h3>
+				${configPresets.map((preset) => html`<${PresetCard} key=${preset.id} preset=${preset} />`)}
+			</div>
+		`
+		}
 	</div>`;
 }

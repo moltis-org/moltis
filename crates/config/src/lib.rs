@@ -5,6 +5,7 @@
 //!
 //! Supports `${ENV_VAR}` substitution in all string values.
 
+pub mod agent_defs;
 pub mod env_subst;
 pub mod error;
 pub mod loader;
@@ -28,11 +29,12 @@ pub use {
         user_global_config_dir_if_different, user_path,
     },
     schema::{
-        AgentIdentity, AgentPresetConfig, AgentsConfig, AuthConfig, CalDavAccountConfig,
-        CalDavConfig, ChatConfig, GeoLocation, MemoryBootstrapSectionOptions, MessageQueueMode,
-        MoltisConfig, PromptProfileConfig, PromptProfileMatch, PromptProfileOverride,
-        PromptProfilesConfig, PromptSectionId, PromptSectionOptions, ResolvedIdentity,
-        RuntimeDatetimeTailMode, RuntimeDatetimeTailSectionOptions, RuntimeSectionOptions,
+        AgentIdentity, AgentPreset, AgentsConfig, AuthConfig, CalDavAccountConfig, CalDavConfig,
+        ChatConfig, GeoLocation, MemoryBootstrapSectionOptions, MemoryScope, MessageQueueMode,
+        MoltisConfig, PresetMemoryConfig, PresetToolPolicy, PromptProfileConfig,
+        PromptProfileMatch, PromptProfileOverride, PromptProfilesConfig, PromptSectionId,
+        PromptSectionOptions, ResolvedIdentity, RuntimeDatetimeTailMode,
+        RuntimeDatetimeTailSectionOptions, RuntimeSectionOptions, SessionAccessPolicyConfig,
         Timezone, ToolMode, UserDetailsMode, UserDetailsSectionOptions, UserProfile, VoiceConfig,
         VoiceElevenLabsConfig, VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig,
         VoiceWhisperConfig,

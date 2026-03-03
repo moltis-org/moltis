@@ -334,6 +334,7 @@ impl BrowserPool {
         let vh = self.config.viewport_height;
         let low_mem = self.config.low_memory_threshold_mb;
         let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
+        let container_host = self.config.container_host.clone();
 
         let container = tokio::task::spawn_blocking(move || {
             // Check container runtime availability (Docker or Apple Container)
@@ -366,8 +367,16 @@ impl BrowserPool {
             }
 
             // Start the container (includes readiness polling)
-            BrowserContainer::start(&image, &prefix, vw, vh, low_mem, profile_dir.as_deref())
-                .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))
+            BrowserContainer::start(
+                &image,
+                &prefix,
+                vw,
+                vh,
+                low_mem,
+                profile_dir.as_deref(),
+                &container_host,
+            )
+            .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))
         })
         .await
         .map_err(|e| Error::LaunchFailed(format!("container launch task panicked: {e}")))??;

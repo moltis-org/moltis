@@ -208,6 +208,7 @@ pub struct MoltisConfig {
     pub voice: VoiceConfig,
     pub cron: CronConfig,
     pub caldav: CalDavConfig,
+    pub webhooks: WebhooksConfig,
     /// Environment variables injected into the Moltis process at startup.
     /// Useful for API keys in Docker where you can't easily set env vars.
     /// Process env vars take precedence (existing vars are not overwritten).
@@ -223,33 +224,121 @@ pub struct AgentsConfig {
     pub default_preset: Option<String>,
     /// Named spawn presets.
     #[serde(default)]
-    pub presets: HashMap<String, AgentPresetConfig>,
+    pub presets: HashMap<String, AgentPreset>,
 }
 
 impl AgentsConfig {
     /// Return a preset by name.
-    pub fn get_preset(&self, name: &str) -> Option<&AgentPresetConfig> {
+    pub fn get_preset(&self, name: &str) -> Option<&AgentPreset> {
         self.presets.get(name)
     }
 }
 
-/// Spawn policy preset for sub-agents.
+/// Tool policy for a preset (allow/deny specific tools).
+///
+/// When both `allow` and `deny` are specified, `allow` acts as a whitelist
+/// and `deny` further removes tools from that list.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct AgentPresetConfig {
+pub struct PresetToolPolicy {
+    /// Tools to allow (whitelist). If empty, all tools are allowed.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Tools to deny (blacklist). Applied after `allow`.
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+/// Scope for per-agent persistent memory.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryScope {
+    /// User-global: `~/.moltis/agent-memory/<preset>/`
+    #[default]
+    User,
+    /// Project-local: `.moltis/agent-memory/<preset>/`
+    Project,
+    /// Untracked local: `.moltis/agent-memory-local/<preset>/`
+    Local,
+}
+
+/// Persistent memory configuration for a preset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PresetMemoryConfig {
+    /// Memory scope: where the MEMORY.md is stored.
+    pub scope: MemoryScope,
+    /// Maximum lines to load from MEMORY.md (default: 200).
+    pub max_lines: usize,
+}
+
+impl Default for PresetMemoryConfig {
+    fn default() -> Self {
+        Self {
+            scope: MemoryScope::default(),
+            max_lines: 200,
+        }
+    }
+}
+
+/// Session access policy configuration for a preset.
+///
+/// Controls which sessions an agent can see and interact with via
+/// the `sessions_list`, `sessions_history`, and `sessions_send` tools.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionAccessPolicyConfig {
+    /// Only see sessions with keys matching this prefix.
+    pub key_prefix: Option<String>,
+    /// Explicit session keys this agent can access (in addition to prefix).
+    #[serde(default)]
+    pub allowed_keys: Vec<String>,
+    /// Whether the agent can send messages to sessions.
+    #[serde(default = "default_true")]
+    pub can_send: bool,
+    /// Whether the agent can access sessions from other agents.
+    #[serde(default)]
+    pub cross_agent: bool,
+}
+
+impl Default for SessionAccessPolicyConfig {
+    fn default() -> Self {
+        Self {
+            key_prefix: None,
+            allowed_keys: Vec::new(),
+            can_send: true,
+            cross_agent: false,
+        }
+    }
+}
+
+/// Spawn policy preset for sub-agents.
+///
+/// Presets allow defining specialized agent configurations that can be
+/// selected when spawning sub-agents. Each preset can override identity,
+/// model, tool policies, and system prompt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPreset {
+    /// Agent identity overrides.
+    pub identity: AgentIdentity,
     /// Optional model override for this preset.
     pub model: Option<String>,
-    /// Optional allowlist of tools available to the sub-agent.
-    #[serde(default)]
-    pub allow_tools: Vec<String>,
-    /// Optional denylist of tools removed from the sub-agent.
-    #[serde(default)]
-    pub deny_tools: Vec<String>,
+    /// Tool policy for this preset (allow/deny specific tools).
+    pub tools: PresetToolPolicy,
     /// Restrict sub-agent to delegation/session/task tools only.
     #[serde(default)]
     pub delegate_only: bool,
     /// Optional extra instructions appended to sub-agent system prompt.
     pub system_prompt_suffix: Option<String>,
+    /// Maximum iterations for agent loop.
+    pub max_iterations: Option<u64>,
+    /// Timeout in seconds for the sub-agent.
+    pub timeout_secs: Option<u64>,
+    /// Session access policy for inter-agent communication.
+    pub sessions: Option<SessionAccessPolicyConfig>,
+    /// Persistent per-agent memory configuration.
+    pub memory: Option<PresetMemoryConfig>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -687,10 +776,10 @@ pub struct ServerConfig {
     /// Defaults to 1000. Increase for busy servers, decrease for memory-constrained devices.
     #[serde(default = "default_log_buffer_size")]
     pub log_buffer_size: usize,
-    /// Optional GitHub repository URL used by the update checker.
+    /// URL of the releases manifest (`releases.json`) used by the update checker.
     ///
-    /// When unset, Moltis falls back to the package repository metadata.
-    pub update_repository_url: Option<String>,
+    /// Defaults to `https://www.moltis.org/releases.json` when unset.
+    pub update_releases_url: Option<String>,
 }
 
 fn default_log_buffer_size() -> usize {
@@ -705,7 +794,7 @@ impl Default for ServerConfig {
             http_request_logs: false,
             ws_request_logs: false,
             log_buffer_size: default_log_buffer_size(),
-            update_repository_url: None,
+            update_releases_url: None,
         }
     }
 }
@@ -817,6 +906,41 @@ impl Default for CronConfig {
         Self {
             rate_limit_max: 10,
             rate_limit_window_secs: 60,
+        }
+    }
+}
+
+/// Channel webhook middleware configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebhooksConfig {
+    /// Per-account rate limiting settings.
+    pub rate_limit: WebhookRateLimitConfig,
+}
+
+/// Rate limiting configuration for channel webhooks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebhookRateLimitConfig {
+    /// Whether rate limiting is enabled (default: true).
+    pub enabled: bool,
+    /// Override max requests per minute per account. When set, overrides the
+    /// channel's built-in default. Leave unset to use per-channel defaults
+    /// (Slack: 30/min, Teams: 60/min).
+    pub requests_per_minute: Option<u32>,
+    /// Override burst allowance per account.
+    pub burst: Option<u32>,
+    /// Interval in seconds between stale bucket cleanup (default: 300).
+    pub cleanup_interval_secs: u64,
+}
+
+impl Default for WebhookRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            requests_per_minute: None,
+            burst: None,
+            cleanup_interval_secs: 300,
         }
     }
 }
@@ -1767,6 +1891,12 @@ pub struct BrowserConfig {
     /// When set, `persist_profile` is implicitly true.
     /// If not set and `persist_profile` is true, defaults to `data_dir()/browser/profile/`.
     pub profile_dir: Option<String>,
+    /// Hostname or IP used to connect to the browser container from the host.
+    /// Default: "127.0.0.1" (localhost). When running Moltis itself inside Docker,
+    /// set this to "host.docker.internal" or the Docker bridge gateway IP so
+    /// Moltis can reach the sibling browser container via the host's port mapping.
+    #[serde(default = "default_container_host")]
+    pub container_host: String,
 }
 
 fn default_sandbox_image() -> String {
@@ -1779,6 +1909,10 @@ const fn default_low_memory_threshold_mb() -> u64 {
 
 const fn default_persist_profile() -> bool {
     true
+}
+
+fn default_container_host() -> String {
+    "127.0.0.1".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -1801,6 +1935,7 @@ impl Default for BrowserConfig {
             low_memory_threshold_mb: default_low_memory_threshold_mb(),
             persist_profile: default_persist_profile(),
             profile_dir: None,
+            container_host: default_container_host(),
         }
     }
 }
@@ -2235,6 +2370,8 @@ pub struct ProviderEntry {
     pub api_key: Option<Secret<String>>,
 
     /// Override the base URL.
+    /// Accepts legacy `url` as an alias for compatibility.
+    #[serde(alias = "url")]
     pub base_url: Option<String>,
 
     /// Preferred model IDs for this provider.
@@ -2473,22 +2610,36 @@ default_preset = "research"
 
 [agents.presets.research]
 model = "openai/gpt-5.2"
-allow_tools = ["web_search", "web_fetch"]
-deny_tools = ["exec"]
 delegate_only = false
 system_prompt_suffix = "Focus on evidence."
+max_iterations = 10
+timeout_secs = 120
+
+[agents.presets.research.identity]
+name = "scout"
+emoji = "🔍"
+theme = "thorough"
+
+[agents.presets.research.tools]
+allow = ["web_search", "web_fetch"]
+deny = ["exec"]
 "#;
         let config: MoltisConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.agents.default_preset.as_deref(), Some("research"));
         let preset = config.agents.get_preset("research").unwrap();
         assert_eq!(preset.model.as_deref(), Some("openai/gpt-5.2"));
-        assert_eq!(preset.allow_tools.len(), 2);
-        assert_eq!(preset.deny_tools, vec!["exec".to_string()]);
+        assert_eq!(preset.tools.allow.len(), 2);
+        assert_eq!(preset.tools.deny, vec!["exec".to_string()]);
         assert!(!preset.delegate_only);
         assert_eq!(
             preset.system_prompt_suffix.as_deref(),
             Some("Focus on evidence.")
         );
+        assert_eq!(preset.identity.name.as_deref(), Some("scout"));
+        assert_eq!(preset.identity.emoji.as_deref(), Some("🔍"));
+        assert_eq!(preset.identity.theme.as_deref(), Some("thorough"));
+        assert_eq!(preset.max_iterations, Some(10));
+        assert_eq!(preset.timeout_secs, Some(120));
     }
 
     #[test]
@@ -2750,6 +2901,19 @@ memory = 300
         );
         let parsed: ProviderEntry = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.tool_mode, ToolMode::Text);
+    }
+
+    #[test]
+    fn provider_entry_url_alias_maps_to_base_url() {
+        let entry: ProviderEntry = toml::from_str(
+            r#"
+enabled = true
+url = "http://192.168.0.9:11434"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(entry.base_url.as_deref(), Some("http://192.168.0.9:11434"));
     }
 
     #[test]

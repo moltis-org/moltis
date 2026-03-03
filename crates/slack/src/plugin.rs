@@ -82,6 +82,27 @@ impl SlackPlugin {
         )
         .await
     }
+
+    /// Ingest an already-verified Events API webhook request.
+    ///
+    /// Use this when the caller has already verified the signature via
+    /// the channel webhook middleware pipeline.
+    pub async fn ingest_verified_webhook(
+        &self,
+        account_id: &str,
+        body: &[u8],
+    ) -> ChannelResult<Option<String>> {
+        crate::webhook::handle_verified_webhook(account_id, body, &self.accounts).await
+    }
+
+    /// Ingest an already-verified interaction webhook.
+    pub async fn ingest_verified_interaction_webhook(
+        &self,
+        account_id: &str,
+        body: &[u8],
+    ) -> ChannelResult<()> {
+        crate::webhook::handle_verified_interaction_webhook(account_id, body, &self.accounts).await
+    }
 }
 
 impl Default for SlackPlugin {
@@ -225,6 +246,18 @@ impl ChannelPlugin for SlackPlugin {
 
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
         Some(&self.outbound)
+    }
+
+    fn channel_webhook_verifier(
+        &self,
+        account_id: &str,
+    ) -> Option<Box<dyn moltis_channels::channel_webhook_middleware::ChannelWebhookVerifier>> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        let state = accounts.get(account_id)?;
+        let secret = state.config.signing_secret.as_ref()?;
+        Some(Box::new(
+            crate::channel_webhook_verifier::SlackChannelWebhookVerifier::new(secret.clone()),
+        ))
     }
 }
 

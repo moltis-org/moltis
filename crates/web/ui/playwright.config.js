@@ -1,5 +1,5 @@
 const { defineConfig } = require("@playwright/test");
-const { execFileSync } = require("child_process");
+const { execFileSync } = require("node:child_process");
 
 function pickFreePort() {
 	return execFileSync(
@@ -12,18 +12,18 @@ function pickFreePort() {
 	).trim();
 }
 
-function resolvePort(envVar, usedPorts) {
+function resolvePort(envVar, usedPortSet) {
 	var configured = process.env[envVar];
 	if (configured && configured !== "0") {
-		usedPorts.add(configured);
+		usedPortSet.add(configured);
 		return configured;
 	}
 	var picked = pickFreePort();
-	while (usedPorts.has(picked)) {
+	while (usedPortSet.has(picked)) {
 		picked = pickFreePort();
 	}
 	process.env[envVar] = picked;
-	usedPorts.add(picked);
+	usedPortSet.add(picked);
 	return picked;
 }
 
@@ -37,10 +37,11 @@ const onboardingBaseURL = process.env.MOLTIS_E2E_ONBOARDING_BASE_URL || `http://
 const onboardingAuthPort = resolvePort("MOLTIS_E2E_ONBOARDING_AUTH_PORT", usedPorts);
 const onboardingAuthBaseURL = `http://127.0.0.1:${onboardingAuthPort}`;
 
+const oauthPort = resolvePort("MOLTIS_E2E_OAUTH_PORT", usedPorts);
+const oauthBaseURL = `http://127.0.0.1:${oauthPort}`;
 const onboardingAnthropicPort = resolvePort("MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT", usedPorts);
 const onboardingAnthropicBaseURL =
 	process.env.MOLTIS_E2E_ONBOARDING_ANTHROPIC_BASE_URL || `http://127.0.0.1:${onboardingAnthropicPort}`;
-
 module.exports = defineConfig({
 	testDir: "./e2e/specs",
 	timeout: 45_000,
@@ -67,6 +68,7 @@ module.exports = defineConfig({
 				/onboarding-openai\.spec/,
 				/onboarding-auth\.spec/,
 				/onboarding-anthropic\.spec/,
+				/oauth\.spec/,
 			],
 		},
 		{
@@ -86,6 +88,13 @@ module.exports = defineConfig({
 			testMatch: /onboarding-auth\.spec/,
 			use: {
 				baseURL: onboardingAuthBaseURL,
+			},
+		},
+		{
+			name: "oauth",
+			testMatch: /oauth\.spec/,
+			use: {
+				baseURL: oauthBaseURL,
 			},
 		},
 		{
@@ -128,6 +137,17 @@ module.exports = defineConfig({
 			env: {
 				...process.env,
 				MOLTIS_E2E_ONBOARDING_AUTH_PORT: onboardingAuthPort,
+			},
+		},
+		{
+			command: "./e2e/start-gateway-oauth.sh",
+			cwd: __dirname,
+			url: `${oauthBaseURL}/health`,
+			reuseExistingServer: !process.env.CI,
+			timeout: 300_000,
+			env: {
+				...process.env,
+				MOLTIS_E2E_OAUTH_PORT: oauthPort,
 			},
 		},
 		{
