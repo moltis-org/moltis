@@ -2180,12 +2180,30 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     }
                 }
 
+                // If the client already has a cached history with the same
+                // message count, skip sending the full history to avoid
+                // transferring megabytes of data on every session switch.
+                let cached_count = ctx
+                    .params
+                    .get("cached_message_count")
+                    .and_then(|v| v.as_u64());
+                let mut result = result;
+                if let Some(cached) = cached_count
+                    && let Some(obj) = result.as_object_mut()
+                    && let Some(entry_obj) = obj.get("entry").and_then(|e| e.as_object())
+                    && let Some(server_count) =
+                        entry_obj.get("messageCount").and_then(|v| v.as_u64())
+                    && cached == server_count
+                {
+                    obj.insert("history".to_string(), serde_json::Value::Array(Vec::new()));
+                    obj.insert("historyCacheHit".to_string(), serde_json::Value::Bool(true));
+                }
+
                 // Inject replying state so frontend restores thinking
                 // indicator and voice-pending state after page reload.
                 let chat = ctx.state.chat().await;
                 let active_keys = chat.active_session_keys().await;
                 let replying = active_keys.iter().any(|k| k == key);
-                let mut result = result;
                 if let Some(obj) = result.as_object_mut() {
                     obj.insert("replying".to_string(), serde_json::Value::Bool(replying));
                     if replying {

@@ -310,7 +310,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -419,7 +421,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -494,7 +498,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -518,9 +524,13 @@ jobs:
           MATRIX_ARCH: ${{ matrix.arch }}
         run: |
           PKG_DIR="pkg-root"
-          mkdir -p "$PKG_DIR/usr/bin"
+          mkdir -p "$PKG_DIR/usr/bin" "$PKG_DIR/usr/share/moltis/web" "$PKG_DIR/usr/share/moltis/wasm"
           cp "target/$BUILD_TARGET/release/moltis" "$PKG_DIR/usr/bin/moltis"
           chmod 755 "$PKG_DIR/usr/bin/moltis"
+          cp -R crates/web/src/assets/. "$PKG_DIR/usr/share/moltis/web/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" "$PKG_DIR/usr/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" "$PKG_DIR/usr/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" "$PKG_DIR/usr/share/moltis/wasm/"
 
           cat > "$PKG_DIR/.PKGINFO" <<PKGINFO
           pkgname = moltis
@@ -595,7 +605,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -625,9 +637,13 @@ jobs:
 
           # Build AppDir structure
           APP_DIR="moltis.AppDir"
-          mkdir -p "$APP_DIR/usr/bin"
+          mkdir -p "$APP_DIR/usr/bin" "$APP_DIR/usr/share/moltis/web" "$APP_DIR/usr/share/moltis/wasm"
           cp "target/$BUILD_TARGET/release/moltis" "$APP_DIR/usr/bin/moltis"
           chmod 755 "$APP_DIR/usr/bin/moltis"
+          cp -R crates/web/src/assets/. "$APP_DIR/usr/share/moltis/web/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" "$APP_DIR/usr/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" "$APP_DIR/usr/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" "$APP_DIR/usr/share/moltis/wasm/"
 
           # Create .desktop file
           cat > "$APP_DIR/moltis.desktop" <<DESKTOP
@@ -651,6 +667,7 @@ jobs:
           #!/bin/sh
           SELF=$(readlink -f "$0")
           HERE=${SELF%/*}
+          export MOLTIS_SHARE_DIR="$HERE/usr/share/moltis"
           exec "$HERE/usr/bin/moltis" "$@"
           APPRUN
           chmod +x "$APP_DIR/AppRun"
@@ -779,7 +796,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -801,8 +820,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_TARGET: ${{ matrix.target }}
         run: |
-          cp "target/$BUILD_TARGET/release/moltis" moltis
-          tar czf "moltis-${VERSION}-${BUILD_TARGET}.tar.gz" moltis
+          PKG_DIR="moltis-package"
+          mkdir -p "$PKG_DIR/share/moltis/web" "$PKG_DIR/share/moltis/wasm"
+          cp "target/$BUILD_TARGET/release/moltis" "$PKG_DIR/moltis"
+          cp -R crates/web/src/assets/. "$PKG_DIR/share/moltis/web/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" "$PKG_DIR/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" "$PKG_DIR/share/moltis/wasm/"
+          cp "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" "$PKG_DIR/share/moltis/wasm/"
+          tar czf "moltis-${VERSION}-${BUILD_TARGET}.tar.gz" -C "$PKG_DIR" moltis share
 
       - name: Sign with Sigstore and generate checksums
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
@@ -952,11 +977,13 @@ jobs:
 
       - name: Build WASM components
         shell: bash
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         shell: bash
-        run: cargo build --release --target "$BUILD_TARGET"
+        run: cargo build --release --target "$BUILD_TARGET" --features embedded-assets,embedded-wasm
 
       - name: Determine package version
         id: version
@@ -1414,7 +1441,9 @@ jobs:
             end
 
             def install
-              bin.install "moltis"
+              libexec.install "moltis"
+              share.install "share/moltis"
+              (bin/"moltis").write_env_script libexec/"moltis", MOLTIS_SHARE_DIR: share/"moltis"
             end
 
             test do
@@ -1467,8 +1496,14 @@ jobs:
           # Fly.io
           sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
 
+          # Website releases.json
+          jq --arg v "$VERSION" \
+            '.stable.version = $v | .stable.release_url = "https://github.com/moltis-org/moltis/releases/tag/v" + $v' \
+            website/releases.json > website/releases.json.tmp \
+            && mv website/releases.json.tmp website/releases.json
+
           # Check if any files changed
-          if git diff --quiet .do/deploy.template.yaml render.yaml fly.toml; then
+          if git diff --quiet .do/deploy.template.yaml render.yaml fly.toml website/releases.json; then
             echo "No deploy template changes needed"
             exit 0
           fi
@@ -1488,6 +1523,9 @@ jobs:
           FLY_BLOB=$(gh api "repos/${REPO}/git/blobs" \
             -f content="$(base64 -w0 fly.toml)" \
             -f encoding=base64 --jq '.sha')
+          RELEASES_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 website/releases.json)" \
+            -f encoding=base64 --jq '.sha')
 
           # Create a new tree with the updated files (JSON input for proper array structure)
           TREE_SHA=$(jq -n \
@@ -1495,18 +1533,20 @@ jobs:
             --arg do_sha "$DO_BLOB" \
             --arg render_sha "$RENDER_BLOB" \
             --arg fly_sha "$FLY_BLOB" \
+            --arg releases_sha "$RELEASES_BLOB" \
             '{
               base_tree: $base,
               tree: [
                 {path: ".do/deploy.template.yaml", mode: "100644", type: "blob", sha: $do_sha},
                 {path: "render.yaml", mode: "100644", type: "blob", sha: $render_sha},
-                {path: "fly.toml", mode: "100644", type: "blob", sha: $fly_sha}
+                {path: "fly.toml", mode: "100644", type: "blob", sha: $fly_sha},
+                {path: "website/releases.json", mode: "100644", type: "blob", sha: $releases_sha}
               ]
             }' | gh api "repos/${REPO}/git/trees" --input - --jq '.sha')
 
           # Create a signed commit
           COMMIT_SHA=$(jq -n \
-            --arg msg "chore: update deploy templates to ${VERSION}" \
+            --arg msg "chore: update deploy templates and releases to ${VERSION}" \
             --arg tree "$TREE_SHA" \
             --arg parent "$MAIN_SHA" \
             '{message: $msg, tree: $tree, parents: [$parent]}' \

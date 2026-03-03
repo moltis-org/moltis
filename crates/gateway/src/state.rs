@@ -31,7 +31,7 @@ pub struct MetricsHistory {
 #[cfg(feature = "metrics")]
 impl MetricsHistory {
     /// Create a new history buffer with the given capacity.
-    /// Default: 360 points = 1 hour at 10-second intervals.
+    /// Default: 360 points = 3 hours at 30-second intervals.
     pub fn new(max_points: usize) -> Self {
         Self {
             points: VecDeque::with_capacity(max_points),
@@ -61,7 +61,7 @@ impl MetricsHistory {
 #[cfg(feature = "metrics")]
 impl Default for MetricsHistory {
     fn default() -> Self {
-        Self::new(360) // 1 hour at 10-second intervals
+        Self::new(360) // 3 hours at 30-second intervals
     }
 }
 
@@ -84,7 +84,7 @@ use {moltis_channels::ChannelReplyTarget, moltis_sessions::session_events::Sessi
 use crate::{
     auth::{CredentialStore, ResolvedAuth},
     nodes::NodeRegistry,
-    pairing::PairingState,
+    pairing::{PairingState, PairingStore},
     services::GatewayServices,
 };
 
@@ -264,7 +264,8 @@ pub struct GatewayInner {
     /// Auto-update availability state from GitHub releases.
     pub update: crate::update_check::UpdateAvailability,
     /// Last error per run_id (short-lived, for send_sync to retrieve).
-    pub run_errors: HashMap<String, String>,
+    /// Capped at 1000 entries; entries older than 5 minutes are evicted.
+    pub run_errors: HashMap<String, (String, Instant)>,
     /// Historical metrics data for time-series charts (in-memory cache).
     #[cfg(feature = "metrics")]
     pub metrics_history: MetricsHistory,
@@ -285,6 +286,8 @@ pub struct GatewayInner {
     /// Hostnames that were discovered after passkeys already existed.
     /// Users should sign in with password and register a fresh passkey on these hosts.
     pub passkey_host_update_pending: HashSet<String>,
+    /// Shiki CDN URL override from config (`server.shiki_cdn_url`), or `None` for default.
+    pub shiki_cdn_url: Option<String>,
 }
 
 impl GatewayInner {
@@ -318,6 +321,7 @@ impl GatewayInner {
             channel_command_mode_sessions: HashSet::new(),
             channels_offered: vec!["telegram".into()],
             passkey_host_update_pending: HashSet::new(),
+            shiki_cdn_url: None,
         }
     }
 
@@ -358,6 +362,9 @@ pub struct GatewayState {
     /// Per-session sandbox router (None if sandbox is not configured).
     /// `Arc` because it is shared with `ExecTool`/`ProcessTool` in `moltis-tools`.
     pub sandbox_router: Option<Arc<SandboxRouter>>,
+    /// SQLite-backed pairing store for device token persistence.
+    /// `None` in tests that don't need pairing.
+    pub pairing_store: Option<Arc<PairingStore>>,
     /// Memory manager for long-term memory search (None if no embedding provider).
     /// `Arc` because it is cloned into background tokio tasks.
     pub memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
@@ -423,6 +430,7 @@ impl GatewayState {
             services,
             None,
             None,
+            None,
             false,
             false,
             false,
@@ -447,6 +455,7 @@ impl GatewayState {
         services: GatewayServices,
         sandbox_router: Option<Arc<SandboxRouter>>,
         credential_store: Option<Arc<CredentialStore>>,
+        pairing_store: Option<Arc<PairingStore>>,
         localhost_only: bool,
         behind_proxy: bool,
         tls_active: bool,
@@ -472,6 +481,7 @@ impl GatewayState {
             services,
             credential_store,
             sandbox_router,
+            pairing_store,
             memory_manager,
             localhost_only,
             behind_proxy,
@@ -618,30 +628,46 @@ impl GatewayState {
     }
 
     /// Record a run error (for send_sync to retrieve).
+    /// Capped at 1000 entries; stale entries (>5 min) are evicted opportunistically.
     pub async fn set_run_error(&self, run_id: &str, error: String) {
-        self.inner
-            .write()
-            .await
-            .run_errors
-            .insert(run_id.to_string(), error);
+        const MAX_RUN_ERRORS: usize = 1000;
+        const TTL: std::time::Duration = std::time::Duration::from_secs(300);
+        let mut inner = self.inner.write().await;
+        let now = Instant::now();
+        // Opportunistic eviction of stale entries
+        if inner.run_errors.len() >= MAX_RUN_ERRORS {
+            inner
+                .run_errors
+                .retain(|_, (_, ts)| now.duration_since(*ts) < TTL);
+        }
+        inner.run_errors.insert(run_id.to_string(), (error, now));
     }
 
     /// Take (and remove) the last error for a run_id.
     pub async fn last_run_error(&self, run_id: &str) -> Option<String> {
-        self.inner.write().await.run_errors.remove(run_id)
+        self.inner
+            .write()
+            .await
+            .run_errors
+            .remove(run_id)
+            .map(|(msg, _)| msg)
     }
 
     /// Append a status line (e.g. tool use, model selection) to the channel
     /// status log for a session. These are drained and appended as a logbook
-    /// when the final response is delivered.
+    /// when the final response is delivered. Capped at 100 entries per session
+    /// to prevent unbounded growth.
     pub async fn push_channel_status_log(&self, session_key: &str, message: String) {
-        self.inner
-            .write()
-            .await
+        const MAX_STATUS_LOG_ENTRIES: usize = 100;
+        let mut inner = self.inner.write().await;
+        let log = inner
             .channel_status_log
             .entry(session_key.to_string())
-            .or_default()
-            .push(message);
+            .or_default();
+        if log.len() >= MAX_STATUS_LOG_ENTRIES {
+            log.drain(..log.len() - MAX_STATUS_LOG_ENTRIES + 1);
+        }
+        log.push(message);
     }
 
     /// Drain all buffered status log entries for a session.

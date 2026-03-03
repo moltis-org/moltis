@@ -780,10 +780,23 @@ pub struct ServerConfig {
     ///
     /// Defaults to `https://www.moltis.org/releases.json` when unset.
     pub update_releases_url: Option<String>,
+    /// Maximum number of SQLite pool connections. Lower values reduce memory
+    /// usage for personal gateways. Defaults to 5.
+    #[serde(default = "default_db_pool_max_connections")]
+    pub db_pool_max_connections: u32,
+    /// Base URL for the Shiki syntax-highlighting library loaded by the web UI.
+    ///
+    /// Defaults to `https://esm.sh/shiki@3.2.1?bundle` when unset.
+    /// Set to an alternative CDN or a self-hosted URL to override.
+    pub shiki_cdn_url: Option<String>,
 }
 
 fn default_log_buffer_size() -> usize {
     1000
+}
+
+fn default_db_pool_max_connections() -> u32 {
+    5
 }
 
 impl Default for ServerConfig {
@@ -795,6 +808,8 @@ impl Default for ServerConfig {
             ws_request_logs: false,
             log_buffer_size: default_log_buffer_size(),
             update_releases_url: None,
+            db_pool_max_connections: default_db_pool_max_connections(),
+            shiki_cdn_url: None,
         }
     }
 }
@@ -1152,7 +1167,7 @@ pub struct MetricsConfig {
     #[serde(default = "default_true")]
     pub prometheus_endpoint: bool,
     /// Maximum number of in-memory history points for time-series charts.
-    /// Points are sampled every 10 seconds. Defaults to 360 (1 hour).
+    /// Points are sampled every 30 seconds. Defaults to 360 (3 hours).
     /// Historical data is persisted to SQLite regardless of this setting.
     #[serde(default = "default_metrics_history_points")]
     pub history_points: usize,
@@ -1950,6 +1965,11 @@ pub struct ExecConfig {
     pub security_level: String,
     pub allowlist: Vec<String>,
     pub sandbox: SandboxConfig,
+    /// Where to run commands: `"local"` (default) or `"node"`.
+    pub host: String,
+    /// Default node id or display name for remote execution (when `host = "node"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
 }
 
 impl Default for ExecConfig {
@@ -1961,6 +1981,8 @@ impl Default for ExecConfig {
             security_level: "allowlist".into(),
             allowlist: Vec::new(),
             sandbox: SandboxConfig::default(),
+            host: "local".into(),
+            node: None,
         }
     }
 }

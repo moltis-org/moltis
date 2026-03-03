@@ -202,6 +202,8 @@ fn build_schema_map() -> KnownKeys {
             ("security_level", Leaf),
             ("allowlist", Leaf),
             ("sandbox", sandbox()),
+            ("host", Leaf),
+            ("node", Leaf),
         ]))
     };
 
@@ -407,6 +409,8 @@ fn build_schema_map() -> KnownKeys {
                 ("ws_request_logs", Leaf),
                 ("log_buffer_size", Leaf),
                 ("update_releases_url", Leaf),
+                ("db_pool_max_connections", Leaf),
+                ("shiki_cdn_url", Leaf),
             ])),
         ),
         ("providers", MapWithFields {
@@ -1205,6 +1209,31 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 ),
             });
         }
+    }
+
+    // Unknown exec host
+    let valid_exec_hosts = ["local", "node"];
+    if !valid_exec_hosts.contains(&config.tools.exec.host.as_str()) {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "tools.exec.host".into(),
+            message: format!(
+                "unknown exec host \"{}\"; expected one of: {}",
+                config.tools.exec.host,
+                valid_exec_hosts.join(", ")
+            ),
+        });
+    }
+
+    // Warn if host=node but no node specified
+    if config.tools.exec.host == "node" && config.tools.exec.node.is_none() {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "tools.exec.node".into(),
+            message: "tools.exec.host is \"node\" but no default node is specified; commands will fail unless a node connects".into(),
+        });
     }
 
     // Unknown exec security level

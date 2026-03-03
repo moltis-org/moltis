@@ -472,6 +472,7 @@ test.describe("Settings navigation", () => {
 		const expectedPrefix = [
 			"Identity",
 			"Agents",
+			"Nodes",
 			"Environment",
 			"System Prompt",
 			"Memory",
@@ -491,23 +492,13 @@ test.describe("Settings navigation", () => {
 		expected.push("Configuration");
 		expect(navItems).toEqual(expected);
 
-		const llmsNavItem = page.locator(".settings-nav-item", { hasText: "LLMs" });
-		await expect(llmsNavItem.locator(".icon-layers")).toHaveCount(1);
-		await expect(llmsNavItem.locator(".icon-server")).toHaveCount(0);
-
-		const logsNavItem = page.locator(".settings-nav-item", { hasText: "Logs" });
-		await expect(logsNavItem.locator(".icon-document")).toHaveCount(1);
-
-		const terminalNavItem = page.locator(".settings-nav-item", { hasText: "Terminal" });
-		await expect(terminalNavItem.locator(".icon-terminal")).toHaveCount(1);
-
-		const configNavItem = page.locator(".settings-nav-item", { hasText: "Configuration" });
-		await expect(configNavItem.locator(".icon-code")).toHaveCount(1);
-		await expect(configNavItem.locator(".icon-document")).toHaveCount(0);
+		await expect(page.locator('.settings-nav-item[data-section="providers"]')).toHaveText("LLMs");
+		await expect(page.locator('.settings-nav-item[data-section="logs"]')).toHaveText("Logs");
+		await expect(page.locator('.settings-nav-item[data-section="terminal"]')).toHaveText("Terminal");
+		await expect(page.locator('.settings-nav-item[data-section="config"]')).toHaveText("Configuration");
 
 		if (navItems.includes("GraphQL")) {
-			const graphQlNavItem = page.locator(".settings-nav-item", { hasText: "GraphQL" });
-			await expect(graphQlNavItem.locator(".icon-graphql")).toHaveCount(1);
+			await expect(page.locator('.settings-nav-item[data-section="graphql"]')).toHaveText("GraphQL");
 		}
 	});
 });

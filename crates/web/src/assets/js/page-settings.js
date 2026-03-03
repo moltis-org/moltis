@@ -21,6 +21,7 @@ import { initLogs, teardownLogs } from "./page-logs.js";
 import { initMcp, teardownMcp } from "./page-mcp.js";
 import { initMonitoring, teardownMonitoring } from "./page-metrics.js";
 import { initNetworkAudit, teardownNetworkAudit } from "./page-network-audit.js";
+import { initNodes, teardownNodes } from "./page-nodes.js";
 import { initProviders, teardownProviders } from "./page-providers.js";
 import { initSkills, teardownSkills } from "./page-skills.js";
 import { initTerminal, teardownTerminal } from "./page-terminal.js";
@@ -113,6 +114,12 @@ var sections = [
 		page: true,
 	},
 	{
+		id: "nodes",
+		label: "Nodes",
+		icon: html`<span class="icon icon-nodes"></span>`,
+		page: true,
+	},
+	{
 		id: "environment",
 		label: "Environment",
 		icon: html`<span class="icon icon-terminal"></span>`,
@@ -158,12 +165,12 @@ var sections = [
 	{
 		id: "tailscale",
 		label: "Tailscale",
-		icon: html`<span class="icon icon-globe"></span>`,
+		icon: html`<span class="icon icon-tailscale"></span>`,
 	},
 	{
 		id: "network-audit",
 		label: "Network Audit",
-		icon: html`<span class="icon icon-globe"></span>`,
+		icon: html`<span class="icon icon-shield-check"></span>`,
 		page: true,
 	},
 	{
@@ -206,7 +213,7 @@ var sections = [
 	{
 		id: "import",
 		label: "OpenClaw Import",
-		icon: html`<span class="icon icon-link"></span>`,
+		icon: html`<span class="icon icon-openclaw"></span>`,
 	},
 	{
 		id: "voice",
@@ -214,34 +221,11 @@ var sections = [
 		icon: html`<span class="icon icon-microphone"></span>`,
 	},
 	{ group: "Systems" },
-	{
-		id: "terminal",
-		label: "Terminal",
-		icon: html`<span class="icon icon-terminal"></span>`,
-		page: true,
-	},
-	{
-		id: "monitoring",
-		label: "Monitoring",
-		icon: html`<span class="icon icon-chart-bar"></span>`,
-		page: true,
-	},
-	{
-		id: "logs",
-		label: "Logs",
-		icon: html`<span class="icon icon-document"></span>`,
-		page: true,
-	},
-	{
-		id: "graphql",
-		label: "GraphQL",
-		icon: html`<span class="icon icon-graphql"></span>`,
-	},
-	{
-		id: "config",
-		label: "Configuration",
-		icon: html`<span class="icon icon-code"></span>`,
-	},
+	{ id: "terminal", label: "Terminal", page: true },
+	{ id: "monitoring", label: "Monitoring", page: true },
+	{ id: "logs", label: "Logs", page: true },
+	{ id: "graphql", label: "GraphQL" },
+	{ id: "config", label: "Configuration" },
 ];
 
 function getVisibleSections() {
@@ -283,6 +267,7 @@ function SettingsSidebar() {
 					: html`<button
 							key=${s.id}
 							class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
+							data-section=${s.id}
 							onClick=${() => {
 								if (isMobileViewport()) {
 									mobileSidebarVisible.value = false;
@@ -291,7 +276,6 @@ function SettingsSidebar() {
 								navigate(settingsPath(s.id));
 							}}
 						>
-							${s.icon}
 							${s.label}
 						</button>`,
 			)}
@@ -5056,6 +5040,7 @@ var pageSectionHandlers = {
 	providers: { init: initProviders, teardown: teardownProviders },
 	channels: { init: initChannels, teardown: teardownChannels },
 	mcp: { init: initMcp, teardown: teardownMcp },
+	nodes: { init: initNodes, teardown: teardownNodes },
 	hooks: { init: initHooks, teardown: teardownHooks },
 	skills: { init: initSkills, teardown: teardownSkills },
 	agents: { init: initAgents, teardown: teardownAgents },

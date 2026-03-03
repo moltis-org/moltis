@@ -27,7 +27,8 @@ use {
         model::{StreamEvent, values_to_chat_messages},
         multimodal::parse_data_uri,
         prompt::{
-            PromptHostRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
+            PromptHostRuntimeContext, PromptNodeInfo, PromptNodesRuntimeContext,
+            PromptRuntimeContext, PromptSandboxRuntimeContext,
             build_system_prompt_minimal_with_profile, build_system_prompt_with_profile,
             default_prompt_template, prompt_template_variables,
         },
@@ -1536,9 +1537,39 @@ async fn build_prompt_runtime_context(
     };
     refresh_runtime_prompt_time(&mut host_ctx);
 
+    // Build nodes context from connected remote nodes.
+    let connected = state.connected_nodes().await;
+    let nodes_ctx = if connected.is_empty() {
+        None
+    } else {
+        let default_node_id = session_entry.and_then(|e| e.node_id.clone());
+        Some(PromptNodesRuntimeContext {
+            nodes: connected
+                .into_iter()
+                .map(|n| PromptNodeInfo {
+                    node_id: n.node_id,
+                    display_name: n.display_name,
+                    platform: n.platform,
+                    capabilities: n.capabilities,
+                    cpu_count: n.cpu_count,
+                    cpu_usage: n.cpu_usage,
+                    mem_total: n.mem_total,
+                    mem_available: n.mem_available,
+                    telemetry_stale: n.telemetry_stale,
+                    disk_total: n.disk_total,
+                    disk_available: n.disk_available,
+                    runtimes: n.runtimes,
+                    providers: n.providers,
+                })
+                .collect(),
+            default_node_id,
+        })
+    };
+
     PromptRuntimeContext {
         host: host_ctx,
         sandbox: sandbox_ctx,
+        nodes: nodes_ctx,
     }
 }
 
@@ -8579,6 +8610,10 @@ mod tests {
         async fn ensure_local_model_cached(&self, _model_id: &str) -> error::Result<bool> {
             Ok(false)
         }
+
+        async fn connected_nodes(&self) -> Vec<runtime::ConnectedNodeSummary> {
+            Vec::new()
+        }
     }
 
     fn mock_runtime() -> Arc<dyn ChatRuntime> {
@@ -8706,6 +8741,7 @@ mod tests {
             mcp_disabled: None,
             preview: None,
             agent_id: None,
+            node_id: None,
             version: 0,
         }
     }
@@ -8788,6 +8824,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
         let base_prompt =
             "You are a helpful assistant.\nThe current user datetime is 2026-02-17 16:18:00 CET.\n"

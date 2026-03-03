@@ -15,6 +15,8 @@ platforms:
 apps:
   moltis:
     command: bin/moltis
+    environment:
+      MOLTIS_SHARE_DIR: $SNAP/share/moltis
     plugs:
       - network
       - network-bind
@@ -41,3 +43,8 @@ parts:
       rustup target add wasm32-wasip2
       cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
       craftctl default
+      mkdir -p "$CRAFT_PART_INSTALL/share/moltis/web" "$CRAFT_PART_INSTALL/share/moltis/wasm"
+      cp -R "crates/web/src/assets/." "$CRAFT_PART_INSTALL/share/moltis/web/"
+      cp "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" "$CRAFT_PART_INSTALL/share/moltis/wasm/"
+      cp "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" "$CRAFT_PART_INSTALL/share/moltis/wasm/"
+      cp "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" "$CRAFT_PART_INSTALL/share/moltis/wasm/"

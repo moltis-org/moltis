@@ -91,6 +91,10 @@ RUN groupadd -f docker && \
 
 # Copy binary from builder
 COPY --from=builder /build/target/release/moltis /usr/local/bin/moltis
+COPY --from=builder /build/crates/web/src/assets /usr/share/moltis/web
+COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_calc.wasm /usr/share/moltis/wasm/
+COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm /usr/share/moltis/wasm/
+COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_search.wasm /usr/share/moltis/wasm/
 
 # Create config and data directories
 RUN mkdir -p /home/moltis/.config/moltis /home/moltis/.moltis && \

@@ -8,17 +8,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Ensure local node_modules include Tailwind CLI deps before resolving a binary.
-if [[ ! -d node_modules/@tailwindcss/cli || ! -d node_modules/tailwindcss ]]; then
-  echo "tailwind deps missing — installing npm devDependencies..." >&2
-  if [[ -f package-lock.json ]]; then
-    npm ci --ignore-scripts
-  else
-    npm install --ignore-scripts
-  fi
-fi
-
 # Resolve the tailwindcss binary: explicit override → local node_modules → global CLI.
+# When TAILWINDCSS is set (e.g. standalone binary from CI), skip npm entirely.
 if [[ -n "${TAILWINDCSS:-}" ]]; then
   TAILWIND="$TAILWINDCSS"
 elif [[ -x node_modules/.bin/tailwindcss ]]; then
@@ -26,7 +17,14 @@ elif [[ -x node_modules/.bin/tailwindcss ]]; then
 elif command -v tailwindcss &>/dev/null; then
   TAILWIND="tailwindcss"
 else
-  TAILWIND="npx --no-install @tailwindcss/cli"
+  # No binary found — install via npm and use the local copy.
+  echo "tailwind deps missing — installing npm devDependencies..." >&2
+  if [[ -f package-lock.json ]]; then
+    npm ci --ignore-scripts
+  else
+    npm install --ignore-scripts
+  fi
+  TAILWIND="node_modules/.bin/tailwindcss"
 fi
 
 if [[ "${1:-}" == "--watch" ]]; then

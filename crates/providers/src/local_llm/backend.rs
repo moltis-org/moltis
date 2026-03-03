@@ -134,6 +134,12 @@ pub fn detect_backend_for_model(model_id: &str) -> BackendType {
         return BackendType::Gguf;
     }
 
+    // If the model ID looks like a HuggingFace repo, treat it as an MLX model
+    // when MLX is available (e.g. "mlx-community/Qwen3.5-4B-MLX-4bit").
+    if super::models::is_hf_repo_id(model_id) && is_mlx_available() {
+        return BackendType::Mlx;
+    }
+
     // Unknown model - fall back to system detection
     detect_best_backend()
 }
@@ -816,18 +822,19 @@ pub mod mlx {
         let script = format!(
             r#"
 import mlx_lm
+from mlx_lm.sample_utils import make_sampler
 import json
 
 model, tokenizer = mlx_lm.load("{model_path}")
 prompt = {prompt_json}
+sampler = make_sampler(temp={temperature})
 response = mlx_lm.generate(
     model,
     tokenizer,
     prompt=prompt,
     max_tokens={max_tokens},
-    temp={temperature},
+    sampler=sampler,
 )
-# Estimate tokens (mlx-lm doesn't provide exact counts easily)
 input_tokens = len(tokenizer.encode(prompt))
 output_tokens = len(tokenizer.encode(response))
 print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_tokens": output_tokens}}))
@@ -1029,10 +1036,12 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
         let script = format!(
             r#"
 import mlx_lm
+from mlx_lm.sample_utils import make_sampler
 import sys
 
 model, tokenizer = mlx_lm.load("{model_path}")
 prompt = {prompt_json}
+sampler = make_sampler(temp={temperature})
 
 input_tokens = len(tokenizer.encode(prompt))
 output_tokens = 0
@@ -1042,12 +1051,11 @@ for token in mlx_lm.stream_generate(
     tokenizer,
     prompt=prompt,
     max_tokens={max_tokens},
-    temp={temperature},
+    sampler=sampler,
 ):
     output_tokens += 1
     print(token, end="", flush=True)
 
-# Print token counts at the end (special marker)
 print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
 "#,
             model_path = model_path,
@@ -1171,8 +1179,19 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
             return Ok((model_path, None, context_size));
         }
 
+        // If the model ID looks like a HuggingFace repo, download it directly
+        if models::is_hf_repo_id(&config.model_id) {
+            info!(
+                model = config.model_id,
+                "downloading custom MLX model from HuggingFace repo"
+            );
+            let model_path = models::ensure_mlx_repo(&config.model_id, &config.cache_dir).await?;
+            let context_size = config.context_size.unwrap_or(8192);
+            return Ok((model_path, None, context_size));
+        }
+
         bail!(
-            "unknown MLX model '{}'. Use model_path for custom MLX models.",
+            "unknown MLX model '{}'. Use a HuggingFace repo ID (e.g. mlx-community/Model-Name) or model_path for custom MLX models.",
             config.model_id
         );
     }

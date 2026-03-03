@@ -4,9 +4,10 @@ name              = "moltis-tools"
 version.workspace = true
 
 [features]
-default = ["metrics", "wasm"]
-metrics = ["dep:moltis-metrics"]
-wasm    = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
+default       = ["metrics", "wasm"]
+embedded-wasm = []
+metrics       = ["dep:moltis-metrics"]
+wasm          = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
 [dependencies]
 anyhow                = { workspace = true }

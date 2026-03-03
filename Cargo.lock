@@ -981,6 +981,20 @@ name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
 
 [[package]]
 name = "byteorder"
@@ -5754,6 +5768,7 @@ dependencies = [
  "moltis-cron",
  "moltis-gateway",
  "moltis-memory",
+ "moltis-node-host",
  "moltis-oauth",
  "moltis-onboarding",
  "moltis-openclaw-import",
@@ -5775,6 +5790,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "which 8.0.0",
 ]
 
@@ -6217,8 +6233,10 @@ version = "0.10.11"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytemuck",
  "chrono",
  "directories",
+ "futures",
  "llama-cpp-2",
  "moltis-agents",
  "moltis-common",
@@ -6307,6 +6325,26 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "moltis-node-host"
+version = "0.10.11"
+dependencies = [
+ "anyhow",
+ "futures",
+ "moltis-metrics",
+ "moltis-protocol",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "url",
+ "uuid",
+ "which 8.0.0",
 ]
 
 [[package]]
@@ -6768,6 +6806,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-wasm-precompile"
+version = "0.10.11"
+dependencies = [
+ "anyhow",
+ "wasmtime",
+]
+
+[[package]]
 name = "moltis-wasm-web-fetch"
 version = "0.10.11"
 dependencies = [
@@ -6814,6 +6860,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
  "which 8.0.0",
 ]

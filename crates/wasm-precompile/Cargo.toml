@@ -1,0 +1,15 @@
+[package]
+edition.workspace = true
+name              = "moltis-wasm-precompile"
+version.workspace = true
+
+[[bin]]
+name = "moltis-wasm-precompile"
+path = "src/main.rs"
+
+[dependencies]
+anyhow   = { workspace = true }
+wasmtime = { workspace = true }
+
+[lints]
+workspace = true

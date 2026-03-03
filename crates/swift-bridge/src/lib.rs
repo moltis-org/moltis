@@ -172,7 +172,14 @@ fn build_registry() -> ProviderRegistry {
     let env_overrides = config.env.clone();
     let key_store = KeyStore::new();
     let effective = config_with_saved_keys(&config.providers, &key_store, &[]);
-    ProviderRegistry::from_env_with_config_and_overrides(&effective, &env_overrides)
+    #[cfg(test)]
+    {
+        ProviderRegistry::from_config_with_static_catalogs(&effective, &env_overrides)
+    }
+    #[cfg(not(test))]
+    {
+        ProviderRegistry::from_env_with_config_and_overrides(&effective, &env_overrides)
+    }
 }
 
 static BRIDGE: LazyLock<BridgeState> = LazyLock::new(BridgeState::new);

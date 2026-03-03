@@ -103,11 +103,38 @@ pub struct PromptSandboxRuntimeContext {
     pub session_override: Option<bool>,
 }
 
+/// Info about a single connected remote node, injected into the system prompt.
+#[derive(Debug, Clone)]
+pub struct PromptNodeInfo {
+    pub node_id: String,
+    pub display_name: Option<String>,
+    pub platform: String,
+    pub capabilities: Vec<String>,
+    pub cpu_count: Option<u32>,
+    pub cpu_usage: Option<f32>,
+    pub mem_total: Option<u64>,
+    pub mem_available: Option<u64>,
+    pub telemetry_stale: bool,
+    pub disk_total: Option<u64>,
+    pub disk_available: Option<u64>,
+    pub runtimes: Vec<String>,
+    /// `(provider_name, model_list)` pairs discovered on the node.
+    pub providers: Vec<(String, Vec<String>)>,
+}
+
+/// Runtime context about connected remote nodes.
+#[derive(Debug, Clone, Default)]
+pub struct PromptNodesRuntimeContext {
+    pub nodes: Vec<PromptNodeInfo>,
+    pub default_node_id: Option<String>,
+}
+
 /// Combined runtime context injected into the system prompt.
 #[derive(Debug, Clone, Default)]
 pub struct PromptRuntimeContext {
     pub host: PromptHostRuntimeContext,
     pub sandbox: Option<PromptSandboxRuntimeContext>,
+    pub nodes: Option<PromptNodesRuntimeContext>,
 }
 
 /// Suffix appended to the system prompt when the user's reply medium is voice.
@@ -1164,6 +1191,64 @@ fn append_project_context(prompt: &mut String, project_context: Option<&str>) {
     }
 }
 
+fn format_node_runtime_line(node: &PromptNodeInfo) -> String {
+    let name = node.display_name.as_deref().unwrap_or(&node.node_id);
+    let mut parts = vec![node.platform.clone()];
+    if !node.capabilities.is_empty() {
+        parts.push(format!("caps: {}", node.capabilities.join(",")));
+    }
+    if let Some(cpus) = node.cpu_count {
+        parts.push(format!("{cpus} cores"));
+    }
+    if let Some(usage) = node.cpu_usage {
+        parts.push(format!("{usage:.0}% cpu"));
+    }
+    if let (Some(avail), Some(total)) = (node.mem_available, node.mem_total) {
+        let avail_gb = avail as f64 / 1_073_741_824.0;
+        let total_gb = total as f64 / 1_073_741_824.0;
+        parts.push(format!("{avail_gb:.0}GB/{total_gb:.0}GB mem"));
+    }
+    if let (Some(avail), Some(total)) = (node.disk_available, node.disk_total) {
+        let avail_gb = avail as f64 / 1_073_741_824.0;
+        let total_gb = total as f64 / 1_073_741_824.0;
+        parts.push(format!("disk: {avail_gb:.0}GB/{total_gb:.0}GB free"));
+    }
+    if !node.runtimes.is_empty() {
+        parts.push(format!("runtimes: {}", node.runtimes.join(",")));
+    }
+    if !node.providers.is_empty() {
+        let names: Vec<&str> = node.providers.iter().map(|(n, _)| n.as_str()).collect();
+        parts.push(format!("providers: {}", names.join(",")));
+    }
+    let suffix = if node.telemetry_stale {
+        " (stale)"
+    } else {
+        ""
+    };
+    format!("{name} ({}{suffix})", parts.join(", "))
+}
+
+fn format_nodes_runtime_section(nodes_ctx: &PromptNodesRuntimeContext) -> Option<String> {
+    if nodes_ctx.nodes.is_empty() {
+        return None;
+    }
+    let node_descs: Vec<String> = nodes_ctx
+        .nodes
+        .iter()
+        .map(format_node_runtime_line)
+        .collect();
+    let mut line = format!("Nodes: {}", node_descs.join(" | "));
+    if let Some(ref default) = nodes_ctx.default_node_id {
+        line.push_str(&format!(" [default: {default}]"));
+    }
+    Some(line)
+}
+
+const NODE_ROUTING_GUIDANCE: &str = "\
+- When nodes are connected, the `exec` tool accepts an optional `node` parameter to target a specific node.\n\
+- Omitting `node` runs on the session's default node (shown as [default: ...] above), or locally if none is set.\n\
+- Use node telemetry (CPU, memory) to pick appropriate targets for resource-intensive tasks.\n\n";
+
 fn append_runtime_section(
     prompt: &mut String,
     runtime_context: Option<&PromptRuntimeContext>,
@@ -1183,7 +1268,11 @@ fn append_runtime_section(
     } else {
         None
     };
-    if host_line.is_none() && sandbox_line.is_none() {
+    let nodes_line = runtime
+        .nodes
+        .as_ref()
+        .and_then(format_nodes_runtime_section);
+    if host_line.is_none() && sandbox_line.is_none() && nodes_line.is_none() {
         return;
     }
 
@@ -1196,8 +1285,16 @@ fn append_runtime_section(
         prompt.push_str(&line);
         prompt.push('\n');
     }
+    let has_nodes = nodes_line.is_some();
+    if let Some(line) = nodes_line {
+        prompt.push_str(&line);
+        prompt.push('\n');
+    }
     if include_tools {
         prompt.push_str(EXEC_ROUTING_GUIDANCE);
+        if has_nodes {
+            prompt.push_str(NODE_ROUTING_GUIDANCE);
+        }
     } else {
         prompt.push('\n');
     }
@@ -1758,6 +1855,7 @@ mod tests {
                 no_network: Some(true),
                 session_override: Some(true),
             }),
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -1807,6 +1905,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -1841,6 +1940,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -1875,6 +1975,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -1905,6 +2006,7 @@ mod tests {
                 exec_sandboxed: false,
                 ..Default::default()
             }),
+            nodes: None,
         };
 
         let prompt = build_system_prompt_minimal_runtime(
@@ -2130,6 +2232,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -2160,6 +2263,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -2190,6 +2294,7 @@ mod tests {
         let runtime = PromptRuntimeContext {
             host: PromptHostRuntimeContext::default(),
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(

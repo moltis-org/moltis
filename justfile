@@ -33,9 +33,10 @@ build: build-css
 build-release:
     cargo build --release
 
-# Build embedded WASM guest tools for component execution.
+# Build embedded WASM guest tools and pre-compile to .cwasm for AOT loading.
 wasm-tools:
     cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+    cargo run -p moltis-wasm-precompile --release
 
 # Run local dev server with workspace-local config/data dirs.
 dev-server:
@@ -240,6 +241,14 @@ build-test: build-css
 release-preflight: lockfile-check
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
+
+# Sync repo-root install.sh into website/install.sh for Cloudflare deployment.
+sync-website-install:
+    ./scripts/sync-website-install.sh
+
+# Ensure repo-root install.sh and website/install.sh are identical.
+check-website-install-sync:
+    ./scripts/check-website-install-sync.sh
 
 # Dispatch release workflow from GitHub Actions (normal mode).
 release-workflow ref='main':

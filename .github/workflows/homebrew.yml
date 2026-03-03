@@ -118,7 +118,9 @@ jobs:
             end
 
             def install
-              bin.install "moltis"
+              libexec.install "moltis"
+              share.install "share/moltis"
+              (bin/"moltis").write_env_script libexec/"moltis", MOLTIS_SHARE_DIR: share/"moltis"
             end
 
             test do
