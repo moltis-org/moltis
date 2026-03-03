@@ -1,0 +1,12 @@
+{
+  "name": "moltis-website",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-statement.mjs",
+    "install-manifest:update": "node scripts/generate-install-release-manifest.mjs",
+    "i18n:validate": "node scripts/validate-i18n.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^28.1.0"
+  }
+}

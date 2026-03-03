@@ -1,0 +1,45 @@
+{
+  "catalog_version": "2026-02-22",
+  "provider": "moltis.org",
+  "apis": [
+    {
+      "id": "moltis-install-discovery",
+      "name": "Moltis Install Discovery",
+      "description": "Machine-readable install/import/start contract with stable channel and per-release manifests",
+      "base_url": "https://moltis.org",
+      "endpoints": [
+        {
+          "path": "/.well-known/moltis-install.json",
+          "method": "GET",
+          "content_type": "application/json"
+        },
+        {
+          "path": "/.well-known/moltis-install.schema.json",
+          "method": "GET",
+          "content_type": "application/schema+json"
+        },
+        {
+          "path": "/.well-known/moltis-install.channel.schema.json",
+          "method": "GET",
+          "content_type": "application/schema+json"
+        },
+        {
+          "path": "/.well-known/moltis-install.release.schema.json",
+          "method": "GET",
+          "content_type": "application/schema+json"
+        },
+        {
+          "path": "/.well-known/moltis-install/channels/stable.json",
+          "method": "GET",
+          "content_type": "application/json"
+        },
+        {
+          "path": "/.well-known/moltis-install/releases/{version}.json",
+          "method": "GET",
+          "content_type": "application/json"
+        }
+      ],
+      "docs_url": "https://moltis.org/llms.txt"
+    }
+  ]
+}
