@@ -14,7 +14,7 @@ var highlighter = null;
 export async function initHighlighter() {
 	if (highlighter) return;
 	try {
-		var shiki = await import("./vendor/shiki.mjs");
+		var shiki = await import("shiki");
 		highlighter = await shiki.createHighlighter({
 			themes: ["github-dark", "github-light"],
 			langs: Object.keys(shiki.bundledLanguages),

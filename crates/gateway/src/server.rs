@@ -3002,11 +3002,12 @@ pub async fn prepare_gateway(
         vault.clone(),
     );
 
-    // Store discovered hook info and disabled set in state for the web UI.
+    // Store discovered hook info, disabled set, and config overrides in state for the web UI.
     {
         let mut inner = state.inner.write().await;
         inner.discovered_hooks = discovered_hooks_info;
         inner.disabled_hooks = persisted_disabled;
+        inner.shiki_cdn_url = config.server.shiki_cdn_url.clone();
         #[cfg(feature = "metrics")]
         {
             inner.metrics_history =

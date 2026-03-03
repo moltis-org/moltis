@@ -6768,6 +6768,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-wasm-precompile"
+version = "0.10.11"
+dependencies = [
+ "anyhow",
+ "wasmtime",
+]
+
+[[package]]
 name = "moltis-wasm-web-fetch"
 version = "0.10.11"
 dependencies = [
@@ -6814,6 +6822,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
  "which 8.0.0",
 ]

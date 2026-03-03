@@ -285,6 +285,8 @@ pub struct GatewayInner {
     /// Hostnames that were discovered after passkeys already existed.
     /// Users should sign in with password and register a fresh passkey on these hosts.
     pub passkey_host_update_pending: HashSet<String>,
+    /// Shiki CDN URL override from config (`server.shiki_cdn_url`), or `None` for default.
+    pub shiki_cdn_url: Option<String>,
 }
 
 impl GatewayInner {
@@ -318,6 +320,7 @@ impl GatewayInner {
             channel_command_mode_sessions: HashSet::new(),
             channels_offered: vec!["telegram".into()],
             passkey_host_update_pending: HashSet::new(),
+            shiki_cdn_url: None,
         }
     }
 
