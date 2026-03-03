@@ -174,7 +174,7 @@ fn build_registry() -> ProviderRegistry {
     let effective = config_with_saved_keys(&config.providers, &key_store, &[]);
     #[cfg(test)]
     {
-        ProviderRegistry::from_env_with_config_and_overrides_deferred(&effective, &env_overrides)
+        ProviderRegistry::from_config_with_static_catalogs(&effective, &env_overrides)
     }
     #[cfg(not(test))]
     {
