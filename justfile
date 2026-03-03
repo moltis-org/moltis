@@ -241,6 +241,14 @@ release-preflight: lockfile-check
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
+# Sync repo-root install.sh into website/install.sh for Cloudflare deployment.
+sync-website-install:
+    ./scripts/sync-website-install.sh
+
+# Ensure repo-root install.sh and website/install.sh are identical.
+check-website-install-sync:
+    ./scripts/check-website-install-sync.sh
+
 # Dispatch release workflow from GitHub Actions (normal mode).
 release-workflow ref='main':
     gh workflow run release.yml --ref {{ref}} -f dry_run=false

@@ -21,6 +21,8 @@ apps/ios/local.xcconfig
 crates/web/ui/node_modules/
 crates/web/ui/playwright-report/
 crates/web/ui/test-results/
+website/node_modules/
+website/.playwright-mcp/
 crates/web/src/assets/style.css
 crates/gateway/ui/node_modules/
 crates/gateway/ui/playwright-report/
