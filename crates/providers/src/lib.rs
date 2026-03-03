@@ -1854,13 +1854,23 @@ impl ProviderRegistry {
                 .get(def.config_name)
                 .is_some_and(|entry| entry.fetch_models);
             let try_fetch = def.supports_model_discovery || user_opted_in;
+            let fetch_enabled = should_fetch_models(config, def.config_name);
             let discovered = if skip_live_fetch {
                 // Use the static catalog without any network calls.
-                def.models
-                    .iter()
-                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                    .collect()
-            } else if !skip_discovery && try_fetch && should_fetch_models(config, def.config_name) {
+                if !skip_discovery && try_fetch && fetch_enabled {
+                    def.models
+                        .iter()
+                        .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                        .collect()
+                } else if !def.supports_model_discovery && !def.models.is_empty() && fetch_enabled {
+                    def.models
+                        .iter()
+                        .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else if !skip_discovery && try_fetch && fetch_enabled {
                 if def.config_name == "ollama" {
                     match discover_ollama_models(&base_url) {
                         Ok(models) => models,
