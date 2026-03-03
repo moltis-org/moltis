@@ -14,7 +14,7 @@ import {
 	teardownMediaDrop,
 } from "./media-drop.js";
 import { bindModelComboEvents, setSessionModel } from "./models.js";
-import { bindNodeComboEvents, unbindNodeEvents } from "./nodes-selector.js";
+import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "./nodes-selector.js";
 import { registerPrefix, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
