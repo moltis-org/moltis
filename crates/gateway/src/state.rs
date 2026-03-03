@@ -31,7 +31,7 @@ pub struct MetricsHistory {
 #[cfg(feature = "metrics")]
 impl MetricsHistory {
     /// Create a new history buffer with the given capacity.
-    /// Default: 360 points = 1 hour at 10-second intervals.
+    /// Default: 360 points = 3 hours at 30-second intervals.
     pub fn new(max_points: usize) -> Self {
         Self {
             points: VecDeque::with_capacity(max_points),
@@ -61,7 +61,7 @@ impl MetricsHistory {
 #[cfg(feature = "metrics")]
 impl Default for MetricsHistory {
     fn default() -> Self {
-        Self::new(360) // 1 hour at 10-second intervals
+        Self::new(360) // 3 hours at 30-second intervals
     }
 }
 

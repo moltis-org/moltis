@@ -1157,7 +1157,7 @@ pub struct MetricsConfig {
     #[serde(default = "default_true")]
     pub prometheus_endpoint: bool,
     /// Maximum number of in-memory history points for time-series charts.
-    /// Points are sampled every 10 seconds. Defaults to 360 (1 hour).
+    /// Points are sampled every 30 seconds. Defaults to 360 (3 hours).
     /// Historical data is persisted to SQLite regardless of this setting.
     #[serde(default = "default_metrics_history_points")]
     pub history_points: usize,

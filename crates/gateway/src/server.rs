@@ -4055,7 +4055,7 @@ pub async fn prepare_gateway(
         }
     });
 
-    // Spawn metrics history collection and broadcast task (every 10 seconds).
+    // Spawn metrics history collection and broadcast task (every 30 seconds).
     #[cfg(feature = "metrics")]
     {
         let metrics_state = Arc::clone(&state);
@@ -4070,7 +4070,7 @@ pub async fn prepare_gateway(
             if let Some(ref store) = metrics_state.metrics_store {
                 let max_points = metrics_state.inner.read().await.metrics_history.capacity();
                 // Load enough history to fill the in-memory buffer.
-                let window_secs = max_points as u64 * 10; // 10-second intervals
+                let window_secs = max_points as u64 * 30; // 30-second intervals
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -4121,7 +4121,7 @@ pub async fn prepare_gateway(
                 tx
             });
 
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
             let mut cleanup_counter = 0u32;
             loop {
                 interval.tick().await;
@@ -4202,9 +4202,9 @@ pub async fn prepare_gateway(
                         .await;
                     }
 
-                    // Cleanup old data once per hour (360 ticks at 10s interval).
+                    // Cleanup old data once per hour (120 ticks at 30s interval).
                     cleanup_counter += 1;
-                    if cleanup_counter >= 360 {
+                    if cleanup_counter >= 120 {
                         cleanup_counter = 0;
                         if let Some(tx) = metrics_persist_tx.as_ref() {
                             // Keep 7 days of history.
@@ -4353,6 +4353,13 @@ pub async fn prepare_gateway(
             loop {
                 match rx.recv().await {
                     Ok(entry) => {
+                        // Skip entries from the broadcast module to prevent a
+                        // feedback loop: broadcasting a log entry emits a debug
+                        // log which would be re-captured and re-broadcast
+                        // infinitely, pegging the CPU.
+                        if entry.target.starts_with("moltis_gateway::broadcast") {
+                            continue;
+                        }
                         if let Ok(payload) = serde_json::to_value(&entry) {
                             broadcast(&log_state, "logs.entry", payload, BroadcastOpts {
                                 drop_if_slow: true,
