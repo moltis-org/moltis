@@ -13,7 +13,7 @@ use moltis_protocol::{
     Policy, ResponseFrame, ServerInfo, error_codes, roles, scopes,
 };
 
-use crate::{
+use moltis_gateway::{
     auth,
     broadcast::{BroadcastOpts, broadcast},
     methods::{MethodContext, MethodRegistry},

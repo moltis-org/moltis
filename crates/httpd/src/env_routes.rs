@@ -8,7 +8,7 @@ use {
     serde::Serialize,
 };
 
-use crate::auth::EnvVarEntry;
+use moltis_gateway::auth::EnvVarEntry;
 
 // ── Typed responses ──────────────────────────────────────────────────────────
 

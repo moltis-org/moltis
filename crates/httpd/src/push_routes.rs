@@ -1,10 +1,7 @@
 //! Push notification API routes.
 
 use {
-    crate::{
-        push::{PushPayload, PushService, PushSubscription},
-        server::AppState,
-    },
+    crate::server::AppState,
     axum::{
         Json, Router,
         extract::{ConnectInfo, State},
@@ -13,8 +10,9 @@ use {
         routing::{get, post},
     },
     chrono::Utc,
+    moltis_gateway::push::PushSubscription,
     serde::{Deserialize, Serialize},
-    std::{net::SocketAddr, sync::Arc},
+    std::net::SocketAddr,
 };
 
 /// Response with the VAPID public key.
@@ -147,11 +145,11 @@ async fn subscribe_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Broadcast subscription change
-    crate::broadcast::broadcast(
+    moltis_gateway::broadcast::broadcast(
         &state.gateway,
         "push.subscriptions",
         serde_json::json!({"action": "added"}),
-        crate::broadcast::BroadcastOpts::default(),
+        moltis_gateway::broadcast::BroadcastOpts::default(),
     )
     .await;
 
@@ -173,11 +171,11 @@ async fn unsubscribe_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Broadcast subscription change
-    crate::broadcast::broadcast(
+    moltis_gateway::broadcast::broadcast(
         &state.gateway,
         "push.subscriptions",
         serde_json::json!({"action": "removed"}),
-        crate::broadcast::BroadcastOpts::default(),
+        moltis_gateway::broadcast::BroadcastOpts::default(),
     )
     .await;
 
@@ -272,22 +270,4 @@ pub fn push_router() -> Router<AppState> {
         .route("/subscribe", post(subscribe_handler))
         .route("/unsubscribe", post(unsubscribe_handler))
         .route("/status", get(status_handler))
-}
-
-/// Send a push notification to all subscribers.
-pub async fn send_push_notification(
-    push_service: &Arc<PushService>,
-    title: &str,
-    body: &str,
-    url: Option<&str>,
-    session_key: Option<&str>,
-) -> anyhow::Result<usize> {
-    let payload = PushPayload {
-        title: title.to_string(),
-        body: body.to_string(),
-        url: url.map(String::from),
-        session_key: session_key.map(String::from),
-    };
-
-    push_service.send_to_all(&payload).await
 }

@@ -171,6 +171,7 @@ web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-u
 whatsapp = ["dep:moltis-whatsapp", "dep:qrcode", "moltis-whatsapp/metrics"]
 
 [dev-dependencies]
+moltis-httpd      = { default-features = true, workspace = true }
 moltis-web        = { workspace = true }
 reqwest           = { workspace = true }
 sqlx              = { workspace = true }

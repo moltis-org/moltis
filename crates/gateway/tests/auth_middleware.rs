@@ -9,12 +9,14 @@ use tokio::net::TcpListener;
 #[cfg(all(feature = "graphql", feature = "web-ui"))]
 use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
-use moltis_gateway::{
-    auth::{self, CredentialStore},
-    methods::MethodRegistry,
-    server::{build_gateway_base, finalize_gateway_app},
-    services::GatewayServices,
-    state::GatewayState,
+use {
+    moltis_gateway::{
+        auth::{self, CredentialStore},
+        methods::MethodRegistry,
+        services::GatewayServices,
+        state::GatewayState,
+    },
+    moltis_httpd::server::{build_gateway_base, finalize_gateway_app},
 };
 
 /// Start a test server with a credential store (auth enabled).

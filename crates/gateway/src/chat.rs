@@ -182,7 +182,7 @@ impl ChatRuntime for GatewayChatRuntime {
         #[cfg(feature = "push-notifications")]
         {
             if let Some(push_service) = self.state.get_push_service().await {
-                return crate::push_routes::send_push_notification(
+                return crate::push::send_push_notification(
                     &push_service,
                     title,
                     body,

@@ -17,7 +17,9 @@ use {
     serde_json::Value,
 };
 
-use crate::{server::AppState, services::ServiceResult, state::GatewayState};
+use moltis_gateway::{services::ServiceResult, state::GatewayState};
+
+use crate::server::AppState;
 
 /// `SystemInfoService` implementation backed by the gateway's live state.
 ///

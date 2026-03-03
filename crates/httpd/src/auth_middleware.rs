@@ -12,11 +12,12 @@ use axum::{
     response::{IntoResponse, Json, Redirect},
 };
 
-use crate::{
+use moltis_gateway::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
-    server::is_local_connection,
     state::GatewayState,
 };
+
+use crate::server::is_local_connection;
 
 /// Session cookie name.
 pub const SESSION_COOKIE: &str = "moltis_session";

@@ -12,10 +12,11 @@ use {
     tracing::{debug, error, info, warn},
 };
 
-use crate::{
-    server::AppState,
-    tailscale::{CliTailscaleManager, TailscaleManager, TailscaleMode, validate_tailscale_config},
+use moltis_gateway::tailscale::{
+    CliTailscaleManager, TailscaleManager, TailscaleMode, validate_tailscale_config,
 };
+
+use crate::server::AppState;
 
 const TAILSCALE_STATUS_FAILED: &str = "TAILSCALE_STATUS_FAILED";
 const TAILSCALE_MODE_INVALID: &str = "TAILSCALE_MODE_INVALID";
@@ -24,7 +25,7 @@ const TAILSCALE_CONFIGURE_FAILED: &str = "TAILSCALE_CONFIGURE_FAILED";
 
 async fn sync_webauthn_host_and_notice(state: &AppState, hostname: Option<&str>) -> Option<String> {
     let hostname = hostname?;
-    let normalized = crate::auth_webauthn::normalize_host(hostname);
+    let normalized = moltis_gateway::auth_webauthn::normalize_host(hostname);
     if normalized.is_empty() {
         return None;
     }
@@ -47,13 +48,14 @@ async fn sync_webauthn_host_and_notice(state: &AppState, hostname: Option<&str>)
             return None;
         },
     };
-    let webauthn = match crate::auth_webauthn::WebAuthnState::new(&normalized, &origin_url, &[]) {
-        Ok(wa) => wa,
-        Err(e) => {
-            warn!(host = %normalized, "failed to initialize runtime WebAuthn RP: {e}");
-            return None;
-        },
-    };
+    let webauthn =
+        match moltis_gateway::auth_webauthn::WebAuthnState::new(&normalized, &origin_url, &[]) {
+            Ok(wa) => wa,
+            Err(e) => {
+                warn!(host = %normalized, "failed to initialize runtime WebAuthn RP: {e}");
+                return None;
+            },
+        };
 
     {
         let mut reg = registry.write().await;

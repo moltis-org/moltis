@@ -36,11 +36,16 @@ which           = { workspace = true }
 agent              = ["moltis-gateway/agent"]
 default            = []
 graphql            = []
+mdns               = ["moltis-httpd/mdns"]
 metrics            = ["moltis-httpd/metrics"]
 push-notifications = ["moltis-httpd/push-notifications"]
+slack              = ["moltis-httpd/slack"]
 tailscale          = ["moltis-httpd/tailscale"]
+tls                = ["moltis-httpd/tls"]
+trusted-network    = ["moltis-httpd/trusted-network"]
 vault              = ["moltis-httpd/vault"]
 voice              = []
+web-ui             = ["moltis-httpd/web-ui"]
 
 [lints]
 workspace = true

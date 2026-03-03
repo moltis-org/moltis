@@ -7,30 +7,27 @@
 //! Non-HTTP consumers (TUI, tests) can depend on `moltis-gateway`
 //! directly without pulling in the HTTP stack.
 
+pub mod auth_middleware;
+pub mod auth_routes;
+pub mod env_routes;
+pub mod request_throttle;
 pub mod server;
-
-// Re-export HTTP modules from gateway.
-// These modules will migrate here in a future step; for now we expose
-// them through moltis-httpd so that consumers can start depending on
-// this crate.
-pub use moltis_gateway::{
-    auth_middleware, auth_routes, env_routes, request_throttle, tools_routes, upload_routes, ws,
-};
+pub mod tools_routes;
+pub mod upload_routes;
+pub mod ws;
 
 #[cfg(feature = "graphql")]
-pub use moltis_gateway::graphql_routes;
+pub mod graphql_routes;
 #[cfg(feature = "metrics")]
-pub use moltis_gateway::metrics_middleware;
+pub mod metrics_middleware;
 #[cfg(feature = "metrics")]
-pub use moltis_gateway::metrics_routes;
+pub mod metrics_routes;
 #[cfg(feature = "push-notifications")]
-pub use moltis_gateway::push_routes;
+pub mod push_routes;
 #[cfg(feature = "tailscale")]
-pub use moltis_gateway::tailscale_routes;
+pub mod tailscale_routes;
 
 // Re-export key types for consumers.
 #[cfg(feature = "tailscale")]
 pub use server::TailscaleOpts;
-pub use server::{
-    AppState, PreparedGateway, RouteEnhancer, prepare_httpd_embedded, start_gateway, start_httpd,
-};
+pub use server::{AppState, PreparedGateway, RouteEnhancer, prepare_httpd_embedded, start_gateway};

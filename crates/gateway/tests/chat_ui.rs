@@ -9,13 +9,15 @@ use {
     tokio_tungstenite::{connect_async, tungstenite::Message},
 };
 
-use moltis_gateway::{
-    auth,
-    chat::{DisabledModelsStore, LiveChatService, LiveModelService},
-    methods::MethodRegistry,
-    server::{build_gateway_base, finalize_gateway_app},
-    services::GatewayServices,
-    state::GatewayState,
+use {
+    moltis_gateway::{
+        auth,
+        chat::{DisabledModelsStore, LiveChatService, LiveModelService},
+        methods::MethodRegistry,
+        services::GatewayServices,
+        state::GatewayState,
+    },
+    moltis_httpd::server::{build_gateway_base, finalize_gateway_app},
 };
 
 use moltis_providers::ProviderRegistry;
