@@ -21,6 +21,10 @@ pub struct OAuthConfig {
     /// If true, use the GitHub device-flow instead of PKCE authorization code flow.
     #[serde(default)]
     pub device_flow: bool,
+    /// If set, the temporary OAuth token is exchanged for a permanent API key
+    /// by POSTing to this endpoint. The result is stored in `KeyStore`, not `TokenStore`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_endpoint: Option<String>,
 }
 
 /// Stored OAuth tokens.

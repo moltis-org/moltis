@@ -5759,6 +5759,7 @@ dependencies = [
  "moltis-openclaw-import",
  "moltis-plugins",
  "moltis-projects",
+ "moltis-provider-setup",
  "moltis-sessions",
  "moltis-skills",
  "moltis-tools",

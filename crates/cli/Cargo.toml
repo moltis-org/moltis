@@ -43,6 +43,7 @@ moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
 moltis-plugins         = { workspace = true }
 moltis-projects        = { workspace = true }
+moltis-provider-setup  = { workspace = true }
 moltis-sessions        = { workspace = true }
 moltis-skills          = { workspace = true }
 moltis-tools           = { workspace = true }

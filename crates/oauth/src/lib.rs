@@ -1,3 +1,4 @@
+pub mod api_key_exchange;
 pub mod callback_server;
 mod config_dir;
 pub mod defaults;
@@ -12,6 +13,7 @@ pub mod storage;
 pub mod types;
 
 pub use {
+    api_key_exchange::create_api_key_from_oauth,
     callback_server::CallbackServer,
     defaults::{callback_port, load_oauth_config},
     device_flow::DeviceCodeResponse,

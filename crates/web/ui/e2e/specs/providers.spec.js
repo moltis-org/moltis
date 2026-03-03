@@ -87,6 +87,47 @@ test.describe("Provider setup page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("anthropic shows api key and oauth badges", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await openProvidersPage(page);
+		await page.locator("#providersAddLlmBtn").click();
+
+		const anthropicItem = page
+			.locator(".provider-modal-backdrop .provider-item")
+			.filter({ has: page.locator(".provider-item-name", { hasText: /^Anthropic$/ }) })
+			.first();
+
+		if ((await anthropicItem.count()) > 0) {
+			await expect(anthropicItem).toBeVisible();
+			const badges = anthropicItem.locator(".provider-item-badge");
+			const badgeTexts = await badges.allTextContents();
+			expect(badgeTexts).toContain("API Key");
+			expect(badgeTexts).toContain("OAuth");
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("anthropic api key form shows oauth button", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await openProvidersPage(page);
+		await page.locator("#providersAddLlmBtn").click();
+
+		const anthropicItem = page
+			.locator(".provider-modal-backdrop .provider-item")
+			.filter({ has: page.locator(".provider-item-name", { hasText: /^Anthropic$/ }) })
+			.first();
+
+		if ((await anthropicItem.count()) > 0) {
+			await anthropicItem.click();
+			await expect(
+				page.getByRole("button", { name: /Connect with Anthropic OAuth/i }),
+			).toBeVisible();
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("provider validation errors render in danger panel", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await openProvidersPage(page);

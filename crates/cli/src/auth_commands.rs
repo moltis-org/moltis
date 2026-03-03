@@ -2,7 +2,8 @@ use {
     anyhow::Result,
     clap::Subcommand,
     moltis_oauth::{
-        CallbackServer, OAuthFlow, TokenStore, callback_port, device_flow, load_oauth_config,
+        CallbackServer, OAuthFlow, TokenStore, callback_port, create_api_key_from_oauth,
+        device_flow, load_oauth_config,
     },
 };
 
@@ -57,6 +58,7 @@ async fn login(provider: &str) -> Result<()> {
         return login_device_flow(provider, &config).await;
     }
 
+    let api_key_endpoint = config.api_key_endpoint.clone();
     let port = callback_port(&config);
     let flow = OAuthFlow::new(config);
     let req = flow.start()?;
@@ -72,10 +74,23 @@ async fn login(provider: &str) -> Result<()> {
     println!("Exchanging code for tokens...");
     let tokens = flow.exchange(&code, &req.pkce.verifier).await?;
 
-    let store = TokenStore::new();
-    store.save(provider, &tokens)?;
+    if let Some(endpoint) = api_key_endpoint {
+        println!("Creating API key...");
+        let api_key = create_api_key_from_oauth(&endpoint, &tokens.access_token).await?;
+        let key_store = moltis_provider_setup::KeyStore::new();
+        key_store.save_config(
+            provider,
+            Some(secrecy::ExposeSecret::expose_secret(&api_key).to_string()),
+            None,
+            None,
+        )?;
+        println!("Successfully created API key for {provider}");
+    } else {
+        let store = TokenStore::new();
+        store.save(provider, &tokens)?;
+        println!("Successfully logged in to {provider}");
+    }
 
-    println!("Successfully logged in to {provider}");
     Ok(())
 }
 

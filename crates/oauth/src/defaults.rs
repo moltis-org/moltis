@@ -8,6 +8,23 @@ fn builtin_defaults() -> HashMap<String, OAuthConfig> {
     // GitHub Copilot uses device flow (handled by the provider itself),
     // but we store a config entry so `load_oauth_config` returns Some
     // and the gateway recognises it as an OAuth provider.
+    m.insert("anthropic".into(), OAuthConfig {
+        client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e".into(),
+        auth_url: "https://console.anthropic.com/oauth/authorize".into(),
+        token_url: "https://console.anthropic.com/v1/oauth/token".into(),
+        redirect_uri: "http://localhost:1456/auth/callback".into(),
+        resource: None,
+        scopes: vec![
+            "org:create_api_key".into(),
+            "user:profile".into(),
+            "user:inference".into(),
+        ],
+        extra_auth_params: vec![],
+        device_flow: false,
+        api_key_endpoint: Some(
+            "https://api.anthropic.com/api/oauth/claude_cli/create_api_key".into(),
+        ),
+    });
     m.insert("github-copilot".into(), OAuthConfig {
         client_id: "Iv1.b507a08c87ecfe98".into(),
         auth_url: "https://github.com/login/device/code".into(),
@@ -17,6 +34,7 @@ fn builtin_defaults() -> HashMap<String, OAuthConfig> {
         scopes: vec![],
         extra_auth_params: vec![],
         device_flow: true,
+        api_key_endpoint: None,
     });
     m.insert("kimi-code".into(), OAuthConfig {
         client_id: "17e5f671-d194-4dfb-9706-5516cb48c098".into(),
@@ -27,6 +45,7 @@ fn builtin_defaults() -> HashMap<String, OAuthConfig> {
         scopes: vec![],
         extra_auth_params: vec![],
         device_flow: true,
+        api_key_endpoint: None,
     });
     m.insert("openai-codex".into(), OAuthConfig {
         client_id: "app_EMoamEEZ73f0CkXaXp7hrann".into(),
@@ -45,6 +64,7 @@ fn builtin_defaults() -> HashMap<String, OAuthConfig> {
             ("codex_cli_simplified_flow".into(), "true".into()),
         ],
         device_flow: false,
+        api_key_endpoint: None,
     });
     m
 }
@@ -88,6 +108,9 @@ pub fn load_oauth_config(provider: &str) -> Option<OAuthConfig> {
     }
     if let Ok(v) = std::env::var(format!("{env_prefix}REDIRECT_URI")) {
         config.redirect_uri = v;
+    }
+    if let Ok(v) = std::env::var(format!("{env_prefix}API_KEY_ENDPOINT")) {
+        config.api_key_endpoint = Some(v);
     }
 
     Some(config)
@@ -140,6 +163,31 @@ mod tests {
     }
 
     #[test]
+    fn load_anthropic_config() {
+        let config = load_oauth_config("anthropic").expect("should have anthropic");
+        assert_eq!(config.client_id, "9d1c250a-e61b-44d9-88ed-5944d1962f5e");
+        assert!(!config.device_flow);
+        assert_eq!(
+            config.auth_url,
+            "https://console.anthropic.com/oauth/authorize"
+        );
+        assert_eq!(
+            config.token_url,
+            "https://console.anthropic.com/v1/oauth/token"
+        );
+        assert_eq!(config.redirect_uri, "http://localhost:1456/auth/callback");
+        assert_eq!(config.scopes, vec![
+            "org:create_api_key",
+            "user:profile",
+            "user:inference"
+        ]);
+        assert_eq!(
+            config.api_key_endpoint.as_deref(),
+            Some("https://api.anthropic.com/api/oauth/claude_cli/create_api_key")
+        );
+    }
+
+    #[test]
     fn load_unknown_provider_returns_none() {
         assert!(load_oauth_config("nonexistent-provider").is_none());
     }
@@ -155,5 +203,11 @@ mod tests {
     fn callback_port_with_redirect_uri() {
         let config = load_oauth_config("openai-codex").unwrap();
         assert_eq!(callback_port(&config), 1455);
+    }
+
+    #[test]
+    fn callback_port_anthropic() {
+        let config = load_oauth_config("anthropic").unwrap();
+        assert_eq!(callback_port(&config), 1456);
     }
 }

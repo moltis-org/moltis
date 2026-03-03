@@ -1678,6 +1678,8 @@ impl ProviderSetupService for LiveProviderSetupService {
                     .unwrap_or_default();
                 let model = models.first().cloned();
 
+                let has_oauth = load_oauth_config(provider.name).is_some();
+
                 Some((
                     offered_rank.get(&normalized_name).copied(),
                     known_idx,
@@ -1692,6 +1694,7 @@ impl ProviderSetupService for LiveProviderSetupService {
                         "model": model,
                         "requiresModel": provider.requires_model,
                         "keyOptional": provider.key_optional,
+                        "hasOauth": has_oauth,
                     }),
                 ))
             })
@@ -1887,9 +1890,14 @@ impl ProviderSetupService for LiveProviderSetupService {
         set_provider_enabled_in_config(&provider_name, true)?;
         self.set_provider_enabled_in_memory(&provider_name, true);
 
-        // If tokens already exist (for example imported from the main/home config),
-        // skip launching a fresh OAuth flow and rebuild the registry immediately.
-        if self.has_oauth_tokens(&provider_name) {
+        // If credentials already exist (API key for api_key_endpoint providers,
+        // or tokens for standard OAuth), skip launching a fresh OAuth flow.
+        let already_configured = if oauth_config.api_key_endpoint.is_some() {
+            self.key_store.load(&provider_name).is_some()
+        } else {
+            self.has_oauth_tokens(&provider_name)
+        };
+        if already_configured {
             let effective = self.effective_config();
             let new_registry = self.build_registry(&effective);
             let provider_summary = new_registry.provider_summary();
@@ -1953,6 +1961,8 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         // Spawn background task to wait for the callback and exchange the code
         let token_store = self.token_store.clone();
+        let key_store = self.key_store.clone();
+        let api_key_endpoint = oauth_config_for_pending.api_key_endpoint.clone();
         let registry = Arc::clone(&self.registry);
         let config = self.effective_config();
         let env_overrides = self.env_overrides.clone();
@@ -1962,7 +1972,41 @@ impl ProviderSetupService for LiveProviderSetupService {
                 Ok(code) => {
                     match flow.exchange(&code, &verifier).await {
                         Ok(tokens) => {
-                            if let Err(e) = token_store.save(&provider_name, &tokens) {
+                            if let Some(endpoint) = api_key_endpoint {
+                                // Exchange temporary token for a permanent API key.
+                                match moltis_oauth::create_api_key_from_oauth(
+                                    &endpoint,
+                                    &tokens.access_token,
+                                )
+                                .await
+                                {
+                                    Ok(api_key) => {
+                                        if let Err(e) = key_store.save_config(
+                                            &provider_name,
+                                            Some(ExposeSecret::expose_secret(&api_key).to_string()),
+                                            None,
+                                            None,
+                                        ) {
+                                            tracing::error!(
+                                                provider = %provider_name,
+                                                error = %e,
+                                                "failed to save API key from OAuth"
+                                            );
+                                            return;
+                                        }
+                                        let _ =
+                                            set_provider_enabled_in_config(&provider_name, true);
+                                    },
+                                    Err(e) => {
+                                        tracing::error!(
+                                            provider = %provider_name,
+                                            error = %e,
+                                            "OAuth API key exchange failed"
+                                        );
+                                        return;
+                                    },
+                                }
+                            } else if let Err(e) = token_store.save(&provider_name, &tokens) {
                                 tracing::error!(
                                     provider = %provider_name,
                                     error = %e,
@@ -1970,7 +2014,7 @@ impl ProviderSetupService for LiveProviderSetupService {
                                 );
                                 return;
                             }
-                            // Rebuild registry with new tokens
+                            // Rebuild registry with new tokens/key
                             let new_registry = ProviderRegistry::from_env_with_config_and_overrides(
                                 &config,
                                 &env_overrides,
@@ -2029,15 +2073,30 @@ impl ProviderSetupService for LiveProviderSetupService {
             .remove(&state)
             .ok_or_else(|| "unknown or expired OAuth state".to_string())?;
 
+        let api_key_endpoint = pending.oauth_config.api_key_endpoint.clone();
         let flow = OAuthFlow::new(pending.oauth_config);
         let tokens = flow
             .exchange(&code, &pending.verifier)
             .await
             .map_err(ServiceError::message)?;
 
-        self.token_store
-            .save(&pending.provider_name, &tokens)
-            .map_err(ServiceError::message)?;
+        if let Some(endpoint) = api_key_endpoint {
+            let api_key = moltis_oauth::create_api_key_from_oauth(&endpoint, &tokens.access_token)
+                .await
+                .map_err(|e| ServiceError::message(e.to_string()))?;
+            self.key_store
+                .save_config(
+                    &pending.provider_name,
+                    Some(ExposeSecret::expose_secret(&api_key).to_string()),
+                    None,
+                    None,
+                )
+                .map_err(ServiceError::message)?;
+        } else {
+            self.token_store
+                .save(&pending.provider_name, &tokens)
+                .map_err(ServiceError::message)?;
+        }
         set_provider_enabled_in_config(&pending.provider_name, true)?;
         self.set_provider_enabled_in_memory(&pending.provider_name, true);
 
@@ -2129,10 +2188,18 @@ impl ProviderSetupService for LiveProviderSetupService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'provider' parameter".to_string())?;
 
-        let has_tokens = self.has_oauth_tokens(provider_name);
+        // For providers with api_key_endpoint, check KeyStore instead of TokenStore.
+        let authenticated = if load_oauth_config(provider_name)
+            .as_ref()
+            .is_some_and(|c| c.api_key_endpoint.is_some())
+        {
+            self.key_store.load(provider_name).is_some()
+        } else {
+            self.has_oauth_tokens(provider_name)
+        };
         Ok(serde_json::json!({
             "provider": provider_name,
-            "authenticated": has_tokens,
+            "authenticated": authenticated,
         }))
     }
 
@@ -4428,6 +4495,65 @@ mod tests {
         assert_eq!(
             ids[2], "openrouter::gpt-4o-search-preview",
             "slow namespaced model should be last, got: {ids:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn available_includes_has_oauth_for_anthropic() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let result = svc.available().await.unwrap();
+        let arr = result.as_array().unwrap();
+
+        let anthropic = arr
+            .iter()
+            .find(|v| v.get("name").and_then(|n| n.as_str()) == Some("anthropic"))
+            .expect("anthropic should be in available providers");
+
+        assert_eq!(
+            anthropic.get("hasOauth").and_then(|v| v.as_bool()),
+            Some(true),
+            "anthropic should have hasOauth: true"
+        );
+        assert_eq!(
+            anthropic.get("authType").and_then(|v| v.as_str()),
+            Some("api-key"),
+            "anthropic should still have authType: api-key"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_status_checks_key_store_for_anthropic() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let mut svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        svc.key_store = KeyStore::with_path(temp.path().join("keys.json"));
+
+        // Initially not authenticated
+        let result = svc
+            .oauth_status(serde_json::json!({"provider": "anthropic"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.get("authenticated").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        // Save an API key and re-check
+        svc.key_store
+            .save_config("anthropic", Some("sk-ant-test".to_string()), None, None)
+            .expect("save key");
+        let result = svc
+            .oauth_status(serde_json::json!({"provider": "anthropic"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.get("authenticated").and_then(|v| v.as_bool()),
+            Some(true)
         );
     }
 }

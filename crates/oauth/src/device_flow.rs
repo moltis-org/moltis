@@ -153,6 +153,7 @@ mod tests {
             scopes: vec![],
             extra_auth_params: vec![],
             device_flow: true,
+            api_key_endpoint: None,
         }
     }
 

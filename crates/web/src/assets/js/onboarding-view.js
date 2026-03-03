@@ -678,6 +678,33 @@ function ModelSelectCard({ model, selected, probe, onToggle }) {
 	</div>`;
 }
 
+function OAuthButton({ provider, onDone }) {
+	var [oauthError, setOauthError] = useState(null);
+	var [starting, setStarting] = useState(false);
+
+	function onClick() {
+		setStarting(true);
+		setOauthError(null);
+		startProviderOAuth(provider.name).then((result) => {
+			if (result.status === "browser") {
+				window.location.href = result.authUrl;
+			} else if (result.status === "already") {
+				onDone();
+			} else {
+				setStarting(false);
+				setOauthError(result.error || "OAuth failed");
+			}
+		});
+	}
+
+	return html`<div class="flex flex-col gap-1">
+		<button type="button" class="provider-btn provider-btn-secondary w-full" disabled=${starting} onClick=${onClick}>
+			${starting ? "Starting OAuth\u2026" : `Connect with ${provider.displayName} OAuth`}
+		</button>
+		${oauthError ? html`<div class="text-xs text-[var(--error)]">${oauthError}</div>` : null}
+	</div>`;
+}
+
 // ── Provider row for multi-provider onboarding ──────────────
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider row renders inline config forms for api-key, oauth, and local flows
@@ -762,6 +789,7 @@ function OnboardingProviderRow({
 					<span class="provider-item-badge ${provider.authType}">
 						${provider.authType === "oauth" ? "OAuth" : provider.authType === "local" ? "Local" : "API Key"}
 					</span>
+					${provider.hasOauth && provider.authType !== "oauth" ? html`<span class="provider-item-badge oauth">OAuth</span>` : null}
 				</div>
 			</div>
 			<div class="shrink-0">
@@ -799,6 +827,16 @@ function OnboardingProviderRow({
 							: null
 					}
 				</div>
+				${
+					provider.hasOauth
+						? html`<div class="flex items-center gap-2 my-2 text-xs text-[var(--muted)]">
+						<div class="flex-1 border-t border-[var(--border)]"></div>
+						<span>or</span>
+						<div class="flex-1 border-t border-[var(--border)]"></div>
+					</div>
+					<${OAuthButton} provider=${provider} onDone=${onCancelConfigure} />`
+						: null
+				}
 				${
 					supportsEndpoint
 						? html`<div>

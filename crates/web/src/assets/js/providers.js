@@ -138,6 +138,12 @@ export function openProviderModal() {
 					badge.textContent = "API Key";
 				}
 				badges.appendChild(badge);
+				if (p.hasOauth && p.authType !== "oauth") {
+					var oauthBadge = document.createElement("span");
+					oauthBadge.className = "provider-item-badge oauth";
+					oauthBadge.textContent = "OAuth";
+					badges.appendChild(oauthBadge);
+				}
 			}
 			item.appendChild(badges);
 
@@ -516,6 +522,41 @@ export function showApiKeyForm(provider) {
 			keyHelpLine.textContent = keyHelp.text;
 		}
 		form.appendChild(keyHelpLine);
+	}
+
+	// OAuth alternative for API key providers with OAuth support
+	if (provider.hasOauth) {
+		var divider = document.createElement("div");
+		divider.className = "flex items-center gap-2 my-3 text-xs text-[var(--muted)]";
+		var line1 = document.createElement("div");
+		line1.className = "flex-1 border-t border-[var(--border)]";
+		var orText = document.createElement("span");
+		orText.textContent = "or";
+		var line2 = document.createElement("div");
+		line2.className = "flex-1 border-t border-[var(--border)]";
+		divider.append(line1, orText, line2);
+		form.appendChild(divider);
+
+		var oauthBtn = document.createElement("button");
+		oauthBtn.className = "provider-btn provider-btn-secondary w-full";
+		oauthBtn.textContent = `Connect with ${provider.displayName} OAuth`;
+		oauthBtn.addEventListener("click", () => {
+			oauthBtn.disabled = true;
+			oauthBtn.textContent = "Starting OAuth...";
+			startProviderOAuth(provider.name).then((result) => {
+				if (result.status === "browser") {
+					window.location.href = result.authUrl;
+				} else if (result.status === "already") {
+					closeProviderModal();
+					openProviderModal();
+				} else {
+					oauthBtn.disabled = false;
+					oauthBtn.textContent = `Connect with ${provider.displayName} OAuth`;
+					setFormError(errorPanel, result.error || "OAuth failed");
+				}
+			});
+		});
+		form.appendChild(oauthBtn);
 	}
 
 	// Endpoint field for OpenAI-compatible providers
