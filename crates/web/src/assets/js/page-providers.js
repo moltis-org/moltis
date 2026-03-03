@@ -248,7 +248,7 @@ function ProviderSection(props) {
 				</span>
 			</div>
 			<div class="flex gap-2 shrink-0">
-				${group.models.length > 0 ? html`<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onSelectModels}>${t("providers:preferredModels")}</button>` : null}
+				${group.models.length > 0 ? html`<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onSelectModels}>${t("providers:preferredModels.button")}</button>` : null}
 				<button
 					class="provider-btn provider-btn-danger provider-btn-sm"
 					disabled=${deletingProvider.value === group.provider}

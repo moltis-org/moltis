@@ -57,6 +57,7 @@ export default {
 		testing: "测试中\u2026",
 	},
 	preferredModels: {
+		button: "首选模型",
 		title: "{{provider}} — 首选模型",
 		loadingModels: "加载模型中...",
 		noModelsAvailable: "暂无可用模型。请先尝试运行\u201c检测所有模型\u201d。",
