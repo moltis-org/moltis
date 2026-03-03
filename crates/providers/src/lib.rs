@@ -2192,10 +2192,7 @@ mod tests {
     }
 
     fn registry_from_config(config: &ProvidersConfig) -> ProviderRegistry {
-        ProviderRegistry::from_env_with_config_and_overrides_deferred(
-            config,
-            &HashMap::new(),
-        )
+        ProviderRegistry::from_env_with_config_and_overrides_deferred(config, &HashMap::new())
     }
 
     #[test]
