@@ -785,7 +785,7 @@ pub struct ServerConfig {
     pub db_pool_max_connections: u32,
     /// Base URL for the Shiki syntax-highlighting library loaded by the web UI.
     ///
-    /// Defaults to `https://esm.sh/shiki@3.2.1/bundle/web` when unset.
+    /// Defaults to `https://esm.sh/shiki@3.2.1?bundle` when unset.
     /// Set to an alternative CDN or a self-hosted URL to override.
     pub shiki_cdn_url: Option<String>,
 }
