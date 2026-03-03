@@ -1185,8 +1185,7 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
                 model = config.model_id,
                 "downloading custom MLX model from HuggingFace repo"
             );
-            let model_path =
-                models::ensure_mlx_repo(&config.model_id, &config.cache_dir).await?;
+            let model_path = models::ensure_mlx_repo(&config.model_id, &config.cache_dir).await?;
             let context_size = config.context_size.unwrap_or(8192);
             return Ok((model_path, None, context_size));
         }

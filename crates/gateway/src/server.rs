@@ -1225,9 +1225,12 @@ pub async fn prepare_gateway(
         )
     };
 
-    // Discover LLM providers from env + config + saved keys.
+    // Kick off discovery workers immediately, but build a static startup
+    // registry first so gateway startup does not block on network I/O.
+    let startup_discovery_pending =
+        ProviderRegistry::fire_discoveries(&effective_providers, &config_env_overrides);
     let registry = Arc::new(tokio::sync::RwLock::new(
-        ProviderRegistry::from_env_with_config_and_overrides(
+        ProviderRegistry::from_config_with_static_catalogs(
             &effective_providers,
             &config_env_overrides,
         ),
@@ -1246,7 +1249,7 @@ pub async fn prepare_gateway(
             provider_summary = %provider_summary,
             config_path = %config_path.display(),
             provider_keys_path = %provider_keys_path.display(),
-            "no LLM providers at startup; model/chat services remain active and will pick up providers after credentials are saved"
+            "no LLM providers in static startup catalog; model/chat services remain active and will pick up providers after credentials are saved or background discovery completes"
         );
     }
 
@@ -3068,6 +3071,81 @@ pub async fn prepare_gateway(
     live_model_service.set_state(crate::chat::GatewayChatRuntime::from_state(Arc::clone(
         &state,
     )));
+
+    // Finish startup model discovery in the background, then atomically swap
+    // in the fully discovered registry and notify connected clients.
+    if startup_discovery_pending.is_empty() {
+        debug!("startup model discovery skipped, no pending provider discoveries");
+    } else {
+        let registry_for_startup_discovery = Arc::clone(&registry);
+        let state_for_startup_discovery = Arc::clone(&state);
+        let provider_config_for_startup_discovery = effective_providers.clone();
+        let env_overrides_for_startup_discovery = config_env_overrides.clone();
+        tokio::spawn(async move {
+            let startup_discovery_started = std::time::Instant::now();
+            let prefetched = match tokio::task::spawn_blocking(move || {
+                ProviderRegistry::collect_discoveries(startup_discovery_pending)
+            })
+            .await
+            {
+                Ok(prefetched) => prefetched,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "startup background model discovery worker failed while collecting results"
+                    );
+                    return;
+                },
+            };
+
+            let prefetched_models: usize = prefetched.values().map(Vec::len).sum();
+            let new_registry = match tokio::task::spawn_blocking(move || {
+                ProviderRegistry::from_config_with_prefetched(
+                    &provider_config_for_startup_discovery,
+                    &env_overrides_for_startup_discovery,
+                    &prefetched,
+                )
+            })
+            .await
+            {
+                Ok(new_registry) => new_registry,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "startup background model discovery worker failed while rebuilding registry"
+                    );
+                    return;
+                },
+            };
+
+            let provider_summary = new_registry.provider_summary();
+            let model_count = new_registry.list_models().len();
+            {
+                let mut reg = registry_for_startup_discovery.write().await;
+                *reg = new_registry;
+            }
+
+            info!(
+                provider_summary = %provider_summary,
+                models = model_count,
+                prefetched_models,
+                elapsed_ms = startup_discovery_started.elapsed().as_millis(),
+                "startup background model discovery complete, provider registry updated"
+            );
+
+            broadcast(
+                &state_for_startup_discovery,
+                "models.updated",
+                serde_json::json!({
+                    "reason": "startup-discovery",
+                    "models": model_count,
+                    "providerSummary": provider_summary,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+        });
+    }
 
     // Model support probing is triggered on-demand by the web UI when the
     // user opens the model selector (via the `models.detect_supported` RPC).
