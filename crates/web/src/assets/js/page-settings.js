@@ -101,142 +101,33 @@ function fetchIdentity() {
 
 var sections = [
 	{ group: "General" },
-	{
-		id: "identity",
-		label: "Identity",
-		icon: html`<span class="icon icon-person"></span>`,
-	},
-	{
-		id: "agents",
-		label: "Agents",
-		icon: html`<span class="icon icon-users"></span>`,
-		page: true,
-	},
-	{
-		id: "environment",
-		label: "Environment",
-		icon: html`<span class="icon icon-terminal"></span>`,
-	},
-	{
-		id: "memory",
-		label: "Memory",
-		icon: html`<span class="icon icon-database"></span>`,
-	},
-	{
-		id: "notifications",
-		label: "Notifications",
-		icon: html`<span class="icon icon-bell"></span>`,
-	},
-	{
-		id: "crons",
-		label: "Crons",
-		icon: html`<span class="icon icon-cron"></span>`,
-		page: true,
-	},
-	{
-		id: "heartbeat",
-		label: "Heartbeat",
-		icon: html`<span class="icon icon-heart"></span>`,
-		page: true,
-	},
+	{ id: "identity", label: "Identity" },
+	{ id: "agents", label: "Agents", page: true },
+	{ id: "environment", label: "Environment" },
+	{ id: "memory", label: "Memory" },
+	{ id: "notifications", label: "Notifications" },
+	{ id: "crons", label: "Crons", page: true },
+	{ id: "heartbeat", label: "Heartbeat", page: true },
 	{ group: "Security" },
-	{
-		id: "security",
-		label: "Authentication",
-		icon: html`<span class="icon icon-key"></span>`,
-	},
-	{
-		id: "vault",
-		label: "Encryption",
-		icon: html`<span class="icon icon-lock"></span>`,
-	},
-	{
-		id: "tailscale",
-		label: "Tailscale",
-		icon: html`<span class="icon icon-globe"></span>`,
-	},
-	{
-		id: "network-audit",
-		label: "Network Audit",
-		icon: html`<span class="icon icon-globe"></span>`,
-		page: true,
-	},
-	{
-		id: "sandboxes",
-		label: "Sandboxes",
-		icon: html`<span class="icon icon-cube"></span>`,
-		page: true,
-	},
+	{ id: "security", label: "Authentication" },
+	{ id: "vault", label: "Encryption" },
+	{ id: "tailscale", label: "Tailscale" },
+	{ id: "network-audit", label: "Network Audit", page: true },
+	{ id: "sandboxes", label: "Sandboxes", page: true },
 	{ group: "Integrations" },
-	{
-		id: "channels",
-		label: "Channels",
-		icon: html`<span class="icon icon-channels"></span>`,
-		page: true,
-	},
-	{
-		id: "hooks",
-		label: "Hooks",
-		icon: html`<span class="icon icon-wrench"></span>`,
-		page: true,
-	},
-	{
-		id: "providers",
-		label: "LLMs",
-		icon: html`<span class="icon icon-layers"></span>`,
-		page: true,
-	},
-	{
-		id: "mcp",
-		label: "MCP",
-		icon: html`<span class="icon icon-link"></span>`,
-		page: true,
-	},
-	{
-		id: "skills",
-		label: "Skills",
-		icon: html`<span class="icon icon-sparkles"></span>`,
-		page: true,
-	},
-	{
-		id: "import",
-		label: "OpenClaw Import",
-		icon: html`<span class="icon icon-link"></span>`,
-	},
-	{
-		id: "voice",
-		label: "Voice",
-		icon: html`<span class="icon icon-microphone"></span>`,
-	},
+	{ id: "channels", label: "Channels", page: true },
+	{ id: "hooks", label: "Hooks", page: true },
+	{ id: "providers", label: "LLMs", page: true },
+	{ id: "mcp", label: "MCP", page: true },
+	{ id: "skills", label: "Skills", page: true },
+	{ id: "import", label: "OpenClaw Import" },
+	{ id: "voice", label: "Voice" },
 	{ group: "Systems" },
-	{
-		id: "terminal",
-		label: "Terminal",
-		icon: html`<span class="icon icon-terminal"></span>`,
-		page: true,
-	},
-	{
-		id: "monitoring",
-		label: "Monitoring",
-		icon: html`<span class="icon icon-chart-bar"></span>`,
-		page: true,
-	},
-	{
-		id: "logs",
-		label: "Logs",
-		icon: html`<span class="icon icon-document"></span>`,
-		page: true,
-	},
-	{
-		id: "graphql",
-		label: "GraphQL",
-		icon: html`<span class="icon icon-graphql"></span>`,
-	},
-	{
-		id: "config",
-		label: "Configuration",
-		icon: html`<span class="icon icon-code"></span>`,
-	},
+	{ id: "terminal", label: "Terminal", page: true },
+	{ id: "monitoring", label: "Monitoring", page: true },
+	{ id: "logs", label: "Logs", page: true },
+	{ id: "graphql", label: "GraphQL" },
+	{ id: "config", label: "Configuration" },
 ];
 
 function getVisibleSections() {
@@ -278,6 +169,7 @@ function SettingsSidebar() {
 					: html`<button
 							key=${s.id}
 							class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
+							data-section=${s.id}
 							onClick=${() => {
 								if (isMobileViewport()) {
 									mobileSidebarVisible.value = false;
@@ -286,7 +178,6 @@ function SettingsSidebar() {
 								navigate(settingsPath(s.id));
 							}}
 						>
-							${s.icon}
 							${s.label}
 						</button>`,
 			)}
