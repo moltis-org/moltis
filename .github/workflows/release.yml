@@ -310,7 +310,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -419,7 +421,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -494,7 +498,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -595,7 +601,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -779,7 +787,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
 
       - name: Build WASM components
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         env:
@@ -952,7 +962,9 @@ jobs:
 
       - name: Build WASM components
         shell: bash
-        run: cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+        run: |
+          cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+          cargo run -p moltis-wasm-precompile --release
 
       - name: Build release binary
         shell: bash

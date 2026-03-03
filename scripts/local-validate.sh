@@ -499,12 +499,13 @@ run_check "local/lockfile" "cargo fetch --locked"
 # These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"
 
-# Build WASM guest components if the target is installed — required by
-# release-profile builds (macOS app, swift-bridge) that embed the artifacts
+# Build and pre-compile WASM guest components if the target is installed.
+# Release-profile builds (macOS app, swift-bridge) embed `.cwasm` artifacts
 # via include_bytes!.
 if rustup target list --installed 2>/dev/null | grep -q wasm32-wasip2; then
   echo "Building WASM tool components..."
   cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+  cargo run -p moltis-wasm-precompile --release
 fi
 
 # Compile all workspace targets (bin + test harnesses) using the same nightly
