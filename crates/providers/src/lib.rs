@@ -2191,6 +2191,13 @@ mod tests {
         secrecy::Secret::new(s.into())
     }
 
+    fn registry_from_config(config: &ProvidersConfig) -> ProviderRegistry {
+        ProviderRegistry::from_env_with_config_and_overrides_deferred(
+            config,
+            &HashMap::new(),
+        )
+    }
+
     #[test]
     fn context_window_for_known_models() {
         assert_eq!(
@@ -2573,13 +2580,13 @@ mod tests {
     #[test]
     fn registry_from_env_does_not_panic() {
         // Just ensure it doesn't panic with no env vars set.
-        let reg = ProviderRegistry::from_env();
+        let reg = registry_from_config(&ProvidersConfig::default());
         let _ = reg.provider_summary();
     }
 
     #[test]
     fn registry_register_and_get() {
-        let mut reg = ProviderRegistry::from_env_with_config(&ProvidersConfig::default());
+        let mut reg = registry_from_config(&ProvidersConfig::default());
         let initial_count = reg.list_models().len();
 
         let provider = Arc::new(openai::OpenAiProvider::new(
@@ -2653,7 +2660,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         // Should have registered Mistral models
         let mistral_models: Vec<_> = reg
             .list_models()
@@ -2680,7 +2687,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         let cerebras_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -2699,7 +2706,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
     }
 
@@ -2711,7 +2718,8 @@ mod tests {
             "sk-test-minimax-override".to_string(),
         )]);
 
-        let reg = ProviderRegistry::from_env_with_config_and_overrides(&config, &env_overrides);
+        let reg =
+            ProviderRegistry::from_env_with_config_and_overrides_deferred(&config, &env_overrides);
         assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
     }
 
@@ -2725,7 +2733,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "zai"));
     }
 
@@ -2739,7 +2747,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "moonshot"));
     }
 
@@ -2753,7 +2761,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         let ds_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -2785,7 +2793,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "openrouter"));
     }
 
@@ -2800,7 +2808,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         let or_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -2824,7 +2832,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(
             reg.list_models()
                 .iter()
@@ -2848,7 +2856,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "ollama"));
         assert!(reg.get("llama3").is_some());
     }
@@ -2863,7 +2871,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "venice"));
     }
 
@@ -2878,7 +2886,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "mistral"));
     }
 
@@ -2904,7 +2912,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "mistral"));
     }
 
@@ -2920,7 +2928,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         let mistral_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -2942,7 +2950,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         let mistral_models: Vec<&str> = reg
             .list_models()
             .iter()
@@ -3128,7 +3136,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
     }
 
@@ -3143,7 +3151,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         let local_models: Vec<_> = reg
             .list_models()
             .iter()
@@ -3165,7 +3173,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
     }
 
@@ -3180,7 +3188,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(
             reg.list_models().iter().any(|m| m.provider == "local-llm"),
             "local-llm alias config key should register local models"
@@ -3199,7 +3207,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let reg = ProviderRegistry::from_env_with_config(&config);
+        let reg = registry_from_config(&config);
         assert!(
             !reg.list_models().iter().any(|m| m.provider == "local-llm"),
             "disabled local-llm alias config should suppress local model registration"
