@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Protocol constants
 
 enum MoltisProtocol {
-    static let version = 3
+    static let version = 4
     static let maxPayloadBytes = 524_288
     static let tickIntervalMs = 30_000
     static let handshakeTimeoutMs = 10_000

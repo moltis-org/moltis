@@ -74,6 +74,7 @@ actor MoltisWSClient {
         server: ServerConnection,
         apiKey: String
     ) async throws -> HelloOkPayload {
+        logger.info("Opening WebSocket \(server.wsURL.absoluteString, privacy: .public)")
         let session = URLSession(configuration: .default)
         self.session = session
 
@@ -224,7 +225,7 @@ actor MoltisWSClient {
                 }
             } catch {
                 if !Task.isCancelled {
-                    logger.warning("WebSocket receive error: \(error.localizedDescription)")
+                    logger.warning("WebSocket receive error: \(self.connectionErrorDetails(error), privacy: .public)")
                     if shouldReconnect {
                         scheduleReconnect()
                     } else {
@@ -328,16 +329,35 @@ actor MoltisWSClient {
         updateState(.connecting)
 
         let attempt = reconnectAttempts
-        logger.info("Reconnecting (attempt \(attempt))...")
+        logger.info("Reconnecting (attempt \(attempt)) to \(server.wsURL.absoluteString, privacy: .public)...")
 
         Task {
             do {
                 _ = try await performConnect(server: server, apiKey: apiKey)
             } catch {
-                logger.warning("Reconnect failed: \(error.localizedDescription)")
+                logger.warning("Reconnect failed: \(self.connectionErrorDetails(error), privacy: .public)")
                 scheduleReconnect()
             }
         }
+    }
+
+    private func connectionErrorDetails(_ error: Error) -> String {
+        let nsError = error as NSError
+        let failingURLString = nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String
+        let relatedTask = nsError.userInfo["_NSURLErrorFailingURLSessionTaskErrorKey"] as? String
+
+        var parts = [
+            "description=\(error.localizedDescription)",
+            "domain=\(nsError.domain)",
+            "code=\(nsError.code)",
+        ]
+        if let failingURLString {
+            parts.append("url=\(failingURLString)")
+        }
+        if let relatedTask {
+            parts.append("task=\(relatedTask)")
+        }
+        return parts.joined(separator: " ")
     }
 
     private func updateState(_ newState: State) {

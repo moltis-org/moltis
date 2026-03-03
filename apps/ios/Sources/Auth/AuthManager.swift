@@ -40,10 +40,33 @@ struct AuthStatusResponse: Codable {
 }
 
 private struct GonStatusResponse: Codable {
+    let identity: ServerPublicIdentity?
     let graphqlEnabled: Bool?
 
     enum CodingKeys: String, CodingKey {
+        case identity
         case graphqlEnabled = "graphql_enabled"
+    }
+}
+
+struct ServerPublicIdentity: Codable, Equatable {
+    let name: String?
+    let emoji: String?
+
+    var normalizedName: String? {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            return trimmed
+        }
+        return nil
+    }
+
+    var normalizedEmoji: String? {
+        let trimmed = emoji?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            return trimmed
+        }
+        return nil
     }
 }
 
@@ -291,26 +314,15 @@ final class AuthManager: ObservableObject {
     /// Check whether GraphQL is enabled for this server.
     /// Returns nil when this cannot be determined from server responses.
     func checkGraphQLEnabled(url: URL) async -> Bool? {
-        guard let gonURL = endpointURL(baseURL: url, endpointPath: "/api/gon") else {
-            return nil
-        }
+        let info = await fetchPublicServerInfo(url: url)
+        return info?.graphqlEnabled
+    }
 
-        var request = URLRequest(url: gonURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 10
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                return nil
-            }
-
-            let gon = try JSONDecoder().decode(GonStatusResponse.self, from: data)
-            return gon.graphqlEnabled
-        } catch {
-            return nil
-        }
+    /// Fetch public identity metadata without authentication.
+    /// Returns nil when this cannot be determined from server responses.
+    func fetchPublicIdentity(url: URL) async -> ServerPublicIdentity? {
+        let info = await fetchPublicServerInfo(url: url)
+        return info?.identity
     }
 
     /// Login with password, then create an API key for persistent access.
@@ -404,6 +416,33 @@ final class AuthManager: ObservableObject {
         saveServers()
     }
 
+    func updateServerEmoji(_ emoji: String?, for serverID: UUID) {
+        let normalizedEmoji = normalizedEmojiValue(emoji)
+
+        guard let idx = servers.firstIndex(where: { $0.id == serverID }) else {
+            return
+        }
+        guard servers[idx].emoji != normalizedEmoji else {
+            return
+        }
+
+        servers[idx].emoji = normalizedEmoji
+        if activeServer?.id == serverID {
+            activeServer = servers[idx]
+        }
+        saveServers()
+    }
+
+    func updateServerEmoji(_ emoji: String?, forURL serverURL: URL) {
+        let normalizedURL = ServerConnection.normalizedURL(serverURL)
+        guard let serverID = servers.first(where: {
+            ServerConnection.normalizedURL($0.url) == normalizedURL
+        })?.id else {
+            return
+        }
+        updateServerEmoji(emoji, for: serverID)
+    }
+
     /// Remove a saved server and its API key.
     func removeServer(_ server: ServerConnection) {
         server.deleteApiKey()
@@ -423,12 +462,16 @@ final class AuthManager: ObservableObject {
     // MARK: - Private helpers
 
     private func upsertAndActivate(_ server: ServerConnection) {
+        var serverToPersist = server
         if let idx = servers.firstIndex(where: { $0.url == server.url }) {
-            servers[idx] = server
+            if serverToPersist.emoji == nil {
+                serverToPersist.emoji = servers[idx].emoji
+            }
+            servers[idx] = serverToPersist
         } else {
-            servers.append(server)
+            servers.append(serverToPersist)
         }
-        activeServer = server
+        activeServer = serverToPersist
         saveServers()
     }
 
@@ -439,6 +482,42 @@ final class AuthManager: ObservableObject {
             : (components?.path ?? "")
         components?.path = normalizedBasePath + endpointPath
         return components?.url
+    }
+
+    private func fetchPublicServerInfo(url: URL) async -> GonStatusResponse? {
+        let paths = ["/api/public/identity", "/api/gon"]
+
+        for path in paths {
+            guard let endpoint = endpointURL(baseURL: url, endpointPath: path) else {
+                continue
+            }
+
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 10
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    continue
+                }
+                let info = try JSONDecoder().decode(GonStatusResponse.self, from: data)
+                return info
+            } catch {
+                continue
+            }
+        }
+
+        return nil
+    }
+
+    private func normalizedEmojiValue(_ emoji: String?) -> String? {
+        let trimmedEmoji = emoji?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedEmoji, !trimmedEmoji.isEmpty {
+            return trimmedEmoji
+        }
+        return nil
     }
 
     private func login(baseURL: URL, password: String) async throws -> String {

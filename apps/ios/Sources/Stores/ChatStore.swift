@@ -161,6 +161,7 @@ final class ChatStore: ObservableObject {
             if let text = payload.text, let msgId = streamingMessageId,
                let idx = messages.firstIndex(where: { $0.id == msgId }) {
                 messages[idx].text += text
+                syncSessionPreview(sessionKey: payload.sessionKey, message: messages[idx])
                 if messages[idx].text.count == text.count {
                     // First delta — update Live Activity
                     let stepNum = max(activeToolCalls.count + 2, 2)
@@ -180,6 +181,7 @@ final class ChatStore: ObservableObject {
                 messages[idx].durationMs = payload.durationMs
                 messages[idx].model = payload.model ?? messages[idx].model
                 messages[idx].provider = payload.provider ?? messages[idx].provider
+                syncSessionPreview(sessionKey: payload.sessionKey, message: messages[idx])
             }
             isStreaming = false
             streamingMessageId = nil
@@ -295,6 +297,16 @@ final class ChatStore: ObservableObject {
             inputTokens: dict["inputTokens"] as? Int,
             outputTokens: dict["outputTokens"] as? Int,
             durationMs: dict["durationMs"] as? Int
+        )
+    }
+
+    private func syncSessionPreview(sessionKey: String?, message: ChatMessage) {
+        guard message.role == .assistant else { return }
+        let key = sessionKey ?? currentSessionKey
+        connectionStore?.sessionStore.updatePreview(
+            for: key,
+            preview: message.text,
+            model: message.model
         )
     }
 }

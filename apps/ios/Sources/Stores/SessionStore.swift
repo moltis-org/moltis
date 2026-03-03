@@ -66,4 +66,34 @@ final class SessionStore: ObservableObject {
             logger.error("Failed to delete session: \(error.localizedDescription)")
         }
     }
+
+    // MARK: - Live preview sync
+
+    func updatePreview(for key: String, preview: String, model: String?) {
+        let normalized = preview.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+
+        guard let idx = sessions.firstIndex(where: { $0.key == key }) else { return }
+
+        sessions[idx].preview = normalized
+        sessions[idx].updatedAt = Date()
+        if let model, !model.isEmpty {
+            sessions[idx].model = model
+        }
+
+        sortSessionsInPlace()
+    }
+
+    private func sortSessionsInPlace() {
+        let (mainSessions, otherSessions) = sessions.reduce(into: ([ChatSession](), [ChatSession]())) {
+            partial, session in
+            if session.key == "main" {
+                partial.0.append(session)
+            } else {
+                partial.1.append(session)
+            }
+        }
+
+        sessions = mainSessions + otherSessions.sorted { $0.updatedAt > $1.updatedAt }
+    }
 }

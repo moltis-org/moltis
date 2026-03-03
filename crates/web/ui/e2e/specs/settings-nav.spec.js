@@ -31,6 +31,12 @@ function graphqlHttpStatus(page) {
 }
 
 test.describe("Settings navigation", () => {
+	async function openProvidersPage(page) {
+		await navigateAndWait(page, "/settings/providers");
+		await expect.poll(() => new URL(page.url()).pathname).toBe("/settings/providers");
+		await expect(page.locator("#providersTitle")).toBeVisible();
+	}
+
 	test("/settings redirects to /settings/identity", async ({ page }) => {
 		await navigateAndWait(page, "/settings");
 		await expect(page).toHaveURL(/\/settings\/identity$/);
@@ -376,8 +382,7 @@ test.describe("Settings navigation", () => {
 	});
 
 	test("provider page renders from settings", async ({ page }) => {
-		await navigateAndWait(page, "/settings/providers");
-		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();
+		await openProvidersPage(page);
 	});
 
 	test("terminal page renders from settings", async ({ page }) => {
