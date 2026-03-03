@@ -312,6 +312,7 @@ test.describe("Settings navigation", () => {
 		const expectedPrefix = [
 			"Identity",
 			"Agents",
+			"Nodes",
 			"Environment",
 			"Memory",
 			"Notifications",

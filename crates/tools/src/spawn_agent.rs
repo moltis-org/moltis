@@ -570,8 +570,9 @@ mod tests {
     }
 
     fn make_empty_provider_registry() -> Arc<tokio::sync::RwLock<ProviderRegistry>> {
+        let env_overrides = std::collections::HashMap::new();
         Arc::new(tokio::sync::RwLock::new(
-            ProviderRegistry::from_env_with_config(&Default::default()),
+            ProviderRegistry::from_config_with_static_catalogs(&Default::default(), &env_overrides),
         ))
     }
 

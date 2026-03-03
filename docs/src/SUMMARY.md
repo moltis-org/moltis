@@ -41,6 +41,8 @@
 - [Native Swift Embedding (POC)](native-swift-embedding.md)
 - [macOS App FFI Bridge (WIP)](macos-app-ffi-bridge.md)
 - [OpenClaw Import](openclaw-import.md)
+- [Multi-Node](nodes.md)
+- [Service Management](service.md)
 
 ---
 

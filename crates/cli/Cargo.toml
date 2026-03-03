@@ -38,6 +38,7 @@ moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
 moltis-gateway         = { workspace = true }
 moltis-memory          = { workspace = true }
+moltis-node-host       = { workspace = true }
 moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
@@ -57,6 +58,7 @@ time                   = { workspace = true }
 tokio                  = { workspace = true }
 tracing                = { workspace = true }
 tracing-subscriber     = { workspace = true }
+uuid                   = { workspace = true }
 which                  = { workspace = true }
 
 [target.'cfg(all(not(target_os = "windows"), not(all(target_os = "linux", target_arch = "aarch64"))))'.dependencies]

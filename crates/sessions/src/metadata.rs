@@ -45,6 +45,8 @@ pub struct SessionEntry {
     pub preview: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
     #[serde(default)]
     pub version: u64,
 }
@@ -134,6 +136,7 @@ impl SessionMetadata {
                 mcp_disabled: None,
                 preview: None,
                 agent_id: None,
+                node_id: None,
                 version: 0,
             })
     }
@@ -219,6 +222,15 @@ impl SessionMetadata {
         }
     }
 
+    /// Assign (or unassign) a session to a remote node.
+    pub fn set_node_id(&mut self, key: &str, node_id: Option<String>) {
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.node_id = node_id;
+            entry.updated_at = now_ms();
+            entry.version += 1;
+        }
+    }
+
     /// List all sessions belonging to a given agent.
     pub fn list_by_agent_id(&self, agent_id: &str) -> Vec<SessionEntry> {
         let mut entries: Vec<_> = self
@@ -290,6 +302,7 @@ struct SessionRow {
     mcp_disabled: Option<i32>,
     preview: Option<String>,
     agent_id: Option<String>,
+    node_id: Option<String>,
     version: i64,
 }
 
@@ -315,6 +328,7 @@ impl From<SessionRow> for SessionEntry {
             mcp_disabled: r.mcp_disabled.map(|v| v != 0),
             preview: r.preview,
             agent_id: r.agent_id,
+            node_id: r.node_id,
             version: r.version as u64,
         }
     }
@@ -378,6 +392,7 @@ impl SqliteSessionMetadata {
                 mcp_disabled        INTEGER,
                 preview             TEXT,
                 agent_id            TEXT,
+                node_id             TEXT,
                 version             INTEGER NOT NULL DEFAULT 0
             )"#,
         )
@@ -645,6 +660,23 @@ impl SqliteSessionMetadata {
             "UPDATE sessions SET agent_id = ?, updated_at = ?, version = version + 1 WHERE key = ?",
         )
         .bind(agent_id)
+        .bind(now)
+        .bind(key)
+        .execute(&self.pool)
+        .await?;
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
+        Ok(())
+    }
+
+    /// Assign (or unassign) a session to a remote node.
+    pub async fn set_node_id(&self, key: &str, node_id: Option<&str>) -> Result<()> {
+        let now = now_ms() as i64;
+        sqlx::query(
+            "UPDATE sessions SET node_id = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(node_id)
         .bind(now)
         .bind(key)
         .execute(&self.pool)

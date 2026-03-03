@@ -66,6 +66,7 @@ async fn start_auth_server_impl(
         services,
         None,
         Some(Arc::clone(&cred_store)),
+        None, // pairing_store
         localhost_only,
         behind_proxy,
         false,
@@ -135,6 +136,7 @@ async fn start_localhost_server_with_vault() -> (
         services,
         None,
         Some(Arc::clone(&cred_store)),
+        None, // pairing_store
         true,
         false,
         false,

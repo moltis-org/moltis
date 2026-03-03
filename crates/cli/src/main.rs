@@ -16,7 +16,9 @@ mod hooks_commands;
 #[cfg(feature = "openclaw-import")]
 mod import_commands;
 mod memory_commands;
+mod node_commands;
 mod sandbox_commands;
+mod service_commands;
 #[cfg(feature = "tailscale")]
 mod tailscale_commands;
 
@@ -142,6 +144,16 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: memory_commands::MemoryAction,
+    },
+    /// Manage remote nodes (generate-token, add, remove, list).
+    Node {
+        #[command(subcommand)]
+        action: node_commands::NodeAction,
+    },
+    /// Install or manage moltis as an OS service.
+    Service {
+        #[command(subcommand)]
+        action: service_commands::ServiceAction,
     },
     #[cfg(feature = "openclaw-import")]
     /// Import data from an OpenClaw installation.
@@ -412,6 +424,8 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
         Some(Commands::Db { action }) => db_commands::handle_db(action).await,
         Some(Commands::Memory { action }) => memory_commands::handle_memory(action).await,
+        Some(Commands::Node { action }) => node_commands::handle_node(action).await,
+        Some(Commands::Service { action }) => service_commands::handle_service(action),
         #[cfg(feature = "openclaw-import")]
         Some(Commands::Import { action }) => import_commands::handle_import(action).await,
         #[cfg(feature = "tailscale")]

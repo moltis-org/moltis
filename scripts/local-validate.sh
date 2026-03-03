@@ -328,21 +328,45 @@ run_check() {
   local end
   local duration
   local log_file=""
+  local monitor_pid=""
 
   start="$(date +%s)"
   set_status pending "$context" "Running locally"
 
   if [[ "$context" == "local/test" && -z "${LOCAL_VALIDATE_TEST_VERBOSE:-}" ]]; then
     log_file="$(mktemp -t local-validate-test.XXXXXX.log)"
+    echo "[$context] running with captured output (set LOCAL_VALIDATE_TEST_VERBOSE=1 to stream test logs)."
     bash -lc "$cmd" >"$log_file" 2>&1 &
   else
     bash -lc "$cmd" &
   fi
 
   CURRENT_PID="$!"
+  if [[ -n "$log_file" ]]; then
+    (
+      local interval
+      local now
+      local elapsed
+      interval="${LOCAL_VALIDATE_PROGRESS_INTERVAL:-30}"
+      while kill -0 "$CURRENT_PID" 2>/dev/null; do
+        sleep "$interval"
+        if kill -0 "$CURRENT_PID" 2>/dev/null; then
+          now="$(date +%s)"
+          elapsed="$((now - start))"
+          echo "[$context] still running (${elapsed}s)."
+        fi
+      done
+    ) &
+    monitor_pid="$!"
+  fi
+
   if wait "$CURRENT_PID"; then
     end="$(date +%s)"
     duration="$((end - start))"
+    if [[ -n "$monitor_pid" ]]; then
+      kill "$monitor_pid" 2>/dev/null || true
+      wait "$monitor_pid" 2>/dev/null || true
+    fi
     CURRENT_PID=""
     if [[ -n "$log_file" ]]; then
       rm -f "$log_file"
@@ -352,6 +376,10 @@ run_check() {
   else
     end="$(date +%s)"
     duration="$((end - start))"
+    if [[ -n "$monitor_pid" ]]; then
+      kill "$monitor_pid" 2>/dev/null || true
+      wait "$monitor_pid" 2>/dev/null || true
+    fi
     CURRENT_PID=""
     if [[ -n "$log_file" ]]; then
       echo "[$context] failed; showing captured output:" >&2
@@ -471,12 +499,13 @@ run_check "local/lockfile" "cargo fetch --locked"
 # These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"
 
-# Build WASM guest components if the target is installed — required by
-# release-profile builds (macOS app, swift-bridge) that embed the artifacts
+# Build and pre-compile WASM guest components if the target is installed.
+# Release-profile builds (macOS app, swift-bridge) embed `.cwasm` artifacts
 # via include_bytes!.
 if rustup target list --installed 2>/dev/null | grep -q wasm32-wasip2; then
   echo "Building WASM tool components..."
   cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+  cargo run -p moltis-wasm-precompile --release
 fi
 
 # Compile all workspace targets (bin + test harnesses) using the same nightly

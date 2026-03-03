@@ -44,6 +44,7 @@ pub mod metrics_middleware;
 #[cfg(feature = "metrics")]
 pub mod metrics_routes;
 pub mod network_audit;
+pub mod node_exec;
 pub mod nodes;
 pub mod onboarding;
 pub mod pairing;

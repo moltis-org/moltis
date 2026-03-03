@@ -23,6 +23,7 @@ default-members = [
   "crates/metrics",
   "crates/msteams",
   "crates/network-filter",
+  "crates/node-host",
   "crates/oauth",
   "crates/onboarding",
   "crates/openclaw-import",
@@ -73,6 +74,7 @@ members = [
   "crates/memory",
   "crates/metrics",
   "crates/msteams",
+  "crates/node-host",
   "crates/oauth",
   "crates/onboarding",
   "crates/openclaw-import",
@@ -304,6 +306,7 @@ moltis-memory          = { path = "crates/memory" }
 moltis-metrics         = { path = "crates/metrics" }
 moltis-msteams         = { path = "crates/msteams" }
 moltis-network-filter  = { default-features = false, path = "crates/network-filter" }
+moltis-node-host       = { path = "crates/node-host" }
 moltis-oauth           = { path = "crates/oauth" }
 moltis-onboarding      = { path = "crates/onboarding" }
 moltis-openclaw-import = { path = "crates/openclaw-import" }

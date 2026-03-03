@@ -2671,11 +2671,13 @@ pub async fn prepare_gateway(
                 .await;
         }
 
-        // Generic config startup loop — one loop for all channel types.
-        let mut started: HashSet<(String, String)> = HashSet::new();
+        // Collect all channel accounts to start (config + stored), then
+        // spawn them concurrently so slow network calls (e.g. Telegram)
+        // don't block startup sequentially.
+        let mut pending_starts: Vec<(String, String, serde_json::Value)> = Vec::new();
+        let mut queued: HashSet<(String, String)> = HashSet::new();
 
         for (channel_type, accounts) in config.channels.all_channel_configs() {
-            // Skip channel types that have no registered plugin.
             if registry.get(channel_type).is_none() {
                 if !accounts.is_empty() {
                     tracing::debug!(
@@ -2686,28 +2688,24 @@ pub async fn prepare_gateway(
                 continue;
             }
             for (account_id, account_config) in accounts {
-                if let Err(e) = registry
-                    .start_account(channel_type, account_id, account_config.clone())
-                    .await
-                {
-                    tracing::warn!(
-                        account_id,
-                        channel_type,
-                        "failed to start channel account: {e}"
-                    );
-                } else {
-                    started.insert((channel_type.to_string(), account_id.clone()));
+                let key = (channel_type.to_string(), account_id.clone());
+                if queued.insert(key) {
+                    pending_starts.push((
+                        channel_type.to_string(),
+                        account_id.clone(),
+                        account_config.clone(),
+                    ));
                 }
             }
         }
 
-        // Load persisted channels that were not started from config.
+        // Load persisted channels that were not queued from config.
         match channel_store.list().await {
             Ok(stored) => {
                 info!("{} stored channel(s) found in database", stored.len());
                 for ch in stored {
                     let key = (ch.channel_type.clone(), ch.account_id.clone());
-                    if started.contains(&key) {
+                    if queued.contains(&key) {
                         info!(
                             account_id = ch.account_id,
                             channel_type = ch.channel_type,
@@ -2715,8 +2713,6 @@ pub async fn prepare_gateway(
                         );
                         continue;
                     }
-
-                    // Only start if the channel type is registered.
                     if registry.get(&ch.channel_type).is_none() {
                         tracing::warn!(
                             account_id = ch.account_id,
@@ -2725,34 +2721,43 @@ pub async fn prepare_gateway(
                         );
                         continue;
                     }
-
                     info!(
                         account_id = ch.account_id,
                         channel_type = ch.channel_type,
                         "starting stored channel"
                     );
-                    if let Err(e) = registry
-                        .start_account(&ch.channel_type, &ch.account_id, ch.config)
-                        .await
-                    {
-                        tracing::warn!(
-                            account_id = ch.account_id,
-                            channel_type = ch.channel_type,
-                            "failed to start stored channel account: {e}"
-                        );
-                    } else {
-                        started.insert(key);
+                    if queued.insert(key) {
+                        pending_starts.push((ch.channel_type, ch.account_id, ch.config));
                     }
                 }
             },
             Err(e) => tracing::warn!("failed to load stored channels: {e}"),
         }
 
-        if !started.is_empty() {
-            info!("{} channel account(s) started", started.len());
-        }
-
         let registry = Arc::new(registry);
+
+        // Spawn all channel starts concurrently.
+        if !pending_starts.is_empty() {
+            let total = pending_starts.len();
+            info!("{total} channel account(s) queued for startup");
+            for (channel_type, account_id, account_config) in pending_starts {
+                let reg = Arc::clone(&registry);
+                tokio::spawn(async move {
+                    if let Err(e) = reg
+                        .start_account(&channel_type, &account_id, account_config)
+                        .await
+                    {
+                        tracing::warn!(
+                            account_id,
+                            channel_type,
+                            "failed to start channel account: {e}"
+                        );
+                    } else {
+                        info!(account_id, channel_type, "channel account started");
+                    }
+                });
+            }
+        }
         let router = Arc::new(RegistryOutboundRouter::new(Arc::clone(&registry)));
 
         services = services.with_channel_registry(Arc::clone(&registry));
@@ -3214,11 +3219,14 @@ pub async fn prepare_gateway(
     // Keep a reference to the browser service for periodic cleanup and shutdown.
     let browser_for_lifecycle = Arc::clone(&services.browser);
 
+    let pairing_store = Arc::new(crate::pairing::PairingStore::new(db_pool.clone()));
+
     let state = GatewayState::with_options(
         resolved_auth,
         services,
         Some(Arc::clone(&sandbox_router)),
         Some(Arc::clone(&credential_store)),
+        Some(pairing_store),
         is_localhost,
         behind_proxy,
         tls_enabled_for_gateway,
@@ -3410,11 +3418,26 @@ pub async fn prepare_gateway(
                 cs.wake("exec-event").await;
             });
         });
-        let exec_tool = moltis_tools::exec::ExecTool::default()
+        let mut exec_tool = moltis_tools::exec::ExecTool::default()
             .with_approval(Arc::clone(&approval_manager), broadcaster)
             .with_sandbox_router(Arc::clone(&sandbox_router))
             .with_env_provider(Arc::clone(&env_provider))
             .with_completion_callback(exec_cb);
+
+        // Always attach the node exec provider so the LLM can target nodes
+        // via the `node` parameter. When tools.exec.host = "node", also set
+        // the default node so commands route there without an explicit param.
+        {
+            let provider = Arc::new(crate::node_exec::GatewayNodeExecProvider::new(Arc::clone(
+                &state,
+            )));
+            let default_node = if config.tools.exec.host == "node" {
+                config.tools.exec.node.clone()
+            } else {
+                None
+            };
+            exec_tool = exec_tool.with_node_provider(provider, default_node);
+        }
 
         let cron_tool = moltis_tools::cron_tool::CronTool::new(Arc::clone(&cron_service));
 
@@ -3512,6 +3535,22 @@ pub async fn prepare_gateway(
             )));
             tool_registry.register(Box::new(moltis_memory::tools::MemorySaveTool::new(
                 Arc::clone(mm),
+            )));
+        }
+
+        // Register node info tools (list, describe, select).
+        {
+            let node_info_provider: Arc<dyn moltis_tools::nodes::NodeInfoProvider> = Arc::new(
+                crate::node_exec::GatewayNodeInfoProvider::new(Arc::clone(&state)),
+            );
+            tool_registry.register(Box::new(moltis_tools::nodes::NodesListTool::new(
+                Arc::clone(&node_info_provider),
+            )));
+            tool_registry.register(Box::new(moltis_tools::nodes::NodesDescribeTool::new(
+                Arc::clone(&node_info_provider),
+            )));
+            tool_registry.register(Box::new(moltis_tools::nodes::NodesSelectTool::new(
+                Arc::clone(&node_info_provider),
             )));
         }
 
