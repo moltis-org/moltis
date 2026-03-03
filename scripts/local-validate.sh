@@ -328,21 +328,45 @@ run_check() {
   local end
   local duration
   local log_file=""
+  local monitor_pid=""
 
   start="$(date +%s)"
   set_status pending "$context" "Running locally"
 
   if [[ "$context" == "local/test" && -z "${LOCAL_VALIDATE_TEST_VERBOSE:-}" ]]; then
     log_file="$(mktemp -t local-validate-test.XXXXXX.log)"
+    echo "[$context] running with captured output (set LOCAL_VALIDATE_TEST_VERBOSE=1 to stream test logs)."
     bash -lc "$cmd" >"$log_file" 2>&1 &
   else
     bash -lc "$cmd" &
   fi
 
   CURRENT_PID="$!"
+  if [[ -n "$log_file" ]]; then
+    (
+      local interval
+      local now
+      local elapsed
+      interval="${LOCAL_VALIDATE_PROGRESS_INTERVAL:-30}"
+      while kill -0 "$CURRENT_PID" 2>/dev/null; do
+        sleep "$interval"
+        if kill -0 "$CURRENT_PID" 2>/dev/null; then
+          now="$(date +%s)"
+          elapsed="$((now - start))"
+          echo "[$context] still running (${elapsed}s)."
+        fi
+      done
+    ) &
+    monitor_pid="$!"
+  fi
+
   if wait "$CURRENT_PID"; then
     end="$(date +%s)"
     duration="$((end - start))"
+    if [[ -n "$monitor_pid" ]]; then
+      kill "$monitor_pid" 2>/dev/null || true
+      wait "$monitor_pid" 2>/dev/null || true
+    fi
     CURRENT_PID=""
     if [[ -n "$log_file" ]]; then
       rm -f "$log_file"
@@ -352,6 +376,10 @@ run_check() {
   else
     end="$(date +%s)"
     duration="$((end - start))"
+    if [[ -n "$monitor_pid" ]]; then
+      kill "$monitor_pid" 2>/dev/null || true
+      wait "$monitor_pid" 2>/dev/null || true
+    fi
     CURRENT_PID=""
     if [[ -n "$log_file" ]]; then
       echo "[$context] failed; showing captured output:" >&2
