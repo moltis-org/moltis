@@ -816,18 +816,19 @@ pub mod mlx {
         let script = format!(
             r#"
 import mlx_lm
+from mlx_lm.sample_utils import make_sampler
 import json
 
 model, tokenizer = mlx_lm.load("{model_path}")
 prompt = {prompt_json}
+sampler = make_sampler(temp={temperature})
 response = mlx_lm.generate(
     model,
     tokenizer,
     prompt=prompt,
     max_tokens={max_tokens},
-    temp={temperature},
+    sampler=sampler,
 )
-# Estimate tokens (mlx-lm doesn't provide exact counts easily)
 input_tokens = len(tokenizer.encode(prompt))
 output_tokens = len(tokenizer.encode(response))
 print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_tokens": output_tokens}}))
@@ -1029,10 +1030,12 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
         let script = format!(
             r#"
 import mlx_lm
+from mlx_lm.sample_utils import make_sampler
 import sys
 
 model, tokenizer = mlx_lm.load("{model_path}")
 prompt = {prompt_json}
+sampler = make_sampler(temp={temperature})
 
 input_tokens = len(tokenizer.encode(prompt))
 output_tokens = 0
@@ -1042,12 +1045,11 @@ for token in mlx_lm.stream_generate(
     tokenizer,
     prompt=prompt,
     max_tokens={max_tokens},
-    temp={temperature},
+    sampler=sampler,
 ):
     output_tokens += 1
     print(token, end="", flush=True)
 
-# Print token counts at the end (special marker)
 print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
 "#,
             model_path = model_path,
