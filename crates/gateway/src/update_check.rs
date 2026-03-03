@@ -9,57 +9,77 @@ pub struct UpdateAvailability {
     pub release_url: Option<String>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum UpdateCheckError {
-    #[error("repository URL is not a GitHub repository: {0}")]
-    UnsupportedRepository(String),
-    #[error("request failed: {0}")]
-    Request(#[from] reqwest::Error),
+/// A channel entry in the releases manifest.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ReleaseChannel {
+    version: String,
+    release_url: Option<String>,
 }
 
+/// The `releases.json` manifest served at the configured URL.
 #[derive(Debug, serde::Deserialize)]
-struct GithubLatestRelease {
-    tag_name: String,
-    html_url: Option<String>,
+struct ReleasesManifest {
+    stable: Option<ReleaseChannel>,
+    unstable: Option<ReleaseChannel>,
 }
 
 pub const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
+const DEFAULT_RELEASES_URL: &str = "https://www.moltis.org/releases.json";
+
+/// Resolve the releases manifest URL from config, falling back to the default.
 #[must_use]
-pub fn resolve_repository_url(configured: Option<&str>) -> Option<String> {
+pub fn resolve_releases_url(configured: Option<&str>) -> String {
     configured
         .map(str::trim)
         .filter(|url| !url.is_empty())
-        .map(str::to_owned)
+        .unwrap_or(DEFAULT_RELEASES_URL)
+        .to_owned()
 }
 
-pub fn github_latest_release_api_url(repository_url: &str) -> Result<String, UpdateCheckError> {
-    let slug = github_repo_slug(repository_url)
-        .ok_or_else(|| UpdateCheckError::UnsupportedRepository(repository_url.to_owned()))?;
-    Ok(format!(
-        "https://api.github.com/repos/{slug}/releases/latest"
-    ))
-}
-
+/// Fetch update availability from the releases manifest.
+///
+/// Returns a default (no update) on any error — 404, parse failure, network
+/// issues — so callers never have to handle errors.
 pub async fn fetch_update_availability(
     client: &reqwest::Client,
-    latest_release_api_url: &str,
+    releases_url: &str,
     current_version: &str,
-) -> Result<UpdateAvailability, UpdateCheckError> {
-    let release = client
-        .get(latest_release_api_url)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<GithubLatestRelease>()
-        .await?;
+) -> UpdateAvailability {
+    match try_fetch_update(client, releases_url, current_version).await {
+        Ok(update) => update,
+        Err(e) => {
+            tracing::debug!("update check skipped: {e}");
+            UpdateAvailability::default()
+        },
+    }
+}
 
-    Ok(update_from_release(
-        &release.tag_name,
-        release.html_url.as_deref(),
-        current_version,
-    ))
+async fn try_fetch_update(
+    client: &reqwest::Client,
+    releases_url: &str,
+    current_version: &str,
+) -> Result<UpdateAvailability, Box<dyn std::error::Error + Send + Sync>> {
+    let response = client.get(releases_url).send().await?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()).into());
+    }
+    let manifest: ReleasesManifest = response.json().await?;
+
+    let channel = if is_pre_release(current_version) {
+        manifest.unstable.or(manifest.stable)
+    } else {
+        manifest.stable
+    };
+
+    match channel {
+        Some(release) => Ok(update_from_release(
+            &release.version,
+            release.release_url.as_deref(),
+            current_version,
+        )),
+        None => Ok(UpdateAvailability::default()),
+    }
 }
 
 fn update_from_release(
@@ -75,26 +95,9 @@ fn update_from_release(
     }
 }
 
-fn github_repo_slug(repository_url: &str) -> Option<String> {
-    let trimmed = repository_url.trim();
-    let without_scheme = trimmed
-        .strip_prefix("https://")
-        .or_else(|| trimmed.strip_prefix("http://"))?;
-
-    let mut parts = without_scheme.split('/');
-    let host = parts.next()?.trim();
-    if !host.eq_ignore_ascii_case("github.com") {
-        return None;
-    }
-
-    let owner = parts.next()?.trim();
-    let repo_part = parts.next()?.trim();
-    let repo = repo_part.strip_suffix(".git").unwrap_or(repo_part);
-
-    if owner.is_empty() || repo.is_empty() {
-        return None;
-    }
-    Some(format!("{owner}/{repo}"))
+fn is_pre_release(version: &str) -> bool {
+    let normalized = normalize_version(version);
+    normalized.contains('-')
 }
 
 fn is_newer_version(latest: &str, current: &str) -> bool {
@@ -128,26 +131,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_github_repo_slug() {
-        assert_eq!(
-            github_repo_slug("https://github.com/moltis-org/moltis"),
-            Some("moltis-org/moltis".to_owned())
-        );
-        assert_eq!(
-            github_repo_slug("https://github.com/moltis-org/moltis/"),
-            Some("moltis-org/moltis".to_owned())
-        );
-        assert_eq!(
-            github_repo_slug("https://github.com/moltis-org/moltis.git"),
-            Some("moltis-org/moltis".to_owned())
-        );
-        assert_eq!(
-            github_repo_slug("https://example.com/moltis-org/moltis"),
-            None
-        );
-    }
-
-    #[test]
     fn compares_semver_versions() {
         assert!(is_newer_version("0.3.0", "0.2.9"));
         assert!(is_newer_version("v1.0.0", "0.9.9"));
@@ -157,17 +140,17 @@ mod tests {
     }
 
     #[test]
-    fn resolves_repository_url_with_config_override() {
+    fn resolves_releases_url_with_config_override() {
         assert_eq!(
-            resolve_repository_url(Some(" https://github.com/example/custom-repo ")),
-            Some("https://github.com/example/custom-repo".to_owned())
+            resolve_releases_url(Some(" https://example.com/releases.json ")),
+            "https://example.com/releases.json"
         );
     }
 
     #[test]
-    fn resolves_repository_url_none_when_missing_or_blank() {
-        assert_eq!(resolve_repository_url(Some("   ")), None);
-        assert_eq!(resolve_repository_url(None), None);
+    fn resolves_releases_url_default_when_missing_or_blank() {
+        assert_eq!(resolve_releases_url(Some("   ")), DEFAULT_RELEASES_URL);
+        assert_eq!(resolve_releases_url(None), DEFAULT_RELEASES_URL);
     }
 
     #[test]
@@ -190,5 +173,49 @@ mod tests {
             update.release_url.as_deref(),
             Some("https://github.com/moltis-org/moltis/releases/tag/v0.3.0")
         );
+    }
+
+    #[test]
+    fn detects_pre_release_versions() {
+        assert!(is_pre_release("0.11.0-rc.1"));
+        assert!(is_pre_release("v0.11.0-beta.2"));
+        assert!(!is_pre_release("0.10.7"));
+        assert!(!is_pre_release("v0.10.7"));
+    }
+
+    #[test]
+    fn selects_channel_based_on_current_version() {
+        let stable = ReleaseChannel {
+            version: "0.10.7".into(),
+            release_url: Some("https://github.com/moltis-org/moltis/releases/tag/v0.10.7".into()),
+        };
+        let unstable = ReleaseChannel {
+            version: "0.11.0-rc.2".into(),
+            release_url: Some(
+                "https://github.com/moltis-org/moltis/releases/tag/v0.11.0-rc.2".into(),
+            ),
+        };
+
+        // Stable current → picks stable channel
+        let current_stable = "0.10.6";
+        assert!(!is_pre_release(current_stable));
+        let update = update_from_release(
+            &stable.version,
+            stable.release_url.as_deref(),
+            current_stable,
+        );
+        assert!(update.available);
+        assert_eq!(update.latest_version.as_deref(), Some("0.10.7"));
+
+        // Pre-release current → would pick unstable channel
+        let current_pre = "0.11.0-rc.1";
+        assert!(is_pre_release(current_pre));
+        let update = update_from_release(
+            &unstable.version,
+            unstable.release_url.as_deref(),
+            current_pre,
+        );
+        // Both are 0.11.0 after stripping pre-release suffix, so no update
+        assert!(!update.available);
     }
 }

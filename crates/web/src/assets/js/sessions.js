@@ -26,6 +26,7 @@ import {
 	toolCallSummary,
 } from "./helpers.js";
 import { attachMessageVoiceControl } from "./message-voice.js";
+import { restoreNodeSelection } from "./nodes-selector.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { settingsPath } from "./routes.js";
@@ -380,6 +381,7 @@ function restoreSessionState(entry, projectId) {
 	S.setSessionExecPromptSymbol(effectiveSandboxRoute || S.hostExecIsRoot ? "#" : "$");
 	updateCommandInputUI();
 	restoreMcpToggle(!entry.mcpDisabled);
+	restoreNodeSelection(entry.node_id || null);
 	updateChatSessionHeader();
 }
 
@@ -979,6 +981,9 @@ export function switchSession(key, searchContext, projectId) {
 	var cachedHistory = getSessionHistory(key);
 	var hasCache = Array.isArray(cachedHistory);
 	var cacheRevisionAtRequest = getHistoryRevision(key);
+	// Tell the server how many messages we already have cached so it can
+	// skip sending the full history when nothing changed.
+	if (hasCache) switchParams.cached_message_count = cachedHistory.length;
 	startSessionRefresh(key, !hasCache);
 	if (hasCache) {
 		renderHistory(key, cachedHistory, searchContext, null);
@@ -1002,9 +1007,10 @@ export function switchSession(key, searchContext, projectId) {
 
 			var entry = res.payload.entry || {};
 			ensureSessionInClientStore(key, entry, projectId);
+			var cacheHit = res.payload.historyCacheHit === true;
 			var serverHistory = Array.isArray(res.payload.history) ? res.payload.history : [];
 			var appliedServerHistory = false;
-			if (shouldApplyServerHistory(key, serverHistory, cacheRevisionAtRequest)) {
+			if (!cacheHit && shouldApplyServerHistory(key, serverHistory, cacheRevisionAtRequest)) {
 				replaceSessionHistory(key, serverHistory);
 				appliedServerHistory = true;
 			}

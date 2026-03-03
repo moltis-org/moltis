@@ -66,6 +66,38 @@ impl WasmComponentEngine {
         Ok(compiled)
     }
 
+    /// Deserialize a pre-compiled component (AOT `.cwasm`).
+    ///
+    /// # Safety
+    /// The `precompiled` bytes **must** come from a trusted source — typically
+    /// `include_bytes!` of a `.cwasm` produced by `Engine::precompile_component`
+    /// with the **same** `wasmtime::Config`.
+    ///
+    /// # Errors
+    /// Returns an error if deserialization fails (e.g. config mismatch).
+    #[allow(unsafe_code)]
+    pub unsafe fn deserialize_component(
+        &self,
+        precompiled: &[u8],
+    ) -> Result<wasmtime::component::Component> {
+        let hash = hash_component_bytes(precompiled);
+        if let Some(component) = self.read_cache().get(&hash) {
+            return Ok(component.clone());
+        }
+
+        // SAFETY: caller guarantees `precompiled` bytes originate from a
+        // trusted `Engine::precompile_component` invocation with compatible config.
+        let component =
+            unsafe { wasmtime::component::Component::deserialize(&self.engine, precompiled)? };
+
+        let mut cache = self.write_cache();
+        if let Some(existing) = cache.get(&hash) {
+            return Ok(existing.clone());
+        }
+        cache.insert(hash, component.clone());
+        Ok(component)
+    }
+
     pub fn compile_module(&self, wasm_bytes: &[u8]) -> Result<wasmtime::Module> {
         wasmtime::Module::new(&self.engine, wasm_bytes)
     }

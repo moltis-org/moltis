@@ -1,0 +1,8 @@
+{
+  "channel_manifest_version": "1",
+  "channel": "stable",
+  "updated_at": "2026-02-22T18:04:06.830Z",
+  "latest_version": "0.9.10",
+  "release_manifest": "https://moltis.org/.well-known/moltis-install/releases/0.9.10.json",
+  "release_notes_url": "https://github.com/moltis-org/moltis/releases/tag/v0.9.10"
+}

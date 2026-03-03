@@ -24,18 +24,45 @@ async function waitForOnboardingStepLoaded(page) {
 	await expect(page.getByText("Loading…")).toHaveCount(0, { timeout: 10_000 });
 }
 
+async function visibleOnboardingHeadingText(page) {
+	const headings = page.locator(".onboarding-card h2");
+	const count = await headings.count();
+	for (let i = 0; i < count; i++) {
+		const heading = headings.nth(i);
+		if (!(await isVisible(heading))) continue;
+		const text = (await heading.textContent())?.trim();
+		if (text) return text;
+	}
+	return null;
+}
+
+async function waitForOnboardingHeadingAdvance(page, previousHeading) {
+	if (!previousHeading) return true;
+	try {
+		await expect
+			.poll(() => visibleOnboardingHeadingText(page), { timeout: 10_000 })
+			.not.toBe(previousHeading);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 async function maybeSkipAuth(page) {
 	const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
 	if (!(await isVisible(authHeading))) return false;
+	const headingBefore = await visibleOnboardingHeadingText(page);
 
 	const clicked = await clickFirstVisibleButton(page, { name: /skip/i });
 	expect(clicked).toBeTruthy();
-	return true;
+	await waitForOnboardingStepLoaded(page);
+	return waitForOnboardingHeadingAdvance(page, headingBefore);
 }
 
 async function maybeCompleteIdentity(page) {
 	const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
 	if (!(await isVisible(identityHeading))) return false;
+	const headingBefore = await visibleOnboardingHeadingText(page);
 
 	const userNameInput = page.getByPlaceholder("e.g. Alice");
 	if (!(await isVisible(userNameInput))) return false;
@@ -53,19 +80,23 @@ async function maybeCompleteIdentity(page) {
 	}
 
 	await page.getByRole("button", { name: "Continue", exact: true }).click();
-	return true;
+	await waitForOnboardingStepLoaded(page);
+	return waitForOnboardingHeadingAdvance(page, headingBefore);
 }
 
 async function maybeSkipOpenClawImport(page) {
 	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
 	if (!(await isVisible(importHeading))) return false;
+	const headingBefore = await visibleOnboardingHeadingText(page);
 
-	// The import step has "Skip for now" (when detected) or "Skip" (when not detected)
-	const skipBtn = page.getByRole("button", { name: /^Skip/ }).first();
-	if (await isVisible(skipBtn)) {
-		await skipBtn.click();
+	// The import step has "Skip for now" (when detected) or "Skip" (when not detected).
+	const skipped = await clickFirstVisibleButton(page, { name: /^Skip( for now)?$/i });
+	if (!skipped) {
+		const continued = await clickFirstVisibleButton(page, { name: "Continue", exact: true });
+		if (!continued) return false;
 	}
-	return true;
+	await waitForOnboardingStepLoaded(page);
+	return waitForOnboardingHeadingAdvance(page, headingBefore);
 }
 
 async function moveToLlmStep(page) {
@@ -74,14 +105,16 @@ async function moveToLlmStep(page) {
 	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
 	if (await isVisible(llmHeading)) return true;
 
-	await maybeSkipAuth(page);
-	if (await isVisible(llmHeading)) return true;
+	// Onboarding step order can vary by environment (auth/import/identity may appear
+	// before LLM). Try each known pre-LLM step until one advances the wizard.
+	for (let i = 0; i < 4; i++) {
+		if (await isVisible(llmHeading)) return true;
 
-	await maybeCompleteIdentity(page);
-	if (await isVisible(llmHeading)) return true;
-
-	await maybeSkipOpenClawImport(page);
-	if (await isVisible(llmHeading)) return true;
+		if (await maybeSkipOpenClawImport(page)) continue;
+		if (await maybeSkipAuth(page)) continue;
+		if (await maybeCompleteIdentity(page)) continue;
+		break;
+	}
 
 	const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
 	if (await isVisible(backBtn)) {

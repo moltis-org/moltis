@@ -60,6 +60,9 @@ struct BrowserInstance {
     browser: Browser,
     pages: HashMap<String, Page>,
     last_used: Instant,
+    /// When this instance was first created. Used to enforce a hard TTL that
+    /// prevents Chromium memory leaks from accumulating in long-lived instances.
+    created_at: Instant,
     /// Whether this instance is running in sandbox mode.
     #[allow(dead_code)]
     sandboxed: bool,
@@ -252,8 +255,11 @@ impl BrowserPool {
         Ok(())
     }
 
-    /// Clean up idle browser instances.
+    /// Clean up idle browser instances and instances that have exceeded the
+    /// hard TTL (30 minutes). The TTL prevents Chromium memory leaks from
+    /// accumulating in long-lived browser instances.
     pub async fn cleanup_idle(&self) {
+        const MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
         let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
         let now = Instant::now();
 
@@ -262,10 +268,19 @@ impl BrowserPool {
         {
             let instances = self.instances.read().await;
             for (sid, instance) in instances.iter() {
-                if let Ok(inst) = instance.try_lock()
-                    && now.duration_since(inst.last_used) > idle_timeout
-                {
-                    to_remove.push(sid.clone());
+                if let Ok(inst) = instance.try_lock() {
+                    let idle = now.duration_since(inst.last_used) > idle_timeout;
+                    let expired = now.duration_since(inst.created_at) > MAX_LIFETIME;
+                    if idle || expired {
+                        if expired {
+                            info!(
+                                session_id = sid,
+                                age_secs = inst.created_at.elapsed().as_secs(),
+                                "browser instance exceeded max lifetime"
+                            );
+                        }
+                        to_remove.push(sid.clone());
+                    }
                 }
             }
         }
@@ -277,12 +292,12 @@ impl BrowserPool {
         info!(
             count = to_remove.len(),
             sessions = ?to_remove,
-            "cleaning up idle browser sessions"
+            "cleaning up browser sessions"
         );
 
         for sid in to_remove {
             if let Err(e) = self.close_session(&sid).await {
-                warn!(session_id = sid, error = %e, "failed to close idle session");
+                warn!(session_id = sid, error = %e, "failed to close session");
             }
         }
     }
@@ -334,6 +349,7 @@ impl BrowserPool {
         let vh = self.config.viewport_height;
         let low_mem = self.config.low_memory_threshold_mb;
         let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
+        let container_host = self.config.container_host.clone();
 
         let container = tokio::task::spawn_blocking(move || {
             // Check container runtime availability (Docker or Apple Container)
@@ -366,8 +382,16 @@ impl BrowserPool {
             }
 
             // Start the container (includes readiness polling)
-            BrowserContainer::start(&image, &prefix, vw, vh, low_mem, profile_dir.as_deref())
-                .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))
+            BrowserContainer::start(
+                &image,
+                &prefix,
+                vw,
+                vh,
+                low_mem,
+                profile_dir.as_deref(),
+                &container_host,
+            )
+            .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))
         })
         .await
         .map_err(|e| Error::LaunchFailed(format!("container launch task panicked: {e}")))??;
@@ -422,6 +446,7 @@ impl BrowserPool {
             browser,
             pages: HashMap::new(),
             last_used: Instant::now(),
+            created_at: Instant::now(),
             sandboxed: true,
             container: Some(container),
         })
@@ -594,6 +619,7 @@ impl BrowserPool {
             browser,
             pages: HashMap::new(),
             last_used: Instant::now(),
+            created_at: Instant::now(),
             sandboxed: false,
             container: None,
         })

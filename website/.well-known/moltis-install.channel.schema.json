@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moltis.org/.well-known/moltis-install.channel.schema.json",
+  "title": "Moltis Install Channel Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "channel_manifest_version",
+    "channel",
+    "updated_at",
+    "latest_version",
+    "release_manifest",
+    "release_notes_url"
+  ],
+  "properties": {
+    "channel_manifest_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "channel": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "latest_version": {
+      "type": "string"
+    },
+    "release_manifest": {
+      "type": "string",
+      "format": "uri"
+    },
+    "release_notes_url": {
+      "type": "string",
+      "format": "uri"
+    }
+  }
+}

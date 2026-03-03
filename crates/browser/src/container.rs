@@ -151,6 +151,8 @@ pub struct BrowserContainer {
     container_id: String,
     /// Host port mapped to the container's CDP port.
     host_port: u16,
+    /// Hostname or IP used to connect to the container.
+    host: String,
     /// The image used.
     #[allow(dead_code)]
     image: String,
@@ -162,6 +164,8 @@ impl BrowserContainer {
     /// Start a new browser container using the auto-detected backend.
     ///
     /// Returns a container instance with the host port for CDP connections.
+    /// `container_host` is the hostname/IP used to reach the container (e.g.
+    /// `"127.0.0.1"` on the host, `"host.docker.internal"` from inside Docker).
     /// When `profile_dir` is `Some`, the host directory is mounted into the
     /// container so that browser profile data persists across sessions.
     pub fn start(
@@ -171,6 +175,7 @@ impl BrowserContainer {
         viewport_height: u32,
         low_memory_threshold_mb: u64,
         profile_dir: Option<&std::path::Path>,
+        container_host: &str,
     ) -> Result<Self> {
         let backend = detect_backend()?;
         Self::start_with_backend(
@@ -181,6 +186,7 @@ impl BrowserContainer {
             viewport_height,
             low_memory_threshold_mb,
             profile_dir,
+            container_host,
         )
     }
 
@@ -193,6 +199,7 @@ impl BrowserContainer {
         viewport_height: u32,
         low_memory_threshold_mb: u64,
         profile_dir: Option<&std::path::Path>,
+        container_host: &str,
     ) -> Result<Self> {
         use std::time::Instant;
 
@@ -246,7 +253,7 @@ impl BrowserContainer {
         );
 
         // Wait for the container to be ready
-        if let Err(error) = wait_for_ready(host_port) {
+        if let Err(error) = wait_for_ready(container_host, host_port) {
             warn!(
                 container_id,
                 host_port,
@@ -269,6 +276,7 @@ impl BrowserContainer {
         Ok(Self {
             container_id,
             host_port,
+            host: container_host.to_string(),
             image: image.to_string(),
             backend,
         })
@@ -278,13 +286,13 @@ impl BrowserContainer {
     #[must_use]
     pub fn websocket_url(&self) -> String {
         // browserless/chrome provides a direct WebSocket endpoint
-        format!("ws://127.0.0.1:{}", self.host_port)
+        format!("ws://{}:{}", self.host, self.host_port)
     }
 
     /// Get the HTTP URL for health checks.
     #[must_use]
     pub fn http_url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.host_port)
+        format!("http://{}:{}", self.host, self.host_port)
     }
 
     /// Stop and remove the container.
@@ -580,10 +588,10 @@ fn find_available_port() -> Result<u16> {
 /// TCP connectivity alone isn't sufficient - Chrome inside the container may accept
 /// connections before it's ready to handle WebSocket requests. We probe `/json/version`
 /// which browserless exposes when Chrome is truly ready.
-fn wait_for_ready(port: u16) -> Result<()> {
+fn wait_for_ready(host: &str, port: u16) -> Result<()> {
     use std::time::{Duration, Instant};
 
-    let url = format!("http://127.0.0.1:{}/json/version", port);
+    let url = format!("http://{}:{}/json/version", host, port);
     let timeout = Duration::from_secs(60);
     let start = Instant::now();
     let mut attempts: u32 = 0;
@@ -613,7 +621,7 @@ fn wait_for_ready(port: u16) -> Result<()> {
         attempts += 1;
 
         // Try HTTP GET /json/version - this endpoint returns 200 when Chrome is ready
-        match probe_http_endpoint(port) {
+        match probe_http_endpoint(host, port) {
             Ok(true) => {
                 info!(
                     attempts,
@@ -654,23 +662,26 @@ fn wait_for_ready(port: u16) -> Result<()> {
 }
 
 /// Probe the Chrome /json/version endpoint to check if it's ready.
-fn probe_http_endpoint(port: u16) -> Result<bool> {
+fn probe_http_endpoint(host: &str, port: u16) -> Result<bool> {
     use std::{
         io::{BufRead, BufReader, Write},
-        net::TcpStream,
+        net::{TcpStream, ToSocketAddrs},
         time::Duration,
     };
 
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("{}:{}", host, port);
     let socket_addr = addr
-        .parse()
-        .map_err(|e| Error::LaunchFailed(format!("invalid address {addr}: {e}")))?;
+        .to_socket_addrs()
+        .map_err(|e| Error::LaunchFailed(format!("failed to resolve {addr}: {e}")))?
+        .next()
+        .ok_or_else(|| Error::LaunchFailed(format!("no addresses resolved for {addr}")))?;
     let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
 
     // Send minimal HTTP request
-    let request = "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let request =
+        format!("GET /json/version HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes())?;
 
     // Read response status line

@@ -21,6 +21,7 @@ import { initLogs, teardownLogs } from "./page-logs.js";
 import { initMcp, teardownMcp } from "./page-mcp.js";
 import { initMonitoring, teardownMonitoring } from "./page-metrics.js";
 import { initNetworkAudit, teardownNetworkAudit } from "./page-network-audit.js";
+import { initNodes, teardownNodes } from "./page-nodes.js";
 import { initProviders, teardownProviders } from "./page-providers.js";
 import { initSkills, teardownSkills } from "./page-skills.js";
 import { initTerminal, teardownTerminal } from "./page-terminal.js";
@@ -113,6 +114,12 @@ var sections = [
 		page: true,
 	},
 	{
+		id: "nodes",
+		label: "Nodes",
+		icon: html`<span class="icon icon-nodes"></span>`,
+		page: true,
+	},
+	{
 		id: "environment",
 		label: "Environment",
 		icon: html`<span class="icon icon-terminal"></span>`,
@@ -153,12 +160,12 @@ var sections = [
 	{
 		id: "tailscale",
 		label: "Tailscale",
-		icon: html`<span class="icon icon-globe"></span>`,
+		icon: html`<span class="icon icon-tailscale"></span>`,
 	},
 	{
 		id: "network-audit",
 		label: "Network Audit",
-		icon: html`<span class="icon icon-globe"></span>`,
+		icon: html`<span class="icon icon-shield-check"></span>`,
 		page: true,
 	},
 	{
@@ -201,7 +208,7 @@ var sections = [
 	{
 		id: "import",
 		label: "OpenClaw Import",
-		icon: html`<span class="icon icon-link"></span>`,
+		icon: html`<span class="icon icon-openclaw"></span>`,
 	},
 	{
 		id: "voice",
@@ -209,34 +216,11 @@ var sections = [
 		icon: html`<span class="icon icon-microphone"></span>`,
 	},
 	{ group: "Systems" },
-	{
-		id: "terminal",
-		label: "Terminal",
-		icon: html`<span class="icon icon-terminal"></span>`,
-		page: true,
-	},
-	{
-		id: "monitoring",
-		label: "Monitoring",
-		icon: html`<span class="icon icon-chart-bar"></span>`,
-		page: true,
-	},
-	{
-		id: "logs",
-		label: "Logs",
-		icon: html`<span class="icon icon-document"></span>`,
-		page: true,
-	},
-	{
-		id: "graphql",
-		label: "GraphQL",
-		icon: html`<span class="icon icon-graphql"></span>`,
-	},
-	{
-		id: "config",
-		label: "Configuration",
-		icon: html`<span class="icon icon-code"></span>`,
-	},
+	{ id: "terminal", label: "Terminal", page: true },
+	{ id: "monitoring", label: "Monitoring", page: true },
+	{ id: "logs", label: "Logs", page: true },
+	{ id: "graphql", label: "GraphQL" },
+	{ id: "config", label: "Configuration" },
 ];
 
 function getVisibleSections() {
@@ -278,6 +262,7 @@ function SettingsSidebar() {
 					: html`<button
 							key=${s.id}
 							class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
+							data-section=${s.id}
 							onClick=${() => {
 								if (isMobileViewport()) {
 									mobileSidebarVisible.value = false;
@@ -286,7 +271,6 @@ function SettingsSidebar() {
 								navigate(settingsPath(s.id));
 							}}
 						>
-							${s.icon}
 							${s.label}
 						</button>`,
 			)}
@@ -1880,7 +1864,7 @@ function OpenClawImportSection() {
 
 function GraphqlSection() {
 	var [loadingConfig, setLoadingConfig] = useState(true);
-	var [enabled, setEnabled] = useState(true);
+	var [enabled, setEnabled] = useState(false);
 	var [saving, setSaving] = useState(false);
 	var [msg, setMsg] = useState(null);
 	var [err, setErr] = useState(null);
@@ -1890,6 +1874,10 @@ function GraphqlSection() {
 	var wsEndpoint = `${wsProtocol}//${window.location.host}/graphql`;
 
 	function loadGraphqlConfig() {
+		if (!connected.value) {
+			setLoadingConfig(true);
+			return;
+		}
 		setLoadingConfig(true);
 		sendRpc("graphql.config.get", {})
 			.then((res) => {
@@ -1910,14 +1898,24 @@ function GraphqlSection() {
 	}
 
 	useEffect(() => {
-		loadGraphqlConfig();
-	}, []);
+		if (connected.value) {
+			loadGraphqlConfig();
+		} else {
+			setLoadingConfig(true);
+			setSaving(false);
+			setMsg(null);
+		}
+	}, [connected.value]);
 
 	function onToggle(nextEnabled) {
+		if (!connected.value) {
+			setErr("WebSocket not connected");
+			rerender();
+			return;
+		}
 		setSaving(true);
 		setMsg(null);
 		setErr(null);
-		setEnabled(nextEnabled);
 		rerender();
 
 		sendRpc("graphql.config.set", { enabled: nextEnabled })
@@ -1929,17 +1927,21 @@ function GraphqlSection() {
 						setMsg("GraphQL updated for this runtime, but failed to persist to config. It may revert on restart.");
 					}
 				} else {
-					setEnabled(!nextEnabled);
 					setErr(res?.error?.message || "Failed to update GraphQL setting");
 				}
 				rerender();
 			})
 			.catch((error) => {
 				setSaving(false);
-				setEnabled(!nextEnabled);
 				setErr(error?.message || "Failed to update GraphQL setting");
 				rerender();
 			});
+	}
+
+	if (!connected.value) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<div class="text-xs text-[var(--muted)]">Connecting…</div>
+		</div>`;
 	}
 
 	if (loadingConfig) {
@@ -1973,7 +1975,7 @@ function GraphqlSection() {
 						id="graphqlEnabledToggle"
 						type="checkbox"
 						checked=${enabled}
-						disabled=${saving}
+						disabled=${saving || loadingConfig || !connected.value}
 						onChange=${(e) => onToggle(e.target.checked)}
 					/>
 					<span class="toggle-slider"></span>
@@ -3936,6 +3938,7 @@ var pageSectionHandlers = {
 	providers: { init: initProviders, teardown: teardownProviders },
 	channels: { init: initChannels, teardown: teardownChannels },
 	mcp: { init: initMcp, teardown: teardownMcp },
+	nodes: { init: initNodes, teardown: teardownNodes },
 	hooks: { init: initHooks, teardown: teardownHooks },
 	skills: { init: initSkills, teardown: teardownSkills },
 	agents: { init: initAgents, teardown: teardownAgents },

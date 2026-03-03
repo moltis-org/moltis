@@ -1,0 +1,45 @@
+{
+  "release_manifest_version": "1",
+  "version": "0.9.10",
+  "tag": "v0.9.10",
+  "published_at": "2026-02-21",
+  "repo": "moltis-org/moltis",
+  "artifacts": [
+    {
+      "target": "aarch64-apple-darwin",
+      "filename": "moltis-0.9.10-aarch64-apple-darwin.tar.gz",
+      "url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-aarch64-apple-darwin.tar.gz",
+      "sha256_url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-aarch64-apple-darwin.tar.gz.sha256",
+      "sha256": null
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "filename": "moltis-0.9.10-x86_64-apple-darwin.tar.gz",
+      "url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-x86_64-apple-darwin.tar.gz",
+      "sha256_url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-x86_64-apple-darwin.tar.gz.sha256",
+      "sha256": null
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "filename": "moltis-0.9.10-aarch64-unknown-linux-gnu.tar.gz",
+      "url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256_url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-aarch64-unknown-linux-gnu.tar.gz.sha256",
+      "sha256": null
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "filename": "moltis-0.9.10-x86_64-unknown-linux-gnu.tar.gz",
+      "url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256_url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-x86_64-unknown-linux-gnu.tar.gz.sha256",
+      "sha256": null
+    },
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "filename": "moltis-0.9.10-x86_64-pc-windows-msvc.exe",
+      "url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-x86_64-pc-windows-msvc.exe",
+      "sha256_url": "https://github.com/moltis-org/moltis/releases/download/v0.9.10/moltis-0.9.10-x86_64-pc-windows-msvc.exe.sha256",
+      "sha256": null
+    }
+  ],
+  "notes": "Some sha256 values are null. Regenerate with --checksums-file before production use."
+}

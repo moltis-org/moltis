@@ -212,4 +212,36 @@ impl ChatRuntime for GatewayChatRuntime {
             Ok(false)
         }
     }
+
+    // ── Remote nodes ────────────────────────────────────────────────────────
+
+    async fn connected_nodes(&self) -> Vec<runtime::ConnectedNodeSummary> {
+        let inner = self.state.inner.read().await;
+        inner
+            .nodes
+            .list()
+            .iter()
+            .map(|n| runtime::ConnectedNodeSummary {
+                node_id: n.node_id.clone(),
+                display_name: n.display_name.clone(),
+                platform: n.platform.clone(),
+                capabilities: n.capabilities.clone(),
+                cpu_count: n.cpu_count,
+                cpu_usage: n.cpu_usage,
+                mem_total: n.mem_total,
+                mem_available: n.mem_available,
+                telemetry_stale: n
+                    .last_telemetry
+                    .is_some_and(|t| t.elapsed() > std::time::Duration::from_secs(120)),
+                disk_total: n.disk_total,
+                disk_available: n.disk_available,
+                runtimes: n.runtimes.clone(),
+                providers: n
+                    .providers
+                    .iter()
+                    .map(|p| (p.provider.clone(), p.models.clone()))
+                    .collect(),
+            })
+            .collect()
+    }
 }

@@ -775,14 +775,27 @@ pub struct ServerConfig {
     /// Defaults to 1000. Increase for busy servers, decrease for memory-constrained devices.
     #[serde(default = "default_log_buffer_size")]
     pub log_buffer_size: usize,
-    /// Optional GitHub repository URL used by the update checker.
+    /// URL of the releases manifest (`releases.json`) used by the update checker.
     ///
-    /// When unset, Moltis falls back to the package repository metadata.
-    pub update_repository_url: Option<String>,
+    /// Defaults to `https://www.moltis.org/releases.json` when unset.
+    pub update_releases_url: Option<String>,
+    /// Maximum number of SQLite pool connections. Lower values reduce memory
+    /// usage for personal gateways. Defaults to 5.
+    #[serde(default = "default_db_pool_max_connections")]
+    pub db_pool_max_connections: u32,
+    /// Base URL for the Shiki syntax-highlighting library loaded by the web UI.
+    ///
+    /// Defaults to `https://esm.sh/shiki@3.2.1?bundle` when unset.
+    /// Set to an alternative CDN or a self-hosted URL to override.
+    pub shiki_cdn_url: Option<String>,
 }
 
 fn default_log_buffer_size() -> usize {
     1000
+}
+
+fn default_db_pool_max_connections() -> u32 {
+    5
 }
 
 impl Default for ServerConfig {
@@ -793,7 +806,9 @@ impl Default for ServerConfig {
             http_request_logs: false,
             ws_request_logs: false,
             log_buffer_size: default_log_buffer_size(),
-            update_repository_url: None,
+            update_releases_url: None,
+            db_pool_max_connections: default_db_pool_max_connections(),
+            shiki_cdn_url: None,
         }
     }
 }
@@ -1151,7 +1166,7 @@ pub struct MetricsConfig {
     #[serde(default = "default_true")]
     pub prometheus_endpoint: bool,
     /// Maximum number of in-memory history points for time-series charts.
-    /// Points are sampled every 10 seconds. Defaults to 360 (1 hour).
+    /// Points are sampled every 30 seconds. Defaults to 360 (3 hours).
     /// Historical data is persisted to SQLite regardless of this setting.
     #[serde(default = "default_metrics_history_points")]
     pub history_points: usize,
@@ -1643,6 +1658,12 @@ pub struct BrowserConfig {
     /// When set, `persist_profile` is implicitly true.
     /// If not set and `persist_profile` is true, defaults to `data_dir()/browser/profile/`.
     pub profile_dir: Option<String>,
+    /// Hostname or IP used to connect to the browser container from the host.
+    /// Default: "127.0.0.1" (localhost). When running Moltis itself inside Docker,
+    /// set this to "host.docker.internal" or the Docker bridge gateway IP so
+    /// Moltis can reach the sibling browser container via the host's port mapping.
+    #[serde(default = "default_container_host")]
+    pub container_host: String,
 }
 
 fn default_sandbox_image() -> String {
@@ -1655,6 +1676,10 @@ const fn default_low_memory_threshold_mb() -> u64 {
 
 const fn default_persist_profile() -> bool {
     true
+}
+
+fn default_container_host() -> String {
+    "127.0.0.1".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -1677,6 +1702,7 @@ impl Default for BrowserConfig {
             low_memory_threshold_mb: default_low_memory_threshold_mb(),
             persist_profile: default_persist_profile(),
             profile_dir: None,
+            container_host: default_container_host(),
         }
     }
 }
@@ -1691,6 +1717,11 @@ pub struct ExecConfig {
     pub security_level: String,
     pub allowlist: Vec<String>,
     pub sandbox: SandboxConfig,
+    /// Where to run commands: `"local"` (default) or `"node"`.
+    pub host: String,
+    /// Default node id or display name for remote execution (when `host = "node"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
 }
 
 impl Default for ExecConfig {
@@ -1702,6 +1733,8 @@ impl Default for ExecConfig {
             security_level: "allowlist".into(),
             allowlist: Vec::new(),
             sandbox: SandboxConfig::default(),
+            host: "local".into(),
+            node: None,
         }
     }
 }
@@ -2111,6 +2144,8 @@ pub struct ProviderEntry {
     pub api_key: Option<Secret<String>>,
 
     /// Override the base URL.
+    /// Accepts legacy `url` as an alias for compatibility.
+    #[serde(alias = "url")]
     pub base_url: Option<String>,
 
     /// Preferred model IDs for this provider.
@@ -2640,6 +2675,19 @@ memory = 300
         );
         let parsed: ProviderEntry = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.tool_mode, ToolMode::Text);
+    }
+
+    #[test]
+    fn provider_entry_url_alias_maps_to_base_url() {
+        let entry: ProviderEntry = toml::from_str(
+            r#"
+enabled = true
+url = "http://192.168.0.9:11434"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(entry.base_url.as_deref(), Some("http://192.168.0.9:11434"));
     }
 
     #[test]

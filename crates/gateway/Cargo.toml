@@ -79,7 +79,7 @@ sha2                   = { workspace = true }
 sqlx                   = { workspace = true }
 sysinfo                = { workspace = true }
 thiserror              = { workspace = true }
-time                   = { optional = true, workspace = true }
+time                   = { workspace = true }
 tokio                  = { workspace = true }
 tokio-rustls           = { optional = true, workspace = true }
 tokio-stream           = { workspace = true }
@@ -159,7 +159,6 @@ tls = [
   "dep:rcgen",
   "dep:rustls",
   "dep:rustls-pemfile",
-  "dep:time",
   "dep:tokio-rustls",
   "dep:tower",
 ]

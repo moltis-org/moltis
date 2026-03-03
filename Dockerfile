@@ -30,6 +30,13 @@ RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
     rm -rf /var/lib/apt/lists/*
 
+# Build Tailwind CSS (style.css is gitignored — must be generated before cargo build)
+RUN ARCH=$(uname -m) && \
+    case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac && \
+    curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW" && \
+    chmod +x "$TW" && \
+    cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+
 # Install WASM target and build WASM components (embedded via include_bytes!)
 RUN rustup target add wasm32-wasip2 && \
     cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
@@ -84,6 +91,10 @@ RUN groupadd -f docker && \
 
 # Copy binary from builder
 COPY --from=builder /build/target/release/moltis /usr/local/bin/moltis
+COPY --from=builder /build/crates/web/src/assets /usr/share/moltis/web
+COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_calc.wasm /usr/share/moltis/wasm/
+COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm /usr/share/moltis/wasm/
+COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_search.wasm /usr/share/moltis/wasm/
 
 # Create config and data directories
 RUN mkdir -p /home/moltis/.config/moltis /home/moltis/.moltis && \

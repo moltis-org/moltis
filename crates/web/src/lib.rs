@@ -33,6 +33,10 @@ pub fn web_routes() -> Router<AppState> {
     let api = add_feature_routes(api);
 
     Router::new()
+        .route(
+            "/api/public/identity",
+            get(gon::api_public_identity_handler),
+        )
         .route("/auth/callback", get(oauth::oauth_callback_handler))
         .route(
             "/share/{share_id}/og-image.svg",

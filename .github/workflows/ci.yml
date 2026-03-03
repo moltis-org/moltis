@@ -118,6 +118,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Check website install script sync
+        run: ./scripts/check-website-install-sync.sh
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
@@ -165,8 +167,7 @@ jobs:
           fi
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
-          chmod +x tailwindcss-linux-x64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
       - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
       - name: Upload cargo timing reports
@@ -232,8 +233,7 @@ jobs:
           tool: cargo-llvm-cov
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
-          chmod +x tailwindcss-linux-x64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
       - name: Generate coverage
         run: cargo llvm-cov --workspace --exclude moltis-tools --exclude moltis-swift-bridge --lcov --output-path lcov.info
@@ -271,8 +271,7 @@ jobs:
 
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
-          chmod +x tailwindcss-linux-x64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
 
       - name: Build moltis binary
@@ -327,8 +326,7 @@ jobs:
 
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-macos-arm64
-          chmod +x tailwindcss-macos-arm64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-macos-arm64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-macos-arm64 ./build.sh
 
       - name: Build Swift bridge and generate Xcode project
@@ -432,8 +430,7 @@ jobs:
           fi
       - name: Build Tailwind CSS
         run: |
-          curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
-          chmod +x tailwindcss-linux-x64
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
       - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
       - name: Upload cargo timing reports

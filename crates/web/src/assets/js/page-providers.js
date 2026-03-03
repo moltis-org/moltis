@@ -248,7 +248,7 @@ function ProviderSection(props) {
 				</span>
 			</div>
 			<div class="flex gap-2 shrink-0">
-				${group.models.length > 0 ? html`<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onSelectModels}>${t("providers:preferredModels")}</button>` : null}
+				${group.models.length > 0 ? html`<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onSelectModels}>${t("providers:preferredModels.button")}</button>` : null}
 				<button
 					class="provider-btn provider-btn-danger provider-btn-sm"
 					disabled=${deletingProvider.value === group.provider}
@@ -303,8 +303,10 @@ function ProvidersPage() {
 	return html`
 		<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<div class="flex items-center gap-3">
-					<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("providers:title")}</h2>
+					<h2 id="providersTitle" class="text-lg font-medium text-[var(--text-strong)]">${t("providers:title")}</h2>
 					<button
+						id="providersAddLlmBtn"
+						data-testid="providers-add-llm"
 						class="provider-btn"
 						onClick=${() => {
 							if (connected.value) openProviderModal();
@@ -313,6 +315,8 @@ function ProvidersPage() {
 						${t("providers:addLlm")}
 					</button>
 					<button
+						id="providersDetectModelsBtn"
+						data-testid="providers-detect-models"
 						class="provider-btn provider-btn-secondary"
 						disabled=${!connected.value || detectingModels.value}
 						onClick=${runDetectAllModels}
@@ -351,12 +355,12 @@ function ProvidersPage() {
 				${(() => {
 					var groups = groupProviderRows(configuredModels.value, providerMetaSig.value);
 					if (loading.value && configuredModels.value.length === 0) {
-						return html`<div class="text-xs text-[var(--muted)]">${t("common:status.loading")}</div>`;
+						return html`<div id="providersLoadingState" class="text-xs text-[var(--muted)]">${t("common:status.loading")}</div>`;
 					}
 					if (configuredModels.value.length === 0) {
-						return html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">${t("providers:noProvidersConfigured")}</div>`;
+						return html`<div id="providersEmptyState" data-testid="providers-empty-state" class="text-xs text-[var(--muted)]" style="padding:12px 0;">${t("providers:noProvidersConfigured")}</div>`;
 					}
-					return html`<div style="max-width:600px;">
+					return html`<div id="providersConfiguredList" data-testid="providers-configured-list" style="max-width:600px;">
 						${
 							groups.length > 1
 								? html`<div class="flex flex-wrap gap-1 mb-3">

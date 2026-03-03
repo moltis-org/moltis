@@ -8,20 +8,52 @@ repository        = "https://github.com/moltis-org/moltis"
 version.workspace = true
 
 [package.metadata.deb]
-assets     = [["target/release/moltis", "usr/bin/", "755"]]
-copyright  = "2025, Moltis Contributors"
-depends    = "$auto"
+assets = [
+  [
+    "target/release/moltis",
+    "usr/bin/",
+    "755",
+  ],
+  [
+    "crates/web/src/assets/**/*",
+    "usr/share/moltis/web/",
+    "644",
+  ],
+  [
+    "target/wasm32-wasip2/release/moltis_wasm_calc.wasm",
+    "usr/share/moltis/wasm/",
+    "644",
+  ],
+  [
+    "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm",
+    "usr/share/moltis/wasm/",
+    "644",
+  ],
+  [
+    "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm",
+    "usr/share/moltis/wasm/",
+    "644",
+  ],
+]
+copyright = "2025, Moltis Contributors"
+depends = "$auto"
 maintainer = "Moltis Contributors"
-name       = "moltis"
-priority   = "optional"
-section    = "net"
+name = "moltis"
+priority = "optional"
+section = "net"
 
 [package.metadata.generate-rpm]
-assets  = [{ dest = "/usr/bin/moltis", mode = "0755", source = "target/release/moltis" }]
+assets = [
+  { dest = "/usr/bin/moltis", mode = "0755", source = "target/release/moltis" },
+  { dest = "/usr/share/moltis/wasm/", mode = "0644", source = "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" },
+  { dest = "/usr/share/moltis/wasm/", mode = "0644", source = "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" },
+  { dest = "/usr/share/moltis/wasm/", mode = "0644", source = "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" },
+  { dest = "/usr/share/moltis/web/", mode = "0644", source = "crates/web/src/assets/**/*" },
+]
 license = "MIT"
-name    = "moltis"
+name = "moltis"
 summary = "Personal AI gateway inspired by OpenClaw"
-url     = "https://www.moltis.org/"
+url = "https://www.moltis.org/"
 
 [[bin]]
 name = "moltis"
@@ -39,6 +71,7 @@ moltis-cron            = { workspace = true }
 moltis-gateway         = { workspace = true }
 moltis-httpd           = { workspace = true }
 moltis-memory          = { workspace = true }
+moltis-node-host       = { workspace = true }
 moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
@@ -58,6 +91,7 @@ time                   = { workspace = true }
 tokio                  = { workspace = true }
 tracing                = { workspace = true }
 tracing-subscriber     = { workspace = true }
+uuid                   = { workspace = true }
 which                  = { workspace = true }
 
 [target.'cfg(all(not(target_os = "windows"), not(all(target_os = "linux", target_arch = "aarch64"))))'.dependencies]
@@ -90,13 +124,14 @@ default = [
   "trusted-network",
   "vault",
   "voice",
-  "wasm",
   "web-ui",
   "whatsapp",
 ]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
 code-splitter   = ["moltis-memory/code-splitter"]
+embedded-assets = ["moltis-web?/embedded-assets"]
+embedded-wasm   = ["moltis-tools/embedded-wasm"]
 file-watcher    = ["moltis-gateway/file-watcher"]
 graphql         = ["moltis-httpd/graphql", "moltis-web?/graphql"]
 jemalloc        = ["dep:tikv-jemallocator"]

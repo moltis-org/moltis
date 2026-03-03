@@ -43,6 +43,9 @@ struct BridgeState {
 
 impl BridgeState {
     fn new() -> Self {
+        #[cfg(test)]
+        init_swift_bridge_test_dirs();
+
         emit_log(
             "INFO",
             "bridge",
@@ -92,6 +95,9 @@ impl BridgeState {
             if let Err(e) = moltis_sessions::run_migrations(&pool).await {
                 emit_log("WARN", "bridge", &format!("sessions migration: {e}"));
             }
+            if let Err(e) = moltis_gateway::run_migrations(&pool).await {
+                emit_log("WARN", "bridge", &format!("gateway migration: {e}"));
+            }
             pool
         });
         let event_bus = SessionEventBus::new();
@@ -136,12 +142,44 @@ impl BridgeState {
     }
 }
 
+#[cfg(test)]
+fn init_swift_bridge_test_dirs() {
+    static TEST_DIRS_INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+    TEST_DIRS_INIT.get_or_init(|| {
+        let base = std::env::temp_dir().join(format!(
+            "moltis-swift-bridge-tests-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let config_dir = base.join("config");
+        let data_dir = base.join("data");
+
+        if let Err(error) = std::fs::create_dir_all(&config_dir) {
+            panic!("failed to create swift-bridge test config dir: {error}");
+        }
+        if let Err(error) = std::fs::create_dir_all(&data_dir) {
+            panic!("failed to create swift-bridge test data dir: {error}");
+        }
+
+        moltis_config::set_config_dir(config_dir);
+        moltis_config::set_data_dir(data_dir);
+    });
+}
+
 fn build_registry() -> ProviderRegistry {
     let config = moltis_config::discover_and_load();
     let env_overrides = config.env.clone();
     let key_store = KeyStore::new();
     let effective = config_with_saved_keys(&config.providers, &key_store, &[]);
-    ProviderRegistry::from_env_with_config_and_overrides(&effective, &env_overrides)
+    #[cfg(test)]
+    {
+        ProviderRegistry::from_config_with_static_catalogs(&effective, &env_overrides)
+    }
+    #[cfg(not(test))]
+    {
+        ProviderRegistry::from_env_with_config_and_overrides(&effective, &env_overrides)
+    }
 }
 
 static BRIDGE: LazyLock<BridgeState> = LazyLock::new(BridgeState::new);
@@ -3888,8 +3926,26 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn chat_stream_sends_error_for_no_provider() {
         use std::sync::{Arc, Mutex};
+
+        // Force a no-provider environment so this test exercises the
+        // synchronous error callback path deterministically.
+        let original_registry = {
+            let mut guard = BRIDGE.registry.write().unwrap_or_else(|e| e.into_inner());
+            std::mem::replace(&mut *guard, ProviderRegistry::empty())
+        };
+        struct RestoreRegistry(Option<ProviderRegistry>);
+        impl Drop for RestoreRegistry {
+            fn drop(&mut self) {
+                if let Some(registry) = self.0.take() {
+                    let mut guard = BRIDGE.registry.write().unwrap_or_else(|e| e.into_inner());
+                    *guard = registry;
+                }
+            }
+        }
+        let _restore_registry = RestoreRegistry(Some(original_registry));
 
         let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let events_clone = Arc::clone(&events);
@@ -3905,7 +3961,7 @@ mod tests {
             }
         }
 
-        // Use a model that almost certainly won't match any configured provider.
+        // With an empty registry, this must error synchronously.
         let request = r#"{"message":"test","model":"nonexistent-model-xyz"}"#;
         let c_request = CString::new(request).unwrap_or_else(|e| panic!("{e}"));
 
@@ -3914,17 +3970,19 @@ mod tests {
             moltis_chat_stream(c_request.as_ptr(), test_callback, user_data);
         }
 
-        // Wait briefly for the async task to complete (it may also error synchronously).
-        std::thread::sleep(std::time::Duration::from_millis(200));
-
         let events = unsafe { Arc::from_raw(user_data as *const Mutex<Vec<String>>) };
         let received = events.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Should receive at least one event (either an error for no provider,
-        // or a done event if somehow a provider matched).
         assert!(
             !received.is_empty(),
             "should receive at least one stream event"
+        );
+        let parsed: Value =
+            serde_json::from_str(&received[0]).unwrap_or_else(|e| panic!("bad json: {e}"));
+        assert_eq!(
+            parsed.get("type").and_then(Value::as_str),
+            Some("error"),
+            "expected an error event when no provider is available"
         );
     }
 

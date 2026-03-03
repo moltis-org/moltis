@@ -38,10 +38,7 @@ use moltis_gateway::{
     methods::MethodRegistry,
     server::{PreparedGatewayCore, prepare_gateway_core},
     state::GatewayState,
-    update_check::{
-        UPDATE_CHECK_INTERVAL, fetch_update_availability, github_latest_release_api_url,
-        resolve_repository_url,
-    },
+    update_check::{UPDATE_CHECK_INTERVAL, fetch_update_availability, resolve_releases_url},
 };
 
 use crate::{
@@ -957,25 +954,10 @@ pub async fn prepare_gateway(
         });
     }
 
-    // Spawn periodic update check against latest GitHub release.
+    // Spawn periodic update check against the releases manifest.
     let update_state = Arc::clone(&state);
-    let update_repository_url =
-        resolve_repository_url(config.server.update_repository_url.as_deref());
+    let releases_url = resolve_releases_url(config.server.update_releases_url.as_deref());
     tokio::spawn(async move {
-        let latest_release_api_url = match update_repository_url {
-            Some(repository_url) => match github_latest_release_api_url(&repository_url) {
-                Ok(url) => url,
-                Err(e) => {
-                    warn!("update checker disabled: {e}");
-                    return;
-                },
-            },
-            None => {
-                info!("update checker disabled: server.update_repository_url is not configured");
-                return;
-            },
-        };
-
         let client = match reqwest::Client::builder()
             .user_agent(format!("moltis-gateway/{}", update_state.version))
             .timeout(std::time::Duration::from_secs(12))
@@ -991,31 +973,23 @@ pub async fn prepare_gateway(
         let mut interval = tokio::time::interval(UPDATE_CHECK_INTERVAL);
         loop {
             interval.tick().await;
-            match fetch_update_availability(&client, &latest_release_api_url, &update_state.version)
-                .await
-            {
-                Ok(next) => {
-                    let changed = {
-                        let mut inner = update_state.inner.write().await;
-                        let update = &mut inner.update;
-                        if *update == next {
-                            false
-                        } else {
-                            *update = next.clone();
-                            true
-                        }
-                    };
-                    if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        })
-                        .await;
-                    }
-                },
-                Err(e) => {
-                    warn!("failed to check latest release: {e}");
-                },
+            let next = fetch_update_availability(&client, &releases_url, &update_state.version).await;
+            let changed = {
+                let mut inner = update_state.inner.write().await;
+                let update = &mut inner.update;
+                if *update == next {
+                    false
+                } else {
+                    *update = next.clone();
+                    true
+                }
+            };
+            if changed && let Ok(payload) = serde_json::to_value(&next) {
+                broadcast(&update_state, "update.available", payload, BroadcastOpts {
+                    drop_if_slow: true,
+                    ..Default::default()
+                })
+                .await;
             }
         }
     });

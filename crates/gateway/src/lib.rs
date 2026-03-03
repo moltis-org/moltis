@@ -35,6 +35,7 @@ pub mod mdns;
 pub mod message_log_store;
 pub mod methods;
 pub mod network_audit;
+pub mod node_exec;
 pub mod nodes;
 pub mod onboarding;
 pub mod pairing;

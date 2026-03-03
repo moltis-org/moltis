@@ -25,7 +25,7 @@ bind = "127.0.0.1"                # Address to bind to ("0.0.0.0" for all interf
 port = {port}                           # Port number (auto-generated for this installation)
 http_request_logs = false              # Enable verbose Axum HTTP request/response logs (debugging)
 ws_request_logs = false                # Enable WebSocket RPC request/response logs (debugging)
-update_repository_url = "https://github.com/moltis-org/moltis"    # GitHub repo used for update checks (comment out to disable)
+update_releases_url = "https://www.moltis.org/releases.json"    # Releases manifest URL for update checks (override to use a custom URL)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUTHENTICATION
@@ -401,6 +401,8 @@ max_instances = 3                 # Maximum concurrent browser instances
 idle_timeout_secs = 300           # Close idle browsers after this many seconds (5 min)
 navigation_timeout_ms = 30000     # Page load timeout in milliseconds (30 sec)
 sandbox = false                   # Run browser in Docker/Apple Container for isolation
+# container_host = "127.0.0.1"   # Host/IP to reach browser container (default: localhost)
+                                  # Set to "host.docker.internal" when Moltis runs inside Docker
 # chrome_path = "/path/to/chrome" # Custom Chrome/Chromium binary path (auto-detected)
 # user_agent = "Custom UA"        # Custom user agent string
 # chrome_args = []                # Extra Chrome command-line arguments

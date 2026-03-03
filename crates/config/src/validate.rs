@@ -113,6 +113,7 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("api_key", Leaf),
             ("base_url", Leaf),
+            ("url", Leaf),
             ("models", Leaf),
             ("fetch_models", Leaf),
             ("stream_transport", Leaf),
@@ -201,6 +202,8 @@ fn build_schema_map() -> KnownKeys {
             ("security_level", Leaf),
             ("allowlist", Leaf),
             ("sandbox", sandbox()),
+            ("host", Leaf),
+            ("node", Leaf),
         ]))
     };
 
@@ -224,6 +227,7 @@ fn build_schema_map() -> KnownKeys {
             ("low_memory_threshold_mb", Leaf),
             ("persist_profile", Leaf),
             ("profile_dir", Leaf),
+            ("container_host", Leaf),
         ]))
     };
 
@@ -347,7 +351,9 @@ fn build_schema_map() -> KnownKeys {
                 ("http_request_logs", Leaf),
                 ("ws_request_logs", Leaf),
                 ("log_buffer_size", Leaf),
-                ("update_repository_url", Leaf),
+                ("update_releases_url", Leaf),
+                ("db_pool_max_connections", Leaf),
+                ("shiki_cdn_url", Leaf),
             ])),
         ),
         ("providers", MapWithFields {
@@ -1145,6 +1151,31 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 ),
             });
         }
+    }
+
+    // Unknown exec host
+    let valid_exec_hosts = ["local", "node"];
+    if !valid_exec_hosts.contains(&config.tools.exec.host.as_str()) {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "tools.exec.host".into(),
+            message: format!(
+                "unknown exec host \"{}\"; expected one of: {}",
+                config.tools.exec.host,
+                valid_exec_hosts.join(", ")
+            ),
+        });
+    }
+
+    // Warn if host=node but no node specified
+    if config.tools.exec.host == "node" && config.tools.exec.node.is_none() {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "unknown-field",
+            path: "tools.exec.node".into(),
+            message: "tools.exec.host is \"node\" but no default node is specified; commands will fail unless a node connects".into(),
+        });
     }
 
     // Unknown exec security level
@@ -2221,6 +2252,25 @@ tool_mode = "text"
         assert!(
             unknown.is_none(),
             "tool_mode should be a known field, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn url_field_accepted_in_provider_entry() {
+        let toml = r#"
+[providers.ollama]
+enabled = true
+url = "http://192.168.0.9:11434"
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path.contains("providers.ollama.url"));
+        assert!(
+            unknown.is_none(),
+            "url should be accepted as a provider field alias, got: {:?}",
             result.diagnostics
         );
     }

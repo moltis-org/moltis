@@ -23,6 +23,7 @@ pub(crate) struct SpaRoutes {
     identity: &'static str,
     config: &'static str,
     logs: &'static str,
+    nodes: &'static str,
     onboarding: &'static str,
     projects: &'static str,
     skills: &'static str,
@@ -39,6 +40,7 @@ pub(crate) static SPA_ROUTES: SpaRoutes = SpaRoutes {
     identity: "/settings/identity",
     config: "/settings/config",
     logs: "/settings/logs",
+    nodes: "/settings/nodes",
     onboarding: "/onboarding",
     projects: "/projects",
     skills: "/skills",
@@ -379,6 +381,12 @@ pub(crate) static PROCESS_STARTED_AT_MS: std::sync::LazyLock<u64> =
 
 pub(crate) const SHARE_IMAGE_URL: &str = "https://www.moltis.org/og-social.jpg?v=4";
 
+/// Default Shiki CDN URL when `server.shiki_cdn_url` is unset.
+///
+/// Use the bundled esm.sh entrypoint to ensure submodule imports resolve
+/// correctly outside esm.sh origin.
+const DEFAULT_SHIKI_CDN_URL: &str = "https://esm.sh/shiki@3.2.1?bundle";
+
 #[derive(Clone, Copy)]
 pub(crate) enum SpaTemplate {
     Index,
@@ -406,6 +414,7 @@ struct IndexHtmlTemplate<'a> {
     share_image_url: &'a str,
     share_image_alt: &'a str,
     routes: &'a SpaRoutes,
+    shiki_url: &'a str,
 }
 
 #[derive(Template)]
@@ -504,6 +513,16 @@ pub(crate) async fn render_spa_template(
     };
 
     let nonce = uuid::Uuid::new_v4().to_string();
+
+    // Resolve Shiki URL from config override or default CDN.
+    let shiki_url = gateway
+        .inner
+        .read()
+        .await
+        .shiki_cdn_url
+        .clone()
+        .unwrap_or_else(|| DEFAULT_SHIKI_CDN_URL.to_owned());
+
     let body = match template {
         SpaTemplate::Index => {
             let gon = build_gon_data(gateway).await;
@@ -520,6 +539,7 @@ pub(crate) async fn render_spa_template(
                 share_image_url: SHARE_IMAGE_URL,
                 share_image_alt: &share_meta.image_alt,
                 routes: &SPA_ROUTES,
+                shiki_url: &shiki_url,
             };
             match template.render() {
                 Ok(html) => html,
@@ -569,9 +589,14 @@ pub(crate) async fn render_spa_template(
         },
     };
 
+    // Extract CDN origin from shiki_url for CSP script-src allowlisting.
+    let shiki_csp_origin = url::Url::parse(&shiki_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|host| format!("{}://{host}", u.scheme())));
+
     let csp = format!(
         "default-src 'self'; \
-         script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; \
+         script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'{shiki_origin}; \
          style-src 'self' 'unsafe-inline'; \
          img-src 'self' data: blob:; \
          media-src 'self' blob:; \
@@ -580,7 +605,11 @@ pub(crate) async fn render_spa_template(
          frame-ancestors 'none'; \
          form-action 'self'; \
          base-uri 'self'; \
-         object-src 'none'"
+         object-src 'none'",
+        shiki_origin = shiki_csp_origin
+            .as_deref()
+            .map(|o| format!(" {o}"))
+            .unwrap_or_default(),
     );
 
     let mut response = Html(body).into_response();

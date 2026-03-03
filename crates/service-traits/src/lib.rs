@@ -687,6 +687,8 @@ impl SkillsService for NoopSkillsStub {
 #[async_trait]
 pub trait BrowserService: Send + Sync {
     async fn request(&self, params: Value) -> ServiceResult;
+    /// Initialize browser internals opportunistically after startup.
+    async fn warmup(&self) {}
     /// Clean up idle browser instances (called periodically).
     async fn cleanup_idle(&self) {}
     /// Shut down all browser instances (called on gateway exit).

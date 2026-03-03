@@ -24,6 +24,7 @@ default-members = [
   "crates/metrics",
   "crates/msteams",
   "crates/network-filter",
+  "crates/node-host",
   "crates/oauth",
   "crates/onboarding",
   "crates/openclaw-import",
@@ -45,6 +46,7 @@ default-members = [
   "crates/tools",
   "crates/vault",
   "crates/voice",
+  "crates/wasm-precompile",
   "crates/wasm-tools/calc",
   "crates/wasm-tools/web-fetch",
   "crates/wasm-tools/web-search",
@@ -74,6 +76,7 @@ members = [
   "crates/memory",
   "crates/metrics",
   "crates/msteams",
+  "crates/node-host",
   "crates/oauth",
   "crates/onboarding",
   "crates/openclaw-import",
@@ -96,6 +99,7 @@ members = [
   "crates/tools",
   "crates/vault",
   "crates/voice",
+  "crates/wasm-precompile",
   "crates/wasm-tools/calc",
   "crates/wasm-tools/web-fetch",
   "crates/wasm-tools/web-search",
@@ -117,7 +121,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/moltis-org/moltis"
 rust-version = "1.91"
-version      = "0.10.7"
+version      = "0.10.11"
 
 [workspace.dependencies]
 # APNS
@@ -169,6 +173,7 @@ toml_edit         = "0.22"
 # LLM provider crates (optional, behind feature flags)
 async-openai = { features = ["chat-completion"], version = "0.32" }
 base64       = "0.22"
+bytemuck     = { features = ["derive"], version = "1" }
 bytes        = "1"
 encoding_rs  = "0.8"
 fd-lock      = "4"
@@ -305,6 +310,7 @@ moltis-memory          = { path = "crates/memory" }
 moltis-metrics         = { path = "crates/metrics" }
 moltis-msteams         = { path = "crates/msteams" }
 moltis-network-filter  = { default-features = false, path = "crates/network-filter" }
+moltis-node-host       = { path = "crates/node-host" }
 moltis-oauth           = { path = "crates/oauth" }
 moltis-onboarding      = { path = "crates/onboarding" }
 moltis-openclaw-import = { path = "crates/openclaw-import" }

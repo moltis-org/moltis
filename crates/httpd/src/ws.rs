@@ -71,14 +71,12 @@ pub async fn handle_connection(
         Ok(Ok(result)) => result,
         Ok(Err(e)) => {
             warn!(conn_id = %conn_id, error = %e, "ws: handshake failed");
-            drop(client_tx);
-            write_handle.abort();
+            graceful_writer_shutdown(client_tx, write_handle).await;
             return;
         },
         Err(_) => {
             warn!(conn_id = %conn_id, "ws: handshake timeout");
-            drop(client_tx);
-            write_handle.abort();
+            graceful_writer_shutdown(client_tx, write_handle).await;
             return;
         },
     };
@@ -106,6 +104,13 @@ pub async fn handle_connection(
 
     // Validate protocol version.
     if params.min_protocol > PROTOCOL_VERSION || params.max_protocol < PROTOCOL_VERSION {
+        warn!(
+            conn_id = %conn_id,
+            min_protocol = params.min_protocol,
+            max_protocol = params.max_protocol,
+            server_protocol = PROTOCOL_VERSION,
+            "ws: protocol mismatch"
+        );
         let err = ResponseFrame::err(
             &request_id,
             ErrorShape::new(
@@ -118,8 +123,7 @@ pub async fn handle_connection(
         );
         #[allow(clippy::unwrap_used)] // serializing known-valid struct
         let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
-        drop(client_tx);
-        write_handle.abort();
+        graceful_writer_shutdown(client_tx, write_handle).await;
         return;
     }
 
@@ -140,6 +144,33 @@ pub async fn handle_connection(
     let mut authenticated = header_authenticated;
     // Scopes from API key verification (if any).
     let mut api_key_scopes: Option<Vec<String>> = None;
+    // Device token verification result (if any).
+    let mut device_token_device_id: Option<String> = None;
+
+    // Check device token first (used by paired nodes).
+    if !authenticated
+        && let Some(ref dt) = params.auth.as_ref().and_then(|a| a.device_token.clone())
+        && let Some(ref store) = state.pairing_store
+    {
+        match store.verify_device_token(dt).await {
+            Ok(Some(verification)) => {
+                authenticated = true;
+                api_key_scopes = Some(verification.scopes.clone());
+                device_token_device_id = Some(verification.device_id.clone());
+                info!(
+                    conn_id = %conn_id,
+                    device_id = %verification.device_id,
+                    "ws: authenticated via device token"
+                );
+            },
+            Ok(None) => {
+                debug!(conn_id = %conn_id, "ws: device token not found or revoked");
+            },
+            Err(e) => {
+                debug!(conn_id = %conn_id, error = %e, "ws: device token verification failed");
+            },
+        }
+    }
 
     if !authenticated && let Some(ref cred_store) = state.credential_store {
         if cred_store.is_setup_complete() {
@@ -189,22 +220,54 @@ pub async fn handle_connection(
     }
 
     if !authenticated {
-        warn!(conn_id = %conn_id, "ws: auth failed");
+        let setup_complete = state
+            .credential_store
+            .as_ref()
+            .is_some_and(|store| store.is_setup_complete());
+        let has_api_key = params
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.api_key.as_ref())
+            .is_some();
+        let has_password = params
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.password.as_ref())
+            .is_some();
+        let has_token = params
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.token.as_ref())
+            .is_some();
+        warn!(
+            conn_id = %conn_id,
+            is_local,
+            header_authenticated,
+            setup_complete,
+            has_api_key,
+            has_password,
+            has_token,
+            "ws: auth failed"
+        );
         let err = ResponseFrame::err(
             &request_id,
             ErrorShape::new(error_codes::UNAUTHORIZED, "authentication failed"),
         );
         #[allow(clippy::unwrap_used)] // serializing known-valid struct
         let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
-        drop(client_tx);
-        write_handle.abort();
+        graceful_writer_shutdown(client_tx, write_handle).await;
         return;
     }
 
-    let role = params
-        .role
-        .clone()
-        .unwrap_or_else(|| roles::OPERATOR.into());
+    // Device-token-authenticated connections default to "node" role.
+    let role = if device_token_device_id.is_some() {
+        params.role.clone().unwrap_or_else(|| roles::NODE.into())
+    } else {
+        params
+            .role
+            .clone()
+            .unwrap_or_else(|| roles::OPERATOR.into())
+    };
 
     // Determine scopes based on auth method.
     // API keys MUST declare scopes explicitly — empty scopes means no access.
@@ -223,8 +286,7 @@ pub async fn handle_connection(
             );
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
             let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
-            drop(client_tx);
-            write_handle.abort();
+            graceful_writer_shutdown(client_tx, write_handle).await;
             return;
         },
         None => {
@@ -367,6 +429,17 @@ pub async fn handle_connection(
             path_env: params.path_env.clone(),
             remote_ip: Some(conn_remote_ip.clone()),
             connected_at: now,
+            mem_total: None,
+            mem_available: None,
+            cpu_count: None,
+            cpu_usage: None,
+            uptime_secs: None,
+            services: Vec::new(),
+            last_telemetry: None,
+            disk_total: None,
+            disk_available: None,
+            runtimes: Vec::new(),
+            providers: Vec::new(),
         };
         state.inner.write().await.nodes.register(node);
         info!(conn_id = %conn_id, node_id = %params.client.id, "node registered");
@@ -383,6 +456,31 @@ pub async fn handle_connection(
             BroadcastOpts::default(),
         )
         .await;
+
+        // Query provider discovery in the background (best-effort).
+        if params
+            .commands
+            .as_ref()
+            .is_some_and(|cmds| cmds.iter().any(|c| c == "system.providers"))
+        {
+            let prov_state = Arc::clone(&state);
+            let prov_node_id = params.client.id.clone();
+            tokio::spawn(async move {
+                match moltis_gateway::node_exec::query_node_providers(&prov_state, &prov_node_id)
+                    .await
+                {
+                    Ok(providers) => {
+                        let mut inner = prov_state.inner.write().await;
+                        if let Some(n) = inner.nodes.get_mut(&prov_node_id) {
+                            n.providers = providers;
+                        }
+                    },
+                    Err(e) => {
+                        debug!(node_id = %prov_node_id, error = %e, "provider discovery failed")
+                    },
+                }
+            });
+        }
     }
 
     // ── Message loop ─────────────────────────────────────────────────────
@@ -537,6 +635,14 @@ struct ConnectResult {
     request_id: String,
     params: ConnectParams,
     is_v4: bool,
+}
+
+async fn graceful_writer_shutdown(
+    client_tx: mpsc::Sender<String>,
+    write_handle: tokio::task::JoinHandle<()>,
+) {
+    drop(client_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(200), write_handle).await;
 }
 
 /// Wait for the first `connect` request frame. Tries v4 format first, falls back to v3.

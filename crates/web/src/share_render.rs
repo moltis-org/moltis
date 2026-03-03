@@ -383,8 +383,18 @@ pub(crate) fn map_share_message_views(
 
 static SHARE_SOCIAL_BRAND_ICON_DATA_URL: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| {
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode(include_bytes!("assets/icons/favicon-compact-512.png"));
+        let png_bytes = crate::assets::read_asset_bytes("icons/favicon-compact-512.png")
+            .unwrap_or_else(|| {
+                #[cfg(feature = "embedded-assets")]
+                {
+                    include_bytes!("assets/icons/favicon-compact-512.png").to_vec()
+                }
+                #[cfg(not(feature = "embedded-assets"))]
+                {
+                    Vec::new()
+                }
+            });
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
         format!("data:image/png;base64,{encoded}")
     });
 

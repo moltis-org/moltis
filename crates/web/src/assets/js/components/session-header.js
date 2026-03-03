@@ -5,6 +5,7 @@
 
 import { html } from "htm/preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { onEvent } from "../events.js";
 import { parseAgentsListPayload, sendRpc } from "../helpers.js";
 import {
 	clearActiveSession,
@@ -57,6 +58,8 @@ export function SessionHeader() {
 	var [switchingAgent, setSwitchingAgent] = useState(false);
 	var [agentOptions, setAgentOptions] = useState([]);
 	var [defaultAgentId, setDefaultAgentId] = useState("main");
+	var [nodeOptions, setNodeOptions] = useState([]);
+	var [switchingNode, setSwitchingNode] = useState(false);
 	var inputRef = useRef(null);
 
 	var fullName = session ? session.label || session.key : currentKey;
@@ -70,6 +73,7 @@ export function SessionHeader() {
 	var canRename = !(isMain || isChannel || isCron);
 	var canStop = !isCron && replying;
 	var currentAgentId = session?.agent_id || defaultAgentId || "main";
+	var currentNodeId = session?.node_id || "";
 
 	useEffect(() => {
 		var cancelled = false;
@@ -81,6 +85,25 @@ export function SessionHeader() {
 		});
 		return () => {
 			cancelled = true;
+		};
+	}, [currentKey]);
+
+	// Fetch connected nodes and subscribe to presence updates.
+	useEffect(() => {
+		var cancelled = false;
+		var fetchNodes = () => {
+			sendRpc("node.list", {}).then((res) => {
+				if (cancelled || !res?.ok) return;
+				setNodeOptions(Array.isArray(res.payload) ? res.payload : []);
+			});
+		};
+		fetchNodes();
+		var unsub = onEvent("presence", () => {
+			if (!cancelled) fetchNodes();
+		});
+		return () => {
+			cancelled = true;
+			unsub();
 		};
 	}, [currentKey]);
 
@@ -242,6 +265,33 @@ export function SessionHeader() {
 		[currentAgentId, currentKey, session, switchingAgent],
 	);
 
+	var onNodeChange = useCallback(
+		(event) => {
+			var nextNodeId = event.target.value;
+			if (switchingNode) return;
+			setSwitchingNode(true);
+			sendRpc("nodes.set_session", {
+				session_key: currentKey,
+				node_id: nextNodeId || null,
+			})
+				.then((res) => {
+					if (!res?.ok) {
+						showToast(res?.error?.message || "Failed to switch node", "error");
+						return;
+					}
+					if (session) {
+						session.node_id = nextNodeId || null;
+						session.dataVersion.value++;
+					}
+					fetchSessions();
+				})
+				.finally(() => {
+					setSwitchingNode(false);
+				});
+		},
+		[currentKey, session, switchingNode],
+	);
+
 	var agentSelectValue = currentAgentId;
 	var hasCurrentAgentOption = agentOptions.some((agent) => agent.id === agentSelectValue);
 	var selectDisabled = switchingAgent || agentOptions.length === 0;
@@ -273,6 +323,30 @@ export function SessionHeader() {
 						return html`
 							<option key=${agent.id} value=${agent.id}>
 								${`${prefix}${agent.name}${suffix}`}
+							</option>
+						`;
+					})}
+				</select>
+			`
+			}
+			${
+				!isCron &&
+				nodeOptions.length > 0 &&
+				html`
+				<select
+					class="chat-session-btn"
+					value=${currentNodeId}
+					onChange=${onNodeChange}
+					disabled=${switchingNode}
+					title="Session node"
+					style="max-width:160px;text-overflow:ellipsis;"
+				>
+					<option value="">Local</option>
+					${nodeOptions.map((node) => {
+						var label = node.displayName || node.nodeId;
+						return html`
+							<option key=${node.nodeId} value=${node.nodeId}>
+								${label}
 							</option>
 						`;
 					})}

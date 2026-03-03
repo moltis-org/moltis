@@ -83,13 +83,15 @@ function updateNavActiveState(path) {
 }
 
 export function mount(path) {
-	teardownCurrentPage();
-	pageContent.textContent = "";
-	pageContent.style.cssText = "";
-	currentPrefix = null;
-
 	var route = findPageRoute(path);
 	var page = route.page;
+	var samePrefixNav = route.matchedPrefix && route.matchedPrefix === currentPrefix;
+
+	if (!samePrefixNav) {
+		teardownCurrentPage();
+		pageContent.textContent = "";
+		pageContent.style.cssText = "";
+	}
 
 	currentPage = path;
 	currentPrefix = route.matchedPrefix;
