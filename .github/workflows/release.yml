@@ -1467,8 +1467,14 @@ jobs:
           # Fly.io
           sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
 
+          # Website releases.json
+          jq --arg v "$VERSION" \
+            '.stable.version = $v | .stable.release_url = "https://github.com/moltis-org/moltis/releases/tag/v" + $v' \
+            website/releases.json > website/releases.json.tmp \
+            && mv website/releases.json.tmp website/releases.json
+
           # Check if any files changed
-          if git diff --quiet .do/deploy.template.yaml render.yaml fly.toml; then
+          if git diff --quiet .do/deploy.template.yaml render.yaml fly.toml website/releases.json; then
             echo "No deploy template changes needed"
             exit 0
           fi
@@ -1488,6 +1494,9 @@ jobs:
           FLY_BLOB=$(gh api "repos/${REPO}/git/blobs" \
             -f content="$(base64 -w0 fly.toml)" \
             -f encoding=base64 --jq '.sha')
+          RELEASES_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 website/releases.json)" \
+            -f encoding=base64 --jq '.sha')
 
           # Create a new tree with the updated files (JSON input for proper array structure)
           TREE_SHA=$(jq -n \
@@ -1495,18 +1504,20 @@ jobs:
             --arg do_sha "$DO_BLOB" \
             --arg render_sha "$RENDER_BLOB" \
             --arg fly_sha "$FLY_BLOB" \
+            --arg releases_sha "$RELEASES_BLOB" \
             '{
               base_tree: $base,
               tree: [
                 {path: ".do/deploy.template.yaml", mode: "100644", type: "blob", sha: $do_sha},
                 {path: "render.yaml", mode: "100644", type: "blob", sha: $render_sha},
-                {path: "fly.toml", mode: "100644", type: "blob", sha: $fly_sha}
+                {path: "fly.toml", mode: "100644", type: "blob", sha: $fly_sha},
+                {path: "website/releases.json", mode: "100644", type: "blob", sha: $releases_sha}
               ]
             }' | gh api "repos/${REPO}/git/trees" --input - --jq '.sha')
 
           # Create a signed commit
           COMMIT_SHA=$(jq -n \
-            --arg msg "chore: update deploy templates to ${VERSION}" \
+            --arg msg "chore: update deploy templates and releases to ${VERSION}" \
             --arg tree "$TREE_SHA" \
             --arg parent "$MAIN_SHA" \
             '{message: $msg, tree: $tree, parents: [$parent]}' \

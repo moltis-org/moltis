@@ -86,6 +86,18 @@ pub async fn ensure_local_model_cached(
         return download_legacy_model(def, &cache_dir, state).await;
     }
 
+    // Check if it's a HuggingFace repo ID (e.g. mlx-community/Model-Name)
+    if local_llm::models::is_hf_repo_id(model_id) {
+        let is_cached = local_llm::models::is_mlx_repo_cached(model_id, &cache_dir);
+        info!(model_id, is_cached, "HuggingFace repo ID detected");
+
+        if is_cached {
+            return Ok(false);
+        }
+
+        return download_hf_mlx_repo(model_id, &cache_dir, state).await;
+    }
+
     // Unknown model - let the provider handle it (will fail with a clear error)
     info!(model_id, "model not found in any registry");
     Ok(false)
@@ -299,6 +311,100 @@ async fn download_legacy_model(
         },
         Err(e) => {
             // Broadcast error
+            broadcast(
+                state,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id,
+                    "error": e.to_string(),
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+            Err(LocalModelCacheError::message(format!(
+                "Failed to download model: {e}"
+            )))
+        },
+    }
+}
+
+/// Download an arbitrary HuggingFace MLX repo with progress broadcasting.
+async fn download_hf_mlx_repo(
+    hf_repo: &str,
+    cache_dir: &std::path::Path,
+    state: &Arc<GatewayState>,
+) -> LocalModelCacheResult<bool> {
+    let model_id = hf_repo.to_string();
+    let display_name = format!("{} (custom MLX)", hf_repo);
+
+    broadcast(
+        state,
+        "local-llm.download",
+        serde_json::json!({
+            "modelId": model_id,
+            "displayName": display_name,
+            "status": "starting",
+            "message": "Missing model on disk, downloading...",
+        }),
+        BroadcastOpts::default(),
+    )
+    .await;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(u64, Option<u64>)>();
+    let state_for_progress = Arc::clone(state);
+    let model_id_for_broadcast = model_id.clone();
+    let display_name_for_broadcast = display_name.clone();
+
+    let broadcast_task = tokio::spawn(async move {
+        while let Some((downloaded, total)) = rx.recv().await {
+            let progress = total.map(|t| {
+                if t > 0 {
+                    (downloaded as f64 / t as f64 * 100.0).min(100.0)
+                } else {
+                    0.0
+                }
+            });
+            broadcast(
+                &state_for_progress,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id_for_broadcast,
+                    "displayName": display_name_for_broadcast,
+                    "downloaded": downloaded,
+                    "total": total,
+                    "progress": progress,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+        }
+    });
+
+    let result = local_llm::models::ensure_mlx_repo_with_progress(hf_repo, cache_dir, |p| {
+        let _ = tx.send((p.downloaded, p.total));
+    })
+    .await;
+
+    drop(tx);
+    let _ = broadcast_task.await;
+
+    match result {
+        Ok(_) => {
+            broadcast(
+                state,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id,
+                    "displayName": display_name,
+                    "progress": 100.0,
+                    "complete": true,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+            Ok(true)
+        },
+        Err(e) => {
             broadcast(
                 state,
                 "local-llm.download",
@@ -971,16 +1077,22 @@ impl LocalLlmService for LiveLocalLlmService {
             return Err("GGUF models require 'hfFilename' parameter".into());
         }
 
-        // Generate a model ID from the repo name
-        let model_id = format!(
-            "custom-{}",
-            hf_repo
-                .split('/')
-                .next_back()
-                .unwrap_or(&hf_repo)
-                .to_lowercase()
-                .replace(' ', "-")
-        );
+        // For MLX models, use the HuggingFace repo ID directly as the model ID
+        // so the provider can download it automatically. For GGUF, keep the
+        // custom- prefix since the repo alone isn't enough (needs filename).
+        let model_id = if backend == "MLX" {
+            hf_repo.clone()
+        } else {
+            format!(
+                "custom-{}",
+                hf_repo
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(&hf_repo)
+                    .to_lowercase()
+                    .replace(' ', "-")
+            )
+        };
 
         info!(model = %model_id, repo = %hf_repo, backend = %backend, "configuring custom model");
 

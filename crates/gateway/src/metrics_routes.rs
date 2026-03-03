@@ -126,7 +126,7 @@ pub async fn api_metrics_summary_handler(State(state): State<AppState>) -> impl 
 
 /// Historical metrics data for time-series charts.
 ///
-/// Returns the last hour of metrics snapshots (sampled every 10 seconds)
+/// Returns metrics snapshots (sampled every 30 seconds)
 /// for rendering charts in the monitoring UI.
 #[cfg(feature = "metrics")]
 pub async fn api_metrics_history_handler(State(state): State<AppState>) -> impl IntoResponse {

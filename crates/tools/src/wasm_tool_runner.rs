@@ -181,6 +181,61 @@ impl WasmToolRunner {
         )
     }
 
+    /// Create a pure-tool runner from pre-compiled `.cwasm` bytes (AOT, no Cranelift at runtime).
+    ///
+    /// # Safety
+    /// `precompiled` must originate from `Engine::precompile_component` with the same config.
+    #[allow(unsafe_code)]
+    pub unsafe fn new_precompiled(
+        engine: Arc<WasmComponentEngine>,
+        precompiled: &[u8],
+        fuel_limit: u64,
+        memory_limit_bytes: usize,
+        timeout: Duration,
+        epoch_interval_ms: u64,
+    ) -> Result<Self> {
+        // SAFETY: caller guarantees the bytes are from a compatible precompile.
+        unsafe {
+            Self::new_inner_precompiled(
+                engine,
+                precompiled,
+                fuel_limit,
+                memory_limit_bytes,
+                timeout,
+                epoch_interval_ms,
+                None,
+            )
+        }
+    }
+
+    /// Create an HTTP-capable tool runner from pre-compiled `.cwasm` bytes (AOT).
+    ///
+    /// # Safety
+    /// `precompiled` must originate from `Engine::precompile_component` with the same config.
+    #[allow(unsafe_code)]
+    pub unsafe fn new_http_precompiled(
+        engine: Arc<WasmComponentEngine>,
+        precompiled: &[u8],
+        fuel_limit: u64,
+        memory_limit_bytes: usize,
+        timeout: Duration,
+        epoch_interval_ms: u64,
+        http_host: HttpHostImpl,
+    ) -> Result<Self> {
+        // SAFETY: caller guarantees the bytes are from a compatible precompile.
+        unsafe {
+            Self::new_inner_precompiled(
+                engine,
+                precompiled,
+                fuel_limit,
+                memory_limit_bytes,
+                timeout,
+                epoch_interval_ms,
+                Some(http_host),
+            )
+        }
+    }
+
     fn new_inner(
         engine: Arc<WasmComponentEngine>,
         wasm_bytes: &[u8],
@@ -194,6 +249,44 @@ impl WasmToolRunner {
             .compile_component(wasm_bytes)
             .context("failed to compile wasm component")?;
         let component_hash = hash_component_bytes(wasm_bytes);
+        let metadata =
+            Self::load_metadata(&engine, &component, memory_limit_bytes, http_host.as_ref())?;
+        Ok(Self {
+            engine,
+            component,
+            component_hash,
+            name: metadata.name,
+            description: metadata.description,
+            parameters_schema: metadata.parameters_schema,
+            fuel_limit,
+            memory_limit_bytes,
+            timeout,
+            epoch_interval_ms,
+            http_host,
+        })
+    }
+
+    /// Inner constructor for pre-compiled (AOT) components.
+    ///
+    /// # Safety
+    /// `precompiled` must originate from `Engine::precompile_component` with the same config.
+    #[allow(unsafe_code)]
+    unsafe fn new_inner_precompiled(
+        engine: Arc<WasmComponentEngine>,
+        precompiled: &[u8],
+        fuel_limit: u64,
+        memory_limit_bytes: usize,
+        timeout: Duration,
+        epoch_interval_ms: u64,
+        http_host: Option<HttpHostImpl>,
+    ) -> Result<Self> {
+        // SAFETY: caller guarantees the bytes are from a compatible precompile.
+        let component = unsafe {
+            engine
+                .deserialize_component(precompiled)
+                .context("failed to deserialize precompiled wasm component")?
+        };
+        let component_hash = hash_component_bytes(precompiled);
         let metadata =
             Self::load_metadata(&engine, &component, memory_limit_bytes, http_host.as_ref())?;
         Ok(Self {
@@ -403,17 +496,35 @@ pub fn register_wasm_tools(
         Arc::new(WasmComponentEngine::new(None).context("failed to create wasm component engine")?);
 
     // --- calc (pure tool) ---
+    let precompiled = crate::embedded_wasm::is_precompiled();
     match crate::embedded_wasm::calc_component_bytes() {
         Ok(calc_bytes) => {
             let (fuel, memory) = wasm_limits.resolve_store_limits("calc");
-            match WasmToolRunner::new(
-                Arc::clone(&wasm_engine),
-                calc_bytes.as_ref(),
-                fuel,
-                memory,
-                Duration::from_secs(2),
-                epoch_interval_ms,
-            ) {
+            #[allow(unsafe_code)]
+            let runner_result = if precompiled {
+                // SAFETY: release-mode bytes come from include_bytes! of a .cwasm
+                // produced by Engine::precompile_component with the same config.
+                unsafe {
+                    WasmToolRunner::new_precompiled(
+                        Arc::clone(&wasm_engine),
+                        calc_bytes.as_ref(),
+                        fuel,
+                        memory,
+                        Duration::from_secs(2),
+                        epoch_interval_ms,
+                    )
+                }
+            } else {
+                WasmToolRunner::new(
+                    Arc::clone(&wasm_engine),
+                    calc_bytes.as_ref(),
+                    fuel,
+                    memory,
+                    Duration::from_secs(2),
+                    epoch_interval_ms,
+                )
+            };
+            match runner_result {
                 Ok(runner) => {
                     let hash = runner.component_hash();
                     registry.register_wasm(Box::new(runner), hash);
@@ -439,15 +550,32 @@ pub fn register_wasm_tools(
                 HashMap::new(),
             ) {
                 Ok(http_host) => {
-                    match WasmToolRunner::new_http(
-                        Arc::clone(&wasm_engine),
-                        fetch_bytes.as_ref(),
-                        fuel,
-                        memory,
-                        Duration::from_secs(5),
-                        epoch_interval_ms,
-                        http_host,
-                    ) {
+                    #[allow(unsafe_code)]
+                    let runner_result = if precompiled {
+                        // SAFETY: see calc comment above.
+                        unsafe {
+                            WasmToolRunner::new_http_precompiled(
+                                Arc::clone(&wasm_engine),
+                                fetch_bytes.as_ref(),
+                                fuel,
+                                memory,
+                                Duration::from_secs(5),
+                                epoch_interval_ms,
+                                http_host,
+                            )
+                        }
+                    } else {
+                        WasmToolRunner::new_http(
+                            Arc::clone(&wasm_engine),
+                            fetch_bytes.as_ref(),
+                            fuel,
+                            memory,
+                            Duration::from_secs(5),
+                            epoch_interval_ms,
+                            http_host,
+                        )
+                    };
+                    match runner_result {
                         Ok(runner) => {
                             let hash = runner.component_hash();
                             let cache_ttl =
@@ -490,15 +618,32 @@ pub fn register_wasm_tools(
                 secret_headers,
             ) {
                 Ok(http_host) => {
-                    match WasmToolRunner::new_http(
-                        Arc::clone(&wasm_engine),
-                        search_bytes.as_ref(),
-                        fuel,
-                        memory,
-                        Duration::from_secs(5),
-                        epoch_interval_ms,
-                        http_host,
-                    ) {
+                    #[allow(unsafe_code)]
+                    let runner_result = if precompiled {
+                        // SAFETY: see calc comment above.
+                        unsafe {
+                            WasmToolRunner::new_http_precompiled(
+                                Arc::clone(&wasm_engine),
+                                search_bytes.as_ref(),
+                                fuel,
+                                memory,
+                                Duration::from_secs(5),
+                                epoch_interval_ms,
+                                http_host,
+                            )
+                        }
+                    } else {
+                        WasmToolRunner::new_http(
+                            Arc::clone(&wasm_engine),
+                            search_bytes.as_ref(),
+                            fuel,
+                            memory,
+                            Duration::from_secs(5),
+                            epoch_interval_ms,
+                            http_host,
+                        )
+                    };
+                    match runner_result {
                         Ok(runner) => {
                             let hash = runner.component_hash();
                             let cache_ttl =

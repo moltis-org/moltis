@@ -8,21 +8,25 @@ use crate::Result;
 #[cfg(all(feature = "wasm", debug_assertions))]
 use crate::error::Context;
 
+// ── Release: embed pre-compiled .cwasm (AOT) ─────────────────────────────────
+
 #[cfg(all(feature = "wasm", not(debug_assertions)))]
 const CALC_COMPONENT_RELEASE_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../target/wasm32-wasip2/release/moltis_wasm_calc.wasm"
+    "/../../target/wasm32-wasip2/release/moltis_wasm_calc.cwasm"
 ));
 #[cfg(all(feature = "wasm", not(debug_assertions)))]
 const WEB_FETCH_COMPONENT_RELEASE_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm"
+    "/../../target/wasm32-wasip2/release/moltis_wasm_web_fetch.cwasm"
 ));
 #[cfg(all(feature = "wasm", not(debug_assertions)))]
 const WEB_SEARCH_COMPONENT_RELEASE_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../target/wasm32-wasip2/release/moltis_wasm_web_search.wasm"
+    "/../../target/wasm32-wasip2/release/moltis_wasm_web_search.cwasm"
 ));
+
+// ── Debug: load raw .wasm from disk (JIT compiled) ───────────────────────────
 
 #[cfg(all(feature = "wasm", debug_assertions))]
 fn component_debug_path(file_name: &str) -> PathBuf {
@@ -44,9 +48,8 @@ fn load_component_debug_bytes(file_name: &str, tool_name: &str) -> Result<Cow<'s
 
 /// Load the embedded calc component bytes.
 ///
-/// In debug builds this reads the guest artifact from `target/` so iterative
-/// development can rebuild the component without relinking the host.
-/// In release builds this uses `include_bytes!` for deterministic embedding.
+/// In debug builds this reads the raw `.wasm` from `target/` (JIT compiled).
+/// In release builds this returns pre-compiled `.cwasm` bytes (AOT).
 #[cfg(feature = "wasm")]
 pub fn calc_component_bytes() -> Result<Cow<'static, [u8]>> {
     #[cfg(debug_assertions)]
@@ -61,6 +64,8 @@ pub fn calc_component_bytes() -> Result<Cow<'static, [u8]>> {
 }
 
 /// Load the embedded web_fetch component bytes.
+///
+/// Debug: raw `.wasm` (JIT). Release: pre-compiled `.cwasm` (AOT).
 #[cfg(feature = "wasm")]
 pub fn web_fetch_component_bytes() -> Result<Cow<'static, [u8]>> {
     #[cfg(debug_assertions)]
@@ -75,6 +80,8 @@ pub fn web_fetch_component_bytes() -> Result<Cow<'static, [u8]>> {
 }
 
 /// Load the embedded web_search component bytes.
+///
+/// Debug: raw `.wasm` (JIT). Release: pre-compiled `.cwasm` (AOT).
 #[cfg(feature = "wasm")]
 pub fn web_search_component_bytes() -> Result<Cow<'static, [u8]>> {
     #[cfg(debug_assertions)]
@@ -86,4 +93,13 @@ pub fn web_search_component_bytes() -> Result<Cow<'static, [u8]>> {
     {
         Ok(Cow::Borrowed(WEB_SEARCH_COMPONENT_RELEASE_BYTES))
     }
+}
+
+/// Whether the embedded bytes are pre-compiled (`.cwasm`) or raw (`.wasm`).
+///
+/// Used by `register_wasm_tools()` to choose between `deserialize_component()`
+/// and `compile_component()`.
+#[cfg(feature = "wasm")]
+pub fn is_precompiled() -> bool {
+    !cfg!(debug_assertions)
 }

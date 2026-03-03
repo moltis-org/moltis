@@ -58,6 +58,7 @@ export default {
 		testing: "Testing\u2026",
 	},
 	preferredModels: {
+		button: "Modèles préférés",
 		title: "{{provider}} — Preferred Models",
 		loadingModels: "Loading models...",
 		noModelsAvailable: "No models available yet. Try running Detect All Models first.",

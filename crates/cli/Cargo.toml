@@ -91,7 +91,6 @@ default = [
   "trusted-network",
   "vault",
   "voice",
-  "wasm",
   "web-ui",
   "whatsapp",
 ]

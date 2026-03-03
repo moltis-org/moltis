@@ -284,6 +284,17 @@ pub fn models_for_backend(backend: BackendType) -> Vec<&'static LocalModelDef> {
     }
 }
 
+/// Check if a model ID looks like a HuggingFace repository ID (e.g. `mlx-community/Qwen3.5-4B-MLX-4bit`).
+#[must_use]
+pub fn is_hf_repo_id(model_id: &str) -> bool {
+    let parts: Vec<&str> = model_id.splitn(2, '/').collect();
+    parts.len() == 2
+        && !parts[0].is_empty()
+        && !parts[1].is_empty()
+        && !model_id.contains(' ')
+        && !model_id.starts_with('/')
+}
+
 /// Default cache directory for downloaded models.
 ///
 /// Returns `~/.moltis/models` (same base as config/data directories).
@@ -567,6 +578,145 @@ where
         total_size_mb = total_downloaded / (1024 * 1024),
         model = model.id,
         "MLX model downloaded successfully"
+    );
+
+    Ok(model_dir)
+}
+
+/// Check if an arbitrary HuggingFace MLX repo is cached locally.
+#[must_use]
+pub fn is_mlx_repo_cached(hf_repo: &str, cache_dir: &std::path::Path) -> bool {
+    let model_dir_name = hf_repo.replace('/', "__");
+    let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+
+    let config_path = model_dir.join("config.json");
+    let model_path = model_dir.join("model.safetensors");
+    let index_path = model_dir.join("model.safetensors.index.json");
+
+    config_path.exists() && (model_path.exists() || index_path.exists())
+}
+
+/// Ensure an arbitrary HuggingFace MLX repo is downloaded, returning the path to
+/// the model directory.
+///
+/// Unlike [`ensure_mlx_model`], this accepts any HuggingFace repo ID (e.g.
+/// `mlx-community/Qwen3.5-4B-MLX-4bit`) and does not require the model to be
+/// in the built-in catalog.
+pub async fn ensure_mlx_repo(
+    hf_repo: &str,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<PathBuf> {
+    ensure_mlx_repo_with_progress(hf_repo, cache_dir, |_| {}).await
+}
+
+/// Ensure an arbitrary HuggingFace MLX repo is downloaded with progress reporting.
+pub async fn ensure_mlx_repo_with_progress<F>(
+    hf_repo: &str,
+    cache_dir: &std::path::Path,
+    mut on_progress: F,
+) -> anyhow::Result<PathBuf>
+where
+    F: FnMut(DownloadProgress),
+{
+    let model_dir_name = hf_repo.replace('/', "__");
+    let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+
+    // Check if model is already fully downloaded
+    let config_path = model_dir.join("config.json");
+    let model_path = model_dir.join("model.safetensors");
+    let index_path = model_dir.join("model.safetensors.index.json");
+
+    if config_path.exists() && (model_path.exists() || index_path.exists()) {
+        info!(
+            path = %model_dir.display(),
+            hf_repo,
+            "custom MLX model found in cache"
+        );
+        return Ok(model_dir);
+    }
+
+    tokio::fs::create_dir_all(&model_dir)
+        .await
+        .context("creating MLX model cache dir")?;
+
+    info!(
+        hf_repo,
+        "downloading custom MLX model from HuggingFace"
+    );
+
+    let files = list_hf_repo_files(hf_repo).await?;
+    debug!(file_count = files.len(), "found files in HuggingFace repo");
+
+    let files_to_download: Vec<String> = files
+        .into_iter()
+        .filter(|f| {
+            MLX_MODEL_FILES.contains(&f.as_str())
+                || MLX_SHARD_PATTERNS
+                    .iter()
+                    .any(|p| f.starts_with(p) && f.ends_with(".safetensors"))
+                || f.ends_with(".safetensors")
+        })
+        .collect();
+
+    if files_to_download.is_empty() {
+        bail!(
+            "no model files found in HuggingFace repo '{}'. Is this an MLX model repository?",
+            hf_repo
+        );
+    }
+
+    info!(
+        files = ?files_to_download,
+        "downloading {} files for custom MLX model",
+        files_to_download.len()
+    );
+
+    let mut total_downloaded: u64 = 0;
+    for filename in &files_to_download {
+        let file_path = model_dir.join(filename);
+
+        if file_path.exists() {
+            debug!(file = filename, "file already cached, skipping");
+            continue;
+        }
+
+        if let Some(parent) = file_path.parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
+
+        let url = format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            hf_repo, filename
+        );
+        debug!(url = %url, file = filename, "downloading file");
+
+        let downloaded = download_file(&url, &file_path, |progress| {
+            on_progress(DownloadProgress {
+                downloaded: total_downloaded + progress.downloaded,
+                total: None,
+            });
+        })
+        .await
+        .with_context(|| format!("downloading {}", filename))?;
+
+        total_downloaded += downloaded;
+        debug!(
+            file = filename,
+            size_mb = downloaded / (1024 * 1024),
+            "file downloaded"
+        );
+    }
+
+    on_progress(DownloadProgress {
+        downloaded: total_downloaded,
+        total: Some(total_downloaded),
+    });
+
+    info!(
+        path = %model_dir.display(),
+        total_size_mb = total_downloaded / (1024 * 1024),
+        hf_repo,
+        "custom MLX model downloaded successfully"
     );
 
     Ok(model_dir)
@@ -969,5 +1119,84 @@ mod tests {
             std::fs::write(mlx_dir.join("model.safetensors"), b"fake").unwrap();
             assert!(is_model_cached(model, BackendType::Mlx, cache_dir));
         }
+    }
+
+    // ── HuggingFace Repo ID Tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_is_hf_repo_id_valid() {
+        assert!(is_hf_repo_id("mlx-community/Qwen3.5-4B-MLX-4bit"));
+        assert!(is_hf_repo_id("mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"));
+        assert!(is_hf_repo_id("bartowski/Llama-3.2-1B-Instruct-GGUF"));
+        assert!(is_hf_repo_id("org/model"));
+    }
+
+    #[test]
+    fn test_is_hf_repo_id_invalid() {
+        assert!(!is_hf_repo_id("qwen2.5-coder-7b-q4_k_m"));
+        assert!(!is_hf_repo_id(""));
+        assert!(!is_hf_repo_id("/model"));
+        assert!(!is_hf_repo_id("org/"));
+        assert!(!is_hf_repo_id("has space/model"));
+        assert!(!is_hf_repo_id("no-slash"));
+    }
+
+    #[test]
+    fn test_is_mlx_repo_cached_returns_false_when_not_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        assert!(!is_mlx_repo_cached(
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+            cache_dir
+        ));
+    }
+
+    #[test]
+    fn test_is_mlx_repo_cached_returns_true_when_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let repo = "mlx-community/Qwen3.5-4B-MLX-4bit";
+        let model_dir = cache_dir
+            .join("mlx")
+            .join("mlx-community__Qwen3.5-4B-MLX-4bit");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+        std::fs::write(model_dir.join("model.safetensors"), b"fake").unwrap();
+
+        assert!(is_mlx_repo_cached(repo, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_repo_cached_returns_true_with_sharded() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let repo = "mlx-community/Qwen3.5-4B-MLX-4bit";
+        let model_dir = cache_dir
+            .join("mlx")
+            .join("mlx-community__Qwen3.5-4B-MLX-4bit");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+        std::fs::write(model_dir.join("model.safetensors.index.json"), b"{}").unwrap();
+
+        assert!(is_mlx_repo_cached(repo, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_repo_cached_returns_false_when_incomplete() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let repo = "mlx-community/Qwen3.5-4B-MLX-4bit";
+        let model_dir = cache_dir
+            .join("mlx")
+            .join("mlx-community__Qwen3.5-4B-MLX-4bit");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+        // Missing model.safetensors and index
+
+        assert!(!is_mlx_repo_cached(repo, cache_dir));
     }
 }

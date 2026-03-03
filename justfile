@@ -33,9 +33,10 @@ build: build-css
 build-release:
     cargo build --release
 
-# Build embedded WASM guest tools for component execution.
+# Build embedded WASM guest tools and pre-compile to .cwasm for AOT loading.
 wasm-tools:
     cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+    cargo run -p moltis-wasm-precompile --release
 
 # Run local dev server with workspace-local config/data dirs.
 dev-server:

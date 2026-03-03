@@ -216,34 +216,11 @@ var sections = [
 		icon: html`<span class="icon icon-microphone"></span>`,
 	},
 	{ group: "Systems" },
-	{
-		id: "terminal",
-		label: "Terminal",
-		icon: html`<span class="icon icon-terminal"></span>`,
-		page: true,
-	},
-	{
-		id: "monitoring",
-		label: "Monitoring",
-		icon: html`<span class="icon icon-chart-bar"></span>`,
-		page: true,
-	},
-	{
-		id: "logs",
-		label: "Logs",
-		icon: html`<span class="icon icon-document"></span>`,
-		page: true,
-	},
-	{
-		id: "graphql",
-		label: "GraphQL",
-		icon: html`<span class="icon icon-graphql"></span>`,
-	},
-	{
-		id: "config",
-		label: "Configuration",
-		icon: html`<span class="icon icon-code"></span>`,
-	},
+	{ id: "terminal", label: "Terminal", page: true },
+	{ id: "monitoring", label: "Monitoring", page: true },
+	{ id: "logs", label: "Logs", page: true },
+	{ id: "graphql", label: "GraphQL" },
+	{ id: "config", label: "Configuration" },
 ];
 
 function getVisibleSections() {
@@ -285,6 +262,7 @@ function SettingsSidebar() {
 					: html`<button
 							key=${s.id}
 							class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
+							data-section=${s.id}
 							onClick=${() => {
 								if (isMobileViewport()) {
 									mobileSidebarVisible.value = false;
@@ -293,7 +271,6 @@ function SettingsSidebar() {
 								navigate(settingsPath(s.id));
 							}}
 						>
-							${s.icon}
 							${s.label}
 						</button>`,
 			)}
