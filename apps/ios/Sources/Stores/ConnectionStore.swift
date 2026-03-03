@@ -84,14 +84,19 @@ final class ConnectionStore: ObservableObject {
 
             // Fetch identity
             await fetchIdentity()
+            authManager.updateServerEmoji(agentEmoji, for: server.id)
 
             // Load initial data
             await sessionStore.loadSessions()
             await modelStore.loadModels()
 
         } catch {
-            logger.error("Connection failed: \(error.localizedDescription)")
-            state = .error(error.localizedDescription)
+            let userMessage = await connectionFailureMessage(
+                error: error,
+                server: server
+            )
+            logger.error("Connection failed: \(userMessage, privacy: .public)")
+            state = .error(userMessage)
         }
     }
 
@@ -159,6 +164,87 @@ final class ConnectionStore: ObservableObject {
             }
         } catch {
             logger.debug("Could not fetch identity: \(error.localizedDescription)")
+        }
+    }
+
+    private func connectionFailureMessage(error: Error, server: ServerConnection) async -> String {
+        let nsError = error as NSError
+        let domain = nsError.domain
+        let code = nsError.code
+        logger.error(
+            "Connection failure detail domain=\(domain, privacy: .public) code=\(code) description=\(error.localizedDescription, privacy: .public)"
+        )
+
+        if let authError = error as? AuthError {
+            switch authError {
+            case .noApiKey:
+                return "No API key was found for this server. Re-run Check Connection and sign in again."
+            case .invalidCredentials:
+                return "Saved credentials were rejected. Re-run Check Connection and sign in again."
+            default:
+                break
+            }
+        }
+
+        if error.localizedDescription.lowercased().contains("protocol mismatch") {
+            return "Client/server protocol mismatch. Update the iOS app and restart the Moltis gateway."
+        }
+
+        if isCertificateTrustError(nsError) {
+            return "TLS certificate is not trusted yet. Download and trust the Moltis Local CA for this server."
+        }
+
+        if isSocketNotConnectedError(nsError) {
+            if let diagnostic = await websocketPreflightDiagnostic(server: server) {
+                return diagnostic
+            }
+            return "WebSocket disconnected before handshake. Verify this iPhone can reach \(server.url.host ?? "the server") on the same network."
+        }
+
+        return error.localizedDescription
+    }
+
+    private func isSocketNotConnectedError(_ error: NSError) -> Bool {
+        error.domain == NSPOSIXErrorDomain && error.code == 57
+    }
+
+    private func isCertificateTrustError(_ error: NSError) -> Bool {
+        guard error.domain == NSURLErrorDomain else { return false }
+        return [
+            NSURLErrorServerCertificateHasBadDate,
+            NSURLErrorServerCertificateUntrusted,
+            NSURLErrorServerCertificateHasUnknownRoot,
+            NSURLErrorServerCertificateNotYetValid,
+            NSURLErrorSecureConnectionFailed,
+        ].contains(error.code)
+    }
+
+    private func websocketPreflightDiagnostic(server: ServerConnection) async -> String? {
+        guard let apiKey = server.apiKey else {
+            return "No API key available for WebSocket authentication."
+        }
+
+        var request = URLRequest(url: server.baseURL.appendingPathComponent("api/gon"))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return "Server did not return a valid HTTP response while validating WebSocket credentials."
+            }
+            switch http.statusCode {
+            case 200:
+                return "HTTP auth succeeded, but WebSocket handshake failed. Check local DNS/network path for \(server.url.host ?? "this host")."
+            case 401, 403:
+                return "Server rejected the saved credentials. Re-run Check Connection and sign in again."
+            default:
+                return "Server validation failed with HTTP \(http.statusCode)."
+            }
+        } catch {
+            let message = (error as NSError).localizedDescription
+            return "Could not validate server reachability before WebSocket connect (\(message))."
         }
     }
 }
