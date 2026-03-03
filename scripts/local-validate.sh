@@ -484,16 +484,11 @@ fi
 # and means both nextest and E2E reuse these artifacts without recompilation.
 run_check "local/build" "$build_cmd"
 
-# After build, run test / macOS app / e2e in parallel — all reuse the compiled
-# artifacts (same nightly toolchain) and don't contend on resources.
-run_check_async "local/test" "$test_cmd"
-test_pid="$RUN_CHECK_ASYNC_PID"
-
-macos_pid=""
+# Keep test and platform checks sequential to avoid overloading local machines.
+run_check "local/test" "$test_cmd"
 if [[ "${LOCAL_VALIDATE_SKIP_MACOS_APP:-0}" != "1" ]]; then
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    run_check_async "local/macos-app" "$macos_app_cmd"
-    macos_pid="$RUN_CHECK_ASYNC_PID"
+    run_check "local/macos-app" "$macos_app_cmd"
   else
     echo "Skipping macOS app checks (requires macOS host)."
     set_status success "local/macos-app" "Skipped on non-macOS host"
@@ -517,33 +512,11 @@ else
 fi
 
 # Gateway web UI e2e tests.
-e2e_pid=""
 if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" != "1" ]]; then
   cleanup_e2e_ports
-  run_check_async "local/e2e" "$e2e_cmd"
-  e2e_pid="$RUN_CHECK_ASYNC_PID"
+  run_check "local/e2e" "$e2e_cmd"
 else
   echo "Skipping E2E checks (LOCAL_VALIDATE_SKIP_E2E=1)."
-fi
-
-# Wait for the heavy parallel checks.
-heavy_failed=0
-if ! wait "$test_pid"; then heavy_failed=1; fi
-if ! report_async_result "local/test" "$test_pid"; then heavy_failed=1; fi
-
-if [[ -n "$macos_pid" ]]; then
-  if ! wait "$macos_pid"; then heavy_failed=1; fi
-  if ! report_async_result "local/macos-app" "$macos_pid"; then heavy_failed=1; fi
-fi
-
-if [[ -n "$e2e_pid" ]]; then
-  if ! wait "$e2e_pid"; then heavy_failed=1; fi
-  if ! report_async_result "local/e2e" "$e2e_pid"; then heavy_failed=1; fi
-fi
-
-if [[ "$heavy_failed" -ne 0 ]]; then
-  echo "One or more checks (test/macos-app/e2e) failed." >&2
-  exit 1
 fi
 
 # Coverage (optional — requires cargo-llvm-cov).
