@@ -48,7 +48,17 @@ async function copyShareUrl(url, visibility) {
 	await shareLinkDialog(url, visibility);
 }
 
-export function SessionHeader() {
+export function SessionHeader({
+	showSelectors = true,
+	showName = true,
+	showShare = true,
+	showFork = true,
+	showStop = true,
+	showClear = true,
+	showDelete = true,
+	nameOwnLine = false,
+	showRenameButton = false,
+} = {}) {
 	var session = sessionStore.activeSession.value;
 	var currentKey = sessionStore.activeSessionKey.value;
 
@@ -63,7 +73,7 @@ export function SessionHeader() {
 	var inputRef = useRef(null);
 
 	var fullName = session ? session.label || session.key : currentKey;
-	var displayName = fullName.length > 20 ? `${fullName.slice(0, 20)}\u2026` : fullName;
+	var displayName = nameOwnLine ? fullName : fullName.length > 20 ? `${fullName.slice(0, 20)}\u2026` : fullName;
 	var replying = session?.replying.value;
 	var activeRunId = session?.activeRunId.value || null;
 
@@ -330,9 +340,52 @@ export function SessionHeader() {
 		];
 	}
 
+	var nameStyle = { cursor: canRename ? "pointer" : "default" };
+	if (nameOwnLine) {
+		nameStyle.color = "var(--text-strong)";
+		nameStyle.wordBreak = "break-word";
+	}
+	var renameInputStyle = nameOwnLine ? { maxWidth: "none", width: "100%" } : undefined;
+
+	var nameControl =
+		showName &&
+		(renaming
+			? html`<input
+				ref=${inputRef}
+				class="chat-session-rename-input"
+				style=${renameInputStyle}
+				onBlur=${commitRename}
+				onKeyDown=${onKeyDown}
+			/>`
+			: html`<span
+				class="chat-session-name"
+				style=${nameStyle}
+				title=${canRename ? "Click to rename" : ""}
+				onClick=${startRename}
+			>${displayName}</span>`);
+
+	var renameCta =
+		showName &&
+		showRenameButton &&
+		canRename &&
+		!renaming &&
+		html`<button class="chat-session-btn" onClick=${startRename} title="Rename session">
+			Rename
+		</button>`;
+
 	return html`
-		<div class="flex items-center gap-2">
+			<div class=${nameOwnLine ? "flex flex-col gap-2 w-full" : "flex items-center gap-2"}>
+				${
+					nameOwnLine &&
+					showName &&
+					html`<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 w-full">
+						<div class="min-w-0">${nameControl}</div>
+						<div class="justify-self-end">${renameCta}</div>
+					</div>`
+				}
+			<div class=${nameOwnLine ? "flex flex-wrap items-center gap-2" : "flex items-center gap-2"}>
 			${
+				showSelectors &&
 				!isCron &&
 				html`
 				<${ComboSelect}
@@ -348,6 +401,7 @@ export function SessionHeader() {
 			`
 			}
 			${
+				showSelectors &&
 				shouldShowNodePicker &&
 				html`
 				<${ComboSelect}
@@ -362,33 +416,28 @@ export function SessionHeader() {
 				/>
 			`
 			}
+			${!nameOwnLine && showName && nameControl}
+			${!nameOwnLine && renameCta}
 			${
-				renaming
-					? html`<input
-						ref=${inputRef}
-						class="chat-session-rename-input"
-						onBlur=${commitRename}
-						onKeyDown=${onKeyDown}
-					/>`
-					: html`<span
-						class="chat-session-name"
-						style=${{ cursor: canRename ? "pointer" : "default" }}
-						title=${canRename ? "Click to rename" : ""}
-						onClick=${startRename}
-					>${displayName}</span>`
-			}
-			${
+				showFork &&
 				!isCron &&
 				html`
 				<button class="chat-session-btn" onClick=${onFork} title="Fork session">
 					Fork
 				</button>
+			`
+			}
+			${
+				showShare &&
+				!isCron &&
+				html`
 				<button class="chat-session-btn" onClick=${onShare} title="Share snapshot">
 					Share
 				</button>
 			`
 			}
 			${
+				showStop &&
 				canStop &&
 				html`
 				<button class="chat-session-btn" onClick=${onStop} title="Stop generation" disabled=${stopping}>
@@ -397,6 +446,7 @@ export function SessionHeader() {
 			`
 			}
 			${
+				showClear &&
 				isMain &&
 				html`
 				<button class="chat-session-btn" onClick=${onClear} title="Clear session" disabled=${clearing}>
@@ -405,6 +455,7 @@ export function SessionHeader() {
 			`
 			}
 			${
+				showDelete &&
 				!(isMain || isCron) &&
 				html`
 				<button class="chat-session-btn chat-session-btn-danger" onClick=${onDelete} title="Delete session">
@@ -412,6 +463,7 @@ export function SessionHeader() {
 				</button>
 			`
 			}
+			</div>
 		</div>
 	`;
 }

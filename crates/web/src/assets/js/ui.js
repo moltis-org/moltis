@@ -489,10 +489,16 @@ export function ComboSelect({
 	var [open, setOpen] = useState(false);
 	var [query, setQuery] = useState("");
 	var [kbIndex, setKbIndex] = useState(-1);
+	var [alignRight, setAlignRight] = useState(false);
 	var ref = useRef(null);
 	var searchRef = useRef(null);
 	var dropdownRef = useRef(null);
 	var fillStyle = fullWidth ? "width:100%;" : undefined;
+	var dropdownStyle = fullWidth
+		? "width:100%;"
+		: searchable
+			? undefined
+			: "min-width:100%;width:max-content;max-width:min(360px,calc(100vw - 16px));";
 
 	var selected = options.find((o) => o.value === value);
 	var label = selected ? selected.label : placeholder || "(none)";
@@ -517,6 +523,22 @@ export function ComboSelect({
 		if (searchable && searchRef.current) searchRef.current.focus();
 		else if (!searchable && dropdownRef.current) dropdownRef.current.focus();
 	}, [open, searchable]);
+
+	useEffect(() => {
+		if (!open) return;
+		function updateAlignment() {
+			if (!ref.current) return;
+			var comboRect = ref.current.getBoundingClientRect();
+			var dropdownWidth = dropdownRef.current?.offsetWidth || (fullWidth ? comboRect.width : 280);
+			var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+			var rightEdge = comboRect.left + dropdownWidth;
+			var shouldAlignRight = rightEdge > viewportWidth - 8 && comboRect.right - dropdownWidth >= 8;
+			setAlignRight(shouldAlignRight);
+		}
+		requestAnimationFrame(updateAlignment);
+		window.addEventListener("resize", updateAlignment);
+		return () => window.removeEventListener("resize", updateAlignment);
+	}, [open, fullWidth]);
 
 	useEffect(() => {
 		setKbIndex(-1);
@@ -563,7 +585,13 @@ export function ComboSelect({
     </button>
     ${
 			open &&
-			html`<div class="model-dropdown" ref=${dropdownRef} tabIndex="-1" style=${fillStyle} onKeyDown=${onKeyDown}>
+			html`<div
+      class="model-dropdown ${alignRight ? "align-right" : ""}"
+      ref=${dropdownRef}
+      tabIndex="-1"
+      style=${dropdownStyle}
+      onKeyDown=${onKeyDown}
+    >
       ${
 				searchable &&
 				html`<input class="model-search-input" ref=${searchRef} placeholder=${searchPlaceholder || "Search\u2026"}
