@@ -1803,9 +1803,6 @@ impl ProviderRegistry {
             return;
         }
 
-        // Log system info once
-        local_gguf::log_system_info_and_suggestions();
-
         // Collect all model IDs to register:
         // 1. From local_models (multi-model config from local-llm.json)
         // 2. From provider models in config (preferred pins)
@@ -1819,6 +1816,11 @@ impl ProviderRegistry {
             );
             return;
         }
+
+        // Only probe local hardware/backends when at least one local model is
+        // configured. On macOS this avoids loading Metal/MLX runtime state
+        // during startup when local inference is not in use.
+        local_gguf::log_system_info_and_suggestions();
 
         // Build config from provider entry for user overrides
         let entry = config.get("local");

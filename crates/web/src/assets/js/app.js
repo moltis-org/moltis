@@ -171,7 +171,15 @@ function applyMemory(mem) {
 	var el = document.getElementById("memoryInfo");
 	if (!el) return;
 	var fmt = (b) => prettyBytes(b, { maximumFractionDigits: 0, space: false });
-	el.textContent = `${fmt(mem.process)} \u00b7 ${fmt(mem.available)} free / ${fmt(mem.total)}`;
+	var localLlamaCpp = 0;
+	if (typeof mem.localLlamaCpp === "number") {
+		localLlamaCpp = mem.localLlamaCpp;
+	} else if (typeof mem.local_llama_cpp === "number") {
+		// Backward compatibility with older payload casing.
+		localLlamaCpp = mem.local_llama_cpp;
+	}
+	var localLlamaPart = localLlamaCpp > 0 ? ` (llama.cpp ${fmt(localLlamaCpp)})` : "";
+	el.textContent = `${fmt(mem.process)}${localLlamaPart} \u00b7 ${fmt(mem.available)} free / ${fmt(mem.total)}`;
 }
 
 applyMemory(gon.get("mem"));

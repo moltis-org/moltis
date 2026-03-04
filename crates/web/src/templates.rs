@@ -94,13 +94,17 @@ struct SandboxGonInfo {
 
 /// Memory snapshot included in gon data and tick broadcasts.
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct MemSnapshot {
     process: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_llama_cpp: Option<u64>,
     available: u64,
     total: u64,
 }
 
-/// Collect a point-in-time memory snapshot (process RSS + system memory).
+/// Collect a point-in-time memory snapshot (process RSS + local llama.cpp +
+/// system memory).
 pub(crate) fn collect_mem_snapshot() -> MemSnapshot {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
@@ -116,6 +120,7 @@ pub(crate) fn collect_mem_snapshot() -> MemSnapshot {
         .and_then(|p| sys.process(p))
         .map(|p| p.memory())
         .unwrap_or(0);
+    let local_llama_cpp = moltis_gateway::server::local_llama_cpp_bytes_for_ui();
     let total = sys.total_memory();
     // available_memory() returns 0 on macOS; fall back to total − used.
     let available = match sys.available_memory() {
@@ -124,6 +129,7 @@ pub(crate) fn collect_mem_snapshot() -> MemSnapshot {
     };
     MemSnapshot {
         process,
+        local_llama_cpp: (local_llama_cpp > 0).then_some(local_llama_cpp),
         available,
         total,
     }
@@ -758,5 +764,29 @@ mod tests {
         let safe = script_safe_json(&val);
         assert!(!safe.contains('<'));
         assert!(!safe.contains('>'));
+    }
+
+    #[test]
+    fn mem_snapshot_omits_llama_cpp_when_none() {
+        let snapshot = MemSnapshot {
+            process: 1,
+            local_llama_cpp: None,
+            available: 2,
+            total: 3,
+        };
+        let json = serde_json::to_value(snapshot).unwrap();
+        assert!(json.get("localLlamaCpp").is_none());
+    }
+
+    #[test]
+    fn mem_snapshot_includes_llama_cpp_when_present() {
+        let snapshot = MemSnapshot {
+            process: 1,
+            local_llama_cpp: Some(4),
+            available: 2,
+            total: 3,
+        };
+        let json = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(json.get("localLlamaCpp").and_then(|v| v.as_u64()), Some(4));
     }
 }
