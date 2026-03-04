@@ -37,6 +37,8 @@ const SANDBOX_DAEMON_RESTART_FAILED: &str = "SANDBOX_DAEMON_RESTART_FAILED";
 const SANDBOX_SHARED_HOME_SAVE_FAILED: &str = "SANDBOX_SHARED_HOME_SAVE_FAILED";
 const SESSION_HISTORY_FAILED: &str = "SESSION_HISTORY_FAILED";
 const SESSION_LIST_FAILED: &str = "SESSION_LIST_FAILED";
+const SESSION_LIST_DEFAULT_LIMIT: usize = 40;
+const SESSION_LIST_MAX_LIMIT: usize = 200;
 const SESSION_HISTORY_DEFAULT_LIMIT: usize = 120;
 const SESSION_HISTORY_MAX_LIMIT: usize = 500;
 
@@ -79,9 +81,56 @@ fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_jso
 
 // ── Session media ────────────────────────────────────────────────────────────
 
-pub async fn api_sessions_handler(State(state): State<AppState>) -> impl IntoResponse {
+#[derive(serde::Deserialize, Default)]
+pub struct SessionListQuery {
+    #[serde(default)]
+    cursor: Option<u64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+fn clamp_session_list_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(SESSION_LIST_DEFAULT_LIMIT)
+        .clamp(1, SESSION_LIST_MAX_LIMIT)
+}
+
+pub async fn api_sessions_handler(
+    Query(query): Query<SessionListQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     match state.gateway.services.session.list().await {
-        Ok(payload) => Json(payload).into_response(),
+        Ok(payload) => {
+            if query.cursor.is_none() && query.limit.is_none() {
+                return Json(payload).into_response();
+            }
+
+            let sessions = payload
+                .as_array()
+                .cloned()
+                .unwrap_or_else(Vec::<serde_json::Value>::new);
+            let limit = clamp_session_list_limit(query.limit);
+            let start = query
+                .cursor
+                .and_then(|idx| usize::try_from(idx).ok())
+                .unwrap_or(0)
+                .min(sessions.len());
+            let end = start.saturating_add(limit).min(sessions.len());
+            let page = sessions[start..end].to_vec();
+            let next_cursor = if end < sessions.len() {
+                u64::try_from(end).ok()
+            } else {
+                None
+            };
+
+            Json(serde_json::json!({
+                "sessions": page,
+                "nextCursor": next_cursor,
+                "hasMore": next_cursor.is_some(),
+                "total": sessions.len(),
+            }))
+            .into_response()
+        },
         Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             SESSION_LIST_FAILED,
