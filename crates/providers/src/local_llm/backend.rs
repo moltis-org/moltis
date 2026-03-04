@@ -2,13 +2,24 @@
 //!
 //! Backends handle the actual model loading and inference.
 
-use std::pin::Pin;
+use std::{
+    pin::Pin,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use {anyhow::Result, async_trait::async_trait, tokio_stream::Stream};
 
 use moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent};
 
 use super::LocalLlmConfig;
+
+static LOADED_LLAMA_MODEL_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Total bytes currently held by loaded llama.cpp model tensors.
+#[must_use]
+pub fn loaded_llama_model_bytes() -> u64 {
+    LOADED_LLAMA_MODEL_BYTES.load(Ordering::Relaxed)
+}
 
 /// Types of local LLM backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -270,9 +281,33 @@ pub mod gguf {
     unsafe impl Sync for SendSyncBackend {}
 
     /// GGUF backend implementation.
+    struct GgufModelHandle {
+        model: Mutex<LlamaModel>,
+        model_size_bytes: u64,
+    }
+
+    impl GgufModelHandle {
+        fn new(model: LlamaModel) -> Self {
+            let model_size_bytes = model.size();
+            super::LOADED_LLAMA_MODEL_BYTES
+                .fetch_add(model_size_bytes, std::sync::atomic::Ordering::Relaxed);
+            Self {
+                model: Mutex::new(model),
+                model_size_bytes,
+            }
+        }
+    }
+
+    impl Drop for GgufModelHandle {
+        fn drop(&mut self) {
+            super::LOADED_LLAMA_MODEL_BYTES
+                .fetch_sub(self.model_size_bytes, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     pub struct GgufBackend {
         backend: Arc<SendSyncBackend>,
-        model: Arc<Mutex<LlamaModel>>,
+        model: Arc<GgufModelHandle>,
         model_id: String,
         model_def: Option<&'static LocalModelDef>,
         context_size: u32,
@@ -317,17 +352,19 @@ pub mod gguf {
 
             let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
                 .map_err(|e| anyhow::anyhow!("failed to load GGUF model: {e}"))?;
+            let model_handle = Arc::new(GgufModelHandle::new(model));
 
             info!(
                 path = %model_path.display(),
                 model = %config.model_id,
                 context_size,
+                model_size_bytes = model_handle.model_size_bytes,
                 "loaded GGUF model"
             );
 
             Ok(Self {
                 backend: Arc::new(SendSyncBackend(backend)),
-                model: Arc::new(Mutex::new(model)),
+                model: model_handle,
                 model_id: config.model_id.clone(),
                 model_def,
                 context_size,
@@ -352,7 +389,7 @@ pub mod gguf {
             max_tokens: u32,
             tool_names: &[&str],
         ) -> Result<(String, u32, u32)> {
-            let model = self.model.blocking_lock();
+            let model = self.model.model.blocking_lock();
             let backend = &self.backend.0;
 
             let batch_size: usize = 512;
@@ -591,7 +628,7 @@ pub mod gguf {
     /// Streaming generation in a blocking context.
     fn stream_generate_sync(
         backend: &LlamaBackend,
-        model: &Mutex<LlamaModel>,
+        model: &GgufModelHandle,
         prompt: &str,
         max_tokens: u32,
         context_size: u32,
@@ -601,7 +638,7 @@ pub mod gguf {
         let batch_size: usize = 512;
 
         let result = (|| -> Result<(u32, u32)> {
-            let model = model.blocking_lock();
+            let model = model.model.blocking_lock();
 
             let ctx_params = LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(context_size))

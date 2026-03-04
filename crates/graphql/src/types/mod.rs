@@ -1015,6 +1015,9 @@ pub struct TickEvent {
 pub struct MemoryStats {
     /// Process RSS in bytes.
     pub process: u64,
+    /// Approximate bytes held by loaded local llama.cpp model tensors.
+    #[serde(default)]
+    pub local_llama_cpp: u64,
     /// System available memory in bytes.
     pub available: u64,
     /// System total memory in bytes.

@@ -35,6 +35,12 @@ const SANDBOX_CONTAINERS_CLEAN_FAILED: &str = "SANDBOX_CONTAINERS_CLEAN_FAILED";
 const SANDBOX_DISK_USAGE_FAILED: &str = "SANDBOX_DISK_USAGE_FAILED";
 const SANDBOX_DAEMON_RESTART_FAILED: &str = "SANDBOX_DAEMON_RESTART_FAILED";
 const SANDBOX_SHARED_HOME_SAVE_FAILED: &str = "SANDBOX_SHARED_HOME_SAVE_FAILED";
+const SESSION_HISTORY_FAILED: &str = "SESSION_HISTORY_FAILED";
+const SESSION_LIST_FAILED: &str = "SESSION_LIST_FAILED";
+const SESSION_LIST_DEFAULT_LIMIT: usize = 40;
+const SESSION_LIST_MAX_LIMIT: usize = 200;
+const SESSION_HISTORY_DEFAULT_LIMIT: usize = 120;
+const SESSION_HISTORY_MAX_LIMIT: usize = 500;
 
 fn api_error(code: &str, error: impl Into<String>) -> serde_json::Value {
     serde_json::json!({
@@ -74,6 +80,264 @@ fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_jso
 }
 
 // ── Session media ────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize, Default)]
+pub struct SessionListQuery {
+    #[serde(default)]
+    cursor: Option<u64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+fn clamp_session_list_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(SESSION_LIST_DEFAULT_LIMIT)
+        .clamp(1, SESSION_LIST_MAX_LIMIT)
+}
+
+pub async fn api_sessions_handler(
+    Query(query): Query<SessionListQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.gateway.services.session.list().await {
+        Ok(payload) => {
+            if query.cursor.is_none() && query.limit.is_none() {
+                return Json(payload).into_response();
+            }
+
+            let sessions = payload
+                .as_array()
+                .cloned()
+                .unwrap_or_else(Vec::<serde_json::Value>::new);
+            let limit = clamp_session_list_limit(query.limit);
+            let start = query
+                .cursor
+                .and_then(|idx| usize::try_from(idx).ok())
+                .unwrap_or(0)
+                .min(sessions.len());
+            let end = start.saturating_add(limit).min(sessions.len());
+            let page = sessions[start..end].to_vec();
+            let next_cursor = if end < sessions.len() {
+                u64::try_from(end).ok()
+            } else {
+                None
+            };
+
+            Json(serde_json::json!({
+                "sessions": page,
+                "nextCursor": next_cursor,
+                "hasMore": next_cursor.is_some(),
+                "total": sessions.len(),
+            }))
+            .into_response()
+        },
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SESSION_LIST_FAILED,
+            e.to_string(),
+        ),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct SessionHistoryQuery {
+    #[serde(default)]
+    cached_message_count: Option<u64>,
+    #[serde(default)]
+    cursor: Option<u64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+fn filter_ui_history(messages: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    messages
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, mut msg)| {
+            if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                let has_content = msg
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+                let has_reasoning = msg
+                    .get("reasoning")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+                let has_audio = msg
+                    .get("audio")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+                if !(has_content || has_reasoning || has_audio) {
+                    return None;
+                }
+            }
+            if let Some(obj) = msg.as_object_mut() {
+                obj.insert("historyIndex".to_string(), serde_json::json!(idx));
+            }
+            Some(msg)
+        })
+        .collect()
+}
+
+fn history_index(msg: &serde_json::Value) -> Option<usize> {
+    msg.get("historyIndex")
+        .and_then(|v| v.as_u64())
+        .and_then(|idx| usize::try_from(idx).ok())
+}
+
+fn paginated_history(
+    history: Vec<serde_json::Value>,
+    cursor: Option<usize>,
+    limit: usize,
+) -> (Vec<serde_json::Value>, bool, Option<u64>) {
+    let mut scoped = if let Some(cursor_idx) = cursor {
+        history
+            .into_iter()
+            .filter(|msg| history_index(msg).is_some_and(|idx| idx < cursor_idx))
+            .collect::<Vec<_>>()
+    } else {
+        history
+    };
+
+    let len = scoped.len();
+    if len > limit {
+        scoped.drain(0..(len - limit));
+    }
+
+    let next_cursor = scoped
+        .first()
+        .and_then(history_index)
+        .filter(|idx| *idx > 0)
+        .and_then(|idx| u64::try_from(idx).ok());
+
+    (scoped, next_cursor.is_some(), next_cursor)
+}
+
+fn clamp_history_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(SESSION_HISTORY_DEFAULT_LIMIT)
+        .clamp(1, SESSION_HISTORY_MAX_LIMIT)
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct BootstrapQuery {
+    #[serde(default)]
+    include_channels: Option<bool>,
+    #[serde(default)]
+    include_sessions: Option<bool>,
+    #[serde(default)]
+    include_models: Option<bool>,
+    #[serde(default)]
+    include_projects: Option<bool>,
+    #[serde(default)]
+    include_counts: Option<bool>,
+    #[serde(default)]
+    include_identity: Option<bool>,
+}
+
+impl BootstrapQuery {
+    fn channels_enabled(&self) -> bool {
+        self.include_channels.unwrap_or(true)
+    }
+
+    fn sessions_enabled(&self) -> bool {
+        self.include_sessions.unwrap_or(true)
+    }
+
+    fn models_enabled(&self) -> bool {
+        self.include_models.unwrap_or(true)
+    }
+
+    fn projects_enabled(&self) -> bool {
+        self.include_projects.unwrap_or(true)
+    }
+
+    fn counts_enabled(&self) -> bool {
+        self.include_counts.unwrap_or(true)
+    }
+
+    fn identity_enabled(&self) -> bool {
+        self.include_identity.unwrap_or(true)
+    }
+}
+
+pub async fn api_session_history_handler(
+    Path(session_key): Path<String>,
+    Query(query): Query<SessionHistoryQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let Some(store) = state.gateway.services.session_store.as_ref() else {
+        return api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SESSION_HISTORY_FAILED,
+            "session store not available",
+        );
+    };
+
+    let cursor = query.cursor.and_then(|idx| usize::try_from(idx).ok());
+    let limit = clamp_history_limit(query.limit);
+
+    let metadata_entry = if let Some(ref metadata) = state.gateway.services.session_metadata {
+        metadata.get(&session_key).await
+    } else {
+        None
+    };
+    let metadata_count = metadata_entry
+        .as_ref()
+        .map(|entry| u64::from(entry.message_count));
+
+    if cursor.is_none()
+        && let (Some(cached), Some(server_count)) = (query.cached_message_count, metadata_count)
+        && cached == server_count
+    {
+        return Json(serde_json::json!({
+            "history": [],
+            "historyCacheHit": true,
+            "hasMore": false,
+            "nextCursor": null,
+            "totalMessages": server_count,
+            "historyTruncated": false,
+            "historyDroppedCount": 0,
+        }))
+        .into_response();
+    }
+
+    let raw_history = match store.read(&session_key).await {
+        Ok(history) => history,
+        Err(e) => {
+            return api_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                SESSION_HISTORY_FAILED,
+                e.to_string(),
+            );
+        },
+    };
+
+    let server_count = metadata_count.unwrap_or(raw_history.len() as u64);
+
+    let full_history = filter_ui_history(raw_history);
+    let total_messages = full_history.len() as u64;
+    let (mut history, has_more, next_cursor) = paginated_history(full_history, cursor, limit);
+
+    let history_cache_hit = cursor.is_none()
+        && query
+            .cached_message_count
+            .is_some_and(|cached| cached == server_count);
+    if history_cache_hit {
+        history.clear();
+    }
+
+    Json(serde_json::json!({
+        "history": history,
+        "historyCacheHit": history_cache_hit,
+        "hasMore": has_more,
+        "nextCursor": next_cursor,
+        "totalMessages": total_messages,
+        "historyTruncated": false,
+        "historyDroppedCount": 0,
+    }))
+    .into_response()
+}
 
 pub async fn api_session_media_handler(
     Path((session_key, filename)): Path<(String, String)>,
@@ -124,17 +388,72 @@ pub async fn api_logs_download_handler(State(state): State<AppState>) -> impl In
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 
-pub async fn api_bootstrap_handler(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn api_bootstrap_handler(
+    Query(query): Query<BootstrapQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     let gw = &state.gateway;
-    let (channels, sessions, models, projects, onboarded) = tokio::join!(
-        gw.services.channel.status(),
-        gw.services.session.list(),
-        gw.services.model.list(),
-        gw.services.project.list(),
+    api_bootstrap_with_query(gw, &query).await
+}
+
+async fn api_bootstrap_with_query(
+    gw: &moltis_gateway::state::GatewayState,
+    query: &BootstrapQuery,
+) -> Response {
+    let channels_enabled = query.channels_enabled();
+    let sessions_enabled = query.sessions_enabled();
+    let models_enabled = query.models_enabled();
+    let projects_enabled = query.projects_enabled();
+    let counts_enabled = query.counts_enabled();
+    let identity_enabled = query.identity_enabled();
+
+    let (channels, sessions, models, projects, identity, counts, onboarded) = tokio::join!(
+        async {
+            if channels_enabled {
+                gw.services.channel.status().await.ok()
+            } else {
+                None
+            }
+        },
+        async {
+            if sessions_enabled {
+                gw.services.session.list().await.ok()
+            } else {
+                None
+            }
+        },
+        async {
+            if models_enabled {
+                gw.services.model.list().await.ok()
+            } else {
+                None
+            }
+        },
+        async {
+            if projects_enabled {
+                gw.services.project.list().await.ok()
+            } else {
+                None
+            }
+        },
+        async {
+            if identity_enabled {
+                gw.services.agent.identity_get().await.ok()
+            } else {
+                None
+            }
+        },
+        async {
+            if counts_enabled {
+                Some(build_nav_counts(gw).await)
+            } else {
+                None
+            }
+        },
         onboarding_completed(gw),
     );
-    let identity = gw.services.agent.identity_get().await.ok();
-    let sandbox = if let Some(ref router) = state.gateway.sandbox_router {
+
+    let sandbox = if let Some(ref router) = gw.sandbox_router {
         let default_image = router.default_image().await;
         serde_json::json!({
             "backend": router.backend_name(),
@@ -148,17 +467,17 @@ pub async fn api_bootstrap_handler(State(state): State<AppState>) -> impl IntoRe
             "default_image": moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE,
         })
     };
-    let counts = build_nav_counts(gw).await;
     Json(serde_json::json!({
-        "channels": channels.ok(),
-        "sessions": sessions.ok(),
-        "models": models.ok(),
-        "projects": projects.ok(),
+        "channels": channels,
+        "sessions": sessions,
+        "models": models,
+        "projects": projects,
         "onboarded": onboarded,
         "identity": identity,
         "sandbox": sandbox,
         "counts": counts,
     }))
+    .into_response()
 }
 
 // ── MCP / Hooks ──────────────────────────────────────────────────────────────

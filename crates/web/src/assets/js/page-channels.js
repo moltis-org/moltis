@@ -3,7 +3,7 @@
 import { signal, useSignal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import {
 	addChannel,
 	buildTeamsEndpoint,
@@ -129,20 +129,11 @@ function loadSenders() {
 	});
 }
 
-// ── Channel icon ─────────────────────────────────────────────
-function WhatsAppIcon() {
-	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M3 21l1.65-3.8a9 9 0 113.4 2.9L3 21" />
-    <path d="M9 10a.5.5 0 001 0V9a.5.5 0 00-1 0v1zm5 3a.5.5 0 001 0v-1a.5.5 0 00-1 0v1z" />
-  </svg>`;
-}
-
 function ChannelIcon({ type }) {
 	var t = channelType(type);
 	if (t === "msteams") return html`<span class="icon icon-msteams"></span>`;
 	if (t === "discord") return html`<span class="icon icon-discord"></span>`;
-	if (t === "whatsapp") return html`<${WhatsAppIcon} />`;
+	if (t === "whatsapp") return html`<span class="icon icon-whatsapp"></span>`;
 	return html`<span class="icon icon-telegram"></span>`;
 }
 
@@ -242,7 +233,7 @@ function ConnectButtons() {
 			onClick=${() => {
 				if (connected.value) showAddWhatsApp.value = true;
 			}}>
-			<${WhatsAppIcon} /> Connect WhatsApp
+			<span class="icon icon-whatsapp"></span> Connect WhatsApp
 		</button>`
 		}
 	</div>`;
@@ -935,16 +926,28 @@ function AddSlackModal() {
 }
 
 // ── QR code display (WhatsApp pairing) ───────────────────────
-function qrSvgDataUrl(svg) {
+function qrSvgObjectUrl(svg) {
 	if (!svg) return null;
-	return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+	try {
+		return URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+	} catch (_err) {
+		return null;
+	}
 }
 
 function QrCodeDisplay({ data, svg }) {
+	var [svgUrl, setSvgUrl] = useState(null);
+
+	useEffect(() => {
+		var nextUrl = qrSvgObjectUrl(svg);
+		setSvgUrl(nextUrl);
+		return () => {
+			if (nextUrl) URL.revokeObjectURL(nextUrl);
+		};
+	}, [svg]);
+
 	if (!data)
 		return html`<div class="flex items-center justify-center p-8 text-[var(--muted)] text-sm">Waiting for QR code...</div>`;
-
-	var svgUrl = qrSvgDataUrl(svg);
 
 	return html`<div class="flex flex-col items-center gap-3 p-4">
     <div class="rounded-lg bg-white p-3" style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;">

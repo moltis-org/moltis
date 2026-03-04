@@ -335,10 +335,6 @@ body {
     border-radius: 0 !important;
   }
 
-  .chat-toolbar.mobile-expanded {
-    flex-wrap: wrap;
-  }
-
   .chat-toolbar > * {
     flex-shrink: 0;
   }
@@ -361,69 +357,11 @@ body {
     border-radius: 0 !important;
   }
 
-  .mobile-controls-btn {
-    margin-left: auto;
-    order: 2;
-    width: 38px;
-    height: 30px;
-    min-height: 0;
-    padding: 0;
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    color: var(--muted);
-    justify-content: center;
-    align-items: center;
-    display: inline-flex !important;
-  }
-
-  .mobile-controls-btn .icon-menu-dots-horizontal {
-    width: 18px;
-    height: 18px;
-  }
-
-  .mobile-controls-btn.active {
-    color: var(--accent) !important;
-    border: none !important;
-    background: transparent !important;
-  }
-
-  .chat-toolbar .mobile-toolbar-extra {
-    display: none !important;
-  }
-
-  .chat-toolbar.mobile-expanded .mobile-toolbar-extra {
-    display: inline-flex !important;
-    order: 4;
-    flex: 0 0 auto;
-  }
-
-  .chat-toolbar.mobile-expanded .mobile-toolbar-extra.mobile-toolbar-extra-block {
-    display: inline-block !important;
-    order: 4;
-    flex: 0 0 auto;
-  }
-
-  .chat-toolbar.mobile-expanded .mobile-toolbar-break {
-    display: block !important;
-    order: 3;
-    width: 100%;
-    flex: 0 0 100%;
-    height: 0;
-    margin: 0;
-    padding: 0;
-  }
-
-  .chat-toolbar .mobile-toolbar-hide {
-    display: none !important;
-  }
-
   #queuedMessages,
   .media-preview-strip {
     display: none !important;
   }
 
-  #sessionHeaderMount { display: none !important; }
 }
 
 /* ── Settings Sidebar Mobile ── */
@@ -675,7 +613,6 @@ body {
     display: none;
   }
 
-  .mobile-controls-btn { display: none !important; }
 }
 
 .sessions-toggle-btn {

@@ -23,8 +23,18 @@ export function formatLoginTitle(identity) {
 	return identityName(identity);
 }
 
-function escapeSvgText(text) {
-	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function emojiFaviconPng(emoji) {
+	var canvas = document.createElement("canvas");
+	canvas.width = 64;
+	canvas.height = 64;
+	var ctx = canvas.getContext("2d");
+	if (!ctx) return null;
+	ctx.clearRect(0, 0, 64, 64);
+	ctx.textAlign = "center";
+	ctx.textBaseline = "middle";
+	ctx.font = "52px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif";
+	ctx.fillText(emoji, 32, 34);
+	return canvas.toDataURL("image/png");
 }
 
 export function applyIdentityFavicon(identity) {
@@ -39,18 +49,12 @@ export function applyIdentityFavicon(identity) {
 		links = [fallback];
 	}
 
-	var safeEmoji = escapeSvgText(emoji);
-	var svg =
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-		`<text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" font-size="52">${safeEmoji}</text>` +
-		`</svg>`;
-	var href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
-	var forceResetHref = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=";
+	var href = emojiFaviconPng(emoji);
+	if (!href) return false;
 
 	for (var link of links) {
-		link.type = "image/svg+xml";
+		link.type = "image/png";
 		link.removeAttribute("sizes");
-		link.href = forceResetHref;
 		link.href = href;
 	}
 	return true;

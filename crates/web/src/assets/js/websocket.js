@@ -39,6 +39,7 @@ import {
 	cacheSessionHistoryMessage,
 	clearSessionHistoryCache,
 	fetchSessions,
+	markSessionLocallyCleared,
 	setSessionActiveRunId,
 	setSessionReplying,
 	setSessionUnread,
@@ -50,6 +51,16 @@ import { connectWs, forceReconnect, subscribeEvents } from "./ws-connect.js";
 // ── Chat event handlers ──────────────────────────────────────
 
 var pendingToolCallEnds = new Map();
+var hasConnectedOnce = false;
+
+function clearChatEmptyState() {
+	if (!S.chatMsgBox) return;
+	var welcome = S.chatMsgBox.querySelector("#welcomeCard");
+	if (welcome) welcome.remove();
+	var noProviders = S.chatMsgBox.querySelector("#noProvidersCard");
+	if (noProviders) noProviders.remove();
+	S.chatMsgBox.classList.remove("chat-messages-empty");
+}
 
 function toolCallLogicalId(payload) {
 	if (!payload) return "";
@@ -110,6 +121,7 @@ function moveFirstQueuedToChat() {
 	firstQueued.classList.remove("queued");
 	var badge = firstQueued.querySelector(".queued-badge");
 	if (badge) badge.remove();
+	clearChatEmptyState();
 	S.chatMsgBox.appendChild(firstQueued);
 	if (!tray.querySelector(".msg")) tray.classList.add("hidden");
 }
@@ -133,8 +145,7 @@ function handleChatThinking(p, isActive, isChatPage, eventSession) {
 	setSessionReplying(eventSession, true);
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
-	var welcome = document.getElementById("welcomeCard");
-	if (welcome) welcome.remove();
+	clearChatEmptyState();
 	var thinkEl = document.createElement("div");
 	thinkEl.className = "msg assistant thinking";
 	thinkEl.id = "thinkingIndicator";
@@ -230,6 +241,7 @@ function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
 	card.querySelector("[data-cmd]").textContent = ` ${cmd}`;
 	// Preserve thinking text as a reasoning disclosure inside the tool card
 	if (thinkingText) appendReasoningDisclosure(card, thinkingText);
+	clearChatEmptyState();
 	S.chatMsgBox.appendChild(card);
 	var endKey = toolCallEventKey(eventSession, p);
 	var pendingEnd = pendingToolCallEnds.get(endKey);
@@ -452,6 +464,7 @@ function handleChatDelta(p, isActive, isChatPage, eventSession) {
 		S.setStreamText("");
 		S.setStreamEl(document.createElement("div"));
 		S.streamEl.className = "msg assistant";
+		clearChatEmptyState();
 		S.chatMsgBox.appendChild(S.streamEl);
 	}
 	S.setStreamText(S.streamText + p.text);
@@ -596,7 +609,10 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		var msgEl = S.streamEl || document.createElement("div");
 		msgEl.className = "msg assistant";
 		msgEl.textContent = "";
-		if (!msgEl.parentNode) S.chatMsgBox.appendChild(msgEl);
+		if (!msgEl.parentNode) {
+			clearChatEmptyState();
+			S.chatMsgBox.appendChild(msgEl);
+		}
 
 		if (p.audio) {
 			var filename = p.audio.split("/").pop();
@@ -729,6 +745,7 @@ function handleChatRetrying(p, isActive, isChatPage, eventSession) {
 		indicator.className = "msg assistant thinking";
 		indicator.id = "thinkingIndicator";
 		indicator.appendChild(makeThinkingDots());
+		clearChatEmptyState();
 		S.chatMsgBox.appendChild(indicator);
 	}
 
@@ -815,11 +832,7 @@ function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
 	setSessionActiveRunId(eventSession, null);
 	clearSessionHistoryCache(eventSession);
 	// Reset badge, unread state, and history index for every client.
-	var session = sessionStore.getByKey(eventSession);
-	if (session) {
-		session.syncCounts(0, 0);
-		session.lastHistoryIndex.value = -1;
-	}
+	markSessionLocallyCleared(eventSession);
 	if (isActive) {
 		S.setLastHistoryIndex(-1);
 		S.setChatSeq(0);
@@ -860,11 +873,19 @@ function handleChatEvent(p) {
 		// If session switching got stuck (e.g. lost RPC response), do not drop
 		// terminal frames. Unstick and process final/error so replies still show
 		// without requiring a full page reload.
-		if (p.state === "final" || p.state === "error") {
+		var allowDuringSwitch =
+			p.state === "final" ||
+			p.state === "error" ||
+			p.state === "aborted" ||
+			p.state === "notice" ||
+			p.state === "session_cleared" ||
+			p.state === "queue_cleared";
+		if (!allowDuringSwitch) {
+			return;
+		}
+		if (p.state === "final" || p.state === "error" || p.state === "aborted") {
 			sessionStore.switchInProgress.value = false;
 			S.setSessionSwitchInProgress(false);
-		} else {
-			return;
 		}
 	}
 
@@ -1045,6 +1066,7 @@ function handleLocalLlmDownload(payload) {
 		downloadIndicatorEl.appendChild(progressText);
 
 		if (S.chatMsgBox) {
+			clearChatEmptyState();
 			S.chatMsgBox.appendChild(downloadIndicatorEl);
 			S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 		}
@@ -1187,6 +1209,8 @@ function dispatchFrame(frame) {
 var connectOpts = {
 	onFrame: dispatchFrame,
 	onConnected: (hello) => {
+		var isReconnect = hasConnectedOnce;
+		hasConnectedOnce = true;
 		setStatus("connected", "");
 		var now = new Date();
 		var ts = now.toLocaleTimeString([], {
@@ -1221,10 +1245,14 @@ var connectOpts = {
 				"mcp.status",
 			]),
 		);
-		fetchModels();
-		fetchSessions();
-		fetchProjects();
-		prefetchChannels();
+		// Keep initial hydration authoritative via app bootstrap/gon.
+		// On reconnect, force a fresh snapshot in case realtime events were missed.
+		if (isReconnect) {
+			fetchModels();
+			fetchSessions();
+			fetchProjects();
+			prefetchChannels();
+		}
 		sendRpc("logs.status", {}).then((res) => {
 			if (res?.ok) {
 				var p = res.payload || {};

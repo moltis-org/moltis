@@ -38,6 +38,14 @@ wasm-tools:
     cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
     cargo run -p moltis-wasm-precompile --release
 
+# Build just the release WASM artifacts expected by embedded-wasm builds.
+build-wasm-artifacts: wasm-tools
+    @echo "Built target/wasm32-wasip2/release/{moltis_wasm_calc,moltis_wasm_web_fetch,moltis_wasm_web_search}.{wasm,cwasm}"
+
+# Build release after ensuring embedded WASM artifacts are present.
+build-release-with-wasm: build-wasm-artifacts
+    cargo build --release
+
 # Run local dev server with workspace-local config/data dirs.
 dev-server:
     MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis

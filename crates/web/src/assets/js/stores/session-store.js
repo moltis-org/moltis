@@ -4,7 +4,6 @@
 // Session class instance with per-session signals for client-side state.
 
 import { computed, signal } from "@preact/signals";
-import { sendRpc } from "../helpers.js";
 
 // ── Session class ────────────────────────────────────────────
 
@@ -179,12 +178,32 @@ export function upsert(serverData) {
 	return next;
 }
 
-/** Fetch sessions from the server via RPC. */
+/** Remove a session by key. Returns true when a session was removed. */
+export function remove(key) {
+	if (!key) return false;
+	var existing = getByKey(key);
+	if (!existing) return false;
+	sessions.value = sessions.value.filter((session) => session.key !== key);
+	if (activeSessionKey.value === key) {
+		var fallback = sessions.value.find((session) => session.key === "main")?.key || sessions.value[0]?.key || "main";
+		activeSessionKey.value = fallback;
+		localStorage.setItem("moltis-session", fallback);
+	}
+	return true;
+}
+
+/** Fetch sessions from the server via HTTP (gzip-friendly). */
 export function fetch() {
-	return sendRpc("sessions.list", {}).then((res) => {
-		if (!res?.ok) return;
-		setAll(res.payload || []);
-	});
+	return window
+		.fetch("/api/sessions", {
+			headers: { Accept: "application/json" },
+		})
+		.then((response) => (response.ok ? response.json() : null))
+		.then((payload) => {
+			if (!Array.isArray(payload)) return;
+			setAll(payload);
+		})
+		.catch(() => {});
 }
 
 /** Notify Preact that session data changed (triggers re-render). */
@@ -212,6 +231,7 @@ export var sessionStore = {
 	Session,
 	setAll,
 	upsert,
+	remove,
 	fetch,
 	getByKey,
 	setActive,

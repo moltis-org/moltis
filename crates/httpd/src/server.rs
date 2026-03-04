@@ -906,7 +906,15 @@ pub async fn prepare_gateway(
                 0 => total.saturating_sub(sys.used_memory()),
                 v => v,
             };
-            broadcast_tick(&tick_state, process_mem, available, total).await;
+            let local_llama_cpp_bytes = moltis_gateway::server::local_llama_cpp_bytes_for_ui();
+            broadcast_tick(
+                &tick_state,
+                process_mem,
+                local_llama_cpp_bytes,
+                available,
+                total,
+            )
+            .await;
         }
     });
 
@@ -1062,6 +1070,8 @@ pub async fn prepare_gateway(
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             let mut cleanup_counter = 0u32;
+            let mut sys = sysinfo::System::new();
+            let pid = sysinfo::get_current_pid().ok();
             loop {
                 interval.tick().await;
                 if let Some(ref handle) = metrics_state.metrics_handle {
@@ -1075,6 +1085,20 @@ pub async fn prepare_gateway(
                     let prometheus_text = handle.render();
                     let snapshot =
                         moltis_metrics::MetricsSnapshot::from_prometheus_text(&prometheus_text);
+                    sys.refresh_memory();
+                    if let Some(pid) = pid {
+                        sys.refresh_processes_specifics(
+                            sysinfo::ProcessesToUpdate::Some(&[pid]),
+                            false,
+                            sysinfo::ProcessRefreshKind::nothing().with_memory(),
+                        );
+                    }
+                    let process_memory_bytes = pid
+                        .and_then(|p| sys.process(p))
+                        .map(|p| p.memory())
+                        .unwrap_or(0);
+                    let local_llama_cpp_bytes =
+                        moltis_gateway::server::local_llama_cpp_bytes_for_ui();
                     // Convert per-provider metrics to history format.
                     let by_provider = snapshot
                         .categories
@@ -1109,6 +1133,8 @@ pub async fn prepare_gateway(
                         tool_errors: snapshot.categories.tools.errors,
                         mcp_calls: snapshot.categories.mcp.total,
                         active_sessions: snapshot.categories.system.active_sessions,
+                        process_memory_bytes,
+                        local_llama_cpp_bytes,
                     };
 
                     // Push to in-memory history.

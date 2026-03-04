@@ -144,6 +144,11 @@ fn build_api_routes() -> Router<AppState> {
             "/api/restart",
             axum::routing::post(moltis_httpd::tools_routes::restart),
         )
+        .route("/api/sessions", get(api::api_sessions_handler))
+        .route(
+            "/api/sessions/{session_key}/history",
+            get(api::api_session_history_handler),
+        )
         .route(
             "/api/sessions/{session_key}/upload",
             axum::routing::post(moltis_httpd::upload_routes::session_upload).layer(

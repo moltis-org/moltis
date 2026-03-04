@@ -530,6 +530,56 @@ fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn process_rss_bytes() -> u64 {
+    let mut sys = sysinfo::System::new();
+    let Some(pid) = sysinfo::get_current_pid().ok() else {
+        return 0;
+    };
+    sys.refresh_memory();
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        false,
+        sysinfo::ProcessRefreshKind::nothing().with_memory(),
+    );
+    sys.process(pid).map(|p| p.memory()).unwrap_or(0)
+}
+
+struct StartupMemProbe {
+    enabled: bool,
+    last_rss_bytes: u64,
+}
+
+impl StartupMemProbe {
+    fn new() -> Self {
+        let enabled = env_flag_enabled("MOLTIS_STARTUP_MEM_TRACE");
+        let last_rss_bytes = if enabled {
+            process_rss_bytes()
+        } else {
+            0
+        };
+        Self {
+            enabled,
+            last_rss_bytes,
+        }
+    }
+
+    fn checkpoint(&mut self, stage: &str) {
+        if !self.enabled {
+            return;
+        }
+        let rss_bytes = process_rss_bytes();
+        let delta_bytes = rss_bytes as i128 - self.last_rss_bytes as i128;
+        self.last_rss_bytes = rss_bytes;
+
+        info!(
+            stage,
+            rss_bytes,
+            delta_bytes = delta_bytes as i64,
+            "startup memory checkpoint"
+        );
+    }
+}
+
 fn validate_proxy_tls_configuration(
     behind_proxy: bool,
     tls_enabled: bool,
@@ -750,6 +800,11 @@ fn spawn_post_listener_warmups(
     browser_service: Arc<dyn crate::services::BrowserService>,
     browser_tool: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
 ) {
+    if !env_flag_enabled("MOLTIS_BROWSER_WARMUP") {
+        debug!("startup browser warmup disabled (set MOLTIS_BROWSER_WARMUP=1 to enable)");
+        return;
+    }
+
     tokio::spawn(async move {
         browser_service.warmup().await;
         if let Some(tool) = browser_tool
@@ -852,6 +907,18 @@ pub fn openclaw_detected_for_ui() -> bool {
 #[cfg(not(feature = "openclaw-import"))]
 pub fn openclaw_detected_for_ui() -> bool {
     false
+}
+
+#[cfg(feature = "local-llm")]
+#[must_use]
+pub fn local_llama_cpp_bytes_for_ui() -> u64 {
+    moltis_providers::local_llm::loaded_llama_model_bytes()
+}
+
+#[cfg(not(feature = "local-llm"))]
+#[must_use]
+pub const fn local_llama_cpp_bytes_for_ui() -> u64 {
+    0
 }
 
 fn log_startup_config_storage_diagnostics() {
@@ -1023,6 +1090,8 @@ pub async fn prepare_gateway_core(
     let instance_slug_value = instance_slug(&config);
     let browser_container_prefix = browser_container_prefix(&instance_slug_value);
     let sandbox_container_prefix = sandbox_container_prefix(&instance_slug_value);
+    let mut startup_mem_probe = StartupMemProbe::new();
+    startup_mem_probe.checkpoint("prepare_gateway.start");
 
     // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
     if no_tls {
@@ -1124,6 +1193,7 @@ pub async fn prepare_gateway_core(
             );
         }
     }
+    startup_mem_probe.checkpoint("providers.registry.initialized");
 
     // Refresh dynamic provider model discovery hourly so long-lived sessions
     // pick up newly available models without requiring a restart.
@@ -1284,6 +1354,7 @@ pub async fn prepare_gateway_core(
         });
         services.mcp = live_mcp.clone() as Arc<dyn crate::services::McpService>;
     }
+    startup_mem_probe.checkpoint("services.core_wired");
 
     // Initialize data directory and SQLite database.
     let data_dir = data_dir.unwrap_or_else(moltis_config::data_dir);
@@ -1390,6 +1461,7 @@ pub async fn prepare_gateway_core(
 
     // Migrate plugins data into unified skills system (idempotent, non-fatal).
     moltis_skills::migration::migrate_plugins_to_skills(&data_dir).await;
+    startup_mem_probe.checkpoint("sqlite.migrations.complete");
 
     // Initialize vault for encryption-at-rest.
     #[cfg(feature = "vault")]
@@ -2442,6 +2514,7 @@ pub async fn prepare_gateway_core(
     services = services.with_session_share_store(Arc::clone(&session_share_store));
 
     services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
+    startup_mem_probe.checkpoint("channels.initialized");
 
     // Shared agents config (presets) — used by both SpawnAgentTool and RPC.
     let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
@@ -2833,6 +2906,7 @@ pub async fn prepare_gateway_core(
             },
         }
     };
+    startup_mem_probe.checkpoint("memory_manager.initialized");
 
     let is_localhost =
         matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
@@ -2907,6 +2981,7 @@ pub async fn prepare_gateway_core(
         #[cfg(feature = "vault")]
         vault.clone(),
     );
+    startup_mem_probe.checkpoint("gateway_state.created");
 
     // Store discovered hook info, disabled set, and config overrides in state for the web UI.
     {
@@ -3531,6 +3606,8 @@ pub async fn prepare_gateway_core(
             },
         }
     };
+
+    startup_mem_probe.checkpoint("prepare_gateway.ready");
 
     Ok(PreparedGatewayCore {
         state: Arc::clone(&state),
