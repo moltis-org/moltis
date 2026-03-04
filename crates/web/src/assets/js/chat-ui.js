@@ -3,6 +3,15 @@
 import { formatTokens, parseErrorMessage, sendRpc, updateCountdown } from "./helpers.js";
 import * as S from "./state.js";
 
+function clearChatEmptyState() {
+	if (!S.chatMsgBox) return;
+	var welcome = S.chatMsgBox.querySelector("#welcomeCard");
+	if (welcome) welcome.remove();
+	var noProviders = S.chatMsgBox.querySelector("#noProvidersCard");
+	if (noProviders) noProviders.remove();
+	S.chatMsgBox.classList.remove("chat-messages-empty");
+}
+
 // Scroll chat to bottom and keep it pinned until layout settles.
 // Uses a ResizeObserver to catch any late layout shifts (sidebar re-render,
 // font loading, async style recalc) and re-scrolls until stable.
@@ -21,8 +30,7 @@ export function scrollChatToBottom() {
 
 export function chatAddMsg(cls, content, isHtml) {
 	if (!S.chatMsgBox) return null;
-	var welcome = document.getElementById("welcomeCard");
-	if (welcome) welcome.remove();
+	clearChatEmptyState();
 	var el = document.createElement("div");
 	el.className = `msg ${cls}`;
 	if (cls === "system") {
@@ -49,8 +57,7 @@ export function chatAddMsg(cls, content, isHtml) {
  */
 export function chatAddMsgWithImages(cls, htmlContent, images) {
 	if (!S.chatMsgBox) return null;
-	var welcome = document.getElementById("welcomeCard");
-	if (welcome) welcome.remove();
+	clearChatEmptyState();
 	var el = document.createElement("div");
 	el.className = `msg ${cls}`;
 	if (htmlContent) {
@@ -128,6 +135,7 @@ export function appendReasoningDisclosure(messageEl, reasoningText) {
 
 export function chatAddErrorCard(err) {
 	if (!S.chatMsgBox) return;
+	clearChatEmptyState();
 	var el = document.createElement("div");
 	el.className = "msg error-card";
 
@@ -183,6 +191,7 @@ export function chatAddErrorMsg(message) {
 
 export function renderApprovalCard(requestId, command) {
 	if (!S.chatMsgBox) return;
+	clearChatEmptyState();
 	var tpl = document.getElementById("tpl-approval-card");
 	var frag = tpl.content.cloneNode(true);
 	var card = frag.firstElementChild;

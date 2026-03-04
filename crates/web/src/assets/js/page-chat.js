@@ -1,5 +1,6 @@
 // ── Chat page ────────────────────────────────────────────
 
+import { effect } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { chatAddMsg, chatAddMsgWithImages, updateCommandInputUI } from "./chat-ui.js";
@@ -22,12 +23,14 @@ import {
 	bumpSessionCount,
 	cacheOutgoingUserMessage,
 	clearActiveSession,
+	clearAllSessions,
 	seedSessionPreviewFromUserText,
 	setSessionActiveRunId,
 	setSessionReplying,
 	switchSession,
 } from "./sessions.js";
 import * as S from "./state.js";
+import { sessionStore } from "./stores/session-store.js";
 import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
 // ── Slash commands ───────────────────────────────────────
@@ -41,6 +44,7 @@ var slashMenuEl = null;
 var slashMenuIdx = 0;
 var slashMenuItems = [];
 var chatMoreModalKeydownHandler = null;
+var disposeSessionControlsVisibility = null;
 
 function slashInjectStyles() {
 	if (document.getElementById("slashMenuStyles")) return;
@@ -472,6 +476,22 @@ export function renderCompactCard(data) {
 }
 
 // ── Debug panel ──────────────────────────────────────────
+function setDebugModalOpen(open) {
+	var modal = S.$("debugModal");
+	if (!modal) return;
+	modal.classList.toggle("hidden", !open);
+	var btn = S.$("debugPanelBtn");
+	if (btn) btn.style.color = open ? "var(--accent)" : "var(--muted)";
+}
+
+function setFullContextModalOpen(open) {
+	var modal = S.$("fullContextModal");
+	if (!modal) return;
+	modal.classList.toggle("hidden", !open);
+	var btn = S.$("fullContextBtn");
+	if (btn) btn.style.color = open ? "var(--accent)" : "var(--muted)";
+}
+
 function refreshDebugPanel() {
 	var panel = S.$("debugPanel");
 	if (!panel) return;
@@ -498,13 +518,16 @@ function refreshDebugPanel() {
 }
 
 function toggleDebugPanel() {
-	var panel = S.$("debugPanel");
-	var btn = S.$("debugPanelBtn");
-	if (!panel) return;
-	var hidden = panel.classList.contains("hidden");
-	panel.classList.toggle("hidden", !hidden);
-	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
-	if (hidden) refreshDebugPanel();
+	var modal = S.$("debugModal");
+	if (!modal) return;
+	var opening = modal.classList.contains("hidden");
+	if (!opening) {
+		setDebugModalOpen(false);
+		return;
+	}
+	setFullContextModalOpen(false);
+	setDebugModalOpen(true);
+	refreshDebugPanel();
 }
 
 // ── Full context panel ───────────────────────────────────
@@ -702,19 +725,22 @@ ${contextText}`;
 }
 
 function toggleFullContextPanel() {
-	var panel = S.$("fullContextPanel");
-	var btn = S.$("fullContextBtn");
-	if (!panel) return;
-	var hidden = panel.classList.contains("hidden");
-	panel.classList.toggle("hidden", !hidden);
-	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
-	if (hidden) refreshFullContextPanel();
+	var modal = S.$("fullContextModal");
+	if (!modal) return;
+	var opening = modal.classList.contains("hidden");
+	if (!opening) {
+		setFullContextModalOpen(false);
+		return;
+	}
+	setDebugModalOpen(false);
+	setFullContextModalOpen(true);
+	refreshFullContextPanel();
 }
 
 /** Refresh the full-context panel if it is currently visible. */
 export function maybeRefreshFullContext() {
-	var panel = S.$("fullContextPanel");
-	if (panel && !panel.classList.contains("hidden")) refreshFullContextPanel();
+	var modal = S.$("fullContextModal");
+	if (modal && !modal.classList.contains("hidden")) refreshFullContextPanel();
 }
 
 // ── MCP toggle ───────────────────────────────────────────
@@ -965,7 +991,7 @@ function handleHistoryDown() {
 // Safe: static hardcoded HTML template string — no user input is interpolated.
 var chatPageHTML =
 	'<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto auto;overflow:hidden">' +
-	'<div class="chat-toolbar px-4 py-1.5 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2">' +
+	'<div class="chat-toolbar h-12 px-4 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2" style="grid-row:1;">' +
 	'<div id="modelCombo" class="model-combo">' +
 	'<button id="modelComboBtn" class="model-combo-btn" type="button">' +
 	'<span id="modelComboLabel">loading\u2026</span>' +
@@ -994,8 +1020,13 @@ var chatPageHTML =
 	'<div id="chatMoreModal" class="provider-modal-backdrop hidden">' +
 	'<div class="provider-modal" style="width:560px;max-width:92vw;">' +
 	'<div class="provider-modal-header">' +
-	'<div class="provider-item-name">More controls</div>' +
-	'<button id="chatMoreCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button>' +
+	'<div class="flex items-center gap-2">' +
+	'<button id="chatMoreDeleteAllBtn" type="button" class="provider-btn provider-btn-sm chat-session-btn-danger inline-flex items-center gap-1.5" style="background:var(--error);border-color:var(--error);color:#fff;">' +
+	'<span class="icon icon-sm icon-x-circle shrink-0"></span>' +
+	'<span id="chatMoreDeleteAllLabel">Delete all sessions</span>' +
+	"</button>" +
+	"</div>" +
+	'<div id="sessionHeaderModalTopMount" class="flex items-center gap-2"></div>' +
 	"</div>" +
 	'<div class="provider-modal-body flex flex-col gap-3">' +
 	'<div class="flex flex-wrap items-center gap-2">' +
@@ -1023,21 +1054,38 @@ var chatPageHTML =
 	'<span id="fullContextLabel">Context</span>' +
 	"</button>" +
 	"</div>" +
-	'<div class="border-t border-[var(--border)] pt-3">' +
-	'<div class="text-xs text-[var(--muted)] mb-2">Session controls</div>' +
+	'<div id="sessionControlsSection" class="border-t border-[var(--border)] pt-3">' +
 	'<div id="sessionHeaderModalMount" class="w-full"></div>' +
 	"</div>" +
 	"</div>" +
 	"</div>" +
 	"</div>" +
-	"<div>" +
-	'<div id="debugPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:260px;"></div>' +
-	'<div id="fullContextPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:500px;"></div>' +
+	'<div id="debugModal" class="provider-modal-backdrop hidden">' +
+	'<div class="provider-modal" style="width:min(980px,96vw);max-width:96vw;max-height:88vh;">' +
+	'<div class="provider-modal-header">' +
+	'<div class="provider-item-name">Debug context</div>' +
+	'<button id="debugModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button>' +
 	"</div>" +
-	'<div class="p-4 flex flex-col gap-2" id="messages" style="overflow-y:auto;min-height:0"></div>' +
-	'<div id="queuedMessages" class="queued-tray hidden"></div>' +
-	'<div id="tokenBar" class="token-bar"></div>' +
-	'<div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
+	'<div class="provider-modal-body" style="padding:0;overflow:hidden;">' +
+	'<div id="debugPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div>' +
+	"</div>" +
+	"</div>" +
+	"</div>" +
+	'<div id="fullContextModal" class="provider-modal-backdrop hidden">' +
+	'<div class="provider-modal" style="width:min(1080px,96vw);max-width:96vw;max-height:88vh;">' +
+	'<div class="provider-modal-header">' +
+	'<div class="provider-item-name">Full context</div>' +
+	'<button id="fullContextModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button>' +
+	"</div>" +
+	'<div class="provider-modal-body" style="padding:0;overflow:hidden;">' +
+	'<div id="fullContextPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div>' +
+	"</div>" +
+	"</div>" +
+	"</div>" +
+	'<div class="p-4 flex flex-col gap-2" id="messages" style="grid-row:3;overflow-y:auto;min-height:0"></div>' +
+	'<div id="queuedMessages" class="queued-tray hidden" style="grid-row:4;"></div>' +
+	'<div id="tokenBar" class="token-bar" style="grid-row:5;"></div>' +
+	'<div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end" style="grid-row:6;">' +
 	'<span id="chatCommandPrompt" class="chat-command-prompt chat-command-prompt-hidden" title="Command prompt symbol" aria-hidden="true">$</span>' +
 	'<textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" ' +
 	'class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea>' +
@@ -1114,6 +1162,10 @@ registerPrefix(
 		bindSandboxImageEvents();
 		updateSandboxImageUI(null);
 
+		var closeChatMore = null;
+		var closeDebugModal = null;
+		var closeFullContextModal = null;
+
 		// Mount compact controls in toolbar and full session controls in modal.
 		var headerToolbarMount = S.$("sessionHeaderToolbarMount");
 		if (headerToolbarMount) {
@@ -1132,12 +1184,38 @@ registerPrefix(
 		if (headerModalMount) {
 			render(
 				html`<${SessionHeader}
-					showSelectors=${false}
-					showStop=${false}
-					nameOwnLine=${true}
-					showRenameButton=${true}
-				/>`,
+						showSelectors=${false}
+						showStop=${false}
+						showFork=${false}
+						showShare=${false}
+						showDelete=${false}
+						nameOwnLine=${true}
+						showRenameButton=${true}
+					/>`,
 				headerModalMount,
+			);
+		}
+		var sessionControlsSection = S.$("sessionControlsSection");
+		if (sessionControlsSection) {
+			disposeSessionControlsVisibility?.();
+			disposeSessionControlsVisibility = effect(() => {
+				var isMainSession = (sessionStore.activeSessionKey.value || "main") === "main";
+				sessionControlsSection.classList.toggle("hidden", isMainSession);
+			});
+		}
+		var headerModalTopMount = S.$("sessionHeaderModalTopMount");
+		if (headerModalTopMount) {
+			render(
+				html`<${SessionHeader}
+						showSelectors=${false}
+						showName=${false}
+						showStop=${false}
+						showClear=${false}
+						actionButtonClass=${"provider-btn provider-btn-secondary provider-btn-sm"}
+						onBeforeShare=${() => closeChatMore?.()}
+						onBeforeDelete=${() => closeChatMore?.()}
+					/>`,
+				headerModalTopMount,
 			);
 		}
 
@@ -1145,11 +1223,30 @@ registerPrefix(
 		if (mcpToggle) mcpToggle.addEventListener("click", toggleMcp);
 		updateMcpToggleUI(true); // default: MCP enabled
 
+		var debugModal = S.$("debugModal");
+		var debugModalCloseBtn = S.$("debugModalCloseBtn");
+		if (debugModal) {
+			closeDebugModal = () => setDebugModalOpen(false);
+			if (debugModalCloseBtn) debugModalCloseBtn.addEventListener("click", closeDebugModal);
+			debugModal.addEventListener("click", (e) => {
+				if (e.target === debugModal) closeDebugModal();
+			});
+		}
+
+		var fullContextModal = S.$("fullContextModal");
+		var fullContextModalCloseBtn = S.$("fullContextModalCloseBtn");
+		if (fullContextModal) {
+			closeFullContextModal = () => setFullContextModalOpen(false);
+			if (fullContextModalCloseBtn) fullContextModalCloseBtn.addEventListener("click", closeFullContextModal);
+			fullContextModal.addEventListener("click", (e) => {
+				if (e.target === fullContextModal) closeFullContextModal();
+			});
+		}
+
 		var chatMoreModal = S.$("chatMoreModal");
 		var chatMoreBtn = S.$("chatMoreBtn");
-		var chatMoreCloseBtn = S.$("chatMoreCloseBtn");
 		if (chatMoreModal && chatMoreBtn) {
-			var closeChatMore = () => {
+			closeChatMore = () => {
 				chatMoreModal.classList.add("hidden");
 				chatMoreBtn.classList.remove("active");
 				if (S.sandboxImageDropdown) {
@@ -1157,11 +1254,12 @@ registerPrefix(
 				}
 			};
 			var openChatMore = () => {
+				setDebugModalOpen(false);
+				setFullContextModalOpen(false);
 				chatMoreModal.classList.remove("hidden");
 				chatMoreBtn.classList.add("active");
 			};
 			chatMoreBtn.addEventListener("click", openChatMore);
-			if (chatMoreCloseBtn) chatMoreCloseBtn.addEventListener("click", closeChatMore);
 			chatMoreModal.addEventListener("click", (e) => {
 				if (e.target === chatMoreModal) closeChatMore();
 			});
@@ -1170,9 +1268,45 @@ registerPrefix(
 				if (closeAfterToggleBtn) closeAfterToggleBtn.addEventListener("click", closeChatMore);
 			}
 			chatMoreModalKeydownHandler = (e) => {
-				if (e.key === "Escape") closeChatMore();
+				if (e.key !== "Escape") return;
+				if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
+					closeFullContextModal?.();
+					return;
+				}
+				if (debugModal && !debugModal.classList.contains("hidden")) {
+					closeDebugModal?.();
+					return;
+				}
+				closeChatMore();
 			};
 			document.addEventListener("keydown", chatMoreModalKeydownHandler);
+		}
+		var chatMoreDeleteAllBtn = S.$("chatMoreDeleteAllBtn");
+		if (chatMoreDeleteAllBtn) {
+			var chatMoreDeleteAllLabel = S.$("chatMoreDeleteAllLabel");
+			var deleteAllInFlight = false;
+			chatMoreDeleteAllBtn.addEventListener("click", () => {
+				if (deleteAllInFlight) return;
+				deleteAllInFlight = true;
+				chatMoreDeleteAllBtn.disabled = true;
+				if (chatMoreDeleteAllLabel) {
+					chatMoreDeleteAllLabel.textContent = "Deleting\u2026";
+				}
+				closeChatMore?.();
+				clearAllSessions()
+					.then((res) => {
+						if (res?.ok && !res?.skipped) return;
+						if (res?.cancelled || res?.skipped) return;
+						chatAddMsg("error", res?.error?.message || "Failed to clear sessions");
+					})
+					.finally(() => {
+						deleteAllInFlight = false;
+						chatMoreDeleteAllBtn.disabled = false;
+						if (chatMoreDeleteAllLabel) {
+							chatMoreDeleteAllLabel.textContent = "Delete all sessions";
+						}
+					});
+			});
 		}
 
 		var debugBtn = S.$("debugPanelBtn");
@@ -1254,10 +1388,14 @@ registerPrefix(
 			document.removeEventListener("keydown", chatMoreModalKeydownHandler);
 			chatMoreModalKeydownHandler = null;
 		}
+		disposeSessionControlsVisibility?.();
+		disposeSessionControlsVisibility = null;
 		var headerToolbarMount = S.$("sessionHeaderToolbarMount");
 		if (headerToolbarMount) render(null, headerToolbarMount);
 		var headerModalMount = S.$("sessionHeaderModalMount");
 		if (headerModalMount) render(null, headerModalMount);
+		var headerModalTopMount = S.$("sessionHeaderModalTopMount");
+		if (headerModalTopMount) render(null, headerModalTopMount);
 		S.setChatMsgBox(null);
 		S.setChatInput(null);
 		S.setChatSendBtn(null);

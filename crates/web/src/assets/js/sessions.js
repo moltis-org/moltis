@@ -355,12 +355,10 @@ export function clearActiveSession() {
 
 // ── Session list ─────────────────────────────────────────────
 // The Preact SessionList component is mounted once from app.js and
-// auto-rerenders from signals.  This function handles the imperative
-// Clear button visibility that lives outside the component.
+// auto-rerenders from signals.
 
 export function renderSessionList() {
 	ensureSessionListScrollBinding();
-	updateClearAllVisibility();
 	maybeLoadMoreSessionsFromScroll();
 }
 
@@ -540,62 +538,36 @@ newSessionBtn.addEventListener("click", () => {
 	}
 });
 
-// ── Clear all sessions button ───────────────────────────────
-var clearAllBtn = S.$("clearAllSessionsBtn");
-
-/** Show the Clear button only when there are deletable (session:*) sessions. */
-function updateClearAllVisibility() {
-	if (!clearAllBtn) return;
-	var allSessions = sessionStore.sessions.value;
-	var hasClearable = allSessions.some(
-		(s) =>
-			s.key !== "main" &&
-			!s.key.startsWith("cron:") &&
-			!s.key.startsWith("telegram:") &&
-			!s.key.startsWith("msteams:") &&
-			!s.channelBinding,
+function isClearableSession(session) {
+	return (
+		session.key !== "main" &&
+		!session.key.startsWith("cron:") &&
+		!session.key.startsWith("telegram:") &&
+		!session.key.startsWith("msteams:") &&
+		!session.channelBinding
 	);
-	clearAllBtn.classList.toggle("hidden", !hasClearable);
 }
 
-if (clearAllBtn) {
-	clearAllBtn.addEventListener("click", () => {
-		var allSessions = sessionStore.sessions.value;
-		var count = allSessions.filter(
-			(s) =>
-				s.key !== "main" &&
-				!s.key.startsWith("cron:") &&
-				!s.key.startsWith("telegram:") &&
-				!s.key.startsWith("msteams:") &&
-				!s.channelBinding,
-		).length;
-		if (count === 0) return;
-		confirmDialog(
-			`Delete ${count} session${count !== 1 ? "s" : ""}? Main, channel-bound, and cron sessions will be kept.`,
-		).then((yes) => {
-			if (!yes) return;
-			clearAllBtn.disabled = true;
-			clearAllBtn.textContent = "Clearing\u2026";
-			sendRpc("sessions.clear_all", {}).then((res) => {
-				clearAllBtn.disabled = false;
-				clearAllBtn.textContent = "Clear";
-				if (res?.ok) {
-					clearSessionHistory();
-					// If the active session was deleted, switch to main.
-					var active = sessionStore.getByKey(sessionStore.activeSessionKey.value);
-					var wasKept =
-						!active ||
-						active.key === "main" ||
-						active.key.startsWith("cron:") ||
-						active.key.startsWith("telegram:") ||
-						active.key.startsWith("msteams:") ||
-						active.channelBinding;
-					if (!wasKept) {
-						switchSession("main");
-					}
-					fetchSessions();
-				}
-			});
+export function clearAllSessions() {
+	var allSessions = sessionStore.sessions.value;
+	var count = allSessions.filter((session) => isClearableSession(session)).length;
+	if (count === 0) {
+		return Promise.resolve({ ok: true, skipped: true });
+	}
+	return confirmDialog(
+		`Delete ${count} session${count !== 1 ? "s" : ""}? Main, channel-bound, and cron sessions will be kept.`,
+	).then((yes) => {
+		if (!yes) return { ok: false, cancelled: true };
+		return sendRpc("sessions.clear_all", {}).then((res) => {
+			if (!res?.ok) return res;
+			clearSessionHistory();
+			// If the active session was deleted, switch to main.
+			var active = sessionStore.getByKey(sessionStore.activeSessionKey.value);
+			if (active && isClearableSession(active)) {
+				switchSession("main");
+			}
+			fetchSessions();
+			return res;
 		});
 	});
 }
@@ -1125,6 +1097,7 @@ function renderWelcomeAgentPicker(card, activeAgentId, onActiveAgentResolved) {
 
 function showWelcomeCard() {
 	if (!S.chatMsgBox) return;
+	S.chatMsgBox.classList.add("chat-messages-empty");
 
 	if (modelStore.models.value.length === 0) {
 		var noProvTpl = document.getElementById("tpl-no-providers-card");
@@ -1275,7 +1248,10 @@ function syncHistoryState(key, history, historyTailIndex, totalCountHint) {
 function renderHistory(key, history, searchContext, thinkingText, totalCountHint, skipAutoScroll) {
 	ensureHistoryScrollBinding();
 	hideSessionLoadIndicator();
-	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
+	if (S.chatMsgBox) {
+		S.chatMsgBox.classList.remove("chat-messages-empty");
+		S.chatMsgBox.textContent = "";
+	}
 	var msgEls = [];
 	S.setSessionTokens({ input: 0, output: 0 });
 	S.setSessionCurrentInputTokens(0);

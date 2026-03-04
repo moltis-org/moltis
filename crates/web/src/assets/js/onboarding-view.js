@@ -2113,14 +2113,6 @@ function VoiceStep({ onNext, onBack }) {
 
 // ── Channel step ────────────────────────────────────────────
 
-function WhatsAppIconLg() {
-	return html`<svg width="28" height="28" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M3 21l1.65-3.8a9 9 0 113.4 2.9L3 21" />
-    <path d="M9 10a.5.5 0 001 0V9a.5.5 0 00-1 0v1zm5 3a.5.5 0 001 0v-1a.5.5 0 00-1 0v1z" />
-  </svg>`;
-}
-
 function ChannelTypeSelector({ onSelect, offered }) {
 	return html`<div class="flex gap-3">
 		${
@@ -2133,7 +2125,7 @@ function ChannelTypeSelector({ onSelect, offered }) {
 		${
 			offered.has("whatsapp") &&
 			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("whatsapp")}>
-			<${WhatsAppIconLg} />
+			<span class="icon icon-xl icon-whatsapp"></span>
 			<span class="text-sm font-medium text-[var(--text-strong)]">WhatsApp</span>
 		</button>`
 		}
@@ -2472,6 +2464,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 	var [pairingStarted, setPairingStarted] = useState(false);
 	var [qrData, setQrData] = useState(null);
 	var [qrSvg, setQrSvg] = useState(null);
+	var [qrSvgUrl, setQrSvgUrl] = useState(null);
 	var [pairingError, setPairingError] = useState(null);
 	var unsubRef = useRef(null);
 
@@ -2481,6 +2474,23 @@ function WhatsAppForm({ onConnected, error, setError }) {
 			if (unsubRef.current) unsubRef.current();
 		};
 	}, []);
+
+	useEffect(() => {
+		if (!qrSvg) {
+			setQrSvgUrl(null);
+			return undefined;
+		}
+		var nextUrl = null;
+		try {
+			nextUrl = URL.createObjectURL(new Blob([qrSvg], { type: "image/svg+xml" }));
+			setQrSvgUrl(nextUrl);
+		} catch (_err) {
+			setQrSvgUrl(null);
+		}
+		return () => {
+			if (nextUrl) URL.revokeObjectURL(nextUrl);
+		};
+	}, [qrSvg]);
 
 	function onStartPairing(e) {
 		e.preventDefault();
@@ -2529,8 +2539,6 @@ function WhatsAppForm({ onConnected, error, setError }) {
 			}
 		});
 	}
-
-	var qrSvgUrl = qrSvg ? `data:image/svg+xml;utf8,${encodeURIComponent(qrSvg)}` : null;
 
 	if (pairingStarted) {
 		return html`<div class="flex flex-col gap-4 items-center">

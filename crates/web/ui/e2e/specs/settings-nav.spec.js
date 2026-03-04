@@ -43,7 +43,9 @@ test.describe("Settings navigation", () => {
 		await expect(page.getByRole("heading", { name: "Identity", exact: true })).toBeVisible();
 	});
 
-	test("settings nav keeps distinct icons for nodes, tailscale, network audit, and openclaw import", async ({ page }) => {
+	test("settings nav keeps distinct icons for nodes, tailscale, network audit, and openclaw import", async ({
+		page,
+	}) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/identity");
 		await expect(page.locator(".settings-sidebar-nav")).toBeVisible();
@@ -184,16 +186,15 @@ test.describe("Settings navigation", () => {
 			var options = ["🦊", "🐙", "🤖", "🐶"];
 			return options.find((emoji) => emoji !== current) || "🦊";
 		});
+		const iconHrefBefore = await page.evaluate(() => document.querySelector('link[rel="icon"]')?.href || "");
 		await page.getByRole("button", { name: selectedEmoji, exact: true }).click();
 		await expect(page.getByText("Saved", { exact: true })).toBeVisible();
 		await expect
 			.poll(() =>
-				page.evaluate((value) => {
+				page.evaluate((beforeHref) => {
 					var href = document.querySelector('link[rel="icon"]')?.href || "";
-					if (!href.startsWith("data:image/svg+xml,")) return false;
-					var decoded = decodeURIComponent(href.slice("data:image/svg+xml,".length));
-					return decoded.includes(value);
-				}, selectedEmoji),
+					return href.startsWith("data:image/png") && href !== beforeHref;
+				}, iconHrefBefore),
 			)
 			.toBeTruthy();
 		await expect(

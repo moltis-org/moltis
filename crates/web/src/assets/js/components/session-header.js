@@ -6,6 +6,7 @@
 import { html } from "htm/preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { onEvent } from "../events.js";
+import * as gon from "../gon.js";
 import { parseAgentsListPayload, sendRpc } from "../helpers.js";
 import {
 	clearActiveSession,
@@ -58,16 +59,23 @@ export function SessionHeader({
 	showDelete = true,
 	nameOwnLine = false,
 	showRenameButton = false,
+	actionButtonClass = "chat-session-btn",
+	onBeforeShare = null,
+	onBeforeDelete = null,
 } = {}) {
 	var session = sessionStore.activeSession.value;
 	var currentKey = sessionStore.activeSessionKey.value;
+	var gonAgentsPayload = parseAgentsListPayload(gon.get("agents"));
+	var initialAgentOptions = Array.isArray(gonAgentsPayload?.agents) ? gonAgentsPayload.agents : [];
+	var initialDefaultAgentId = typeof gonAgentsPayload?.defaultId === "string" ? gonAgentsPayload.defaultId : "main";
 
 	var [renaming, setRenaming] = useState(false);
 	var [clearing, setClearing] = useState(false);
 	var [stopping, setStopping] = useState(false);
 	var [switchingAgent, setSwitchingAgent] = useState(false);
-	var [agentOptions, setAgentOptions] = useState([]);
-	var [defaultAgentId, setDefaultAgentId] = useState("main");
+	var [agentOptions, setAgentOptions] = useState(initialAgentOptions);
+	var [defaultAgentId, setDefaultAgentId] = useState(initialDefaultAgentId);
+	var [agentOptionsLoaded, setAgentOptionsLoaded] = useState(initialAgentOptions.length > 0);
 	var [nodeOptions, setNodeOptions] = useState([]);
 	var [switchingNode, setSwitchingNode] = useState(false);
 	var inputRef = useRef(null);
@@ -88,10 +96,15 @@ export function SessionHeader({
 	useEffect(() => {
 		var cancelled = false;
 		sendRpc("agents.list", {}).then((res) => {
-			if (cancelled || !res?.ok) return;
+			if (cancelled) return;
+			if (!res?.ok) {
+				setAgentOptionsLoaded(true);
+				return;
+			}
 			var parsed = parseAgentsListPayload(res.payload);
 			setDefaultAgentId(parsed.defaultId);
 			setAgentOptions(parsed.agents);
+			setAgentOptionsLoaded(true);
 		});
 		return () => {
 			cancelled = true;
@@ -162,6 +175,9 @@ export function SessionHeader({
 	}, [currentKey]);
 
 	var onDelete = useCallback(() => {
+		if (typeof onBeforeDelete === "function") {
+			onBeforeDelete();
+		}
 		var msgCount = session ? session.messageCount || 0 : 0;
 		var nextKey = nextSessionKey(currentKey);
 		var doDelete = () => {
@@ -188,7 +204,7 @@ export function SessionHeader({
 		} else {
 			doDelete();
 		}
-	}, [currentKey, session]);
+	}, [currentKey, onBeforeDelete, session]);
 
 	var onClear = useCallback(() => {
 		if (clearing) return;
@@ -240,11 +256,14 @@ export function SessionHeader({
 	);
 
 	var onShare = useCallback(() => {
+		if (typeof onBeforeShare === "function") {
+			onBeforeShare();
+		}
 		shareVisibilityDialog().then((visibility) => {
 			if (!visibility) return;
 			void shareSnapshot(visibility);
 		});
-	}, [shareSnapshot]);
+	}, [onBeforeShare, shareSnapshot]);
 
 	var onAgentChange = useCallback(
 		(nextAgentId) => {
@@ -310,7 +329,7 @@ export function SessionHeader({
 			label: `${prefix}${agent.name}${suffix}`,
 		};
 	});
-	if (!hasCurrentAgentOption && agentSelectValue) {
+	if (!hasCurrentAgentOption && agentSelectValue && (switchingAgent || agentOptionsLoaded)) {
 		agentSelectOptions = [
 			{
 				value: agentSelectValue,
@@ -320,6 +339,7 @@ export function SessionHeader({
 		];
 	}
 	var agentSelectDisabled = switchingAgent || agentSelectOptions.length === 0;
+	var shouldShowAgentPicker = !isCron && agentOptionsLoaded && (agentOptions.length > 1 || !hasCurrentAgentOption);
 
 	var shouldShowNodePicker = !isCron && (nodeOptions.length > 0 || Boolean(currentNodeId));
 	var hasCurrentNodeOption = currentNodeId === "" || nodeOptions.some((node) => node.nodeId === currentNodeId);
@@ -369,7 +389,7 @@ export function SessionHeader({
 		showRenameButton &&
 		canRename &&
 		!renaming &&
-		html`<button class="chat-session-btn" onClick=${startRename} title="Rename session">
+		html`<button class=${actionButtonClass} onClick=${startRename} title="Rename session">
 			Rename
 		</button>`;
 
@@ -386,7 +406,7 @@ export function SessionHeader({
 			<div class=${nameOwnLine ? "flex flex-wrap items-center gap-2" : "flex items-center gap-2"}>
 			${
 				showSelectors &&
-				!isCron &&
+				shouldShowAgentPicker &&
 				html`
 				<${ComboSelect}
 					options=${agentSelectOptions}
@@ -418,51 +438,59 @@ export function SessionHeader({
 			}
 			${!nameOwnLine && showName && nameControl}
 			${!nameOwnLine && renameCta}
-			${
-				showFork &&
-				!isCron &&
-				html`
-				<button class="chat-session-btn" onClick=${onFork} title="Fork session">
-					Fork
-				</button>
-			`
-			}
-			${
-				showShare &&
-				!isCron &&
-				html`
-				<button class="chat-session-btn" onClick=${onShare} title="Share snapshot">
-					Share
-				</button>
-			`
-			}
-			${
-				showStop &&
-				canStop &&
-				html`
-				<button class="chat-session-btn" onClick=${onStop} title="Stop generation" disabled=${stopping}>
-					${stopping ? "Stopping\u2026" : "Stop"}
-				</button>
-			`
-			}
-			${
-				showClear &&
-				isMain &&
-				html`
-				<button class="chat-session-btn" onClick=${onClear} title="Clear session" disabled=${clearing}>
-					${clearing ? "Clearing\u2026" : "Clear"}
-				</button>
-			`
-			}
-			${
-				showDelete &&
-				!(isMain || isCron) &&
-				html`
-				<button class="chat-session-btn chat-session-btn-danger" onClick=${onDelete} title="Delete session">
-					Delete
-				</button>
-			`
-			}
+				${
+					showDelete &&
+					!(isMain || isCron) &&
+					html`
+					<button
+						class=${`${actionButtonClass} chat-session-btn-danger inline-flex items-center gap-1.5`}
+						onClick=${onDelete}
+						title="Delete session"
+						style=${{ background: "var(--error)", borderColor: "var(--error)", color: "#fff" }}
+					>
+						<span class="icon icon-sm icon-x-circle shrink-0"></span>
+						Delete
+					</button>
+				`
+				}
+				${
+					showFork &&
+					!isCron &&
+					html`
+					<button class=${`${actionButtonClass} inline-flex items-center gap-1.5`} onClick=${onFork} title="Fork session">
+						<span class="icon icon-sm icon-layers shrink-0"></span>
+						Fork
+					</button>
+				`
+				}
+				${
+					showShare &&
+					!isCron &&
+					html`
+					<button class=${`${actionButtonClass} inline-flex items-center gap-1.5`} onClick=${onShare} title="Share snapshot">
+						<span class="icon icon-sm icon-share shrink-0"></span>
+						Share
+					</button>
+				`
+				}
+				${
+					showStop &&
+					canStop &&
+					html`
+					<button class=${actionButtonClass} onClick=${onStop} title="Stop generation" disabled=${stopping}>
+						${stopping ? "Stopping\u2026" : "Stop"}
+					</button>
+				`
+				}
+				${
+					showClear &&
+					isMain &&
+					html`
+					<button class=${actionButtonClass} onClick=${onClear} title="Clear session" disabled=${clearing}>
+						${clearing ? "Clearing\u2026" : "Clear"}
+					</button>
+				`
+				}
 			</div>
 		</div>
 	`;
