@@ -2110,9 +2110,9 @@ pub enum ToolRegistryMode {
     /// Send all tool schemas to the model directly.
     #[default]
     Full,
-    /// Expose only `tool_search` + `tool_use` meta-tools. Real schemas are
-    /// served on-demand at execution time, keeping the prompt compact when
-    /// hundreds of MCP tools are connected.
+    /// Expose only `tool_search` meta-tool. Real tools are activated on demand
+    /// and called directly, keeping the prompt compact when hundreds of MCP
+    /// tools are connected.
     Lazy,
 }
 
