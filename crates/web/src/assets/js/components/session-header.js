@@ -15,7 +15,7 @@ import {
 	switchSession,
 } from "../sessions.js";
 import { sessionStore } from "../stores/session-store.js";
-import { confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui.js";
+import { ComboSelect, confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui.js";
 
 function nextSessionKey(currentKey) {
 	var allSessions = sessionStore.sessions.value;
@@ -237,8 +237,7 @@ export function SessionHeader() {
 	}, [shareSnapshot]);
 
 	var onAgentChange = useCallback(
-		(event) => {
-			var nextAgentId = event.target.value;
+		(nextAgentId) => {
 			if (!nextAgentId || nextAgentId === currentAgentId || switchingAgent) {
 				return;
 			}
@@ -266,8 +265,7 @@ export function SessionHeader() {
 	);
 
 	var onNodeChange = useCallback(
-		(event) => {
-			var nextNodeId = event.target.value;
+		(nextNodeId) => {
 			if (switchingNode) return;
 			setSwitchingNode(true);
 			sendRpc("nodes.set_session", {
@@ -294,63 +292,74 @@ export function SessionHeader() {
 
 	var agentSelectValue = currentAgentId;
 	var hasCurrentAgentOption = agentOptions.some((agent) => agent.id === agentSelectValue);
-	var selectDisabled = switchingAgent || agentOptions.length === 0;
+	var agentSelectOptions = agentOptions.map((agent) => {
+		var prefix = agent.emoji ? `${agent.emoji} ` : "";
+		var suffix = agent.id === defaultAgentId ? " (default)" : "";
+		return {
+			value: agent.id,
+			label: `${prefix}${agent.name}${suffix}`,
+		};
+	});
+	if (!hasCurrentAgentOption && agentSelectValue) {
+		agentSelectOptions = [
+			{
+				value: agentSelectValue,
+				label: switchingAgent ? "Switching…" : `agent:${agentSelectValue}`,
+			},
+			...agentSelectOptions,
+		];
+	}
+	var agentSelectDisabled = switchingAgent || agentSelectOptions.length === 0;
+
+	var shouldShowNodePicker = !isCron && (nodeOptions.length > 0 || Boolean(currentNodeId));
+	var hasCurrentNodeOption = currentNodeId === "" || nodeOptions.some((node) => node.nodeId === currentNodeId);
+	var nodeSelectOptions = [
+		{ value: "", label: "Local" },
+		...nodeOptions.map((node) => ({
+			value: node.nodeId,
+			label: node.displayName || node.nodeId,
+		})),
+	];
+	if (!hasCurrentNodeOption && currentNodeId) {
+		nodeSelectOptions = [
+			{
+				value: currentNodeId,
+				label: switchingNode ? "Switching…" : `node:${currentNodeId}`,
+			},
+			...nodeSelectOptions,
+		];
+	}
 
 	return html`
 		<div class="flex items-center gap-2">
 			${
 				!isCron &&
 				html`
-				<select
-					class="chat-session-btn"
+				<${ComboSelect}
+					options=${agentSelectOptions}
 					value=${agentSelectValue}
 					onChange=${onAgentChange}
-					disabled=${selectDisabled}
-					title="Session agent"
-					style="max-width:180px;text-overflow:ellipsis;"
-				>
-					${
-						!hasCurrentAgentOption &&
-						html`
-						<option value=${agentSelectValue}>
-							${switchingAgent ? "Switching…" : `agent:${agentSelectValue}`}
-						</option>
-					`
-					}
-					${agentOptions.map((agent) => {
-						var prefix = agent.emoji ? `${agent.emoji} ` : "";
-						var suffix = agent.id === defaultAgentId ? " (default)" : "";
-						return html`
-							<option key=${agent.id} value=${agent.id}>
-								${`${prefix}${agent.name}${suffix}`}
-							</option>
-						`;
-					})}
-				</select>
+					placeholder="Session agent"
+					searchable=${false}
+					allowEmpty=${false}
+					fullWidth=${false}
+					disabled=${agentSelectDisabled}
+				/>
 			`
 			}
 			${
-				!isCron &&
-				nodeOptions.length > 0 &&
+				shouldShowNodePicker &&
 				html`
-				<select
-					class="chat-session-btn"
+				<${ComboSelect}
+					options=${nodeSelectOptions}
 					value=${currentNodeId}
 					onChange=${onNodeChange}
+					placeholder="Session node"
+					searchable=${false}
+					allowEmpty=${false}
+					fullWidth=${false}
 					disabled=${switchingNode}
-					title="Session node"
-					style="max-width:160px;text-overflow:ellipsis;"
-				>
-					<option value="">Local</option>
-					${nodeOptions.map((node) => {
-						var label = node.displayName || node.nodeId;
-						return html`
-							<option key=${node.nodeId} value=${node.nodeId}>
-								${label}
-							</option>
-						`;
-					})}
-				</select>
+				/>
 			`
 			}
 			${

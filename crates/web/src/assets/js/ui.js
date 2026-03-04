@@ -471,14 +471,28 @@ export function ModelSelect({ models, value, onChange, placeholder }) {
  * @param {string} placeholder - placeholder when nothing selected
  * @param {string} searchPlaceholder - placeholder for search input
  * @param {boolean} searchable - whether to show the search input
+ * @param {boolean} fullWidth - whether control should fill available width
+ * @param {boolean} allowEmpty - whether to show a "(none)" choice
+ * @param {boolean} disabled - whether selection is disabled
  */
-export function ComboSelect({ options, value, onChange, placeholder, searchPlaceholder, searchable = true }) {
+export function ComboSelect({
+	options,
+	value,
+	onChange,
+	placeholder,
+	searchPlaceholder,
+	searchable = true,
+	fullWidth = true,
+	allowEmpty = true,
+	disabled = false,
+}) {
 	var [open, setOpen] = useState(false);
 	var [query, setQuery] = useState("");
 	var [kbIndex, setKbIndex] = useState(-1);
 	var ref = useRef(null);
 	var searchRef = useRef(null);
 	var dropdownRef = useRef(null);
+	var fillStyle = fullWidth ? "width:100%;" : undefined;
 
 	var selected = options.find((o) => o.value === value);
 	var label = selected ? selected.label : placeholder || "(none)";
@@ -508,6 +522,10 @@ export function ComboSelect({ options, value, onChange, placeholder, searchPlace
 		setKbIndex(-1);
 	}, [query]);
 
+	useEffect(() => {
+		if (disabled) setOpen(false);
+	}, [disabled]);
+
 	function onKeyDown(e) {
 		if (e.key === "Escape") {
 			setOpen(false);
@@ -530,24 +548,35 @@ export function ComboSelect({ options, value, onChange, placeholder, searchPlace
 		setQuery("");
 	}
 
-	return html`<div class="model-combo" ref=${ref} style="width:100%;">
-    <button type="button" class="model-combo-btn" style="width:100%;" onClick=${() => setOpen(!open)}>
+	return html`<div class="model-combo" ref=${ref} style=${fillStyle}>
+    <button
+      type="button"
+      class="model-combo-btn"
+      style=${fillStyle}
+      onClick=${() => {
+				if (!disabled) setOpen(!open);
+			}}
+      disabled=${disabled}
+    >
       <span class="model-item-label">${label}</span>
       <span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>
     </button>
     ${
 			open &&
-			html`<div class="model-dropdown" ref=${dropdownRef} tabIndex="-1" style="width:100%;" onKeyDown=${onKeyDown}>
+			html`<div class="model-dropdown" ref=${dropdownRef} tabIndex="-1" style=${fillStyle} onKeyDown=${onKeyDown}>
       ${
 				searchable &&
 				html`<input class="model-search-input" ref=${searchRef} placeholder=${searchPlaceholder || "Search\u2026"}
         value=${query} onInput=${(e) => setQuery(e.target.value)} />`
 			}
       <div class="model-dropdown-list">
-        <div class="model-dropdown-item ${value ? "" : "selected"}"
+        ${
+					allowEmpty &&
+					html`<div class="model-dropdown-item ${value ? "" : "selected"}"
           onClick=${() => pick(null)}>
           <span class="model-item-label">${placeholder || "(none)"}</span>
-        </div>
+        </div>`
+				}
         ${filtered.map(
 					(o, i) => html`<div key=${o.value}
             class="model-dropdown-item ${o.value === value ? "selected" : ""} ${i === kbIndex ? "kb-active" : ""}"
