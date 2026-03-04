@@ -86,6 +86,22 @@ async function setSwitchRpcSendMode(page, mode, delayMs = 0) {
 	);
 }
 
+async function openChatMoreControls(page) {
+	const moreBtn = page.locator("#chatMoreBtn");
+	const moreModal = page.locator("#chatMoreModal");
+	await expect(moreBtn).toBeVisible();
+	const alreadyOpen = await moreModal.isVisible().catch(() => false);
+	if (!alreadyOpen) {
+		await moreBtn.click();
+		await expect(moreModal).toBeVisible();
+	}
+	return moreModal;
+}
+
+function activeModalBackdrops(page) {
+	return page.locator(".provider-modal-backdrop:not(.hidden)");
+}
+
 test.describe("Session management", () => {
 	test("session list renders on load", async ({ page }) => {
 		await navigateAndWait(page, "/");
@@ -233,19 +249,23 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("main session shows clear action while non-main sessions show delete", async ({ page }) => {
+	test("main session hides clear/delete actions while non-main sessions show delete", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");
 		await waitForWsConnected(page);
 		await expectPageContentMounted(page);
 
-		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
-		await expect(page.locator('button[title="Delete session"]')).toHaveCount(0);
+		await openChatMoreControls(page);
+		await expect(page.locator('#chatMoreModal button[title="Clear session"]')).toBeHidden();
+		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toHaveCount(0);
+		await page.keyboard.press("Escape");
+		await expect(page.locator("#chatMoreModal")).toBeHidden();
 
 		await createSession(page);
 
-		await expect(page.locator('button[title="Clear session"]')).toHaveCount(0);
-		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
+		await openChatMoreControls(page);
+		await expect(page.locator('#chatMoreModal button[title="Clear session"]')).toHaveCount(0);
+		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -260,9 +280,12 @@ test.describe("Session management", () => {
 		const sessionPath = new URL(page.url()).pathname;
 		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
 
-		const stopBtn = page.locator('#sessionHeaderMount button[title="Stop generation"]');
+		await openChatMoreControls(page);
+		const stopBtn = page.locator('.chat-toolbar button[title="Stop generation"]');
 		await expect(stopBtn).toHaveCount(0);
-		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
+		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(page.locator("#chatMoreModal")).toBeHidden();
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -276,7 +299,8 @@ test.describe("Session management", () => {
 		await expect(stopBtn).toBeVisible();
 		await stopBtn.click();
 		await expect(stopBtn).toHaveCount(0);
-		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
+		await openChatMoreControls(page);
+		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -306,8 +330,9 @@ test.describe("Session management", () => {
 			}
 		});
 
-		await page.locator('button[title="Share snapshot"]').click();
-		await expect(page.locator(".provider-modal-backdrop")).toBeVisible();
+		await openChatMoreControls(page);
+		await page.locator('#chatMoreModal button[title="Share snapshot"]').click();
+		await expect(activeModalBackdrops(page)).toBeVisible();
 		await expect(
 			page.getByText(
 				"We do best-effort redaction for API keys and tokens in shared tool output, but always review before sharing.",
@@ -348,8 +373,9 @@ test.describe("Session management", () => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
-		await page.locator('button[title="Share snapshot"]').click();
-		await expect(page.locator(".provider-modal-backdrop")).toBeVisible();
+		await openChatMoreControls(page);
+		await page.locator('#chatMoreModal button[title="Share snapshot"]').click();
+		await expect(activeModalBackdrops(page)).toBeVisible();
 		await page.locator('[data-share-visibility="public"]').click();
 
 		const linkModal = page.locator('[data-share-link-modal="true"]');
@@ -519,20 +545,21 @@ test.describe("Session management", () => {
 					page.evaluate(() => {
 						const store = window.__moltis_stores?.sessionStore;
 						const session = store?.activeSession?.value;
-						const deleteBtn = document.querySelector('button[title="Delete session"]');
-						if (!(session && deleteBtn)) return false;
+						if (!session) return false;
 						session.forkPoint = 5;
 						session.messageCount = 5;
 						session.dataVersion.value++;
-						deleteBtn.click();
 						return true;
 					}),
 				{ timeout: 10_000 },
 			)
 			.toBe(true);
 
+		await openChatMoreControls(page);
+		await page.locator('#chatMoreModal button[title="Delete session"]').click();
+
 		// The confirmation dialog should NOT be visible.
-		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
+		await expect(activeModalBackdrops(page)).toHaveCount(0);
 
 		// The session should be deleted immediately (no dialog appeared)
 		// so we should navigate away from the current session URL.
@@ -568,16 +595,17 @@ test.describe("Session management", () => {
 			)
 			.toBe(true);
 
-		const deleteBtn = page.locator('button[title="Delete session"]');
+		await openChatMoreControls(page);
+		const deleteBtn = page.locator('#chatMoreModal button[title="Delete session"]');
 		await expect(deleteBtn).toBeVisible();
 		await deleteBtn.click();
 
 		// The confirmation dialog SHOULD appear
-		await expect(page.locator(".provider-modal-backdrop")).toBeVisible();
+		await expect(activeModalBackdrops(page)).toBeVisible();
 
 		// Dismiss the dialog by clicking Cancel
-		await page.locator(".provider-modal-backdrop .provider-btn-secondary").click();
-		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
+		await activeModalBackdrops(page).locator(".provider-btn-secondary").click();
+		await expect(activeModalBackdrops(page)).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});

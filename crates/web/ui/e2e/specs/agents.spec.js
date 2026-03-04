@@ -159,13 +159,14 @@ test.describe("Agents settings page", () => {
 		await waitForWsConnected(page);
 		await createSession(page);
 
-		const agentSelect = page.locator('select[title="Session agent"]');
-		await expect(agentSelect).toBeEnabled({ timeout: 10_000 });
-		await expect(agentSelect.locator('option[value="selector-test"]')).toBeAttached({ timeout: 10_000 });
-		await agentSelect.selectOption("selector-test");
-		// The controlled Preact select resets value on re-render; wait for
-		// the session store to reflect the agent switch (RPC round-trip)
-		// before asserting the DOM value.
+		const agentPicker = page.locator("#sessionHeaderToolbarMount .model-combo .model-combo-btn").first();
+		await expect(agentPicker).toBeEnabled({ timeout: 10_000 });
+		await agentPicker.click();
+		const selectorOption = page.locator(".model-dropdown-item").filter({ hasText: "Selector Test Agent" }).first();
+		await expect(selectorOption).toBeVisible({ timeout: 10_000 });
+		await selectorOption.click();
+
+		// Wait for the session store to reflect the agent switch (RPC round-trip).
 		await expect
 			.poll(
 				async () =>

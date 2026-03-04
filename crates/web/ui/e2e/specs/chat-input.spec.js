@@ -64,8 +64,31 @@ async function getChatSeq(page) {
 	});
 }
 
+async function openChatMoreControls(page) {
+	const moreBtn = page.locator("#chatMoreBtn");
+	const moreModal = page.locator("#chatMoreModal");
+	await expect(moreBtn).toBeVisible();
+	const alreadyOpen = await moreModal.isVisible().catch(() => false);
+	if (!alreadyOpen) {
+		await moreBtn.click();
+		await expect(moreModal).toBeVisible();
+	}
+	return moreModal;
+}
+
+async function ensureFullContextModalOpen(page) {
+	const fullContextModal = page.locator("#fullContextModal");
+	const alreadyOpen = await fullContextModal.isVisible().catch(() => false);
+	if (alreadyOpen) return fullContextModal;
+	await openChatMoreControls(page);
+	await expect(page.locator("#fullContextBtn")).toBeVisible();
+	await page.locator("#fullContextBtn").click();
+	await expect(fullContextModal).toBeVisible();
+	return fullContextModal;
+}
+
 async function openFullContextWithRetry(page) {
-	const toggleBtn = page.locator("#fullContextBtn");
+	const fullContextModal = page.locator("#fullContextModal");
 	const panel = page.locator("#fullContextPanel");
 	const copyBtn = panel.getByRole("button", { name: "Copy", exact: true });
 	const failedMsg = panel.getByText("Failed to build context", { exact: true });
@@ -80,10 +103,11 @@ async function openFullContextWithRetry(page) {
 
 		const panelVisible = await panel.isVisible().catch(() => false);
 		if (panelVisible) {
-			await toggleBtn.click();
+			await page.locator("#fullContextModalCloseBtn").click();
+			await expect(fullContextModal).toBeHidden();
 		}
 
-		await toggleBtn.click();
+		await ensureFullContextModalOpen(page);
 		await expect(panel).toBeVisible();
 
 		const result = await expect
