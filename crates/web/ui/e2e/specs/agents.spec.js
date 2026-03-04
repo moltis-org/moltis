@@ -159,21 +159,23 @@ test.describe("Agents settings page", () => {
 		await waitForWsConnected(page);
 		await createSession(page);
 
-		const agentSelect = page.locator('select[title="Session agent"]');
-		await expect(agentSelect).toBeEnabled({ timeout: 10_000 });
-		await expect(agentSelect.locator('option[value="selector-test"]')).toBeAttached({ timeout: 10_000 });
-		await agentSelect.selectOption("selector-test");
+		const agentCombo = page.locator("#sessionHeaderToolbarMount .model-combo").first();
+		await expect(agentCombo).toBeVisible({ timeout: 10_000 });
+		const agentComboBtn = agentCombo.locator(".model-combo-btn");
+		await expect(agentComboBtn).toBeEnabled({ timeout: 10_000 });
+		await agentComboBtn.click();
+		const agentDropdown = agentCombo.locator(".model-dropdown");
+		await expect(agentDropdown).toBeVisible({ timeout: 10_000 });
+		const selectorOption = agentDropdown.locator(".model-dropdown-item", { hasText: "Selector Test Agent" }).first();
+		await expect(selectorOption).toBeVisible({ timeout: 10_000 });
+		await selectorOption.click();
 		// The controlled Preact select resets value on re-render; wait for
 		// the session store to reflect the agent switch (RPC round-trip)
 		// before asserting the DOM value.
 		await expect
-			.poll(
-				async () =>
-					page.evaluate(
-						() => window.__moltis_stores?.sessionStore?.activeSession?.value?.agent_id,
-					),
-				{ timeout: 15_000 },
-			)
+			.poll(async () => page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSession?.value?.agent_id), {
+				timeout: 15_000,
+			})
 			.toBe("selector-test");
 		// Keep assertions on persisted session state + sidebar UI because
 		// the select can transiently reflect stale data during session refreshes.

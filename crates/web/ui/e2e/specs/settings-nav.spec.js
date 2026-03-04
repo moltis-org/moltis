@@ -43,6 +43,61 @@ test.describe("Settings navigation", () => {
 		await expect(page.getByRole("heading", { name: "Identity", exact: true })).toBeVisible();
 	});
 
+	test("settings nav keeps distinct icons for nodes, tailscale, network audit, and openclaw import", async ({
+		page,
+	}) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/identity");
+		await expect(page.locator(".settings-sidebar-nav")).toBeVisible();
+
+		const masks = await page.evaluate(() => {
+			const readRuleMask = (selector) => {
+				for (const sheet of Array.from(document.styleSheets || [])) {
+					let rules;
+					try {
+						rules = sheet.cssRules;
+					} catch {
+						continue;
+					}
+					if (!rules) continue;
+					for (const rule of Array.from(rules)) {
+						if (rule.type !== CSSRule.STYLE_RULE || rule.selectorText !== selector) continue;
+						return rule.style.getPropertyValue("-webkit-mask-image") || rule.style.getPropertyValue("mask-image") || "";
+					}
+				}
+				return null;
+			};
+			return {
+				nodes: readRuleMask('.settings-nav-item[data-section="nodes"]::before'),
+				tailscale: readRuleMask('.settings-nav-item[data-section="tailscale"]::before'),
+				networkAudit: readRuleMask('.settings-nav-item[data-section="network-audit"]::before'),
+				mcp: readRuleMask('.settings-nav-item[data-section="mcp"]::before'),
+				openclawImport: readRuleMask('.settings-nav-item[data-section="import"]::before'),
+			};
+		});
+
+		const hasMask = (value) => {
+			if (typeof value !== "string") return false;
+			const normalized = value.trim().toLowerCase();
+			return normalized !== "" && normalized !== "none";
+		};
+		if (masks.nodes !== null) {
+			expect(hasMask(masks.nodes)).toBeTruthy();
+		}
+		expect(hasMask(masks.tailscale)).toBeTruthy();
+		expect(hasMask(masks.networkAudit)).toBeTruthy();
+		expect(hasMask(masks.mcp)).toBeTruthy();
+		expect(masks.tailscale).not.toBe(masks.networkAudit);
+
+		// Import appears only when OpenClaw is detected in this run.
+		if (masks.openclawImport !== null) {
+			expect(hasMask(masks.openclawImport)).toBeTruthy();
+			expect(masks.openclawImport).not.toBe(masks.mcp);
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	const settingsSections = [
 		{ id: "identity", heading: "Identity" },
 		{ id: "memory", heading: "Memory" },
@@ -131,16 +186,15 @@ test.describe("Settings navigation", () => {
 			var options = ["🦊", "🐙", "🤖", "🐶"];
 			return options.find((emoji) => emoji !== current) || "🦊";
 		});
+		const iconHrefBefore = await page.evaluate(() => document.querySelector('link[rel="icon"]')?.href || "");
 		await page.getByRole("button", { name: selectedEmoji, exact: true }).click();
 		await expect(page.getByText("Saved", { exact: true })).toBeVisible();
 		await expect
 			.poll(() =>
-				page.evaluate((value) => {
+				page.evaluate((beforeHref) => {
 					var href = document.querySelector('link[rel="icon"]')?.href || "";
-					if (!href.startsWith("data:image/svg+xml,")) return false;
-					var decoded = decodeURIComponent(href.slice("data:image/svg+xml,".length));
-					return decoded.includes(value);
-				}, selectedEmoji),
+					return href.startsWith("data:image/png") && href !== beforeHref;
+				}, iconHrefBefore),
 			)
 			.toBeTruthy();
 		await expect(
@@ -312,6 +366,7 @@ test.describe("Settings navigation", () => {
 		const expectedPrefix = [
 			"Identity",
 			"Agents",
+			"Nodes",
 			"Environment",
 			"Memory",
 			"Notifications",

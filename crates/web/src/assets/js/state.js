@@ -39,6 +39,13 @@ export var modelDropdownList = null;
 export var selectedModelId = localStorage.getItem("moltis-model") || "";
 export var modelIdx = -1;
 
+// Node selector elements — created dynamically inside the chat page
+export var nodeCombo = null;
+export var nodeComboBtn = null;
+export var nodeComboLabel = null;
+export var nodeDropdown = null;
+export var nodeDropdownList = null;
+
 // Session project combo (in chat header)
 export var projectCombo = null;
 export var projectComboBtn = null;
@@ -189,6 +196,21 @@ export function setSelectedModelId(v) {
 }
 export function setModelIdx(v) {
 	modelIdx = v;
+}
+export function setNodeCombo(v) {
+	nodeCombo = v;
+}
+export function setNodeComboBtn(v) {
+	nodeComboBtn = v;
+}
+export function setNodeComboLabel(v) {
+	nodeComboLabel = v;
+}
+export function setNodeDropdown(v) {
+	nodeDropdown = v;
+}
+export function setNodeDropdownList(v) {
+	nodeDropdownList = v;
 }
 export function setProjectCombo(v) {
 	projectCombo = v;

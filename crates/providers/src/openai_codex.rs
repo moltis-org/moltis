@@ -362,7 +362,7 @@ pub fn has_stored_tokens() -> bool {
     TokenStore::new().load("openai-codex").is_some() || load_codex_cli_tokens().is_some()
 }
 
-fn default_model_catalog() -> Vec<super::DiscoveredModel> {
+pub fn default_model_catalog() -> Vec<super::DiscoveredModel> {
     DEFAULT_CODEX_MODELS
         .iter()
         .map(|(id, name)| super::DiscoveredModel::new(*id, *name))
@@ -522,6 +522,23 @@ async fn fetch_models_from_api(
         anyhow::bail!("codex models API returned no models");
     }
     Ok(models)
+}
+
+/// Spawn model discovery in a background thread and return the receiver
+/// immediately, without blocking. Returns `None` if tokens are not configured.
+pub fn start_model_discovery() -> Option<mpsc::Receiver<anyhow::Result<Vec<super::DiscoveredModel>>>>
+{
+    let (access_token, account_id) = load_access_token_and_account_id().ok()?;
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(anyhow::Error::from)
+            .and_then(|rt| rt.block_on(fetch_models_from_api(access_token, account_id)));
+        let _ = tx.send(result);
+    });
+    Some(rx)
 }
 
 fn fetch_models_blocking(

@@ -1,78 +1,157 @@
-//! Static asset serving: filesystem (dev) or embedded (release).
+//! Static asset serving with three-tier resolution:
 //!
-//! In dev mode (`cargo run`), assets are served from disk so edits are
-//! picked up on reload. In release builds the assets directory is embedded
-//! into the binary via `include_dir!` and served with immutable
-//! cache-control headers keyed by a content hash.
+//! 1. **Dev filesystem** — `MOLTIS_ASSETS_DIR` env var or auto-detected from
+//!    the crate source tree when running via `cargo run`.
+//! 2. **External share dir** — `share_dir()/web/` for packaged deployments
+//!    (Debian, RPM, Docker) where assets live outside the binary.
+//! 3. **Embedded fallback** — `include_dir!` compiled into the binary (only
+//!    available when the `embedded-assets` feature is enabled).
 
-use std::{path::PathBuf, sync::LazyLock};
+use std::{
+    path::{Component, Path as FsPath, PathBuf},
+    sync::LazyLock,
+};
 
 use {
     axum::{extract::Path, http::StatusCode, response::IntoResponse},
     tracing::info,
 };
 
-// ── Embedded assets ──────────────────────────────────────────────────────────
+// ── Embedded assets (feature-gated) ─────────────────────────────────────────
 
+#[cfg(feature = "embedded-assets")]
 static ASSETS: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/src/assets");
 
 // Fail compilation with a clear message if style.css hasn't been generated.
 // Run `just build-css` (or `cd crates/web/ui && ./build.sh`) to generate it.
+#[cfg(feature = "embedded-assets")]
 const _: &str = include_str!("assets/style.css");
 
-// ── Asset serving: filesystem (dev) or embedded (release) ────────────────────
+// ── Asset source resolution ─────────────────────────────────────────────────
 
-/// Filesystem path to serve assets from, if available. Checked once at startup.
-/// Set via `MOLTIS_ASSETS_DIR` env var, or auto-detected from the crate source
-/// tree when running via `cargo run`.
-static FS_ASSETS_DIR: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
-    // Explicit env var takes precedence
+/// Resolved asset source, checked once at startup.
+enum AssetSource {
+    /// Filesystem directory (dev mode or `MOLTIS_ASSETS_DIR`).
+    Filesystem(PathBuf),
+    /// External share directory (`share_dir()/web/`).
+    External(PathBuf),
+    /// Embedded in binary (feature `embedded-assets`).
+    #[cfg(feature = "embedded-assets")]
+    Embedded,
+    /// No assets available (embedded-assets feature disabled, no external dir).
+    #[cfg(not(feature = "embedded-assets"))]
+    Unavailable,
+}
+
+static ASSET_SOURCE: LazyLock<AssetSource> = LazyLock::new(|| {
+    // 1. Explicit env var
     if let Ok(dir) = std::env::var("MOLTIS_ASSETS_DIR") {
         let p = PathBuf::from(dir);
         if p.is_dir() {
             info!("Serving assets from filesystem: {}", p.display());
-            return Some(p);
+            return AssetSource::Filesystem(p);
         }
     }
 
-    // Auto-detect: works when running from the repo via `cargo run`
+    // 2. Auto-detect cargo source tree (dev mode)
     let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
     if cargo_dir.is_dir() {
         info!("Serving assets from filesystem: {}", cargo_dir.display());
-        return Some(cargo_dir);
+        return AssetSource::Filesystem(cargo_dir);
     }
 
-    info!("Serving assets from embedded binary");
-    None
+    // 3. External share directory
+    if let Some(share) = moltis_config::share_dir() {
+        let web_dir = share.join("web");
+        if web_dir.is_dir() {
+            info!(
+                "Serving assets from external share dir: {}",
+                web_dir.display()
+            );
+            return AssetSource::External(web_dir);
+        }
+    }
+
+    // 4. Embedded fallback (or unavailable)
+    #[cfg(feature = "embedded-assets")]
+    {
+        info!("Serving assets from embedded binary");
+        AssetSource::Embedded
+    }
+    #[cfg(not(feature = "embedded-assets"))]
+    {
+        info!("No asset source available (embedded-assets feature disabled)");
+        AssetSource::Unavailable
+    }
 });
 
-/// Whether we're serving from the filesystem (dev mode) or embedded (release).
+/// Whether we're serving from the filesystem (dev mode) or embedded/external (release).
 pub(crate) fn is_dev_assets() -> bool {
-    FS_ASSETS_DIR.is_some()
+    matches!(*ASSET_SOURCE, AssetSource::Filesystem(_))
 }
 
-/// Compute a short content hash of all embedded assets. Only used in release
-/// mode (embedded assets) for cache-busting versioned URLs.
+/// Compute a short content hash of all assets for cache-busting versioned URLs.
 pub(crate) fn asset_content_hash() -> String {
     use std::{collections::BTreeMap, hash::Hasher};
 
-    let mut files = BTreeMap::new();
-    let mut stack: Vec<&include_dir::Dir<'_>> = vec![&ASSETS];
-    while let Some(dir) = stack.pop() {
-        for file in dir.files() {
-            files.insert(file.path().display().to_string(), file.contents());
-        }
-        for sub in dir.dirs() {
-            stack.push(sub);
-        }
+    let mut h = std::hash::DefaultHasher::new();
+
+    match &*ASSET_SOURCE {
+        AssetSource::Filesystem(dir) | AssetSource::External(dir) => {
+            let mut files = BTreeMap::new();
+            walk_dir_for_hash(dir, dir, &mut files);
+            for (path, contents) in &files {
+                h.write(path.as_bytes());
+                h.write(contents);
+            }
+        },
+        #[cfg(feature = "embedded-assets")]
+        AssetSource::Embedded => {
+            let mut files = BTreeMap::new();
+            let mut stack: Vec<&include_dir::Dir<'_>> = vec![&ASSETS];
+            while let Some(dir) = stack.pop() {
+                for file in dir.files() {
+                    files.insert(file.path().display().to_string(), file.contents());
+                }
+                for sub in dir.dirs() {
+                    stack.push(sub);
+                }
+            }
+            for (path, contents) in &files {
+                h.write(path.as_bytes());
+                h.write(contents);
+            }
+        },
+        #[cfg(not(feature = "embedded-assets"))]
+        AssetSource::Unavailable => {},
     }
 
-    let mut h = std::hash::DefaultHasher::new();
-    for (path, contents) in &files {
-        h.write(path.as_bytes());
-        h.write(contents);
-    }
     format!("{:016x}", h.finish())
+}
+
+/// Walk a filesystem directory for hashing, storing (relative_path, file_bytes)
+/// pairs sorted by path.
+fn walk_dir_for_hash(
+    base: &FsPath,
+    dir: &FsPath,
+    out: &mut std::collections::BTreeMap<String, Vec<u8>>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_dir_for_hash(base, &path, out);
+        } else if let Ok(bytes) = std::fs::read(&path) {
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            out.insert(rel, bytes);
+        }
+    }
 }
 
 fn mime_for_path(path: &str) -> &'static str {
@@ -91,18 +170,37 @@ fn mime_for_path(path: &str) -> &'static str {
     }
 }
 
-/// Read an asset file, preferring filesystem over embedded.
-fn read_asset(path: &str) -> Option<Vec<u8>> {
-    if let Some(dir) = FS_ASSETS_DIR.as_ref() {
-        let file_path = dir.join(path);
-        // Prevent path traversal
-        if file_path.starts_with(dir)
-            && let Ok(bytes) = std::fs::read(&file_path)
-        {
-            return Some(bytes);
-        }
+/// Read a file from a filesystem directory with path-traversal protection.
+fn read_from_dir(dir: &std::path::Path, path: &str) -> Option<Vec<u8>> {
+    let rel = FsPath::new(path);
+    if rel.is_absolute() {
+        return None;
     }
-    ASSETS.get_file(path).map(|f| f.contents().to_vec())
+
+    if !rel
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+
+    std::fs::read(dir.join(rel)).ok()
+}
+
+/// Read an asset file using three-tier resolution.
+fn read_asset(path: &str) -> Option<Vec<u8>> {
+    match &*ASSET_SOURCE {
+        AssetSource::Filesystem(dir) | AssetSource::External(dir) => read_from_dir(dir, path),
+        #[cfg(feature = "embedded-assets")]
+        AssetSource::Embedded => ASSETS.get_file(path).map(|f| f.contents().to_vec()),
+        #[cfg(not(feature = "embedded-assets"))]
+        AssetSource::Unavailable => None,
+    }
+}
+
+/// Read raw asset bytes by path. Used by `share_render.rs` for the favicon.
+pub fn read_asset_bytes(path: &str) -> Option<Vec<u8>> {
+    read_asset(path)
 }
 
 /// Versioned assets: `/assets/v/<hash>/path` — immutable, cached forever.
@@ -164,6 +262,22 @@ fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Respo
 
             response
         },
+        #[cfg(not(feature = "embedded-assets"))]
+        None => {
+            // When embedded-assets is disabled and no external dir is available,
+            // provide a helpful error message.
+            if matches!(*ASSET_SOURCE, AssetSource::Unavailable) {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Web assets are not available. Install assets to /usr/share/moltis/web/ \
+                     or set MOLTIS_SHARE_DIR to the directory containing them.",
+                )
+                    .into_response()
+            } else {
+                (StatusCode::NOT_FOUND, "not found").into_response()
+            }
+        },
+        #[cfg(feature = "embedded-assets")]
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
 }

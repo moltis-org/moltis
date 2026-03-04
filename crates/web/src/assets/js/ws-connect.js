@@ -109,7 +109,15 @@ export function connectWs(opts) {
 			delete S.pending[id];
 		}
 		if (opts.onDisconnected) opts.onDisconnected(wasConnected);
-		scheduleReconnect(() => connectWs(opts), backoff);
+
+		// If the WebSocket never opened, the server likely rejected the
+		// upgrade (e.g. 401). Check auth status and redirect to login
+		// instead of endlessly reconnecting.
+		if (wasConnected) {
+			scheduleReconnect(() => connectWs(opts), backoff);
+		} else {
+			checkAuthOrReconnect(opts, backoff);
+		}
 	};
 
 	ws.onerror = () => {
@@ -155,6 +163,29 @@ function handleServerRequest(ws, frame) {
  */
 export function subscribeEvents(events) {
 	return sendRpc("subscribe", { events: events });
+}
+
+/**
+ * When the WebSocket never opened, check `/api/auth/status` to see if
+ * the failure was an auth rejection. Redirect to login/onboarding when
+ * appropriate; otherwise fall back to normal reconnect.
+ */
+function checkAuthOrReconnect(opts, backoff) {
+	fetch("/api/auth/status")
+		.then((r) => (r.ok ? r.json() : null))
+		.then((auth) => {
+			if (auth?.setup_required) {
+				window.location.assign("/onboarding");
+			} else if (auth && !auth.authenticated) {
+				window.location.assign("/login");
+			} else {
+				scheduleReconnect(() => connectWs(opts), backoff);
+			}
+		})
+		.catch(() => {
+			// Auth check itself failed — fall back to normal reconnect.
+			scheduleReconnect(() => connectWs(opts), backoff);
+		});
 }
 
 function scheduleReconnect(reconnect, backoff) {

@@ -64,9 +64,11 @@ binary_is_stale() {
 	if [ -f "${REPO_ROOT}/Cargo.lock" ] && [ "${REPO_ROOT}/Cargo.lock" -nt "${binary}" ]; then
 		return 0
 	fi
+	# E2E serves frontend assets from disk in dev mode, so JS/CSS/HTML edits do
+	# not require rebuilding the Rust binary.
 	find "${REPO_ROOT}/crates" \
 		-type f \
-		\( -name "*.rs" -o -name "*.toml" -o -name "*.html" -o -name "*.js" -o -name "*.css" \) \
+		\( -name "*.rs" -o -name "*.toml" \) \
 		-newer "${binary}" \
 		-print -quit | grep -q .
 }

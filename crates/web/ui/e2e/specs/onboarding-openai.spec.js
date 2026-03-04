@@ -104,11 +104,21 @@ test.describe("Onboarding OpenAI provider", () => {
 		await expect(openaiRow).toBeVisible();
 		await expect(openaiRow.locator(".provider-item-badge.configured")).toBeVisible();
 		await expect(openaiRow.getByRole("button", { name: "Choose Model", exact: true })).toBeVisible();
+		const providerList = openaiRow.locator(
+			"xpath=ancestor::div[contains(@class,'flex') and contains(@class,'flex-col') and contains(@class,'gap-2')][1]",
+		);
+		await expect(providerList).not.toHaveClass(/overflow-y-auto/);
+		await expect(providerList).not.toHaveClass(/max-h-80/);
 
 		await openaiRow.getByRole("button", { name: "Choose Model", exact: true }).click();
 
 		await expect(openaiRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
-		await expect(openaiRow.locator(".model-card").first()).toBeVisible({ timeout: 45_000 });
+		const firstModelCard = openaiRow.locator(".model-card").first();
+		await expect(firstModelCard).toBeVisible({ timeout: 45_000 });
+		// Regression guard: keep model list from becoming a nested scroll region.
+		const modelList = firstModelCard.locator("xpath=..");
+		await expect(modelList).not.toHaveClass(/overflow-y-auto/);
+		await expect(modelList).not.toHaveClass(/max-h-56/);
 		await expect(openaiRow.locator("input[type='password']")).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
@@ -144,6 +154,9 @@ test.describe("Onboarding OpenAI provider", () => {
 		const selectedModelId = (await firstModelCard.locator(".font-mono").first().textContent())?.trim() || "";
 		expect(selectedModelId).not.toBe("");
 
+		await firstModelCard.evaluate((element) => {
+			element.scrollIntoView({ block: "center", inline: "nearest" });
+		});
 		await firstModelCard.click();
 		await expect(firstModelCard).toHaveClass(/selected/);
 

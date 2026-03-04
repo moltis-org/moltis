@@ -26,6 +26,13 @@ pub use {
     models::{LocalModelDef, ModelFormat},
 };
 
+/// Total bytes currently held by loaded llama.cpp tensors for local GGUF
+/// backends. This is updated when models are loaded/unloaded.
+#[must_use]
+pub fn loaded_llama_model_bytes() -> u64 {
+    backend::loaded_llama_model_bytes()
+}
+
 /// Configuration for the local LLM provider.
 #[derive(Debug, Clone)]
 pub struct LocalLlmConfig {

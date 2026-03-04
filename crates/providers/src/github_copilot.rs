@@ -256,7 +256,7 @@ async fn fetch_valid_copilot_token_with_fallback(
     fetch_valid_copilot_token(client, &token_store).await
 }
 
-fn default_model_catalog() -> Vec<super::DiscoveredModel> {
+pub fn default_model_catalog() -> Vec<super::DiscoveredModel> {
     COPILOT_MODELS
         .iter()
         .map(|(id, name)| super::DiscoveredModel::new(*id, *name))
@@ -382,7 +382,9 @@ async fn fetch_models_from_api(
     Ok(models)
 }
 
-fn fetch_models_blocking() -> anyhow::Result<Vec<super::DiscoveredModel>> {
+/// Spawn model discovery in a background thread and return the receiver
+/// immediately, without blocking.
+pub fn start_model_discovery() -> mpsc::Receiver<anyhow::Result<Vec<super::DiscoveredModel>>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let result = tokio::runtime::Builder::new_current_thread()
@@ -402,7 +404,12 @@ fn fetch_models_blocking() -> anyhow::Result<Vec<super::DiscoveredModel>> {
             });
         let _ = tx.send(result);
     });
-    rx.recv()
+    rx
+}
+
+fn fetch_models_blocking() -> anyhow::Result<Vec<super::DiscoveredModel>> {
+    start_model_discovery()
+        .recv()
         .map_err(|err| anyhow::anyhow!("copilot model discovery worker failed: {err}"))?
 }
 

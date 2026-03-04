@@ -10,15 +10,16 @@ import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
 import { init as initI18n, translateStaticElements } from "./i18n.js";
 import { initMobile, toggleSessions } from "./mobile.js";
+import { fetchModels } from "./models.js";
 import { updateNavCounts } from "./nav-counts.js";
 import { renderSessionProjectSelect } from "./project-combo.js";
-import { renderProjectSelect } from "./projects.js";
+import { fetchProjects, renderProjectSelect } from "./projects.js";
 import { initPWA } from "./pwa.js";
 import { initInstallBanner } from "./pwa-install.js";
 import { mount, navigate, registerPage, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
-import { fetchSessions, refreshActiveSession, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
+import { clearSessionHistoryCache, fetchSessions, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
 import { modelStore } from "./stores/model-store.js";
 import { projectStore } from "./stores/project-store.js";
@@ -107,19 +108,78 @@ onEvent("update.available", showUpdateBanner);
 initUpdateBannerDismiss();
 showVaultBanner(gon.get("vault_status"));
 gon.onChange("vault_status", showVaultBanner);
+
+function upsertSessionFromEvent(entry) {
+	if (!entry?.key) return false;
+	sessionStore.upsert(entry);
+	var legacy = S.sessions.slice();
+	var idx = legacy.findIndex((session) => session.key === entry.key);
+	if (idx >= 0) {
+		legacy[idx] = { ...legacy[idx], ...entry };
+	} else {
+		legacy.push({ ...entry });
+	}
+	S.setSessions(legacy);
+	renderSessionList();
+	return true;
+}
+
+function removeSessionFromEvent(sessionKey) {
+	if (!sessionKey) return false;
+	var removedActive = sessionStore.activeSessionKey.value === sessionKey;
+	var removed = sessionStore.remove(sessionKey);
+	if (!removed) return false;
+	clearSessionHistoryCache(sessionKey);
+	S.setSessions(S.sessions.filter((session) => session.key !== sessionKey));
+	renderSessionList();
+	if (!removedActive) return true;
+	var nextKey = sessionStore.activeSessionKey.value || "main";
+	S.setActiveSessionKey(nextKey);
+	if (location.pathname.startsWith("/chats/")) {
+		navigate(sessionPath(nextKey));
+	}
+	return true;
+}
+
 onEvent("session", (payload) => {
-	fetchSessions();
-	if (payload && payload.kind === "patched" && payload.sessionKey === S.activeSessionKey) {
-		refreshActiveSession();
+	if (!payload?.kind) return;
+	if (payload.kind === "deleted") {
+		if (!removeSessionFromEvent(payload.sessionKey)) {
+			fetchSessions();
+		}
+		return;
+	}
+	if (upsertSessionFromEvent(payload.entry || null)) return;
+	if (payload.kind === "created" || payload.kind === "patched") {
+		fetchSessions();
 	}
 });
+
+function seedSessionsFromGon() {
+	var seeded = gon.get("sessions_recent");
+	if (!Array.isArray(seeded) || seeded.length === 0) return;
+	if (sessionStore.sessions.value.length > 0) return;
+	sessionStore.setAll(seeded);
+	S.setSessions(seeded);
+	renderSessionList();
+}
+
+seedSessionsFromGon();
 
 function applyMemory(mem) {
 	if (!mem) return;
 	var el = document.getElementById("memoryInfo");
 	if (!el) return;
 	var fmt = (b) => prettyBytes(b, { maximumFractionDigits: 0, space: false });
-	el.textContent = `${fmt(mem.process)} \u00b7 ${fmt(mem.available)} free / ${fmt(mem.total)}`;
+	var localLlamaCpp = 0;
+	if (typeof mem.localLlamaCpp === "number") {
+		localLlamaCpp = mem.localLlamaCpp;
+	} else if (typeof mem.local_llama_cpp === "number") {
+		// Backward compatibility with older payload casing.
+		localLlamaCpp = mem.local_llama_cpp;
+	}
+	var localLlamaPart = localLlamaCpp > 0 ? ` (llama.cpp ${fmt(localLlamaCpp)})` : "";
+	el.textContent = `${fmt(mem.process)}${localLlamaPart} \u00b7 ${fmt(mem.available)} free / ${fmt(mem.total)}`;
 }
 
 applyMemory(gon.get("mem"));
@@ -386,7 +446,7 @@ function applyModels(models) {
 function fetchBootstrap() {
 	// Fetch bootstrap data asynchronously — populates sidebar, models, projects
 	// as soon as the data arrives, without blocking the initial page render.
-	fetch("/api/bootstrap")
+	fetch("/api/bootstrap?include_sessions=false")
 		.then((r) => r.json())
 		.then((boot) => {
 			if (boot.channels) S.setCachedChannels(boot.channels.channels || boot.channels || []);
@@ -396,6 +456,9 @@ function fetchBootstrap() {
 				// Dual-write to state.js for backward compat
 				S.setSessions(bootSessions);
 				renderSessionList();
+			} else {
+				// Keep full list fetch separate from bootstrap payload size.
+				fetchSessions();
 			}
 			if (boot.models) applyModels(boot.models);
 			refreshWelcomeCardIfNeeded();
@@ -415,7 +478,10 @@ function fetchBootstrap() {
 			if (boot.counts) updateNavCounts(boot.counts);
 		})
 		.catch(() => {
-			/* WS connect will fetch this data anyway */
+			// If bootstrap fails, hydrate from dedicated lightweight endpoints.
+			fetchSessions();
+			fetchModels();
+			fetchProjects();
 		});
 }
 

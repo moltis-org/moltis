@@ -368,10 +368,12 @@ async fn fetch_models_from_api(
     Ok(models)
 }
 
-fn fetch_models_blocking(
+/// Spawn model discovery in a background thread and return the receiver
+/// immediately, without blocking. Call `.recv()` later to collect the result.
+pub fn start_model_discovery(
     api_key: secrecy::Secret<String>,
     base_url: String,
-) -> anyhow::Result<Vec<super::DiscoveredModel>> {
+) -> mpsc::Receiver<anyhow::Result<Vec<super::DiscoveredModel>>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let result = tokio::runtime::Builder::new_current_thread()
@@ -381,7 +383,15 @@ fn fetch_models_blocking(
             .and_then(|rt| rt.block_on(fetch_models_from_api(api_key, base_url)));
         let _ = tx.send(result);
     });
-    rx.recv()
+    rx
+}
+
+fn fetch_models_blocking(
+    api_key: secrecy::Secret<String>,
+    base_url: String,
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
+    start_model_discovery(api_key, base_url)
+        .recv()
         .map_err(|err| anyhow::anyhow!("openai model discovery worker failed: {err}"))?
 }
 

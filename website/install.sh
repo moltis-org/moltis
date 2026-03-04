@@ -203,6 +203,18 @@ ensure_install_dir() {
     fi
 }
 
+install_shared_assets() {
+    source_dir="$1"
+    if [ ! -d "$source_dir" ]; then
+        return 0
+    fi
+
+    share_dir="$HOME/.moltis/share"
+    mkdir -p "$share_dir"
+    cp -R "$source_dir"/. "$share_dir"/
+    info "Installed shared assets to $share_dir"
+}
+
 add_to_path_instructions() {
     shell_name=$(basename "$SHELL")
     case "$shell_name" in
@@ -295,6 +307,12 @@ install_binary() {
     ensure_install_dir
     mv "$tmpdir/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
+
+    if [ -d "$tmpdir/share/moltis" ]; then
+        install_shared_assets "$tmpdir/share/moltis"
+    elif [ -d "$tmpdir/share/web" ] && [ -d "$tmpdir/share/wasm" ]; then
+        install_shared_assets "$tmpdir/share"
+    fi
 
     success "Moltis installed to $INSTALL_DIR/$BINARY_NAME"
     add_to_path_instructions
@@ -420,12 +438,24 @@ install_from_source() {
 
     cd "$tmpdir/moltis"
 
+    info "Building WASM tool components..."
+    rustup target add wasm32-wasip2
+    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+
     info "Building release binary..."
     cargo build --release
 
     ensure_install_dir
     cp "target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
+
+    SHARE_STAGING="$tmpdir/moltis-share"
+    mkdir -p "$SHARE_STAGING/web" "$SHARE_STAGING/wasm"
+    cp -R "crates/web/src/assets/." "$SHARE_STAGING/web/"
+    cp "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" "$SHARE_STAGING/wasm/"
+    cp "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" "$SHARE_STAGING/wasm/"
+    cp "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" "$SHARE_STAGING/wasm/"
+    install_shared_assets "$SHARE_STAGING"
 
     success "Moltis built and installed to $INSTALL_DIR/$BINARY_NAME"
     add_to_path_instructions

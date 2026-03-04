@@ -842,7 +842,7 @@ function OnboardingProviderRow({
 							onInput=${(e) => setModelSearch(e.target.value)} />`
 						: null
 				}
-				<div class="flex flex-col gap-1 max-h-56 overflow-y-auto">
+				<div class="flex flex-col gap-1">
 					${
 						filteredModels.length === 0
 							? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models match your search.</div>`
@@ -917,7 +917,7 @@ function OnboardingProviderRow({
 								: null
 						}
 						<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
-						<div class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+						<div class="flex flex-col gap-2">
 							${
 								localModels.filter((m) => m.backend === selectedBackend).length === 0
 									? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models available for ${selectedBackend}</div>`
@@ -1532,7 +1532,7 @@ function ProviderStep({ onNext, onBack }) {
 			</div>`
 				: null
 		}
-		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto">
+		<div class="flex flex-col gap-2">
 			${providers.map(
 				(p) => html`<${OnboardingProviderRow}
 				key=${p.name}
@@ -2113,14 +2113,6 @@ function VoiceStep({ onNext, onBack }) {
 
 // ── Channel step ────────────────────────────────────────────
 
-function WhatsAppIconLg() {
-	return html`<svg width="28" height="28" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M3 21l1.65-3.8a9 9 0 113.4 2.9L3 21" />
-    <path d="M9 10a.5.5 0 001 0V9a.5.5 0 00-1 0v1zm5 3a.5.5 0 001 0v-1a.5.5 0 00-1 0v1z" />
-  </svg>`;
-}
-
 function ChannelTypeSelector({ onSelect, offered }) {
 	return html`<div class="flex gap-3">
 		${
@@ -2133,7 +2125,7 @@ function ChannelTypeSelector({ onSelect, offered }) {
 		${
 			offered.has("whatsapp") &&
 			html`<button type="button" class="backend-card flex-1 items-center gap-3 py-6" onClick=${() => onSelect("whatsapp")}>
-			<${WhatsAppIconLg} />
+			<span class="icon icon-xl icon-whatsapp"></span>
 			<span class="text-sm font-medium text-[var(--text-strong)]">WhatsApp</span>
 		</button>`
 		}
@@ -2190,7 +2182,7 @@ function TelegramForm({ onConnected, error, setError }) {
 		});
 	}
 
-	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
 			<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
@@ -2302,7 +2294,7 @@ function TeamsForm({ onConnected, error, setError }) {
 		});
 	}
 
-	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">Microsoft Teams setup</span>
 			<span>1. <a href="https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration" target="_blank" class="text-[var(--accent)] underline">Create an Azure Bot registration</a> and copy the App ID + App Password.</span>
@@ -2404,7 +2396,7 @@ function DiscordForm({ onConnected, error, setError }) {
 
 	var inviteUrl = discordInviteUrl(token);
 
-	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">How to set up a Discord bot</span>
 			<span>1. Go to the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Discord Developer Portal</a></span>
@@ -2472,6 +2464,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 	var [pairingStarted, setPairingStarted] = useState(false);
 	var [qrData, setQrData] = useState(null);
 	var [qrSvg, setQrSvg] = useState(null);
+	var [qrSvgUrl, setQrSvgUrl] = useState(null);
 	var [pairingError, setPairingError] = useState(null);
 	var unsubRef = useRef(null);
 
@@ -2481,6 +2474,23 @@ function WhatsAppForm({ onConnected, error, setError }) {
 			if (unsubRef.current) unsubRef.current();
 		};
 	}, []);
+
+	useEffect(() => {
+		if (!qrSvg) {
+			setQrSvgUrl(null);
+			return undefined;
+		}
+		var nextUrl = null;
+		try {
+			nextUrl = URL.createObjectURL(new Blob([qrSvg], { type: "image/svg+xml" }));
+			setQrSvgUrl(nextUrl);
+		} catch (_err) {
+			setQrSvgUrl(null);
+		}
+		return () => {
+			if (nextUrl) URL.revokeObjectURL(nextUrl);
+		};
+	}, [qrSvg]);
 
 	function onStartPairing(e) {
 		e.preventDefault();
@@ -2530,8 +2540,6 @@ function WhatsAppForm({ onConnected, error, setError }) {
 		});
 	}
 
-	var qrSvgUrl = qrSvg ? `data:image/svg+xml;utf8,${encodeURIComponent(qrSvg)}` : null;
-
 	if (pairingStarted) {
 		return html`<div class="flex flex-col gap-4 items-center">
 			${
@@ -2555,7 +2563,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 		</div>`;
 	}
 
-	return html`<form onSubmit=${onStartPairing} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+	return html`<form onSubmit=${onStartPairing} class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">Link your WhatsApp</span>
 			<span>1. Choose an account ID below (any name you like)</span>
@@ -2989,7 +2997,9 @@ function SummaryStep({ onBack, onFinish }) {
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
 				voiceEnabled ? fetchVoiceProviders().catch(() => null) : Promise.resolve(null),
-				fetch("/api/bootstrap")
+				fetch(
+					"/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false",
+				)
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
 			]);
@@ -3030,7 +3040,7 @@ function SummaryStep({ onBack, onFinish }) {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:summary.title")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Overview of your configuration. You can change any of these later in Settings.</p>
 
-		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="flex flex-col gap-2">
 			<!-- Identity -->
 			<${SummaryRow}
 				icon=${data.identity?.user_name && data.identity?.name ? html`<${CheckIcon} />` : html`<${WarnIcon} />`}
@@ -3301,7 +3311,7 @@ var containerRef = null;
 export function mountOnboarding(container) {
 	containerRef = container;
 	container.style.cssText =
-		"display:flex;align-items:center;justify-content:center;min-height:100vh;padding:max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));box-sizing:border-box;width:100%;max-width:100vw;overflow-x:hidden;";
+		"display:flex;align-items:flex-start;justify-content:center;min-height:100vh;padding:max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));box-sizing:border-box;width:100%;max-width:100vw;overflow-x:hidden;overflow-y:auto;";
 	render(html`<${OnboardingPage} />`, container);
 }
 

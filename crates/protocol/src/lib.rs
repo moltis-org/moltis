@@ -391,6 +391,9 @@ pub struct ConnectAuth {
     pub password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// Device token issued via pairing flow (used by nodes to authenticate).
+    #[serde(rename = "deviceToken", skip_serializing_if = "Option::is_none")]
+    pub device_token: Option<String>,
 }
 
 /// Sent by the gateway after successful handshake.
