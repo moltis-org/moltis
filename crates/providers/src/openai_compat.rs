@@ -779,8 +779,8 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
     }
 
     // Some OpenAI-compatible backends stream planning text in
-    // `reasoning_content` or `reasoning`. Surface it separately
-    // so UI can show it in the thinking area.
+    // `reasoning_content` or `reasoning`. Surface it separately so UI can
+    //  show it in the thinking area without polluting final assistant text.
     let reasoning_text = delta["reasoning_content"]
         .as_str()
         .or_else(|| delta["reasoning"].as_str());
