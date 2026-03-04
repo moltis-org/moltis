@@ -2326,6 +2326,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
         let profile = PromptProfileConfig {
             name: "ordered".to_string(),
@@ -2428,6 +2429,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
         let profile = PromptProfileConfig {
             name: "runtime-lite".to_string(),
@@ -2480,6 +2482,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
         let profile = PromptProfileConfig {
             name: "date-only".to_string(),
@@ -2532,6 +2535,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
         let profile = PromptProfileConfig {
             name: "templated".to_string(),
