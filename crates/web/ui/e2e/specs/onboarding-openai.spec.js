@@ -108,7 +108,12 @@ test.describe("Onboarding OpenAI provider", () => {
 		await openaiRow.getByRole("button", { name: "Choose Model", exact: true }).click();
 
 		await expect(openaiRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
-		await expect(openaiRow.locator(".model-card").first()).toBeVisible({ timeout: 45_000 });
+		const firstModelCard = openaiRow.locator(".model-card").first();
+		await expect(firstModelCard).toBeVisible({ timeout: 45_000 });
+		// Regression guard: keep model list from becoming a nested scroll region.
+		const modelList = firstModelCard.locator("xpath=..");
+		await expect(modelList).not.toHaveClass(/overflow-y-auto/);
+		await expect(modelList).not.toHaveClass(/max-h-56/);
 		await expect(openaiRow.locator("input[type='password']")).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);

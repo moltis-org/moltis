@@ -842,7 +842,7 @@ function OnboardingProviderRow({
 							onInput=${(e) => setModelSearch(e.target.value)} />`
 						: null
 				}
-				<div class="flex flex-col gap-1 max-h-56 overflow-y-auto">
+				<div class="flex flex-col gap-1">
 					${
 						filteredModels.length === 0
 							? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models match your search.</div>`
