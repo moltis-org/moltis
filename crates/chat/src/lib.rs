@@ -19,11 +19,12 @@ use {
     tracing::{debug, info, warn},
 };
 
-use moltis_config::{MessageQueueMode, ToolMode};
+use moltis_config::{MessageQueueMode, ToolMode, ToolRegistryMode};
 
 use {
     moltis_agents::{
         AgentRunError, ChatMessage, ContentPart, UserContent,
+        lazy_tools::wrap_registry_lazy,
         model::{StreamEvent, values_to_chat_messages},
         multimodal::parse_data_uri,
         prompt::{
@@ -5659,6 +5660,18 @@ async fn run_with_tools(
     if tools_enabled && let Some(manager) = state.memory_manager() {
         install_agent_scoped_memory_tools(&mut filtered_registry, manager, agent_id);
     }
+
+    // In lazy mode, collapse the full registry behind tool_search so only
+    // one compact schema is sent to the model.  The model calls tool_search
+    // to activate any tool it needs; from that point the runner dispatches
+    // hooks normally on direct tool calls.
+    let config = moltis_config::discover_and_load();
+    let filtered_registry = if tools_enabled && config.tools.registry_mode == ToolRegistryMode::Lazy
+    {
+        wrap_registry_lazy(filtered_registry)
+    } else {
+        filtered_registry
+    };
 
     // Build system prompt:
     // - Native tools: full prompt with tool schemas sent via API

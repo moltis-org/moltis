@@ -526,6 +526,8 @@ pub mod gguf {
                     id: tc.id,
                     name: tc.name,
                     arguments: tc.arguments,
+
+                    extra_content: None,
                 })
                 .collect();
 

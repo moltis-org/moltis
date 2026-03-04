@@ -334,3 +334,21 @@ codegen-units = 1
 lto           = "thin"
 panic         = "abort"
 strip         = true
+
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.crypto-bigint]
+opt-level = 3
+
+[profile.dev.package.rustls]
+opt-level = 3
+
+[profile.dev.package.bcrypt]
+opt-level = 3
+
+[profile.dev.package.ring]
+opt-level = 3

@@ -249,6 +249,7 @@ fn parse_tool_call_json(content: &str) -> Option<ToolCall> {
         id,
         name,
         arguments,
+        extra_content: None,
     })
 }
 

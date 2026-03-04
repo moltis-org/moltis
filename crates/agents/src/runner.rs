@@ -607,15 +607,16 @@ pub async fn run_agent_loop_with_context(
     let native_tools = provider.supports_tools();
     let config = moltis_config::discover_and_load();
     let max_tool_result_bytes = config.tools.max_tool_result_bytes;
-    let max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
-    let tool_schemas = tools.list_schemas();
+    let mut max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
+    if config.tools.registry_mode == moltis_config::ToolRegistryMode::Lazy {
+        max_iterations = max_iterations.saturating_mul(3);
+    }
 
     let is_multimodal = matches!(user_content, UserContent::Multimodal(_));
     info!(
         provider = provider.name(),
         model = provider.id(),
         native_tools,
-        tools_count = tool_schemas.len(),
         is_multimodal,
         "starting agent loop"
     );
@@ -631,13 +632,6 @@ pub async fn run_agent_loop_with_context(
         content: user_content.clone(),
     });
     let explicit_shell_command = explicit_shell_command_from_user_content(user_content);
-
-    // Only send tool schemas to providers that support them natively.
-    let schemas_for_api = if native_tools {
-        &tool_schemas
-    } else {
-        &vec![]
-    };
 
     // Extract session key once for hook payloads.
     let session_key_for_hooks = tool_context
@@ -676,6 +670,10 @@ pub async fn run_agent_loop_with_context(
             "calling LLM"
         );
         trace!(iteration = iterations, messages = ?messages, "LLM request messages");
+
+        // Re-compute schemas each iteration so newly activated lazy tools appear.
+        let tool_schemas = tools.list_schemas();
+        let schemas_for_api: &Vec<_> = if native_tools { &tool_schemas } else { &vec![] };
 
         // Dispatch BeforeLLMCall hook — may block the LLM call.
         if let Some(ref hooks) = hook_registry {
@@ -837,6 +835,8 @@ pub async fn run_agent_loop_with_context(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+
+                extra_content: None,
             }];
         }
 
@@ -952,7 +952,9 @@ pub async fn run_agent_loop_with_context(
             .tool_calls
             .iter()
             .map(|tc| {
-                let tool = tools.get(sanitize_tool_name(&tc.name));
+                // get_arc() checks both the static registry and the activated
+                // map (populated by tool_search in lazy mode).
+                let tool = tools.get_arc(sanitize_tool_name(&tc.name));
                 let mut args = tc.arguments.clone();
 
                 // Dispatch BeforeToolCall hook — may block or modify arguments.
@@ -1132,15 +1134,16 @@ pub async fn run_agent_loop_streaming(
     let native_tools = provider.supports_tools();
     let config = moltis_config::discover_and_load();
     let max_tool_result_bytes = config.tools.max_tool_result_bytes;
-    let max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
-    let tool_schemas = tools.list_schemas();
+    let mut max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
+    if config.tools.registry_mode == moltis_config::ToolRegistryMode::Lazy {
+        max_iterations = max_iterations.saturating_mul(3);
+    }
 
     let is_multimodal = matches!(user_content, UserContent::Multimodal(_));
     info!(
         provider = provider.name(),
         model = provider.id(),
         native_tools,
-        tools_count = tool_schemas.len(),
         is_multimodal,
         "starting streaming agent loop"
     );
@@ -1156,20 +1159,6 @@ pub async fn run_agent_loop_streaming(
         content: user_content.clone(),
     });
     let explicit_shell_command = explicit_shell_command_from_user_content(user_content);
-
-    // Only send tool schemas to providers that support them natively.
-    let schemas_for_api = if native_tools {
-        tool_schemas.clone()
-    } else {
-        vec![]
-    };
-
-    info!(
-        native_tools,
-        schemas_for_api_count = schemas_for_api.len(),
-        tool_schemas_count = tool_schemas.len(),
-        "schemas_for_api prepared for streaming"
-    );
 
     // Extract session key once for hook payloads.
     let session_key_for_hooks = tool_context
@@ -1215,6 +1204,10 @@ pub async fn run_agent_loop_streaming(
             "calling LLM (streaming)"
         );
         trace!(iteration = iterations, messages = ?messages, "LLM request messages");
+
+        // Re-compute schemas each iteration so newly activated lazy tools appear.
+        let tool_schemas = tools.list_schemas();
+        let schemas_for_api = if native_tools { tool_schemas.clone() } else { vec![] };
 
         // Dispatch BeforeLLMCall hook — may block the LLM call.
         if let Some(ref hooks) = hook_registry {
@@ -1290,13 +1283,14 @@ pub async fn run_agent_loop_streaming(
                         cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
                     }
                 },
-                StreamEvent::ToolCallStart { id, name, index } => {
+                StreamEvent::ToolCallStart { id, name, index, extra_content } => {
                     let vec_pos = tool_calls.len();
                     debug!(tool = %name, id = %id, stream_index = index, vec_pos, "tool call started in stream");
                     tool_calls.push(ToolCall {
                         id,
                         name,
                         arguments: serde_json::json!({}),
+                        extra_content,
                     });
                     stream_idx_to_vec_pos.insert(index, vec_pos);
                     tool_call_args.insert(index, String::new());
@@ -1488,6 +1482,8 @@ pub async fn run_agent_loop_streaming(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+
+                extra_content: None,
             }];
         }
 
@@ -1613,7 +1609,9 @@ pub async fn run_agent_loop_streaming(
         let tool_futures: Vec<_> = tool_calls
             .iter()
             .map(|tc| {
-                let tool = tools.get(sanitize_tool_name(&tc.name));
+                // get_arc() checks both the static registry and the activated
+                // map (populated by tool_search in lazy mode).
+                let tool = tools.get_arc(sanitize_tool_name(&tc.name));
                 let mut args = tc.arguments.clone();
 
                 let hook_registry = hook_registry.clone();
@@ -1955,6 +1953,8 @@ mod tests {
                         id: "call_1".into(),
                         name: "echo_tool".into(),
                         arguments: serde_json::json!({"text": "hi"}),
+
+                        extra_content: None,
                     }],
                     usage: Usage {
                         input_tokens: 10,
@@ -2212,6 +2212,8 @@ mod tests {
                         id: "call_exec_1".into(),
                         name: "exec".into(),
                         arguments: serde_json::json!({"command": "echo hello"}),
+
+                        extra_content: None,
                     }],
                     usage: Usage {
                         input_tokens: 10,
@@ -2782,16 +2784,22 @@ mod tests {
                     id: "c1".into(),
                     name: "tool_a".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
                 ToolCall {
                     id: "c2".into(),
                     name: "tool_b".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
                 ToolCall {
                     id: "c3".into(),
                     name: "tool_c".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
             ],
         });
@@ -2856,16 +2864,22 @@ mod tests {
                     id: "c1".into(),
                     name: "tool_a".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
                 ToolCall {
                     id: "c2".into(),
                     name: "fail_tool".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
                 ToolCall {
                     id: "c3".into(),
                     name: "tool_c".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
             ],
         });
@@ -2919,16 +2933,22 @@ mod tests {
                     id: "c1".into(),
                     name: "slow_a".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
                 ToolCall {
                     id: "c2".into(),
                     name: "slow_b".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
                 ToolCall {
                     id: "c3".into(),
                     name: "slow_c".into(),
                     arguments: serde_json::json!({}),
+
+                    extra_content: None,
                 },
             ],
         });
@@ -3198,6 +3218,8 @@ mod tests {
                         id: "call_screenshot".into(),
                         name: "screenshot_tool".into(),
                         arguments: serde_json::json!({}),
+
+                        extra_content: None,
                     }],
                     usage: Usage {
                         input_tokens: 10,
@@ -4019,6 +4041,7 @@ mod tests {
                         id: "call_abc".into(),
                         name: "echo_tool".into(),
                         index: 1, // non-zero — the bug trigger
+                        extra_content: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 1,
@@ -4172,6 +4195,7 @@ mod tests {
                         id: "call_1".into(),
                         name: "echo_tool".into(),
                         index: 1,
+                        extra_content: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 1,
@@ -4182,6 +4206,7 @@ mod tests {
                         id: "call_2".into(),
                         name: "echo_tool".into(),
                         index: 3,
+                        extra_content: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 3,

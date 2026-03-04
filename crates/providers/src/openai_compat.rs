@@ -401,10 +401,14 @@ pub fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
                     let name = tc["function"]["name"].as_str()?.to_string();
                     let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
                     let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                    // Preserve opaque provider metadata (e.g. Gemini
+                    // `thought_signature`) for round-tripping.
+                    let extra_content = tc.get("extra_content").cloned();
                     Some(ToolCall {
                         id,
                         name,
                         arguments,
+                        extra_content,
                     })
                 })
                 .collect()
@@ -576,6 +580,9 @@ pub fn strip_think_tags(content: &str) -> (String, String) {
 pub struct StreamingToolState {
     /// Map from index -> (id, name, arguments_buffer)
     pub tool_calls: HashMap<usize, (String, String, String)>,
+    /// Opaque provider metadata per tool-call index (e.g. Gemini
+    /// `extra_content` containing `thought_signature`).
+    pub tool_call_extra: HashMap<usize, serde_json::Value>,
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
@@ -797,10 +804,17 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
                 state
                     .tool_calls
                     .insert(index, (id.to_string(), name.to_string(), String::new()));
+                // Capture opaque extra_content (e.g. Gemini thought_signature)
+                // on the first chunk for this tool call.
+                let extra = tc.get("extra_content").cloned();
+                if let Some(ref e) = extra {
+                    state.tool_call_extra.insert(index, e.clone());
+                }
                 events.push(StreamEvent::ToolCallStart {
                     id: id.to_string(),
                     name: name.to_string(),
                     index,
+                    extra_content: extra,
                 });
             }
 
@@ -1304,7 +1318,7 @@ mod tests {
                 assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
                 assert!(matches!(
                     &events[1],
-                    StreamEvent::ToolCallStart { id, name, index }
+                    StreamEvent::ToolCallStart { id, name, index, .. }
                     if id == "call_1" && name == "test" && *index == 0
                 ));
             },

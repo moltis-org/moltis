@@ -1435,6 +1435,9 @@ pub struct ToolsConfig {
     /// Maximum bytes for a single tool result before truncation. Default 50KB.
     #[serde(default = "default_max_tool_result_bytes")]
     pub max_tool_result_bytes: usize,
+    /// How the tool registry is exposed to the model. Default: full.
+    #[serde(default, skip_serializing_if = "is_default_registry_mode")]
+    pub registry_mode: ToolRegistryMode,
 }
 
 impl Default for ToolsConfig {
@@ -1448,6 +1451,7 @@ impl Default for ToolsConfig {
             agent_timeout_secs: default_agent_timeout_secs(),
             agent_max_iterations: default_agent_max_iterations(),
             max_tool_result_bytes: default_max_tool_result_bytes(),
+            registry_mode: ToolRegistryMode::default(),
         }
     }
 }
@@ -2097,6 +2101,23 @@ pub enum ToolMode {
 
 const fn is_default_tool_mode(v: &ToolMode) -> bool {
     matches!(v, ToolMode::Auto)
+}
+
+/// How the tool registry is exposed to the LLM.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolRegistryMode {
+    /// Send all tool schemas to the model directly.
+    #[default]
+    Full,
+    /// Expose only `tool_search` + `tool_use` meta-tools. Real schemas are
+    /// served on-demand at execution time, keeping the prompt compact when
+    /// hundreds of MCP tools are connected.
+    Lazy,
+}
+
+const fn is_default_registry_mode(v: &ToolRegistryMode) -> bool {
+    matches!(v, ToolRegistryMode::Full)
 }
 
 /// Streaming transport for provider response streams.

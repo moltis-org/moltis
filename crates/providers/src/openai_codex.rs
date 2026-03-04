@@ -738,6 +738,7 @@ impl LlmProvider for OpenAiCodexProvider {
                 id: fn_call_ids[i].clone(),
                 name: fn_call_names[i].clone(),
                 arguments,
+                extra_content: None,
             });
         }
 
@@ -908,7 +909,7 @@ impl LlmProvider for OpenAiCodexProvider {
                                     let index = current_tool_index;
                                     current_tool_index += 1;
                                     tool_calls.insert(index, (id.clone(), name.clone()));
-                                    yield StreamEvent::ToolCallStart { id, name, index };
+                                    yield StreamEvent::ToolCallStart { id, name, index, extra_content: None };
                                 }
                             }
                             "response.function_call_arguments.delta" => {
@@ -1095,6 +1096,8 @@ mod tests {
                 id: "call_1".to_string(),
                 name: "get_time".to_string(),
                 arguments: serde_json::json!({}),
+
+                extra_content: None,
             }]),
             ChatMessage::tool("call_1", "12:00"),
         ];
@@ -1224,6 +1227,8 @@ mod tests {
                 id: "call_screenshot".to_string(),
                 name: "browser_screenshot".to_string(),
                 arguments: serde_json::json!({}),
+
+                extra_content: None,
             }]),
             ChatMessage::tool("call_screenshot", &tool_output),
             ChatMessage::assistant("Here is the screenshot."),

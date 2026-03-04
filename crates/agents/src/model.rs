@@ -142,24 +142,31 @@ impl ChatMessage {
                     let tc_json: Vec<serde_json::Value> = tool_calls
                         .iter()
                         .map(|tc| {
-                            serde_json::json!({
+                            let mut entry = serde_json::json!({
                                 "id": tc.id,
                                 "type": "function",
                                 "function": {
                                     "name": tc.name,
                                     "arguments": tc.arguments.to_string(),
                                 }
-                            })
+                            });
+                            // Round-trip opaque provider metadata (Gemini
+                            // `thought_signature`, etc.) so providers that
+                            // require it on subsequent turns receive it back.
+                            if let Some(ref extra) = tc.extra_content {
+                                entry["extra_content"] = extra.clone();
+                            }
+                            entry
                         })
                         .collect();
-                    let mut msg = serde_json::json!({
+                    // Always include `content` even when None: Mistral (and
+                    // some other providers) reject assistant messages that have
+                    // tool_calls but no `content` field at all.
+                    serde_json::json!({
                         "role": "assistant",
+                        "content": content.as_deref().unwrap_or(""),
                         "tool_calls": tc_json,
-                    });
-                    if let Some(text) = content {
-                        msg["content"] = serde_json::Value::String(text.clone());
-                    }
-                    msg
+                    })
                 }
             },
             ChatMessage::Tool {
@@ -241,6 +248,7 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                                     id,
                                     name,
                                     arguments,
+                                    extra_content: tc.get("extra_content").cloned(),
                                 })
                             })
                             .collect()
@@ -296,6 +304,9 @@ pub enum StreamEvent {
         name: String,
         /// Index of this tool call in the response (0-based).
         index: usize,
+        /// Opaque provider metadata (e.g. Gemini `thought_signature`) that
+        /// must be round-tripped on subsequent requests.
+        extra_content: Option<serde_json::Value>,
     },
     /// Streaming delta for tool call arguments (JSON fragment).
     ToolCallArgumentsDelta {
@@ -405,6 +416,10 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Opaque provider metadata to be round-tripped (e.g. Gemini
+    /// `thought_signature`).  Parsed from `extra_content` in the response and
+    /// re-serialised on the next request.
+    pub extra_content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -510,6 +525,8 @@ mod tests {
             id: "call_1".into(),
             name: "exec".into(),
             arguments: serde_json::json!({"cmd": "ls"}),
+
+            extra_content: None,
         }]);
         let val = msg.to_openai_value();
         assert_eq!(val["role"], "assistant");
@@ -742,5 +759,84 @@ mod tests {
         let meta = provider.model_metadata().await.unwrap();
         assert_eq!(meta.id, "stub-model");
         assert_eq!(meta.context_length, 42_000);
+    }
+
+    // ── Regression: Mistral empty-content rejection (Bug #2) ────────
+
+    /// Mistral rejects assistant messages that have `tool_calls` but no
+    /// `content` field.  Verify that `to_openai_value()` always includes
+    /// `content` (even when the original is `None`).
+    #[test]
+    fn assistant_with_tools_always_has_content_field() {
+        let msg = ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({"cmd": "ls"}),
+            extra_content: None,
+        }]);
+        let val = msg.to_openai_value();
+        // `content` must exist and be an empty string, never null/missing.
+        assert!(val.get("content").is_some(), "content field must be present");
+        assert_eq!(val["content"], "", "content must default to empty string");
+        assert!(val["tool_calls"].as_array().is_some());
+    }
+
+    // ── Regression: Gemini thought_signature round-trip (Bug #3) ────
+
+    /// Gemini 2.5/3 models return `extra_content.google.thought_signature`
+    /// on tool calls.  This must survive serialise → deserialise so that
+    /// the provider receives it back on subsequent turns.
+    #[test]
+    fn extra_content_round_trips_through_openai_serialisation() {
+        let sig = serde_json::json!({
+            "google": {
+                "thought_signature": "abc123signature"
+            }
+        });
+        let msg = ChatMessage::assistant_with_tools(Some("thinking".into()), vec![ToolCall {
+            id: "call_99".into(),
+            name: "search".into(),
+            arguments: serde_json::json!({"q": "rust"}),
+            extra_content: Some(sig.clone()),
+        }]);
+
+        // Serialise to OpenAI format.
+        let val = msg.to_openai_value();
+        let tc0 = &val["tool_calls"][0];
+        assert_eq!(tc0["extra_content"], sig, "extra_content must be serialised");
+
+        // Deserialise back and verify the round-trip.
+        let values = vec![val];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 1);
+        match &msgs[0] {
+            ChatMessage::Assistant { tool_calls, .. } => {
+                assert_eq!(tool_calls.len(), 1);
+                assert_eq!(
+                    tool_calls[0].extra_content.as_ref(),
+                    Some(&sig),
+                    "extra_content must survive round-trip"
+                );
+            },
+            _ => panic!("expected assistant message"),
+        }
+    }
+
+    /// When `extra_content` is None it should not appear in the serialised
+    /// JSON at all (keeps payloads lean for non-Gemini providers).
+    #[test]
+    fn extra_content_none_omitted_from_json() {
+        let msg = ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({}),
+            extra_content: None,
+        }]);
+        let val = msg.to_openai_value();
+        let tc0 = &val["tool_calls"][0];
+        assert!(
+            tc0.get("extra_content").is_none(),
+            "extra_content should not be present when None"
+        );
     }
 }

@@ -415,6 +415,8 @@ export function toolCallSummary(name, args, executionMode) {
 			var url = args.url ? ` ${args.url}` : "";
 			return `browser ${action}${mode}${url}`.trim();
 		}
+		case "tool_search":
+			return args.name ? `tool_search ${args.name}` : `tool_search "${args.query || ""}"`.trim();
 		default:
 			return name || "tool";
 	}

@@ -70,6 +70,8 @@ fn parse_tool_calls(content: &[serde_json::Value]) -> Vec<ToolCall> {
                     id: block["id"].as_str().unwrap_or("").to_string(),
                     name: block["name"].as_str().unwrap_or("").to_string(),
                     arguments: block["input"].clone(),
+
+                    extra_content: None,
                 })
             } else {
                 None
@@ -396,7 +398,7 @@ impl LlmProvider for AnthropicProvider {
                                             let id = content_block["id"].as_str().unwrap_or("").to_string();
                                             let name = content_block["name"].as_str().unwrap_or("").to_string();
                                             current_block_index = Some(index);
-                                            yield StreamEvent::ToolCallStart { id, name, index };
+                                            yield StreamEvent::ToolCallStart { id, name, index, extra_content: None };
                                         }
                                     }
                                     "content_block_delta" => {

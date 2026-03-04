@@ -480,8 +480,9 @@ fn append_memory_section(
     memory_text: Option<&str>,
     tool_schemas: &[serde_json::Value],
 ) {
-    let has_memory_search = has_tool_schema(tool_schemas, "memory_search");
-    let has_memory_save = has_tool_schema(tool_schemas, "memory_save");
+    let lazy_mode = has_tool_schema(tool_schemas, "tool_search");
+    let has_memory_search = has_tool_schema(tool_schemas, "memory_search") || lazy_mode;
+    let has_memory_save = has_tool_schema(tool_schemas, "memory_save") || lazy_mode;
     let memory_content = memory_text.filter(|text| !text.is_empty());
     if memory_content.is_none() && !has_memory_search && !has_memory_save {
         return;
@@ -503,15 +504,25 @@ fn append_memory_section(
         ));
     }
     if has_memory_search {
-        prompt.push_str(concat!(
-            "\nYou also have `memory_search` to find additional details from ",
-            "`memory/*.md` files and past session history beyond what is shown above. ",
-            "**Always search memory before claiming you don't know something.** ",
-            "The long-term memory system holds user facts, past decisions, project context, ",
-            "and anything previously stored.\n",
-        ));
+        if lazy_mode {
+            prompt.push_str(concat!(
+                "\nMemory tools (`memory_search`, `memory_save`) are available — call ",
+                "`tool_search` with their name to activate them, then call them directly. ",
+                "Use them to recall or store information beyond what is shown above. ",
+                "**Always search memory before claiming you don\u{2019}t know ",
+                "something.**\n",
+            ));
+        } else {
+            prompt.push_str(concat!(
+                "\nYou also have `memory_search` to find additional details from ",
+                "`memory/*.md` files and past session history beyond what is shown above. ",
+                "**Always search memory before claiming you don't know something.** ",
+                "The long-term memory system holds user facts, past decisions, project context, ",
+                "and anything previously stored.\n",
+            ));
+        }
     }
-    if has_memory_save {
+    if has_memory_save && !lazy_mode {
         prompt.push_str(concat!(
             "\n**When the user asks you to remember, save, or note something, ",
             "you MUST call `memory_save` to persist it.** ",

@@ -1,7 +1,10 @@
 use {
     anyhow::Result,
     async_trait::async_trait,
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    },
 };
 
 /// Agent-callable tool.
@@ -34,8 +37,14 @@ struct ToolEntry {
 ///
 /// Tools are stored as `Arc<dyn AgentTool>` so the registry can be cheaply
 /// cloned (e.g. for sub-agents that need a filtered copy of the parent's tools).
+///
+/// `activated` provides interior-mutable storage for tools discovered at
+/// runtime via `tool_search` in lazy mode. Entries here are surfaced by
+/// `list_schemas()` and `get_arc()` alongside the statically registered tools.
 pub struct ToolRegistry {
     tools: HashMap<String, ToolEntry>,
+    /// Tools activated at runtime (lazy mode: filled by `ToolSearchTool`).
+    pub(crate) activated: Arc<Mutex<HashMap<String, Arc<dyn AgentTool>>>>,
 }
 
 impl Default for ToolRegistry {
@@ -48,6 +57,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            activated: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -113,12 +123,19 @@ impl ToolRegistry {
     }
 
     /// Return a cloned tool handle by name.
+    ///
+    /// Checks both statically registered tools and tools activated at runtime
+    /// via the lazy-mode `tool_search` mechanism.
     pub fn get_arc(&self, name: &str) -> Option<Arc<dyn AgentTool>> {
-        self.tools.get(name).map(|e| Arc::clone(&e.tool))
+        if let Some(e) = self.tools.get(name) {
+            return Some(Arc::clone(&e.tool));
+        }
+        self.activated.lock().unwrap_or_else(|e| e.into_inner()).get(name).cloned()
     }
 
     pub fn list_schemas(&self) -> Vec<serde_json::Value> {
-        self.tools
+        let mut schemas: Vec<serde_json::Value> = self
+            .tools
             .values()
             .map(|e| {
                 let mut schema = serde_json::json!({
@@ -142,7 +159,20 @@ impl ToolRegistry {
                 }
                 schema
             })
-            .collect()
+            .collect();
+
+        // Include tools activated at runtime via lazy-mode tool_search.
+        let activated = self.activated.lock().unwrap_or_else(|e| e.into_inner());
+        for tool in activated.values() {
+            schemas.push(serde_json::json!({
+                "name": tool.name(),
+                "description": tool.description(),
+                "parameters": tool.parameters_schema(),
+                "source": "activated",
+            }));
+        }
+
+        schemas
     }
 
     /// List registered tool names.
@@ -163,7 +193,7 @@ impl ToolRegistry {
                 })
             })
             .collect();
-        ToolRegistry { tools }
+        ToolRegistry { tools, activated: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Clone the registry, excluding all MCP-sourced tools.
@@ -179,7 +209,7 @@ impl ToolRegistry {
                 })
             })
             .collect();
-        ToolRegistry { tools }
+        ToolRegistry { tools, activated: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Clone the registry, excluding tools whose names are in `exclude`.
@@ -195,7 +225,7 @@ impl ToolRegistry {
                 })
             })
             .collect();
-        ToolRegistry { tools }
+        ToolRegistry { tools, activated: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Clone the registry keeping only tools that match `predicate`.
@@ -214,7 +244,7 @@ impl ToolRegistry {
                 })
             })
             .collect();
-        ToolRegistry { tools }
+        ToolRegistry { tools, activated: Arc::new(Mutex::new(HashMap::new())) }
     }
 }
 
@@ -431,5 +461,49 @@ mod tests {
         let mut names = filtered.list_names();
         names.sort();
         assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
+    }
+
+    // ── Regression: get_arc() finds activated tools (Bug #1) ────────
+
+    /// `get_arc()` must check the `activated` map, not just `tools`.
+    /// This is the fix for "unknown tool: exec" after `tool_search` activation.
+    #[test]
+    fn test_get_arc_finds_activated_tools() {
+        let registry = ToolRegistry::new();
+        // Tool is NOT statically registered — simulate lazy activation.
+        registry
+            .activated
+            .lock()
+            .unwrap()
+            .insert("web_fetch".into(), Arc::new(DummyTool {
+                name: "web_fetch".to_string(),
+            }));
+        // get_arc must find the activated tool.
+        assert!(
+            registry.get_arc("web_fetch").is_some(),
+            "get_arc must return tools from the activated map"
+        );
+        // Static lookup returns None.
+        assert!(registry.get("web_fetch").is_none());
+    }
+
+    /// `list_schemas()` must include activated tools alongside static ones.
+    #[test]
+    fn test_list_schemas_includes_activated_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+        registry
+            .activated
+            .lock()
+            .unwrap()
+            .insert("web_fetch".into(), Arc::new(DummyTool {
+                name: "web_fetch".to_string(),
+            }));
+        let schemas = registry.list_schemas();
+        let names: Vec<String> = schemas.iter().map(|s| s["name"].as_str().unwrap().to_string()).collect();
+        assert!(names.contains(&"exec".into()), "static tool must be present");
+        assert!(names.contains(&"web_fetch".into()), "activated tool must be present");
     }
 }
