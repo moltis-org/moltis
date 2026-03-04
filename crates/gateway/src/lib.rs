@@ -51,8 +51,6 @@ pub mod share_store;
 pub mod state;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
-#[cfg(feature = "tls")]
-pub mod tls;
 pub mod tts_phrases;
 pub mod update_check;
 pub mod voice;

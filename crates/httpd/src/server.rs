@@ -50,11 +50,14 @@ use crate::{
 use moltis_gateway::tailscale::{CliTailscaleManager, TailscaleManager, TailscaleMode};
 
 #[cfg(feature = "tls")]
-use moltis_gateway::tls::CertManager;
+use moltis_tls::CertManager;
 
 /// Options for tailscale serve/funnel passed from CLI flags.
 #[cfg(feature = "tailscale")]
-pub use moltis_gateway::server::TailscaleOpts;
+pub struct TailscaleOpts {
+    pub mode: String,
+    pub reset_on_exit: bool,
+}
 
 #[cfg(test)]
 fn should_prebuild_sandbox_image(
@@ -489,6 +492,11 @@ pub async fn prepare_gateway(
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
 ) -> anyhow::Result<PreparedGateway> {
+    #[cfg(feature = "tailscale")]
+    let tailscale_mode_override = tailscale_opts.as_ref().map(|opts| opts.mode.clone());
+    #[cfg(feature = "tailscale")]
+    let tailscale_reset_on_exit_override = tailscale_opts.as_ref().map(|opts| opts.reset_on_exit);
+
     let core = prepare_gateway_core(
         bind,
         port,
@@ -497,7 +505,9 @@ pub async fn prepare_gateway(
         config_dir,
         data_dir,
         #[cfg(feature = "tailscale")]
-        tailscale_opts,
+        tailscale_mode_override,
+        #[cfg(feature = "tailscale")]
+        tailscale_reset_on_exit_override,
         session_event_bus,
     )
     .await?;
@@ -835,7 +845,7 @@ pub async fn prepare_gateway(
             (ca, cert, key)
         } else if tls_config.auto_generate {
             // Auto-generate certificates.
-            let mgr = moltis_gateway::tls::FsCertManager::new()?;
+            let mgr = moltis_tls::FsCertManager::new()?;
             let (ca, cert, key) = mgr.ensure_certs()?;
             (Some(ca), cert, key)
         } else {
@@ -1486,7 +1496,7 @@ pub async fn prepare_gateway(
 /// using a feature-stable argument list.
 ///
 /// This wrapper intentionally hides `tailscale_opts`, which only exists when
-/// the `tailscale` feature is enabled on `moltis-gateway`.
+/// the `tailscale` feature is enabled.
 #[allow(clippy::expect_used)]
 pub async fn prepare_gateway_embedded(
     bind: &str,
@@ -1613,7 +1623,7 @@ pub async fn start_gateway(
             (ca, cert, key)
         } else if tls_config.auto_generate {
             // Auto-generate certificates.
-            let mgr = moltis_gateway::tls::FsCertManager::new()?;
+            let mgr = moltis_tls::FsCertManager::new()?;
             let (ca, cert, key) = mgr.ensure_certs()?;
             (Some(ca), cert, key)
         } else {
@@ -1624,7 +1634,7 @@ pub async fn start_gateway(
 
         ca_cert_path = ca_path.clone();
 
-        let mgr = moltis_gateway::tls::FsCertManager::new()?;
+        let mgr = moltis_tls::FsCertManager::new()?;
         rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
         // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
@@ -1856,13 +1866,9 @@ pub async fn start_gateway(
             let bind_clone = bind.to_string();
             let ca_clone = ca.clone();
             tokio::spawn(async move {
-                if let Err(e) = moltis_gateway::tls::start_http_redirect_server(
-                    &bind_clone,
-                    http_port,
-                    port,
-                    &ca_clone,
-                )
-                .await
+                if let Err(e) =
+                    moltis_tls::start_http_redirect_server(&bind_clone, http_port, port, &ca_clone)
+                        .await
                 {
                     tracing::error!("HTTP redirect server failed: {e}");
                 }
@@ -1877,14 +1883,8 @@ pub async fn start_gateway(
         moltis_gateway::server::start_browser_warmup_after_listener(Arc::clone(
             &browser_for_warmup,
         ));
-        moltis_gateway::tls::serve_tls_with_http_redirect(
-            tcp_listener,
-            Arc::new(tls_cfg),
-            app,
-            port,
-            bind,
-        )
-        .await?;
+        moltis_tls::serve_tls_with_http_redirect(tcp_listener, Arc::new(tls_cfg), app, port, bind)
+            .await?;
         return Ok(());
     }
 

@@ -33,6 +33,7 @@ moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
 moltis-slack          = { optional = true, workspace = true }
+moltis-tls            = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-vault          = { optional = true, workspace = true }
 rand                  = { workspace = true }
@@ -78,10 +79,16 @@ prometheus = ["metrics", "moltis-gateway/prometheus"]
 push-notifications = ["dep:chrono", "moltis-gateway/push-notifications"]
 slack = ["dep:moltis-slack", "moltis-gateway/slack"]
 tailscale = ["moltis-gateway/tailscale"]
-tls = ["dep:rustls", "moltis-gateway/tls"]
+tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]
 trusted-network = ["moltis-gateway/trusted-network"]
 vault = ["dep:moltis-vault", "moltis-gateway/vault"]
 web-ui = ["moltis-gateway/web-ui"]
+
+[dev-dependencies]
+moltis-providers = { workspace = true }
+moltis-web       = { workspace = true }
+sqlx             = { workspace = true }
+tempfile         = { workspace = true }
 
 [lints]
 workspace = true

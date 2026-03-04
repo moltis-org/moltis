@@ -55,13 +55,6 @@ use crate::tailscale::{
     CliTailscaleManager, TailscaleManager, TailscaleMode, validate_tailscale_config,
 };
 
-/// Options for tailscale serve/funnel passed from CLI flags.
-#[cfg(feature = "tailscale")]
-pub struct TailscaleOpts {
-    pub mode: String,
-    pub reset_on_exit: bool,
-}
-
 // ── Location requester ───────────────────────────────────────────────────────
 
 /// Gateway implementation of [`moltis_tools::location::LocationRequester`].
@@ -1075,7 +1068,8 @@ pub async fn prepare_gateway_core(
     log_buffer: Option<crate::logs::LogBuffer>,
     config_dir: Option<PathBuf>,
     data_dir: Option<PathBuf>,
-    #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
+    #[cfg(feature = "tailscale")] tailscale_mode_override: Option<String>,
+    #[cfg(feature = "tailscale")] tailscale_reset_on_exit_override: Option<bool>,
     session_event_bus: Option<SessionEventBus>,
 ) -> anyhow::Result<PreparedGatewayCore> {
     let session_event_bus = session_event_bus.unwrap_or_default();
@@ -3026,17 +3020,12 @@ pub async fn prepare_gateway_core(
     #[cfg(feature = "tailscale")]
     let tailscale_mode: TailscaleMode = {
         // CLI flag overrides config file.
-        let mode_str = tailscale_opts
-            .as_ref()
-            .map(|o| o.mode.clone())
-            .unwrap_or_else(|| config.tailscale.mode.clone());
+        let mode_str = tailscale_mode_override.unwrap_or_else(|| config.tailscale.mode.clone());
         mode_str.parse().unwrap_or(TailscaleMode::Off)
     };
     #[cfg(feature = "tailscale")]
-    let tailscale_reset_on_exit = tailscale_opts
-        .as_ref()
-        .map(|o| o.reset_on_exit)
-        .unwrap_or(config.tailscale.reset_on_exit);
+    let tailscale_reset_on_exit =
+        tailscale_reset_on_exit_override.unwrap_or(config.tailscale.reset_on_exit);
 
     #[cfg(feature = "tailscale")]
     if tailscale_mode != TailscaleMode::Off {

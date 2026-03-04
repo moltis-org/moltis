@@ -29,6 +29,8 @@ pub mod push_routes;
 pub mod tailscale_routes;
 
 // Re-export key types for consumers.
+#[cfg(feature = "tls")]
+pub use moltis_tls as tls;
 #[cfg(feature = "tailscale")]
 pub use server::TailscaleOpts;
 pub use server::{AppState, PreparedGateway, RouteEnhancer, prepare_httpd_embedded, start_gateway};
