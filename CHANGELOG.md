@@ -19,6 +19,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.12] - 2026-03-04
+### Added
+- [ci] Add release dry-run mode
+- [browser] Add container_host for Docker-in-Docker connectivity (#300)
+- [ios] Auto-discover server identity and show emojis (#297)
+- [website] Migrate cloudflare website into monorepo (#302)
+- [local-llm] Allow arbitrary HuggingFace model IDs for MLX models
+- [web,tools] AOT WASM pre-compilation and Shiki CDN loading
+- [cli] Remove wasm from default features to reduce memory
+- [gateway] Make provider discovery startup non-blocking
+- [monitoring] Track memory history and improve local-llm memory reporting (#325)
+- [ios] Add local llama cpp memory field to GraphQL schema
+
+
+### Changed
+- [web] Move settings nav icons from JS to CSS
+- Externalize web/wasm assets and reduce memory footprint (#321)
+- [web] Move chat history hydration to paged HTTP
+- [web] Paginate sessions and auto-load older history
+
+
+### Removed
+- [web] Remove nested onboarding scroll and restore settings nav icons
+- [web] Declutter chat controls and fix dropdown positioning
+
+
+### Fixed
+- [config] Support provider url alias for remote Ollama config (#299)
+- [ci] Make release dry-run job conditions valid
+- [providers] Use Ollama capabilities for tool support detection (#301)
+- [scripts] Roll back heavy local validation parallelism
+- [web] Skip npm install when TAILWINDCSS binary is provided
+- [ci] Update website/releases.json on release
+- [web] Add missing i18n button key for preferredModels
+- [local-llm] Use sampler API for mlx-lm >= 0.20
+- [gateway] Break redirect loop when onboarded but auth not configured (#310)
+- [gateway] Reduce idle CPU from metrics loop and log broadcast feedback
+- [gateway] Speed up startup by deferring tailscale and log scan
+- [gateway] Improve browser warmup integration
+- [scripts] Run local nextest with ci timeout profile
+- [ci] Build macOS app arm64 in fast path
+- [web] Move session history off websocket and cap payload size
+- [web] Use combo select for session header selectors
+- [web] Externalize SVG icons and restore empty-chat centering
+- [web] Align e2e with controls modal and daily model refresh
+
+
+### Security
+- [nodes] Add multi-node support with device pairing, remote exec, and UI (#291)
+
 ## [0.10.11] - 2026-03-02
 
 ## [0.10.10] - 2026-03-02
