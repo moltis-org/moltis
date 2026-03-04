@@ -77,6 +77,8 @@ pub(crate) struct GonData {
     started_at: u64,
     /// Whether an OpenClaw installation was detected (for import UI).
     openclaw_detected: bool,
+    /// Small recent session snapshot for instant sidebar paint.
+    sessions_recent: Vec<serde_json::Value>,
     agents: Vec<serde_json::Value>,
     #[cfg(feature = "vault")]
     vault_status: String,
@@ -92,13 +94,17 @@ struct SandboxGonInfo {
 
 /// Memory snapshot included in gon data and tick broadcasts.
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct MemSnapshot {
     process: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_llama_cpp: Option<u64>,
     available: u64,
     total: u64,
 }
 
-/// Collect a point-in-time memory snapshot (process RSS + system memory).
+/// Collect a point-in-time memory snapshot (process RSS + local llama.cpp +
+/// system memory).
 pub(crate) fn collect_mem_snapshot() -> MemSnapshot {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
@@ -114,6 +120,7 @@ pub(crate) fn collect_mem_snapshot() -> MemSnapshot {
         .and_then(|p| sys.process(p))
         .map(|p| p.memory())
         .unwrap_or(0);
+    let local_llama_cpp = moltis_gateway::server::local_llama_cpp_bytes_for_ui();
     let total = sys.total_memory();
     // available_memory() returns 0 on macOS; fall back to total − used.
     let available = match sys.available_memory() {
@@ -122,6 +129,7 @@ pub(crate) fn collect_mem_snapshot() -> MemSnapshot {
     };
     MemSnapshot {
         process,
+        local_llama_cpp: (local_llama_cpp > 0).then_some(local_llama_cpp),
         available,
         total,
     }
@@ -148,6 +156,87 @@ fn parse_git_branch(raw: &str) -> Option<String> {
     } else {
         Some(branch.to_owned())
     }
+}
+
+const SESSION_PREVIEW_MAX_CHARS: usize = 200;
+
+fn truncate_preview(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let mut out = String::new();
+    for _ in 0..max_chars {
+        if let Some(ch) = chars.next() {
+            out.push(ch);
+        } else {
+            return out;
+        }
+    }
+    if chars.next().is_some() {
+        out.push('…');
+    }
+    out
+}
+
+async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<serde_json::Value> {
+    let Some(ref metadata) = gw.services.session_metadata else {
+        return Vec::new();
+    };
+
+    let mut recent = Vec::new();
+    for entry in metadata.list().await.into_iter().take(limit) {
+        let active_channel = if let Some(ref binding_json) = entry.channel_binding {
+            if let Ok(target) =
+                serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
+            {
+                metadata
+                    .get_active_session(
+                        target.channel_type.as_str(),
+                        &target.account_id,
+                        &target.chat_id,
+                    )
+                    .await
+                    .map(|key| key == entry.key)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let preview = entry
+            .preview
+            .as_deref()
+            .map(|text| truncate_preview(text, SESSION_PREVIEW_MAX_CHARS));
+        let agent_id = entry.agent_id.clone().unwrap_or_else(|| "main".to_owned());
+        let agent_id_camel = agent_id.clone();
+
+        recent.push(serde_json::json!({
+            "id": entry.id,
+            "key": entry.key,
+            "label": entry.label,
+            "model": entry.model,
+            "createdAt": entry.created_at,
+            "updatedAt": entry.updated_at,
+            "messageCount": entry.message_count,
+            "lastSeenMessageCount": entry.last_seen_message_count,
+            "projectId": entry.project_id,
+            "sandbox_enabled": entry.sandbox_enabled,
+            "sandbox_image": entry.sandbox_image,
+            "worktree_branch": entry.worktree_branch,
+            "channelBinding": entry.channel_binding,
+            "activeChannel": active_channel,
+            "parentSessionKey": entry.parent_session_key,
+            "forkPoint": entry.fork_point,
+            "mcpDisabled": entry.mcp_disabled,
+            "preview": preview,
+            "archived": entry.archived,
+            "agent_id": agent_id,
+            "agentId": agent_id_camel,
+            "node_id": entry.node_id,
+            "version": entry.version,
+        }));
+    }
+
+    recent
 }
 
 // ── NavCounts ────────────────────────────────────────────────────────────────
@@ -256,6 +345,8 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
 // ── GonData builder ──────────────────────────────────────────────────────────
 
 pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
+    const GON_SESSIONS_RECENT_LIMIT: usize = 30;
+
     let port = gw.port;
     let identity = gw
         .services
@@ -332,6 +423,8 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         Vec::new()
     };
 
+    let sessions_recent = build_recent_sessions_snapshot(gw, GON_SESSIONS_RECENT_LIMIT).await;
+
     GonData {
         identity,
         version: gw.version.clone(),
@@ -353,6 +446,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
         openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
+        sessions_recent,
         agents,
         #[cfg(feature = "vault")]
         vault_status: {
@@ -670,5 +764,29 @@ mod tests {
         let safe = script_safe_json(&val);
         assert!(!safe.contains('<'));
         assert!(!safe.contains('>'));
+    }
+
+    #[test]
+    fn mem_snapshot_omits_llama_cpp_when_none() {
+        let snapshot = MemSnapshot {
+            process: 1,
+            local_llama_cpp: None,
+            available: 2,
+            total: 3,
+        };
+        let json = serde_json::to_value(snapshot).unwrap();
+        assert!(json.get("localLlamaCpp").is_none());
+    }
+
+    #[test]
+    fn mem_snapshot_includes_llama_cpp_when_present() {
+        let snapshot = MemSnapshot {
+            process: 1,
+            local_llama_cpp: Some(4),
+            available: 2,
+            total: 3,
+        };
+        let json = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(json.get("localLlamaCpp").and_then(|v| v.as_u64()), Some(4));
     }
 }

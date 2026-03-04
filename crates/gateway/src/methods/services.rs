@@ -2038,6 +2038,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .ok_or_else(|| {
                         ErrorShape::new(error_codes::INVALID_REQUEST, "missing 'key' parameter")
                     })?;
+                let include_history = ctx
+                    .params
+                    .get("include_history")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
                 let previous_active_key = {
                     let inner = ctx.state.inner.read().await;
                     inner.active_sessions.get(&ctx.client_conn_id).cloned()
@@ -2070,7 +2075,10 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Resolve first (auto-creates session if needed), then
                 // persist project_id so the entry exists when we patch.
-                let mut resolve_params = serde_json::json!({ "key": key });
+                let mut resolve_params = serde_json::json!({
+                    "key": key,
+                    "include_history": include_history,
+                });
                 if !was_existing_session
                     && let Some(previous_key) = previous_active_key
                         .as_deref()
@@ -2188,7 +2196,14 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .get("cached_message_count")
                     .and_then(|v| v.as_u64());
                 let mut result = result;
+                if !include_history && let Some(obj) = result.as_object_mut() {
+                    obj.insert("history".to_string(), serde_json::Value::Array(Vec::new()));
+                    obj.insert("historyOmitted".to_string(), serde_json::Value::Bool(true));
+                    obj.remove("historyTruncated");
+                    obj.remove("historyDroppedCount");
+                }
                 if let Some(cached) = cached_count
+                    && include_history
                     && let Some(obj) = result.as_object_mut()
                     && let Some(entry_obj) = obj.get("entry").and_then(|e| e.as_object())
                     && let Some(server_count) =
@@ -2197,6 +2212,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 {
                     obj.insert("history".to_string(), serde_json::Value::Array(Vec::new()));
                     obj.insert("historyCacheHit".to_string(), serde_json::Value::Bool(true));
+                    obj.remove("historyTruncated");
+                    obj.remove("historyDroppedCount");
                 }
 
                 // Inject replying state so frontend restores thinking

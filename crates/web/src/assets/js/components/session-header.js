@@ -6,6 +6,7 @@
 import { html } from "htm/preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { onEvent } from "../events.js";
+import * as gon from "../gon.js";
 import { parseAgentsListPayload, sendRpc } from "../helpers.js";
 import {
 	clearActiveSession,
@@ -15,7 +16,7 @@ import {
 	switchSession,
 } from "../sessions.js";
 import { sessionStore } from "../stores/session-store.js";
-import { confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui.js";
+import { ComboSelect, confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui.js";
 
 function nextSessionKey(currentKey) {
 	var allSessions = sessionStore.sessions.value;
@@ -48,22 +49,39 @@ async function copyShareUrl(url, visibility) {
 	await shareLinkDialog(url, visibility);
 }
 
-export function SessionHeader() {
+export function SessionHeader({
+	showSelectors = true,
+	showName = true,
+	showShare = true,
+	showFork = true,
+	showStop = true,
+	showClear = true,
+	showDelete = true,
+	nameOwnLine = false,
+	showRenameButton = false,
+	actionButtonClass = "chat-session-btn",
+	onBeforeShare = null,
+	onBeforeDelete = null,
+} = {}) {
 	var session = sessionStore.activeSession.value;
 	var currentKey = sessionStore.activeSessionKey.value;
+	var gonAgentsPayload = parseAgentsListPayload(gon.get("agents"));
+	var initialAgentOptions = Array.isArray(gonAgentsPayload?.agents) ? gonAgentsPayload.agents : [];
+	var initialDefaultAgentId = typeof gonAgentsPayload?.defaultId === "string" ? gonAgentsPayload.defaultId : "main";
 
 	var [renaming, setRenaming] = useState(false);
 	var [clearing, setClearing] = useState(false);
 	var [stopping, setStopping] = useState(false);
 	var [switchingAgent, setSwitchingAgent] = useState(false);
-	var [agentOptions, setAgentOptions] = useState([]);
-	var [defaultAgentId, setDefaultAgentId] = useState("main");
+	var [agentOptions, setAgentOptions] = useState(initialAgentOptions);
+	var [defaultAgentId, setDefaultAgentId] = useState(initialDefaultAgentId);
+	var [agentOptionsLoaded, setAgentOptionsLoaded] = useState(initialAgentOptions.length > 0);
 	var [nodeOptions, setNodeOptions] = useState([]);
 	var [switchingNode, setSwitchingNode] = useState(false);
 	var inputRef = useRef(null);
 
 	var fullName = session ? session.label || session.key : currentKey;
-	var displayName = fullName.length > 20 ? `${fullName.slice(0, 20)}\u2026` : fullName;
+	var displayName = nameOwnLine ? fullName : fullName.length > 20 ? `${fullName.slice(0, 20)}\u2026` : fullName;
 	var replying = session?.replying.value;
 	var activeRunId = session?.activeRunId.value || null;
 
@@ -78,10 +96,15 @@ export function SessionHeader() {
 	useEffect(() => {
 		var cancelled = false;
 		sendRpc("agents.list", {}).then((res) => {
-			if (cancelled || !res?.ok) return;
+			if (cancelled) return;
+			if (!res?.ok) {
+				setAgentOptionsLoaded(true);
+				return;
+			}
 			var parsed = parseAgentsListPayload(res.payload);
 			setDefaultAgentId(parsed.defaultId);
 			setAgentOptions(parsed.agents);
+			setAgentOptionsLoaded(true);
 		});
 		return () => {
 			cancelled = true;
@@ -152,6 +175,9 @@ export function SessionHeader() {
 	}, [currentKey]);
 
 	var onDelete = useCallback(() => {
+		if (typeof onBeforeDelete === "function") {
+			onBeforeDelete();
+		}
 		var msgCount = session ? session.messageCount || 0 : 0;
 		var nextKey = nextSessionKey(currentKey);
 		var doDelete = () => {
@@ -178,7 +204,7 @@ export function SessionHeader() {
 		} else {
 			doDelete();
 		}
-	}, [currentKey, session]);
+	}, [currentKey, onBeforeDelete, session]);
 
 	var onClear = useCallback(() => {
 		if (clearing) return;
@@ -230,15 +256,17 @@ export function SessionHeader() {
 	);
 
 	var onShare = useCallback(() => {
+		if (typeof onBeforeShare === "function") {
+			onBeforeShare();
+		}
 		shareVisibilityDialog().then((visibility) => {
 			if (!visibility) return;
 			void shareSnapshot(visibility);
 		});
-	}, [shareSnapshot]);
+	}, [onBeforeShare, shareSnapshot]);
 
 	var onAgentChange = useCallback(
-		(event) => {
-			var nextAgentId = event.target.value;
+		(nextAgentId) => {
 			if (!nextAgentId || nextAgentId === currentAgentId || switchingAgent) {
 				return;
 			}
@@ -266,8 +294,7 @@ export function SessionHeader() {
 	);
 
 	var onNodeChange = useCallback(
-		(event) => {
-			var nextNodeId = event.target.value;
+		(nextNodeId) => {
 			if (switchingNode) return;
 			setSwitchingNode(true);
 			sendRpc("nodes.set_session", {
@@ -294,115 +321,177 @@ export function SessionHeader() {
 
 	var agentSelectValue = currentAgentId;
 	var hasCurrentAgentOption = agentOptions.some((agent) => agent.id === agentSelectValue);
-	var selectDisabled = switchingAgent || agentOptions.length === 0;
+	var agentSelectOptions = agentOptions.map((agent) => {
+		var prefix = agent.emoji ? `${agent.emoji} ` : "";
+		var suffix = agent.id === defaultAgentId ? " (default)" : "";
+		return {
+			value: agent.id,
+			label: `${prefix}${agent.name}${suffix}`,
+		};
+	});
+	if (!hasCurrentAgentOption && agentSelectValue && (switchingAgent || agentOptionsLoaded)) {
+		agentSelectOptions = [
+			{
+				value: agentSelectValue,
+				label: switchingAgent ? "Switching…" : `agent:${agentSelectValue}`,
+			},
+			...agentSelectOptions,
+		];
+	}
+	var agentSelectDisabled = switchingAgent || agentSelectOptions.length === 0;
+	var shouldShowAgentPicker = !isCron && agentOptionsLoaded && (agentOptions.length > 1 || !hasCurrentAgentOption);
+
+	var shouldShowNodePicker = !isCron && (nodeOptions.length > 0 || Boolean(currentNodeId));
+	var hasCurrentNodeOption = currentNodeId === "" || nodeOptions.some((node) => node.nodeId === currentNodeId);
+	var nodeSelectOptions = [
+		{ value: "", label: "Local" },
+		...nodeOptions.map((node) => ({
+			value: node.nodeId,
+			label: node.displayName || node.nodeId,
+		})),
+	];
+	if (!hasCurrentNodeOption && currentNodeId) {
+		nodeSelectOptions = [
+			{
+				value: currentNodeId,
+				label: switchingNode ? "Switching…" : `node:${currentNodeId}`,
+			},
+			...nodeSelectOptions,
+		];
+	}
+
+	var nameStyle = { cursor: canRename ? "pointer" : "default" };
+	if (nameOwnLine) {
+		nameStyle.color = "var(--text-strong)";
+		nameStyle.wordBreak = "break-word";
+	}
+	var renameInputStyle = nameOwnLine ? { maxWidth: "none", width: "100%" } : undefined;
+
+	var nameControl =
+		showName &&
+		(renaming
+			? html`<input
+				ref=${inputRef}
+				class="chat-session-rename-input"
+				style=${renameInputStyle}
+				onBlur=${commitRename}
+				onKeyDown=${onKeyDown}
+			/>`
+			: html`<span
+				class="chat-session-name"
+				style=${nameStyle}
+				title=${canRename ? "Click to rename" : ""}
+				onClick=${startRename}
+			>${displayName}</span>`);
+
+	var renameCta =
+		showName &&
+		showRenameButton &&
+		canRename &&
+		!renaming &&
+		html`<button class=${actionButtonClass} onClick=${startRename} title="Rename session">
+			Rename
+		</button>`;
 
 	return html`
-		<div class="flex items-center gap-2">
+			<div class=${nameOwnLine ? "flex flex-col gap-2 w-full" : "flex items-center gap-2"}>
+				${
+					nameOwnLine &&
+					showName &&
+					html`<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 w-full">
+						<div class="min-w-0">${nameControl}</div>
+						<div class="justify-self-end">${renameCta}</div>
+					</div>`
+				}
+			<div class=${nameOwnLine ? "flex flex-wrap items-center gap-2" : "flex items-center gap-2"}>
 			${
-				!isCron &&
+				showSelectors &&
+				shouldShowAgentPicker &&
 				html`
-				<select
-					class="chat-session-btn"
+				<${ComboSelect}
+					options=${agentSelectOptions}
 					value=${agentSelectValue}
 					onChange=${onAgentChange}
-					disabled=${selectDisabled}
-					title="Session agent"
-					style="max-width:180px;text-overflow:ellipsis;"
-				>
-					${
-						!hasCurrentAgentOption &&
-						html`
-						<option value=${agentSelectValue}>
-							${switchingAgent ? "Switching…" : `agent:${agentSelectValue}`}
-						</option>
-					`
-					}
-					${agentOptions.map((agent) => {
-						var prefix = agent.emoji ? `${agent.emoji} ` : "";
-						var suffix = agent.id === defaultAgentId ? " (default)" : "";
-						return html`
-							<option key=${agent.id} value=${agent.id}>
-								${`${prefix}${agent.name}${suffix}`}
-							</option>
-						`;
-					})}
-				</select>
+					placeholder="Session agent"
+					searchable=${false}
+					allowEmpty=${false}
+					fullWidth=${false}
+					disabled=${agentSelectDisabled}
+				/>
 			`
 			}
 			${
-				!isCron &&
-				nodeOptions.length > 0 &&
+				showSelectors &&
+				shouldShowNodePicker &&
 				html`
-				<select
-					class="chat-session-btn"
+				<${ComboSelect}
+					options=${nodeSelectOptions}
 					value=${currentNodeId}
 					onChange=${onNodeChange}
+					placeholder="Session node"
+					searchable=${false}
+					allowEmpty=${false}
+					fullWidth=${false}
 					disabled=${switchingNode}
-					title="Session node"
-					style="max-width:160px;text-overflow:ellipsis;"
-				>
-					<option value="">Local</option>
-					${nodeOptions.map((node) => {
-						var label = node.displayName || node.nodeId;
-						return html`
-							<option key=${node.nodeId} value=${node.nodeId}>
-								${label}
-							</option>
-						`;
-					})}
-				</select>
+				/>
 			`
 			}
-			${
-				renaming
-					? html`<input
-						ref=${inputRef}
-						class="chat-session-rename-input"
-						onBlur=${commitRename}
-						onKeyDown=${onKeyDown}
-					/>`
-					: html`<span
-						class="chat-session-name"
-						style=${{ cursor: canRename ? "pointer" : "default" }}
-						title=${canRename ? "Click to rename" : ""}
-						onClick=${startRename}
-					>${displayName}</span>`
-			}
-			${
-				!isCron &&
-				html`
-				<button class="chat-session-btn" onClick=${onFork} title="Fork session">
-					Fork
-				</button>
-				<button class="chat-session-btn" onClick=${onShare} title="Share snapshot">
-					Share
-				</button>
-			`
-			}
-			${
-				canStop &&
-				html`
-				<button class="chat-session-btn" onClick=${onStop} title="Stop generation" disabled=${stopping}>
-					${stopping ? "Stopping\u2026" : "Stop"}
-				</button>
-			`
-			}
-			${
-				isMain &&
-				html`
-				<button class="chat-session-btn" onClick=${onClear} title="Clear session" disabled=${clearing}>
-					${clearing ? "Clearing\u2026" : "Clear"}
-				</button>
-			`
-			}
-			${
-				!(isMain || isCron) &&
-				html`
-				<button class="chat-session-btn chat-session-btn-danger" onClick=${onDelete} title="Delete session">
-					Delete
-				</button>
-			`
-			}
+			${!nameOwnLine && showName && nameControl}
+			${!nameOwnLine && renameCta}
+				${
+					showDelete &&
+					!(isMain || isCron) &&
+					html`
+					<button
+						class=${`${actionButtonClass} chat-session-btn-danger inline-flex items-center gap-1.5`}
+						onClick=${onDelete}
+						title="Delete session"
+						style=${{ background: "var(--error)", borderColor: "var(--error)", color: "#fff" }}
+					>
+						<span class="icon icon-sm icon-x-circle shrink-0"></span>
+						Delete
+					</button>
+				`
+				}
+				${
+					showFork &&
+					!isCron &&
+					html`
+					<button class=${`${actionButtonClass} inline-flex items-center gap-1.5`} onClick=${onFork} title="Fork session">
+						<span class="icon icon-sm icon-layers shrink-0"></span>
+						Fork
+					</button>
+				`
+				}
+				${
+					showShare &&
+					!isCron &&
+					html`
+					<button class=${`${actionButtonClass} inline-flex items-center gap-1.5`} onClick=${onShare} title="Share snapshot">
+						<span class="icon icon-sm icon-share shrink-0"></span>
+						Share
+					</button>
+				`
+				}
+				${
+					showStop &&
+					canStop &&
+					html`
+					<button class=${actionButtonClass} onClick=${onStop} title="Stop generation" disabled=${stopping}>
+						${stopping ? "Stopping\u2026" : "Stop"}
+					</button>
+				`
+				}
+				${
+					showClear &&
+					isMain &&
+					html`
+					<button class=${actionButtonClass} onClick=${onClear} title="Clear session" disabled=${clearing}>
+						${clearing ? "Clearing\u2026" : "Clear"}
+					</button>
+				`
+				}
+			</div>
 		</div>
 	`;
 }

@@ -54,8 +54,13 @@ pub async fn api_public_identity_handler(State(state): State<AppState>) -> impl 
         }
     });
 
+    #[cfg(feature = "graphql")]
+    let graphql_enabled = state.gateway.is_graphql_enabled();
+    #[cfg(not(feature = "graphql"))]
+    let graphql_enabled = false;
+
     Json(PublicIdentityPayload {
         identity: PublicIdentity { name, emoji },
-        graphql_enabled: state.gateway.is_graphql_enabled(),
+        graphql_enabled,
     })
 }

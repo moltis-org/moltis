@@ -893,11 +893,14 @@ export function renderMapPointGroups(container, points, fallbackLabel) {
  */
 export function parseAgentsListPayload(payload) {
 	if (Array.isArray(payload)) {
-		return { defaultId: "main", agents: payload };
+		var legacyDefault = payload.find((agent) => agent?.is_default === true && typeof agent?.id === "string")?.id;
+		return { defaultId: legacyDefault || "main", agents: payload };
 	}
+	var agents = Array.isArray(payload?.agents) ? payload.agents : [];
+	var inferredDefault = agents.find((agent) => agent?.is_default === true && typeof agent?.id === "string")?.id;
 	return {
-		defaultId: typeof payload?.default_id === "string" ? payload.default_id : "main",
-		agents: Array.isArray(payload?.agents) ? payload.agents : [],
+		defaultId: typeof payload?.default_id === "string" ? payload.default_id : inferredDefault || "main",
+		agents: agents,
 	};
 }
 

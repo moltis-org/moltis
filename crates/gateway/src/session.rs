@@ -33,6 +33,10 @@ const SHARE_BOUNDARY_NOTICE: &str =
 const SHARE_PREVIEW_MAX_IMAGE_WIDTH: u32 = 430;
 const SHARE_PREVIEW_MAX_IMAGE_HEIGHT: u32 = 430;
 const SHARE_REDACTED_VALUE: &str = "[REDACTED]";
+const SESSION_PREVIEW_MAX_CHARS: usize = 200;
+const UI_HISTORY_MAX_BYTES: usize = 2 * 1024 * 1024;
+const UI_HISTORY_MIN_MESSAGES: usize = 120;
+const UI_HISTORY_TRIM_STEP: usize = 50;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,7 +140,6 @@ fn truncate_preview(s: &str, max: usize) -> String {
 /// have enough text (target ~80 chars). Skips tool_result messages.
 fn extract_preview(history: &[Value]) -> Option<String> {
     const TARGET: usize = 80;
-    const MAX: usize = 200;
 
     let mut combined = String::new();
     for msg in history {
@@ -158,7 +161,32 @@ fn extract_preview(history: &[Value]) -> Option<String> {
     if combined.is_empty() {
         return None;
     }
-    Some(truncate_preview(&combined, MAX))
+    Some(truncate_preview(&combined, SESSION_PREVIEW_MAX_CHARS))
+}
+
+fn trim_ui_history(mut history: Vec<Value>) -> (Vec<Value>, usize) {
+    if history.is_empty() {
+        return (history, 0);
+    }
+
+    let mut dropped = 0usize;
+    loop {
+        let size = serde_json::to_vec(&history).map_or(0, |buf| buf.len());
+        if size <= UI_HISTORY_MAX_BYTES || history.len() <= UI_HISTORY_MIN_MESSAGES {
+            break;
+        }
+
+        let removable = history.len().saturating_sub(UI_HISTORY_MIN_MESSAGES);
+        if removable == 0 {
+            break;
+        }
+
+        let trim_count = removable.min(UI_HISTORY_TRIM_STEP);
+        history.drain(0..trim_count);
+        dropped += trim_count;
+    }
+
+    (history, dropped)
 }
 
 fn value_u64(msg: &Value, key: &str) -> Option<u64> {
@@ -984,6 +1012,11 @@ impl SessionService for LiveSessionService {
                 }
             }
 
+            let preview = e
+                .preview
+                .as_deref()
+                .map(|p| truncate_preview(p, SESSION_PREVIEW_MAX_CHARS));
+
             entries.push(serde_json::json!({
                 "id": e.id,
                 "key": e.key,
@@ -1002,7 +1035,7 @@ impl SessionService for LiveSessionService {
                 "parentSessionKey": e.parent_session_key,
                 "forkPoint": e.fork_point,
                 "mcpDisabled": e.mcp_disabled,
-                "preview": e.preview,
+                "preview": preview,
                 "agent_id": agent_id,
                 "agentId": agent_id,
                 "node_id": e.node_id,
@@ -1032,6 +1065,10 @@ impl SessionService for LiveSessionService {
             .get("key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let include_history = params
+            .get("include_history")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let inherit_from_key = params
             .get("inherit_agent_from")
             .and_then(|v| v.as_str())
@@ -1045,19 +1082,57 @@ impl SessionService for LiveSessionService {
             .ensure_entry_agent_id(key, inherit_from_key)
             .await
             .ok_or_else(|| format!("session '{key}' not found after resolve"))?;
-        let history = self.store.read(key).await.map_err(ServiceError::message)?;
+        if !include_history {
+            if entry.message_count == 0
+                && let Some(ref hooks) = self.hook_registry
+            {
+                let payload = moltis_common::hooks::HookPayload::SessionStart {
+                    session_key: key.to_string(),
+                };
+                if let Err(e) = hooks.dispatch(&payload).await {
+                    warn!(session = %key, error = %e, "SessionStart hook failed");
+                }
+            }
+
+            return Ok(serde_json::json!({
+                "entry": {
+                    "id": entry.id,
+                    "key": entry.key,
+                    "label": entry.label,
+                    "model": entry.model,
+                    "createdAt": entry.created_at,
+                    "updatedAt": entry.updated_at,
+                    "messageCount": entry.message_count,
+                    "projectId": entry.project_id,
+                    "archived": entry.archived,
+                    "sandbox_enabled": entry.sandbox_enabled,
+                    "sandbox_image": entry.sandbox_image,
+                    "worktree_branch": entry.worktree_branch,
+                    "mcpDisabled": entry.mcp_disabled,
+                    "agent_id": entry.agent_id,
+                    "agentId": entry.agent_id,
+                    "node_id": entry.node_id,
+                    "version": entry.version,
+                },
+                "history": [],
+                "historyTruncated": false,
+                "historyDroppedCount": 0,
+            }));
+        }
+
+        let raw_history = self.store.read(key).await.map_err(ServiceError::message)?;
 
         // Recompute preview from combined messages every time resolve runs,
         // so sessions get the latest multi-message preview algorithm.
-        if !history.is_empty() {
-            let new_preview = extract_preview(&history);
+        if !raw_history.is_empty() {
+            let new_preview = extract_preview(&raw_history);
             if new_preview.as_deref() != entry.preview.as_deref() {
                 self.metadata.set_preview(key, new_preview.as_deref()).await;
             }
         }
 
         // Dispatch SessionStart hook for newly created sessions (empty history).
-        if history.is_empty()
+        if raw_history.is_empty()
             && let Some(ref hooks) = self.hook_registry
         {
             let payload = moltis_common::hooks::HookPayload::SessionStart {
@@ -1067,6 +1142,8 @@ impl SessionService for LiveSessionService {
                 warn!(session = %key, error = %e, "SessionStart hook failed");
             }
         }
+
+        let (history, dropped_count) = trim_ui_history(filter_ui_history(raw_history));
 
         Ok(serde_json::json!({
             "entry": {
@@ -1088,7 +1165,9 @@ impl SessionService for LiveSessionService {
                 "node_id": entry.node_id,
                 "version": entry.version,
             },
-            "history": filter_ui_history(history),
+            "history": history,
+            "historyTruncated": dropped_count > 0,
+            "historyDroppedCount": dropped_count,
         }))
     }
 
@@ -1875,6 +1954,29 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0]["role"], "assistant");
         assert_eq!(filtered[0]["reasoning"], "internal plan");
+    }
+
+    #[test]
+    fn trim_ui_history_drops_oldest_messages_when_payload_is_too_large() {
+        let payload = "x".repeat(30_000);
+        let history: Vec<Value> = (0..150)
+            .map(|idx| serde_json::json!({ "id": idx, "role": "assistant", "content": payload }))
+            .collect();
+
+        let (trimmed, dropped) = trim_ui_history(history);
+        assert!(dropped > 0, "expected some messages to be dropped");
+        assert_eq!(trimmed.len() + dropped, 150);
+        assert_eq!(trimmed[0]["id"], serde_json::json!(dropped));
+        assert!(
+            trimmed.len() >= UI_HISTORY_MIN_MESSAGES,
+            "must keep at least the configured recent tail",
+        );
+
+        let trimmed_bytes = serde_json::to_vec(&trimmed).expect("serialize trimmed history");
+        assert!(
+            trimmed_bytes.len() <= UI_HISTORY_MAX_BYTES || trimmed.len() == UI_HISTORY_MIN_MESSAGES,
+            "trimmed payload should stay under budget unless minimum tail is reached",
+        );
     }
 
     // --- Preview extraction tests ---

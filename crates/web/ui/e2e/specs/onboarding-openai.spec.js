@@ -104,6 +104,11 @@ test.describe("Onboarding OpenAI provider", () => {
 		await expect(openaiRow).toBeVisible();
 		await expect(openaiRow.locator(".provider-item-badge.configured")).toBeVisible();
 		await expect(openaiRow.getByRole("button", { name: "Choose Model", exact: true })).toBeVisible();
+		const providerList = openaiRow.locator(
+			"xpath=ancestor::div[contains(@class,'flex') and contains(@class,'flex-col') and contains(@class,'gap-2')][1]",
+		);
+		await expect(providerList).not.toHaveClass(/overflow-y-auto/);
+		await expect(providerList).not.toHaveClass(/max-h-80/);
 
 		await openaiRow.getByRole("button", { name: "Choose Model", exact: true }).click();
 
@@ -149,6 +154,9 @@ test.describe("Onboarding OpenAI provider", () => {
 		const selectedModelId = (await firstModelCard.locator(".font-mono").first().textContent())?.trim() || "";
 		expect(selectedModelId).not.toBe("");
 
+		await firstModelCard.evaluate((element) => {
+			element.scrollIntoView({ block: "center", inline: "nearest" });
+		});
 		await firstModelCard.click();
 		await expect(firstModelCard).toHaveClass(/selected/);
 

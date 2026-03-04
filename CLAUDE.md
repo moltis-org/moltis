@@ -67,7 +67,7 @@ cargo run / cargo run --release
 Assets in `crates/web/src/assets/` (JS, CSS, HTML). Dev mode serves from disk (edit and reload);
 release mode embeds via `include_dir!` with versioned URLs.
 
-- Run `biome check --write` after editing JS files.
+- **Always** run `biome check --write` when JS files change.
 - Avoid creating HTML from JS — add hidden elements in `index.html`, toggle visibility. Preact/HTM exceptions allowed.
 - **Always use Tailwind classes** instead of inline `style="..."`.
 - Reuse CSS classes from `components.css`: `provider-btn`, `provider-btn-secondary`, `provider-btn-danger`.
@@ -231,6 +231,11 @@ Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): descripti
 ### Local Validation
 
 **Always** run `./scripts/local-validate.sh <PR_NUMBER>` when a PR exists.
+
+For incremental local edits before full validation:
+- JS changed: run `biome check --write`.
+- Rust changed: run `cargo +nightly-2025-11-30 fmt --all -- --check`.
+- JS + Rust changed: run both.
 
 Exact commands (must match `local-validate.sh`):
 - Fmt: `cargo +nightly-2025-11-30 fmt --all -- --check`

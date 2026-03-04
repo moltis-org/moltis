@@ -11,6 +11,7 @@ import { onEvent } from "./events.js";
 import { t } from "./i18n.js";
 import { registerPrefix } from "./router.js";
 import { routes } from "./routes.js";
+import prettyBytes from "./vendor/pretty-bytes.mjs";
 
 var metricsData = signal(null);
 var historyPoints = signal([]);
@@ -92,6 +93,11 @@ function formatNumber(n) {
 	if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
 	if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
 	return n.toString();
+}
+
+function formatMemoryBytes(bytes) {
+	if (bytes === undefined || bytes === null || bytes <= 0) return "\u2014";
+	return prettyBytes(bytes, { maximumFractionDigits: 0, space: false });
 }
 
 function formatUptime(seconds) {
@@ -294,6 +300,27 @@ function prepareChartData(points, fields) {
 	return [timestamps, ...seriesData];
 }
 
+function prepareMemoryChart(points) {
+	if (!points || points.length === 0) {
+		return null;
+	}
+
+	var mib = 1024 * 1024;
+	var timestamps = points.map((p) => p.timestamp / 1000);
+	var processMemory = points.map((p) => (p.process_memory_bytes || 0) / mib);
+	var hasLocalLlama = points.some((p) => (p.local_llama_cpp_bytes || 0) > 0);
+
+	var data = [timestamps, processMemory];
+	var series = [{ label: t("metrics:series.processMemory"), color: chartColors.error }];
+
+	if (hasLocalLlama) {
+		data.push(points.map((p) => (p.local_llama_cpp_bytes || 0) / mib));
+		series.push({ label: t("metrics:series.localLlamaCpp"), color: chartColors.primary });
+	}
+
+	return { data, series };
+}
+
 // Get unique provider names from history points
 function getProviders(points) {
 	var providers = new Set();
@@ -336,13 +363,19 @@ var providerColors = [
 	"#f97316", // orange
 ];
 
-function MetricsGrid({ categories }) {
+function MetricsGrid({ categories, latestPoint }) {
 	if (!categories) return null;
 
 	var { llm, http, tools, mcp, system } = categories;
+	var processMemory = latestPoint?.process_memory_bytes || 0;
 
 	// Check if there's any meaningful data
-	var hasData = system?.uptime_seconds > 0 || http?.total > 0 || llm?.completions_total > 0 || tools?.total > 0;
+	var hasData =
+		system?.uptime_seconds > 0 ||
+		http?.total > 0 ||
+		llm?.completions_total > 0 ||
+		tools?.total > 0 ||
+		processMemory > 0;
 
 	if (!hasData) {
 		return html`
@@ -364,6 +397,7 @@ function MetricsGrid({ categories }) {
 					<${MetricCard} title=${t("metrics:cards.connectedClients")} value=${formatNumber(system?.connected_clients)} />
 					<${MetricCard} title=${t("metrics:cards.activeSessions")} value=${formatNumber(system?.active_sessions)} />
 					<${MetricCard} title=${t("metrics:cards.httpRequests")} value=${formatNumber(http?.total)} />
+					<${MetricCard} title=${t("metrics:cards.processMemory")} value=${formatMemoryBytes(processMemory)} />
 				</div>
 			</section>
 
@@ -429,6 +463,7 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 	var requestData = prepareChartData(filteredPoints, ["http_requests", "llm_completions"]);
 	var connectionsData = prepareChartData(filteredPoints, ["ws_active", "active_sessions"]);
 	var toolsData = prepareChartData(filteredPoints, ["tool_executions", "mcp_calls"]);
+	var memoryChart = prepareMemoryChart(filteredPoints);
 
 	// Prepare per-provider charts
 	var providers = getProviders(filteredPoints);
@@ -501,6 +536,16 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 							{ label: t("metrics:series.wsActive"), color: chartColors.secondary },
 							{ label: t("metrics:series.activeSessions"), color: chartColors.tertiary },
 						]}
+					/>
+				`
+				}
+				${
+					memoryChart &&
+					html`
+					<${TimeSeriesChart}
+						title=${t("metrics:charts.memoryUsage")}
+						data=${memoryChart.data}
+						series=${memoryChart.series}
 					/>
 				`
 				}
@@ -693,7 +738,10 @@ function MonitoringPage({ initialTab }) {
 					activeTab === "overview" &&
 					html`
 					<div class="space-y-10">
-						<${MetricsGrid} categories=${metricsData.value?.categories} />
+						<${MetricsGrid}
+							categories=${metricsData.value?.categories}
+							latestPoint=${historyPoints.value[historyPoints.value.length - 1]}
+						/>
 						<${ProviderTable} byProvider=${metricsData.value?.categories?.llm?.by_provider} />
 						<${PrometheusEndpoint} />
 					</div>

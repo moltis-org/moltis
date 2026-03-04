@@ -1,7 +1,7 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { formatLoginTitle } from "./branding.js";
+import { applyIdentityFavicon, formatLoginTitle } from "./branding.js";
 import { init as initI18n, t } from "./i18n.js";
 import { initTheme } from "./theme.js";
 
@@ -16,6 +16,7 @@ var identity = gon.identity || null;
 
 // Set page branding from identity.
 document.title = formatLoginTitle(identity);
+applyIdentityFavicon(identity);
 showVaultBanner(gon.vault_status);
 
 function showVaultBanner(status) {

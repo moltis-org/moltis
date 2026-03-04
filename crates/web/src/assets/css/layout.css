@@ -148,6 +148,10 @@
   top: calc(100% + 4px);
   left: 0;
 }
+.model-dropdown.align-right {
+  left: auto;
+  right: 0;
+}
 
 .model-dropdown.hidden { display: none; }
 

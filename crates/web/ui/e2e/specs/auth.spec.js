@@ -380,7 +380,7 @@ test.describe("Authentication", () => {
 		await expect.poll(() => page.title()).toBe(expectedTitle);
 
 		if (expected.hasEmoji) {
-			expect(expected.firstIconHref.startsWith("data:image/svg+xml,")).toBeTruthy();
+			expect(expected.firstIconHref.startsWith("data:image/png")).toBeTruthy();
 		} else {
 			expect(expected.firstIconHref).toContain("/assets/");
 		}
@@ -479,7 +479,7 @@ test.describe("Login page", () => {
 		await expect.poll(() => page.title()).toBe(expected.title);
 		await expect(page.locator(".auth-title")).toContainText(expected.title);
 		if (expected.hasEmoji) {
-			expect(expected.firstIconHref.startsWith("data:image/svg+xml,")).toBeTruthy();
+			expect(expected.firstIconHref.startsWith("data:image/png")).toBeTruthy();
 		} else {
 			expect(expected.firstIconHref).toContain("/assets/");
 		}

@@ -6,6 +6,15 @@
 
 var historyByKey = new Map();
 var revisionByKey = new Map();
+var bytesByKey = new Map();
+var lastAccessByKey = new Map();
+var totalBytes = 0;
+var encoder = typeof TextEncoder === "function" ? new TextEncoder() : null;
+
+var MAX_TOTAL_HISTORY_BYTES = 12 * 1024 * 1024;
+var MAX_SESSION_HISTORY_BYTES = 2 * 1024 * 1024;
+var MIN_SESSION_HISTORY_MESSAGES = 80;
+var TRIM_STEP_MESSAGES = 25;
 
 function deepClone(value) {
 	if (value === undefined) return undefined;
@@ -35,6 +44,83 @@ function messageHistoryIndex(msg) {
 
 function bumpRevision(key) {
 	revisionByKey.set(key, (revisionByKey.get(key) || 0) + 1);
+}
+
+function touchHistoryKey(key) {
+	lastAccessByKey.set(key, Date.now());
+}
+
+function estimateHistoryBytes(history) {
+	try {
+		var serialized = JSON.stringify(history || []);
+		if (!serialized) return 0;
+		if (encoder) return encoder.encode(serialized).length;
+		return serialized.length;
+	} catch (_e) {
+		return 0;
+	}
+}
+
+function updateHistorySize(key, nextBytes) {
+	var prev = bytesByKey.get(key) || 0;
+	bytesByKey.set(key, nextBytes);
+	totalBytes += nextBytes - prev;
+	if (totalBytes < 0) totalBytes = 0;
+}
+
+function dropHistoryKey(key) {
+	var prev = bytesByKey.get(key) || 0;
+	historyByKey.delete(key);
+	revisionByKey.delete(key);
+	bytesByKey.delete(key);
+	lastAccessByKey.delete(key);
+	totalBytes -= prev;
+	if (totalBytes < 0) totalBytes = 0;
+}
+
+function trimSessionHistoryInPlace(list) {
+	var bytes = estimateHistoryBytes(list);
+	while (list.length > MIN_SESSION_HISTORY_MESSAGES && list.length > 1 && bytes > MAX_SESSION_HISTORY_BYTES) {
+		var removable = list.length - MIN_SESSION_HISTORY_MESSAGES;
+		var trimCount = Math.min(TRIM_STEP_MESSAGES, removable);
+		list.splice(0, trimCount);
+		bytes = estimateHistoryBytes(list);
+	}
+
+	while (list.length > 1 && bytes > MAX_SESSION_HISTORY_BYTES) {
+		list.shift();
+		bytes = estimateHistoryBytes(list);
+	}
+
+	return bytes;
+}
+
+function evictGlobalHistoryBudget(preferredKey) {
+	while (totalBytes > MAX_TOTAL_HISTORY_BYTES && historyByKey.size > 0) {
+		var victim = null;
+		var oldest = Number.POSITIVE_INFINITY;
+		for (var [key, ts] of lastAccessByKey.entries()) {
+			if (key === preferredKey && historyByKey.size > 1) continue;
+			if (ts < oldest) {
+				oldest = ts;
+				victim = key;
+			}
+		}
+		if (!victim) {
+			victim = historyByKey.keys().next().value;
+		}
+		if (!victim) break;
+		dropHistoryKey(victim);
+	}
+}
+
+function enforceHistoryBudgets(key) {
+	var list = historyByKey.get(key);
+	if (!list) return;
+	var bytes = trimSessionHistoryInPlace(list);
+	updateHistorySize(key, bytes);
+	touchHistoryKey(key);
+	evictGlobalHistoryBudget(key);
 }
 
 function normalizeMessage(message, fallbackIndex) {
@@ -97,13 +183,16 @@ export function hasSessionHistory(key) {
 }
 
 export function getSessionHistory(key) {
-	return historyByKey.get(key) || null;
+	var history = historyByKey.get(key) || null;
+	if (history) touchHistoryKey(key);
+	return history;
 }
 
 export function replaceSessionHistory(key, history) {
 	var next = Array.isArray(history) ? history.map((msg) => normalizeMessage(msg)) : [];
 	historyByKey.set(key, next);
 	bumpRevision(key);
+	enforceHistoryBudgets(key);
 	return next;
 }
 
@@ -121,6 +210,7 @@ export function upsertSessionHistoryMessage(key, message, historyIndex) {
 		upsertWithoutIndex(list, next);
 	}
 	bumpRevision(key);
+	enforceHistoryBudgets(key);
 	return next;
 }
 
@@ -128,8 +218,10 @@ export function clearSessionHistory(key) {
 	if (key === undefined) {
 		historyByKey.clear();
 		revisionByKey.clear();
+		bytesByKey.clear();
+		lastAccessByKey.clear();
+		totalBytes = 0;
 		return;
 	}
-	historyByKey.delete(key);
-	revisionByKey.delete(key);
+	dropHistoryKey(key);
 }

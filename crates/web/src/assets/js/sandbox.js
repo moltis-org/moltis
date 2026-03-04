@@ -108,6 +108,10 @@ export function bindSandboxToggleEvents() {
 // ── Sandbox image selector ──────────────────────────────────
 
 var DEFAULT_IMAGE = "ubuntu:25.10";
+var sandboxImageBtnEl = null;
+var sandboxImageBtnClickHandler = null;
+var sandboxImageDocClickHandler = null;
+var sandboxImageRepositionHandler = null;
 
 export function updateSandboxImageUI(image) {
 	S.setSessionSandboxImage(image || null);
@@ -121,29 +125,83 @@ export function updateSandboxImageUI(image) {
 
 export function bindSandboxImageEvents() {
 	if (!S.sandboxImageBtn) return;
+	if (sandboxImageBtnEl && sandboxImageBtnClickHandler) {
+		sandboxImageBtnEl.removeEventListener("click", sandboxImageBtnClickHandler);
+	}
+	if (sandboxImageDocClickHandler) {
+		document.removeEventListener("click", sandboxImageDocClickHandler);
+	}
+	if (sandboxImageRepositionHandler) {
+		window.removeEventListener("resize", sandboxImageRepositionHandler);
+		document.removeEventListener("scroll", sandboxImageRepositionHandler, true);
+	}
 
-	S.sandboxImageBtn.addEventListener("click", (e) => {
+	sandboxImageBtnClickHandler = (e) => {
 		if (!sandboxRuntimeAvailable()) return;
 		e.stopPropagation();
 		toggleImageDropdown();
-	});
-
-	document.addEventListener("click", () => {
+	};
+	sandboxImageDocClickHandler = () => {
 		if (S.sandboxImageDropdown) {
 			S.sandboxImageDropdown.classList.add("hidden");
 		}
-	});
+	};
+	sandboxImageRepositionHandler = () => positionImageDropdown();
+
+	sandboxImageBtnEl = S.sandboxImageBtn;
+	sandboxImageBtnEl.addEventListener("click", sandboxImageBtnClickHandler);
+	document.addEventListener("click", sandboxImageDocClickHandler);
+
+	window.addEventListener("resize", sandboxImageRepositionHandler);
+	document.addEventListener("scroll", sandboxImageRepositionHandler, true);
 }
 
 function toggleImageDropdown() {
-	if (!S.sandboxImageDropdown) return;
+	if (!(S.sandboxImageDropdown && S.sandboxImageBtn)) return;
 	var isHidden = S.sandboxImageDropdown.classList.contains("hidden");
 	if (isHidden) {
 		populateImageDropdown();
 		S.sandboxImageDropdown.classList.remove("hidden");
+		requestAnimationFrame(positionImageDropdown);
 	} else {
 		S.sandboxImageDropdown.classList.add("hidden");
 	}
+}
+
+function positionImageDropdown() {
+	if (!(S.sandboxImageDropdown && S.sandboxImageBtn)) return;
+	if (S.sandboxImageDropdown.classList.contains("hidden")) return;
+
+	var btnRect = S.sandboxImageBtn.getBoundingClientRect();
+	var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+	var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+
+	S.sandboxImageDropdown.style.position = "fixed";
+	S.sandboxImageDropdown.style.zIndex = "70";
+	S.sandboxImageDropdown.style.marginTop = "0";
+	S.sandboxImageDropdown.style.minWidth = `${Math.max(200, Math.round(btnRect.width))}px`;
+	S.sandboxImageDropdown.style.maxWidth = `${Math.max(220, viewportWidth - 16)}px`;
+
+	var preferredTop = btnRect.bottom + 4;
+	S.sandboxImageDropdown.style.top = `${preferredTop}px`;
+	S.sandboxImageDropdown.style.left = `${Math.max(8, Math.round(btnRect.left))}px`;
+
+	// Measure after placement so we can clamp to viewport and optionally open upward.
+	var dropdownRect = S.sandboxImageDropdown.getBoundingClientRect();
+	var spaceBelow = viewportHeight - btnRect.bottom - 8;
+	var spaceAbove = btnRect.top - 8;
+	var shouldOpenUp = spaceBelow < 180 && spaceAbove > spaceBelow;
+	var maxHeight = Math.max(120, shouldOpenUp ? spaceAbove : spaceBelow);
+	S.sandboxImageDropdown.style.maxHeight = `${Math.floor(maxHeight)}px`;
+
+	if (shouldOpenUp) {
+		var desiredTop = btnRect.top - Math.min(dropdownRect.height, maxHeight) - 4;
+		S.sandboxImageDropdown.style.top = `${Math.max(8, Math.round(desiredTop))}px`;
+	}
+
+	dropdownRect = S.sandboxImageDropdown.getBoundingClientRect();
+	var clampedLeft = Math.max(8, Math.min(Math.round(btnRect.left), Math.round(viewportWidth - dropdownRect.width - 8)));
+	S.sandboxImageDropdown.style.left = `${clampedLeft}px`;
 }
 
 function populateImageDropdown() {
@@ -162,6 +220,7 @@ function populateImageDropdown() {
 				var isCurrent = S.sessionSandboxImage === img.tag;
 				addImageOption(img.tag, isCurrent, `${img.skill_name} (${img.size})`);
 			}
+			requestAnimationFrame(positionImageDropdown);
 		})
 		.catch(() => {
 			// Silently ignore fetch errors for image list
