@@ -127,7 +127,7 @@ var sections = [
 	{
 		id: "system-prompt",
 		label: "System Prompt",
-		icon: html`<span class="icon icon-document"></span>`,
+		icon: html`<span class="icon icon-code"></span>`,
 	},
 	{
 		id: "memory",
