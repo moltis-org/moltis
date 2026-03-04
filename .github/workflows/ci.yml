@@ -348,6 +348,8 @@ jobs:
             -configuration Release \
             -destination "platform=macOS" \
             -derivedDataPath apps/macos/.derivedData-ci \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
             build
 
   ios-app:
