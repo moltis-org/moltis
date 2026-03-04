@@ -18,6 +18,11 @@ test.describe("Monitoring dashboard", () => {
 		await expect(content).not.toBeEmpty();
 	});
 
+	test("overview shows process memory card", async ({ page }) => {
+		await navigateAndWait(page, "/monitoring");
+		await expect(page.getByText("Process Memory", { exact: true })).toBeVisible();
+	});
+
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/monitoring");

@@ -55,6 +55,10 @@ pub struct MetricsHistoryPoint {
     pub mcp_calls: u64,
     /// Active sessions.
     pub active_sessions: u64,
+    /// Process RSS memory in bytes.
+    pub process_memory_bytes: u64,
+    /// Local llama.cpp model memory in bytes.
+    pub local_llama_cpp_bytes: u64,
 }
 
 /// Trait for metrics history storage backends.
@@ -154,7 +158,9 @@ impl SqliteMetricsStore {
                 tool_executions INTEGER NOT NULL DEFAULT 0,
                 tool_errors INTEGER NOT NULL DEFAULT 0,
                 mcp_calls INTEGER NOT NULL DEFAULT 0,
-                active_sessions INTEGER NOT NULL DEFAULT 0
+                active_sessions INTEGER NOT NULL DEFAULT 0,
+                process_memory_bytes INTEGER NOT NULL DEFAULT 0,
+                local_llama_cpp_bytes INTEGER NOT NULL DEFAULT 0
             )
             "#,
         )
@@ -180,6 +186,26 @@ impl SqliteMetricsStore {
         .await
         .ok(); // Ignore error if column already exists
 
+        // Migration: add process memory column if it doesn't exist.
+        sqlx::query(
+            r#"
+            ALTER TABLE metrics_history ADD COLUMN process_memory_bytes INTEGER NOT NULL DEFAULT 0
+            "#,
+        )
+        .execute(pool)
+        .await
+        .ok(); // Ignore error if column already exists
+
+        // Migration: add local llama.cpp memory column if it doesn't exist.
+        sqlx::query(
+            r#"
+            ALTER TABLE metrics_history ADD COLUMN local_llama_cpp_bytes INTEGER NOT NULL DEFAULT 0
+            "#,
+        )
+        .execute(pool)
+        .await
+        .ok(); // Ignore error if column already exists
+
         Ok(())
     }
 }
@@ -198,8 +224,9 @@ impl MetricsStore for SqliteMetricsStore {
             INSERT INTO metrics_history (
                 timestamp, llm_completions, llm_input_tokens, llm_output_tokens,
                 llm_errors, by_provider, http_requests, http_active, ws_connections,
-                ws_active, tool_executions, tool_errors, mcp_calls, active_sessions
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ws_active, tool_executions, tool_errors, mcp_calls, active_sessions,
+                process_memory_bytes, local_llama_cpp_bytes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(point.timestamp as i64)
@@ -216,6 +243,8 @@ impl MetricsStore for SqliteMetricsStore {
         .bind(point.tool_errors as i64)
         .bind(point.mcp_calls as i64)
         .bind(point.active_sessions as i64)
+        .bind(point.process_memory_bytes as i64)
+        .bind(point.local_llama_cpp_bytes as i64)
         .execute(&self.pool)
         .await?;
 
@@ -227,7 +256,8 @@ impl MetricsStore for SqliteMetricsStore {
             r#"
             SELECT timestamp, llm_completions, llm_input_tokens, llm_output_tokens,
                    llm_errors, by_provider, http_requests, http_active, ws_connections,
-                   ws_active, tool_executions, tool_errors, mcp_calls, active_sessions
+                   ws_active, tool_executions, tool_errors, mcp_calls, active_sessions,
+                   process_memory_bytes, local_llama_cpp_bytes
             FROM metrics_history
             WHERE timestamp >= ?
             ORDER BY timestamp ASC
@@ -256,7 +286,8 @@ impl MetricsStore for SqliteMetricsStore {
             r#"
             SELECT timestamp, llm_completions, llm_input_tokens, llm_output_tokens,
                    llm_errors, by_provider, http_requests, http_active, ws_connections,
-                   ws_active, tool_executions, tool_errors, mcp_calls, active_sessions
+                   ws_active, tool_executions, tool_errors, mcp_calls, active_sessions,
+                   process_memory_bytes, local_llama_cpp_bytes
             FROM metrics_history
             ORDER BY timestamp DESC
             LIMIT 1
@@ -286,6 +317,8 @@ struct MetricsRow {
     tool_errors: i64,
     mcp_calls: i64,
     active_sessions: i64,
+    process_memory_bytes: i64,
+    local_llama_cpp_bytes: i64,
 }
 
 impl From<MetricsRow> for MetricsHistoryPoint {
@@ -310,6 +343,8 @@ impl From<MetricsRow> for MetricsHistoryPoint {
             tool_errors: row.tool_errors as u64,
             mcp_calls: row.mcp_calls as u64,
             active_sessions: row.active_sessions as u64,
+            process_memory_bytes: row.process_memory_bytes as u64,
+            local_llama_cpp_bytes: row.local_llama_cpp_bytes as u64,
         }
     }
 }
@@ -335,6 +370,8 @@ mod tests {
             tool_errors: 0,
             mcp_calls: 0,
             active_sessions: 0,
+            process_memory_bytes: 0,
+            local_llama_cpp_bytes: 0,
         }
     }
 
@@ -354,6 +391,8 @@ mod tests {
         point.tool_errors = 2;
         point.mcp_calls = 8;
         point.active_sessions = 4;
+        point.process_memory_bytes = 123_000_000;
+        point.local_llama_cpp_bytes = 0;
 
         store.save_point(&point).await.unwrap();
 
@@ -362,6 +401,7 @@ mod tests {
         assert_eq!(history[0].timestamp, 1000);
         assert_eq!(history[0].llm_completions, 10);
         assert_eq!(history[0].llm_input_tokens, 100);
+        assert_eq!(history[0].process_memory_bytes, 123_000_000);
     }
 
     #[tokio::test]
