@@ -9,6 +9,7 @@
 
 pub mod auth_middleware;
 pub mod auth_routes;
+pub mod channel_webhook_middleware;
 pub mod env_routes;
 pub mod request_throttle;
 pub mod server;

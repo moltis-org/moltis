@@ -9,9 +9,6 @@ anyhow                 = { workspace = true }
 async-graphql          = { optional = true, workspace = true }
 async-graphql-axum     = { optional = true, workspace = true }
 async-trait            = { workspace = true }
-axum                   = { workspace = true }
-axum-extra             = { features = ["cookie"], workspace = true }
-axum-server            = { optional = true, workspace = true }
 base64                 = { workspace = true }
 bytes                  = { workspace = true }
 chrono                 = { features = ["serde"], optional = true, workspace = true }
@@ -20,8 +17,7 @@ dashmap                = { workspace = true }
 futures                = { workspace = true }
 gix                    = { workspace = true }
 hostname               = { workspace = true }
-hyper                  = { optional = true, workspace = true }
-hyper-util             = { optional = true, workspace = true }
+http                   = { workspace = true }
 include_dir            = { optional = true, workspace = true }
 mdns-sd                = { optional = true, workspace = true }
 moltis-agents          = { workspace = true }
@@ -68,10 +64,7 @@ portable-pty           = { optional = true, workspace = true }
 pulldown-cmark         = { features = ["html"], workspace = true }
 qrcode                 = { optional = true, workspace = true }
 rand                   = { workspace = true }
-rcgen                  = { optional = true, workspace = true }
 reqwest                = { workspace = true }
-rustls                 = { optional = true, workspace = true }
-rustls-pemfile         = { optional = true, workspace = true }
 secrecy                = { workspace = true }
 serde                  = { workspace = true }
 serde_json             = { workspace = true }
@@ -81,13 +74,9 @@ sysinfo                = { workspace = true }
 thiserror              = { workspace = true }
 time                   = { workspace = true }
 tokio                  = { workspace = true }
-tokio-rustls           = { optional = true, workspace = true }
 tokio-stream           = { workspace = true }
-tokio-tungstenite      = { workspace = true }
 tokio-util             = { workspace = true }
 toml                   = { workspace = true }
-tower                  = { optional = true, workspace = true }
-tower-http             = { features = ["catch-panic", "compression-gzip", "compression-zstd", "cors", "limit", "request-id", "sensitive-headers", "set-header", "trace"], workspace = true }
 tracing                = { workspace = true }
 tracing-subscriber     = { workspace = true }
 url                    = { workspace = true }
@@ -152,15 +141,7 @@ qmd = ["dep:moltis-qmd"]
 slack = ["dep:moltis-slack", "moltis-slack/metrics"]
 tailscale = ["dep:moltis-tailscale"]
 tls = [
-  "dep:axum-server",
-  "dep:hyper",
-  "dep:hyper-util",
   "dep:moltis-tls",
-  "dep:rcgen",
-  "dep:rustls",
-  "dep:rustls-pemfile",
-  "dep:tokio-rustls",
-  "dep:tower",
 ]
 trusted-network = ["dep:moltis-network-filter"]
 vault = ["dep:moltis-vault", "moltis-auth/vault"]
@@ -170,6 +151,7 @@ web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-u
 whatsapp = ["dep:moltis-whatsapp", "dep:qrcode", "moltis-whatsapp/metrics"]
 
 [dev-dependencies]
+axum              = { workspace = true }
 moltis-httpd      = { default-features = true, workspace = true }
 moltis-web        = { workspace = true }
 reqwest           = { workspace = true }

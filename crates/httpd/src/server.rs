@@ -598,7 +598,9 @@ pub async fn prepare_gateway(
                             &body,
                         ) {
                             Err(rejection) => {
-                                moltis_gateway::channel_webhook_middleware::rejection_into_response(rejection)
+                                crate::channel_webhook_middleware::rejection_into_response(
+                                    rejection,
+                                )
                             },
                             Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => (
                                 StatusCode::OK,
@@ -692,7 +694,9 @@ pub async fn prepare_gateway(
                             &body,
                         ) {
                             Err(rejection) => {
-                                moltis_gateway::channel_webhook_middleware::rejection_into_response(rejection)
+                                crate::channel_webhook_middleware::rejection_into_response(
+                                    rejection,
+                                )
                             },
                             Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => (
                                 StatusCode::OK,
@@ -776,7 +780,9 @@ pub async fn prepare_gateway(
                             &body,
                         ) {
                             Err(rejection) => {
-                                moltis_gateway::channel_webhook_middleware::rejection_into_response(rejection)
+                                crate::channel_webhook_middleware::rejection_into_response(
+                                    rejection,
+                                )
                             },
                             Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => (
                                 StatusCode::OK,
@@ -1492,7 +1498,7 @@ pub async fn prepare_gateway_embedded(
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
 ) -> anyhow::Result<PreparedGateway> {
-    prepare_gateway(
+    let prepared = prepare_gateway(
         bind,
         port,
         no_tls,
@@ -1504,7 +1510,11 @@ pub async fn prepare_gateway_embedded(
         extra_routes,
         session_event_bus,
     )
-    .await
+    .await?;
+    // Embedded callers own the listener lifecycle, but still need non-blocking
+    // OpenClaw startup tasks.
+    moltis_gateway::server::start_openclaw_background_tasks(prepared.banner.data_dir.clone());
+    Ok(prepared)
 }
 
 /// Alias for [`prepare_gateway_embedded`] used by swift-bridge consumers.
@@ -1588,6 +1598,7 @@ pub async fn start_gateway(
     let mut rustls_config: Option<rustls::ServerConfig> = None;
 
     let app = prepared.app;
+    let browser_for_warmup = Arc::clone(&banner.browser_for_lifecycle);
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -1862,6 +1873,10 @@ pub async fn start_gateway(
         // Plain HTTP requests to this port get a 301 redirect instead of a TLS error.
         let tls_cfg = rustls_config.expect("rustls config must be set when TLS is active");
         let tcp_listener = tokio::net::TcpListener::bind(addr).await?;
+        moltis_gateway::server::start_openclaw_background_tasks(banner.data_dir.clone());
+        moltis_gateway::server::start_browser_warmup_after_listener(Arc::clone(
+            &browser_for_warmup,
+        ));
         moltis_gateway::tls::serve_tls_with_http_redirect(
             tcp_listener,
             Arc::new(tls_cfg),
@@ -1875,6 +1890,8 @@ pub async fn start_gateway(
 
     // Plain HTTP server (existing behavior, or TLS feature disabled).
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    moltis_gateway::server::start_openclaw_background_tasks(banner.data_dir.clone());
+    moltis_gateway::server::start_browser_warmup_after_listener(Arc::clone(&browser_for_warmup));
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

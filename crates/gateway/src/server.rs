@@ -796,6 +796,11 @@ fn spawn_openclaw_background_init(data_dir: PathBuf) {
 #[cfg(not(feature = "openclaw-import"))]
 fn spawn_openclaw_background_init(_data_dir: PathBuf) {}
 
+/// Launch OpenClaw detection/import background tasks without blocking startup.
+pub fn start_openclaw_background_tasks(data_dir: PathBuf) {
+    spawn_openclaw_background_init(data_dir);
+}
+
 fn spawn_post_listener_warmups(
     browser_service: Arc<dyn crate::services::BrowserService>,
     browser_tool: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
@@ -813,6 +818,13 @@ fn spawn_post_listener_warmups(
             warn!(%error, "browser tool warmup failed");
         }
     });
+}
+
+/// Start browser warmup after the transport listener is ready.
+pub fn start_browser_warmup_after_listener(
+    browser_service: Arc<dyn crate::services::BrowserService>,
+) {
+    spawn_post_listener_warmups(browser_service, None);
 }
 
 #[cfg(feature = "tailscale")]
