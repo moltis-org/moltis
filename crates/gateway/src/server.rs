@@ -1536,13 +1536,15 @@ pub async fn prepare_gateway(
     }
     startup_mem_probe.checkpoint("providers.registry.initialized");
 
-    // Refresh dynamic provider model discovery hourly so long-lived sessions
+    // Refresh dynamic provider model discovery daily so long-lived sessions
     // pick up newly available models without requiring a restart.
+    const DYNAMIC_PROVIDER_MODEL_REFRESH_INTERVAL: std::time::Duration =
+        std::time::Duration::from_secs(24 * 60 * 60);
     {
         let registry_for_refresh = Arc::clone(&registry);
         let provider_config_for_refresh = base_provider_config.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+            let mut interval = tokio::time::interval(DYNAMIC_PROVIDER_MODEL_REFRESH_INTERVAL);
             interval.tick().await;
             loop {
                 interval.tick().await;
@@ -1560,7 +1562,7 @@ pub async fn prepare_gateway(
                     info!(
                         provider = %provider_name,
                         models = model_count,
-                        "hourly dynamic provider model refresh complete"
+                        "daily dynamic provider model refresh complete"
                     );
                 }
             }
