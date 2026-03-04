@@ -6,8 +6,6 @@ version.workspace    = true
 
 [dependencies]
 anyhow                 = { workspace = true }
-async-graphql          = { optional = true, workspace = true }
-async-graphql-axum     = { optional = true, workspace = true }
 async-trait            = { workspace = true }
 base64                 = { workspace = true }
 bytes                  = { workspace = true }
@@ -31,7 +29,6 @@ moltis-common          = { workspace = true }
 moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
 moltis-discord         = { workspace = true }
-moltis-graphql         = { optional = true, workspace = true }
 moltis-mcp             = { workspace = true }
 moltis-media           = { workspace = true }
 moltis-memory          = { workspace = true }
@@ -117,7 +114,7 @@ file-watcher = [
   "moltis-openclaw-import?/file-watcher",
   "moltis-skills/file-watcher",
 ]
-graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
+graphql = []
 local-embeddings = ["moltis-memory/local-embeddings"]
 local-llm = [
   "moltis-chat/local-llm",
@@ -140,9 +137,7 @@ push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/pus
 qmd = ["dep:moltis-qmd"]
 slack = ["dep:moltis-slack", "moltis-slack/metrics"]
 tailscale = ["dep:moltis-tailscale"]
-tls = [
-  "dep:moltis-tls",
-]
+tls = ["dep:moltis-tls"]
 trusted-network = ["dep:moltis-network-filter"]
 vault = ["dep:moltis-vault", "moltis-auth/vault"]
 voice = ["dep:moltis-voice"]

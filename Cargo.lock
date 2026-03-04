@@ -6049,8 +6049,6 @@ name = "moltis-gateway"
 version = "0.10.11"
 dependencies = [
  "anyhow",
- "async-graphql",
- "async-graphql-axum",
  "async-trait",
  "axum",
  "base64 0.22.1",
@@ -6075,7 +6073,6 @@ dependencies = [
  "moltis-config",
  "moltis-cron",
  "moltis-discord",
- "moltis-graphql",
  "moltis-httpd",
  "moltis-mcp",
  "moltis-media",
