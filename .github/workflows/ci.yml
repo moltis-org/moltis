@@ -314,7 +314,7 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
+          targets: aarch64-apple-darwin,wasm32-wasip2
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
@@ -330,6 +330,9 @@ jobs:
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-macos-arm64 ./build.sh
 
       - name: Build Swift bridge and generate Xcode project
+        env:
+          MOLTIS_SWIFT_BRIDGE_TARGETS: aarch64-apple-darwin
+          MOLTIS_SWIFT_BRIDGE_SKIP_WASM_PRECOMPILE: "1"
         run: |
           ./scripts/build-swift-bridge.sh
           ./scripts/generate-swift-project.sh
@@ -345,6 +348,8 @@ jobs:
             -configuration Release \
             -destination "platform=macOS" \
             -derivedDataPath apps/macos/.derivedData-ci \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
             build
 
   ios-app:
