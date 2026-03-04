@@ -45,8 +45,10 @@ import { sessionStore } from "./stores/session-store.js";
 import { confirmDialog } from "./ui.js";
 
 var SESSION_PREVIEW_MAX_CHARS = 200;
+var SESSION_HISTORY_PAGE_LIMIT = 120;
 var switchRequestSeq = 0;
 var latestSwitchRequestBySession = new Map();
+var sessionHistoryPaging = new Map();
 
 function truncateSessionPreview(text) {
 	var trimmed = (text || "").trim();
@@ -139,6 +141,7 @@ export function clearActiveSession() {
 			var activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
 			markSessionLocallyCleared(activeKey);
 			clearSessionHistory(activeKey);
+			clearHistoryPaginationState(activeKey);
 			return res;
 		}
 		S.setLastHistoryIndex(prevHistoryIdx);
@@ -228,6 +231,37 @@ function toValidHistoryIndex(value) {
 	return idx;
 }
 
+function clearHistoryPaginationState(key) {
+	if (key === undefined) {
+		sessionHistoryPaging.clear();
+		return;
+	}
+	if (!key) return;
+	sessionHistoryPaging.delete(key);
+}
+
+function setHistoryPaginationState(key, payload) {
+	if (!key) return;
+	var hasMore = payload?.hasMore === true;
+	var nextCursor = toValidHistoryIndex(payload?.nextCursor);
+	var totalMessages = Number(payload?.totalMessages);
+	sessionHistoryPaging.set(key, {
+		hasMore: hasMore && nextCursor !== null,
+		nextCursor: hasMore ? nextCursor : null,
+		totalMessages: Number.isInteger(totalMessages) && totalMessages >= 0 ? totalMessages : null,
+		loadingOlder: false,
+	});
+}
+
+function getHistoryPaginationState(key) {
+	return sessionHistoryPaging.get(key) || null;
+}
+
+function isHistoryCacheComplete(key) {
+	var paging = getHistoryPaginationState(key);
+	return !paging || paging.hasMore !== true;
+}
+
 function historyIndexFromMessage(message) {
 	if (!(message && typeof message === "object")) return null;
 	var idx = toValidHistoryIndex(message.historyIndex);
@@ -287,6 +321,7 @@ export function cacheOutgoingUserMessage(key, chatParams) {
 
 export function clearSessionHistoryCache(key) {
 	clearSessionHistory(key);
+	clearHistoryPaginationState(key);
 }
 
 // ── New session button ──────────────────────────────────────
@@ -639,7 +674,7 @@ function makeThinkingDots() {
 	return tpl.content.cloneNode(true).firstElementChild;
 }
 
-function postHistoryLoadActions(key, searchContext, msgEls, thinkingText) {
+function postHistoryLoadActions(key, searchContext, msgEls, thinkingText, skipAutoScroll) {
 	sendRpc("chat.context", {}).then((ctxRes) => {
 		if (ctxRes?.ok && ctxRes.payload) {
 			if (ctxRes.payload.tokenUsage) {
@@ -668,9 +703,9 @@ function postHistoryLoadActions(key, searchContext, msgEls, thinkingText) {
 	});
 	updateTokenBar();
 
-	if (searchContext?.query && S.chatMsgBox) {
+	if (!skipAutoScroll && searchContext?.query && S.chatMsgBox) {
 		highlightAndScroll(msgEls, searchContext.messageIndex, searchContext.query);
-	} else {
+	} else if (!skipAutoScroll) {
 		scrollChatToBottom();
 	}
 
@@ -689,7 +724,125 @@ function postHistoryLoadActions(key, searchContext, msgEls, thinkingText) {
 			thinkEl.appendChild(makeThinkingDots());
 		}
 		S.chatMsgBox.appendChild(thinkEl);
-		scrollChatToBottom();
+		if (!skipAutoScroll) scrollChatToBottom();
+	}
+}
+
+function mergeHistoryPages(existingHistory, olderHistory) {
+	var older = Array.isArray(olderHistory) ? olderHistory : [];
+	var current = Array.isArray(existingHistory) ? existingHistory : [];
+	if (older.length === 0) return current;
+	if (current.length === 0) return older;
+
+	var byIndex = new Map();
+	var ordered = [];
+	var pushMessage = (msg) => {
+		var idx = historyIndexFromMessage(msg);
+		if (idx === null) {
+			ordered.push(msg);
+			return;
+		}
+		if (!byIndex.has(idx)) {
+			ordered.push(msg);
+		}
+		byIndex.set(idx, msg);
+	};
+
+	for (var msg of older) pushMessage(msg);
+	for (var msg of current) pushMessage(msg);
+
+	return ordered.map((msg) => {
+		var idx = historyIndexFromMessage(msg);
+		if (idx === null) return msg;
+		return byIndex.get(idx) || msg;
+	});
+}
+
+function renderLoadOlderControl(key, totalCountHint) {
+	if (!S.chatMsgBox) return;
+	var paging = getHistoryPaginationState(key);
+	if (!(paging && paging.hasMore && Number.isInteger(paging.nextCursor))) return;
+
+	var loaded = (getSessionHistory(key) || []).length;
+	var total = Number.isInteger(totalCountHint) ? totalCountHint : paging.totalMessages;
+
+	var wrap = document.createElement("div");
+	wrap.className = "msg system";
+
+	var btn = document.createElement("button");
+	btn.type = "button";
+	btn.className = "provider-btn provider-btn-secondary provider-btn-sm";
+	btn.textContent = paging.loadingOlder ? "Loading older messages..." : "Load older messages";
+	btn.disabled = paging.loadingOlder;
+	btn.addEventListener("click", () => {
+		loadOlderHistoryPage(key);
+	});
+
+	wrap.appendChild(btn);
+	if (Number.isInteger(total) && total > loaded) {
+		var note = document.createElement("span");
+		note.className = "text-xs text-[var(--muted)] ml-2";
+		note.textContent = `${loaded} of ${total} loaded`;
+		wrap.appendChild(note);
+	}
+
+	S.chatMsgBox.insertBefore(wrap, S.chatMsgBox.firstChild);
+}
+
+async function loadOlderHistoryPage(key) {
+	var paging = getHistoryPaginationState(key);
+	if (!(paging && paging.hasMore && Number.isInteger(paging.nextCursor))) return;
+	if (paging.loadingOlder) return;
+	if (sessionStore.activeSessionKey.value !== key) return;
+
+	var nextState = { ...paging, loadingOlder: true };
+	sessionHistoryPaging.set(key, nextState);
+	var loadedHistory = getSessionHistory(key) || [];
+	var totalBefore = Number.isInteger(nextState.totalMessages)
+		? nextState.totalMessages
+		: loadedHistory.length;
+	renderHistory(key, loadedHistory, null, null, totalBefore, true);
+
+	var beforeHeight = S.chatMsgBox ? S.chatMsgBox.scrollHeight : 0;
+	var beforeTop = S.chatMsgBox ? S.chatMsgBox.scrollTop : 0;
+
+	try {
+		var payload = await fetchSessionHistoryViaHttp(key, {
+			cursor: nextState.nextCursor,
+			limit: SESSION_HISTORY_PAGE_LIMIT,
+		});
+		if (sessionStore.activeSessionKey.value !== key) return;
+
+		var older = Array.isArray(payload.history) ? payload.history : [];
+		var current = getSessionHistory(key) || [];
+		if (older.length > 0 && payload.historyCacheHit !== true) {
+			replaceSessionHistory(key, mergeHistoryPages(current, older));
+		}
+		setHistoryPaginationState(key, payload);
+
+		var merged = getSessionHistory(key) || [];
+		var sessionEntry = sessionStore.getByKey(key);
+		var totalCountHint = Number.isInteger(sessionEntry?.messageCount)
+			? sessionEntry.messageCount
+			: Number(payload.totalMessages) || merged.length;
+		renderHistory(key, merged, null, null, totalCountHint, true);
+
+		if (S.chatMsgBox) {
+			var afterHeight = S.chatMsgBox.scrollHeight;
+			S.chatMsgBox.scrollTop = Math.max(0, beforeTop + (afterHeight - beforeHeight));
+		}
+	} catch {
+		if (sessionStore.activeSessionKey.value !== key) return;
+		var fallback = getSessionHistory(key) || [];
+		var fallbackTotal = Number.isInteger(nextState.totalMessages)
+			? nextState.totalMessages
+			: fallback.length;
+		sessionHistoryPaging.set(key, { ...nextState, loadingOlder: false });
+		renderHistory(key, fallback, null, null, fallbackTotal, true);
+		chatAddMsg("error", "Failed to load older messages");
+	} finally {
+		var latest = getHistoryPaginationState(key);
+		if (latest) sessionHistoryPaging.set(key, { ...latest, loadingOlder: false });
 	}
 }
 
@@ -891,15 +1044,19 @@ function resetSwitchViewState() {
 	updateTokenBar();
 }
 
-function syncHistoryState(key, history, historyTailIndex) {
-	var count = Array.isArray(history) ? history.length : 0;
+function syncHistoryState(key, history, historyTailIndex, totalCountHint) {
+	var loadedCount = Array.isArray(history) ? history.length : 0;
 	var sessionEntry = sessionStore.getByKey(key);
+	var legacy = S.sessions.find((s) => s.key === key);
+	var existingCount = Number.isInteger(sessionEntry?.messageCount) ? sessionEntry.messageCount : 0;
+	var legacyCount = Number.isInteger(legacy?.messageCount) ? legacy.messageCount : 0;
+	var hintedCount = Number.isInteger(totalCountHint) ? totalCountHint : 0;
+	var count = Math.max(loadedCount, existingCount, hintedCount, legacyCount);
 	if (sessionEntry) {
 		sessionEntry.syncCounts(count, count);
 		sessionEntry.localUnread.value = false;
 		sessionEntry.lastHistoryIndex.value = historyTailIndex;
 	}
-	var legacy = S.sessions.find((s) => s.key === key);
 	if (legacy) {
 		legacy.messageCount = count;
 		legacy.lastSeenMessageCount = count;
@@ -908,7 +1065,7 @@ function syncHistoryState(key, history, historyTailIndex) {
 	S.setLastHistoryIndex(historyTailIndex);
 }
 
-function renderHistory(key, history, searchContext, thinkingText) {
+function renderHistory(key, history, searchContext, thinkingText, totalCountHint, skipAutoScroll) {
 	hideSessionLoadIndicator();
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 	var msgEls = [];
@@ -932,7 +1089,7 @@ function renderHistory(key, history, searchContext, thinkingText) {
 	// Syntax-highlight all code blocks in the rendered history.
 	if (S.chatMsgBox) highlightCodeBlocks(S.chatMsgBox);
 	var historyTailIndex = computeHistoryTailIndex(history);
-	syncHistoryState(key, history, historyTailIndex);
+	syncHistoryState(key, history, historyTailIndex, totalCountHint);
 
 	// Resume chatSeq from the highest user message seq in history
 	// so the counter continues from where it left off after reload.
@@ -950,7 +1107,8 @@ function renderHistory(key, history, searchContext, thinkingText) {
 		var ts = lastMsg.created_at;
 		if (ts) appendLastMessageTimestamp(ts);
 	}
-	postHistoryLoadActions(key, searchContext, msgEls, thinkingText);
+	renderLoadOlderControl(key, totalCountHint);
+	postHistoryLoadActions(key, searchContext, msgEls, thinkingText, skipAutoScroll === true);
 }
 
 function shouldApplyServerHistory(key, serverHistory, requestRevision) {
@@ -981,11 +1139,21 @@ function applyReplyingStateFromSwitchPayload(key, payload) {
 	}
 }
 
-async function fetchSessionHistoryViaHttp(key, cachedMessageCount) {
-	var url = `/api/sessions/${encodeURIComponent(key)}/history`;
-	if (Number.isInteger(cachedMessageCount) && cachedMessageCount >= 0) {
-		url += `?cached_message_count=${cachedMessageCount}`;
+async function fetchSessionHistoryViaHttp(key, options) {
+	var opts = options || {};
+	var query = new URLSearchParams();
+	if (Number.isInteger(opts.cachedMessageCount) && opts.cachedMessageCount >= 0) {
+		query.set("cached_message_count", String(opts.cachedMessageCount));
 	}
+	if (Number.isInteger(opts.cursor) && opts.cursor >= 0) {
+		query.set("cursor", String(opts.cursor));
+	}
+	if (Number.isInteger(opts.limit) && opts.limit > 0) {
+		query.set("limit", String(opts.limit));
+	}
+	var url = `/api/sessions/${encodeURIComponent(key)}/history`;
+	var qs = query.toString();
+	if (qs) url += `?${qs}`;
 
 	var response = await fetch(url, {
 		headers: { Accept: "application/json" },
@@ -1024,10 +1192,15 @@ export function switchSession(key, searchContext, projectId) {
 	var cachedHistory = getSessionHistory(key);
 	var hasCache = Array.isArray(cachedHistory);
 	var cacheRevisionAtRequest = getHistoryRevision(key);
-	var cachedHistoryCount = hasCache ? cachedHistory.length : null;
+	var cacheComplete = hasCache && isHistoryCacheComplete(key);
+	var cachedHistoryCount = cacheComplete
+		? Number.isInteger(cachedEntry?.messageCount)
+			? cachedEntry.messageCount
+			: cachedHistory.length
+		: null;
 	startSessionRefresh(key, !hasCache);
 	if (hasCache) {
-		renderHistory(key, cachedHistory, searchContext, null);
+		renderHistory(key, cachedHistory, searchContext, null, cachedHistoryCount, false);
 	} else {
 		showSessionLoadIndicator();
 	}
@@ -1048,6 +1221,11 @@ export function switchSession(key, searchContext, projectId) {
 
 			var entry = res.payload.entry || {};
 			ensureSessionInClientStore(key, entry, projectId);
+			var pagingBefore = getHistoryPaginationState(key);
+			var pagingBeforeHasMore = pagingBefore?.hasMore === true;
+			var pagingBeforeCursor = Number.isInteger(pagingBefore?.nextCursor)
+				? pagingBefore.nextCursor
+				: null;
 			var historyPayload = {
 				historyCacheHit: res.payload.historyCacheHit === true,
 				history: Array.isArray(res.payload.history) ? res.payload.history : [],
@@ -1056,7 +1234,10 @@ export function switchSession(key, searchContext, projectId) {
 			};
 			if (res.payload.historyOmitted === true) {
 				try {
-					historyPayload = await fetchSessionHistoryViaHttp(key, cachedHistoryCount);
+					historyPayload = await fetchSessionHistoryViaHttp(key, {
+						cachedMessageCount: cachedHistoryCount,
+						limit: SESSION_HISTORY_PAGE_LIMIT,
+					});
 				} catch (error) {
 					if (!isLatestSwitchRequest(key, switchReqId)) return;
 					stillActive = sessionStore.activeSessionKey.value === key;
@@ -1071,6 +1252,14 @@ export function switchSession(key, searchContext, projectId) {
 				if (!isLatestSwitchRequest(key, switchReqId)) return;
 				stillActive = sessionStore.activeSessionKey.value === key;
 			}
+			setHistoryPaginationState(key, historyPayload);
+			var pagingAfter = getHistoryPaginationState(key);
+			var pagingAfterHasMore = pagingAfter?.hasMore === true;
+			var pagingAfterCursor = Number.isInteger(pagingAfter?.nextCursor)
+				? pagingAfter.nextCursor
+				: null;
+			var paginationChanged =
+				pagingBeforeHasMore !== pagingAfterHasMore || pagingBeforeCursor !== pagingAfterCursor;
 
 			var cacheHit = historyPayload.historyCacheHit === true;
 			var serverHistory = Array.isArray(historyPayload.history) ? historyPayload.history : [];
@@ -1084,17 +1273,28 @@ export function switchSession(key, searchContext, projectId) {
 				restoreSessionState(entry, projectId);
 				applyReplyingStateFromSwitchPayload(key, res.payload);
 				var thinkingText = res.payload.replying ? res.payload.thinkingText || null : null;
-				var shouldRerender = !hasCache || Boolean(searchContext?.query) || appliedServerHistory;
+				var totalCountHint = Number.isInteger(entry.messageCount)
+					? entry.messageCount
+					: Number(historyPayload.totalMessages) || history.length;
+				var shouldRerender =
+					!hasCache || Boolean(searchContext?.query) || appliedServerHistory || paginationChanged;
 				if (shouldRerender) {
-					renderHistory(key, history, searchContext, thinkingText);
+					renderHistory(key, history, searchContext, thinkingText, totalCountHint, false);
 				} else {
-					postHistoryLoadActions(key, searchContext, [], thinkingText);
+					postHistoryLoadActions(key, searchContext, [], thinkingText, false);
 				}
 				if (appliedServerHistory && historyPayload.historyTruncated === true) {
 					var dropped = Number(historyPayload.historyDroppedCount) || 0;
 					chatAddMsg(
 						"system",
 						`Loaded the most recent messages for performance (${dropped} older message${dropped === 1 ? "" : "s"} omitted).`,
+					);
+				}
+				if (appliedServerHistory && historyPayload.hasMore === true) {
+					var total = Number(historyPayload.totalMessages) || history.length;
+					chatAddMsg(
+						"system",
+						`Loaded recent history (${history.length} of ${total} messages) for faster loading.`,
 					);
 				}
 				if (S.chatInput) S.chatInput.focus();

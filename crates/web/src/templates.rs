@@ -77,6 +77,8 @@ pub(crate) struct GonData {
     started_at: u64,
     /// Whether an OpenClaw installation was detected (for import UI).
     openclaw_detected: bool,
+    /// Small recent session snapshot for instant sidebar paint.
+    sessions_recent: Vec<serde_json::Value>,
     agents: Vec<serde_json::Value>,
     #[cfg(feature = "vault")]
     vault_status: String,
@@ -148,6 +150,87 @@ fn parse_git_branch(raw: &str) -> Option<String> {
     } else {
         Some(branch.to_owned())
     }
+}
+
+const SESSION_PREVIEW_MAX_CHARS: usize = 200;
+
+fn truncate_preview(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let mut out = String::new();
+    for _ in 0..max_chars {
+        if let Some(ch) = chars.next() {
+            out.push(ch);
+        } else {
+            return out;
+        }
+    }
+    if chars.next().is_some() {
+        out.push('…');
+    }
+    out
+}
+
+async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<serde_json::Value> {
+    let Some(ref metadata) = gw.services.session_metadata else {
+        return Vec::new();
+    };
+
+    let mut recent = Vec::new();
+    for entry in metadata.list().await.into_iter().take(limit) {
+        let active_channel = if let Some(ref binding_json) = entry.channel_binding {
+            if let Ok(target) =
+                serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
+            {
+                metadata
+                    .get_active_session(
+                        target.channel_type.as_str(),
+                        &target.account_id,
+                        &target.chat_id,
+                    )
+                    .await
+                    .map(|key| key == entry.key)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let preview = entry
+            .preview
+            .as_deref()
+            .map(|text| truncate_preview(text, SESSION_PREVIEW_MAX_CHARS));
+        let agent_id = entry.agent_id.clone().unwrap_or_else(|| "main".to_owned());
+        let agent_id_camel = agent_id.clone();
+
+        recent.push(serde_json::json!({
+            "id": entry.id,
+            "key": entry.key,
+            "label": entry.label,
+            "model": entry.model,
+            "createdAt": entry.created_at,
+            "updatedAt": entry.updated_at,
+            "messageCount": entry.message_count,
+            "lastSeenMessageCount": entry.last_seen_message_count,
+            "projectId": entry.project_id,
+            "sandbox_enabled": entry.sandbox_enabled,
+            "sandbox_image": entry.sandbox_image,
+            "worktree_branch": entry.worktree_branch,
+            "channelBinding": entry.channel_binding,
+            "activeChannel": active_channel,
+            "parentSessionKey": entry.parent_session_key,
+            "forkPoint": entry.fork_point,
+            "mcpDisabled": entry.mcp_disabled,
+            "preview": preview,
+            "archived": entry.archived,
+            "agent_id": agent_id,
+            "agentId": agent_id_camel,
+            "node_id": entry.node_id,
+            "version": entry.version,
+        }));
+    }
+
+    recent
 }
 
 // ── NavCounts ────────────────────────────────────────────────────────────────
@@ -256,6 +339,8 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
 // ── GonData builder ──────────────────────────────────────────────────────────
 
 pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
+    const GON_SESSIONS_RECENT_LIMIT: usize = 30;
+
     let port = gw.port;
     let identity = gw
         .services
@@ -332,6 +417,8 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         Vec::new()
     };
 
+    let sessions_recent = build_recent_sessions_snapshot(gw, GON_SESSIONS_RECENT_LIMIT).await;
+
     GonData {
         identity,
         version: gw.version.clone(),
@@ -353,6 +440,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
         openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
+        sessions_recent,
         agents,
         #[cfg(feature = "vault")]
         vault_status: {

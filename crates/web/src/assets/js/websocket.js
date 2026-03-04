@@ -51,6 +51,7 @@ import { connectWs, forceReconnect, subscribeEvents } from "./ws-connect.js";
 // ── Chat event handlers ──────────────────────────────────────
 
 var pendingToolCallEnds = new Map();
+var hasConnectedOnce = false;
 
 function toolCallLogicalId(payload) {
 	if (!payload) return "";
@@ -1192,6 +1193,8 @@ function dispatchFrame(frame) {
 var connectOpts = {
 	onFrame: dispatchFrame,
 	onConnected: (hello) => {
+		var isReconnect = hasConnectedOnce;
+		hasConnectedOnce = true;
 		setStatus("connected", "");
 		var now = new Date();
 		var ts = now.toLocaleTimeString([], {
@@ -1226,10 +1229,14 @@ var connectOpts = {
 				"mcp.status",
 			]),
 		);
-		fetchModels();
-		fetchSessions();
-		fetchProjects();
-		prefetchChannels();
+		// Keep initial hydration authoritative via app bootstrap/gon.
+		// On reconnect, force a fresh snapshot in case realtime events were missed.
+		if (isReconnect) {
+			fetchModels();
+			fetchSessions();
+			fetchProjects();
+			prefetchChannels();
+		}
 		sendRpc("logs.status", {}).then((res) => {
 			if (res?.ok) {
 				var p = res.payload || {};

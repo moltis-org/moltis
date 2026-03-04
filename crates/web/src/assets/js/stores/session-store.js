@@ -178,6 +178,20 @@ export function upsert(serverData) {
 	return next;
 }
 
+/** Remove a session by key. Returns true when a session was removed. */
+export function remove(key) {
+	if (!key) return false;
+	var existing = getByKey(key);
+	if (!existing) return false;
+	sessions.value = sessions.value.filter((session) => session.key !== key);
+	if (activeSessionKey.value === key) {
+		var fallback = sessions.value.find((session) => session.key === "main")?.key || sessions.value[0]?.key || "main";
+		activeSessionKey.value = fallback;
+		localStorage.setItem("moltis-session", fallback);
+	}
+	return true;
+}
+
 /** Fetch sessions from the server via HTTP (gzip-friendly). */
 export function fetch() {
 	return window
@@ -217,6 +231,7 @@ export var sessionStore = {
 	Session,
 	setAll,
 	upsert,
+	remove,
 	fetch,
 	getByKey,
 	setActive,

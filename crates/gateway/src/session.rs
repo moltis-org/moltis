@@ -1065,6 +1065,10 @@ impl SessionService for LiveSessionService {
             .get("key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let include_history = params
+            .get("include_history")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let inherit_from_key = params
             .get("inherit_agent_from")
             .and_then(|v| v.as_str())
@@ -1078,6 +1082,44 @@ impl SessionService for LiveSessionService {
             .ensure_entry_agent_id(key, inherit_from_key)
             .await
             .ok_or_else(|| format!("session '{key}' not found after resolve"))?;
+        if !include_history {
+            if entry.message_count == 0
+                && let Some(ref hooks) = self.hook_registry
+            {
+                let payload = moltis_common::hooks::HookPayload::SessionStart {
+                    session_key: key.to_string(),
+                };
+                if let Err(e) = hooks.dispatch(&payload).await {
+                    warn!(session = %key, error = %e, "SessionStart hook failed");
+                }
+            }
+
+            return Ok(serde_json::json!({
+                "entry": {
+                    "id": entry.id,
+                    "key": entry.key,
+                    "label": entry.label,
+                    "model": entry.model,
+                    "createdAt": entry.created_at,
+                    "updatedAt": entry.updated_at,
+                    "messageCount": entry.message_count,
+                    "projectId": entry.project_id,
+                    "archived": entry.archived,
+                    "sandbox_enabled": entry.sandbox_enabled,
+                    "sandbox_image": entry.sandbox_image,
+                    "worktree_branch": entry.worktree_branch,
+                    "mcpDisabled": entry.mcp_disabled,
+                    "agent_id": entry.agent_id,
+                    "agentId": entry.agent_id,
+                    "node_id": entry.node_id,
+                    "version": entry.version,
+                },
+                "history": [],
+                "historyTruncated": false,
+                "historyDroppedCount": 0,
+            }));
+        }
+
         let raw_history = self.store.read(key).await.map_err(ServiceError::message)?;
 
         // Recompute preview from combined messages every time resolve runs,

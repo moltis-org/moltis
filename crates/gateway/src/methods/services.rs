@@ -2039,7 +2039,10 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Resolve first (auto-creates session if needed), then
                 // persist project_id so the entry exists when we patch.
-                let mut resolve_params = serde_json::json!({ "key": key });
+                let mut resolve_params = serde_json::json!({
+                    "key": key,
+                    "include_history": include_history,
+                });
                 if !was_existing_session
                     && let Some(previous_key) = previous_active_key
                         .as_deref()

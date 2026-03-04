@@ -917,7 +917,7 @@ function OnboardingProviderRow({
 								: null
 						}
 						<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
-						<div class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+						<div class="flex flex-col gap-2">
 							${
 								localModels.filter((m) => m.backend === selectedBackend).length === 0
 									? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models available for ${selectedBackend}</div>`
@@ -1532,7 +1532,7 @@ function ProviderStep({ onNext, onBack }) {
 			</div>`
 				: null
 		}
-		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto">
+		<div class="flex flex-col gap-2">
 			${providers.map(
 				(p) => html`<${OnboardingProviderRow}
 				key=${p.name}
@@ -2190,7 +2190,7 @@ function TelegramForm({ onConnected, error, setError }) {
 		});
 	}
 
-	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
 			<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
@@ -2302,7 +2302,7 @@ function TeamsForm({ onConnected, error, setError }) {
 		});
 	}
 
-	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">Microsoft Teams setup</span>
 			<span>1. <a href="https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration" target="_blank" class="text-[var(--accent)] underline">Create an Azure Bot registration</a> and copy the App ID + App Password.</span>
@@ -2404,7 +2404,7 @@ function DiscordForm({ onConnected, error, setError }) {
 
 	var inviteUrl = discordInviteUrl(token);
 
-	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">How to set up a Discord bot</span>
 			<span>1. Go to the <a href="https://discord.com/developers/applications" target="_blank" class="text-[var(--accent)] underline">Discord Developer Portal</a></span>
@@ -2555,7 +2555,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 		</div>`;
 	}
 
-	return html`<form onSubmit=${onStartPairing} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+	return html`<form onSubmit=${onStartPairing} class="flex flex-col gap-3">
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">Link your WhatsApp</span>
 			<span>1. Choose an account ID below (any name you like)</span>
@@ -2989,7 +2989,9 @@ function SummaryStep({ onBack, onFinish }) {
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
 				voiceEnabled ? fetchVoiceProviders().catch(() => null) : Promise.resolve(null),
-				fetch("/api/bootstrap")
+				fetch(
+					"/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false",
+				)
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
 			]);
@@ -3030,7 +3032,7 @@ function SummaryStep({ onBack, onFinish }) {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">${t("onboarding:summary.title")}</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Overview of your configuration. You can change any of these later in Settings.</p>
 
-		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto -mr-4 pr-4">
+		<div class="flex flex-col gap-2">
 			<!-- Identity -->
 			<${SummaryRow}
 				icon=${data.identity?.user_name && data.identity?.name ? html`<${CheckIcon} />` : html`<${WarnIcon} />`}
@@ -3301,7 +3303,7 @@ var containerRef = null;
 export function mountOnboarding(container) {
 	containerRef = container;
 	container.style.cssText =
-		"display:flex;align-items:center;justify-content:center;min-height:100vh;padding:max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));box-sizing:border-box;width:100%;max-width:100vw;overflow-x:hidden;";
+		"display:flex;align-items:flex-start;justify-content:center;min-height:100vh;padding:max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));box-sizing:border-box;width:100%;max-width:100vw;overflow-x:hidden;overflow-y:auto;";
 	render(html`<${OnboardingPage} />`, container);
 }
 

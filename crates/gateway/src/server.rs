@@ -4276,18 +4276,75 @@ pub async fn prepare_gateway(
                                 ("patched", session_key.as_str())
                             },
                         };
-                        broadcast(
-                            &ws_state,
-                            "session",
-                            serde_json::json!({
-                                "kind": kind,
-                                "sessionKey": session_key,
-                            }),
-                            BroadcastOpts {
-                                drop_if_slow: true,
-                                ..Default::default()
-                            },
-                        )
+                        let mut payload = serde_json::json!({
+                            "kind": kind,
+                            "sessionKey": session_key,
+                        });
+                        if kind != "deleted"
+                            && let Some(ref metadata) = ws_state.services.session_metadata
+                            && let Some(entry) = metadata.get(session_key).await
+                        {
+                            let active_channel = if let Some(ref binding_json) =
+                                entry.channel_binding
+                            {
+                                if let Ok(target) = serde_json::from_str::<
+                                    moltis_channels::ChannelReplyTarget,
+                                >(binding_json)
+                                {
+                                    metadata
+                                        .get_active_session(
+                                            target.channel_type.as_str(),
+                                            &target.account_id,
+                                            &target.chat_id,
+                                        )
+                                        .await
+                                        .map(|key| key == entry.key)
+                                        .unwrap_or(false)
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+                            let preview = entry.preview.as_deref().map(|text| {
+                                let truncated = text.chars().take(200).collect::<String>();
+                                if text.chars().count() > 200 {
+                                    format!("{truncated}…")
+                                } else {
+                                    truncated
+                                }
+                            });
+                            let agent_id = entry.agent_id.clone();
+                            payload["entry"] = serde_json::json!({
+                                "id": entry.id,
+                                "key": entry.key,
+                                "label": entry.label,
+                                "model": entry.model,
+                                "createdAt": entry.created_at,
+                                "updatedAt": entry.updated_at,
+                                "messageCount": entry.message_count,
+                                "lastSeenMessageCount": entry.last_seen_message_count,
+                                "projectId": entry.project_id,
+                                "sandbox_enabled": entry.sandbox_enabled,
+                                "sandbox_image": entry.sandbox_image,
+                                "worktree_branch": entry.worktree_branch,
+                                "channelBinding": entry.channel_binding,
+                                "activeChannel": active_channel,
+                                "parentSessionKey": entry.parent_session_key,
+                                "forkPoint": entry.fork_point,
+                                "mcpDisabled": entry.mcp_disabled,
+                                "preview": preview,
+                                "archived": entry.archived,
+                                "agent_id": agent_id.clone(),
+                                "agentId": agent_id,
+                                "node_id": entry.node_id,
+                                "version": entry.version,
+                            });
+                        }
+                        broadcast(&ws_state, "session", payload, BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        })
                         .await;
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
