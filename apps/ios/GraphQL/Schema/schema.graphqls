@@ -547,6 +547,10 @@ type MemoryStats {
 	"""
 	process: Int!
 	"""
+	Approximate bytes held by loaded local llama.cpp model tensors.
+	"""
+	localLlamaCpp: Int!
+	"""
 	System available memory in bytes.
 	"""
 	available: Int!
