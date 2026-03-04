@@ -59,34 +59,69 @@ function truncateSessionPreview(text) {
 // ── Fetch & render ──────────────────────────────────────────
 
 export function fetchSessions() {
-	sendRpc("sessions.list", {}).then((res) => {
-		if (!res?.ok) return;
-		var incoming = res.payload || [];
-		// Preserve client-side flags (localUnread, replying) across fetches.
-		var oldByKey = {};
-		for (var old of S.sessions) {
-			if (old._localUnread || old._replying) {
-				oldByKey[old.key] = {
-					localUnread: old._localUnread,
-					replying: old._replying,
-				};
+	fetch("/api/sessions", {
+		headers: { Accept: "application/json" },
+	})
+		.then((response) => (response.ok ? response.json() : null))
+		.then((incoming) => {
+			if (!Array.isArray(incoming)) return;
+			// Preserve client-side flags (localUnread, replying) across fetches.
+			var oldByKey = {};
+			for (var old of S.sessions) {
+				if (old._localUnread || old._replying) {
+					oldByKey[old.key] = {
+						localUnread: old._localUnread,
+						replying: old._replying,
+					};
+				}
 			}
-		}
-		for (var s of incoming) {
-			var prev = oldByKey[s.key];
-			if (prev) {
-				if (prev.localUnread) s._localUnread = true;
-				if (prev.replying) s._replying = true;
+			for (var s of incoming) {
+				var prev = oldByKey[s.key];
+				if (prev) {
+					if (prev.localUnread) s._localUnread = true;
+					if (prev.replying) s._replying = true;
+				}
 			}
-		}
-		// Update session store (source of truth) — version guard
-		// inside Session.update() prevents stale data from overwriting.
-		sessionStore.setAll(incoming);
-		// Dual-write to state.js for backward compat
-		S.setSessions(incoming);
-		renderSessionList();
-		updateChatSessionHeader();
-	});
+			// Update session store (source of truth) — version guard
+			// inside Session.update() prevents stale data from overwriting.
+			sessionStore.setAll(incoming);
+			// Dual-write to state.js for backward compat
+			S.setSessions(incoming);
+			renderSessionList();
+			updateChatSessionHeader();
+		})
+		.catch(() => {});
+}
+
+export function markSessionLocallyCleared(key) {
+	if (!key) return;
+	var now = Date.now();
+
+	var session = sessionStore.getByKey(key);
+	if (session) {
+		session.syncCounts(0, 0);
+		session.preview = "";
+		session.updatedAt = now;
+		session.replying.value = false;
+		session.activeRunId.value = null;
+		session.lastHistoryIndex.value = -1;
+		var localVersion = Number.isInteger(session.version) ? session.version : 0;
+		session.version = localVersion + 1;
+		session.dataVersion.value++;
+	}
+
+	var legacy = S.sessions.find((s) => s.key === key);
+	if (legacy) {
+		legacy.messageCount = 0;
+		legacy.lastSeenMessageCount = 0;
+		legacy.preview = "";
+		legacy.updatedAt = now;
+		legacy._localUnread = false;
+		legacy._replying = false;
+		legacy._activeRunId = null;
+		var legacyVersion = Number.isInteger(legacy.version) ? legacy.version : 0;
+		legacy.version = legacyVersion + 1;
+	}
 }
 
 /** Clear history for the currently active session and reset local UI state. */
@@ -102,30 +137,14 @@ export function clearActiveSession() {
 			S.setSessionCurrentInputTokens(0);
 			updateTokenBar();
 			var activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
-			var session = sessionStore.getByKey(activeKey);
-			if (session) {
-				session.syncCounts(0, 0);
-				session.replying.value = false;
-				session.activeRunId.value = null;
-			}
+			markSessionLocallyCleared(activeKey);
 			clearSessionHistory(activeKey);
-			fetchSessions();
 			return res;
 		}
 		S.setLastHistoryIndex(prevHistoryIdx);
 		S.setChatSeq(prevSeq);
 		chatAddMsg("error", res?.error?.message || "Clear failed");
 		return res;
-	});
-}
-
-/** Re-fetch the active session entry and restore sandbox/model state. */
-export function refreshActiveSession() {
-	if (!S.activeSessionKey) return;
-	sendRpc("sessions.resolve", { key: S.activeSessionKey }).then((res) => {
-		if (!(res?.ok && res.payload)) return;
-		var entry = res.payload.entry || res.payload;
-		restoreSessionState(entry, entry.projectId);
 	});
 }
 
@@ -962,6 +981,28 @@ function applyReplyingStateFromSwitchPayload(key, payload) {
 	}
 }
 
+async function fetchSessionHistoryViaHttp(key, cachedMessageCount) {
+	var url = `/api/sessions/${encodeURIComponent(key)}/history`;
+	if (Number.isInteger(cachedMessageCount) && cachedMessageCount >= 0) {
+		url += `?cached_message_count=${cachedMessageCount}`;
+	}
+
+	var response = await fetch(url, {
+		headers: { Accept: "application/json" },
+	});
+	var payload = null;
+	try {
+		payload = await response.json();
+	} catch {
+		payload = null;
+	}
+	if (!response.ok) {
+		var errMsg = payload?.error || `Failed to load session history (${response.status})`;
+		throw new Error(errMsg);
+	}
+	return payload || {};
+}
+
 export function switchSession(key, searchContext, projectId) {
 	sessionStore.setActive(key);
 	// Dual-write to state.js for backward compat
@@ -978,12 +1019,12 @@ export function switchSession(key, searchContext, projectId) {
 	var switchReqId = startSwitchRequest(key);
 	var switchParams = { key: key };
 	if (projectId) switchParams.project_id = projectId;
+	// Keep WebSocket for live state only; history comes from HTTP (gzip-friendly).
+	switchParams.include_history = false;
 	var cachedHistory = getSessionHistory(key);
 	var hasCache = Array.isArray(cachedHistory);
 	var cacheRevisionAtRequest = getHistoryRevision(key);
-	// Tell the server how many messages we already have cached so it can
-	// skip sending the full history when nothing changed.
-	if (hasCache) switchParams.cached_message_count = cachedHistory.length;
+	var cachedHistoryCount = hasCache ? cachedHistory.length : null;
 	startSessionRefresh(key, !hasCache);
 	if (hasCache) {
 		renderHistory(key, cachedHistory, searchContext, null);
@@ -992,7 +1033,7 @@ export function switchSession(key, searchContext, projectId) {
 	}
 
 	sendRpc("sessions.switch", switchParams)
-		.then((res) => {
+		.then(async (res) => {
 			if (!isLatestSwitchRequest(key, switchReqId)) return;
 			var stillActive = sessionStore.activeSessionKey.value === key;
 			if (!(res?.ok && res.payload)) {
@@ -1007,8 +1048,32 @@ export function switchSession(key, searchContext, projectId) {
 
 			var entry = res.payload.entry || {};
 			ensureSessionInClientStore(key, entry, projectId);
-			var cacheHit = res.payload.historyCacheHit === true;
-			var serverHistory = Array.isArray(res.payload.history) ? res.payload.history : [];
+			var historyPayload = {
+				historyCacheHit: res.payload.historyCacheHit === true,
+				history: Array.isArray(res.payload.history) ? res.payload.history : [],
+				historyTruncated: res.payload.historyTruncated === true,
+				historyDroppedCount: Number(res.payload.historyDroppedCount) || 0,
+			};
+			if (res.payload.historyOmitted === true) {
+				try {
+					historyPayload = await fetchSessionHistoryViaHttp(key, cachedHistoryCount);
+				} catch (error) {
+					if (!isLatestSwitchRequest(key, switchReqId)) return;
+					stillActive = sessionStore.activeSessionKey.value === key;
+					if (stillActive && !hasCache) {
+						hideSessionLoadIndicator();
+						chatAddMsg("error", error?.message || "Failed to load session history");
+					}
+					finishSessionRefresh(key);
+					if (stillActive && S.chatInput) S.chatInput.focus();
+					return;
+				}
+				if (!isLatestSwitchRequest(key, switchReqId)) return;
+				stillActive = sessionStore.activeSessionKey.value === key;
+			}
+
+			var cacheHit = historyPayload.historyCacheHit === true;
+			var serverHistory = Array.isArray(historyPayload.history) ? historyPayload.history : [];
 			var appliedServerHistory = false;
 			if (!cacheHit && shouldApplyServerHistory(key, serverHistory, cacheRevisionAtRequest)) {
 				replaceSessionHistory(key, serverHistory);
@@ -1024,6 +1089,13 @@ export function switchSession(key, searchContext, projectId) {
 					renderHistory(key, history, searchContext, thinkingText);
 				} else {
 					postHistoryLoadActions(key, searchContext, [], thinkingText);
+				}
+				if (appliedServerHistory && historyPayload.historyTruncated === true) {
+					var dropped = Number(historyPayload.historyDroppedCount) || 0;
+					chatAddMsg(
+						"system",
+						`Loaded the most recent messages for performance (${dropped} older message${dropped === 1 ? "" : "s"} omitted).`,
+					);
 				}
 				if (S.chatInput) S.chatInput.focus();
 			}

@@ -35,6 +35,8 @@ const SANDBOX_CONTAINERS_CLEAN_FAILED: &str = "SANDBOX_CONTAINERS_CLEAN_FAILED";
 const SANDBOX_DISK_USAGE_FAILED: &str = "SANDBOX_DISK_USAGE_FAILED";
 const SANDBOX_DAEMON_RESTART_FAILED: &str = "SANDBOX_DAEMON_RESTART_FAILED";
 const SANDBOX_SHARED_HOME_SAVE_FAILED: &str = "SANDBOX_SHARED_HOME_SAVE_FAILED";
+const SESSION_HISTORY_FAILED: &str = "SESSION_HISTORY_FAILED";
+const SESSION_LIST_FAILED: &str = "SESSION_LIST_FAILED";
 
 fn api_error(code: &str, error: impl Into<String>) -> serde_json::Value {
     serde_json::json!({
@@ -74,6 +76,80 @@ fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_jso
 }
 
 // ── Session media ────────────────────────────────────────────────────────────
+
+pub async fn api_sessions_handler(State(state): State<AppState>) -> impl IntoResponse {
+    match state.gateway.services.session.list().await {
+        Ok(payload) => Json(payload).into_response(),
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SESSION_LIST_FAILED,
+            e.to_string(),
+        ),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct SessionHistoryQuery {
+    #[serde(default)]
+    cached_message_count: Option<u64>,
+}
+
+pub async fn api_session_history_handler(
+    Path(session_key): Path<String>,
+    Query(query): Query<SessionHistoryQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let resolved = state
+        .gateway
+        .services
+        .session
+        .resolve(serde_json::json!({ "key": session_key }))
+        .await;
+
+    match resolved {
+        Ok(payload) => {
+            let server_count = payload
+                .get("entry")
+                .and_then(|entry| entry.get("messageCount"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let mut history = payload
+                .get("history")
+                .and_then(|h| h.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let history_cache_hit = query
+                .cached_message_count
+                .is_some_and(|cached| cached == server_count);
+            if history_cache_hit {
+                history.clear();
+            }
+
+            let history_truncated = payload
+                .get("historyTruncated")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let history_dropped_count = payload
+                .get("historyDroppedCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            Json(serde_json::json!({
+                "history": history,
+                "historyCacheHit": history_cache_hit,
+                "historyTruncated": history_truncated,
+                "historyDroppedCount": history_dropped_count,
+            }))
+            .into_response()
+        },
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SESSION_HISTORY_FAILED,
+            e.to_string(),
+        ),
+    }
+}
 
 pub async fn api_session_media_handler(
     Path((session_key, filename)): Path<(String, String)>,

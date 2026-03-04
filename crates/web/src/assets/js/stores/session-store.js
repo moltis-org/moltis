@@ -4,7 +4,6 @@
 // Session class instance with per-session signals for client-side state.
 
 import { computed, signal } from "@preact/signals";
-import { sendRpc } from "../helpers.js";
 
 // ── Session class ────────────────────────────────────────────
 
@@ -179,12 +178,18 @@ export function upsert(serverData) {
 	return next;
 }
 
-/** Fetch sessions from the server via RPC. */
+/** Fetch sessions from the server via HTTP (gzip-friendly). */
 export function fetch() {
-	return sendRpc("sessions.list", {}).then((res) => {
-		if (!res?.ok) return;
-		setAll(res.payload || []);
-	});
+	return window
+		.fetch("/api/sessions", {
+			headers: { Accept: "application/json" },
+		})
+		.then((response) => (response.ok ? response.json() : null))
+		.then((payload) => {
+			if (!Array.isArray(payload)) return;
+			setAll(payload);
+		})
+		.catch(() => {});
 }
 
 /** Notify Preact that session data changed (triggers re-render). */

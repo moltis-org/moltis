@@ -18,7 +18,7 @@ import { initInstallBanner } from "./pwa-install.js";
 import { mount, navigate, registerPage, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
-import { fetchSessions, refreshActiveSession, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
+import { fetchSessions, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
 import { modelStore } from "./stores/model-store.js";
 import { projectStore } from "./stores/project-store.js";
@@ -108,9 +108,8 @@ initUpdateBannerDismiss();
 showVaultBanner(gon.get("vault_status"));
 gon.onChange("vault_status", showVaultBanner);
 onEvent("session", (payload) => {
-	fetchSessions();
-	if (payload && payload.kind === "patched" && payload.sessionKey === S.activeSessionKey) {
-		refreshActiveSession();
+	if (payload?.kind === "created" || payload?.kind === "deleted") {
+		fetchSessions();
 	}
 });
 

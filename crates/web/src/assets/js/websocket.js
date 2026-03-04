@@ -39,6 +39,7 @@ import {
 	cacheSessionHistoryMessage,
 	clearSessionHistoryCache,
 	fetchSessions,
+	markSessionLocallyCleared,
 	setSessionActiveRunId,
 	setSessionReplying,
 	setSessionUnread,
@@ -815,11 +816,7 @@ function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
 	setSessionActiveRunId(eventSession, null);
 	clearSessionHistoryCache(eventSession);
 	// Reset badge, unread state, and history index for every client.
-	var session = sessionStore.getByKey(eventSession);
-	if (session) {
-		session.syncCounts(0, 0);
-		session.lastHistoryIndex.value = -1;
-	}
+	markSessionLocallyCleared(eventSession);
 	if (isActive) {
 		S.setLastHistoryIndex(-1);
 		S.setChatSeq(0);
@@ -860,11 +857,19 @@ function handleChatEvent(p) {
 		// If session switching got stuck (e.g. lost RPC response), do not drop
 		// terminal frames. Unstick and process final/error so replies still show
 		// without requiring a full page reload.
-		if (p.state === "final" || p.state === "error") {
+		var allowDuringSwitch =
+			p.state === "final" ||
+			p.state === "error" ||
+			p.state === "aborted" ||
+			p.state === "notice" ||
+			p.state === "session_cleared" ||
+			p.state === "queue_cleared";
+		if (!allowDuringSwitch) {
+			return;
+		}
+		if (p.state === "final" || p.state === "error" || p.state === "aborted") {
 			sessionStore.switchInProgress.value = false;
 			S.setSessionSwitchInProgress(false);
-		} else {
-			return;
 		}
 	}
 
