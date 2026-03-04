@@ -324,6 +324,7 @@ type NetworkAuditCallback = unsafe extern "C" fn(event_json: *const c_char);
 static NETWORK_AUDIT_CALLBACK: OnceLock<NetworkAuditCallback> = OnceLock::new();
 
 /// JSON-serializable network audit event sent to Swift.
+#[cfg(feature = "trusted-network")]
 #[derive(Debug, Serialize)]
 struct BridgeNetworkAuditEvent {
     domain: String,
@@ -338,6 +339,7 @@ struct BridgeNetworkAuditEvent {
 }
 
 #[allow(unsafe_code)]
+#[cfg(feature = "trusted-network")]
 fn emit_network_audit(entry: &moltis_network_filter::NetworkAuditEntry) {
     if let Some(callback) = NETWORK_AUDIT_CALLBACK.get() {
         let source = match &entry.approval_source {
@@ -1744,6 +1746,7 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
 
         // Subscribe to the network audit broadcast (if the proxy is active)
         // and forward entries to Swift via the registered callback.
+        #[cfg(feature = "trusted-network")]
         if let Some(ref audit_buf) = prepared.audit_buffer {
             let mut audit_rx = audit_buf.subscribe();
             BRIDGE.runtime.spawn(async move {

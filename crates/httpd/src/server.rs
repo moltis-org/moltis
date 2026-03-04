@@ -67,6 +67,7 @@ fn should_prebuild_sandbox_image(
     !matches!(mode, moltis_tools::sandbox::SandboxMode::Off) && !packages.is_empty()
 }
 
+#[cfg(feature = "mdns")]
 fn instance_slug(config: &moltis_config::MoltisConfig) -> String {
     let mut raw_name = config.identity.name.clone();
     if let Some(file_identity) = moltis_config::load_identity()
@@ -833,6 +834,7 @@ pub async fn prepare_gateway(
     }
 
     // Resolve TLS configuration (only when compiled with the `tls` feature).
+    #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
     let tls_active = tls_enabled_for_gateway;
 
     #[cfg(feature = "tls")]

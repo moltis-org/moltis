@@ -10,10 +10,11 @@ version.workspace      = true
 crate-type = ["staticlib"]
 
 [features]
-default = ["metrics", "qmd", "tracing"]
-metrics = ["dep:metrics"]
-qmd     = ["moltis-gateway/qmd"]
-tracing = ["dep:tracing"]
+default         = ["metrics", "qmd", "tracing", "trusted-network"]
+metrics         = ["dep:metrics"]
+qmd             = ["moltis-gateway/qmd"]
+tracing         = ["dep:tracing"]
+trusted-network = ["moltis-httpd/trusted-network"]
 
 [dependencies]
 anyhow                = { workspace = true }
