@@ -496,6 +496,10 @@ pub async fn prepare_gateway(
     let tailscale_mode_override = tailscale_opts.as_ref().map(|opts| opts.mode.clone());
     #[cfg(feature = "tailscale")]
     let tailscale_reset_on_exit_override = tailscale_opts.as_ref().map(|opts| opts.reset_on_exit);
+    #[cfg(not(feature = "tailscale"))]
+    let tailscale_mode_override: Option<String> = None;
+    #[cfg(not(feature = "tailscale"))]
+    let tailscale_reset_on_exit_override: Option<bool> = None;
 
     let core = prepare_gateway_core(
         bind,
@@ -504,9 +508,7 @@ pub async fn prepare_gateway(
         log_buffer,
         config_dir,
         data_dir,
-        #[cfg(feature = "tailscale")]
         tailscale_mode_override,
-        #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
         session_event_bus,
     )
@@ -539,6 +541,7 @@ pub async fn prepare_gateway(
         tailscale_mode,
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit,
+        ..
     } = core;
 
     #[cfg(feature = "push-notifications")]
