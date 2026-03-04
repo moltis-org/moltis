@@ -981,7 +981,8 @@ pub async fn prepare_gateway(
         let mut interval = tokio::time::interval(UPDATE_CHECK_INTERVAL);
         loop {
             interval.tick().await;
-            let next = fetch_update_availability(&client, &releases_url, &update_state.version).await;
+            let next =
+                fetch_update_availability(&client, &releases_url, &update_state.version).await;
             let changed = {
                 let mut inner = update_state.inner.write().await;
                 let update = &mut inner.update;
