@@ -249,7 +249,8 @@ async fn setup_handler(
         Ok(token) => {
             #[cfg(feature = "vault")]
             if let Some(rk) = vault_recovery_key {
-                let domain_attr = localhost_cookie_domain(&headers);
+                let domain_attr =
+                    localhost_cookie_domain(&headers, state.gateway_state.behind_proxy);
                 let cookie = format!(
                     "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000{domain_attr}"
                 );
@@ -260,7 +261,7 @@ async fn setup_handler(
                 )
                     .into_response();
             }
-            session_response(token, &headers)
+            session_response(token, &headers, state.gateway_state.behind_proxy)
         },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -298,7 +299,7 @@ async fn login_handler(
                 }
             }
             match state.credential_store.create_session().await {
-                Ok(token) => session_response(token, &headers),
+                Ok(token) => session_response(token, &headers, state.gateway_state.behind_proxy),
                 Err(e) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("session error: {e}"),
@@ -324,7 +325,7 @@ async fn logout_handler(
     if let Some(token) = extract_session_token(&headers) {
         let _ = state.credential_store.delete_session(token).await;
     }
-    clear_session_response(&headers)
+    clear_session_response(&headers, state.gateway_state.behind_proxy)
 }
 
 // ── Reset all auth (requires session) ─────────────────────────────────────────
@@ -344,7 +345,7 @@ async fn reset_auth_handler(
             let code = generate_setup_code();
             tracing::info!("setup code: {code} (enter this in the browser to set your password)");
             state.gateway_state.inner.write().await.setup_code = Some(secrecy::Secret::new(code));
-            clear_session_response(&headers)
+            clear_session_response(&headers, state.gateway_state.behind_proxy)
         },
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -578,8 +579,12 @@ pub fn generate_setup_code() -> String {
 /// Build a session cookie string, adding `Domain=localhost` when the request
 /// arrived on a `.localhost` subdomain (e.g. `moltis.localhost`) so the cookie
 /// is shared across all loopback names per RFC 6761.
-fn session_response(token: String, headers: &axum::http::HeaderMap) -> axum::response::Response {
-    let domain_attr = localhost_cookie_domain(headers);
+fn session_response(
+    token: String,
+    headers: &axum::http::HeaderMap,
+    behind_proxy: bool,
+) -> axum::response::Response {
+    let domain_attr = localhost_cookie_domain(headers, behind_proxy);
     let cookie = format!(
         "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000{domain_attr}"
     );
@@ -591,8 +596,11 @@ fn session_response(token: String, headers: &axum::http::HeaderMap) -> axum::res
         .into_response()
 }
 
-fn clear_session_response(headers: &axum::http::HeaderMap) -> axum::response::Response {
-    let domain_attr = localhost_cookie_domain(headers);
+fn clear_session_response(
+    headers: &axum::http::HeaderMap,
+    behind_proxy: bool,
+) -> axum::response::Response {
+    let domain_attr = localhost_cookie_domain(headers, behind_proxy);
     let cookie =
         format!("{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{domain_attr}");
     (
@@ -610,22 +618,43 @@ fn clear_session_response(headers: &axum::http::HeaderMap) -> axum::response::Re
 /// to `moltis.localhost` and vice versa because `Set-Cookie` without a `Domain`
 /// attribute is a host-only cookie.  Adding `Domain=localhost` makes the
 /// cookie available to `localhost` **and** all its subdomains (RFC 6265 §5.2.3).
-fn localhost_cookie_domain(headers: &axum::http::HeaderMap) -> &'static str {
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+fn localhost_cookie_domain(headers: &axum::http::HeaderMap, behind_proxy: bool) -> &'static str {
+    let Some(host) = cookie_host(headers, behind_proxy) else {
+        return "";
+    };
 
     // Strip port.
     let name = host.rsplit_once(':').map_or(host, |(h, _)| h);
 
-    if name == "localhost" || name.ends_with(".localhost") {
+    // Behind a proxy we only add Domain=localhost for explicit .localhost
+    // forwarded hosts. This avoids setting an invalid Domain when proxies
+    // rewrite Host to the upstream loopback address.
+    if name.ends_with(".localhost") || (!behind_proxy && name == "localhost") {
         "; Domain=localhost"
     } else {
         ""
     }
 }
 
+fn cookie_host(headers: &axum::http::HeaderMap, behind_proxy: bool) -> Option<&str> {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+
+    if !behind_proxy {
+        return host;
+    }
+
+    headers
+        .get("x-forwarded-host")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|raw| raw.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .or(host)
+}
 // ── Passkey registration (requires session) ──────────────────────────────────
 
 async fn passkey_register_begin_handler(
@@ -772,7 +801,7 @@ async fn passkey_auth_finish_handler(
 
     match wa.finish_authentication(&body.challenge_id, &body.credential) {
         Ok(_result) => match state.credential_store.create_session().await {
-            Ok(token) => session_response(token, &headers),
+            Ok(token) => session_response(token, &headers, state.gateway_state.behind_proxy),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
         Err(e) => (StatusCode::UNAUTHORIZED, e.to_string()).into_response(),
@@ -914,7 +943,7 @@ async fn setup_passkey_register_finish_handler(
         .await;
     state.gateway_state.inner.write().await.setup_code = None;
     match state.credential_store.create_session().await {
-        Ok(token) => session_response(token, &headers),
+        Ok(token) => session_response(token, &headers, state.gateway_state.behind_proxy),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to create session: {e}"),
@@ -1040,49 +1069,69 @@ mod tests {
     #[test]
     fn localhost_cookie_domain_plain_localhost() {
         let h = headers_with_host("localhost:8080");
-        assert_eq!(localhost_cookie_domain(&h), "; Domain=localhost");
+        assert_eq!(localhost_cookie_domain(&h, false), "; Domain=localhost");
     }
 
     #[test]
     fn localhost_cookie_domain_moltis_subdomain() {
         let h = headers_with_host("moltis.localhost:59263");
-        assert_eq!(localhost_cookie_domain(&h), "; Domain=localhost");
+        assert_eq!(localhost_cookie_domain(&h, false), "; Domain=localhost");
     }
 
     #[test]
     fn localhost_cookie_domain_bare_localhost_no_port() {
         let h = headers_with_host("localhost");
-        assert_eq!(localhost_cookie_domain(&h), "; Domain=localhost");
+        assert_eq!(localhost_cookie_domain(&h, false), "; Domain=localhost");
     }
 
     #[test]
     fn localhost_cookie_domain_external_host_omits_domain() {
         let h = headers_with_host("example.com:443");
-        assert_eq!(localhost_cookie_domain(&h), "");
+        assert_eq!(localhost_cookie_domain(&h, false), "");
     }
 
     #[test]
     fn localhost_cookie_domain_tailscale_host_omits_domain() {
         let h = headers_with_host("mybox.tail12345.ts.net:8080");
-        assert_eq!(localhost_cookie_domain(&h), "");
+        assert_eq!(localhost_cookie_domain(&h, false), "");
     }
 
     #[test]
     fn localhost_cookie_domain_ip_address_omits_domain() {
         let h = headers_with_host("192.168.1.100:8080");
-        assert_eq!(localhost_cookie_domain(&h), "");
+        assert_eq!(localhost_cookie_domain(&h, false), "");
     }
 
     #[test]
     fn localhost_cookie_domain_no_host_header_omits_domain() {
         let h = axum::http::HeaderMap::new();
-        assert_eq!(localhost_cookie_domain(&h), "");
+        assert_eq!(localhost_cookie_domain(&h, false), "");
+    }
+
+    #[test]
+    fn localhost_cookie_domain_proxy_mode_ignores_upstream_localhost_host() {
+        let h = headers_with_host("localhost:13131");
+        assert_eq!(localhost_cookie_domain(&h, true), "");
+    }
+
+    #[test]
+    fn localhost_cookie_domain_proxy_mode_uses_forwarded_host() {
+        let mut h = headers_with_host("localhost:13131");
+        h.insert("x-forwarded-host", "chat.example.com".parse().unwrap());
+        assert_eq!(localhost_cookie_domain(&h, true), "");
+    }
+
+    #[test]
+    fn localhost_cookie_domain_proxy_mode_supports_forwarded_localhost_subdomain() {
+        let mut h = headers_with_host("localhost:13131");
+        h.insert("x-forwarded-host", "moltis.localhost:8080".parse().unwrap());
+        assert_eq!(localhost_cookie_domain(&h, true), "; Domain=localhost");
     }
 
     #[test]
     fn session_response_includes_domain_for_localhost() {
         let h = headers_with_host("moltis.localhost:8080");
-        let resp = session_response("test-token".into(), &h);
+        let resp = session_response("test-token".into(), &h, false);
         let cookie = resp
             .headers()
             .get(axum::http::header::SET_COOKIE)
@@ -1099,7 +1148,7 @@ mod tests {
     #[test]
     fn session_response_omits_domain_for_external_host() {
         let h = headers_with_host("example.com:443");
-        let resp = session_response("test-token".into(), &h);
+        let resp = session_response("test-token".into(), &h, false);
         let cookie = resp
             .headers()
             .get(axum::http::header::SET_COOKIE)
@@ -1115,7 +1164,7 @@ mod tests {
     #[test]
     fn clear_session_response_includes_domain_for_localhost() {
         let h = headers_with_host("localhost:18080");
-        let resp = clear_session_response(&h);
+        let resp = clear_session_response(&h, false);
         let cookie = resp
             .headers()
             .get(axum::http::header::SET_COOKIE)
@@ -1127,5 +1176,21 @@ mod tests {
             "clear cookie should include Domain=localhost, got: {cookie}"
         );
         assert!(cookie.contains("Max-Age=0"));
+    }
+
+    #[test]
+    fn session_response_proxy_mode_omits_localhost_domain_without_forwarded_host() {
+        let h = headers_with_host("localhost:13131");
+        let resp = session_response("test-token".into(), &h, true);
+        let cookie = resp
+            .headers()
+            .get(axum::http::header::SET_COOKIE)
+            .expect("login response must set a session cookie")
+            .to_str()
+            .expect("cookie header must be valid UTF-8");
+        assert!(
+            !cookie.contains("Domain="),
+            "cookie should omit Domain in proxy mode when only upstream localhost host is visible, got: {cookie}"
+        );
     }
 }
