@@ -234,6 +234,10 @@
       </div>
       <div id="searchResults" class="hidden"></div>
     </div>
+    <div id="sessionTabBar" class="flex border-b border-[var(--border)] text-xs" role="tablist">
+      <button class="session-tab flex-1 py-1.5 text-center cursor-pointer bg-transparent border-b-2 border-transparent text-[var(--muted)] hover:text-[var(--text)] transition-colors" data-tab="sessions" role="tab">Sessions</button>
+      <button class="session-tab flex-1 py-1.5 text-center cursor-pointer bg-transparent border-b-2 border-transparent text-[var(--muted)] hover:text-[var(--text)] transition-colors" data-tab="cron" role="tab">Cron</button>
+    </div>
     <div class="flex-1 overflow-y-auto" id="sessionList"></div>
   </div>
 

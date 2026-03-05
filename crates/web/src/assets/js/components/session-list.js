@@ -218,8 +218,14 @@ export function SessionList() {
 	var activeKey = sessionStore.activeSessionKey.value;
 	var refreshingKey = sessionStore.refreshInProgressKey.value;
 	var filterId = projectStore.projectFilterId.value;
+	var tab = sessionStore.sessionListTab.value;
 
 	var filtered = filterId ? allSessions.filter((s) => s.projectId === filterId) : allSessions;
+	if (tab === "sessions") {
+		filtered = filtered.filter((s) => !(s.key || "").startsWith("cron:"));
+	} else if (tab === "cron") {
+		filtered = filtered.filter((s) => (s.key || "").startsWith("cron:"));
+	}
 
 	// Build parent→children map for tree rendering
 	var childrenMap = {};

@@ -11,6 +11,12 @@ export default {
 		},
 	},
 
+	// Session list tabs
+	tabs: {
+		sessions: "Sessions",
+		cron: "Cron",
+	},
+
 	// Session list
 	list: {
 		newSession: "New session",
