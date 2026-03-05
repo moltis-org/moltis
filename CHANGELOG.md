@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.16] - 2026-03-05
+### Fixed
+- [ci,tools] Unblock dependabot and support wasmtime 36
+- [auth] Honor forwarded host for proxy session cookies
+
 ## [0.10.15] - 2026-03-05
 ### Fixed
 - Install rustls CryptoProvider before channel startup (#336)
