@@ -1434,6 +1434,14 @@ pub async fn prepare_gateway(
     let mut startup_mem_probe = StartupMemProbe::new();
     startup_mem_probe.checkpoint("prepare_gateway.start");
 
+    // Install a process-level rustls CryptoProvider early, before any channel
+    // plugin (Slack, Discord, etc.) creates outbound TLS connections via
+    // hyper-rustls.  Without this, `--no-tls` deployments skip the TLS cert
+    // setup path where `install_default()` previously lived, causing a panic
+    // the first time an outbound HTTPS request is made (see #329).
+    #[cfg(feature = "tls")]
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
     if no_tls {
         config.tls.enabled = false;
