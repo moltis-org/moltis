@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.17] - 2026-03-05
+### Fixed
+- [config] Include tmux in default sandbox packages
+
 ## [0.10.16] - 2026-03-05
 ### Fixed
 - [ci,tools] Unblock dependabot and support wasmtime 36
