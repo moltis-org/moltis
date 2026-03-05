@@ -1,5 +1,5 @@
 [build]
-image = 'ghcr.io/moltis-org/moltis:0.10.11'
+image = 'ghcr.io/moltis-org/moltis:0.10.12'
 
 [env]
 MOLTIS_BEHIND_PROXY    = 'true'
