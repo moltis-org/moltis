@@ -319,6 +319,11 @@ jobs:
           BUILD_TARGET: ${{ matrix.target }}
         run: cargo build --release --target "$BUILD_TARGET"
 
+      - name: Stage WASM assets for cargo-deb
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: bash ./scripts/stage-wasm-package-assets.sh "target/$BUILD_TARGET/release"
+
       - name: Build .deb package
         env:
           BUILD_TARGET: ${{ matrix.target }}

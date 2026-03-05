@@ -20,17 +20,17 @@ assets = [
     "644",
   ],
   [
-    "target/wasm32-wasip2/release/moltis_wasm_calc.wasm",
+    "target/release/moltis_wasm_calc.wasm",
     "usr/share/moltis/wasm/",
     "644",
   ],
   [
-    "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm",
+    "target/release/moltis_wasm_web_fetch.wasm",
     "usr/share/moltis/wasm/",
     "644",
   ],
   [
-    "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm",
+    "target/release/moltis_wasm_web_search.wasm",
     "usr/share/moltis/wasm/",
     "644",
   ],

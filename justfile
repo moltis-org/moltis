@@ -51,17 +51,20 @@ dev-server:
     MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
 
 # Build Debian package for the current architecture
-deb: build-release
+deb: build-release build-wasm-artifacts
+    bash ./scripts/stage-wasm-package-assets.sh target/release
     cargo deb -p moltis --no-build
 
 # Build Debian package for amd64
-deb-amd64:
+deb-amd64: build-wasm-artifacts
     cargo build --release --target x86_64-unknown-linux-gnu
+    bash ./scripts/stage-wasm-package-assets.sh target/x86_64-unknown-linux-gnu/release
     cargo deb -p moltis --no-build --target x86_64-unknown-linux-gnu
 
 # Build Debian package for arm64
-deb-arm64:
+deb-arm64: build-wasm-artifacts
     cargo build --release --target aarch64-unknown-linux-gnu
+    bash ./scripts/stage-wasm-package-assets.sh target/aarch64-unknown-linux-gnu/release
     cargo deb -p moltis --no-build --target aarch64-unknown-linux-gnu
 
 # Build Debian packages for all architectures
