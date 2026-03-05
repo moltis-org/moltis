@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.14] - 2026-03-05
+### Fixed
+- [packaging] Use cli-relative web assets in cargo-deb
+
 ## [0.10.13] - 2026-03-04
 ### Fixed
 - [ci] Stage wasm assets for cargo-deb packaging
