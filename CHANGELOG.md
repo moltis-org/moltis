@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.13] - 2026-03-04
+### Fixed
+- [ci] Stage wasm assets for cargo-deb packaging
+
 ## [0.10.12] - 2026-03-04
 ### Added
 - [ci] Add release dry-run mode
