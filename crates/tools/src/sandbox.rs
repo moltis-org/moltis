@@ -2319,7 +2319,7 @@ impl WasmSandbox {
         let env_vars: Vec<(String, String)> = opts.env.clone().into_iter().collect();
 
         let result = tokio::task::spawn_blocking(move || -> Result<ExecResult> {
-            use wasmtime_wasi::pipe::MemoryOutputPipe;
+            use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 
             let engine = wasm_engine.engine().clone();
             let stdout_pipe = MemoryOutputPipe::new(max_output_bytes);
