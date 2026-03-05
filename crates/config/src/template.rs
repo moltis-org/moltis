@@ -323,6 +323,7 @@ packages = [
     "tzdata",
     "shellcheck",
     "patchelf",
+    "tmux",
     # Text processing & search
     "ripgrep",
     # Browser automation dependencies

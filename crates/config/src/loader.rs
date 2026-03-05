@@ -1403,6 +1403,22 @@ mod tests {
             raw.contains("\"collect\"  - Buffer messages, concatenate as single message"),
             "generated template should document the collect queue option"
         );
+        assert!(
+            raw.contains("\"tmux\""),
+            "generated template should include tmux in sandbox packages"
+        );
+
+        let parsed: MoltisConfig = parse_config(&raw, &path).expect("parse generated config");
+        assert!(
+            parsed
+                .tools
+                .exec
+                .sandbox
+                .packages
+                .iter()
+                .any(|pkg| pkg == "tmux"),
+            "parsed config should include tmux in sandbox packages"
+        );
     }
 
     #[test]

@@ -77,6 +77,7 @@ packages = [
     "curl",
     "git",
     "jq",
+    "tmux",
     "python3",
     "python3-pip",
     "nodejs",
