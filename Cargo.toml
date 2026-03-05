@@ -273,7 +273,7 @@ shell-words           = "1"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
-wasmtime              = { features = ["component-model"], version = "30" }
+wasmtime              = { features = ["component-model"], version = "36" }
 wasmtime-wasi         = "30"
 which                 = "8"
 wit-bindgen           = "0.41"
