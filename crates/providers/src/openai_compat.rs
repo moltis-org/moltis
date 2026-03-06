@@ -779,9 +779,12 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
     }
 
     // Some OpenAI-compatible backends stream planning text in
-    // `reasoning_content`. Surface it separately so UI can show it in the
-    // thinking area without polluting final assistant text.
-    if let Some(reasoning_content) = delta["reasoning_content"].as_str()
+    // `reasoning_content` or `reasoning`. Surface it separately so UI can
+    //  show it in the thinking area without polluting final assistant text.
+    let reasoning_text = delta["reasoning_content"]
+        .as_str()
+        .or_else(|| delta["reasoning"].as_str());
+    if let Some(reasoning_content) = reasoning_text
         && !reasoning_content.is_empty()
     {
         events.push(StreamEvent::ReasoningDelta(reasoning_content.to_string()));
@@ -1287,6 +1290,24 @@ mod tests {
                 assert!(matches!(
                     &events[1],
                     StreamEvent::ReasoningDelta(s) if s == "plan step"
+                ));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_process_sse_reasoning_delta_openrouter() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"reasoning":"deep thought"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
+                assert!(matches!(
+                    &events[1],
+                    StreamEvent::ReasoningDelta(s) if s == "deep thought"
                 ));
             },
             _ => panic!("Expected Events"),

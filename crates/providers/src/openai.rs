@@ -475,6 +475,7 @@ impl OpenAiProvider {
         self.provider_name.eq_ignore_ascii_case("moonshot")
             || self.base_url.contains("moonshot.ai")
             || self.base_url.contains("moonshot.cn")
+            || self.model.starts_with("kimi-")
     }
 
     fn requires_top_level_system_prompt(&self) -> bool {
