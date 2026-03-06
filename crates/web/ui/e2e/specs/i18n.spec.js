@@ -193,4 +193,103 @@ test.describe("i18n", () => {
 
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("zh-TW locale loads Traditional Chinese strings", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/chats/main");
+
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			await i18n.setLocale("zh-TW");
+		});
+
+		const translated = await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			return {
+				save: i18n.t("common:actions.save"),
+				cancel: i18n.t("common:actions.cancel"),
+				locale: i18n.locale.value,
+			};
+		});
+
+		// Verify Traditional Chinese (Taiwan) — not Simplified
+		expect(translated.save).toBe("儲存");
+		expect(translated.cancel).toBe("取消");
+		expect(translated.locale).toBe("zh-TW");
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("zh-Hant normalizes to zh-TW", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/chats/main");
+
+		const result = await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			await i18n.setLocale("zh-Hant");
+			return {
+				locale: i18n.locale.value,
+				translation: i18n.t("common:actions.save"),
+			};
+		});
+
+		expect(result.locale).toBe("zh-TW");
+		expect(result.translation).toBe("儲存");
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("zh-TW and zh are independent locales", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/chats/main");
+
+		// Set to zh (Simplified Chinese) first
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			await i18n.setLocale("zh");
+		});
+
+		const zhResult = await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			return { save: i18n.t("common:actions.save"), locale: i18n.locale.value };
+		});
+
+		// Simplified Chinese uses 保存, Traditional uses 儲存
+		expect(zhResult.save).toBe("保存");
+		expect(zhResult.locale).toBe("zh");
+
+		// Now switch to zh-TW
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			await i18n.setLocale("zh-TW");
+		});
+
+		const twResult = await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			return { save: i18n.t("common:actions.save"), locale: i18n.locale.value };
+		});
+
+		expect(twResult.save).toBe("儲存");
+		expect(twResult.locale).toBe("zh-TW");
+
+		expect(pageErrors).toEqual([]);
+	});
 });

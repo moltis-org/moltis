@@ -1,0 +1,55 @@
+// ── Projects page Traditional Chinese (Taiwan) strings ──────
+
+export default {
+	title: "儲存庫",
+	description:
+		"專案會將工作階段繫結至程式碼庫目錄。當工作階段連結至專案時，會自動載入上下文檔案（CLAUDE.md、AGENTS.md、.cursorrules 及規則目錄），掃描高風險的提示詞注入模式，並注入系統提示詞。啟用自動 worktree，可讓每個工作階段擁有自己的 git 分支以隔離作業。",
+	autoDetectDescription:
+		'<strong class="text-[var(--text)]">自動偵測</strong>會掃描家目錄下的常見目錄（<code class="font-mono text-xs">~/Projects</code>、<code class="font-mono text-xs">~/Developer</code>、<code class="font-mono text-xs">~/src</code>、<code class="font-mono text-xs">~/code</code>、<code class="font-mono text-xs">~/repos</code>、<code class="font-mono text-xs">~/workspace</code>、<code class="font-mono text-xs">~/dev</code>、<code class="font-mono text-xs">~/git</code>）及 Superset 工作目錄（<code class="font-mono text-xs">~/.superset/worktrees</code>），尋找 git 儲存庫並新增為專案。',
+	clearAllHint: "「全部清除」只會從 Moltis 中移除儲存庫項目，不會刪除磁碟上的任何檔案。",
+	noProjectsConfigured: "尚未設定專案。請在上方新增目錄或使用自動偵測。",
+	confirmClearAll: "確定要從 Moltis 中清除所有儲存庫嗎？此操作僅從清單中移除，不會刪除磁碟上的檔案。",
+	confirmClearAllButton: "全部清除",
+	autoDetect: "自動偵測",
+	detecting: "偵測中\u2026",
+	clearAll: "全部清除",
+	clearing: "清除中\u2026",
+	autoDetectTooltip: "掃描常見位置中的 git 儲存庫並新增為專案",
+	clearAllTooltip: "從 Moltis 中移除所有儲存庫項目，不刪除磁碟上的檔案",
+	pathInput: {
+		directory: "目錄",
+		placeholder: "/path/to/project",
+	},
+	badges: {
+		auto: "自動",
+		worktree: "工作目錄",
+		setup: "setup",
+		teardown: "teardown",
+		image: "映像檔",
+		indexed: "已索引",
+	},
+	card: {
+		systemPromptPrefix: "系統提示詞：",
+		editProject: "編輯專案",
+		edit: "編輯",
+		removeProject: "移除專案",
+	},
+	editForm: {
+		label: "標籤",
+		labelPlaceholder: "專案名稱",
+		directory: "目錄",
+		directoryPlaceholder: "/path/to/project",
+		systemPrompt: "系統提示詞（選填）",
+		systemPromptPlaceholder: "處理此專案時給 LLM 的額外指示\u2026",
+		setupCommand: "Setup 指令",
+		setupCommandPlaceholder: "例如 pnpm install",
+		teardownCommand: "Teardown 指令",
+		teardownCommandPlaceholder: "例如 docker compose down",
+		branchPrefix: "分支前綴",
+		branchPrefixPlaceholder: "預設：moltis",
+		sandboxImage: "沙盒映像檔",
+		sandboxImagePlaceholder: "預設（ubuntu:25.10）",
+		autoWorktree: "每個工作階段自動建立 git 工作目錄",
+		codeIndex: "啟用程式碼索引（語意搜尋）",
+	},
+};

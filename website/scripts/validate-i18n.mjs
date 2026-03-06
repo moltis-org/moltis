@@ -13,6 +13,7 @@ const LANGUAGES = [
   { code: "en", locale: "en_US", file: "index.en.html" },
   { code: "fr", locale: "fr_FR", file: "index.fr.html" },
   { code: "zh", locale: "zh_CN", file: "index.zh.html" },
+  { code: "zh-TW", locale: "zh_TW", file: "index.zh-TW.html" },
   { code: "es", locale: "es_ES", file: "index.es.html" },
   { code: "de", locale: "de_DE", file: "index.de.html" },
   { code: "it", locale: "it_IT", file: "index.it.html" },

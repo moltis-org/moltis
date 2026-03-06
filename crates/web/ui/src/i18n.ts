@@ -17,13 +17,26 @@ import i18next from "i18next";
 
 const STORAGE_KEY = "moltis-locale";
 let initPromise: Promise<void> | null = null;
-const SUPPORTED_LOCALES = new Set(["en", "fr", "zh"]);
-export const supportedLocales: readonly string[] = Object.freeze(["en", "fr", "zh"]);
+const SUPPORTED_LOCALES = new Set(["en", "fr", "zh", "zh-TW"]);
+export const supportedLocales: readonly string[] = Object.freeze(["en", "fr", "zh", "zh-TW"]);
 
 function normalizeLocaleTag(value: string | null | undefined): string {
 	if (!value) return "en";
 	let tag = String(value).trim().replace("_", "-");
 	if (!tag) return "en";
+	const lower = tag.toLowerCase();
+	if (
+		lower === "zh-tw" ||
+		lower.startsWith("zh-tw-") ||
+		lower === "zh-hk" ||
+		lower.startsWith("zh-hk-") ||
+		lower === "zh-mo" ||
+		lower.startsWith("zh-mo-") ||
+		lower === "zh-hant" ||
+		lower.startsWith("zh-hant-")
+	) {
+		return "zh-TW";
+	}
 	const idx = tag.indexOf("-");
 	if (idx !== -1) {
 		tag = tag.slice(0, idx);

@@ -1,4 +1,4 @@
-export const SUPPORTED = ["en", "fr", "zh", "es", "de", "it", "pt", "ja", "ko", "ru"];
+export const SUPPORTED = ["en", "fr", "zh", "zh-TW", "es", "de", "it", "pt", "ja", "ko", "ru"];
 export const DEFAULT_LANG = "en";
 
 const NORMAL_CLASS =
@@ -41,6 +41,18 @@ export const NAV_I18N = {
 			security: "安全",
 			compare: "对比",
 			changelog: "更新日志",
+		},
+	},
+	"zh-TW": {
+		langBtn: "正體中文",
+		langTitle: "切換語言",
+		tabs: {
+			home: "首頁",
+			install: "安裝",
+			features: "功能",
+			security: "安全",
+			compare: "比較",
+			changelog: "更新日誌",
 		},
 	},
 	es: {
@@ -134,9 +146,14 @@ function escapeRegExp(value) {
 }
 
 export function resolvePageLang(html, fallback = DEFAULT_LANG) {
-	const match = html.match(/<html[^>]*\blang="([a-z]{2})"/i);
-	const lang = match?.[1]?.toLowerCase();
-	return lang && SUPPORTED.includes(lang) ? lang : fallback;
+	const match = html.match(/<html[^>]*\blang="([A-Za-z-]+)"/);
+	const lang = match?.[1];
+	if (!lang) return fallback;
+	// Try exact match first (preserves case for zh-TW), then lowercase fallback
+	if (SUPPORTED.includes(lang)) return lang;
+	const lower = lang.toLowerCase();
+	const found = SUPPORTED.find((s) => s.toLowerCase() === lower);
+	return found ?? fallback;
 }
 
 export function localizeNavHtml(navHtml, lang) {
