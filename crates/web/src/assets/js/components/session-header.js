@@ -154,7 +154,7 @@ export function SessionHeader({
 
 	var onKeyDown = useCallback(
 		(e) => {
-			if (e.key === "Enter") {
+			if (e.key === "Enter" && !e.isComposing) {
 				e.preventDefault();
 				commitRename();
 			}

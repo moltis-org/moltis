@@ -1505,7 +1505,7 @@ function renderLocalModelSelection(provider, sysInfo, modelsData) {
 
 	searchBtn.addEventListener("click", doSearch);
 	searchInput.addEventListener("keydown", (e) => {
-		if (e.key === "Enter") doSearch();
+		if (e.key === "Enter" && !e.isComposing) doSearch();
 	});
 
 	// Auto-search with debounce when user stops typing
