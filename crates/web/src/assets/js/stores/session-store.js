@@ -122,6 +122,8 @@ export var sessions = signal([]);
 export var activeSessionKey = signal(localStorage.getItem("moltis-session") || "main");
 export var switchInProgress = signal(false);
 export var refreshInProgressKey = signal("");
+/** Session list tab filter: "all" | "sessions" | "cron" */
+export var sessionListTab = signal(localStorage.getItem("moltis-session-tab") || "sessions");
 
 export var activeSession = computed(() => {
 	var key = activeSessionKey.value;
@@ -222,12 +224,19 @@ export function setActive(key) {
 	localStorage.setItem("moltis-session", key);
 }
 
+/** Set the session list tab and persist it. */
+export function setSessionListTab(tab) {
+	sessionListTab.value = tab;
+	localStorage.setItem("moltis-session-tab", tab);
+}
+
 export var sessionStore = {
 	sessions,
 	activeSessionKey,
 	activeSession,
 	switchInProgress,
 	refreshInProgressKey,
+	sessionListTab,
 	Session,
 	setAll,
 	upsert,
@@ -235,5 +244,6 @@ export var sessionStore = {
 	fetch,
 	getByKey,
 	setActive,
+	setSessionListTab,
 	notify,
 };

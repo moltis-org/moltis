@@ -1135,6 +1135,12 @@
     color: var(--muted);
   }
 
+  /* Session tab bar */
+  .session-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
   /* Session panel */
   .session-item {
     display: flex;

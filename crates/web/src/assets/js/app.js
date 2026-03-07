@@ -485,10 +485,32 @@ function fetchBootstrap() {
 		});
 }
 
+function initSessionTabBar() {
+	var bar = S.$("sessionTabBar");
+	if (!bar) return;
+	var buttons = bar.querySelectorAll(".session-tab");
+
+	function updateActive() {
+		var current = sessionStore.sessionListTab.value;
+		for (var btn of buttons) {
+			btn.classList.toggle("active", btn.dataset.tab === current);
+		}
+	}
+
+	for (var btn of buttons) {
+		btn.addEventListener("click", function () {
+			sessionStore.setSessionListTab(this.dataset.tab);
+			updateActive();
+		});
+	}
+	updateActive();
+}
+
 function startApp() {
 	// Mount the reactive SessionList once — signals drive all re-renders.
 	var sessionListEl = S.$("sessionList");
 	if (sessionListEl) render(html`<${SessionList} />`, sessionListEl);
+	initSessionTabBar();
 
 	var path = location.pathname;
 	if (path === "/") {
