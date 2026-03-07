@@ -3212,8 +3212,9 @@ pub extern "C" fn moltis_sandbox_check_packages(request_json: *const c_char) -> 
             .collect();
         let script = checks.join("\n");
 
+        let cli = moltis_tools::sandbox::container_cli();
         let output = BRIDGE.runtime.block_on(async {
-            tokio::process::Command::new("docker")
+            tokio::process::Command::new(cli)
                 .args(["run", "--rm", "--entrypoint", "sh", &base, "-c", &script])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())

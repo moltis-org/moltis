@@ -22,6 +22,7 @@ moltis-browser        = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
 moltis-cron           = { workspace = true }
+moltis-media          = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-network-filter = { workspace = true }
 moltis-providers      = { workspace = true }

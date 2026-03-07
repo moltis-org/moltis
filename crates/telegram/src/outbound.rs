@@ -535,15 +535,12 @@ impl ChannelOutbound for TelegramOutbound {
                     "sending base64 media to telegram"
                 );
 
-                // Determine file extension
-                let ext = match media.mime_type.as_str() {
-                    "image/png" => "png",
-                    "image/jpeg" | "image/jpg" => "jpg",
-                    "image/gif" => "gif",
-                    "image/webp" => "webp",
-                    _ => "bin",
-                };
-                let filename = format!("screenshot.{ext}");
+                // Use the original filename when provided, otherwise derive
+                // from MIME type.
+                let filename = media.filename.clone().unwrap_or_else(|| {
+                    let ext = moltis_media::mime::extension_for_mime(&media.mime_type);
+                    format!("file.{ext}")
+                });
 
                 // For images, try as photo first, fall back to document on dimension errors
                 if media.mime_type.starts_with("image/") {

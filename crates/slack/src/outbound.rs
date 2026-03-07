@@ -485,8 +485,14 @@ impl ChannelOutbound for SlackOutbound {
         match media_url {
             Some(url) if url.starts_with("data:") => {
                 let (data, mime) = decode_data_url(url)?;
-                let ext = extension_for_mime(&mime);
-                let filename = format!("file.{ext}");
+                let filename = payload
+                    .media
+                    .as_ref()
+                    .and_then(|m| m.filename.clone())
+                    .unwrap_or_else(|| {
+                        let ext = extension_for_mime(&mime);
+                        format!("file.{ext}")
+                    });
                 let caption = if payload.text.is_empty() {
                     None
                 } else {

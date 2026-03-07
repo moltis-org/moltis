@@ -19,6 +19,7 @@ import {
 	formatTokens,
 	parseAgentsListPayload,
 	renderAudioPlayer,
+	renderDocument,
 	renderMarkdown,
 	renderScreenshot,
 	sendRpc,
@@ -798,6 +799,14 @@ function renderHistoryToolResult(msg) {
 			var sessionKey = S.activeSessionKey || "main";
 			var mediaSrc = `/api/sessions/${encodeURIComponent(sessionKey)}/media/${encodeURIComponent(filename)}`;
 			renderScreenshot(card, mediaSrc);
+		}
+		// Render persisted document from the media API.
+		if (msg.result.document_ref) {
+			var docStoredName = msg.result.document_ref.split("/").pop();
+			var docDisplayName = msg.result.filename || docStoredName;
+			var docSessionKey = S.activeSessionKey || "main";
+			var docMediaSrc = `/api/sessions/${encodeURIComponent(docSessionKey)}/media/${encodeURIComponent(docStoredName)}`;
+			renderDocument(card, docMediaSrc, docDisplayName, msg.result.mime_type, msg.result.size_bytes);
 		}
 	}
 

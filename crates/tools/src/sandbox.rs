@@ -854,12 +854,14 @@ pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 let parts: Vec<&str> = line.splitn(3, '\t').collect();
-                if parts.len() == 3
-                    && is_sandbox_image_tag(parts[0])
-                    && seen.insert(parts[0].to_string())
-                {
+                if parts.len() != 3 {
+                    continue;
+                }
+                // Podman prefixes local repos with "localhost/"; normalize.
+                let tag = parts[0].strip_prefix("localhost/").unwrap_or(parts[0]);
+                if is_sandbox_image_tag(tag) && seen.insert(tag.to_string()) {
                     images.push(SandboxImage {
-                        tag: parts[0].to_string(),
+                        tag: tag.to_string(),
                         size: parts[1].to_string(),
                         created: parts[2].to_string(),
                     });
@@ -5005,13 +5007,29 @@ fn is_docker_daemon_available() -> bool {
 }
 
 /// Check whether a CLI tool is available on PATH.
-fn is_cli_available(name: &str) -> bool {
+pub(crate) fn is_cli_available(name: &str) -> bool {
     std::process::Command::new(name)
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
+}
+
+/// Return the name of the container CLI to use for OCI image operations
+/// (`docker run`, `docker build`, etc.).
+///
+/// Prefers `podman` (daemonless) when available, falls back to `docker`.
+/// The result is cached after the first call.
+pub fn container_cli() -> &'static str {
+    static CLI: std::sync::OnceLock<&str> = std::sync::OnceLock::new();
+    CLI.get_or_init(|| {
+        if is_cli_available("podman") {
+            "podman"
+        } else {
+            "docker"
+        }
+    })
 }
 
 /// Return `true` when the installed Podman version supports `host-gateway`

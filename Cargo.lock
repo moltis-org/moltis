@@ -6699,6 +6699,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-cron",
+ "moltis-media",
  "moltis-metrics",
  "moltis-network-filter",
  "moltis-providers",

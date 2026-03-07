@@ -595,6 +595,58 @@
     color: white;
     border-color: var(--accent-dim);
   }
+  /* Document card (send_document tool) */
+  .document-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .document-icon {
+    font-size: 1.6rem;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .document-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+  .document-filename {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .document-size {
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+  .document-download-btn {
+    flex-shrink: 0;
+    background: var(--accent-dim);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 6px 14px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .document-download-btn:hover {
+    background: var(--accent);
+  }
   .msg code {
     background: var(--surface2);
     padding: 1px 6px;

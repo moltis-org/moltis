@@ -3583,6 +3583,11 @@ pub async fn prepare_gateway(
             moltis_tools::send_image::SendImageTool::new()
                 .with_sandbox_router(Arc::clone(&sandbox_router)),
         ));
+        tool_registry.register(Box::new(
+            moltis_tools::send_document::SendDocumentTool::new()
+                .with_sandbox_router(Arc::clone(&sandbox_router))
+                .with_session_store(Arc::clone(&session_store)),
+        ));
         if let Some(t) = moltis_tools::web_search::WebSearchTool::from_config_with_env_overrides(
             &config.tools.web.search,
             &runtime_env_overrides,

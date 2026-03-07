@@ -443,8 +443,10 @@ impl ChannelOutbound for DiscordOutbound {
 
         if media.url.starts_with("data:") {
             let bytes = decode_data_url(&media.url)?;
-            let ext = extension_for_mime(&media.mime_type);
-            let filename = format!("attachment.{ext}");
+            let filename = media.filename.clone().unwrap_or_else(|| {
+                let ext = extension_for_mime(&media.mime_type);
+                format!("attachment.{ext}")
+            });
             let preview = build_upload_preview(&bytes, &media.mime_type);
 
             debug!(

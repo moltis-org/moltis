@@ -522,6 +522,91 @@ export function renderScreenshot(container, imgSrc, scale) {
 	container.appendChild(imgContainer);
 }
 
+// ── Document card ───────────────────────────────────────────
+
+/**
+ * Return an icon string for a given MIME type / filename extension.
+ * @param {string} [mimeType]
+ * @param {string} [filename]
+ * @returns {string}
+ */
+function documentIcon(mimeType, filename) {
+	var ext = (filename || "").split(".").pop().toLowerCase();
+	if (mimeType === "application/pdf" || ext === "pdf") return "\uD83D\uDCC4"; // 📄
+	if (mimeType === "application/zip" || mimeType === "application/gzip" || ext === "zip" || ext === "gz")
+		return "\uD83D\uDCE6"; // 📦
+	if (/spreadsheet|csv|xls/.test(mimeType || "") || /^(csv|xls|xlsx)$/.test(ext)) return "\uD83D\uDCCA"; // 📊
+	if (/wordprocessing|msword|rtf/.test(mimeType || "") || /^(doc|docx|rtf)$/.test(ext)) return "\uD83D\uDCC3"; // 📃
+	if (/presentation|ppt/.test(mimeType || "") || /^(ppt|pptx)$/.test(ext)) return "\uD83D\uDCCA"; // 📊
+	return "\uD83D\uDCC1"; // 📁
+}
+
+/**
+ * Format a byte count for display (e.g. "1.2 MB", "345 KB").
+ * @param {number} bytes
+ * @returns {string}
+ */
+function formatDocSize(bytes) {
+	if (typeof bytes !== "number" || bytes < 0) return "";
+	if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+	if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${bytes} B`;
+}
+
+/**
+ * Render a document card with filename, icon, and download link.
+ * @param {HTMLElement} container - parent element to append into
+ * @param {string} mediaSrc - URL to the document (media API endpoint)
+ * @param {string} filename - display filename
+ * @param {string} [mimeType] - MIME type for icon selection
+ * @param {number} [sizeBytes] - file size for display
+ */
+export function renderDocument(container, mediaSrc, filename, mimeType, sizeBytes) {
+	var wrap = document.createElement("div");
+	wrap.className = "document-container";
+
+	var icon = document.createElement("span");
+	icon.className = "document-icon";
+	icon.textContent = documentIcon(mimeType, filename);
+
+	var info = document.createElement("div");
+	info.className = "document-info";
+
+	var nameEl = document.createElement("span");
+	nameEl.className = "document-filename";
+	nameEl.textContent = filename || "document";
+
+	info.appendChild(nameEl);
+
+	if (sizeBytes != null && sizeBytes > 0) {
+		var sizeEl = document.createElement("span");
+		sizeEl.className = "document-size";
+		sizeEl.textContent = formatDocSize(sizeBytes);
+		info.appendChild(sizeEl);
+	}
+
+	var dlBtn = document.createElement("a");
+	dlBtn.className = "document-download-btn";
+	dlBtn.href = mediaSrc;
+	dlBtn.download = filename || "document";
+	// PDFs and text open in new tab; others download
+	var isPdf = (mimeType || "").includes("pdf") || (filename || "").endsWith(".pdf");
+	var isText = (mimeType || "").startsWith("text/");
+	if (isPdf || isText) {
+		dlBtn.target = "_blank";
+		dlBtn.rel = "noopener noreferrer";
+		dlBtn.textContent = "\u2197 Open";
+		dlBtn.removeAttribute("download");
+	} else {
+		dlBtn.textContent = "\u2B07 Download";
+	}
+
+	wrap.appendChild(icon);
+	wrap.appendChild(info);
+	wrap.appendChild(dlBtn);
+	container.appendChild(wrap);
+}
+
 // ── Waveform audio player ───────────────────────────────────
 
 var WAVEFORM_BAR_COUNT = 48;

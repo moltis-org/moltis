@@ -18,6 +18,7 @@ import {
 	formatTokens,
 	localizeStructuredError,
 	renderAudioPlayer,
+	renderDocument,
 	renderMapLinks,
 	renderMapPointGroups,
 	renderMarkdown,
@@ -284,6 +285,14 @@ function appendToolResult(toolCard, result, eventSession) {
 			? result.screenshot
 			: `data:image/png;base64,${result.screenshot}`;
 		renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
+	}
+	// Document card (send_document tool)
+	if (result.document_ref) {
+		var docStoredName = result.document_ref.split("/").pop();
+		var docDisplayName = result.filename || docStoredName;
+		var docSessionKey = eventSession || S.activeSessionKey || "main";
+		var docMediaSrc = `/api/sessions/${encodeURIComponent(docSessionKey)}/media/${encodeURIComponent(docStoredName)}`;
+		renderDocument(toolCard, docMediaSrc, docDisplayName, result.mime_type, result.size_bytes);
 	}
 	// Map link buttons (show_map tool)
 	var renderedPointGroups = renderMapPointGroups(toolCard, result.points, result.label);

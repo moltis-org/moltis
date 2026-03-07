@@ -5874,6 +5874,58 @@ async fn run_with_tools(
                         .and_then(|c| c.as_str())
                         .map(String::from);
 
+                    // Check for document file to send to channel.
+                    // New path: `document_ref` (lightweight media-dir reference).
+                    // Legacy path: `document` with `data:` URI.
+                    let document_ref_to_send = result
+                        .as_ref()
+                        .and_then(|r| r.get("document_ref"))
+                        .and_then(|d| d.as_str())
+                        .map(String::from);
+
+                    let document_ref_mime = if document_ref_to_send.is_some() {
+                        result
+                            .as_ref()
+                            .and_then(|r| r.get("mime_type"))
+                            .and_then(|m| m.as_str())
+                            .map(String::from)
+                    } else {
+                        None
+                    };
+
+                    let document_to_send = if document_ref_to_send.is_none() {
+                        result
+                            .as_ref()
+                            .and_then(|r| r.get("document"))
+                            .and_then(|d| d.as_str())
+                            .filter(|d| d.starts_with("data:"))
+                            .map(String::from)
+                    } else {
+                        None
+                    };
+
+                    let has_document = document_ref_to_send.is_some() || document_to_send.is_some();
+
+                    let document_filename = if has_document {
+                        result
+                            .as_ref()
+                            .and_then(|r| r.get("filename"))
+                            .and_then(|f| f.as_str())
+                            .map(String::from)
+                    } else {
+                        None
+                    };
+
+                    let document_caption = if has_document {
+                        result
+                            .as_ref()
+                            .and_then(|r| r.get("caption"))
+                            .and_then(|c| c.as_str())
+                            .map(String::from)
+                    } else {
+                        None
+                    };
+
                     // Extract location from show_map results for native pin
                     let location_to_send = if name == "show_map" {
                         result.as_ref().and_then(|r| {
@@ -5900,6 +5952,15 @@ async fn run_with_tools(
                                 );
                                 capped[*field] = Value::String(truncated);
                             }
+                        }
+                        // Cap legacy document data URIs — the LLM never sees
+                        // these and the UI doesn't render them.
+                        if let Some(doc) = capped.get("document").and_then(|v| v.as_str())
+                            && doc.starts_with("data:")
+                            && doc.len() > 200
+                        {
+                            capped["document"] =
+                                Value::String("[document data omitted]".to_string());
                         }
                         payload["result"] = capped;
                     }
@@ -5932,6 +5993,44 @@ async fn run_with_tools(
                                 image_caption.as_deref(),
                             )
                             .await;
+                        });
+                    }
+
+                    // Send document to channel targets if present.
+                    if let Some(media_ref) = document_ref_to_send {
+                        // New path: read from media dir at upload time.
+                        let state_clone = Arc::clone(&state);
+                        let sk_clone = sk.clone();
+                        let store_clone = store.clone();
+                        let mime = document_ref_mime
+                            .unwrap_or_else(|| "application/octet-stream".to_string());
+                        tokio::spawn(async move {
+                            if let Some(payload) = document_payload_from_ref(
+                                store_clone.as_ref(),
+                                &sk_clone,
+                                &media_ref,
+                                &mime,
+                                document_filename.as_deref(),
+                                document_caption.as_deref(),
+                            )
+                            .await
+                            {
+                                dispatch_document_to_channels(&state_clone, &sk_clone, payload)
+                                    .await;
+                            }
+                        });
+                    } else if let Some(document_data) = document_to_send {
+                        // Legacy fallback: data URI.
+                        let state_clone = Arc::clone(&state);
+                        let sk_clone = sk.clone();
+                        let payload = document_payload_from_data_uri(
+                            &document_data,
+                            document_filename.as_deref(),
+                            document_caption.as_deref(),
+                        );
+                        tokio::spawn(async move {
+                            dispatch_document_to_channels(&state_clone, &sk_clone, payload)
+                                .await;
                         });
                     }
 
@@ -5985,9 +6084,19 @@ async fn run_with_tools(
                                 .get("screenshot")
                                 .and_then(|v| v.as_str())
                                 .is_some_and(|s| s.starts_with("data:"));
+                            // Strip legacy document data URIs — they are only
+                            // needed by the channel dispatch (already extracted
+                            // above) and should not be persisted.
+                            let strip_document = r
+                                .get("document")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|s| s.starts_with("data:"));
                             if let Some(obj) = r.as_object_mut() {
                                 if strip_screenshot {
                                     obj.remove("screenshot");
+                                }
+                                if strip_document {
+                                    obj.remove("document");
                                 }
                                 obj.remove("screenshot_scale");
                             }
@@ -7600,6 +7709,7 @@ async fn build_tts_payload(
         media: Some(MediaAttachment {
             url: format!("data:{mime_type};base64,{}", response.audio),
             mime_type,
+            filename: None,
         }),
         reply_to_id: None,
         silent: false,
@@ -7843,6 +7953,7 @@ async fn send_screenshot_to_channels(
         media: Some(MediaAttachment {
             url: screenshot_data.to_string(),
             mime_type,
+            filename: None,
         }),
         reply_to_id: None,
         silent: false,
@@ -7885,6 +7996,139 @@ async fn send_screenshot_to_channels(
             warn!(error = %e, "channel reply task join failed");
         }
     }
+}
+
+/// Send a document payload to all pending channel targets for a session.
+/// Uses `peek_channel_replies` so targets remain for the final text response.
+async fn dispatch_document_to_channels(
+    state: &Arc<dyn ChatRuntime>,
+    session_key: &str,
+    payload: moltis_common::types::ReplyPayload,
+) {
+    let targets = state.peek_channel_replies(session_key).await;
+    if targets.is_empty() {
+        return;
+    }
+
+    let outbound = match state.channel_outbound() {
+        Some(o) => o,
+        None => return,
+    };
+
+    let mut tasks = Vec::with_capacity(targets.len());
+    for target in targets {
+        let outbound = Arc::clone(&outbound);
+        let payload = payload.clone();
+        tasks.push(tokio::spawn(async move {
+            let reply_to = target.message_id.as_deref();
+            if let Err(e) = outbound
+                .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
+                .await
+            {
+                warn!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "failed to send document to channel: {e}"
+                );
+                let error_msg = format!("\u{26a0}\u{fe0f} Failed to send document: {e}");
+                let _ = outbound
+                    .send_text(&target.account_id, &target.chat_id, &error_msg, reply_to)
+                    .await;
+            } else {
+                debug!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "sent document to channel"
+                );
+            }
+        }));
+    }
+
+    for task in tasks {
+        if let Err(e) = task.await {
+            warn!(error = %e, "channel document task join failed");
+        }
+    }
+}
+
+/// Build a `ReplyPayload` from a data URI (legacy path).
+fn document_payload_from_data_uri(
+    data_uri: &str,
+    filename: Option<&str>,
+    caption: Option<&str>,
+) -> moltis_common::types::ReplyPayload {
+    use moltis_common::types::{MediaAttachment, ReplyPayload};
+
+    let mime_type = data_uri
+        .strip_prefix("data:")
+        .and_then(|s| s.split(';').next())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    ReplyPayload {
+        text: caption.unwrap_or_default().to_string(),
+        media: Some(MediaAttachment {
+            url: data_uri.to_string(),
+            mime_type,
+            filename: filename.map(String::from),
+        }),
+        reply_to_id: None,
+        silent: false,
+    }
+}
+
+/// Build a `ReplyPayload` by reading from the session media directory.
+/// Returns `None` if the store is unavailable or the read fails.
+async fn document_payload_from_ref(
+    session_store: Option<&Arc<SessionStore>>,
+    session_key: &str,
+    media_ref: &str,
+    mime_type: &str,
+    filename: Option<&str>,
+    caption: Option<&str>,
+) -> Option<moltis_common::types::ReplyPayload> {
+    use moltis_common::types::{MediaAttachment, ReplyPayload};
+
+    let store = match session_store {
+        Some(s) => s,
+        None => {
+            warn!("document_payload_from_ref: no session store available");
+            return None;
+        },
+    };
+
+    let ref_filename = match media_ref.rsplit('/').next() {
+        Some(f) => f,
+        None => {
+            warn!(media_ref, "invalid document_ref path");
+            return None;
+        },
+    };
+
+    let bytes = match store.read_media(session_key, ref_filename).await {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(media_ref, error = %e, "failed to read document from media dir");
+            return None;
+        },
+    };
+
+    let b64 = {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    };
+    let data_uri = format!("data:{mime_type};base64,{b64}");
+
+    Some(ReplyPayload {
+        text: caption.unwrap_or_default().to_string(),
+        media: Some(MediaAttachment {
+            url: data_uri,
+            mime_type: mime_type.to_string(),
+            filename: filename.map(String::from),
+        }),
+        reply_to_id: None,
+        silent: false,
+    })
 }
 
 /// Send a native location pin to all pending channel targets for a session.
