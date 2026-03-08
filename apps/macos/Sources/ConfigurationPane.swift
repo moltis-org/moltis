@@ -261,11 +261,7 @@ private struct ConfigTextEditor: NSViewRepresentable {
             height: CGFloat.greatestFiniteMagnitude
         )
 
-        // 1.3x line height for comfortable reading (CotEditor default)
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineHeightMultiple = 1.3
-        textView.defaultParagraphStyle = paragraphStyle
-        textView.typingAttributes[.paragraphStyle] = paragraphStyle
+        applyParagraphStyle(to: textView)
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
@@ -280,6 +276,14 @@ private struct ConfigTextEditor: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
         }
+    }
+
+    private func applyParagraphStyle(to textView: NSTextView) {
+        // 1.3x line height for comfortable reading (CotEditor default)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineHeightMultiple = 1.3
+        textView.defaultParagraphStyle = paragraphStyle
+        textView.typingAttributes[.paragraphStyle] = paragraphStyle
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
