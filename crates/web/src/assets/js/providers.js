@@ -55,6 +55,13 @@ var BYOM_PROVIDERS = ["venice"];
 var VALIDATION_HINT_TEXT = "Validation can take up to 20 seconds for some providers.";
 var VALIDATION_HINT_RUNNING_TEXT = "Validating models... this can take up to 20 seconds.";
 var VALIDATION_PROGRESS_EVENT = "providers.validate.progress";
+var oauthStatusTimer = null;
+
+function clearOAuthStatusTimer() {
+	if (!oauthStatusTimer) return;
+	clearInterval(oauthStatusTimer);
+	oauthStatusTimer = null;
+}
 
 function normalizeEndpointForCompare(rawUrl) {
 	if (!rawUrl) return null;
@@ -176,6 +183,7 @@ export function openProviderModal() {
 }
 
 export function closeProviderModal() {
+	clearOAuthStatusTimer();
 	els().modal.classList.add("hidden");
 }
 
@@ -883,12 +891,23 @@ export function showOAuthFlow(provider) {
 	var backBtn = document.createElement("button");
 	backBtn.className = "provider-btn provider-btn-secondary";
 	backBtn.textContent = "Back";
-	backBtn.addEventListener("click", openProviderModal);
+	backBtn.addEventListener("click", () => {
+		clearOAuthStatusTimer();
+		openProviderModal();
+	});
 	btns.appendChild(backBtn);
 
 	var connectBtn = document.createElement("button");
 	connectBtn.className = "provider-btn";
 	connectBtn.textContent = "Connect";
+	var oauthCompleted = false;
+
+	function finishOAuthOnce() {
+		if (oauthCompleted) return;
+		oauthCompleted = true;
+		clearOAuthStatusTimer();
+		showOAuthModelSelector(provider);
+	}
 
 	function setManualSubmitting(submitting) {
 		manualSubmitBtn.disabled = submitting;
@@ -910,7 +929,7 @@ export function showOAuthFlow(provider) {
 					connectBtn.textContent = "Connected";
 					desc.classList.remove("text-error");
 					desc.textContent = `${provider.displayName} connected successfully!`;
-					showOAuthModelSelector(provider);
+					finishOAuthOnce();
 					return;
 				}
 				desc.classList.add("text-error");
@@ -933,12 +952,12 @@ export function showOAuthFlow(provider) {
 				connectBtn.textContent = "Connected";
 				desc.classList.remove("text-error");
 				desc.textContent = `${provider.displayName} is already connected (imported credentials found).`;
-				showOAuthModelSelector(provider);
+				finishOAuthOnce();
 			} else if (result.status === "browser") {
 				window.open(result.authUrl, "_blank");
 				connectBtn.textContent = "Waiting for auth...";
 				manualWrap.classList.remove("hidden");
-				pollOAuthStatus(provider);
+				pollOAuthStatus(provider, finishOAuthOnce);
 			} else if (result.status === "device") {
 				connectBtn.textContent = "Waiting for auth...";
 				desc.classList.remove("text-error");
@@ -955,8 +974,9 @@ export function showOAuthFlow(provider) {
 				desc.appendChild(linkEl);
 				desc.appendChild(document.createTextNode(" and enter code: "));
 				desc.appendChild(codeEl);
-				pollOAuthStatus(provider);
+				pollOAuthStatus(provider, finishOAuthOnce);
 			} else {
+				clearOAuthStatusTimer();
 				connectBtn.disabled = false;
 				connectBtn.textContent = "Connect";
 				manualWrap.classList.add("hidden");
@@ -970,14 +990,15 @@ export function showOAuthFlow(provider) {
 	m.body.appendChild(wrapper);
 }
 
-function pollOAuthStatus(provider) {
+function pollOAuthStatus(provider, onAuthenticated) {
 	var m = els();
 	var attempts = 0;
 	var maxAttempts = 60;
-	var timer = setInterval(() => {
+	clearOAuthStatusTimer();
+	oauthStatusTimer = setInterval(() => {
 		attempts++;
 		if (attempts > maxAttempts) {
-			clearInterval(timer);
+			clearOAuthStatusTimer();
 			m.body.textContent = "";
 			var timeout = document.createElement("div");
 			timeout.className = "text-xs text-[var(--error)]";
@@ -987,7 +1008,11 @@ function pollOAuthStatus(provider) {
 		}
 		sendRpc("providers.oauth.status", { provider: provider.name }).then((res) => {
 			if (res?.ok && res.payload && res.payload.authenticated) {
-				clearInterval(timer);
+				clearOAuthStatusTimer();
+				if (typeof onAuthenticated === "function") {
+					onAuthenticated();
+					return;
+				}
 				showOAuthModelSelector(provider);
 			}
 		});

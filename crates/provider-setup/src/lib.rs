@@ -2064,13 +2064,33 @@ impl ProviderSetupService for LiveProviderSetupService {
             .map(ToOwned::to_owned)
             .or_else(|| parsed_callback.as_ref().map(|parsed| parsed.state.clone()))
             .ok_or_else(|| "missing 'state' parameter".to_string())?;
+        let requested_provider = params
+            .get("provider")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
 
-        let pending = self
-            .pending_oauth
-            .write()
-            .await
-            .remove(&state)
-            .ok_or_else(|| "unknown or expired OAuth state".to_string())?;
+        let pending = {
+            let mut pending_oauth = self.pending_oauth.write().await;
+            let pending = pending_oauth
+                .get(&state)
+                .cloned()
+                .ok_or_else(|| "unknown or expired OAuth state".to_string())?;
+
+            if let Some(provider) = requested_provider.as_deref()
+                && provider != pending.provider_name
+            {
+                return Err(ServiceError::message(format!(
+                    "provider mismatch for OAuth state: expected '{}', got '{}'",
+                    pending.provider_name, provider
+                )));
+            }
+
+            pending_oauth
+                .remove(&state)
+                .ok_or_else(|| "unknown or expired OAuth state".to_string())?
+        };
 
         let flow = OAuthFlow::new(pending.oauth_config);
         let tokens = flow
@@ -3762,6 +3782,71 @@ mod tests {
         assert!(
             err.to_string().contains("unknown or expired OAuth state"),
             "expected parsed callback to reach pending-state validation, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_complete_rejects_provider_mismatch_without_consuming_state() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+
+        let start_result = match svc
+            .oauth_start(serde_json::json!({
+                "provider": "openai-codex",
+            }))
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => panic!("oauth start should succeed: {error}"),
+        };
+
+        if start_result
+            .get("alreadyAuthenticated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        let auth_url = match start_result.get("authUrl").and_then(|v| v.as_str()) {
+            Some(value) => value,
+            None => panic!("missing authUrl"),
+        };
+        let parsed = match reqwest::Url::parse(auth_url) {
+            Ok(value) => value,
+            Err(error) => panic!("authUrl should be valid: {error}"),
+        };
+        let state = match parsed
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned())
+        {
+            Some(value) => value,
+            None => panic!("oauth authUrl should include state"),
+        };
+
+        let mismatch_result = svc
+            .oauth_complete(serde_json::json!({
+                "provider": "github-copilot",
+                "callback": format!("http://localhost:1455/auth/callback?code=fake&state={state}"),
+            }))
+            .await;
+        let mismatch_error = match mismatch_result {
+            Ok(_) => panic!("provider mismatch should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            mismatch_error
+                .to_string()
+                .contains("provider mismatch for OAuth state"),
+            "unexpected mismatch error: {mismatch_error}"
+        );
+        assert!(
+            svc.pending_oauth.read().await.contains_key(&state),
+            "provider mismatch should not consume pending OAuth state"
         );
     }
 
