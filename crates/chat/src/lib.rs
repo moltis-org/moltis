@@ -1161,7 +1161,10 @@ async fn build_prompt_runtime_context(
             let is_sandboxed = router.is_sandboxed(session_key).await;
             // Only include sandbox context when sandbox is actually enabled for
             // this session.  When disabled, omitting it prevents the LLM from
-            // hallucinating sandbox usage (see #360).
+            // hallucinating sandbox usage (see #360).  This intentionally
+            // discards `session_override` — its only consumer is the prompt
+            // line we are omitting, and no other code reads it from
+            // `PromptSandboxRuntimeContext`.
             if !is_sandboxed {
                 return None;
             }

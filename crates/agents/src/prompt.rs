@@ -250,11 +250,11 @@ const EXEC_ROUTING_GUIDANCE_SANDBOX: &str = "Execution routing:\n\
 - When sandbox is disabled, `exec` runs on the host and may require approval.\n\
 - In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
 - Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
-- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n\
-- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\n";
+- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
 const EXEC_ROUTING_GUIDANCE_HOST_ONLY: &str = "Execution routing:\n\
-- `exec` runs on the host.\n\
-- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n\n";
+- `exec` runs on the host.\n";
+const EXEC_ROUTING_SUDO_HINT: &str =
+    "- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n";
 /// Build model-family-aware tool call guidance for text-based tool mode.
 fn tool_call_guidance(model_id: Option<&str>) -> String {
     let _family = model_id
@@ -534,6 +534,10 @@ fn append_runtime_section(
         } else {
             prompt.push_str(EXEC_ROUTING_GUIDANCE_HOST_ONLY);
         }
+        if runtime.host.sudo_non_interactive == Some(true) {
+            prompt.push_str(EXEC_ROUTING_SUDO_HINT);
+        }
+        prompt.push('\n');
         if has_nodes {
             prompt.push_str(NODE_ROUTING_GUIDANCE);
         }
@@ -1114,6 +1118,8 @@ mod tests {
         assert!(prompt.contains("Execution routing:"));
         assert!(prompt.contains("`~` and relative paths resolve under"));
         assert!(prompt.contains("Sandbox/host routing changes are expected runtime behavior"));
+        // Sudo hint appears because sudo_non_interactive=true is set.
+        assert!(prompt.contains("sudo_non_interactive=true` means non-interactive sudo"));
     }
 
     #[test]
@@ -1153,6 +1159,8 @@ mod tests {
         // Sandbox-specific guidance should NOT appear.
         assert!(!prompt.contains("runs inside sandbox"));
         assert!(!prompt.contains("Sandbox/host routing changes"));
+        // Sudo hint should NOT appear when sudo_non_interactive is not set.
+        assert!(!prompt.contains("sudo_non_interactive"));
     }
 
     #[test]
