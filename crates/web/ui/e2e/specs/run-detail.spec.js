@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, waitForWsConnected } = require("../helpers");
 
 test.describe("Run detail panel", () => {
 	test("run detail button is not visible for messages without run_id", async ({ page }) => {

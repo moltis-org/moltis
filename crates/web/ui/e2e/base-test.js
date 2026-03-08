@@ -8,7 +8,6 @@
 const { test: base, expect } = require("@playwright/test");
 
 var test = base.extend({
-	// biome-ignore lint/correctness/noUnusedVariables: Playwright fixture signature requires destructured params even when unused
 	page: async ({ page, context }, use, testInfo) => {
 		await use(page);
 
