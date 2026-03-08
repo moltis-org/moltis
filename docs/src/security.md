@@ -425,6 +425,36 @@ no loopback bypass, no exceptions.
    Moltis TLS enabled. Set `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true` to
    acknowledge this non-default setup.
 
+### Nginx (direct config example)
+
+If HTTP works but WebSockets fail, make sure your location block includes
+`proxy_http_version 1.1;` and upgrade headers.
+
+```nginx
+location / {
+    proxy_pass http://172.17.0.1:13131;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Real-IP $remote_addr;
+
+    # WebSocket upgrade support
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+}
+```
+
+If you use `$connection_upgrade`, define it once in the `http {}` block:
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+```
+
 ### Nginx Proxy Manager (known-good headers)
 
 If WebSockets fail behind NPM while HTTP works, ensure:
