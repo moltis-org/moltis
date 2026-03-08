@@ -13,6 +13,10 @@ var pendingFlows = new Map();
 var issuedCodes = new Map();
 // Whether /token should return errors (toggled via /config)
 var tokenShouldFail = false;
+// Whether /authorize should avoid redirecting to callback (for manual paste tests)
+var authorizeShouldNotRedirect = false;
+// Last generated callback URL from /authorize
+var lastRedirectUrl = null;
 
 function parseRequestUrl(req) {
 	return new URL(req.url, "http://127.0.0.1");
@@ -78,6 +82,15 @@ function handleAuthorize(res, query) {
 	var redirectUrl = new URL(query.redirect_uri);
 	redirectUrl.searchParams.set("code", authCode);
 	redirectUrl.searchParams.set("state", query.state);
+	lastRedirectUrl = redirectUrl.toString();
+
+	if (authorizeShouldNotRedirect) {
+		return respond(res, 200, {
+			ok: true,
+			note: "authorize_should_not_redirect is enabled",
+			redirect_url: lastRedirectUrl,
+		});
+	}
 
 	res.writeHead(302, { Location: redirectUrl.toString() });
 	res.end();
@@ -175,6 +188,9 @@ async function handleConfig(req) {
 	if (configBody.has("token_should_fail")) {
 		tokenShouldFail = configBody.get("token_should_fail") === "true";
 	}
+	if (configBody.has("authorize_should_not_redirect")) {
+		authorizeShouldNotRedirect = configBody.get("authorize_should_not_redirect") === "true";
+	}
 }
 
 function handleReset() {
@@ -182,6 +198,8 @@ function handleReset() {
 	pendingFlows.clear();
 	issuedCodes.clear();
 	tokenShouldFail = false;
+	authorizeShouldNotRedirect = false;
+	lastRedirectUrl = null;
 }
 
 var server = http.createServer(async (req, res) => {
@@ -204,6 +222,9 @@ var server = http.createServer(async (req, res) => {
 	}
 	if (req.method === "GET" && pathname === "/calls") {
 		return respond(res, 200, calls);
+	}
+	if (req.method === "GET" && pathname === "/last-redirect") {
+		return respond(res, 200, { redirect_url: lastRedirectUrl });
 	}
 	if (req.method === "POST" && pathname === "/config") {
 		await handleConfig(req);

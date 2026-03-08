@@ -170,9 +170,11 @@ docker exec -it moltis moltis auth login --provider openai-codex
 docker exec -it <container> moltis auth login --provider openai-codex
 ```
 
-The CLI opens a browser on the machine where you run the command. After you
-log in, tokens are saved to the config volume and the running gateway picks
-them up automatically — no restart needed.
+The CLI opens a browser on the machine where you run the command. If automatic
+callback capture fails, Moltis prompts you to paste the callback URL (or
+`code#state`) directly in the terminal. After you log in, tokens are saved to
+the config volume and the running gateway picks them up automatically — no
+restart needed.
 
 ```admonish tip
 GitHub Copilot uses device-flow authentication (a code you enter on

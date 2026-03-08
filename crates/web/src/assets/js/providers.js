@@ -5,7 +5,7 @@ import { sendRpc } from "./helpers.js";
 import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
-import { startProviderOAuth } from "./provider-oauth.js";
+import { completeProviderOAuth, startProviderOAuth } from "./provider-oauth.js";
 import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
@@ -854,6 +854,29 @@ export function showOAuthFlow(provider) {
 	desc.textContent = `Click below to authenticate with ${provider.displayName} via OAuth.`;
 	wrapper.appendChild(desc);
 
+	var manualWrap = document.createElement("div");
+	manualWrap.className = "flex flex-col gap-2 mt-2 hidden";
+
+	var manualHint = document.createElement("div");
+	manualHint.className = "text-xs text-[var(--muted)]";
+	manualHint.textContent = "If localhost callback fails, paste the redirect URL (or code#state) below.";
+	manualWrap.appendChild(manualHint);
+
+	var manualInput = document.createElement("input");
+	manualInput.type = "text";
+	manualInput.className = "provider-key-input w-full";
+	manualInput.placeholder = "http://localhost:1455/auth/callback?code=...&state=...";
+	manualWrap.appendChild(manualInput);
+
+	var manualBtns = document.createElement("div");
+	manualBtns.className = "btn-row";
+	var manualSubmitBtn = document.createElement("button");
+	manualSubmitBtn.className = "provider-btn provider-btn-secondary";
+	manualSubmitBtn.textContent = "Submit Callback";
+	manualBtns.appendChild(manualSubmitBtn);
+	manualWrap.appendChild(manualBtns);
+	wrapper.appendChild(manualWrap);
+
 	var btns = document.createElement("div");
 	btns.className = "btn-row";
 
@@ -866,6 +889,42 @@ export function showOAuthFlow(provider) {
 	var connectBtn = document.createElement("button");
 	connectBtn.className = "provider-btn";
 	connectBtn.textContent = "Connect";
+
+	function setManualSubmitting(submitting) {
+		manualSubmitBtn.disabled = submitting;
+		manualInput.disabled = submitting;
+		manualSubmitBtn.textContent = submitting ? "Submitting..." : "Submit Callback";
+	}
+
+	manualSubmitBtn.addEventListener("click", () => {
+		var callback = manualInput.value.trim();
+		if (!callback) {
+			desc.classList.add("text-error");
+			desc.textContent = "Paste the callback URL (or code#state) to continue.";
+			return;
+		}
+		setManualSubmitting(true);
+		completeProviderOAuth(provider.name, callback)
+			.then((res) => {
+				if (res?.ok) {
+					connectBtn.textContent = "Connected";
+					desc.classList.remove("text-error");
+					desc.textContent = `${provider.displayName} connected successfully!`;
+					showOAuthModelSelector(provider);
+					return;
+				}
+				desc.classList.add("text-error");
+				desc.textContent = res?.error?.message || "Failed to complete OAuth callback.";
+			})
+			.catch((error) => {
+				desc.classList.add("text-error");
+				desc.textContent = error?.message || "Failed to complete OAuth callback.";
+			})
+			.finally(() => {
+				setManualSubmitting(false);
+			});
+	});
+
 	connectBtn.addEventListener("click", () => {
 		connectBtn.disabled = true;
 		connectBtn.textContent = "Starting...";
@@ -878,11 +937,13 @@ export function showOAuthFlow(provider) {
 			} else if (result.status === "browser") {
 				window.open(result.authUrl, "_blank");
 				connectBtn.textContent = "Waiting for auth...";
+				manualWrap.classList.remove("hidden");
 				pollOAuthStatus(provider);
 			} else if (result.status === "device") {
 				connectBtn.textContent = "Waiting for auth...";
 				desc.classList.remove("text-error");
 				desc.textContent = "";
+				manualWrap.classList.add("hidden");
 				var linkEl = document.createElement("a");
 				linkEl.href = result.verificationUrl;
 				linkEl.target = "_blank";
@@ -898,6 +959,7 @@ export function showOAuthFlow(provider) {
 			} else {
 				connectBtn.disabled = false;
 				connectBtn.textContent = "Connect";
+				manualWrap.classList.add("hidden");
 				desc.textContent = result.error || "Failed to start OAuth";
 				desc.classList.add("text-error");
 			}

@@ -138,6 +138,10 @@ OpenAI Codex uses OAuth-based access.
 2. Click **Connect** and complete the auth flow.
 3. Choose a Codex model.
 
+If the browser cannot reach `localhost:1455`, Moltis now supports a manual
+fallback in both **Settings** and **Onboarding**: paste the callback URL (or
+`code#state`) into the OAuth panel and submit it.
+
 ```admonish note title="Docker and cloud deployments"
 The OAuth flow redirects your browser to `localhost:1455`. In Docker, make sure
 port 1455 is published (`-p 1455:1455`). On cloud platforms where `localhost`
@@ -151,7 +155,9 @@ docker exec -it moltis moltis auth login --provider openai-codex
 fly ssh console -C "moltis auth login --provider openai-codex"
 ~~~
 
-The CLI opens a browser on your machine and handles the callback locally.
+The CLI opens a browser on your machine and handles the callback locally. If
+automatic callback capture fails, the CLI prompts you to paste the callback URL
+(or `code#state`) directly in the terminal.
 Tokens are saved to the config volume and picked up by the gateway automatically.
 ```
 
