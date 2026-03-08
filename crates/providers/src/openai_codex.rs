@@ -30,6 +30,9 @@ const CODEX_MODELS_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/model
 /// `minimal_client_version` filter so all available models are returned.
 /// Using the crate's own version (0.x) caused the API to hide newer models
 /// that require >= 0.98.0.  See <https://github.com/moltis-org/moltis/issues/354>.
+///
+/// **DO NOT** change this to `env!("CARGO_PKG_VERSION")` — the crate version
+/// is unrelated to the Codex client version and will break model discovery.
 const CODEX_MODELS_CLIENT_VERSION: &str = "1.0.0";
 
 const DEFAULT_CODEX_MODELS: &[(&str, &str)] = &[
@@ -1304,18 +1307,13 @@ mod tests {
 
     #[test]
     fn client_version_satisfies_codex_minimum() {
-        // The Codex models API filters models by minimal_client_version.
-        // Our reported version must be >= 0.98.0 to receive the full catalog.
+        // Pin the constant so any change forces the test to be updated and
+        // the new value to be validated against the Codex API.
         // See https://github.com/moltis-org/moltis/issues/354
-        let parts: Vec<u32> = CODEX_MODELS_CLIENT_VERSION
-            .split('.')
-            .map(|s| s.parse().expect("version part must be numeric"))
-            .collect();
-        assert!(parts.len() >= 2, "version must have at least major.minor");
-        let (major, minor) = (parts[0], parts[1]);
-        assert!(
-            major > 0 || minor >= 98,
-            "CODEX_MODELS_CLIENT_VERSION ({CODEX_MODELS_CLIENT_VERSION}) must be >= 0.98.0"
+        assert_eq!(
+            CODEX_MODELS_CLIENT_VERSION, "1.0.0",
+            "If you need to change CODEX_MODELS_CLIENT_VERSION, ensure the new value \
+             satisfies the Codex API's minimal_client_version (>= 0.98.0). See issue #354."
         );
     }
 
