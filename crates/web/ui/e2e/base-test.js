@@ -34,7 +34,9 @@ var test = base.extend({
 				}
 			}
 
-			var md = ["## Error Context", "", `**Test**: ${testInfo.title}`, `**Status**: ${testInfo.status}`, ""].concat(parts).join("\n");
+			var md = ["## Error Context", "", `**Test**: ${testInfo.title}`, `**Status**: ${testInfo.status}`, ""]
+				.concat(parts)
+				.join("\n");
 
 			await testInfo.attach("error-context", {
 				body: Buffer.from(md, "utf-8"),
