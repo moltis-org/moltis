@@ -39,9 +39,7 @@ async function visibleOnboardingHeadingText(page) {
 async function waitForOnboardingHeadingAdvance(page, previousHeading) {
 	if (!previousHeading) return true;
 	try {
-		await expect
-			.poll(() => visibleOnboardingHeadingText(page), { timeout: 10_000 })
-			.not.toBe(previousHeading);
+		await expect.poll(() => visibleOnboardingHeadingText(page), { timeout: 10_000 }).not.toBe(previousHeading);
 		return true;
 	} catch {
 		return false;
