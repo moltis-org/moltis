@@ -26,9 +26,15 @@ pub struct OpenAiCodexProvider {
 }
 
 const CODEX_MODELS_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/models";
-const CODEX_MODELS_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Report a client version that satisfies the Codex API's
+/// `minimal_client_version` filter so all available models are returned.
+/// Using the crate's own version (0.x) caused the API to hide newer models
+/// that require >= 0.98.0.  See <https://github.com/moltis-org/moltis/issues/354>.
+const CODEX_MODELS_CLIENT_VERSION: &str = "1.0.0";
 
 const DEFAULT_CODEX_MODELS: &[(&str, &str)] = &[
+    ("gpt-5.4", "GPT-5.4"),
+    ("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark"),
     ("gpt-5.3-codex", "GPT-5.3 Codex"),
     ("gpt-5.2-codex", "GPT-5.2 Codex"),
     ("gpt-5.2", "GPT-5.2"),
@@ -1294,6 +1300,33 @@ mod tests {
         assert_eq!(content[0]["text"], "describe this image");
         assert_eq!(content[1]["type"], "input_image");
         assert_eq!(content[1]["image_url"], "data:image/png;base64,ABC123");
+    }
+
+    #[test]
+    fn client_version_satisfies_codex_minimum() {
+        // The Codex models API filters models by minimal_client_version.
+        // Our reported version must be >= 0.98.0 to receive the full catalog.
+        // See https://github.com/moltis-org/moltis/issues/354
+        let parts: Vec<u32> = CODEX_MODELS_CLIENT_VERSION
+            .split('.')
+            .map(|s| s.parse().expect("version part must be numeric"))
+            .collect();
+        assert!(parts.len() >= 2, "version must have at least major.minor");
+        let (major, minor) = (parts[0], parts[1]);
+        assert!(
+            major > 0 || minor >= 98,
+            "CODEX_MODELS_CLIENT_VERSION ({CODEX_MODELS_CLIENT_VERSION}) must be >= 0.98.0"
+        );
+    }
+
+    #[test]
+    fn default_codex_models_includes_latest() {
+        let ids: Vec<&str> = DEFAULT_CODEX_MODELS.iter().map(|(id, _)| *id).collect();
+        assert!(ids.contains(&"gpt-5.4"), "missing gpt-5.4 in defaults");
+        assert!(
+            ids.contains(&"gpt-5.3-codex-spark"),
+            "missing gpt-5.3-codex-spark in defaults"
+        );
     }
 
     #[test]
