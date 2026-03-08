@@ -6,19 +6,8 @@ use crate::multimodal::parse_data_uri;
 
 // ── Reasoning effort ──────────────────────────────────────────────────────
 
-/// Reasoning/thinking effort level for models that support extended thinking.
-///
-/// Maps to provider-specific parameters:
-/// - **Anthropic**: `thinking.budget_tokens` (low=4096, medium=10240, high=32768)
-/// - **OpenAI**: `reasoning_effort` field on o-series models
-/// - **Other providers**: ignored if unsupported
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ReasoningEffort {
-    Low,
-    Medium,
-    High,
-}
+/// Re-export from config so downstream crates can use `moltis_agents::model::ReasoningEffort`.
+pub use moltis_config::schema::ReasoningEffort;
 
 // ── Typed chat messages ─────────────────────────────────────────────────────
 

@@ -162,24 +162,37 @@ impl SpawnAgentTool {
     /// Apply reasoning_effort from the agent preset to the provider, if set.
     ///
     /// Returns the original provider if reasoning_effort is not configured or
-    /// the provider doesn't support it.
+    /// the provider doesn't support it. Warns when the preset overrides a
+    /// reasoning effort already set via the model ID suffix.
     fn maybe_apply_reasoning_effort(
         provider: Arc<dyn LlmProvider>,
         preset: Option<&AgentPreset>,
     ) -> Arc<dyn LlmProvider> {
-        use moltis_agents::model::ReasoningEffort;
-        let effort_str = preset.and_then(|p| p.reasoning_effort.as_deref());
-        let Some(effort) = effort_str else {
+        let Some(effort) = preset.and_then(|p| p.reasoning_effort) else {
             return provider;
         };
-        let effort = match effort {
-            "low" => ReasoningEffort::Low,
-            "medium" => ReasoningEffort::Medium,
-            "high" => ReasoningEffort::High,
-            _ => return provider,
-        };
+        // Warn if the provider already has a (different) reasoning effort from
+        // the model ID suffix — the preset value will take precedence.
+        if let Some(existing) = provider.reasoning_effort()
+            && existing != effort
+        {
+            tracing::warn!(
+                model = %provider.id(),
+                existing = ?existing,
+                preset = ?effort,
+                "preset reasoning_effort overrides model-ID suffix; using preset value"
+            );
+        }
         let cloned = Arc::clone(&provider);
-        cloned.with_reasoning_effort(effort).unwrap_or(provider)
+        let new_provider = cloned.with_reasoning_effort(effort);
+        if new_provider.is_none() {
+            info!(
+                model = %provider.id(),
+                ?effort,
+                "provider does not support reasoning effort; ignoring preset setting"
+            );
+        }
+        new_provider.unwrap_or(provider)
     }
 
     async fn resolve_preset(

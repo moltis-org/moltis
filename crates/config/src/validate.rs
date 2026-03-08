@@ -987,21 +987,8 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         });
     }
 
-    // agents.presets.*.reasoning_effort must be low/medium/high if set.
-    for (name, preset) in &config.agents.presets {
-        if let Some(ref effort) = preset.reasoning_effort
-            && !matches!(effort.as_str(), "low" | "medium" | "high")
-        {
-            diagnostics.push(Diagnostic {
-                severity: Severity::Error,
-                category: "invalid-value",
-                path: format!("agents.presets.{name}.reasoning_effort"),
-                message: format!(
-                    "reasoning_effort must be \"low\", \"medium\", or \"high\" (got \"{effort}\")"
-                ),
-            });
-        }
-    }
+    // agents.presets.*.reasoning_effort is now a typed enum (ReasoningEffort)
+    // and validated at deserialization time (step 4). No semantic check needed.
 
     // SSRF allowlist CIDR validation
     for (idx, entry) in config.tools.web.fetch.ssrf_allowlist.iter().enumerate() {
@@ -2338,7 +2325,7 @@ tool_mode = "{mode}"
     }
 
     #[test]
-    fn reasoning_effort_invalid_value_reports_error() {
+    fn reasoning_effort_invalid_value_reports_type_error() {
         let toml = r#"
         [agents.presets.thinker]
         model = "claude-opus-4-5-20251101"
@@ -2348,14 +2335,11 @@ tool_mode = "{mode}"
         let error = result
             .diagnostics
             .iter()
-            .find(|d| d.path.contains("reasoning_effort") && d.severity == Severity::Error);
+            .find(|d| d.category == "type-error" && d.severity == Severity::Error);
         assert!(
             error.is_some(),
-            "invalid reasoning_effort should produce error"
-        );
-        assert!(
-            error.unwrap().message.contains("extreme"),
-            "error message should mention the invalid value"
+            "invalid reasoning_effort should produce type error: {:?}",
+            result.diagnostics
         );
     }
 

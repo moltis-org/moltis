@@ -475,21 +475,34 @@ impl OpenAiProvider {
         self
     }
 
-    /// Apply `reasoning_effort` to an OpenAI Chat Completions or Responses API
-    /// request body, if configured.
-    fn apply_reasoning_effort(&self, body: &mut serde_json::Value) {
+    /// Return the reasoning effort string if configured.
+    fn reasoning_effort_str(&self) -> Option<&'static str> {
         use moltis_agents::model::ReasoningEffort;
-        let Some(effort) = self.reasoning_effort else {
-            return;
-        };
-        let effort_str = match effort {
+        self.reasoning_effort.map(|e| match e {
             ReasoningEffort::Low => "low",
             ReasoningEffort::Medium => "medium",
             ReasoningEffort::High => "high",
-        };
-        body["reasoning"] = serde_json::json!({
-            "effort": effort_str,
-        });
+        })
+    }
+
+    /// Apply `reasoning_effort` for the **Chat Completions** API (used by
+    /// `complete()` and `stream_with_tools_sse()`).
+    ///
+    /// Format: `"reasoning_effort": "high"` (top-level string field).
+    fn apply_reasoning_effort_chat(&self, body: &mut serde_json::Value) {
+        if let Some(effort) = self.reasoning_effort_str() {
+            body["reasoning_effort"] = serde_json::json!(effort);
+        }
+    }
+
+    /// Apply `reasoning_effort` for the **Responses** API (used by
+    /// `stream_with_tools_websocket()`).
+    ///
+    /// Format: `"reasoning": { "effort": "high" }` (nested object).
+    fn apply_reasoning_effort_responses(&self, body: &mut serde_json::Value) {
+        if let Some(effort) = self.reasoning_effort_str() {
+            body["reasoning"] = serde_json::json!({ "effort": effort });
+        }
     }
 
     fn requires_reasoning_content_on_tool_messages(&self) -> bool {
@@ -682,7 +695,7 @@ impl OpenAiProvider {
                 body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
             }
 
-            self.apply_reasoning_effort(&mut body);
+            self.apply_reasoning_effort_chat(&mut body);
 
             debug!(
                 model = %self.model,
@@ -875,7 +888,7 @@ impl OpenAiProvider {
                 response_payload["tool_choice"] = serde_json::json!("auto");
             }
 
-            self.apply_reasoning_effort(&mut response_payload);
+            self.apply_reasoning_effort_responses(&mut response_payload);
 
             let create_event = serde_json::json!({
                 "type": "response.create",
@@ -1140,7 +1153,7 @@ impl LlmProvider for OpenAiProvider {
             body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
         }
 
-        self.apply_reasoning_effort(&mut body);
+        self.apply_reasoning_effort_chat(&mut body);
 
         debug!(
             model = %self.model,
@@ -2019,7 +2032,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_reasoning_effort_injects_field() {
+    fn apply_reasoning_effort_chat_injects_top_level_field() {
         let mut provider = OpenAiProvider::new(
             Secret::new("test-key".into()),
             "o3".into(),
@@ -2028,9 +2041,26 @@ mod tests {
         provider.reasoning_effort = Some(moltis_agents::model::ReasoningEffort::High);
 
         let mut body = serde_json::json!({ "model": "o3", "messages": [] });
-        provider.apply_reasoning_effort(&mut body);
+        provider.apply_reasoning_effort_chat(&mut body);
 
-        assert_eq!(body["reasoning"]["effort"], "high");
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn apply_reasoning_effort_responses_injects_nested_field() {
+        let mut provider = OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        );
+        provider.reasoning_effort = Some(moltis_agents::model::ReasoningEffort::Medium);
+
+        let mut body = serde_json::json!({ "model": "o3", "input": [] });
+        provider.apply_reasoning_effort_responses(&mut body);
+
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]
@@ -2041,7 +2071,8 @@ mod tests {
             "https://api.openai.com/v1".into(),
         );
         let mut body = serde_json::json!({ "model": "o3", "messages": [] });
-        provider.apply_reasoning_effort(&mut body);
+        provider.apply_reasoning_effort_chat(&mut body);
+        assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("reasoning").is_none());
     }
 

@@ -128,10 +128,15 @@ pub fn split_reasoning_suffix(
 
 #[must_use]
 pub fn raw_model_id(model_id: &str) -> &str {
-    let (id, _reasoning) = split_reasoning_suffix(model_id);
-    id.rsplit_once(MODEL_ID_NAMESPACE_SEP)
+    // Fast path: skip reasoning suffix parsing when no `@` is present.
+    let base = if model_id.contains(REASONING_SUFFIX_SEP) {
+        split_reasoning_suffix(model_id).0
+    } else {
+        model_id
+    };
+    base.rsplit_once(MODEL_ID_NAMESPACE_SEP)
         .map(|(_, raw)| raw)
-        .unwrap_or(id)
+        .unwrap_or(base)
 }
 
 #[must_use]
@@ -2312,11 +2317,15 @@ impl ProviderRegistry {
             .and_then(|id| self.providers.get(id))
             .cloned()?;
         if let Some(effort) = reasoning {
-            Some(
-                Arc::clone(&provider)
-                    .with_reasoning_effort(effort)
-                    .unwrap_or(provider),
-            )
+            let new_provider = Arc::clone(&provider).with_reasoning_effort(effort);
+            if new_provider.is_none() {
+                tracing::warn!(
+                    model_id,
+                    ?effort,
+                    "provider does not support reasoning effort; ignoring suffix"
+                );
+            }
+            Some(new_provider.unwrap_or(provider))
         } else {
             Some(provider)
         }
