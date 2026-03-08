@@ -66,10 +66,10 @@ impl AnthropicProvider {
             "budget_tokens": budget_tokens,
         });
         // Extended thinking requires higher max_tokens than budget_tokens.
-        if let Some(max_tokens) = body["max_tokens"].as_u64() {
-            if max_tokens <= budget_tokens {
-                body["max_tokens"] = serde_json::json!(budget_tokens + 4096);
-            }
+        if let Some(max_tokens) = body["max_tokens"].as_u64()
+            && max_tokens <= budget_tokens
+        {
+            body["max_tokens"] = serde_json::json!(budget_tokens + 4096);
         }
     }
 }
