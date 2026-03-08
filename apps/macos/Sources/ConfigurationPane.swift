@@ -236,8 +236,16 @@ private struct ConfigTextEditor: NSViewRepresentable {
         scrollView.layer?.borderWidth = 1
         scrollView.layer?.borderColor = NSColor.separatorColor.cgColor
 
+        let textView = Self.makeTextView(delegate: context.coordinator)
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+
+        return scrollView
+    }
+
+    private static func makeTextView(delegate: NSTextViewDelegate) -> NSTextView {
         let textView = NSTextView()
-        textView.delegate = context.coordinator
+        textView.delegate = delegate
         textView.isRichText = false
         textView.allowsUndo = true
         textView.usesFindPanel = true
@@ -261,16 +269,12 @@ private struct ConfigTextEditor: NSViewRepresentable {
             height: CGFloat.greatestFiniteMagnitude
         )
 
-        // 1.3x line height for comfortable reading (CotEditor default)
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineHeightMultiple = 1.3
         textView.defaultParagraphStyle = paragraphStyle
         textView.typingAttributes[.paragraphStyle] = paragraphStyle
 
-        scrollView.documentView = textView
-        context.coordinator.textView = textView
-
-        return scrollView
+        return textView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
