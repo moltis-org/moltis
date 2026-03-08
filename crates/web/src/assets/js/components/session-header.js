@@ -440,7 +440,7 @@ export function SessionHeader({
 			${!nameOwnLine && renameCta}
 				${
 					showDelete &&
-					!(isMain || isCron) &&
+					!isMain &&
 					html`
 					<button
 						class=${`${actionButtonClass} chat-session-btn-danger inline-flex items-center gap-1.5`}
