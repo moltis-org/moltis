@@ -989,17 +989,17 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
 
     // agents.presets.*.reasoning_effort must be low/medium/high if set.
     for (name, preset) in &config.agents.presets {
-        if let Some(ref effort) = preset.reasoning_effort {
-            if !matches!(effort.as_str(), "low" | "medium" | "high") {
-                diagnostics.push(Diagnostic {
-                    severity: Severity::Error,
-                    category: "invalid-value",
-                    path: format!("agents.presets.{name}.reasoning_effort"),
-                    message: format!(
-                        "reasoning_effort must be \"low\", \"medium\", or \"high\" (got \"{effort}\")"
-                    ),
-                });
-            }
+        if let Some(ref effort) = preset.reasoning_effort
+            && !matches!(effort.as_str(), "low" | "medium" | "high")
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "invalid-value",
+                path: format!("agents.presets.{name}.reasoning_effort"),
+                message: format!(
+                    "reasoning_effort must be \"low\", \"medium\", or \"high\" (got \"{effort}\")"
+                ),
+            });
         }
     }
 
