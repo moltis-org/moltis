@@ -87,32 +87,42 @@ mod tests {
 
     #[test]
     fn parses_full_callback_url() {
-        let parsed =
-            parse_callback_input("http://localhost:1455/auth/callback?code=abc123&state=xyz789")
-                .expect("should parse callback URL");
+        let parsed = match parse_callback_input(
+            "http://localhost:1455/auth/callback?code=abc123&state=xyz789",
+        ) {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("should parse callback URL: {error}"),
+        };
         assert_eq!(parsed.code, "abc123");
         assert_eq!(parsed.state, "xyz789");
     }
 
     #[test]
     fn parses_query_string() {
-        let parsed =
-            parse_callback_input("code=abc123&state=xyz789").expect("should parse query string");
+        let parsed = match parse_callback_input("code=abc123&state=xyz789") {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("should parse query string: {error}"),
+        };
         assert_eq!(parsed.code, "abc123");
         assert_eq!(parsed.state, "xyz789");
     }
 
     #[test]
     fn parses_compact_code_state() {
-        let parsed = parse_callback_input("abc123#xyz789").expect("should parse compact form");
+        let parsed = match parse_callback_input("abc123#xyz789") {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("should parse compact form: {error}"),
+        };
         assert_eq!(parsed.code, "abc123");
         assert_eq!(parsed.state, "xyz789");
     }
 
     #[test]
     fn rejects_missing_state() {
-        let err = parse_callback_input("http://localhost:1455/auth/callback?code=abc123")
-            .expect_err("missing state should fail");
+        let err = match parse_callback_input("http://localhost:1455/auth/callback?code=abc123") {
+            Ok(parsed) => panic!("missing state should fail, got parsed input: {parsed:?}"),
+            Err(error) => error,
+        };
         assert!(
             err.to_string().contains("code") || err.to_string().contains("state"),
             "error should mention missing callback fields, got: {err}"
