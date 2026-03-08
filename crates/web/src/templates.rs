@@ -77,6 +77,9 @@ pub(crate) struct GonData {
     started_at: u64,
     /// Whether an OpenClaw installation was detected (for import UI).
     openclaw_detected: bool,
+    /// When true, onboarding is done but auth setup is still pending.
+    /// The onboarding page should show only the auth step.
+    auth_setup_pending: bool,
     /// Small recent session snapshot for instant sidebar paint.
     sessions_recent: Vec<serde_json::Value>,
     agents: Vec<serde_json::Value>,
@@ -446,6 +449,10 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
         openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
+        auth_setup_pending: gw
+            .credential_store
+            .as_ref()
+            .is_some_and(|store| !store.is_setup_complete() && !store.is_auth_disabled()),
         sessions_recent,
         agents,
         #[cfg(feature = "vault")]

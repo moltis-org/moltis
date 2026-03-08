@@ -3256,6 +3256,7 @@ function OnboardingPage() {
 	var [step, setStep] = useState(-1); // -1 = checking
 	var [authNeeded, setAuthNeeded] = useState(false);
 	var [authSkippable, setAuthSkippable] = useState(false);
+	var [authOnly, setAuthOnly] = useState(false); // true when onboarding done but auth pending
 	var [voiceAvailable] = useState(() => getGon("voice_enabled") === true);
 	var headerRef = useRef(null);
 	var navRef = useRef(null);
@@ -3298,6 +3299,11 @@ function OnboardingPage() {
 				if (auth?.setup_required || (auth?.auth_disabled && !auth?.localhost_only)) {
 					setAuthNeeded(true);
 					setAuthSkippable(!auth.setup_required);
+					// Onboarding already done but auth still pending (e.g. remote
+					// access via Tailscale Serve) — show only the auth step.
+					if (auth?.setup_required && getGon("auth_setup_pending")) {
+						setAuthOnly(true);
+					}
 					setStep(0);
 				} else {
 					setAuthNeeded(false);
@@ -3315,6 +3321,16 @@ function OnboardingPage() {
 	if (step === -1) {
 		return html`<div class="onboarding-card">
 			<div class="text-sm text-[var(--muted)]">${t("common:status.loading")}</div>
+		</div>`;
+	}
+
+	// Auth-only mode: onboarding done but auth pending (e.g. remote Tailscale access).
+	// Show just the auth step, then go straight to chat.
+	if (authOnly) {
+		return html`<div class="onboarding-card">
+			<div class="mt-6">
+				<${AuthStep} onNext=${() => window.location.assign(preferredChatPath())} skippable=${false} />
+			</div>
 		</div>`;
 	}
 
