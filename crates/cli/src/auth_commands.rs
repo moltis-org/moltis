@@ -294,19 +294,25 @@ mod tests {
 
     #[test]
     fn pasted_callback_code_state_mismatch_is_rejected() {
-        let err = extract_pasted_callback_code(
+        let result = extract_pasted_callback_code(
             "http://localhost:1455/auth/callback?code=abc&state=state-a",
             "state-b",
-        )
-        .expect_err("state mismatch should fail");
+        );
+        let err = match result {
+            Ok(code) => panic!("state mismatch should fail, got code: {code}"),
+            Err(error) => error,
+        };
 
         assert!(err.to_string().contains("state mismatch"));
     }
 
     #[test]
     fn pasted_callback_code_extracts_code_when_state_matches() {
-        let code = extract_pasted_callback_code("abc123#state-ok", "state-ok")
-            .expect("matching state should succeed");
+        let result = extract_pasted_callback_code("abc123#state-ok", "state-ok");
+        let code = match result {
+            Ok(code) => code,
+            Err(error) => panic!("matching state should succeed: {error}"),
+        };
         assert_eq!(code, "abc123");
     }
 }
