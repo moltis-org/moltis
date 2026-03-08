@@ -77,9 +77,6 @@ pub(crate) struct GonData {
     started_at: u64,
     /// Whether an OpenClaw installation was detected (for import UI).
     openclaw_detected: bool,
-    /// When true, onboarding is done but auth setup is still pending.
-    /// The onboarding page should show only the auth step.
-    auth_setup_pending: bool,
     /// Small recent session snapshot for instant sidebar paint.
     sessions_recent: Vec<serde_json::Value>,
     agents: Vec<serde_json::Value>,
@@ -449,10 +446,6 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
         openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
-        auth_setup_pending: gw
-            .credential_store
-            .as_ref()
-            .is_some_and(|store| !store.is_setup_complete() && !store.is_auth_disabled()),
         sessions_recent,
         agents,
         #[cfg(feature = "vault")]
@@ -493,6 +486,7 @@ pub(crate) enum SpaTemplate {
     Index,
     Login,
     Onboarding,
+    SetupRequired,
 }
 
 pub(crate) struct ShareMeta {
@@ -536,6 +530,12 @@ struct OnboardingHtmlTemplate<'a> {
     nonce: &'a str,
     page_title: &'a str,
     gon_json: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "setup-required.html", escape = "html")]
+struct SetupRequiredHtmlTemplate<'a> {
+    asset_prefix: &'a str,
 }
 
 #[derive(serde::Deserialize)]
@@ -684,6 +684,18 @@ pub(crate) async fn render_spa_template(
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render onboarding template");
+                    String::new()
+                },
+            }
+        },
+        SpaTemplate::SetupRequired => {
+            let template = SetupRequiredHtmlTemplate {
+                asset_prefix: &asset_prefix,
+            };
+            match template.render() {
+                Ok(html) => html,
+                Err(e) => {
+                    warn!(error = %e, "failed to render setup-required template");
                     String::new()
                 },
             }

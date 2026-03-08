@@ -30,16 +30,7 @@ pub async fn spa_fallback(State(state): State<AppState>, uri: Uri) -> impl IntoR
 pub async fn onboarding_handler(State(state): State<AppState>) -> impl IntoResponse {
     let onboarded = onboarding_completed(&state.gateway).await;
 
-    // When onboarding is complete but auth credentials haven't been set up yet,
-    // stay on the onboarding page so the user can configure auth (e.g. when
-    // accessing remotely via Tailscale Serve where setup_required blocks access).
-    let auth_setup_pending = state
-        .gateway
-        .credential_store
-        .as_ref()
-        .is_some_and(|store| !store.is_setup_complete() && !store.is_auth_disabled());
-
-    if should_redirect_from_onboarding(onboarded) && !auth_setup_pending {
+    if should_redirect_from_onboarding(onboarded) {
         return Redirect::to("/").into_response();
     }
 
@@ -48,4 +39,8 @@ pub async fn onboarding_handler(State(state): State<AppState>) -> impl IntoRespo
 
 pub async fn login_handler_page(State(state): State<AppState>) -> impl IntoResponse {
     render_spa_template(&state.gateway, SpaTemplate::Login).await
+}
+
+pub async fn setup_required_handler(State(state): State<AppState>) -> impl IntoResponse {
+    render_spa_template(&state.gateway, SpaTemplate::SetupRequired).await
 }

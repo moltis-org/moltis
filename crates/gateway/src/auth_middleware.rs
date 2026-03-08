@@ -136,8 +136,8 @@ pub async fn auth_gate(
                     })),
                 )
                     .into_response()
-            } else {
-                // Allow all page paths through during setup — the SPA
+            } else if is_local {
+                // Local connections pass through during setup — the SPA
                 // handles onboarding redirects itself (spa_fallback
                 // redirects to /onboarding when not yet onboarded).
                 // This prevents a redirect loop when the instance is
@@ -147,6 +147,12 @@ pub async fn auth_gate(
                     method: AuthMethod::Loopback,
                 });
                 next.run(request).await
+            } else {
+                // Remote connections when auth is not configured yet:
+                // redirect to a static "setup required" page instead of
+                // passing through, which would cause a redirect loop
+                // between `/` and `/onboarding` (#350).
+                Redirect::to("/setup-required").into_response()
             }
         },
         AuthResult::Unauthorized => {
@@ -185,6 +191,7 @@ fn is_public_path(path: &str) -> bool {
     matches!(
         path,
         "/health" | "/auth/callback" | "/manifest.json" | "/sw.js" | "/login"
+            | "/setup-required"
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/api/public/")
         || path.starts_with("/api/channels/msteams/")
