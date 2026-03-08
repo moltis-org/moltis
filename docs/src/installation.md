@@ -85,13 +85,22 @@ See [Docker Deployment](docker.md) for full instructions on running Moltis in a 
 
 - Rust 1.91 or later
 - A C compiler (for some dependencies)
+- [just](https://github.com/casey/just) (command runner)
+- Node.js (for building Tailwind CSS)
 
 ### Clone and Build
 
 ```bash
 git clone https://github.com/moltis-org/moltis.git
 cd moltis
-cargo build --release
+just build-css           # Build Tailwind CSS for the web UI
+just build-release       # Build in release mode
+```
+
+For a full release build including WASM sandbox tools:
+
+```bash
+just build-release-with-wasm
 ```
 
 The binary will be at `target/release/moltis`.
@@ -143,7 +152,8 @@ brew upgrade moltis
 ```bash
 cd moltis
 git pull
-cargo build --release
+just build-css
+just build-release
 ```
 
 ## Uninstalling
