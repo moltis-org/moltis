@@ -36,6 +36,8 @@ pub struct OpenAiProvider {
     stream_transport: ProviderStreamTransport,
     metadata_cache: tokio::sync::OnceCell<ModelMetadata>,
     tool_mode_override: Option<moltis_config::ToolMode>,
+    /// Optional reasoning effort level for o-series models.
+    reasoning_effort: Option<moltis_agents::model::ReasoningEffort>,
 }
 
 const OPENAI_MODELS_ENDPOINT_PATH: &str = "/models";
@@ -438,6 +440,7 @@ impl OpenAiProvider {
             stream_transport: ProviderStreamTransport::Sse,
             metadata_cache: tokio::sync::OnceCell::new(),
             tool_mode_override: None,
+            reasoning_effort: None,
         }
     }
 
@@ -456,6 +459,7 @@ impl OpenAiProvider {
             stream_transport: ProviderStreamTransport::Sse,
             metadata_cache: tokio::sync::OnceCell::new(),
             tool_mode_override: None,
+            reasoning_effort: None,
         }
     }
 
@@ -469,6 +473,23 @@ impl OpenAiProvider {
     pub fn with_tool_mode(mut self, mode: moltis_config::ToolMode) -> Self {
         self.tool_mode_override = Some(mode);
         self
+    }
+
+    /// Apply `reasoning_effort` to an OpenAI Chat Completions or Responses API
+    /// request body, if configured.
+    fn apply_reasoning_effort(&self, body: &mut serde_json::Value) {
+        use moltis_agents::model::ReasoningEffort;
+        let Some(effort) = self.reasoning_effort else {
+            return;
+        };
+        let effort_str = match effort {
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+        };
+        body["reasoning"] = serde_json::json!({
+            "effort": effort_str,
+        });
     }
 
     fn requires_reasoning_content_on_tool_messages(&self) -> bool {
@@ -661,10 +682,13 @@ impl OpenAiProvider {
                 body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
             }
 
+            self.apply_reasoning_effort(&mut body);
+
             debug!(
                 model = %self.model,
                 messages_count = openai_messages.len(),
                 tools_count = tools.len(),
+                reasoning_effort = ?self.reasoning_effort,
                 "openai stream_with_tools request (sse)"
             );
             trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai stream request body (sse)");
@@ -851,6 +875,8 @@ impl OpenAiProvider {
                 response_payload["tool_choice"] = serde_json::json!("auto");
             }
 
+            self.apply_reasoning_effort(&mut response_payload);
+
             let create_event = serde_json::json!({
                 "type": "response.create",
                 "response": response_payload,
@@ -859,6 +885,7 @@ impl OpenAiProvider {
             debug!(
                 model = %self.model,
                 tools_count = tools.len(),
+                reasoning_effort = ?self.reasoning_effort,
                 "openai stream_with_tools request (websocket)"
             );
             trace!(event = %create_event, "openai websocket create event");
@@ -999,6 +1026,27 @@ impl LlmProvider for OpenAiProvider {
         &self.provider_name
     }
 
+    fn reasoning_effort(&self) -> Option<moltis_agents::model::ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    fn with_reasoning_effort(
+        self: std::sync::Arc<Self>,
+        effort: moltis_agents::model::ReasoningEffort,
+    ) -> Option<std::sync::Arc<dyn LlmProvider>> {
+        Some(std::sync::Arc::new(Self {
+            api_key: self.api_key.clone(),
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            provider_name: self.provider_name.clone(),
+            client: self.client,
+            stream_transport: self.stream_transport,
+            metadata_cache: tokio::sync::OnceCell::new(),
+            tool_mode_override: self.tool_mode_override,
+            reasoning_effort: Some(effort),
+        }))
+    }
+
     fn id(&self) -> &str {
         &self.model
     }
@@ -1092,10 +1140,13 @@ impl LlmProvider for OpenAiProvider {
             body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
         }
 
+        self.apply_reasoning_effort(&mut body);
+
         debug!(
             model = %self.model,
             messages_count = messages.len(),
             tools_count = tools.len(),
+            reasoning_effort = ?self.reasoning_effort,
             "openai complete request"
         );
         trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai request body");
@@ -1965,5 +2016,52 @@ mod tests {
             },
             other => panic!("expected stream error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn apply_reasoning_effort_injects_field() {
+        let mut provider = OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        );
+        provider.reasoning_effort = Some(moltis_agents::model::ReasoningEffort::High);
+
+        let mut body = serde_json::json!({ "model": "o3", "messages": [] });
+        provider.apply_reasoning_effort(&mut body);
+
+        assert_eq!(body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn apply_reasoning_effort_skipped_when_none() {
+        let provider = OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        );
+        let mut body = serde_json::json!({ "model": "o3", "messages": [] });
+        provider.apply_reasoning_effort(&mut body);
+        assert!(body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn with_reasoning_effort_creates_new_provider() {
+        use moltis_agents::model::{LlmProvider, ReasoningEffort};
+        let provider = Arc::new(OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        ));
+        assert!(provider.reasoning_effort().is_none());
+
+        let with_effort = provider
+            .with_reasoning_effort(ReasoningEffort::Medium)
+            .expect("openai supports reasoning_effort");
+        assert_eq!(
+            with_effort.reasoning_effort(),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(with_effort.id(), "o3");
     }
 }

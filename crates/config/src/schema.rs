@@ -338,6 +338,12 @@ pub struct AgentPreset {
     pub sessions: Option<SessionAccessPolicyConfig>,
     /// Persistent per-agent memory configuration.
     pub memory: Option<PresetMemoryConfig>,
+    /// Reasoning/thinking effort level: "low", "medium", or "high".
+    ///
+    /// Controls extended thinking for models that support it (e.g. Claude Opus,
+    /// OpenAI o-series). Higher values enable deeper reasoning but increase
+    /// latency and token usage.
+    pub reasoning_effort: Option<String>,
 }
 
 /// Voice configuration (TTS and STT).

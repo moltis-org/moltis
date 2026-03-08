@@ -159,6 +159,29 @@ impl SpawnAgentTool {
         sub_tools
     }
 
+    /// Apply reasoning_effort from the agent preset to the provider, if set.
+    ///
+    /// Returns the original provider if reasoning_effort is not configured or
+    /// the provider doesn't support it.
+    fn maybe_apply_reasoning_effort(
+        provider: Arc<dyn LlmProvider>,
+        preset: Option<&AgentPreset>,
+    ) -> Arc<dyn LlmProvider> {
+        use moltis_agents::model::ReasoningEffort;
+        let effort_str = preset.and_then(|p| p.reasoning_effort.as_deref());
+        let Some(effort) = effort_str else {
+            return provider;
+        };
+        let effort = match effort {
+            "low" => ReasoningEffort::Low,
+            "medium" => ReasoningEffort::Medium,
+            "high" => ReasoningEffort::High,
+            _ => return provider,
+        };
+        let cloned = Arc::clone(&provider);
+        cloned.with_reasoning_effort(effort).unwrap_or(provider)
+    }
+
     async fn resolve_preset(
         &self,
         params: &serde_json::Value,
@@ -392,13 +415,16 @@ impl AgentTool for SpawnAgentTool {
             .into());
         }
 
-        // Resolve provider.
+        // Resolve provider (and apply reasoning_effort from preset if set).
         let provider = if let Some(id) = model_id {
             let reg = self.provider_registry.read().await;
-            reg.get(&id)
-                .ok_or_else(|| Error::message(format!("unknown model: {id}")))?
+            let base_provider = reg
+                .get(&id)
+                .ok_or_else(|| Error::message(format!("unknown model: {id}")))?;
+            Self::maybe_apply_reasoning_effort(base_provider, preset.as_ref())
         } else {
-            Arc::clone(&self.default_provider)
+            let base = Arc::clone(&self.default_provider);
+            Self::maybe_apply_reasoning_effort(base, preset.as_ref())
         };
 
         // Capture model ID before provider is moved into the sub-agent loop.

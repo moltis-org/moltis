@@ -339,6 +339,7 @@ fn build_schema_map() -> KnownKeys {
                 "memory",
                 Struct(HashMap::from([("scope", Leaf), ("max_lines", Leaf)])),
             ),
+            ("reasoning_effort", Leaf),
         ]))
     };
 
@@ -984,6 +985,22 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 "default preset \"{default_preset}\" is not defined in agents.presets"
             ),
         });
+    }
+
+    // agents.presets.*.reasoning_effort must be low/medium/high if set.
+    for (name, preset) in &config.agents.presets {
+        if let Some(ref effort) = preset.reasoning_effort {
+            if !matches!(effort.as_str(), "low" | "medium" | "high") {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    category: "invalid-value",
+                    path: format!("agents.presets.{name}.reasoning_effort"),
+                    message: format!(
+                        "reasoning_effort must be \"low\", \"medium\", or \"high\" (got \"{effort}\")"
+                    ),
+                });
+            }
+        }
     }
 
     // SSRF allowlist CIDR validation
@@ -2295,5 +2312,68 @@ tool_mode = "{mode}"
                 result.diagnostics
             );
         }
+    }
+
+    #[test]
+    fn reasoning_effort_valid_values_no_error() {
+        for effort in &["low", "medium", "high"] {
+            let toml = format!(
+                r#"
+                [agents.presets.thinker]
+                model = "claude-opus-4-5-20251101"
+                reasoning_effort = "{effort}"
+                "#
+            );
+            let result = validate_toml_str(&toml);
+            let errors: Vec<_> = result
+                .diagnostics
+                .iter()
+                .filter(|d| d.path.contains("reasoning_effort") && d.severity == Severity::Error)
+                .collect();
+            assert!(
+                errors.is_empty(),
+                "effort={effort} should be valid: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reasoning_effort_invalid_value_reports_error() {
+        let toml = r#"
+        [agents.presets.thinker]
+        model = "claude-opus-4-5-20251101"
+        reasoning_effort = "extreme"
+        "#;
+        let result = validate_toml_str(toml);
+        let error = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path.contains("reasoning_effort") && d.severity == Severity::Error);
+        assert!(
+            error.is_some(),
+            "invalid reasoning_effort should produce error"
+        );
+        assert!(
+            error.unwrap().message.contains("extreme"),
+            "error message should mention the invalid value"
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_recognized_in_schema() {
+        let toml = r#"
+        [agents.presets.thinker]
+        reasoning_effort = "high"
+        "#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.message.contains("reasoning_effort"));
+        assert!(
+            unknown.is_none(),
+            "reasoning_effort should be a recognized field, got: {:?}",
+            result.diagnostics
+        );
     }
 }

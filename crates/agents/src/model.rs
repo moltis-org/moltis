@@ -1,8 +1,24 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use {async_trait::async_trait, tokio_stream::Stream};
 
 use crate::multimodal::parse_data_uri;
+
+// ── Reasoning effort ──────────────────────────────────────────────────────
+
+/// Reasoning/thinking effort level for models that support extended thinking.
+///
+/// Maps to provider-specific parameters:
+/// - **Anthropic**: `thinking.budget_tokens` (low=4096, medium=10240, high=32768)
+/// - **OpenAI**: `reasoning_effort` field on o-series models
+/// - **Other providers**: ignored if unsupported
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
 
 // ── Typed chat messages ─────────────────────────────────────────────────────
 
@@ -377,6 +393,26 @@ pub trait LlmProvider: Send + Sync {
         _tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream(messages)
+    }
+
+    /// Configured reasoning effort for this provider instance, if any.
+    ///
+    /// Providers that support extended thinking (Anthropic, OpenAI o-series)
+    /// use this value when building API requests.
+    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        None
+    }
+
+    /// Return a new provider with reasoning effort set, if supported.
+    ///
+    /// Returns `None` for providers that don't support reasoning effort.
+    /// Used by sub-agent spawning to apply per-agent reasoning settings
+    /// without mutating the shared registry provider.
+    fn with_reasoning_effort(
+        self: Arc<Self>,
+        _effort: ReasoningEffort,
+    ) -> Option<Arc<dyn LlmProvider>> {
+        None
     }
 
     /// Fetch runtime model metadata from the provider API.
