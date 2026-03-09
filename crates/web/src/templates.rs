@@ -786,6 +786,30 @@ mod tests {
     }
 
     #[test]
+    fn setup_required_template_renders_html() {
+        let template = SetupRequiredHtmlTemplate {
+            asset_prefix: "/assets/v/test123/",
+        };
+        let html = template.render().unwrap();
+        assert!(
+            html.contains("<!DOCTYPE html>"),
+            "should produce a full HTML document"
+        );
+        assert!(
+            html.contains("Authentication Not Configured"),
+            "should contain the setup-required heading"
+        );
+        assert!(
+            html.contains("moltis auth reset-password"),
+            "should contain the CLI reset command"
+        );
+        assert!(
+            html.contains("/assets/v/test123/"),
+            "should interpolate the asset prefix"
+        );
+    }
+
+    #[test]
     fn mem_snapshot_omits_llama_cpp_when_none() {
         let snapshot = MemSnapshot {
             process: 1,
