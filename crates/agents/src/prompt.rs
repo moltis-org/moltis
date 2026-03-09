@@ -252,7 +252,7 @@ const EXEC_ROUTING_GUIDANCE_SANDBOX: &str = "Execution routing:\n\
 - Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
 - Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
 const EXEC_ROUTING_GUIDANCE_HOST_ONLY: &str = "Execution routing:\n\
-- `exec` runs on the host.\n";
+- `exec` runs on the host and may require approval.\n";
 const EXEC_ROUTING_SUDO_HINT: &str =
     "- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n";
 /// Build model-family-aware tool call guidance for text-based tool mode.
@@ -1161,6 +1161,38 @@ mod tests {
         assert!(!prompt.contains("Sandbox/host routing changes"));
         // Sudo hint should NOT appear when sudo_non_interactive is not set.
         assert!(!prompt.contains("sudo_non_interactive"));
+    }
+
+    #[test]
+    fn test_runtime_context_no_sandbox_with_sudo_includes_sudo_hint() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("container-host".into()),
+                sudo_non_interactive: Some(true),
+                ..Default::default()
+            },
+            sandbox: None,
+            nodes: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("`exec` runs on the host"));
+        assert!(!prompt.contains("runs inside sandbox"));
+        assert!(prompt.contains("sudo_non_interactive=true` means non-interactive sudo"));
     }
 
     #[test]

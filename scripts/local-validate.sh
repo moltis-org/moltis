@@ -499,7 +499,7 @@ run_check "local/lockfile" "cargo fetch --locked"
 # fresh clones won't have it).
 if [[ ! -f crates/web/src/assets/style.css ]]; then
   echo "style.css missing — building CSS with Tailwind..."
-  just build-css
+  run_check "local/build-css" "just build-css"
 fi
 
 # Lint runs first to warm the cargo build cache (clippy compiles all targets).
