@@ -136,22 +136,21 @@ pub async fn auth_gate(
                     })),
                 )
                     .into_response()
-            } else if is_local {
-                // Local connections pass through during setup — the SPA
-                // handles onboarding redirects itself (spa_fallback
-                // redirects to /onboarding when not yet onboarded).
-                // This prevents a redirect loop when the instance is
-                // already onboarded but auth credentials haven't been
-                // configured yet (#310).
+            } else if is_local || path == "/onboarding" || path == "/onboarding/" {
+                // Local connections and /onboarding pass through during
+                // setup.  Local: the SPA handles onboarding redirects
+                // itself.  Remote /onboarding: the page's own auth step
+                // (step 0) requires a setup code, so it is safe to
+                // render without full auth (#310, #350).
                 request.extensions_mut().insert(AuthIdentity {
                     method: AuthMethod::Loopback,
                 });
                 next.run(request).await
             } else {
-                // Remote connections when auth is not configured yet:
-                // redirect to a static "setup required" page instead of
-                // passing through, which would cause a redirect loop
-                // between `/` and `/onboarding` (#350).
+                // Remote connections to other pages when auth is not
+                // configured yet: redirect to a static "setup required"
+                // page instead of passing through, which would cause a
+                // redirect loop between `/` and `/onboarding` (#350).
                 Redirect::to("/setup-required").into_response()
             }
         },
