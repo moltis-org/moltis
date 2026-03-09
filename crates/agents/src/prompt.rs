@@ -250,8 +250,7 @@ const EXEC_ROUTING_GUIDANCE_SANDBOX: &str = "Execution routing:\n\
 - When sandbox is disabled, `exec` runs on the host and may require approval.\n\
 - In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
 - Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n";
-const EXEC_ROUTING_SANDBOX_CLOSING: &str =
-    "- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
+const EXEC_ROUTING_SANDBOX_CLOSING: &str = "- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
 const EXEC_ROUTING_GUIDANCE_HOST_ONLY: &str = "Execution routing:\n\
 - `exec` runs on the host and may require approval.\n";
 const EXEC_ROUTING_SUDO_HINT: &str =
