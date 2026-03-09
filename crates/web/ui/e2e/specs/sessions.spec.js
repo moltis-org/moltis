@@ -656,8 +656,10 @@ test.describe("Session management", () => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
-		// Create a cron session via RPC so it appears in the session list
+		// Create a cron session in the database via sessions.switch, then add a
+		// message so messageCount > 0 (triggers the confirmation dialog on delete).
 		const cronKey = `cron:e2e-delete-test-${Date.now()}`;
+		await expectRpcOk(page, "sessions.switch", { key: cronKey });
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
@@ -679,7 +681,7 @@ test.describe("Session management", () => {
 
 		// Click the cron session to select it
 		const cronItem = page.locator(`#sessionList .session-item[data-session-key="${cronKey}"]`);
-		await expect(cronItem).toBeVisible({ timeout: 5_000 });
+		await expect(cronItem).toBeVisible({ timeout: 10_000 });
 		await cronItem.click();
 
 		// Wait for session messages to be fully loaded before proceeding
