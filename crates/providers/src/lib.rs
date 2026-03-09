@@ -2366,24 +2366,21 @@ impl ProviderRegistry {
     /// the corresponding reasoning effort applied.
     #[must_use]
     pub fn list_models_with_reasoning_variants(&self) -> Vec<ModelInfo> {
-        let mut result: Vec<ModelInfo> = self.models.clone();
-        let variants: Vec<ModelInfo> = self
-            .models
-            .iter()
-            .filter(|m| supports_reasoning_for_model(&m.id))
-            .flat_map(|m| {
-                REASONING_SUFFIXES.iter().map(move |&(suffix, _)| {
+        let mut result = Vec::with_capacity(self.models.len() * 4);
+        for m in &self.models {
+            result.push(m.clone());
+            if supports_reasoning_for_model(&m.id) {
+                for &(suffix, _) in REASONING_SUFFIXES {
                     let label = suffix.strip_prefix("reasoning-").unwrap_or(suffix);
-                    ModelInfo {
+                    result.push(ModelInfo {
                         id: format!("{}{REASONING_SUFFIX_SEP}{suffix}", m.id),
                         provider: m.provider.clone(),
                         display_name: format!("{} ({label} reasoning)", m.display_name),
                         created_at: m.created_at,
-                    }
-                })
-            })
-            .collect();
-        result.extend(variants);
+                    });
+                }
+            }
+        }
         result
     }
 
@@ -4004,6 +4001,22 @@ mod tests {
         assert!(variant_ids.contains(&"anthropic::claude-opus-4-5-20251101@reasoning-high"));
         // gpt-4o should NOT have variants
         assert!(!variant_ids.iter().any(|id| id.contains("gpt-4o@")));
+
+        // Variants should be grouped immediately after their base model
+        assert_eq!(variant_ids[0], "anthropic::claude-opus-4-5-20251101");
+        assert_eq!(
+            variant_ids[1],
+            "anthropic::claude-opus-4-5-20251101@reasoning-low"
+        );
+        assert_eq!(
+            variant_ids[2],
+            "anthropic::claude-opus-4-5-20251101@reasoning-medium"
+        );
+        assert_eq!(
+            variant_ids[3],
+            "anthropic::claude-opus-4-5-20251101@reasoning-high"
+        );
+        assert_eq!(variant_ids[4], "openai::gpt-4o");
     }
 
     #[test]
