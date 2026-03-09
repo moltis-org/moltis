@@ -19,6 +19,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.10.18] - 2026-03-09
+### Added
+- [gateway] Make provider discovery startup non-blocking
+- [monitoring] Track memory history and improve local-llm memory reporting (#325)
+- [ios] Add local llama cpp memory field to GraphQL schema
+- [providers] Include reasoning fields for kimi models (#323)
+- [chat] Tabs to filter chats between sessions and cron (#338)
+- [oauth] Support pasted callback URL fallback (#365)
+- [providers] Add reasoning effort support for models with extended thinking (#363)
+
+
+### Changed
+- Externalize web/wasm assets and reduce memory footprint (#321)
+- [web] Move chat history hydration to paged HTTP
+- [web] Paginate sessions and auto-load older history
+
+
+### Removed
+- [web] Remove nested onboarding scroll and restore settings nav icons
+- [web] Declutter chat controls and fix dropdown positioning
+
+
+### Fixed
+- [gateway] Speed up startup by deferring tailscale and log scan
+- [gateway] Improve browser warmup integration
+- [scripts] Run local nextest with ci timeout profile
+- [ci] Build macOS app arm64 in fast path
+- [web] Move session history off websocket and cap payload size
+- [web] Use combo select for session header selectors
+- [web] Externalize SVG icons and restore empty-chat centering
+- [web] Align e2e with controls modal and daily model refresh
+- [ci] Stage wasm assets for cargo-deb packaging
+- [packaging] Use cli-relative web assets in cargo-deb
+- Install rustls CryptoProvider before channel startup (#336)
+- [ci,tools] Unblock dependabot and support wasmtime 36
+- [auth] Honor forwarded host for proxy session cookies
+- [config] Include tmux in default sandbox packages
+- [mdns] Use stable host label to avoid mDNSResponder conflict and double-.local suffix (#349)
+- [web] Prevent Enter key from triggering actions during IME composition (#341)
+- [biome] Update schema to 2.4.6 and move noUnusedExpressions to suspicious
+- [ci] Update biome version to 2.4.6 in CI workflows
+- [macos] Extract makeTextView to fix function body length lint violation
+- [providers] Report compatible client_version for Codex model discovery (#359)
+- [prompt] Omit sandbox/node info from runtime prompt when disabled (#362)
+- [web] Allow deleting cron sessions from chat sidebar (#357)
+- [chat] Skip duplicate text fallback when TTS disabled and voice streamed (#373)
+- [web] Break redirect loop when accessing via Tailscale Serve (#356)
+
+
+### Security
+- [nodes] Add multi-node support with device pairing, remote exec, and UI (#291)
+- [security] Add direct nginx websocket proxy example (#364)
+
 ## [0.10.17] - 2026-03-05
 ### Fixed
 - [config] Include tmux in default sandbox packages

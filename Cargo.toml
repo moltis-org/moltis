@@ -119,7 +119,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/moltis-org/moltis"
 rust-version = "1.91"
-version      = "0.10.17"
+version      = "0.10.18"
 
 [workspace.dependencies]
 # APNS
