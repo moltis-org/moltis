@@ -1187,12 +1187,42 @@ async fn api_endpoint_rate_limited_after_high_request_volume() {
 
 // ── Onboarding auth protection tests ─────────────────────────────────────────
 
-/// During setup (no password), a remote connection to /onboarding is allowed
-/// through — the auth gate must not redirect back to /onboarding (which would
-/// cause an infinite 303 loop).
+/// During setup (no password), a local connection to /onboarding passes
+/// through without redirect — the SPA handles onboarding routing itself.
 #[cfg(feature = "web-ui")]
 #[tokio::test]
-async fn onboarding_accessible_during_setup_for_remote() {
+async fn onboarding_passes_through_for_local_during_setup() {
+    let (addr, _store, _state) = start_localhost_server().await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://{addr}/onboarding"))
+        .send()
+        .await
+        .unwrap();
+
+    // Local connections must NOT be redirected to /setup-required.
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_ne!(
+        location, "/setup-required",
+        "local /onboarding during setup must not redirect to /setup-required"
+    );
+}
+
+/// During setup (no password), a remote connection to /onboarding also
+/// passes through — the onboarding page handles its own auth via setup
+/// codes (step 0).
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn onboarding_passes_through_for_remote_during_setup() {
     let (addr, _store, _state) = start_proxied_server().await;
 
     let client = reqwest::Client::builder()
@@ -1206,15 +1236,111 @@ async fn onboarding_accessible_during_setup_for_remote() {
         .await
         .unwrap();
 
-    // Must NOT be a redirect (especially not 303 to /onboarding).
+    // Remote /onboarding must NOT redirect to /setup-required; it has its
+    // own setup-code auth flow.
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     assert_ne!(
-        resp.status(),
-        303,
-        "/onboarding must not redirect to itself during setup"
+        location, "/setup-required",
+        "remote /onboarding during setup must not redirect to /setup-required"
     );
+}
+
+/// During setup (no password), a remote connection to / is redirected to
+/// /setup-required (same as /onboarding).
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn root_redirects_to_setup_required_for_remote() {
+    let (addr, _store, _state) = start_proxied_server().await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client.get(format!("http://{addr}/")).send().await.unwrap();
+
     assert!(
-        !resp.status().is_redirection(),
-        "/onboarding should serve the page during setup, not redirect"
+        resp.status().is_redirection(),
+        "remote / during setup should redirect"
+    );
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(
+        location, "/setup-required",
+        "remote / during setup must redirect to /setup-required"
+    );
+}
+
+/// /setup-required is a public path and serves content even for remote
+/// connections during setup (no redirect loop).
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn setup_required_page_accessible_for_remote() {
+    let (addr, _store, _state) = start_proxied_server().await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://{addr}/setup-required"))
+        .send()
+        .await
+        .unwrap();
+
+    // /setup-required is a public path — must not redirect.
+    assert!(
+        resp.status().is_success(),
+        "/setup-required should serve content, got {}",
+        resp.status()
+    );
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Authentication Not Configured"),
+        "/setup-required should contain the setup heading"
+    );
+}
+
+/// After setup is complete, /setup-required redirects to /login so stale
+/// bookmarks don't show a misleading "Authentication Not Configured" page.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn setup_required_redirects_to_login_after_setup() {
+    let (addr, store, _state) = start_proxied_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://{addr}/setup-required"))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(
+        resp.status().is_redirection(),
+        "/setup-required should redirect after setup, got {}",
+        resp.status()
+    );
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(
+        location, "/login",
+        "/setup-required should redirect to /login after setup"
     );
 }
 

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Setup Required</title>
+<link rel="icon" type="image/png" sizes="96x96" href="{{ asset_prefix }}icons/icon-96.png">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
+<link rel="stylesheet" href="{{ asset_prefix }}css/base.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/components.css">
+<link rel="stylesheet" href="{{ asset_prefix }}style.css">
+<style>
+  body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+  .card{max-width:460px;padding:2.5rem;border-radius:12px;border:1px solid var(--border);text-align:center}
+  h1{margin:0 0 .75rem;font-size:1.35rem}
+  p{margin:.5rem 0;line-height:1.6;color:var(--muted)}
+  code{background:rgba(128,128,128,.15);padding:.15em .4em;border-radius:4px;font-size:.9em}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Authentication Not Configured</h1>
+  <p>This instance requires authentication to be set up before it can be accessed remotely.</p>
+  <p>Connect from the local machine or use the CLI:</p>
+  <p><code>moltis auth reset-password</code></p>
+</div>
+</body>
+</html>

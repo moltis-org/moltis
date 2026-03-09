@@ -40,3 +40,16 @@ pub async fn onboarding_handler(State(state): State<AppState>) -> impl IntoRespo
 pub async fn login_handler_page(State(state): State<AppState>) -> impl IntoResponse {
     render_spa_template(&state.gateway, SpaTemplate::Login).await
 }
+
+pub async fn setup_required_handler(State(state): State<AppState>) -> impl IntoResponse {
+    // If auth is already configured, redirect so stale bookmarks don't show
+    // a misleading "Authentication Not Configured" page.
+    if let Some(ref store) = state.gateway.credential_store
+        && store.is_setup_complete()
+    {
+        return Redirect::to("/login").into_response();
+    }
+    render_spa_template(&state.gateway, SpaTemplate::SetupRequired)
+        .await
+        .into_response()
+}

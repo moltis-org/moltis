@@ -486,6 +486,7 @@ pub(crate) enum SpaTemplate {
     Index,
     Login,
     Onboarding,
+    SetupRequired,
 }
 
 pub(crate) struct ShareMeta {
@@ -529,6 +530,12 @@ struct OnboardingHtmlTemplate<'a> {
     nonce: &'a str,
     page_title: &'a str,
     gon_json: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "setup-required.html", escape = "html")]
+struct SetupRequiredHtmlTemplate<'a> {
+    asset_prefix: &'a str,
 }
 
 #[derive(serde::Deserialize)]
@@ -681,6 +688,18 @@ pub(crate) async fn render_spa_template(
                 },
             }
         },
+        SpaTemplate::SetupRequired => {
+            let template = SetupRequiredHtmlTemplate {
+                asset_prefix: &asset_prefix,
+            };
+            match template.render() {
+                Ok(html) => html,
+                Err(e) => {
+                    warn!(error = %e, "failed to render setup-required template");
+                    String::new()
+                },
+            }
+        },
     };
 
     // Extract CDN origin from shiki_url for CSP script-src allowlisting.
@@ -764,6 +783,30 @@ mod tests {
         let safe = script_safe_json(&val);
         assert!(!safe.contains('<'));
         assert!(!safe.contains('>'));
+    }
+
+    #[test]
+    fn setup_required_template_renders_html() {
+        let template = SetupRequiredHtmlTemplate {
+            asset_prefix: "/assets/v/test123/",
+        };
+        let html = template.render().unwrap();
+        assert!(
+            html.contains("<!DOCTYPE html>"),
+            "should produce a full HTML document"
+        );
+        assert!(
+            html.contains("Authentication Not Configured"),
+            "should contain the setup-required heading"
+        );
+        assert!(
+            html.contains("moltis auth reset-password"),
+            "should contain the CLI reset command"
+        );
+        assert!(
+            html.contains("/assets/v/test123/"),
+            "should interpolate the asset prefix"
+        );
     }
 
     #[test]

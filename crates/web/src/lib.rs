@@ -45,6 +45,7 @@ pub fn web_routes() -> Router<AppState> {
         .route("/share/{share_id}", get(share::share_page_handler))
         .route("/onboarding", get(spa::onboarding_handler))
         .route("/login", get(spa::login_handler_page))
+        .route("/setup-required", get(spa::setup_required_handler))
         .route(
             "/assets/v/{version}/{*path}",
             get(assets::versioned_asset_handler),
