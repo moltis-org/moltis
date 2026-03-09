@@ -651,4 +651,61 @@ test.describe("Session management", () => {
 
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("cron session shows delete button in more controls", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		// Create a cron session in the database via sessions.switch, then add a
+		// message so messageCount > 0 (triggers the confirmation dialog on delete).
+		const cronKey = `cron:e2e-delete-test-${Date.now()}`;
+		await expectRpcOk(page, "sessions.switch", { key: cronKey });
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: cronKey,
+				state: "final",
+				text: "cron output",
+				messageIndex: 0,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+				runId: "run-cron-delete",
+			},
+		});
+
+		// Switch to the cron tab so the session is visible
+		const cronTab = page.locator('#sessionTabBar .session-tab[data-tab="cron"]');
+		await expect(cronTab).toBeVisible({ timeout: 5_000 });
+		await cronTab.click();
+
+		// Click the cron session to select it
+		const cronItem = page.locator(`#sessionList .session-item[data-session-key="${cronKey}"]`);
+		await expect(cronItem).toBeVisible({ timeout: 10_000 });
+		await cronItem.click();
+
+		// Wait for session messages to be fully loaded before proceeding
+		await expect(page.locator(".msg")).not.toHaveCount(0, { timeout: 5_000 });
+
+		// Open more controls and verify delete button is visible
+		await openChatMoreModal(page);
+		const deleteBtn = page.locator('#chatMoreModal button[title="Delete session"]');
+		await expect(deleteBtn).toBeVisible({ timeout: 5_000 });
+
+		// Click delete — should show confirmation since it has messages
+		await deleteBtn.click();
+		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
+
+		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
+			hasText: "Delete this session?",
+		});
+		await expect(confirmModal).toBeVisible({ timeout: 10_000 });
+		await confirmModal.getByRole("button", { name: "Delete", exact: true }).click();
+		await expect(confirmModal).toHaveCount(0, { timeout: 10_000 });
+
+		// Cron session should be gone from the list
+		await expect(cronItem).toHaveCount(0, { timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
 });
