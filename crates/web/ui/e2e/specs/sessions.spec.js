@@ -674,7 +674,7 @@ test.describe("Session management", () => {
 		});
 
 		// Switch to the cron tab so the session is visible
-		const cronTab = page.locator('[data-session-tab="cron"]');
+		const cronTab = page.locator('#sessionTabBar .session-tab[data-tab="cron"]');
 		await expect(cronTab).toBeVisible({ timeout: 5_000 });
 		await cronTab.click();
 
