@@ -3,6 +3,7 @@ use {
     clap::Subcommand,
     moltis_oauth::{
         CallbackServer, OAuthFlow, TokenStore, callback_port, device_flow, load_oauth_config,
+        parse_callback_input,
     },
 };
 
@@ -67,7 +68,17 @@ async fn login(provider: &str) -> Result<()> {
     }
 
     println!("Waiting for callback on http://127.0.0.1:{port}/auth/callback ...");
-    let code = CallbackServer::wait_for_code(port, req.state, "127.0.0.1").await?;
+    println!(
+        "If this callback cannot be reached, you'll be prompted to paste the redirect URL manually."
+    );
+    let code = match CallbackServer::wait_for_code(port, req.state.clone(), "127.0.0.1").await {
+        Ok(code) => code,
+        Err(error) => {
+            println!("Automatic OAuth callback failed: {error}");
+            println!("Paste the full callback URL (or code#state), then press Enter:");
+            read_pasted_callback_code(&req.state)?
+        },
+    };
 
     println!("Exchanging code for tokens...");
     let tokens = flow.exchange(&code, &req.pkce.verifier).await?;
@@ -77,6 +88,26 @@ async fn login(provider: &str) -> Result<()> {
 
     println!("Successfully logged in to {provider}");
     Ok(())
+}
+
+fn read_pasted_callback_code(expected_state: &str) -> Result<String> {
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    extract_pasted_callback_code(&input, expected_state)
+}
+
+fn extract_pasted_callback_code(input: &str, expected_state: &str) -> Result<String> {
+    let parsed = parse_callback_input(input).map_err(|error| {
+        anyhow::anyhow!(
+            "invalid callback input; expected URL, query string, or code#state: {error}"
+        )
+    })?;
+
+    if parsed.state != expected_state {
+        anyhow::bail!("OAuth state mismatch in pasted callback");
+    }
+
+    Ok(parsed.code)
 }
 
 async fn login_device_flow(provider: &str, config: &moltis_oauth::OAuthConfig) -> Result<()> {
@@ -246,7 +277,7 @@ async fn create_api_key(label: &str, scopes_str: Option<String>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::reset_password_success_lines;
+    use super::{extract_pasted_callback_code, reset_password_success_lines};
 
     #[test]
     fn reset_password_message_describes_disabled_auth_state() {
@@ -259,5 +290,29 @@ mod tests {
             lines[1],
             "Authentication is now disabled. Open Settings > Security to set a password or passkey to re-enable it."
         );
+    }
+
+    #[test]
+    fn pasted_callback_code_state_mismatch_is_rejected() {
+        let result = extract_pasted_callback_code(
+            "http://localhost:1455/auth/callback?code=abc&state=state-a",
+            "state-b",
+        );
+        let err = match result {
+            Ok(code) => panic!("state mismatch should fail, got code: {code}"),
+            Err(error) => error,
+        };
+
+        assert!(err.to_string().contains("state mismatch"));
+    }
+
+    #[test]
+    fn pasted_callback_code_extracts_code_when_state_matches() {
+        let result = extract_pasted_callback_code("abc123#state-ok", "state-ok");
+        let code = match result {
+            Ok(code) => code,
+            Err(error) => panic!("matching state should succeed: {error}"),
+        };
+        assert_eq!(code, "abc123");
     }
 }

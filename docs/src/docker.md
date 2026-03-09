@@ -347,8 +347,9 @@ docker exec -it moltis moltis auth login --provider openai-codex
 ```
 
 The CLI opens a browser on the machine where you run the command and handles
-the OAuth callback locally. Tokens are saved to the config volume and picked
-up by the running gateway automatically.
+the OAuth callback locally. If automatic callback capture fails, Moltis prompts
+you to paste the callback URL (or `code#state`) into the terminal. Tokens are
+saved to the config volume and picked up by the running gateway automatically.
 
 ### Permission denied on bind mounts
 

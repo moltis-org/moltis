@@ -38,6 +38,12 @@ async function configureMock(mockPort, options) {
 	return res.ok;
 }
 
+async function getLastRedirectUrl(mockPort) {
+	var res = await fetch(mockUrl(mockPort, "/last-redirect"));
+	var payload = await res.json();
+	return payload?.redirect_url || "";
+}
+
 function removeIfExists(filePath) {
 	try {
 		fs.rmSync(filePath, { force: true });
@@ -139,6 +145,48 @@ test.describe("OAuth provider connection", () => {
 		expect(authCall.query.code_challenge_method).toBe("S256");
 		expect(authCall.query.state).toBeTruthy();
 		expect(authCall.query.client_id).toBe("test-client-id");
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("OAuth can be completed by pasting callback URL in settings UI", async ({ page, context }) => {
+		var pageErrors = watchPageErrors(page);
+		await openProvidersSettingsPage(page);
+
+		// Prevent authorize endpoint from auto-redirecting back to callback so
+		// we can test manual callback submission.
+		await configureMock(mockPort, { authorize_should_not_redirect: "true" });
+
+		var codexCard = await openProviderPicker(page);
+		await codexCard.click();
+		await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
+
+		var popupPromise = context.waitForEvent("page", { timeout: 10_000 });
+		await page.getByRole("button", { name: "Connect" }).click();
+		await popupPromise;
+
+		var callbackInput = page.getByPlaceholder("http://localhost:1455/auth/callback?code=...&state=...");
+		await expect(callbackInput).toBeVisible();
+
+		var redirectUrl = "";
+		await expect
+			.poll(
+				async () => {
+					redirectUrl = await getLastRedirectUrl(mockPort);
+					return redirectUrl.length > 0;
+				},
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+
+		await callbackInput.fill(redirectUrl);
+		await page.getByRole("button", { name: "Submit Callback" }).click();
+
+		await expect(page.getByText(/connected successfully|Select Model/i)).toBeVisible({ timeout: 15_000 });
+
+		var calls = await getMockCalls(mockPort);
+		var tokenCalls = calls.filter((c) => c.path === "/token");
+		expect(tokenCalls.length).toBe(1);
 
 		expect(pageErrors).toEqual([]);
 	});
