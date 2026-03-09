@@ -1187,12 +1187,12 @@ async fn api_endpoint_rate_limited_after_high_request_volume() {
 
 // ── Onboarding auth protection tests ─────────────────────────────────────────
 
-/// During setup (no password), a remote connection to /onboarding is allowed
-/// through — the auth gate must not redirect back to /onboarding (which would
-/// cause an infinite 303 loop).
+/// During setup (no password), a remote connection to /onboarding is
+/// redirected to /setup-required — the auth gate must never redirect back
+/// to /onboarding (which would cause an infinite 303 loop).
 #[cfg(feature = "web-ui")]
 #[tokio::test]
-async fn onboarding_accessible_during_setup_for_remote() {
+async fn onboarding_redirects_to_setup_required_for_remote() {
     let (addr, _store, _state) = start_proxied_server().await;
 
     let client = reqwest::Client::builder()
@@ -1206,15 +1206,20 @@ async fn onboarding_accessible_during_setup_for_remote() {
         .await
         .unwrap();
 
-    // Must NOT be a redirect (especially not 303 to /onboarding).
-    assert_ne!(
-        resp.status(),
-        303,
-        "/onboarding must not redirect to itself during setup"
-    );
+    // Remote setup-required must redirect to the setup-required page,
+    // not loop back to /onboarding (#350).
     assert!(
-        !resp.status().is_redirection(),
-        "/onboarding should serve the page during setup, not redirect"
+        resp.status().is_redirection(),
+        "remote /onboarding during setup should redirect"
+    );
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(
+        location, "/setup-required",
+        "remote /onboarding during setup must redirect to /setup-required"
     );
 }
 
