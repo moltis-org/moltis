@@ -159,6 +159,42 @@ impl SpawnAgentTool {
         sub_tools
     }
 
+    /// Apply reasoning_effort from the agent preset to the provider, if set.
+    ///
+    /// Returns the original provider if reasoning_effort is not configured or
+    /// the provider doesn't support it. Warns when the preset overrides a
+    /// reasoning effort already set via the model ID suffix.
+    fn maybe_apply_reasoning_effort(
+        provider: Arc<dyn LlmProvider>,
+        preset: Option<&AgentPreset>,
+    ) -> Arc<dyn LlmProvider> {
+        let Some(effort) = preset.and_then(|p| p.reasoning_effort) else {
+            return provider;
+        };
+        // Warn if the provider already has a (different) reasoning effort from
+        // the model ID suffix — the preset value will take precedence.
+        if let Some(existing) = provider.reasoning_effort()
+            && existing != effort
+        {
+            tracing::warn!(
+                model = %provider.id(),
+                existing = ?existing,
+                preset = ?effort,
+                "preset reasoning_effort overrides model-ID suffix; using preset value"
+            );
+        }
+        let cloned = Arc::clone(&provider);
+        let new_provider = cloned.with_reasoning_effort(effort);
+        if new_provider.is_none() {
+            info!(
+                model = %provider.id(),
+                ?effort,
+                "provider does not support reasoning effort; ignoring preset setting"
+            );
+        }
+        new_provider.unwrap_or(provider)
+    }
+
     async fn resolve_preset(
         &self,
         params: &serde_json::Value,
@@ -392,13 +428,16 @@ impl AgentTool for SpawnAgentTool {
             .into());
         }
 
-        // Resolve provider.
+        // Resolve provider (and apply reasoning_effort from preset if set).
         let provider = if let Some(id) = model_id {
             let reg = self.provider_registry.read().await;
-            reg.get(&id)
-                .ok_or_else(|| Error::message(format!("unknown model: {id}")))?
+            let base_provider = reg
+                .get(&id)
+                .ok_or_else(|| Error::message(format!("unknown model: {id}")))?;
+            Self::maybe_apply_reasoning_effort(base_provider, preset.as_ref())
         } else {
-            Arc::clone(&self.default_provider)
+            let base = Arc::clone(&self.default_provider);
+            Self::maybe_apply_reasoning_effort(base, preset.as_ref())
         };
 
         // Capture model ID before provider is moved into the sub-agent loop.

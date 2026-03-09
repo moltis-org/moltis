@@ -1,8 +1,13 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use {async_trait::async_trait, tokio_stream::Stream};
 
 use crate::multimodal::parse_data_uri;
+
+// ── Reasoning effort ──────────────────────────────────────────────────────
+
+/// Re-export from config so downstream crates can use `moltis_agents::model::ReasoningEffort`.
+pub use moltis_config::schema::ReasoningEffort;
 
 // ── Typed chat messages ─────────────────────────────────────────────────────
 
@@ -377,6 +382,26 @@ pub trait LlmProvider: Send + Sync {
         _tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream(messages)
+    }
+
+    /// Configured reasoning effort for this provider instance, if any.
+    ///
+    /// Providers that support extended thinking (Anthropic, OpenAI o-series)
+    /// use this value when building API requests.
+    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        None
+    }
+
+    /// Return a new provider with reasoning effort set, if supported.
+    ///
+    /// Returns `None` for providers that don't support reasoning effort.
+    /// Used by sub-agent spawning to apply per-agent reasoning settings
+    /// without mutating the shared registry provider.
+    fn with_reasoning_effort(
+        self: Arc<Self>,
+        _effort: ReasoningEffort,
+    ) -> Option<Arc<dyn LlmProvider>> {
+        None
     }
 
     /// Fetch runtime model metadata from the provider API.

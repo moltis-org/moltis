@@ -57,7 +57,7 @@ test.describe("Chat abort", () => {
 				var appUrl = new URL(appScript.src, window.location.origin);
 				var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 				var state = await import(`${prefix}js/state.js`);
-				return !state.sessionSwitchInProgress && !state.chatBatchLoading;
+				return !(state.sessionSwitchInProgress || state.chatBatchLoading);
 			},
 			{ timeout: 10_000 },
 		);

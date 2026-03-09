@@ -91,12 +91,52 @@ pub fn namespaced_model_id(provider: &str, model_id: &str) -> String {
     format!("{provider}{MODEL_ID_NAMESPACE_SEP}{model_id}")
 }
 
+/// Separator between a model ID and its reasoning effort suffix.
+const REASONING_SUFFIX_SEP: char = '@';
+
+/// Reasoning effort suffixes appended to model IDs.
+const REASONING_SUFFIXES: &[(&str, moltis_agents::model::ReasoningEffort)] = &[
+    ("reasoning-low", moltis_agents::model::ReasoningEffort::Low),
+    (
+        "reasoning-medium",
+        moltis_agents::model::ReasoningEffort::Medium,
+    ),
+    (
+        "reasoning-high",
+        moltis_agents::model::ReasoningEffort::High,
+    ),
+];
+
+/// Split a model ID into (base_id, optional reasoning effort).
+///
+/// Examples:
+/// - `"anthropic::claude-opus-4-5@reasoning-high"` → `("anthropic::claude-opus-4-5", Some(High))`
+/// - `"gpt-4o"` → `("gpt-4o", None)`
+#[must_use]
+pub fn split_reasoning_suffix(
+    model_id: &str,
+) -> (&str, Option<moltis_agents::model::ReasoningEffort>) {
+    if let Some((base, suffix)) = model_id.rsplit_once(REASONING_SUFFIX_SEP) {
+        for &(tag, effort) in REASONING_SUFFIXES {
+            if suffix == tag {
+                return (base, Some(effort));
+            }
+        }
+    }
+    (model_id, None)
+}
+
 #[must_use]
 pub fn raw_model_id(model_id: &str) -> &str {
-    model_id
-        .rsplit_once(MODEL_ID_NAMESPACE_SEP)
+    // Fast path: skip reasoning suffix parsing when no `@` is present.
+    let base = if model_id.contains(REASONING_SUFFIX_SEP) {
+        split_reasoning_suffix(model_id).0
+    } else {
+        model_id
+    };
+    base.rsplit_once(MODEL_ID_NAMESPACE_SEP)
         .map(|(_, raw)| raw)
-        .unwrap_or(model_id)
+        .unwrap_or(base)
 }
 
 #[must_use]
@@ -538,6 +578,21 @@ impl LlmProvider for RegistryModelProvider {
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.inner.stream_with_tools(messages, tools)
     }
+
+    fn reasoning_effort(&self) -> Option<moltis_agents::model::ReasoningEffort> {
+        self.inner.reasoning_effort()
+    }
+
+    fn with_reasoning_effort(
+        self: Arc<Self>,
+        effort: moltis_agents::model::ReasoningEffort,
+    ) -> Option<Arc<dyn LlmProvider>> {
+        let new_inner = Arc::clone(&self.inner).with_reasoning_effort(effort)?;
+        Some(Arc::new(RegistryModelProvider {
+            model_id: self.model_id.clone(),
+            inner: new_inner,
+        }))
+    }
 }
 
 /// Resolve an API key from config (Secret) or environment variable,
@@ -730,6 +785,41 @@ pub fn supports_vision_for_model(model_id: &str) -> bool {
         return true;
     }
     // Default: no vision support
+    false
+}
+
+/// Check if a model supports reasoning/extended thinking.
+///
+/// Reasoning-capable models can use the `reasoning_effort` configuration
+/// to control the depth of extended thinking. This is used by the UI and
+/// validation to inform users when reasoning_effort is set on a model
+/// that doesn't support it.
+pub fn supports_reasoning_for_model(model_id: &str) -> bool {
+    let id = capability_model_id(model_id);
+    // Anthropic Claude Opus 4.5+ and Sonnet 4.5+
+    if id.starts_with("claude-opus-4-5")
+        || id.starts_with("claude-sonnet-4-5")
+        || id.starts_with("claude-opus-4-6")
+        || id.starts_with("claude-sonnet-4-6")
+    {
+        return true;
+    }
+    // Claude 3.7 Sonnet supports extended thinking
+    if id.starts_with("claude-3-7-sonnet") {
+        return true;
+    }
+    // OpenAI o-series reasoning models
+    if id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4") {
+        return true;
+    }
+    // Gemini 2.5 Flash/Pro with thinking
+    if id.starts_with("gemini-2.5") {
+        return true;
+    }
+    // DeepSeek R1 / reasoning models
+    if id.contains("deepseek-r1") || id.contains("deepseek-reasoner") {
+        return true;
+    }
     false
 }
 
@@ -2220,10 +2310,25 @@ impl ProviderRegistry {
     }
 
     pub fn get(&self, model_id: &str) -> Option<Arc<dyn LlmProvider>> {
-        self.resolve_registry_model_id(model_id, None)
+        let (base_id, reasoning) = split_reasoning_suffix(model_id);
+        let provider = self
+            .resolve_registry_model_id(base_id, None)
             .as_deref()
             .and_then(|id| self.providers.get(id))
-            .cloned()
+            .cloned()?;
+        if let Some(effort) = reasoning {
+            let new_provider = Arc::clone(&provider).with_reasoning_effort(effort);
+            if new_provider.is_none() {
+                tracing::warn!(
+                    model_id,
+                    ?effort,
+                    "provider does not support reasoning effort; ignoring suffix"
+                );
+            }
+            Some(new_provider.unwrap_or(provider))
+        } else {
+            Some(provider)
+        }
     }
 
     pub fn first(&self) -> Option<Arc<dyn LlmProvider>> {
@@ -2251,6 +2356,32 @@ impl ProviderRegistry {
 
     pub fn list_models(&self) -> &[ModelInfo] {
         &self.models
+    }
+
+    /// Return the base model list plus reasoning-effort variants for supported models.
+    ///
+    /// For each model that supports extended thinking, three additional entries
+    /// are appended: `<id>@reasoning-low`, `<id>@reasoning-medium`, `<id>@reasoning-high`.
+    /// These virtual IDs are resolved by `get()` back to the base provider with
+    /// the corresponding reasoning effort applied.
+    #[must_use]
+    pub fn list_models_with_reasoning_variants(&self) -> Vec<ModelInfo> {
+        let mut result = Vec::with_capacity(self.models.len() * 4);
+        for m in &self.models {
+            result.push(m.clone());
+            if supports_reasoning_for_model(&m.id) {
+                for &(suffix, _) in REASONING_SUFFIXES {
+                    let label = suffix.strip_prefix("reasoning-").unwrap_or(suffix);
+                    result.push(ModelInfo {
+                        id: format!("{}{REASONING_SUFFIX_SEP}{suffix}", m.id),
+                        provider: m.provider.clone(),
+                        display_name: format!("{} ({label} reasoning)", m.display_name),
+                        created_at: m.created_at,
+                    });
+                }
+            }
+        }
+        result
     }
 
     /// Return all registered providers in registration order.
@@ -3766,5 +3897,145 @@ mod tests {
     fn openai_provider_tool_mode_default_is_none() {
         let p = openai::OpenAiProvider::new(secret("key"), "gpt-4o".into(), "http://x".into());
         assert_eq!(p.tool_mode(), None);
+    }
+
+    #[test]
+    fn split_reasoning_suffix_parses_effort_levels() {
+        use moltis_agents::model::ReasoningEffort;
+        assert_eq!(
+            split_reasoning_suffix("anthropic::claude-opus-4-5@reasoning-high"),
+            ("anthropic::claude-opus-4-5", Some(ReasoningEffort::High))
+        );
+        assert_eq!(
+            split_reasoning_suffix("o3@reasoning-low"),
+            ("o3", Some(ReasoningEffort::Low))
+        );
+        assert_eq!(split_reasoning_suffix("gpt-4o"), ("gpt-4o", None));
+        assert_eq!(
+            split_reasoning_suffix("model@unknown-suffix"),
+            ("model@unknown-suffix", None)
+        );
+    }
+
+    #[test]
+    fn raw_model_id_strips_reasoning_suffix() {
+        assert_eq!(
+            raw_model_id("anthropic::claude-opus-4-5@reasoning-high"),
+            "claude-opus-4-5"
+        );
+        assert_eq!(raw_model_id("o3@reasoning-medium"), "o3");
+        assert_eq!(raw_model_id("gpt-4o"), "gpt-4o");
+    }
+
+    #[test]
+    fn registry_get_resolves_reasoning_suffix() {
+        let mut reg = ProviderRegistry::empty();
+        reg.register(
+            ModelInfo {
+                id: "claude-opus-4-5-20251101".into(),
+                provider: "anthropic".into(),
+                display_name: "Claude Opus 4.5".into(),
+                created_at: None,
+            },
+            Arc::new(anthropic::AnthropicProvider::new(
+                secret("key"),
+                "claude-opus-4-5-20251101".into(),
+                "https://api.anthropic.com".into(),
+            )),
+        );
+
+        // Base model resolves normally.
+        let p = reg.get("anthropic::claude-opus-4-5-20251101");
+        assert!(p.is_some());
+        assert!(p.unwrap().reasoning_effort().is_none());
+
+        // Reasoning variant resolves with effort applied.
+        let p = reg.get("anthropic::claude-opus-4-5-20251101@reasoning-high");
+        assert!(p.is_some());
+        assert_eq!(
+            p.unwrap().reasoning_effort(),
+            Some(moltis_agents::model::ReasoningEffort::High)
+        );
+    }
+
+    #[test]
+    fn list_models_with_reasoning_variants_generates_entries() {
+        let mut reg = ProviderRegistry::empty();
+        reg.register(
+            ModelInfo {
+                id: "claude-opus-4-5-20251101".into(),
+                provider: "anthropic".into(),
+                display_name: "Claude Opus 4.5".into(),
+                created_at: None,
+            },
+            Arc::new(anthropic::AnthropicProvider::new(
+                secret("key"),
+                "claude-opus-4-5-20251101".into(),
+                "https://api.anthropic.com".into(),
+            )),
+        );
+        reg.register(
+            ModelInfo {
+                id: "gpt-4o".into(),
+                provider: "openai".into(),
+                display_name: "GPT-4o".into(),
+                created_at: None,
+            },
+            Arc::new(openai::OpenAiProvider::new(
+                secret("key"),
+                "gpt-4o".into(),
+                "https://api.openai.com/v1".into(),
+            )),
+        );
+
+        let base_count = reg.list_models().len();
+        assert_eq!(base_count, 2);
+
+        let with_variants = reg.list_models_with_reasoning_variants();
+        // claude-opus-4-5 supports reasoning → +3 variants. gpt-4o does not.
+        assert_eq!(with_variants.len(), 5);
+
+        let variant_ids: Vec<&str> = with_variants.iter().map(|m| m.id.as_str()).collect();
+        assert!(variant_ids.contains(&"anthropic::claude-opus-4-5-20251101@reasoning-low"));
+        assert!(variant_ids.contains(&"anthropic::claude-opus-4-5-20251101@reasoning-medium"));
+        assert!(variant_ids.contains(&"anthropic::claude-opus-4-5-20251101@reasoning-high"));
+        // gpt-4o should NOT have variants
+        assert!(!variant_ids.iter().any(|id| id.contains("gpt-4o@")));
+
+        // Variants should be grouped immediately after their base model
+        assert_eq!(variant_ids[0], "anthropic::claude-opus-4-5-20251101");
+        assert_eq!(
+            variant_ids[1],
+            "anthropic::claude-opus-4-5-20251101@reasoning-low"
+        );
+        assert_eq!(
+            variant_ids[2],
+            "anthropic::claude-opus-4-5-20251101@reasoning-medium"
+        );
+        assert_eq!(
+            variant_ids[3],
+            "anthropic::claude-opus-4-5-20251101@reasoning-high"
+        );
+        assert_eq!(variant_ids[4], "openai::gpt-4o");
+    }
+
+    #[test]
+    fn supports_reasoning_for_known_models() {
+        // Models that support reasoning
+        assert!(supports_reasoning_for_model("claude-opus-4-5-20251101"));
+        assert!(supports_reasoning_for_model("claude-sonnet-4-5-20250929"));
+        assert!(supports_reasoning_for_model("claude-3-7-sonnet-20250219"));
+        assert!(supports_reasoning_for_model("o3"));
+        assert!(supports_reasoning_for_model("o3-mini"));
+        assert!(supports_reasoning_for_model("o1"));
+        assert!(supports_reasoning_for_model("o1-mini"));
+        assert!(supports_reasoning_for_model("gemini-2.5-flash"));
+        assert!(supports_reasoning_for_model("deepseek-r1"));
+
+        // Models that don't support reasoning
+        assert!(!supports_reasoning_for_model("claude-sonnet-4-20250514"));
+        assert!(!supports_reasoning_for_model("gpt-4o"));
+        assert!(!supports_reasoning_for_model("gpt-5.2"));
+        assert!(!supports_reasoning_for_model("claude-3-haiku-20240307"));
     }
 }

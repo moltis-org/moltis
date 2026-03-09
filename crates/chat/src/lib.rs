@@ -1721,9 +1721,10 @@ impl ModelService for LiveModelService {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
         let order = self.priority_order().await;
+        let all_models = reg.list_models_with_reasoning_variants();
         let prioritized = Self::prioritize_models(
             &order,
-            reg.list_models()
+            all_models
                 .iter()
                 .filter(|m| moltis_providers::is_chat_capable_model(&m.id))
                 .filter(|m| !disabled.is_disabled(&m.id))
@@ -1757,9 +1758,10 @@ impl ModelService for LiveModelService {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
         let order = self.priority_order().await;
+        let all_models = reg.list_models_with_reasoning_variants();
         let prioritized = Self::prioritize_models(
             &order,
-            reg.list_models()
+            all_models
                 .iter()
                 .filter(|m| moltis_providers::is_chat_capable_model(&m.id)),
         );
@@ -10056,11 +10058,26 @@ mod tests {
 
         let result = service.list().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 3);
+        // 3 base models + 3 reasoning variants for claude-opus-4-5 = 6
+        assert_eq!(arr.len(), 6);
 
         let result = service.list_all().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 3);
+        assert_eq!(arr.len(), 6);
+
+        // Verify reasoning variants are present with correct display names.
+        let ids: Vec<&str> = arr.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert!(ids.contains(&"anthropic::claude-opus-4-5@reasoning-high"));
+        assert!(ids.contains(&"anthropic::claude-opus-4-5@reasoning-medium"));
+        assert!(ids.contains(&"anthropic::claude-opus-4-5@reasoning-low"));
+        let high = arr
+            .iter()
+            .find(|m| m["id"].as_str() == Some("anthropic::claude-opus-4-5@reasoning-high"))
+            .unwrap();
+        assert_eq!(
+            high["displayName"].as_str().unwrap(),
+            "Claude Opus 4.5 (high reasoning)"
+        );
     }
 
     #[tokio::test]

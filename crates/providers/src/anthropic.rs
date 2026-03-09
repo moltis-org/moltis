@@ -16,6 +16,8 @@ pub struct AnthropicProvider {
     client: &'static reqwest::Client,
     /// Optional alias for metrics differentiation (e.g., "anthropic-work", "anthropic-2").
     alias: Option<String>,
+    /// Optional reasoning effort level for extended thinking.
+    reasoning_effort: Option<moltis_agents::model::ReasoningEffort>,
 }
 
 impl AnthropicProvider {
@@ -26,6 +28,7 @@ impl AnthropicProvider {
             base_url,
             client: crate::shared_http_client(),
             alias: None,
+            reasoning_effort: None,
         }
     }
 
@@ -42,6 +45,31 @@ impl AnthropicProvider {
             base_url,
             client: crate::shared_http_client(),
             alias,
+            reasoning_effort: None,
+        }
+    }
+
+    /// Apply `thinking` configuration to an Anthropic request body based on
+    /// the configured reasoning effort.
+    fn apply_thinking(&self, body: &mut serde_json::Value) {
+        use moltis_agents::model::ReasoningEffort;
+        let Some(effort) = self.reasoning_effort else {
+            return;
+        };
+        let budget_tokens: u64 = match effort {
+            ReasoningEffort::Low => 4096,
+            ReasoningEffort::Medium => 10240,
+            ReasoningEffort::High => 32768,
+        };
+        body["thinking"] = serde_json::json!({
+            "type": "enabled",
+            "budget_tokens": budget_tokens,
+        });
+        // Extended thinking requires higher max_tokens than budget_tokens.
+        if let Some(max_tokens) = body["max_tokens"].as_u64()
+            && max_tokens <= budget_tokens
+        {
+            body["max_tokens"] = serde_json::json!(budget_tokens + 4096);
         }
     }
 }
@@ -182,6 +210,24 @@ impl LlmProvider for AnthropicProvider {
         self.alias.as_deref().unwrap_or("anthropic")
     }
 
+    fn reasoning_effort(&self) -> Option<moltis_agents::model::ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    fn with_reasoning_effort(
+        self: std::sync::Arc<Self>,
+        effort: moltis_agents::model::ReasoningEffort,
+    ) -> Option<std::sync::Arc<dyn LlmProvider>> {
+        Some(std::sync::Arc::new(Self {
+            api_key: self.api_key.clone(),
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            client: self.client,
+            alias: self.alias.clone(),
+            reasoning_effort: Some(effort),
+        }))
+    }
+
     fn id(&self) -> &str {
         &self.model
     }
@@ -219,11 +265,14 @@ impl LlmProvider for AnthropicProvider {
             body["tools"] = serde_json::Value::Array(to_anthropic_tools(tools));
         }
 
+        self.apply_thinking(&mut body);
+
         debug!(
             model = %self.model,
             messages_count = anthropic_messages.len(),
             tools_count = tools.len(),
             has_system = system_text.is_some(),
+            reasoning_effort = ?self.reasoning_effort,
             "anthropic complete request"
         );
         trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic request body");
@@ -320,11 +369,14 @@ impl LlmProvider for AnthropicProvider {
                 body["tools"] = serde_json::Value::Array(to_anthropic_tools(&tools));
             }
 
+            self.apply_thinking(&mut body);
+
             debug!(
                 model = %self.model,
                 messages_count = anthropic_messages.len(),
                 tools_count = tools.len(),
                 has_system = system_text.is_some(),
+                reasoning_effort = ?self.reasoning_effort,
                 "anthropic stream_with_tools request"
             );
             trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic stream request body");
@@ -515,5 +567,75 @@ mod tests {
             with_retry_after_marker(base.clone(), None),
             "HTTP 429: rate limit exceeded"
         );
+    }
+
+    #[test]
+    fn apply_thinking_injects_budget_for_high_effort() {
+        let provider = AnthropicProvider {
+            api_key: secrecy::Secret::new("test".into()),
+            model: "claude-opus-4-5-20251101".into(),
+            base_url: "https://api.anthropic.com".into(),
+            client: crate::shared_http_client(),
+            alias: None,
+            reasoning_effort: Some(moltis_agents::model::ReasoningEffort::High),
+        };
+        let mut body =
+            serde_json::json!({ "model": "claude-opus-4-5-20251101", "max_tokens": 4096 });
+        provider.apply_thinking(&mut body);
+
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 32768);
+        // max_tokens must exceed budget_tokens
+        assert!(body["max_tokens"].as_u64().unwrap() > 32768);
+    }
+
+    #[test]
+    fn apply_thinking_skipped_when_no_effort() {
+        let provider = AnthropicProvider::new(
+            secrecy::Secret::new("test".into()),
+            "claude-opus-4-5-20251101".into(),
+            "https://api.anthropic.com".into(),
+        );
+        let mut body = serde_json::json!({ "model": "test", "max_tokens": 4096 });
+        provider.apply_thinking(&mut body);
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn apply_thinking_low_effort_budget() {
+        let provider = AnthropicProvider {
+            api_key: secrecy::Secret::new("test".into()),
+            model: "claude-sonnet-4-5-20250929".into(),
+            base_url: "https://api.anthropic.com".into(),
+            client: crate::shared_http_client(),
+            alias: None,
+            reasoning_effort: Some(moltis_agents::model::ReasoningEffort::Low),
+        };
+        let mut body = serde_json::json!({ "model": "test", "max_tokens": 4096 });
+        provider.apply_thinking(&mut body);
+
+        assert_eq!(body["thinking"]["budget_tokens"], 4096);
+        // max_tokens should be bumped since it equals budget_tokens
+        assert!(body["max_tokens"].as_u64().unwrap() > 4096);
+    }
+
+    #[test]
+    fn with_reasoning_effort_creates_new_provider() {
+        use std::sync::Arc;
+        let provider = Arc::new(AnthropicProvider::new(
+            secrecy::Secret::new("test-key".into()),
+            "claude-opus-4-5-20251101".into(),
+            "https://api.anthropic.com".into(),
+        ));
+        assert!(provider.reasoning_effort().is_none());
+
+        let with_effort = provider
+            .with_reasoning_effort(moltis_agents::model::ReasoningEffort::High)
+            .expect("anthropic supports reasoning_effort");
+        assert_eq!(
+            with_effort.reasoning_effort(),
+            Some(moltis_agents::model::ReasoningEffort::High)
+        );
+        assert_eq!(with_effort.id(), "claude-opus-4-5-20251101");
     }
 }

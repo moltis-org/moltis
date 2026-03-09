@@ -57,7 +57,7 @@ function buildNodeItem(node, currentId) {
 	var el = document.createElement("div");
 	el.className = "model-dropdown-item";
 	if (node && node.nodeId === currentId) el.classList.add("selected");
-	if (!node && !currentId) {
+	if (!(node || currentId)) {
 		// "Local" entry
 		el.classList.add("selected");
 	}

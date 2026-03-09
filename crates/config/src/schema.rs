@@ -7,6 +7,22 @@ use {
     serde::{Deserialize, Serialize},
 };
 
+// ── Reasoning effort ──────────────────────────────────────────────────────
+
+/// Reasoning/thinking effort level for models that support extended thinking.
+///
+/// Maps to provider-specific parameters:
+/// - **Anthropic**: `thinking.budget_tokens` (low=4096, medium=10240, high=32768)
+/// - **OpenAI**: `reasoning_effort` field on o-series models
+/// - **Other providers**: ignored if unsupported
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
+
 /// Agent identity (name, emoji, theme).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -338,6 +354,12 @@ pub struct AgentPreset {
     pub sessions: Option<SessionAccessPolicyConfig>,
     /// Persistent per-agent memory configuration.
     pub memory: Option<PresetMemoryConfig>,
+    /// Reasoning/thinking effort level for models that support extended thinking.
+    ///
+    /// Controls extended thinking for models that support it (e.g. Claude Opus,
+    /// OpenAI o-series). Higher values enable deeper reasoning but increase
+    /// latency and token usage.
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// Voice configuration (TTS and STT).

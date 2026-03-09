@@ -339,6 +339,7 @@ fn build_schema_map() -> KnownKeys {
                 "memory",
                 Struct(HashMap::from([("scope", Leaf), ("max_lines", Leaf)])),
             ),
+            ("reasoning_effort", Leaf),
         ]))
     };
 
@@ -985,6 +986,9 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
             ),
         });
     }
+
+    // agents.presets.*.reasoning_effort is now a typed enum (ReasoningEffort)
+    // and validated at deserialization time (step 4). No semantic check needed.
 
     // SSRF allowlist CIDR validation
     for (idx, entry) in config.tools.web.fetch.ssrf_allowlist.iter().enumerate() {
@@ -2295,5 +2299,65 @@ tool_mode = "{mode}"
                 result.diagnostics
             );
         }
+    }
+
+    #[test]
+    fn reasoning_effort_valid_values_no_error() {
+        for effort in &["low", "medium", "high"] {
+            let toml = format!(
+                r#"
+                [agents.presets.thinker]
+                model = "claude-opus-4-5-20251101"
+                reasoning_effort = "{effort}"
+                "#
+            );
+            let result = validate_toml_str(&toml);
+            let errors: Vec<_> = result
+                .diagnostics
+                .iter()
+                .filter(|d| d.path.contains("reasoning_effort") && d.severity == Severity::Error)
+                .collect();
+            assert!(
+                errors.is_empty(),
+                "effort={effort} should be valid: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reasoning_effort_invalid_value_reports_type_error() {
+        let toml = r#"
+        [agents.presets.thinker]
+        model = "claude-opus-4-5-20251101"
+        reasoning_effort = "extreme"
+        "#;
+        let result = validate_toml_str(toml);
+        let error = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "type-error" && d.severity == Severity::Error);
+        assert!(
+            error.is_some(),
+            "invalid reasoning_effort should produce type error: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_recognized_in_schema() {
+        let toml = r#"
+        [agents.presets.thinker]
+        reasoning_effort = "high"
+        "#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.message.contains("reasoning_effort"));
+        assert!(
+            unknown.is_none(),
+            "reasoning_effort should be a recognized field, got: {:?}",
+            result.diagnostics
+        );
     }
 }
