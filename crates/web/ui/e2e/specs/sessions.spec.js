@@ -653,8 +653,7 @@ test.describe("Session management", () => {
 	});
 
 	test("cron session shows delete button in more controls", async ({ page }) => {
-		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/");
+		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
 		// Create a cron session via RPC so it appears in the session list
@@ -682,6 +681,9 @@ test.describe("Session management", () => {
 		const cronItem = page.locator(`#sessionList .session-item[data-session-key="${cronKey}"]`);
 		await expect(cronItem).toBeVisible({ timeout: 5_000 });
 		await cronItem.click();
+
+		// Wait for session messages to be fully loaded before proceeding
+		await expect(page.locator(".msg")).not.toHaveCount(0, { timeout: 5_000 });
 
 		// Open more controls and verify delete button is visible
 		await openChatMoreModal(page);
