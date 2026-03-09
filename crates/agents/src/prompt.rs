@@ -245,13 +245,16 @@ const PROJECT_CONTEXT_MAX_CHARS: usize = 8_000;
 /// Maximum number of characters from each workspace file (`AGENTS.md`,
 /// `TOOLS.md`) injected into the prompt.
 const WORKSPACE_FILE_MAX_CHARS: usize = 6_000;
-const EXEC_ROUTING_GUIDANCE: &str = "Execution routing:\n\
+const EXEC_ROUTING_GUIDANCE_SANDBOX: &str = "Execution routing:\n\
 - `exec` runs inside sandbox when `Sandbox(exec): enabled=true`.\n\
 - When sandbox is disabled, `exec` runs on the host and may require approval.\n\
 - In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
-- Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
-- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n\
-- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\n";
+- Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n";
+const EXEC_ROUTING_SANDBOX_CLOSING: &str = "- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
+const EXEC_ROUTING_GUIDANCE_HOST_ONLY: &str = "Execution routing:\n\
+- `exec` runs on the host and may require approval.\n";
+const EXEC_ROUTING_SUDO_HINT: &str =
+    "- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n";
 /// Build model-family-aware tool call guidance for text-based tool mode.
 fn tool_call_guidance(model_id: Option<&str>) -> String {
     let _family = model_id
@@ -515,6 +518,7 @@ fn append_runtime_section(
         prompt.push_str(&line);
         prompt.push('\n');
     }
+    let has_sandbox = sandbox_line.is_some();
     if let Some(line) = sandbox_line {
         prompt.push_str(&line);
         prompt.push('\n');
@@ -525,7 +529,18 @@ fn append_runtime_section(
         prompt.push('\n');
     }
     if include_tools {
-        prompt.push_str(EXEC_ROUTING_GUIDANCE);
+        if has_sandbox {
+            prompt.push_str(EXEC_ROUTING_GUIDANCE_SANDBOX);
+        } else {
+            prompt.push_str(EXEC_ROUTING_GUIDANCE_HOST_ONLY);
+        }
+        if runtime.host.sudo_non_interactive == Some(true) {
+            prompt.push_str(EXEC_ROUTING_SUDO_HINT);
+        }
+        if has_sandbox {
+            prompt.push_str(EXEC_ROUTING_SANDBOX_CLOSING);
+        }
+        prompt.push('\n');
         if has_nodes {
             prompt.push_str(NODE_ROUTING_GUIDANCE);
         }
@@ -1106,6 +1121,121 @@ mod tests {
         assert!(prompt.contains("Execution routing:"));
         assert!(prompt.contains("`~` and relative paths resolve under"));
         assert!(prompt.contains("Sandbox/host routing changes are expected runtime behavior"));
+        // Sudo hint appears because sudo_non_interactive=true is set.
+        assert!(prompt.contains("sudo_non_interactive=true` means non-interactive sudo"));
+    }
+
+    #[test]
+    fn test_runtime_context_sandbox_without_sudo_omits_sudo_hint() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("devbox".into()),
+                ..Default::default()
+            },
+            sandbox: Some(PromptSandboxRuntimeContext {
+                exec_sandboxed: true,
+                mode: Some("all".into()),
+                backend: Some("docker".into()),
+                home: Some("/home/sandbox".into()),
+                ..Default::default()
+            }),
+            nodes: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("Sandbox(exec): enabled=true"));
+        assert!(prompt.contains("Execution routing:"));
+        assert!(prompt.contains("runs inside sandbox"));
+        assert!(prompt.contains("Sandbox/host routing changes are expected runtime behavior"));
+        // Sudo hint must NOT appear when sudo_non_interactive is unset.
+        assert!(!prompt.contains("sudo_non_interactive=true` means non-interactive sudo"));
+    }
+
+    #[test]
+    fn test_runtime_context_no_sandbox_uses_host_only_routing() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("container-host".into()),
+                os: Some("linux".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+            nodes: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("## Runtime"));
+        assert!(prompt.contains("Host: host=container-host"));
+        // No sandbox line should appear.
+        assert!(!prompt.contains("Sandbox(exec)"));
+        // Host-only routing guidance should be used.
+        assert!(prompt.contains("Execution routing:"));
+        assert!(prompt.contains("`exec` runs on the host"));
+        // Sandbox-specific guidance should NOT appear.
+        assert!(!prompt.contains("runs inside sandbox"));
+        assert!(!prompt.contains("Sandbox/host routing changes"));
+        // Sudo hint should NOT appear when sudo_non_interactive is not set.
+        assert!(!prompt.contains("sudo_non_interactive"));
+    }
+
+    #[test]
+    fn test_runtime_context_no_sandbox_with_sudo_includes_sudo_hint() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("container-host".into()),
+                sudo_non_interactive: Some(true),
+                ..Default::default()
+            },
+            sandbox: None,
+            nodes: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("`exec` runs on the host"));
+        assert!(!prompt.contains("runs inside sandbox"));
+        assert!(prompt.contains("sudo_non_interactive=true` means non-interactive sudo"));
     }
 
     #[test]
@@ -1215,10 +1345,7 @@ mod tests {
                 host: Some("moltis-devbox".into()),
                 ..Default::default()
             },
-            sandbox: Some(PromptSandboxRuntimeContext {
-                exec_sandboxed: false,
-                ..Default::default()
-            }),
+            sandbox: None,
             nodes: None,
         };
 
@@ -1235,7 +1362,7 @@ mod tests {
 
         assert!(prompt.contains("## Runtime"));
         assert!(prompt.contains("Host: host=moltis-devbox"));
-        assert!(prompt.contains("Sandbox(exec): enabled=false"));
+        assert!(!prompt.contains("Sandbox(exec)"));
         assert!(!prompt.contains("Execution routing:"));
     }
 

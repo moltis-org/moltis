@@ -1159,12 +1159,21 @@ async fn build_prompt_runtime_context(
     let sandbox_fut = async {
         if let Some(router) = state.sandbox_router() {
             let is_sandboxed = router.is_sandboxed(session_key).await;
+            // Only include sandbox context when sandbox is actually enabled for
+            // this session.  When disabled, omitting it prevents the LLM from
+            // hallucinating sandbox usage (see #360).  This intentionally
+            // discards `session_override` — its only consumer is the prompt
+            // line we are omitting, and no other code reads it from
+            // `PromptSandboxRuntimeContext`.
+            if !is_sandboxed {
+                return None;
+            }
             let config = router.config();
             let backend_name = router.backend_name();
             let workspace_mount = config.workspace_mount.to_string();
             let workspace_path = (workspace_mount != "none").then(|| data_dir_display.clone());
             Some(PromptSandboxRuntimeContext {
-                exec_sandboxed: is_sandboxed,
+                exec_sandboxed: true,
                 mode: Some(config.mode.to_string()),
                 backend: Some(backend_name.to_string()),
                 scope: Some(config.scope.to_string()),
@@ -1176,18 +1185,7 @@ async fn build_prompt_runtime_context(
                 session_override: session_entry.and_then(|entry| entry.sandbox_enabled),
             })
         } else {
-            Some(PromptSandboxRuntimeContext {
-                exec_sandboxed: false,
-                mode: Some("off".to_string()),
-                backend: Some("none".to_string()),
-                scope: None,
-                image: None,
-                home: None,
-                workspace_mount: None,
-                workspace_path: None,
-                no_network: None,
-                session_override: None,
-            })
+            None
         }
     };
 
