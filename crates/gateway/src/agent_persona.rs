@@ -400,8 +400,7 @@ impl AgentPersonaStore {
 
 /// Synthesize the "main" agent persona from the global identity config.
 fn synthesize_main_agent(is_default: bool) -> AgentPersona {
-    let identity =
-        moltis_config::load_identity_for_agent("main").or_else(moltis_config::load_identity);
+    let identity = moltis_config::load_identity_for_agent("main");
     AgentPersona {
         id: "main".to_string(),
         name: identity

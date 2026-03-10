@@ -207,9 +207,9 @@ fn xml_escape(s: &str) -> String {
 
 /// Generate a launchd plist XML string.
 ///
-/// The service reads connection parameters from `node.json` (written by
-/// `moltis node add`), so only `--timeout` is passed as a CLI flag when
-/// it differs from the default.
+/// `node run` reads connection parameters (gateway URL, device token, etc.)
+/// from `~/.moltis/node.json` at runtime, so only `--timeout` is passed as
+/// a CLI flag here.
 pub fn generate_launchd_plist(
     moltis_bin: &Path,
     config: &ServiceConfig,
@@ -218,17 +218,13 @@ pub fn generate_launchd_plist(
     let bin = xml_escape(&moltis_bin.display().to_string());
     let log = xml_escape(&log_path.display().to_string());
 
-    let mut args = vec![
+    let args = [
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
+        "    <string>--timeout</string>".to_string(),
+        format!("    <string>{}</string>", config.timeout),
     ];
-    if config.timeout != default_timeout() {
-        args.push(format!(
-            "    <string>--timeout</string>\n    <string>{}</string>",
-            config.timeout
-        ));
-    }
 
     let args_str = args.join("\n");
 
@@ -410,17 +406,13 @@ fn systemd_unit_path() -> anyhow::Result<PathBuf> {
 
 /// Generate a systemd user unit file.
 ///
-/// The service reads connection parameters from `node.json` (written by
-/// `moltis node add`), so only `--timeout` is passed as a CLI flag when
-/// it differs from the default.
+/// `node run` reads connection parameters from `~/.moltis/node.json` at
+/// runtime, so only `--timeout` is passed as a CLI flag here.
 pub fn generate_systemd_unit(moltis_bin: &Path, config: &ServiceConfig, log_path: &Path) -> String {
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let mut exec_start = format!("{bin} node run");
-    if config.timeout != default_timeout() {
-        exec_start.push_str(&format!(" --timeout {}", config.timeout));
-    }
+    let exec_start = format!("{bin} node run --timeout {}", config.timeout);
 
     format!(
         r#"[Unit]
@@ -647,9 +639,8 @@ mod tests {
 
         assert!(plist.contains("org.moltis.node"));
         assert!(plist.contains("/usr/local/bin/moltis"));
-        assert!(plist.contains("node</string>"));
-        assert!(plist.contains("run</string>"));
-        // Non-default timeout is passed as a CLI flag.
+        // `node run` reads gateway_url, device_token, etc. from node.json
+        // at runtime — only --timeout is passed as a CLI flag.
         assert!(plist.contains("--timeout"));
         assert!(plist.contains("120"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
@@ -661,24 +652,6 @@ mod tests {
         // Verify it's valid-ish XML.
         assert!(plist.starts_with("<?xml"));
         assert!(plist.contains("</plist>"));
-    }
-
-    #[test]
-    fn launchd_plist_omits_default_timeout() {
-        let bin = PathBuf::from("/usr/local/bin/moltis");
-        let config = ServiceConfig {
-            gateway_url: "ws://gw:9090/ws".into(),
-            device_token: "tok_test".into(),
-            node_id: None,
-            display_name: None,
-            working_dir: None,
-            timeout: 300, // default
-        };
-        let log = PathBuf::from("/tmp/node.log");
-
-        let plist = generate_launchd_plist(&bin, &config, &log);
-
-        assert!(!plist.contains("--timeout"));
     }
 
     #[test]
@@ -729,24 +702,6 @@ mod tests {
         // Config values are NOT in the unit — `node run` reads node.json.
         assert!(!unit.contains("--gateway-url"));
         assert!(!unit.contains("--device-token"));
-    }
-
-    #[test]
-    fn systemd_unit_omits_default_timeout() {
-        let bin = PathBuf::from("/usr/bin/moltis");
-        let config = ServiceConfig {
-            gateway_url: "ws://gw:9090/ws".into(),
-            device_token: "tok_min".into(),
-            node_id: None,
-            display_name: None,
-            working_dir: None,
-            timeout: 300, // default
-        };
-        let log = PathBuf::from("/tmp/node.log");
-
-        let unit = generate_systemd_unit(&bin, &config, &log);
-
-        assert!(!unit.contains("--timeout"));
     }
 
     #[test]

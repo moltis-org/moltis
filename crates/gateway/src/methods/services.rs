@@ -183,25 +183,8 @@ fn read_identity_payload_for_agent(agent_id: &str) -> serde_json::Value {
 }
 
 fn write_soul_for_agent(agent_id: &str, soul: Option<String>) -> Result<(), ErrorShape> {
-    if agent_id == "main" {
-        moltis_config::save_soul(soul.as_deref())
-            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
-        return Ok(());
-    }
-    let dir = moltis_config::agent_workspace_dir(agent_id);
-    std::fs::create_dir_all(&dir)
+    moltis_config::save_soul_for_agent(agent_id, soul.as_deref())
         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
-    let soul_path = dir.join("SOUL.md");
-    match soul.as_deref().map(str::trim) {
-        Some(content) if !content.is_empty() => {
-            std::fs::write(&soul_path, content)
-                .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
-        },
-        _ => {
-            std::fs::write(&soul_path, "")
-                .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
-        },
-    }
     Ok(())
 }
 

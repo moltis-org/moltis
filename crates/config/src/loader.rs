@@ -374,8 +374,10 @@ pub fn load_identity() -> Option<AgentIdentity> {
 pub fn load_identity_for_agent(agent_id: &str) -> Option<AgentIdentity> {
     if agent_id == "main" {
         let main_path = agent_workspace_dir("main").join("IDENTITY.md");
-        if let Some(identity) = load_identity_from_path(&main_path) {
-            return Some(identity);
+        if main_path.exists() {
+            // File exists — return parsed content or None (empty sentinel).
+            // Do NOT fall back to root so cleared identities stay cleared.
+            return load_identity_from_path(&main_path);
         }
         return load_identity();
     }
@@ -396,7 +398,10 @@ pub fn resolve_identity() -> ResolvedIdentity {
 pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
     let mut id = ResolvedIdentity::from_config(config);
 
-    if let Some(file_identity) = load_identity() {
+    // Read from `agents/main/IDENTITY.md` first (primary), falling back to
+    // root `IDENTITY.md` (legacy).  This mirrors the read path in
+    // `load_identity_for_agent("main")`.
+    if let Some(file_identity) = load_identity_for_agent("main") {
         if let Some(name) = file_identity.name {
             id.name = name;
         }
@@ -414,7 +419,7 @@ pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
         id.user_name = Some(name);
     }
 
-    id.soul = load_soul();
+    id.soul = load_soul_for_agent("main");
     id
 }
 
@@ -515,8 +520,9 @@ pub fn load_soul() -> Option<String> {
 pub fn load_soul_for_agent(agent_id: &str) -> Option<String> {
     if agent_id == "main" {
         let main_path = agent_workspace_dir("main").join("SOUL.md");
-        if let Some(soul) = load_workspace_markdown(main_path) {
-            return Some(soul);
+        if main_path.exists() {
+            // File exists — return content or None (explicit clear).
+            return load_workspace_markdown(main_path);
         }
         return load_soul();
     }
@@ -607,6 +613,25 @@ pub fn save_soul(soul: Option<&str>) -> crate::Result<PathBuf> {
     Ok(path)
 }
 
+/// Persist SOUL.md into an agent's workspace directory.
+///
+/// For the main agent this writes to `agents/main/SOUL.md` so that
+/// `load_soul_for_agent("main")` picks it up on the primary read path.
+pub fn save_soul_for_agent(agent_id: &str, soul: Option<&str>) -> crate::Result<PathBuf> {
+    let dir = agent_workspace_dir(agent_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("SOUL.md");
+    match soul.map(str::trim) {
+        Some(content) if !content.is_empty() => {
+            std::fs::write(&path, content)?;
+        },
+        _ => {
+            std::fs::write(&path, "")?;
+        },
+    }
+    Ok(path)
+}
+
 /// Persist identity values to `IDENTITY.md` using YAML frontmatter.
 pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     let path = identity_path();
@@ -643,7 +668,7 @@ pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     Ok(path)
 }
 
-/// Persist identity values for a non-main agent into its workspace.
+/// Persist identity values for an agent into its workspace directory.
 pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crate::Result<PathBuf> {
     let dir = agent_workspace_dir(agent_id);
     std::fs::create_dir_all(&dir)?;
@@ -653,9 +678,9 @@ pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crat
         identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
 
     if !has_values {
-        if path.exists() {
-            std::fs::remove_file(&path)?;
-        }
+        // Write an empty sentinel so load_identity_for_agent won't fall back
+        // to a stale root IDENTITY.md on upgraded installs.
+        std::fs::write(&path, "")?;
         return Ok(path);
     }
 
@@ -1856,6 +1881,45 @@ name = "Rex"
 
         let on_disk = std::fs::read_to_string(dir.path().join("SOUL.md")).unwrap();
         assert_eq!(on_disk, custom);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_for_agent_writes_to_agent_dir() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let custom = "Agent soul content.";
+        save_soul_for_agent("main", Some(custom)).expect("save_soul_for_agent");
+
+        let agent_soul = dir.path().join("agents/main/SOUL.md");
+        assert!(agent_soul.exists(), "SOUL.md should exist in agents/main/");
+        assert_eq!(std::fs::read_to_string(&agent_soul).unwrap(), custom);
+
+        // load_soul_for_agent must find the agent-level file.
+        let loaded = load_soul_for_agent("main");
+        assert_eq!(loaded.as_deref(), Some(custom));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_for_agent_none_clears() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        save_soul_for_agent("main", Some("initial")).expect("save");
+        save_soul_for_agent("main", None).expect("clear");
+
+        let agent_soul = dir.path().join("agents/main/SOUL.md");
+        assert!(agent_soul.exists(), "file should remain after clearing");
+        assert!(
+            std::fs::read_to_string(&agent_soul).unwrap().is_empty(),
+            "file should be empty after clearing"
+        );
 
         clear_data_dir();
     }

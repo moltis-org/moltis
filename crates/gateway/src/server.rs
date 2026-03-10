@@ -320,7 +320,7 @@ fn should_prebuild_sandbox_image(
 
 fn instance_slug(config: &moltis_config::MoltisConfig) -> String {
     let mut raw_name = config.identity.name.clone();
-    if let Some(file_identity) = moltis_config::load_identity()
+    if let Some(file_identity) = moltis_config::load_identity_for_agent("main")
         && file_identity.name.is_some()
     {
         raw_name = file_identity.name;
