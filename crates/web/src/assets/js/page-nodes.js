@@ -5,7 +5,6 @@ import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
 import { onEvent } from "./events.js";
-import * as gon from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { ConfirmDialog, requestConfirm } from "./ui.js";
 
@@ -25,9 +24,7 @@ var deviceName = signal("");
 
 function gatewayWsUrl() {
 	var proto = location.protocol === "https:" ? "wss:" : "ws:";
-	var port = gon.get("port") || location.port;
-	var host = location.hostname;
-	return `${proto}//${host}${port ? `:${port}` : ""}/ws`;
+	return `${proto}//${location.host}/ws`;
 }
 
 async function generateToken() {
@@ -42,7 +39,7 @@ async function generateToken() {
 		generatedToken.value = {
 			token: res.payload.deviceToken,
 			deviceId: res.payload.deviceId,
-			command: `moltis node run --host ${wsUrl} --token ${res.payload.deviceToken}`,
+			command: `moltis node add --host ${wsUrl} --token ${res.payload.deviceToken}`,
 		};
 		showToast("Token generated", "success");
 		await refreshPairedDevices();
