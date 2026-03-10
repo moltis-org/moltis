@@ -397,15 +397,13 @@ fn systemd_unit_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Generate a systemd user unit file.
-pub fn generate_systemd_unit(
-    moltis_bin: &Path,
-    _config: &ServiceConfig,
-    log_path: &Path,
-) -> String {
+pub fn generate_systemd_unit(moltis_bin: &Path, config: &ServiceConfig, log_path: &Path) -> String {
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let exec_args = format!("{bin} node run");
+    // `moltis node run` reads connection details from node.json; only
+    // `--timeout` is accepted as a CLI override.
+    let exec_args = format!("{bin} node run --timeout {}", config.timeout);
 
     format!(
         r#"[Unit]
@@ -639,9 +637,11 @@ mod tests {
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("/tmp/node.log"));
-        // Verify it's valid-ish XML.
         assert!(plist.starts_with("<?xml"));
         assert!(plist.contains("</plist>"));
+        // Config fields should NOT appear as CLI args.
+        assert!(!plist.contains("--gateway-url"));
+        assert!(!plist.contains("--device-token"));
     }
 
     #[test]
@@ -663,28 +663,35 @@ mod tests {
         assert!(unit.contains("[Service]"));
         assert!(unit.contains("[Install]"));
         assert!(unit.contains("network-online.target"));
-        assert!(unit.contains("/usr/bin/moltis node run"));
+        assert!(unit.contains("/usr/bin/moltis node run --timeout 600"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("RestartSec=10"));
         assert!(unit.contains("/var/log/moltis/node.log"));
         assert!(unit.contains("WantedBy=default.target"));
+        // Config fields should NOT appear as CLI args.
+        assert!(!unit.contains("--gateway-url"));
+        assert!(!unit.contains("--device-token"));
     }
 
     #[test]
-    fn systemd_unit_omits_optional_fields() {
+    fn systemd_unit_only_passes_timeout_flag() {
         let bin = PathBuf::from("/usr/bin/moltis");
         let config = ServiceConfig {
             gateway_url: "ws://gw:9090/ws".into(),
             device_token: "tok_min".into(),
-            node_id: None,
-            display_name: None,
-            working_dir: None,
+            node_id: Some("node-1".into()),
+            display_name: Some("Test".into()),
+            working_dir: Some("/srv".into()),
             timeout: 300,
         };
         let log = PathBuf::from("/tmp/node.log");
 
         let unit = generate_systemd_unit(&bin, &config, &log);
 
+        // Only --timeout should appear; connection details are in node.json.
+        assert!(unit.contains("--timeout 300"));
+        assert!(!unit.contains("--gateway-url"));
+        assert!(!unit.contains("--device-token"));
         assert!(!unit.contains("--node-id"));
         assert!(!unit.contains("--name"));
         assert!(!unit.contains("--working-dir"));
