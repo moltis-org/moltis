@@ -206,11 +206,38 @@ pub fn generate_launchd_plist(
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let args = vec![
+    let mut args = vec![
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
+        format!(
+            "    <string>--gateway-url</string>\n    <string>{}</string>",
+            config.gateway_url
+        ),
+        format!(
+            "    <string>--device-token</string>\n    <string>{}</string>",
+            config.device_token
+        ),
     ];
+    if let Some(ref id) = config.node_id {
+        args.push(format!(
+            "    <string>--node-id</string>\n    <string>{id}</string>"
+        ));
+    }
+    if let Some(ref name) = config.display_name {
+        args.push(format!(
+            "    <string>--name</string>\n    <string>{name}</string>"
+        ));
+    }
+    if let Some(ref dir) = config.working_dir {
+        args.push(format!(
+            "    <string>--working-dir</string>\n    <string>{dir}</string>"
+        ));
+    }
+    args.push(format!(
+        "    <string>--timeout</string>\n    <string>{}</string>",
+        config.timeout
+    ));
 
     let args_str = args.join("\n");
 
@@ -395,7 +422,22 @@ pub fn generate_systemd_unit(moltis_bin: &Path, config: &ServiceConfig, log_path
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let exec_args = format!("{bin} node run");
+    let mut extra_args = format!(
+        " --gateway-url {} --device-token {}",
+        config.gateway_url, config.device_token
+    );
+    if let Some(ref id) = config.node_id {
+        extra_args.push_str(&format!(" --node-id {id}"));
+    }
+    if let Some(ref name) = config.display_name {
+        extra_args.push_str(&format!(" --name {name}"));
+    }
+    if let Some(ref dir) = config.working_dir {
+        extra_args.push_str(&format!(" --working-dir {dir}"));
+    }
+    extra_args.push_str(&format!(" --timeout {}", config.timeout));
+
+    let exec_args = format!("{bin} node run{extra_args}");
 
     format!(
         r#"[Unit]
