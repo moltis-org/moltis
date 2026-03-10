@@ -705,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_skips_tool_result_entries() {
+    fn convert_includes_tool_result_entries() {
         let values = vec![
             serde_json::json!({"role": "user", "content": "run ls"}),
             serde_json::json!({
@@ -718,9 +718,10 @@ mod tests {
             serde_json::json!({"role": "assistant", "content": "done"}),
         ];
         let msgs = values_to_chat_messages(&values);
-        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs.len(), 3);
         assert!(matches!(&msgs[0], ChatMessage::User { .. }));
-        assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+        assert!(matches!(&msgs[1], ChatMessage::Tool { .. }));
+        assert!(matches!(&msgs[2], ChatMessage::Assistant { .. }));
     }
 
     #[test]
