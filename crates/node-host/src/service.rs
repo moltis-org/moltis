@@ -206,30 +206,11 @@ pub fn generate_launchd_plist(
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let mut args = vec![
+    let args = vec![
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
-        format!("    <string>--host</string>"),
-        format!("    <string>{}</string>", config.gateway_url),
-        format!("    <string>--token</string>"),
-        format!("    <string>{}</string>", config.device_token),
-        format!("    <string>--timeout</string>"),
-        format!("    <string>{}</string>", config.timeout),
     ];
-
-    if let Some(ref id) = config.node_id {
-        args.push("    <string>--node-id</string>".to_string());
-        args.push(format!("    <string>{id}</string>"));
-    }
-    if let Some(ref name) = config.display_name {
-        args.push("    <string>--name</string>".to_string());
-        args.push(format!("    <string>{name}</string>"));
-    }
-    if let Some(ref dir) = config.working_dir {
-        args.push("    <string>--working-dir</string>".to_string());
-        args.push(format!("    <string>{dir}</string>"));
-    }
 
     let args_str = args.join("\n");
 
@@ -414,20 +395,7 @@ pub fn generate_systemd_unit(moltis_bin: &Path, config: &ServiceConfig, log_path
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let mut exec_args = format!(
-        "{bin} node run --host {} --token {} --timeout {}",
-        config.gateway_url, config.device_token, config.timeout,
-    );
-
-    if let Some(ref id) = config.node_id {
-        exec_args.push_str(&format!(" --node-id {id}"));
-    }
-    if let Some(ref name) = config.display_name {
-        exec_args.push_str(&format!(" --name {name}"));
-    }
-    if let Some(ref dir) = config.working_dir {
-        exec_args.push_str(&format!(" --working-dir {dir}"));
-    }
+    let exec_args = format!("{bin} node run");
 
     format!(
         r#"[Unit]
@@ -708,12 +676,6 @@ mod tests {
         assert!(unit.contains("[Install]"));
         assert!(unit.contains("network-online.target"));
         assert!(unit.contains("/usr/bin/moltis node run"));
-        assert!(unit.contains("ws://gw:9090/ws"));
-        assert!(unit.contains("tok_sys"));
-        assert!(unit.contains("--node-id sys-node"));
-        assert!(unit.contains("--name Server"));
-        assert!(unit.contains("--working-dir /srv"));
-        assert!(unit.contains("--timeout 600"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("RestartSec=10"));
         assert!(unit.contains("/var/log/moltis/node.log"));
