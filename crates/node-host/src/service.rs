@@ -197,6 +197,14 @@ fn launchd_plist_path() -> anyhow::Result<PathBuf> {
         .join(format!("{LAUNCHD_LABEL}.plist")))
 }
 
+/// Escape a string for safe inclusion in XML text content.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 /// Generate a launchd plist XML string.
 ///
 /// `node run` reads connection parameters (gateway URL, device token, etc.)
@@ -207,8 +215,8 @@ pub fn generate_launchd_plist(
     config: &ServiceConfig,
     log_path: &Path,
 ) -> String {
-    let bin = moltis_bin.display();
-    let log = log_path.display();
+    let bin = xml_escape(&moltis_bin.display().to_string());
+    let log = xml_escape(&log_path.display().to_string());
 
     let args = [
         format!("    <string>{bin}</string>"),
@@ -642,6 +650,25 @@ mod tests {
         // Config fields should NOT appear as CLI args.
         assert!(!plist.contains("--gateway-url"));
         assert!(!plist.contains("--device-token"));
+    }
+
+    #[test]
+    fn launchd_plist_escapes_xml_special_chars() {
+        let bin = PathBuf::from("/usr/local/bin/moltis");
+        let config = ServiceConfig {
+            gateway_url: "ws://gw:9090/ws".into(),
+            device_token: "tok".into(),
+            node_id: None,
+            display_name: None,
+            working_dir: None,
+            timeout: 300,
+        };
+        let log = PathBuf::from("/tmp/a&b<c>.log");
+
+        let plist = generate_launchd_plist(&bin, &config, &log);
+
+        assert!(plist.contains("a&amp;b&lt;c&gt;.log"));
+        assert!(!plist.contains("a&b<c>"));
     }
 
     #[test]

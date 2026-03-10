@@ -85,6 +85,11 @@ impl OtpState {
         }
     }
 
+    /// Update the lockout cooldown duration (takes effect on future lockouts).
+    pub fn set_cooldown(&mut self, cooldown_secs: u64) {
+        self.cooldown = Duration::from_secs(cooldown_secs);
+    }
+
     /// Initiate an OTP challenge for `peer_id`.
     pub fn initiate(
         &mut self,
