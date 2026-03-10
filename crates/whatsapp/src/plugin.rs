@@ -116,6 +116,10 @@ impl WhatsAppPlugin {
         let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
+            // Update startup-bound fields that are cached outside `config`.
+            if let Ok(mut otp) = state.otp.lock() {
+                otp.set_cooldown(wa_config.otp_cooldown_secs);
+            }
             state.config = wa_config;
             Ok(())
         } else {
@@ -238,6 +242,9 @@ impl ChannelPlugin for WhatsAppPlugin {
         let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
+            if let Ok(mut otp) = state.otp.lock() {
+                otp.set_cooldown(wa_config.otp_cooldown_secs);
+            }
             state.config = wa_config;
             Ok(())
         } else {

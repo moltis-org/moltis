@@ -124,12 +124,17 @@ pub async fn start_connection(
             result = bot.run() => {
                 match result {
                     Ok(handle) => {
+                        tokio::pin!(handle);
                         tokio::select! {
-                            _ = handle => {
+                            _ = &mut handle => {
                                 info!(account_id = %account_id_task, "WhatsApp bot task completed");
                             },
                             _ = cancel.cancelled() => {
-                                info!(account_id = %account_id_task, "WhatsApp account cancelled");
+                                info!(account_id = %account_id_task, "WhatsApp account cancelled, aborting bot task");
+                                handle.abort();
+                                // Wait for the task to finish after abort so the
+                                // sled store is fully released before we signal done.
+                                let _ = handle.await;
                             },
                         }
                     },
