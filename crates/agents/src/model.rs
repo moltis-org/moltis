@@ -265,9 +265,19 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                 };
                 messages.push(ChatMessage::tool(tool_call_id, content));
             },
-            // tool_result entries are UI-only metadata (persisted tool execution
-            // output); they are not part of the LLM conversation context.
-            "tool_result" => continue,
+            // tool_result entries are persisted tool execution output; convert
+            // them to standard tool messages so the LLM sees its own results.
+            "tool_result" => {
+                let tool_call_id = val["tool_call_id"].as_str().unwrap_or("").to_string();
+                let content = if let Some(err) = val["error"].as_str() {
+                    format!("Error: {err}")
+                } else if let Some(result) = val.get("result") {
+                    result.to_string()
+                } else {
+                    String::new()
+                };
+                messages.push(ChatMessage::tool(tool_call_id, content));
+            },
             // notice entries are UI-only informational messages.
             "notice" => continue,
             other => {
@@ -724,6 +734,62 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert!(matches!(&msgs[0], ChatMessage::User { .. }));
         assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn convert_tool_result_to_tool_message() {
+        let values = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{\"command\":\"ls\"}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "exec",
+                "success": true,
+                "result": {"stdout": "file.txt", "exit_code": 0}
+            }),
+        ];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 2);
+        match &msgs[1] {
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
+                assert_eq!(tool_call_id, "call_1");
+                assert!(content.contains("file.txt"));
+            },
+            other => panic!("expected Tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_tool_result_error_to_tool_message() {
+        let values = vec![serde_json::json!({
+            "role": "tool_result",
+            "tool_call_id": "call_2",
+            "tool_name": "exec",
+            "success": false,
+            "error": "command not found"
+        })];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 1);
+        match &msgs[0] {
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
+                assert_eq!(tool_call_id, "call_2");
+                assert_eq!(content, "Error: command not found");
+            },
+            other => panic!("expected Tool, got {other:?}"),
+        }
     }
 
     // ── ModelMetadata default trait impl ────────────────────────────
