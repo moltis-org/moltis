@@ -90,14 +90,19 @@ Moltis runs LLM-generated shell commands inside isolated containers for
 security. When Moltis itself runs in a container, it needs access to the host's
 container runtime to create these sandbox containers.
 
-**Without the socket mount**, sandbox execution is disabled. The agent will
-still work for chat-only interactions, but any tool that runs shell commands
-will fail.
-
 ```bash
-# Required for sandbox execution
+# Recommended for full container isolation
 -v /var/run/docker.sock:/var/run/docker.sock
 ```
+
+**Without the socket mount**, Moltis automatically falls back to the
+[restricted-host sandbox](sandbox.md#restricted-host-sandbox), which provides
+lightweight isolation by clearing environment variables, restricting `PATH`,
+and applying resource limits via `ulimit`. Commands will execute successfully
+inside the Moltis container but without filesystem or network isolation.
+
+For full container-level isolation (filesystem boundaries, network policies),
+mount the Docker socket.
 
 ### Security Consideration
 
@@ -105,10 +110,6 @@ Mounting the Docker socket gives the container full access to the Docker
 daemon. This is equivalent to root access on the host for practical purposes.
 Only run Moltis containers from trusted sources (official images from
 `ghcr.io/moltis-org/moltis`).
-
-If you cannot mount the Docker socket, Moltis will run in "no sandbox" mode —
-commands execute directly inside the Moltis container itself, which provides
-no isolation.
 
 ## Docker Compose
 
