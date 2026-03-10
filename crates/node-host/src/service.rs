@@ -206,11 +206,38 @@ pub fn generate_launchd_plist(
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let args = vec![
+    let mut args = vec![
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
+        format!(
+            "    <string>--gateway-url</string>\n    <string>{}</string>",
+            config.gateway_url
+        ),
+        format!(
+            "    <string>--device-token</string>\n    <string>{}</string>",
+            config.device_token
+        ),
+        format!(
+            "    <string>--timeout</string>\n    <string>{}</string>",
+            config.timeout
+        ),
     ];
+    if let Some(ref id) = config.node_id {
+        args.push(format!(
+            "    <string>--node-id</string>\n    <string>{id}</string>"
+        ));
+    }
+    if let Some(ref name) = config.display_name {
+        args.push(format!(
+            "    <string>--name</string>\n    <string>{name}</string>"
+        ));
+    }
+    if let Some(ref dir) = config.working_dir {
+        args.push(format!(
+            "    <string>--working-dir</string>\n    <string>{dir}</string>"
+        ));
+    }
 
     let args_str = args.join("\n");
 
@@ -395,7 +422,20 @@ pub fn generate_systemd_unit(moltis_bin: &Path, config: &ServiceConfig, log_path
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let exec_args = format!("{bin} node run");
+    let mut exec_parts = vec![format!(
+        "{bin} node run --gateway-url {} --device-token {} --timeout {}",
+        config.gateway_url, config.device_token, config.timeout
+    )];
+    if let Some(ref id) = config.node_id {
+        exec_parts.push(format!("--node-id {id}"));
+    }
+    if let Some(ref name) = config.display_name {
+        exec_parts.push(format!("--name {name}"));
+    }
+    if let Some(ref dir) = config.working_dir {
+        exec_parts.push(format!("--working-dir {dir}"));
+    }
+    let exec_start = exec_parts.join(" ");
 
     format!(
         r#"[Unit]
@@ -405,7 +445,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart={exec_args}
+ExecStart={exec_start}
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:{log}

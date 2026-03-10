@@ -298,20 +298,39 @@ impl ChannelService for LiveChannelService {
             "updating channel account"
         );
         let ct = channel_type.as_str();
-        self.registry
-            .stop_account(ct, account_id)
-            .await
-            .map_err(|e| {
-                error!(error = %e, account_id, channel_type = ct, "failed to stop account");
-                e.to_string()
-            })?;
-        self.registry
-            .start_account(ct, account_id, config.clone())
-            .await
-            .map_err(|e| {
-                error!(error = %e, account_id, channel_type = ct, "failed to start account");
-                e.to_string()
-            })?;
+        let mut live_update_warning = None;
+        match channel_type {
+            ChannelType::Whatsapp => {
+                // WhatsApp keeps a persistent sled DB lock while running; for
+                // policy/config-only changes, apply hot updates in-place to
+                // avoid stop/start lock races.
+                if let Err(e) = self
+                    .registry
+                    .update_account_config(account_id, config.clone())
+                    .await
+                {
+                    warn!(error = %e, account_id, channel_type = ct, "failed to hot-update config");
+                    live_update_warning =
+                        Some("config saved to store but live session was not updated");
+                }
+            },
+            _ => {
+                self.registry
+                    .stop_account(ct, account_id)
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, account_id, channel_type = ct, "failed to stop account");
+                        e.to_string()
+                    })?;
+                self.registry
+                    .start_account(ct, account_id, config.clone())
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, account_id, channel_type = ct, "failed to start account");
+                        e.to_string()
+                    })?;
+            },
+        }
 
         let created_at = self
             .store
@@ -335,10 +354,14 @@ impl ChannelService for LiveChannelService {
             warn!(error = %e, account_id, "failed to persist channel update");
         }
 
-        Ok(serde_json::json!({
+        let mut result = serde_json::json!({
             "updated": account_id,
             "type": channel_type.to_string()
-        }))
+        });
+        if let Some(warning) = live_update_warning {
+            result["warning"] = Value::String(warning.to_string());
+        }
+        Ok(result)
     }
 
     async fn send(&self, params: Value) -> ServiceResult {

@@ -1,12 +1,13 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, atomic::Ordering},
     time::Instant,
 };
 
 use {
     async_trait::async_trait,
+    tokio::time::{Duration, timeout},
     tracing::{info, warn},
 };
 
@@ -25,7 +26,7 @@ use crate::{
 };
 
 /// Cache TTL for probe results (30 seconds).
-const PROBE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+const PROBE_CACHE_TTL: Duration = Duration::from_secs(30);
 
 /// WhatsApp channel plugin.
 pub struct WhatsAppPlugin {
@@ -169,14 +170,25 @@ impl ChannelPlugin for WhatsAppPlugin {
     }
 
     async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
-        let cancel = {
+        let stop_ctx = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-            accounts.get(account_id).map(|s| s.cancel.clone())
+            accounts
+                .get(account_id)
+                .map(|s| (s.cancel.clone(), Arc::clone(&s.shutdown)))
         };
 
-        if let Some(cancel) = cancel {
+        if let Some((cancel, shutdown)) = stop_ctx {
             info!(account_id, "stopping WhatsApp account");
             cancel.cancel();
+
+            if !shutdown.is_done()
+                && timeout(Duration::from_secs(10), shutdown.wait())
+                    .await
+                    .is_err()
+            {
+                warn!(account_id, "timeout waiting for WhatsApp account shutdown");
+            }
+
             let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
             accounts.remove(account_id);
         } else {
@@ -278,7 +290,7 @@ impl ChannelStatus for WhatsAppPlugin {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             match accounts.get(account_id) {
                 Some(state) => {
-                    let connected = state.connected.load(std::sync::atomic::Ordering::Relaxed);
+                    let connected = state.connected.load(Ordering::Relaxed);
                     let details = if connected {
                         state
                             .config
