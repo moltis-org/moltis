@@ -251,7 +251,8 @@ impl LiveOnboardingService {
             } else {
                 v.as_str().map(|s| s.to_string())
             };
-            moltis_config::save_soul(soul.as_deref()).context("failed to save soul")?;
+            moltis_config::save_soul_for_agent("main", soul.as_deref())
+                .context("failed to save soul")?;
         }
         if let Some(v) = str_field(&params, "user_name") {
             user.name = v;

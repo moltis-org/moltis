@@ -518,8 +518,9 @@ pub fn load_soul() -> Option<String> {
 pub fn load_soul_for_agent(agent_id: &str) -> Option<String> {
     if agent_id == "main" {
         let main_path = agent_workspace_dir("main").join("SOUL.md");
-        if let Some(soul) = load_workspace_markdown(main_path) {
-            return Some(soul);
+        if main_path.exists() {
+            // File exists — return content or None (explicit clear).
+            return load_workspace_markdown(main_path);
         }
         return load_soul();
     }
