@@ -142,6 +142,18 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
                 "timeMs",
                 "time_ms",
             ]);
+            // Resolve delay_ms (relative offset from now) into an absolute at_ms.
+            // This lets the LLM specify "in 10 minutes" without computing epoch timestamps.
+            take_alias(obj, "delay_ms", &["delayMs", "delay", "in", "in_ms", "offset_ms"]);
+            if let Some(delay_raw) = obj.remove("delay_ms") {
+                let delay = parse_interval_millis(&delay_raw, "schedule.delay_ms")?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                obj.entry("at_ms".to_string()).or_insert(json!(now + delay));
+                obj.entry("kind".to_string()).or_insert(json!("at"));
+            }
             take_alias(obj, "every_ms", &[
                 "everyMs",
                 "every",
@@ -649,10 +661,11 @@ impl AgentTool for CronTool {
                         "name": { "type": "string", "description": "Human-readable job name" },
                         "schedule": {
                             "type": "object",
-                            "description": "Schedule object. Use {kind:'at', at_ms}, {kind:'every', every_ms, anchor_ms?}, or {kind:'cron', expr, tz?}. This tool also accepts shorthand schedule strings/numbers at runtime.",
+                            "description": "Schedule object. For one-off jobs use {kind:'at', delay_ms} where delay_ms is milliseconds from now (e.g. 600000 for 10 min) — never compute at_ms yourself. For recurring use {kind:'every', every_ms} or {kind:'cron', expr, tz?}.",
                             "properties": {
                                 "kind": { "type": "string", "enum": ["at", "every", "cron"] },
-                                "at_ms": { "type": "integer", "description": "Used when kind='at'" },
+                                "delay_ms": { "type": "integer", "description": "Milliseconds from now to run the job (server resolves to absolute time). Preferred over at_ms." },
+                                "at_ms": { "type": "integer", "description": "Absolute epoch milliseconds. Use delay_ms instead unless you have an exact timestamp." },
                                 "every_ms": { "type": "integer", "description": "Used when kind='every'" },
                                 "anchor_ms": { "type": "integer", "description": "Optional anchor when kind='every'" },
                                 "expr": { "type": "string", "description": "Cron expression used when kind='cron'" },
