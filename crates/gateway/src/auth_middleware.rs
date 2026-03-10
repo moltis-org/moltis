@@ -119,7 +119,7 @@ pub async fn auth_gate(
             next.run(request).await
         },
         AuthResult::SetupRequired => {
-            if path.starts_with("/api/") || path.starts_with("/ws/") {
+            if (path.starts_with("/api/") || path.starts_with("/ws/")) && !is_local {
                 if path.starts_with("/ws/") {
                     warn!(
                         path,
