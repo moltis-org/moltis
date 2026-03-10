@@ -374,8 +374,10 @@ pub fn load_identity() -> Option<AgentIdentity> {
 pub fn load_identity_for_agent(agent_id: &str) -> Option<AgentIdentity> {
     if agent_id == "main" {
         let main_path = agent_workspace_dir("main").join("IDENTITY.md");
-        if let Some(identity) = load_identity_from_path(&main_path) {
-            return Some(identity);
+        if main_path.exists() {
+            // File exists — return parsed content or None (empty sentinel).
+            // Do NOT fall back to root so cleared identities stay cleared.
+            return load_identity_from_path(&main_path);
         }
         return load_identity();
     }
@@ -676,9 +678,9 @@ pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crat
         identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
 
     if !has_values {
-        if path.exists() {
-            std::fs::remove_file(&path)?;
-        }
+        // Write an empty sentinel so load_identity_for_agent won't fall back
+        // to a stale root IDENTITY.md on upgraded installs.
+        std::fs::write(&path, "")?;
         return Ok(path);
     }
 
