@@ -2557,7 +2557,7 @@ pub extern "C" fn moltis_get_soul() -> *mut c_char {
 
     with_ffi_boundary(|| {
         emit_log("DEBUG", "bridge", "moltis_get_soul called");
-        let soul = moltis_config::load_soul();
+        let soul = moltis_config::load_soul_for_agent("main");
         encode_json(&GetSoulResponse { soul })
     })
 }
@@ -2575,7 +2575,7 @@ pub extern "C" fn moltis_save_soul(request_json: *const c_char) -> *mut c_char {
         };
 
         emit_log("INFO", "bridge.config", "Saving soul from settings");
-        match moltis_config::save_soul(request.soul.as_deref()) {
+        match moltis_config::save_soul_for_agent("main", request.soul.as_deref()) {
             Ok(path) => {
                 emit_log(
                     "INFO",
@@ -2612,7 +2612,7 @@ pub extern "C" fn moltis_save_identity(request_json: *const c_char) -> *mut c_ch
         };
 
         emit_log("INFO", "bridge.config", "Saving identity from settings");
-        match moltis_config::save_identity(&identity) {
+        match moltis_config::save_identity_for_agent("main", &identity) {
             Ok(path) => {
                 emit_log(
                     "INFO",

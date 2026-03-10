@@ -198,6 +198,10 @@ fn launchd_plist_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Generate a launchd plist XML string.
+///
+/// `node run` reads connection parameters (gateway URL, device token, etc.)
+/// from `~/.moltis/node.json` at runtime, so only `--timeout` is passed as
+/// a CLI flag here.
 pub fn generate_launchd_plist(
     moltis_bin: &Path,
     config: &ServiceConfig,
@@ -206,10 +210,12 @@ pub fn generate_launchd_plist(
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let args = vec![
+    let args = [
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
+        "    <string>--timeout</string>".to_string(),
+        format!("    <string>{}</string>", config.timeout),
     ];
 
     let args_str = args.join("\n");
@@ -391,7 +397,11 @@ fn systemd_unit_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Generate a systemd user unit file.
-pub fn generate_systemd_unit(moltis_bin: &Path, config: &ServiceConfig, log_path: &Path) -> String {
+pub fn generate_systemd_unit(
+    moltis_bin: &Path,
+    _config: &ServiceConfig,
+    log_path: &Path,
+) -> String {
     let bin = moltis_bin.display();
     let log = log_path.display();
 
@@ -622,11 +632,9 @@ mod tests {
 
         assert!(plist.contains("org.moltis.node"));
         assert!(plist.contains("/usr/local/bin/moltis"));
-        assert!(plist.contains("ws://gw:9090/ws"));
-        assert!(plist.contains("tok_test"));
-        assert!(plist.contains("node-42"));
-        assert!(plist.contains("Test Node"));
-        assert!(plist.contains("/home/user"));
+        // `node run` reads gateway_url, device_token, etc. from node.json
+        // at runtime — only --timeout is passed as a CLI flag.
+        assert!(plist.contains("--timeout"));
         assert!(plist.contains("120"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
@@ -634,26 +642,6 @@ mod tests {
         // Verify it's valid-ish XML.
         assert!(plist.starts_with("<?xml"));
         assert!(plist.contains("</plist>"));
-    }
-
-    #[test]
-    fn launchd_plist_omits_optional_fields() {
-        let bin = PathBuf::from("/usr/local/bin/moltis");
-        let config = ServiceConfig {
-            gateway_url: "ws://gw:9090/ws".into(),
-            device_token: "tok_test".into(),
-            node_id: None,
-            display_name: None,
-            working_dir: None,
-            timeout: 300,
-        };
-        let log = PathBuf::from("/tmp/node.log");
-
-        let plist = generate_launchd_plist(&bin, &config, &log);
-
-        assert!(!plist.contains("--node-id"));
-        assert!(!plist.contains("--name"));
-        assert!(!plist.contains("--working-dir"));
     }
 
     #[test]
