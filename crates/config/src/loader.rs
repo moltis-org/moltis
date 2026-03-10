@@ -396,7 +396,10 @@ pub fn resolve_identity() -> ResolvedIdentity {
 pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
     let mut id = ResolvedIdentity::from_config(config);
 
-    if let Some(file_identity) = load_identity() {
+    // Read from `agents/main/IDENTITY.md` first (primary), falling back to
+    // root `IDENTITY.md` (legacy).  This mirrors the read path in
+    // `load_identity_for_agent("main")`.
+    if let Some(file_identity) = load_identity_for_agent("main") {
         if let Some(name) = file_identity.name {
             id.name = name;
         }
@@ -414,7 +417,7 @@ pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
         id.user_name = Some(name);
     }
 
-    id.soul = load_soul();
+    id.soul = load_soul_for_agent("main");
     id
 }
 
