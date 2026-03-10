@@ -206,38 +206,17 @@ pub fn generate_launchd_plist(
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let mut args = vec![
+    // `moltis node run` reads connection details from node.json (written by
+    // `node add`).  The only CLI flag it accepts is `--timeout`.
+    let args = [
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
         format!(
-            "    <string>--gateway-url</string>\n    <string>{}</string>",
-            config.gateway_url
-        ),
-        format!(
-            "    <string>--device-token</string>\n    <string>{}</string>",
-            config.device_token
+            "    <string>--timeout</string>\n    <string>{}</string>",
+            config.timeout
         ),
     ];
-    if let Some(ref id) = config.node_id {
-        args.push(format!(
-            "    <string>--node-id</string>\n    <string>{id}</string>"
-        ));
-    }
-    if let Some(ref name) = config.display_name {
-        args.push(format!(
-            "    <string>--name</string>\n    <string>{name}</string>"
-        ));
-    }
-    if let Some(ref dir) = config.working_dir {
-        args.push(format!(
-            "    <string>--working-dir</string>\n    <string>{dir}</string>"
-        ));
-    }
-    args.push(format!(
-        "    <string>--timeout</string>\n    <string>{}</string>",
-        config.timeout
-    ));
 
     let args_str = args.join("\n");
 
@@ -422,22 +401,9 @@ pub fn generate_systemd_unit(moltis_bin: &Path, config: &ServiceConfig, log_path
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let mut extra_args = format!(
-        " --gateway-url {} --device-token {}",
-        config.gateway_url, config.device_token
-    );
-    if let Some(ref id) = config.node_id {
-        extra_args.push_str(&format!(" --node-id {id}"));
-    }
-    if let Some(ref name) = config.display_name {
-        extra_args.push_str(&format!(" --name {name}"));
-    }
-    if let Some(ref dir) = config.working_dir {
-        extra_args.push_str(&format!(" --working-dir {dir}"));
-    }
-    extra_args.push_str(&format!(" --timeout {}", config.timeout));
-
-    let exec_args = format!("{bin} node run{extra_args}");
+    // `moltis node run` reads connection details from node.json; only
+    // `--timeout` is accepted as a CLI override.
+    let exec_args = format!("{bin} node run --timeout {}", config.timeout);
 
     format!(
         r#"[Unit]
@@ -664,35 +630,43 @@ mod tests {
 
         assert!(plist.contains("org.moltis.node"));
         assert!(plist.contains("/usr/local/bin/moltis"));
-        assert!(plist.contains("ws://gw:9090/ws"));
-        assert!(plist.contains("tok_test"));
-        assert!(plist.contains("node-42"));
-        assert!(plist.contains("Test Node"));
-        assert!(plist.contains("/home/user"));
+        // `node run` reads connection details from node.json; only --timeout
+        // is passed via CLI.
+        assert!(plist.contains("/usr/local/bin/moltis"));
+        assert!(plist.contains("<string>node</string>"));
+        assert!(plist.contains("<string>run</string>"));
+        assert!(plist.contains("--timeout"));
         assert!(plist.contains("120"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("/tmp/node.log"));
-        // Verify it's valid-ish XML.
         assert!(plist.starts_with("<?xml"));
         assert!(plist.contains("</plist>"));
+        // Config fields should NOT appear as CLI args.
+        assert!(!plist.contains("--gateway-url"));
+        assert!(!plist.contains("--device-token"));
     }
 
     #[test]
-    fn launchd_plist_omits_optional_fields() {
+    fn launchd_plist_only_passes_timeout_flag() {
         let bin = PathBuf::from("/usr/local/bin/moltis");
         let config = ServiceConfig {
             gateway_url: "ws://gw:9090/ws".into(),
             device_token: "tok_test".into(),
-            node_id: None,
-            display_name: None,
-            working_dir: None,
+            node_id: Some("node-1".into()),
+            display_name: Some("Test".into()),
+            working_dir: Some("/tmp".into()),
             timeout: 300,
         };
         let log = PathBuf::from("/tmp/node.log");
 
         let plist = generate_launchd_plist(&bin, &config, &log);
 
+        // Only --timeout should appear; connection details are in node.json.
+        assert!(plist.contains("--timeout"));
+        assert!(plist.contains("300"));
+        assert!(!plist.contains("--gateway-url"));
+        assert!(!plist.contains("--device-token"));
         assert!(!plist.contains("--node-id"));
         assert!(!plist.contains("--name"));
         assert!(!plist.contains("--working-dir"));
@@ -717,28 +691,35 @@ mod tests {
         assert!(unit.contains("[Service]"));
         assert!(unit.contains("[Install]"));
         assert!(unit.contains("network-online.target"));
-        assert!(unit.contains("/usr/bin/moltis node run"));
+        assert!(unit.contains("/usr/bin/moltis node run --timeout 600"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("RestartSec=10"));
         assert!(unit.contains("/var/log/moltis/node.log"));
         assert!(unit.contains("WantedBy=default.target"));
+        // Config fields should NOT appear as CLI args.
+        assert!(!unit.contains("--gateway-url"));
+        assert!(!unit.contains("--device-token"));
     }
 
     #[test]
-    fn systemd_unit_omits_optional_fields() {
+    fn systemd_unit_only_passes_timeout_flag() {
         let bin = PathBuf::from("/usr/bin/moltis");
         let config = ServiceConfig {
             gateway_url: "ws://gw:9090/ws".into(),
             device_token: "tok_min".into(),
-            node_id: None,
-            display_name: None,
-            working_dir: None,
+            node_id: Some("node-1".into()),
+            display_name: Some("Test".into()),
+            working_dir: Some("/srv".into()),
             timeout: 300,
         };
         let log = PathBuf::from("/tmp/node.log");
 
         let unit = generate_systemd_unit(&bin, &config, &log);
 
+        // Only --timeout should appear; connection details are in node.json.
+        assert!(unit.contains("--timeout 300"));
+        assert!(!unit.contains("--gateway-url"));
+        assert!(!unit.contains("--device-token"));
         assert!(!unit.contains("--node-id"));
         assert!(!unit.contains("--name"));
         assert!(!unit.contains("--working-dir"));

@@ -1632,10 +1632,13 @@ impl OnboardingService for MockOnboardingService {
     }
 }
 
-/// Start a local test server with a mock onboarding service.
+/// Start a test server with a mock onboarding service.
+///
+/// When `behind_proxy` is true, connections are treated as remote.
 #[cfg(feature = "web-ui")]
-async fn start_auth_server_with_onboarding(
+async fn start_server_with_onboarding(
     onboarded: bool,
+    behind_proxy: bool,
 ) -> (SocketAddr, Arc<CredentialStore>, Arc<GatewayState>) {
     let tmp = tempfile::tempdir().unwrap();
     moltis_config::set_config_dir(tmp.path().to_path_buf());
@@ -1663,76 +1666,7 @@ async fn start_auth_server_with_onboarding(
         Some(Arc::clone(&cred_store)),
         None, // pairing_store
         false,
-        false,
-        false,
-        None,
-        None,
-        18789,
-        false,
-        None,
-        None, // session_event_bus
-        #[cfg(feature = "metrics")]
-        None,
-        #[cfg(feature = "metrics")]
-        None,
-        #[cfg(feature = "vault")]
-        None,
-    );
-    let state_clone = Arc::clone(&state);
-    let methods = Arc::new(MethodRegistry::new());
-    #[cfg(feature = "push-notifications")]
-    let (router, app_state) = build_gateway_base(state, methods, None, None);
-    #[cfg(not(feature = "push-notifications"))]
-    let (router, app_state) = build_gateway_base(state, methods, None);
-
-    let router = router.merge(moltis_web::web_routes());
-    let app = finalize_gateway_app(router, app_state, false);
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
-        .unwrap();
-    });
-    (addr, cred_store, state_clone)
-}
-
-/// Start a proxied (remote) test server with a mock onboarding service.
-#[cfg(feature = "web-ui")]
-async fn start_proxied_server_with_onboarding(
-    onboarded: bool,
-) -> (SocketAddr, Arc<CredentialStore>, Arc<GatewayState>) {
-    let tmp = tempfile::tempdir().unwrap();
-    moltis_config::set_config_dir(tmp.path().to_path_buf());
-    moltis_config::set_data_dir(tmp.path().to_path_buf());
-    std::mem::forget(tmp);
-
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-    let auth_config = moltis_config::AuthConfig::default();
-    let cred_store = Arc::new(
-        CredentialStore::with_config(pool, &auth_config)
-            .await
-            .unwrap(),
-    );
-
-    let mock_onboarding: Arc<dyn OnboardingService> = Arc::new(MockOnboardingService {
-        onboarded: AtomicBool::new(onboarded),
-    });
-
-    let resolved_auth = auth::resolve_auth(None, None);
-    let services = GatewayServices::noop().with_onboarding(mock_onboarding);
-    let state = GatewayState::with_options(
-        resolved_auth,
-        services,
-        None,
-        Some(Arc::clone(&cred_store)),
-        None, // pairing_store
-        false,
-        true, // behind_proxy — treats connections as remote
+        behind_proxy,
         false,
         None,
         None,
@@ -1775,7 +1709,7 @@ async fn start_proxied_server_with_onboarding(
 #[cfg(feature = "web-ui")]
 #[tokio::test]
 async fn local_api_during_onboarding_bypasses_auth() {
-    let (addr, store, _state) = start_auth_server_with_onboarding(false).await;
+    let (addr, store, _state) = start_server_with_onboarding(false, false).await;
     store.set_initial_password("testpass123").await.unwrap();
 
     let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
@@ -1793,7 +1727,7 @@ async fn local_api_during_onboarding_bypasses_auth() {
 #[cfg(feature = "web-ui")]
 #[tokio::test]
 async fn local_api_after_onboarding_requires_auth() {
-    let (addr, store, _state) = start_auth_server_with_onboarding(true).await;
+    let (addr, store, _state) = start_server_with_onboarding(true, false).await;
     store.set_initial_password("testpass123").await.unwrap();
 
     let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
@@ -1811,7 +1745,7 @@ async fn local_api_after_onboarding_requires_auth() {
 #[cfg(feature = "web-ui")]
 #[tokio::test]
 async fn remote_api_during_onboarding_requires_auth() {
-    let (addr, store, _state) = start_proxied_server_with_onboarding(false).await;
+    let (addr, store, _state) = start_server_with_onboarding(false, true).await;
     store.set_initial_password("testpass123").await.unwrap();
 
     let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
@@ -1821,5 +1755,25 @@ async fn remote_api_during_onboarding_requires_auth() {
         resp.status(),
         401,
         "remote API request during onboarding must still require auth"
+    );
+}
+
+/// Privileged endpoints are NOT covered by the onboarding bypass, even for
+/// local connections during onboarding. Only the narrow set of paths needed
+/// by the wizard is allowed through.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn local_privileged_api_during_onboarding_requires_auth() {
+    let (addr, store, _state) = start_server_with_onboarding(false, false).await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    // /api/config is not in the onboarding bypass allowlist.
+    let resp = reqwest::get(format!("http://{addr}/api/config"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "privileged API must require auth even during onboarding"
     );
 }
