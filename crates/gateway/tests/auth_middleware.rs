@@ -324,13 +324,15 @@ async fn public_routes_accessible_without_auth() {
         .unwrap();
     let resp = client
         .get(format!("http://{addr}/ws"))
-        .send()
-        .await
-        .unwrap();
     assert_ne!(
         resp.status(),
         303,
         "/ws should not redirect to login — it must bypass auth middleware"
+    );
+    assert_eq!(
+        resp.status(),
+        400,
+        "/ws should return 400 for a plain GET (not a WebSocket upgrade), confirming the handler was reached"
     );
 
     // SPA fallback (root page) is public.
