@@ -314,6 +314,27 @@ async fn public_routes_accessible_without_auth() {
         .unwrap();
     assert_eq!(resp.status(), 200);
 
+    // /ws (node WebSocket endpoint) is public so device-token auth
+    // happens at the WebSocket protocol layer, not HTTP middleware.
+    // A plain GET returns 400 (not a WebSocket upgrade), but crucially
+    // it must NOT return a 303 redirect to /login.
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{addr}/ws"))
+    assert_ne!(
+        resp.status(),
+        303,
+        "/ws should not redirect to login — it must bypass auth middleware"
+    );
+    assert_eq!(
+        resp.status(),
+        400,
+        "/ws should return 400 for a plain GET (not a WebSocket upgrade), confirming the handler was reached"
+    );
+
     // SPA fallback (root page) is public.
     let resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
     assert_eq!(resp.status(), 200);
