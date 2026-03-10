@@ -12,7 +12,7 @@ use axum::{
     response::{IntoResponse, Json, Redirect},
 };
 #[cfg(feature = "web-ui")]
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
@@ -155,6 +155,28 @@ pub async fn auth_gate(
             }
         },
         AuthResult::Unauthorized => {
+            // During onboarding, local requests may lack a valid session
+            // cookie (e.g. STT test button uses HTTP fetch, not WS).
+            // Allow only the paths the wizard needs — not all of /api/*.
+            if is_local && is_onboarding_bypass_path(path) {
+                let onboarded = state
+                    .gateway
+                    .services
+                    .onboarding
+                    .wizard_status()
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
+                    .unwrap_or(true);
+                if !onboarded {
+                    debug!(path, remote = %addr, "auth bypass: local request during onboarding");
+                    request.extensions_mut().insert(AuthIdentity {
+                        method: AuthMethod::Loopback,
+                    });
+                    return next.run(request).await;
+                }
+            }
+
             if path.starts_with("/api/") || path.starts_with("/ws/") {
                 if path.starts_with("/ws/") {
                     let has_bearer = bearer_token(request.headers()).is_some();
@@ -201,6 +223,19 @@ fn is_public_path(path: &str) -> bool {
         || path.starts_with("/api/channels/msteams/")
         || path.starts_with("/assets/")
         || path.starts_with("/share/")
+}
+
+/// Paths eligible for the onboarding auth bypass (local + not-yet-onboarded).
+///
+/// Kept narrow so that privileged endpoints like `/api/config` or
+/// `/api/restart` are never reachable without credentials.
+#[cfg(feature = "web-ui")]
+fn is_onboarding_bypass_path(path: &str) -> bool {
+    path.starts_with("/api/sessions/")  // STT upload / media
+        || path.starts_with("/api/bootstrap")
+        || path == "/api/gon"
+        || path.starts_with("/api/tailscale/")
+        || path.starts_with("/ws/") // WS RPCs (voice, provider config)
 }
 
 // ── Vault guard ─────────────────────────────────────────────────────────────
