@@ -529,8 +529,8 @@ mod tests {
         let res = svc.identity_update(json!({ "soul": null })).unwrap();
         assert!(res["soul"].is_null());
 
-        let soul_path = dir.path().join("SOUL.md");
-        // save_soul(None) writes an empty file (not deleted) to prevent re-seeding
+        let soul_path = dir.path().join("agents/main/SOUL.md");
+        // save_soul_for_agent("main", None) writes an empty file (not deleted) to prevent re-seeding
         assert!(soul_path.exists());
         assert!(std::fs::read_to_string(&soul_path).unwrap().is_empty());
 
