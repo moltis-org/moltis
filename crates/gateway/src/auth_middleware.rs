@@ -189,7 +189,13 @@ pub async fn auth_gate(
 fn is_public_path(path: &str) -> bool {
     matches!(
         path,
-        "/health" | "/auth/callback" | "/manifest.json" | "/sw.js" | "/login" | "/setup-required" | "/ws"
+        "/health"
+            | "/auth/callback"
+            | "/manifest.json"
+            | "/sw.js"
+            | "/login"
+            | "/setup-required"
+            | "/ws"
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/api/public/")
         || path.starts_with("/api/channels/msteams/")

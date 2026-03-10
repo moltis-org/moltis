@@ -324,6 +324,9 @@ async fn public_routes_accessible_without_auth() {
         .unwrap();
     let resp = client
         .get(format!("http://{addr}/ws"))
+        .send()
+        .await
+        .unwrap();
     assert_ne!(
         resp.status(),
         303,
