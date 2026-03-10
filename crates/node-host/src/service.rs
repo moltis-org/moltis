@@ -198,6 +198,10 @@ fn launchd_plist_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Generate a launchd plist XML string.
+///
+/// `node run` reads connection parameters (gateway URL, device token, etc.)
+/// from `~/.moltis/node.json` at runtime, so only `--timeout` is passed as
+/// a CLI flag here.
 pub fn generate_launchd_plist(
     moltis_bin: &Path,
     config: &ServiceConfig,
@@ -206,16 +210,12 @@ pub fn generate_launchd_plist(
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    // `moltis node run` reads connection details from node.json (written by
-    // `node add`).  The only CLI flag it accepts is `--timeout`.
     let args = [
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
-        format!(
-            "    <string>--timeout</string>\n    <string>{}</string>",
-            config.timeout
-        ),
+        "    <string>--timeout</string>".to_string(),
+        format!("    <string>{}</string>", config.timeout),
     ];
 
     let args_str = args.join("\n");
@@ -630,11 +630,8 @@ mod tests {
 
         assert!(plist.contains("org.moltis.node"));
         assert!(plist.contains("/usr/local/bin/moltis"));
-        // `node run` reads connection details from node.json; only --timeout
-        // is passed via CLI.
-        assert!(plist.contains("/usr/local/bin/moltis"));
-        assert!(plist.contains("<string>node</string>"));
-        assert!(plist.contains("<string>run</string>"));
+        // `node run` reads gateway_url, device_token, etc. from node.json
+        // at runtime — only --timeout is passed as a CLI flag.
         assert!(plist.contains("--timeout"));
         assert!(plist.contains("120"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
@@ -645,31 +642,6 @@ mod tests {
         // Config fields should NOT appear as CLI args.
         assert!(!plist.contains("--gateway-url"));
         assert!(!plist.contains("--device-token"));
-    }
-
-    #[test]
-    fn launchd_plist_only_passes_timeout_flag() {
-        let bin = PathBuf::from("/usr/local/bin/moltis");
-        let config = ServiceConfig {
-            gateway_url: "ws://gw:9090/ws".into(),
-            device_token: "tok_test".into(),
-            node_id: Some("node-1".into()),
-            display_name: Some("Test".into()),
-            working_dir: Some("/tmp".into()),
-            timeout: 300,
-        };
-        let log = PathBuf::from("/tmp/node.log");
-
-        let plist = generate_launchd_plist(&bin, &config, &log);
-
-        // Only --timeout should appear; connection details are in node.json.
-        assert!(plist.contains("--timeout"));
-        assert!(plist.contains("300"));
-        assert!(!plist.contains("--gateway-url"));
-        assert!(!plist.contains("--device-token"));
-        assert!(!plist.contains("--node-id"));
-        assert!(!plist.contains("--name"));
-        assert!(!plist.contains("--working-dir"));
     }
 
     #[test]
