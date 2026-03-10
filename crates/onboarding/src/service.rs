@@ -79,7 +79,7 @@ impl LiveOnboardingService {
             ws.identity = cfg.identity;
             ws.user = cfg.user;
         }
-        if let Some(file_identity) = moltis_config::load_identity() {
+        if let Some(file_identity) = moltis_config::load_identity_for_agent("main") {
             merge_identity(&mut ws.identity, &file_identity);
         }
         if let Some(file_user) = moltis_config::load_user() {
@@ -166,7 +166,7 @@ impl LiveOnboardingService {
             MoltisConfig::default()
         };
         let mut identity = config.identity.clone();
-        if let Some(file_identity) = moltis_config::load_identity() {
+        if let Some(file_identity) = moltis_config::load_identity_for_agent("main") {
             merge_identity(&mut identity, &file_identity);
         }
         let mut user = config.user.clone();

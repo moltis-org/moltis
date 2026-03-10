@@ -2612,7 +2612,7 @@ pub extern "C" fn moltis_save_identity(request_json: *const c_char) -> *mut c_ch
         };
 
         emit_log("INFO", "bridge.config", "Saving identity from settings");
-        match moltis_config::save_identity(&identity) {
+        match moltis_config::save_identity_for_agent("main", &identity) {
             Ok(path) => {
                 emit_log(
                     "INFO",
