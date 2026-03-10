@@ -703,7 +703,8 @@ pub fn build_gateway_base(
 ) -> (Router<AppState>, AppState) {
     let mut router = Router::new()
         .route("/health", get(health_handler))
-        .route("/ws/chat", get(ws_upgrade_handler));
+        .route("/ws/chat", get(ws_upgrade_handler))
+        .route("/ws", get(ws_upgrade_handler));
 
     // Nest auth routes if credential store is available.
     if let Some(ref cred_store) = state.credential_store {
@@ -759,7 +760,8 @@ pub fn build_gateway_base(
 ) -> (Router<AppState>, AppState) {
     let mut router = Router::new()
         .route("/health", get(health_handler))
-        .route("/ws/chat", get(ws_upgrade_handler));
+        .route("/ws/chat", get(ws_upgrade_handler))
+        .route("/ws", get(ws_upgrade_handler));
 
     // Add Prometheus metrics endpoint (unauthenticated for scraping).
     #[cfg(feature = "prometheus")]
