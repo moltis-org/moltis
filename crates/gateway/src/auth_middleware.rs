@@ -168,7 +168,7 @@ pub async fn auth_gate(
                     .await
                     .ok()
                     .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
-                    .unwrap_or(false);
+                    .unwrap_or(true);
                 if !onboarded {
                     debug!(path, remote = %addr, "auth bypass: local request during onboarding");
                     request.extensions_mut().insert(AuthIdentity {
