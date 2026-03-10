@@ -304,14 +304,29 @@ impl ChannelService for LiveChannelService {
                 // WhatsApp keeps a persistent sled DB lock while running; for
                 // policy/config-only changes, apply hot updates in-place to
                 // avoid stop/start lock races.
-                if let Err(e) = self
+                //
+                // Only suppress UnknownAccount (account not running) — config
+                // validation errors (SerdeJson, InvalidInput) must fail the
+                // request so we don't persist bad config to the store.
+                match self
                     .registry
                     .update_account_config(account_id, config.clone())
                     .await
                 {
-                    warn!(error = %e, account_id, channel_type = ct, "failed to hot-update config");
-                    live_update_warning =
-                        Some("config saved to store but live session was not updated");
+                    Ok(()) => {},
+                    Err(moltis_channels::Error::UnknownAccount { .. }) => {
+                        warn!(
+                            account_id,
+                            channel_type = ct,
+                            "WhatsApp account not running; config will apply on next start"
+                        );
+                        live_update_warning =
+                            Some("config saved to store but live session was not updated");
+                    },
+                    Err(e) => {
+                        error!(error = %e, account_id, channel_type = ct, "invalid config");
+                        return Err(e.to_string().into());
+                    },
                 }
             },
             _ => {

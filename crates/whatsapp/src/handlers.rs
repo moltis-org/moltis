@@ -21,8 +21,8 @@ use crate::{
 };
 
 fn mirror_connected(accounts: &AccountStateMap, account_id: &str, connected: bool) {
-    let mut map = accounts.write().unwrap_or_else(|e| e.into_inner());
-    if let Some(state) = map.get_mut(account_id) {
+    let map = accounts.read().unwrap_or_else(|e| e.into_inner());
+    if let Some(state) = map.get(account_id) {
         state.connected.store(connected, Ordering::Relaxed);
     }
 }
