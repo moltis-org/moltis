@@ -157,7 +157,9 @@ pub async fn handle_node(action: NodeAction) -> Result<()> {
             let node_config = moltis_node_host::NodeConfig {
                 gateway_url: config.gateway_url,
                 device_token: config.device_token,
-                node_id: config.node_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                node_id: config
+                    .node_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 display_name: config.display_name,
                 platform: std::env::consts::OS.into(),
                 caps: vec![

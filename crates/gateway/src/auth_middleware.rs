@@ -12,7 +12,7 @@ use axum::{
     response::{IntoResponse, Json, Redirect},
 };
 #[cfg(feature = "web-ui")]
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
@@ -155,6 +155,29 @@ pub async fn auth_gate(
             }
         },
         AuthResult::Unauthorized => {
+            // During onboarding, local API/WS requests may lack a valid
+            // session cookie (e.g. STT test button uses HTTP fetch, not WS).
+            // Allow them through with Loopback identity so the onboarding
+            // flow can complete without requiring a login first.
+            if is_local && (path.starts_with("/api/") || path.starts_with("/ws/")) {
+                let onboarded = state
+                    .gateway
+                    .services
+                    .onboarding
+                    .wizard_status()
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
+                    .unwrap_or(false);
+                if !onboarded {
+                    debug!(path, remote = %addr, "auth bypass: local request during onboarding");
+                    request.extensions_mut().insert(AuthIdentity {
+                        method: AuthMethod::Loopback,
+                    });
+                    return next.run(request).await;
+                }
+            }
+
             if path.starts_with("/api/") || path.starts_with("/ws/") {
                 if path.starts_with("/ws/") {
                     let has_bearer = bearer_token(request.headers()).is_some();
@@ -189,7 +212,13 @@ pub async fn auth_gate(
 fn is_public_path(path: &str) -> bool {
     matches!(
         path,
-        "/health" | "/auth/callback" | "/manifest.json" | "/sw.js" | "/login" | "/setup-required" | "/ws"
+        "/health"
+            | "/auth/callback"
+            | "/manifest.json"
+            | "/sw.js"
+            | "/login"
+            | "/setup-required"
+            | "/ws"
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/api/public/")
         || path.starts_with("/api/channels/msteams/")

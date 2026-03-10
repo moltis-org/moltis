@@ -805,7 +805,7 @@ impl OnboardingService for NoopOnboardingService {
     }
 
     async fn wizard_status(&self) -> ServiceResult {
-        Ok(serde_json::json!({ "active": false }))
+        Ok(serde_json::json!({ "active": false, "onboarded": true }))
     }
 
     async fn identity_get(&self) -> ServiceResult {
