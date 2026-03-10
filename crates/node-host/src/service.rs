@@ -200,17 +200,36 @@ fn launchd_plist_path() -> anyhow::Result<PathBuf> {
 /// Generate a launchd plist XML string.
 pub fn generate_launchd_plist(
     moltis_bin: &Path,
-    _config: &ServiceConfig,
+    config: &ServiceConfig,
     log_path: &Path,
 ) -> String {
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let args = [
+    let mut args = vec![
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
+        format!("    <string>--gateway-url</string>"),
+        format!("    <string>{}</string>", config.gateway_url),
+        format!("    <string>--device-token</string>"),
+        format!("    <string>{}</string>", config.device_token),
+        format!("    <string>--timeout</string>"),
+        format!("    <string>{}</string>", config.timeout),
     ];
+
+    if let Some(ref id) = config.node_id {
+        args.push("    <string>--node-id</string>".to_string());
+        args.push(format!("    <string>{id}</string>"));
+    }
+    if let Some(ref name) = config.display_name {
+        args.push("    <string>--name</string>".to_string());
+        args.push(format!("    <string>{name}</string>"));
+    }
+    if let Some(ref dir) = config.working_dir {
+        args.push("    <string>--working-dir</string>".to_string());
+        args.push(format!("    <string>{dir}</string>"));
+    }
 
     let args_str = args.join("\n");
 

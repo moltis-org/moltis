@@ -426,7 +426,7 @@ mod tests {
         let status = svc.wizard_status();
         assert_eq!(status["onboarded"], true);
 
-        assert!(dir.path().join("IDENTITY.md").exists());
+        assert!(dir.path().join("agents/main/IDENTITY.md").exists());
         assert!(dir.path().join("USER.md").exists());
         moltis_config::clear_data_dir();
     }
