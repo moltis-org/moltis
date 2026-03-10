@@ -607,6 +607,25 @@ pub fn save_soul(soul: Option<&str>) -> crate::Result<PathBuf> {
     Ok(path)
 }
 
+/// Persist SOUL.md into an agent's workspace directory.
+///
+/// For the main agent this writes to `agents/main/SOUL.md` so that
+/// `load_soul_for_agent("main")` picks it up on the primary read path.
+pub fn save_soul_for_agent(agent_id: &str, soul: Option<&str>) -> crate::Result<PathBuf> {
+    let dir = agent_workspace_dir(agent_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("SOUL.md");
+    match soul.map(str::trim) {
+        Some(content) if !content.is_empty() => {
+            std::fs::write(&path, content)?;
+        },
+        _ => {
+            std::fs::write(&path, "")?;
+        },
+    }
+    Ok(path)
+}
+
 /// Persist identity values to `IDENTITY.md` using YAML frontmatter.
 pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     let path = identity_path();
@@ -643,7 +662,7 @@ pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     Ok(path)
 }
 
-/// Persist identity values for a non-main agent into its workspace.
+/// Persist identity values for an agent into its workspace directory.
 pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crate::Result<PathBuf> {
     let dir = agent_workspace_dir(agent_id);
     std::fs::create_dir_all(&dir)?;
@@ -1856,6 +1875,45 @@ name = "Rex"
 
         let on_disk = std::fs::read_to_string(dir.path().join("SOUL.md")).unwrap();
         assert_eq!(on_disk, custom);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_for_agent_writes_to_agent_dir() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let custom = "Agent soul content.";
+        save_soul_for_agent("main", Some(custom)).expect("save_soul_for_agent");
+
+        let agent_soul = dir.path().join("agents/main/SOUL.md");
+        assert!(agent_soul.exists(), "SOUL.md should exist in agents/main/");
+        assert_eq!(std::fs::read_to_string(&agent_soul).unwrap(), custom);
+
+        // load_soul_for_agent must find the agent-level file.
+        let loaded = load_soul_for_agent("main");
+        assert_eq!(loaded.as_deref(), Some(custom));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_for_agent_none_clears() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        save_soul_for_agent("main", Some("initial")).expect("save");
+        save_soul_for_agent("main", None).expect("clear");
+
+        let agent_soul = dir.path().join("agents/main/SOUL.md");
+        assert!(agent_soul.exists(), "file should remain after clearing");
+        assert!(
+            std::fs::read_to_string(&agent_soul).unwrap().is_empty(),
+            "file should be empty after clearing"
+        );
 
         clear_data_dir();
     }

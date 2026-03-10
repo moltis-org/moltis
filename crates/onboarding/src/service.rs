@@ -107,7 +107,8 @@ impl LiveOnboardingService {
             config.identity = ws.identity.clone();
             config.user = ws.user.clone();
             self.save(&config).context("failed to save config")?;
-            moltis_config::save_identity(&ws.identity).context("failed to save IDENTITY.md")?;
+            moltis_config::save_identity_for_agent("main", &ws.identity)
+                .context("failed to save IDENTITY.md")?;
             moltis_config::save_user(&ws.user).context("failed to save USER.md")?;
             self.mark_onboarded();
 
@@ -268,7 +269,8 @@ impl LiveOnboardingService {
         config.user = user.clone();
 
         self.save(&config)?;
-        moltis_config::save_identity(&identity).context("failed to save identity")?;
+        moltis_config::save_identity_for_agent("main", &identity)
+            .context("failed to save identity")?;
         moltis_config::save_user(&user).context("failed to save user")?;
 
         // Mark onboarding complete once both names are present.
@@ -280,7 +282,7 @@ impl LiveOnboardingService {
             "name": identity.name,
             "emoji": identity.emoji,
             "theme": identity.theme,
-            "soul": moltis_config::load_soul(),
+            "soul": moltis_config::load_soul_for_agent("main"),
             "user_name": user.name,
             "user_timezone": user.timezone.as_ref().map(|tz| tz.name()),
             "user_location": user.location.as_ref().map(|loc| json!({
@@ -292,9 +294,10 @@ impl LiveOnboardingService {
         }))
     }
 
-    /// Update SOUL.md in the workspace root.
+    /// Update SOUL.md for the main agent.
     pub fn identity_update_soul(&self, soul: Option<String>) -> Result<Value> {
-        moltis_config::save_soul(soul.as_deref()).context("failed to save soul")?;
+        moltis_config::save_soul_for_agent("main", soul.as_deref())
+            .context("failed to save soul")?;
         Ok(json!({}))
     }
 
