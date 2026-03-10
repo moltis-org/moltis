@@ -200,13 +200,13 @@ fn launchd_plist_path() -> anyhow::Result<PathBuf> {
 /// Generate a launchd plist XML string.
 pub fn generate_launchd_plist(
     moltis_bin: &Path,
-    config: &ServiceConfig,
+    _config: &ServiceConfig,
     log_path: &Path,
 ) -> String {
     let bin = moltis_bin.display();
     let log = log_path.display();
 
-    let args = vec![
+    let args = [
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
@@ -391,7 +391,11 @@ fn systemd_unit_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Generate a systemd user unit file.
-pub fn generate_systemd_unit(moltis_bin: &Path, config: &ServiceConfig, log_path: &Path) -> String {
+pub fn generate_systemd_unit(
+    moltis_bin: &Path,
+    _config: &ServiceConfig,
+    log_path: &Path,
+) -> String {
     let bin = moltis_bin.display();
     let log = log_path.display();
 
