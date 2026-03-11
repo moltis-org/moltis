@@ -225,7 +225,9 @@ export function SessionList() {
 	// encrypted and cannot be displayed.
 	var [vaultStatus, setVaultStatus] = useState(gon.get("vault_status"));
 	useEffect(() => {
+		setVaultStatus(gon.get("vault_status"));
 		gon.onChange("vault_status", setVaultStatus);
+		return () => gon.offChange("vault_status", setVaultStatus);
 	}, []);
 
 	// Spinner animation via setInterval

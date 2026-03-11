@@ -333,6 +333,8 @@ function clearSensitiveData() {
 	// Clear identity from gon so sidebar/header no longer shows it
 	gon.set("identity", null);
 	gon.set("sessions_recent", null);
+	// Signal vault sealed so SessionList shows the correct placeholder
+	gon.set("vault_status", "sealed");
 }
 
 // Seed sandbox info from gon so the settings page can render immediately

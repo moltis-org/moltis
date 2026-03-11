@@ -37,6 +37,8 @@ export function onServerRequest(method, handler) {
  * @param {(wasConnected: boolean) => void} [opts.onDisconnected]
  * @param {{ factor?: number, max?: number }} [opts.backoff] — default {1.5, 5000}
  */
+var authRedirectPending = false;
+
 export function connectWs(opts) {
 	lastOpts = opts;
 	var backoff = Object.assign({ factor: 1.5, max: 5000 }, opts.backoff);
@@ -89,8 +91,10 @@ export function connectWs(opts) {
 			frame.error = localizeRpcError(frame.error);
 			// When an RPC response indicates auth failure, trigger the
 			// auth-status-changed flow so the UI redirects to login
-			// instead of showing stale/broken data.
-			if (frame.error.code === "UNAUTHORIZED") {
+			// instead of showing stale/broken data. Use a flag to
+			// avoid dispatching multiple times when several RPCs fail.
+			if (frame.error.code === "UNAUTHORIZED" && !authRedirectPending) {
+				authRedirectPending = true;
 				window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
 			}
 		}
