@@ -35,7 +35,7 @@ pub use {
     },
     provider_env::{
         GenericProviderEnv, env_value_with_overrides, generic_provider_api_key_from_env,
-        generic_provider_env, generic_provider_env_source_for_provider,
+        generic_provider_env, generic_provider_env_source_for_provider, normalize_provider_name,
     },
     schema::{
         AgentIdentity, AgentPreset, AgentsConfig, AuthConfig, CalDavAccountConfig, CalDavConfig,

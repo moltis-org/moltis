@@ -13,21 +13,37 @@ pub struct GenericProviderEnv {
     pub api_key_var: &'static str,
 }
 
+fn non_empty_env_value(value: String) -> Option<String> {
+    (!value.trim().is_empty()).then_some(value)
+}
+
+fn env_value_from_source<F>(
+    env_overrides: &HashMap<String, String>,
+    key: &str,
+    env_lookup: F,
+) -> Option<String>
+where
+    F: FnOnce(&str) -> Option<String>,
+{
+    env_overrides
+        .get(key)
+        .cloned()
+        .and_then(non_empty_env_value)
+        .or_else(|| env_lookup(key).and_then(non_empty_env_value))
+}
+
 pub fn env_value_with_overrides(
     env_overrides: &HashMap<String, String>,
     key: &str,
 ) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            env_overrides
-                .get(key)
-                .cloned()
-                .filter(|value| !value.trim().is_empty())
-        })
+    env_value_from_source(env_overrides, key, |env_key| std::env::var(env_key).ok())
 }
 
+/// Resolve the generic provider selector and API key from environment variables.
+///
+/// `MOLTIS_*` keys win over the bare aliases, but provider and API key are resolved
+/// independently so mixed pairs such as `MOLTIS_PROVIDER` + `API_KEY` are accepted.
+/// The concrete variable names used are returned for diagnostics and UI source labels.
 pub fn generic_provider_env(env_overrides: &HashMap<String, String>) -> Option<GenericProviderEnv> {
     let (provider_var, provider_raw) = PROVIDER_ENV_CANDIDATES
         .iter()
@@ -63,7 +79,7 @@ pub fn generic_provider_env_source_for_provider(
         .then(|| format!("env:{}+{}", generic.provider_var, generic.api_key_var))
 }
 
-fn normalize_provider_name(value: &str) -> Option<String> {
+pub fn normalize_provider_name(value: &str) -> Option<String> {
     let normalized = value.trim().to_ascii_lowercase().replace('_', "-");
     if normalized.is_empty() {
         return None;
@@ -84,6 +100,20 @@ fn normalize_provider_name(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use {super::*, secrecy::ExposeSecret};
+
+    #[test]
+    fn env_value_with_overrides_prefers_overrides() {
+        let env_overrides =
+            HashMap::from([("MOLTIS_API_KEY".to_string(), "override-key".to_string())]);
+
+        assert_eq!(
+            env_value_from_source(&env_overrides, "MOLTIS_API_KEY", |_| Some(
+                "ambient-key".to_string()
+            ))
+            .as_deref(),
+            Some("override-key")
+        );
+    }
 
     #[test]
     fn generic_provider_env_prefers_namespaced_keys() {
@@ -114,6 +144,22 @@ mod tests {
             panic!("generic provider env should resolve");
         };
         assert_eq!(resolved.provider, "gemini");
+    }
+
+    #[test]
+    fn generic_provider_env_accepts_mixed_namespace_pairs() {
+        let env_overrides = HashMap::from([
+            ("MOLTIS_PROVIDER".to_string(), "openai".to_string()),
+            ("API_KEY".to_string(), "test-key".to_string()),
+        ]);
+
+        let Some(resolved) = generic_provider_env(&env_overrides) else {
+            panic!("generic provider env should resolve");
+        };
+        assert_eq!(resolved.provider, "openai");
+        assert_eq!(resolved.provider_var, "MOLTIS_PROVIDER");
+        assert_eq!(resolved.api_key.expose_secret(), "test-key");
+        assert_eq!(resolved.api_key_var, "API_KEY");
     }
 
     #[test]

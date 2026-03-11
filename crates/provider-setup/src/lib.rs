@@ -1036,7 +1036,7 @@ fn set_provider_enabled_in_config(provider: &str, enabled: bool) -> ServiceResul
 }
 
 fn normalize_provider_name(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    moltis_config::normalize_provider_name(value).unwrap_or_default()
 }
 
 fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
@@ -3489,6 +3489,31 @@ mod tests {
         assert!(
             github_copilot_idx < openai_idx && openai_idx < anthropic_idx,
             "offered provider order should be preserved, got: {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn available_accepts_offered_provider_aliases() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let config = ProvidersConfig {
+            offered: vec!["claude".into()],
+            ..ProvidersConfig::default()
+        };
+        let svc = LiveProviderSetupService::new(registry, config, None);
+        let result = svc.available().await.unwrap();
+        let arr = result
+            .as_array()
+            .expect("providers.available should return array");
+        let names: Vec<&str> = arr
+            .iter()
+            .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
+            .collect();
+
+        assert!(
+            names.contains(&"anthropic"),
+            "anthropic should be visible when offered contains alias 'claude', got: {names:?}"
         );
     }
 
