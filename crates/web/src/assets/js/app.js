@@ -303,14 +303,37 @@ window.addEventListener("moltis:auth-status-changed", () => {
 	refreshAuthChrome().then((auth) => {
 		if (!auth) return;
 		if (auth.setup_required) {
+			clearSensitiveData();
 			window.location.assign("/onboarding");
 			return;
 		}
 		if (!auth.authenticated) {
+			clearSensitiveData();
 			window.location.assign("/login");
 		}
 	});
 });
+
+/**
+ * Purge cached sensitive data so that a logged-out page cannot display
+ * session previews, identity info, or other user-scoped state.
+ */
+function clearSensitiveData() {
+	// Clear session store and legacy state
+	sessionStore.setAll([]);
+	S.setSessions([]);
+	renderSessionList();
+
+	// Clear model and project stores
+	modelStore.setAll([]);
+	S.setModels([]);
+	projectStore.setAll([]);
+	S.setProjects([]);
+
+	// Clear identity from gon so sidebar/header no longer shows it
+	gon.set("identity", null);
+	gon.set("sessions_recent", null);
+}
 
 // Seed sandbox info from gon so the settings page can render immediately
 // without waiting for the auth-protected /api/bootstrap fetch.
@@ -447,7 +470,13 @@ function fetchBootstrap() {
 	// Fetch bootstrap data asynchronously — populates sidebar, models, projects
 	// as soon as the data arrives, without blocking the initial page render.
 	fetch("/api/bootstrap?include_sessions=false")
-		.then((r) => r.json())
+		.then((r) => {
+			if (r.status === 401 || r.status === 403) {
+				window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
+				return Promise.reject(new Error("auth"));
+			}
+			return r.json();
+		})
 		.then((boot) => {
 			if (boot.channels) S.setCachedChannels(boot.channels.channels || boot.channels || []);
 			if (boot.sessions) {

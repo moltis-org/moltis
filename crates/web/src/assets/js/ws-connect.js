@@ -87,6 +87,12 @@ export function connectWs(opts) {
 		}
 		if (frame?.type === "res" && frame.error) {
 			frame.error = localizeRpcError(frame.error);
+			// When an RPC response indicates auth failure, trigger the
+			// auth-status-changed flow so the UI redirects to login
+			// instead of showing stale/broken data.
+			if (frame.error.code === "UNAUTHORIZED") {
+				window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
+			}
 		}
 		if (frame.type === "res" && frame.id && S.pending[frame.id]) {
 			S.pending[frame.id](frame);

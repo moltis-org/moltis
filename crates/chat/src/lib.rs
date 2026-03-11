@@ -1570,12 +1570,32 @@ impl LiveModelService {
     ) -> Vec<&'a moltis_providers::ModelInfo> {
         let mut ordered: Vec<(usize, &'a moltis_providers::ModelInfo)> =
             models.enumerate().collect();
-        ordered.sort_by_key(|(idx, model)| {
-            (
-                Self::priority_rank(order, model),
-                subscription_provider_rank(&model.provider),
-                *idx,
-            )
+        ordered.sort_by(|(idx_a, a), (idx_b, b)| {
+            let rank_a = Self::priority_rank(order, a);
+            let rank_b = Self::priority_rank(order, b);
+            // Preferred (rank != MAX) first, then non-preferred
+            let bucket_a = if rank_a == usize::MAX {
+                1u8
+            } else {
+                0
+            };
+            let bucket_b = if rank_b == usize::MAX {
+                1u8
+            } else {
+                0
+            };
+            bucket_a
+                .cmp(&bucket_b)
+                .then_with(|| {
+                    a.display_name
+                        .to_lowercase()
+                        .cmp(&b.display_name.to_lowercase())
+                })
+                .then_with(|| {
+                    subscription_provider_rank(&a.provider)
+                        .cmp(&subscription_provider_rank(&b.provider))
+                })
+                .then_with(|| idx_a.cmp(idx_b))
         });
         ordered.into_iter().map(|(_, model)| model).collect()
     }
