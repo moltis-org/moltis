@@ -267,6 +267,12 @@ with exact commands), `## Manual QA`. Include concrete test steps.
 Source in `docs/src/` (mdBook). Auto-deployed to docs.moltis.org on push to main.
 Update `docs/src/SUMMARY.md` when adding pages. Preview: `cd docs && mdbook serve`.
 
+**Keep docs in sync with code.** When adding or changing user-facing features
+(config fields, CLI commands, channel behavior, API endpoints, tools), update
+the relevant `docs/src/` pages and the config template (`crates/config/src/template.rs`)
+in the same PR. Documentation drift causes real user confusion — treat outdated
+docs as a bug.
+
 ## Session Completion
 
 **Work is NOT complete until `git push` succeeds.** Mandatory steps:

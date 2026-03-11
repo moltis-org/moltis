@@ -577,7 +577,16 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # Telegram bots
 # [channels.telegram.my-bot]
 # token = "..."                   # Bot token from @BotFather
-# allowed_users = []              # Telegram user IDs allowed to chat (empty = all)
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Telegram user IDs or usernames (strings)
+# group_allowlist = []            # Telegram group/chat IDs (strings)
+# reply_to_message = false        # Send responses as Telegram replies
+# otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
+# stream_mode = "edit_in_place"   # "edit_in_place" or "off"
+# edit_throttle_ms = 300          # Min ms between streaming edits
 
 # Microsoft Teams bots
 # [channels.msteams.my-bot]
@@ -601,6 +610,21 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # status = "online"               # "online", "idle", "dnd", or "invisible"
 # otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
 # otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
+
+# Slack bots
+# [channels.slack.my-bot]
+# bot_token = "xoxb-..."          # Bot user OAuth token
+# app_token = "xapp-..."          # App-level token for Socket Mode
+# connection_mode = "socket_mode" # "socket_mode" or "events_api"
+# signing_secret = "..."          # Required for events_api mode
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Slack user IDs (strings)
+# channel_allowlist = []          # Slack channel IDs (strings)
+# stream_mode = "edit_in_place"   # "edit_in_place", "native", or "off"
+# edit_throttle_ms = 500          # Min ms between streaming edits
+# thread_replies = true           # Reply in threads
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS

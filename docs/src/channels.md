@@ -83,4 +83,72 @@ app_token = "xapp-..."
 dm_policy = "open"
 ```
 
-See the web UI's **Channels** tab for guided setup with each platform.
+For detailed configuration, see the per-channel pages:
+[Telegram](telegram.md), [Discord](discord.md), [Slack](slack.md),
+[WhatsApp](whatsapp.md).
+
+You can also use the web UI's **Channels** tab for guided setup with each platform.
+
+## Access Control
+
+All channels share the same access control model with three settings:
+
+### DM Policy
+
+Controls who can send direct messages to the bot.
+
+| Value | Behavior |
+|-------|----------|
+| `"allowlist"` | Only users listed in `allowlist` can DM (**default for all channels except WhatsApp**) |
+| `"open"` | Anyone can DM the bot |
+| `"disabled"` | DMs are silently ignored |
+
+```admonish warning title="Empty allowlist blocks everyone"
+When `dm_policy = "allowlist"` with an empty `allowlist`, **all DMs are blocked**.
+This is a security feature — removing all entries from an allowlist never silently
+switches to open access. Add user IDs/usernames to `allowlist` or set
+`dm_policy = "open"`.
+```
+
+### Group Policy
+
+Controls who can interact with the bot in group chats / channels / guilds.
+
+| Value | Behavior |
+|-------|----------|
+| `"open"` | Bot responds in all groups (default) |
+| `"allowlist"` | Only groups on the allowlist are allowed |
+| `"disabled"` | Group messages are silently ignored |
+
+The group allowlist field name varies by channel: `group_allowlist` (Telegram,
+WhatsApp, MS Teams), `guild_allowlist` (Discord), `channel_allowlist` (Slack).
+
+### Mention Mode
+
+Controls when the bot responds in groups (does not apply to DMs).
+
+| Value | Behavior |
+|-------|----------|
+| `"mention"` | Bot only responds when @mentioned (default) |
+| `"always"` | Bot responds to every message |
+| `"none"` | Bot never responds in groups (DM-only) |
+
+### Allowlist Matching
+
+All allowlist fields across all channels share the same matching behavior:
+
+- **Values are strings** — even for numeric IDs, use `"123456789"` not `123456789`
+- **Case-insensitive** — `"Alice"` matches `"alice"`
+- **Glob wildcards** — `"admin_*"`, `"*@example.com"`, `"user_*_vip"`
+- **Multiple identifiers** — both the user's numeric ID and username are checked (where applicable)
+
+### OTP Self-Approval
+
+Channels that support OTP (Telegram, Discord, WhatsApp) allow non-allowlisted
+users to self-approve by entering a 6-digit code. The code appears in the web UI
+under **Channels > Senders**. See each channel's page for details.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `otp_self_approval` | `true` | Enable OTP challenges for non-allowlisted DM users |
+| `otp_cooldown_secs` | `300` | Lockout duration after 3 failed attempts |
