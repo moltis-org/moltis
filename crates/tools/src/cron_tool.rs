@@ -144,7 +144,13 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
             ]);
             // Resolve delay_ms (relative offset from now) into an absolute at_ms.
             // This lets the LLM specify "in 10 minutes" without computing epoch timestamps.
-            take_alias(obj, "delay_ms", &["delayMs", "delay", "in", "in_ms", "offset_ms"]);
+            take_alias(obj, "delay_ms", &[
+                "delayMs",
+                "delay",
+                "in",
+                "in_ms",
+                "offset_ms",
+            ]);
             if let Some(delay_raw) = obj.remove("delay_ms") {
                 let delay = parse_interval_millis(&delay_raw, "schedule.delay_ms")?;
                 let now = std::time::SystemTime::now()
