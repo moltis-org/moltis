@@ -98,10 +98,7 @@ function parseEnvLines(text) {
 }
 
 function safeRemoteUrlText(server) {
-	for (var value of [server.sanitized_url, server.url, server.url_display, server.display_url, server.safe_url]) {
-		if (typeof value === "string" && value.trim()) return value.trim();
-	}
-	return "";
+	return typeof server.url === "string" ? server.url.trim() : "";
 }
 
 function remoteHeaderNames(server) {

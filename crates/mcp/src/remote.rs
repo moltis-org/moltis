@@ -111,67 +111,67 @@ pub fn sanitize_reqwest_error(err: reqwest::Error) -> reqwest::Error {
 }
 
 pub fn substitute_env_placeholders(input: &str, env_overrides: &HashMap<String, String>) -> String {
-    let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
-    let mut idx = 0usize;
+    let bytes = input.as_bytes();
+    let mut cursor = 0usize;
 
-    while idx < bytes.len() {
-        if bytes[idx] != b'$' {
-            out.push(bytes[idx] as char);
-            idx += 1;
-            continue;
-        }
+    while let Some(relative_dollar) = input[cursor..].find('$') {
+        let dollar_idx = cursor + relative_dollar;
+        out.push_str(&input[cursor..dollar_idx]);
 
-        if idx + 1 >= bytes.len() {
+        let after_dollar = dollar_idx + 1;
+        if after_dollar >= input.len() {
             out.push('$');
-            idx += 1;
-            continue;
-        }
-
-        if bytes[idx + 1] == b'{' {
-            let start = idx;
-            idx += 2;
-            let name_start = idx;
-            while idx < bytes.len() && bytes[idx] != b'}' {
-                idx += 1;
-            }
-            if idx < bytes.len() && idx > name_start {
-                let name = &input[name_start..idx];
-                if let Some(value) = lookup_env(name, env_overrides) {
-                    out.push_str(&value);
-                } else {
-                    out.push_str(&input[start..=idx]);
-                }
-                idx += 1;
-                continue;
-            }
-
-            out.push_str(&input[start..]);
+            cursor = after_dollar;
             break;
         }
 
-        let next = bytes[idx + 1];
+        if bytes[after_dollar] == b'{' {
+            let name_start = after_dollar + 1;
+            let Some(relative_close) = input[name_start..].find('}') else {
+                out.push_str(&input[dollar_idx..]);
+                cursor = input.len();
+                break;
+            };
+            let close_idx = name_start + relative_close;
+            if close_idx > name_start {
+                let name = &input[name_start..close_idx];
+                if let Some(value) = lookup_env(name, env_overrides) {
+                    out.push_str(&value);
+                } else {
+                    out.push_str(&input[dollar_idx..=close_idx]);
+                }
+                cursor = close_idx + 1;
+                continue;
+            }
+
+            out.push_str(&input[dollar_idx..]);
+            break;
+        }
+
+        let next = bytes[after_dollar];
         if !is_env_ident_start(next as char) {
             out.push('$');
-            idx += 1;
+            cursor = after_dollar;
             continue;
         }
 
-        let start = idx;
-        idx += 1;
-        let name_start = idx;
-        while idx < bytes.len() && is_env_ident_continue(bytes[idx] as char) {
-            idx += 1;
+        let name_start = after_dollar;
+        let mut name_end = name_start + 1;
+        while name_end < input.len() && is_env_ident_continue(bytes[name_end] as char) {
+            name_end += 1;
         }
 
-        let name = &input[name_start..idx];
+        let name = &input[name_start..name_end];
         if let Some(value) = lookup_env(name, env_overrides) {
             out.push_str(&value);
         } else {
-            out.push_str(&input[start..idx]);
+            out.push_str(&input[dollar_idx..name_end]);
         }
+        cursor = name_end;
     }
 
+    out.push_str(&input[cursor..]);
     out
 }
 
@@ -195,6 +195,12 @@ fn build_header_map(
                 name
             ))
         })?;
+        if resolved.contains_key(&header_name) {
+            return Err(Error::message(format!(
+                "duplicate remote MCP header '{}' conflicts case-insensitively with another header",
+                name
+            )));
+        }
         let value = substitute_env_placeholders(raw_value.expose_secret(), env_overrides);
         let header_value = HeaderValue::from_str(&value).map_err(|error| {
             Error::message(format!(
@@ -242,7 +248,6 @@ fn decode_display_escapes(value: &str) -> String {
         ("%7D", "}"),
         ("%5b", "["),
         ("%5d", "]"),
-        ("%24", "$"),
         ("%7b", "{"),
         ("%7d", "}"),
     ]
@@ -312,5 +317,39 @@ mod tests {
     fn substitute_env_placeholders_ignores_process_env() {
         let value = substitute_env_placeholders("token=$HOME", &HashMap::new());
         assert_eq!(value, "token=$HOME");
+    }
+
+    #[test]
+    fn substitute_env_placeholders_preserves_utf8_segments() {
+        let overrides = HashMap::from([("TOKEN".to_string(), "alpha".to_string())]);
+
+        let value = substitute_env_placeholders(
+            "https://example.com/cafe\u{301}?token=$TOKEN&label=na\u{ef}ve",
+            &overrides,
+        );
+
+        assert_eq!(
+            value,
+            "https://example.com/cafe\u{301}?token=alpha&label=na\u{ef}ve"
+        );
+    }
+
+    #[test]
+    fn build_header_map_rejects_case_insensitive_duplicates() {
+        let headers = HashMap::from([
+            ("X-Workspace".to_string(), Secret::new("alpha".to_string())),
+            ("x-workspace".to_string(), Secret::new("beta".to_string())),
+        ]);
+
+        let error = build_header_map(&headers, &HashMap::new())
+            .err()
+            .map(|err| err.to_string());
+
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "duplicate remote MCP header 'x-workspace' conflicts case-insensitively with another header"
+            )
+        );
     }
 }

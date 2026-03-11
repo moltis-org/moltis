@@ -290,6 +290,8 @@ fn merge_env_overrides(
     base_overrides: &HashMap<String, String>,
     additional: Vec<(String, String)>,
 ) -> HashMap<String, String> {
+    // Config `[env]` values stay authoritative so checked-in config cannot be
+    // silently shadowed by mutable UI-managed entries from the credential store.
     let mut merged = base_overrides.clone();
     for (key, value) in additional {
         if key.trim().is_empty() || value.trim().is_empty() {
@@ -830,6 +832,35 @@ mod tests {
             panic!("header clearing unexpectedly failed");
         };
         assert!(cleared.headers.is_empty());
+    }
+
+    #[test]
+    fn merge_env_overrides_keeps_config_values_authoritative() {
+        let base = HashMap::from([
+            ("OPENAI_API_KEY".to_string(), "config-openai".to_string()),
+            ("BRAVE_API_KEY".to_string(), "config-brave".to_string()),
+        ]);
+
+        let merged = merge_env_overrides(&base, vec![
+            ("OPENAI_API_KEY".to_string(), "ui-openai".to_string()),
+            (
+                "PERPLEXITY_API_KEY".to_string(),
+                "ui-perplexity".to_string(),
+            ),
+        ]);
+
+        assert_eq!(
+            merged.get("OPENAI_API_KEY").map(String::as_str),
+            Some("config-openai")
+        );
+        assert_eq!(
+            merged.get("PERPLEXITY_API_KEY").map(String::as_str),
+            Some("ui-perplexity")
+        );
+        assert_eq!(
+            merged.get("BRAVE_API_KEY").map(String::as_str),
+            Some("config-brave")
+        );
     }
 
     #[tokio::test]
