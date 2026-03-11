@@ -1092,7 +1092,7 @@ for token in mlx_lm.stream_generate(
     max_tokens={max_tokens},
     sampler=sampler,
 ):
-    if token in STOP_TOKENS:
+    if str(token) in STOP_TOKENS:
         break
     output_tokens += 1
     print(token, end="", flush=True)
