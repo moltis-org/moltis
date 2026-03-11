@@ -303,6 +303,12 @@ test.describe("Onboarding wizard", () => {
 		await expect(passwordCard).toBeVisible();
 
 		await passwordCard.click();
+		const passwordInput = page.locator('input[name="password"]').first();
+		const confirmPasswordInput = page.locator('input[name="confirm_password"]').first();
+		await expect(passwordInput).toHaveAttribute("type", "password");
+		await expect(passwordInput).toHaveAttribute("autocomplete", "new-password");
+		await expect(confirmPasswordInput).toHaveAttribute("type", "password");
+		await expect(confirmPasswordInput).toHaveAttribute("autocomplete", "new-password");
 		await expect(page.getByRole("button", { name: /Set password|Skip/i }).first()).toBeVisible();
 	});
 
