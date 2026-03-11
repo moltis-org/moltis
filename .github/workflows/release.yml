@@ -1444,14 +1444,14 @@ jobs:
           VERSION="${TAG}"
           echo "Updating deploy templates to version ${VERSION}"
 
-          # DigitalOcean App Platform
-          sed -i "s/tag: \"[0-9][0-9]*\.[0-9][0-9]*\"/tag: \"${VERSION}\"/" .do/deploy.template.yaml
+          # DigitalOcean App Platform (pattern matches both semver 0.10.18 and date 20260311.01)
+          sed -i "s/tag: \"[0-9][0-9.]*\"/tag: \"${VERSION}\"/" .do/deploy.template.yaml
 
           # Render
-          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" render.yaml
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9.]*|ghcr.io/moltis-org/moltis:${VERSION}|" render.yaml
 
           # Fly.io
-          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9.]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
 
           # Website releases.json
           jq --arg v "$VERSION" \

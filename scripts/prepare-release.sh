@@ -51,11 +51,11 @@ else
   max_seq=0
   for tag in $(git tag -l "${today}.*" 2>/dev/null); do
     seq="${tag#"${today}."}"
-    if [[ "$seq" =~ ^[0-9]+$ ]] && [[ "$seq" -gt "$max_seq" ]]; then
+    if [[ "$seq" =~ ^[0-9]+$ ]] && [[ "10#$seq" -gt "10#$max_seq" ]]; then
       max_seq="$seq"
     fi
   done
-  next_seq=$((max_seq + 1))
+  next_seq=$((10#$max_seq + 1))
   new_version="$(printf '%s.%02d' "$today" "$next_seq")"
   echo "auto-computed version: $new_version"
 fi
