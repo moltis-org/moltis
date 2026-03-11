@@ -797,7 +797,7 @@ fn inspect_current_container_mounts(cli: &str, reference: &str) -> Vec<Container
         if let Some(mounts) = guard.get(&test_container_mount_override_key(cli, reference)) {
             return mounts.clone();
         }
-        return Vec::new();
+        Vec::new()
     }
 
     #[cfg(not(test))]
@@ -906,10 +906,10 @@ fn host_visible_data_dir(config: &SandboxConfig, cli: Option<&str>) -> PathBuf {
     if let Some(configured) = configured_host_data_dir(config) {
         return configured;
     }
-    if let Some(cli) = cli {
-        if let Some(detected) = detect_host_data_dir(cli, &guest_data_dir) {
-            return detected;
-        }
+    if let Some(cli) = cli
+        && let Some(detected) = detect_host_data_dir(cli, &guest_data_dir)
+    {
+        return detected;
     }
     guest_data_dir
 }
