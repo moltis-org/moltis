@@ -341,8 +341,9 @@ function clearStaleRunningToolCards() {
 
 function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
 	updateSessionRunId(eventSession, p.runId);
-	// Always bump badge — the server persists a tool_result message for each call.
-	bumpSessionCount(eventSession, 1);
+	// Always bump badge — the server persists both the hidden assistant
+	// tool-call frame and the visible tool_result for each completed call.
+	bumpSessionCount(eventSession, 2);
 	var toolHistoryIndex = p.messageIndex;
 	if (toolHistoryIndex === undefined || toolHistoryIndex === null) {
 		var toolSession = sessionStore.getByKey(eventSession);
@@ -781,18 +782,90 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	moveFirstQueuedToChat();
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: abort recovery now merges live stream state with persisted partial history
 function handleChatAborted(p, isActive, isChatPage, eventSession) {
 	clearPendingToolCallEndsForSession(eventSession);
 	setSessionReplying(eventSession, false);
 	setSessionActiveRunId(eventSession, null);
+	var partial = p.partialMessage && typeof p.partialMessage === "object" ? p.partialMessage : null;
+	var partialText = String(partial?.content || "");
+	var partialReasoning = String(partial?.reasoning || "");
+	var hasVisiblePartial =
+		hasNonWhitespaceContent(partialText) ||
+		hasNonWhitespaceContent(partialReasoning) ||
+		hasNonWhitespaceContent(partial?.audio || "");
 	var abortSession = sessionStore.getByKey(eventSession);
+	var lastIdx = abortSession ? abortSession.lastHistoryIndex.value : S.lastHistoryIndex;
+	if (hasVisiblePartial) {
+		if (p.messageIndex === undefined || p.messageIndex === null || p.messageIndex > lastIdx) {
+			bumpSessionCount(eventSession, 1);
+		}
+		cacheSessionHistoryMessage(
+			eventSession,
+			{
+				role: "assistant",
+				content: partialText,
+				model: partial?.model || "",
+				provider: partial?.provider || "",
+				inputTokens: partial?.inputTokens || 0,
+				outputTokens: partial?.outputTokens || 0,
+				durationMs: partial?.durationMs || 0,
+				requestInputTokens: partial?.requestInputTokens,
+				requestOutputTokens: partial?.requestOutputTokens,
+				reasoning: partial?.reasoning || null,
+				audio: partial?.audio || null,
+				run_id: partial?.run_id || p.runId || null,
+				created_at: partial?.created_at || Date.now(),
+			},
+			p.messageIndex,
+		);
+		updateSessionHistoryIndex(eventSession, p.messageIndex);
+	}
 	if (abortSession) abortSession.resetStreamState();
+	if (hasVisiblePartial && !isActive) {
+		setSessionUnread(eventSession, true);
+	}
 	if (!(isActive && isChatPage)) {
 		S.setVoicePending(false);
 		return;
 	}
 	removeThinking();
 	clearStaleRunningToolCards();
+	if (hasVisiblePartial) {
+		var partialEl = null;
+		if (hasNonWhitespaceContent(partialText) && S.streamEl) {
+			setSafeMarkdownHtml(S.streamEl, partialText);
+			partialEl = S.streamEl;
+		} else if (hasNonWhitespaceContent(partialText)) {
+			partialEl = chatAddMsg("assistant", renderMarkdown(partialText), true);
+		} else if (hasNonWhitespaceContent(partialReasoning)) {
+			partialEl = chatAddMsg("assistant", "", false);
+		}
+		if (partialEl && partialReasoning && !isReasoningAlreadyShown(partialReasoning)) {
+			appendReasoningDisclosure(partialEl, partialReasoning);
+		}
+		if (partialEl) {
+			appendFinalFooter(
+				partialEl,
+				{
+					model: partial?.model || "",
+					provider: partial?.provider || "",
+					inputTokens: partial?.inputTokens || 0,
+					outputTokens: partial?.outputTokens || 0,
+					durationMs: partial?.durationMs || 0,
+					replyMedium: p.replyMedium || "text",
+					text: partialText,
+					audio: partial?.audio || null,
+					audioWarning: null,
+					runId: p.runId,
+					messageIndex: p.messageIndex,
+					sessionKey: eventSession,
+				},
+				eventSession,
+			);
+			S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+		}
+	}
 	S.setStreamEl(null);
 	S.setStreamText("");
 	S.setVoicePending(false);

@@ -37,6 +37,7 @@ use {
     moltis_providers::{ProviderRegistry, raw_model_id},
     moltis_sessions::{
         ContentBlock, MessageContent, PersistedMessage,
+        message::{PersistedFunction, PersistedToolCall},
         metadata::{SessionEntry, SqliteSessionMetadata},
         store::SessionStore,
     },
@@ -2295,6 +2296,112 @@ pub struct ActiveToolCall {
     pub started_at: u64,
 }
 
+#[derive(Debug, Clone)]
+struct ActiveAssistantDraft {
+    content: String,
+    reasoning: String,
+    model: String,
+    provider: String,
+    seq: Option<u64>,
+    run_id: String,
+}
+
+impl ActiveAssistantDraft {
+    fn new(run_id: &str, model: &str, provider: &str, seq: Option<u64>) -> Self {
+        Self {
+            content: String::new(),
+            reasoning: String::new(),
+            model: model.to_string(),
+            provider: provider.to_string(),
+            seq,
+            run_id: run_id.to_string(),
+        }
+    }
+
+    fn append_text(&mut self, delta: &str) {
+        if !delta.is_empty() {
+            self.content.push_str(delta);
+        }
+    }
+
+    fn set_reasoning(&mut self, reasoning: &str) {
+        self.reasoning.clear();
+        self.reasoning.push_str(reasoning);
+    }
+
+    fn has_visible_content(&self) -> bool {
+        !self.content.trim().is_empty() || !self.reasoning.trim().is_empty()
+    }
+
+    fn to_persisted_message(&self) -> PersistedMessage {
+        let reasoning = self.reasoning.trim();
+        PersistedMessage::Assistant {
+            content: self.content.clone(),
+            created_at: Some(now_ms()),
+            model: Some(self.model.clone()),
+            provider: Some(self.provider.clone()),
+            input_tokens: None,
+            output_tokens: None,
+            duration_ms: None,
+            request_input_tokens: None,
+            request_output_tokens: None,
+            tool_calls: None,
+            reasoning: (!reasoning.is_empty()).then(|| reasoning.to_string()),
+            llm_api_response: None,
+            audio: None,
+            seq: self.seq,
+            run_id: Some(self.run_id.clone()),
+        }
+    }
+}
+
+fn build_persisted_tool_call(
+    tool_call_id: impl Into<String>,
+    tool_name: impl Into<String>,
+    arguments: Option<Value>,
+) -> PersistedToolCall {
+    PersistedToolCall {
+        id: tool_call_id.into(),
+        call_type: "function".to_string(),
+        function: PersistedFunction {
+            name: tool_name.into(),
+            arguments: arguments
+                .unwrap_or_else(|| serde_json::json!({}))
+                .to_string(),
+        },
+    }
+}
+
+fn build_tool_call_assistant_message(
+    tool_call_id: impl Into<String>,
+    tool_name: impl Into<String>,
+    arguments: Option<Value>,
+    seq: Option<u64>,
+    run_id: Option<&str>,
+) -> PersistedMessage {
+    PersistedMessage::Assistant {
+        content: String::new(),
+        created_at: Some(now_ms()),
+        model: None,
+        provider: None,
+        input_tokens: None,
+        output_tokens: None,
+        duration_ms: None,
+        request_input_tokens: None,
+        request_output_tokens: None,
+        tool_calls: Some(vec![build_persisted_tool_call(
+            tool_call_id,
+            tool_name,
+            arguments,
+        )]),
+        reasoning: None,
+        llm_api_response: None,
+        audio: None,
+        seq,
+        run_id: run_id.map(str::to_string),
+    }
+}
+
 pub struct LiveChatService {
     providers: Arc<RwLock<ProviderRegistry>>,
     model_store: Arc<RwLock<DisabledModelsStore>>,
@@ -2316,6 +2423,9 @@ pub struct LiveChatService {
     active_thinking_text: Arc<RwLock<HashMap<String, String>>>,
     /// Per-session active tool calls for `chat.peek` snapshot.
     active_tool_calls: Arc<RwLock<HashMap<String, Vec<ActiveToolCall>>>>,
+    /// Per-session streamed assistant content buffered so an abort can persist
+    /// what the user already saw instead of dropping it on the floor.
+    active_partial_assistant: Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>,
     /// Per-session reply medium for active runs, so the frontend can restore
     /// `voicePending` state after a page reload.
     active_reply_medium: Arc<RwLock<HashMap<String, ReplyMedium>>>,
@@ -2346,6 +2456,7 @@ impl LiveChatService {
             last_client_seq: Arc::new(RwLock::new(HashMap::new())),
             active_thinking_text: Arc::new(RwLock::new(HashMap::new())),
             active_tool_calls: Arc::new(RwLock::new(HashMap::new())),
+            active_partial_assistant: Arc::new(RwLock::new(HashMap::new())),
             active_reply_medium: Arc::new(RwLock::new(HashMap::new())),
             failover_config: moltis_config::schema::FailoverConfig::default(),
         }
@@ -2441,6 +2552,57 @@ impl LiveChatService {
         by_session.retain(|_, id| id != &target_run_id);
 
         (resolved_run_id, aborted)
+    }
+
+    async fn resolve_session_key_for_run(
+        active_runs_by_session: &Arc<RwLock<HashMap<String, String>>>,
+        run_id: Option<&str>,
+        session_key: Option<&str>,
+    ) -> Option<String> {
+        if let Some(key) = session_key {
+            return Some(key.to_string());
+        }
+        let target_run_id = run_id?;
+        active_runs_by_session
+            .read()
+            .await
+            .iter()
+            .find_map(|(key, active_run_id)| (active_run_id == target_run_id).then(|| key.clone()))
+    }
+
+    async fn persist_partial_assistant_on_abort(
+        &self,
+        session_key: &str,
+    ) -> Option<(Value, Option<u32>)> {
+        let partial = self
+            .active_partial_assistant
+            .write()
+            .await
+            .remove(session_key)?;
+        if !partial.has_visible_content() {
+            return None;
+        }
+
+        let partial_message = partial.to_persisted_message();
+        let partial_value = partial_message.to_value();
+        let mut message_index = None;
+
+        if let Err(e) = self.session_store.append(session_key, &partial_value).await {
+            warn!(session = %session_key, error = %e, "failed to persist aborted partial assistant message");
+            return Some((partial_value, None));
+        }
+
+        match self.session_store.count(session_key).await {
+            Ok(count) => {
+                self.session_metadata.touch(session_key, count).await;
+                message_index = Some(count.saturating_sub(1));
+            },
+            Err(e) => {
+                warn!(session = %session_key, error = %e, "failed to count session after persisting aborted partial assistant message");
+            },
+        }
+
+        Some((partial_value, message_index))
     }
 
     /// Resolve a provider from session metadata, history, or first registered.
@@ -2836,6 +2998,7 @@ impl ChatService for LiveChatService {
             let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
             let active_thinking_text = Arc::clone(&self.active_thinking_text);
             let active_tool_calls = Arc::clone(&self.active_tool_calls);
+            let active_partial_assistant = Arc::clone(&self.active_partial_assistant);
             let active_reply_medium = Arc::clone(&self.active_reply_medium);
             let session_store = Arc::clone(&self.session_store);
             let session_metadata = Arc::clone(&self.session_metadata);
@@ -2911,6 +3074,10 @@ impl ChatService for LiveChatService {
                     .await
                     .remove(&session_key_clone);
                 active_tool_calls.write().await.remove(&session_key_clone);
+                active_partial_assistant
+                    .write()
+                    .await
+                    .remove(&session_key_clone);
                 active_reply_medium.write().await.remove(&session_key_clone);
 
                 drop(permit);
@@ -3197,6 +3364,7 @@ impl ChatService for LiveChatService {
         let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
         let active_thinking_text = Arc::clone(&self.active_thinking_text);
         let active_tool_calls = Arc::clone(&self.active_tool_calls);
+        let active_partial_assistant = Arc::clone(&self.active_partial_assistant);
         let active_reply_medium = Arc::clone(&self.active_reply_medium);
         let run_id_clone = run_id.clone();
         let tool_registry = Arc::clone(&self.tool_registry);
@@ -3405,6 +3573,10 @@ impl ChatService for LiveChatService {
                 .write()
                 .await
                 .insert(session_key_clone.clone(), desired_reply_medium);
+            active_partial_assistant.write().await.insert(
+                session_key_clone.clone(),
+                ActiveAssistantDraft::new(&run_id_clone, &model_id, &provider_name, client_seq),
+            );
             if desired_reply_medium == ReplyMedium::Voice {
                 broadcast(
                     &state,
@@ -3438,6 +3610,7 @@ impl ChatService for LiveChatService {
                         Some(&runtime_context),
                         Some(&session_store),
                         client_seq,
+                        Some(Arc::clone(&active_partial_assistant)),
                     )
                     .await
                 } else {
@@ -3466,6 +3639,7 @@ impl ChatService for LiveChatService {
                         client_seq,
                         Some(Arc::clone(&active_thinking_text)),
                         Some(Arc::clone(&active_tool_calls)),
+                        Some(Arc::clone(&active_partial_assistant)),
                     )
                     .await
                 }
@@ -3550,6 +3724,10 @@ impl ChatService for LiveChatService {
                 .await
                 .remove(&session_key_clone);
             active_tool_calls.write().await.remove(&session_key_clone);
+            active_partial_assistant
+                .write()
+                .await
+                .remove(&session_key_clone);
             active_reply_medium.write().await.remove(&session_key_clone);
 
             // Release the semaphore *before* draining so replayed sends can
@@ -3758,6 +3936,7 @@ impl ChatService for LiveChatService {
                 Some(&runtime_context),
                 Some(&self.session_store),
                 None, // send_sync: no client seq
+                None, // send_sync: no partial assistant tracking
             )
             .await
         } else {
@@ -3786,6 +3965,7 @@ impl ChatService for LiveChatService {
                 None,  // send_sync: no client seq
                 None,  // send_sync: no thinking text tracking
                 None,  // send_sync: no tool call tracking
+                None,  // send_sync: no partial assistant tracking
             )
             .await
         };
@@ -3861,6 +4041,10 @@ impl ChatService for LiveChatService {
             return Err("missing 'runId' or 'sessionKey'".into());
         }
 
+        let resolved_session_key =
+            Self::resolve_session_key_for_run(&self.active_runs_by_session, run_id, session_key)
+                .await;
+
         let (resolved_run_id, aborted) = Self::abort_run_handle(
             &self.active_runs,
             &self.active_runs_by_session,
@@ -3876,24 +4060,30 @@ impl ChatService for LiveChatService {
             "chat.abort"
         );
 
-        if aborted && let Some(key) = session_key {
+        if aborted && let Some(key) = resolved_session_key.as_deref() {
+            let partial = self.persist_partial_assistant_on_abort(key).await;
             self.active_thinking_text.write().await.remove(key);
             self.active_tool_calls.write().await.remove(key);
             self.active_reply_medium.write().await.remove(key);
-            broadcast(
-                &self.state,
-                "chat",
-                serde_json::json!({
-                    "state": "aborted",
-                    "runId": resolved_run_id,
-                    "sessionKey": key,
-                }),
-                BroadcastOpts::default(),
-            )
-            .await;
+            let mut payload = serde_json::json!({
+                "state": "aborted",
+                "runId": resolved_run_id,
+                "sessionKey": key,
+            });
+            if let Some((partial_message, message_index)) = partial {
+                payload["partialMessage"] = partial_message;
+                if let Some(index) = message_index {
+                    payload["messageIndex"] = serde_json::json!(index);
+                }
+            }
+            broadcast(&self.state, "chat", payload, BroadcastOpts::default()).await;
         }
 
-        Ok(serde_json::json!({ "aborted": aborted, "runId": resolved_run_id }))
+        Ok(serde_json::json!({
+            "aborted": aborted,
+            "runId": resolved_run_id,
+            "sessionKey": resolved_session_key,
+        }))
     }
 
     async fn cancel_queued(&self, params: Value) -> ServiceResult {
@@ -5101,6 +5291,19 @@ async fn run_explicit_shell_command(
     match exec_result {
         Ok(result) => {
             let capped = capped_tool_result_payload(&result, 10_000);
+            let assistant_tool_call_msg = build_tool_call_assistant_message(
+                tool_call_id.clone(),
+                "exec",
+                Some(tool_args.clone()),
+                client_seq,
+                Some(run_id),
+            );
+            if let Err(e) = session_store
+                .append(session_key, &assistant_tool_call_msg.to_value())
+                .await
+            {
+                warn!("failed to persist direct /sh assistant tool call: {e}");
+            }
             let tool_result_msg = PersistedMessage::tool_result(
                 tool_call_id.clone(),
                 "exec",
@@ -5143,6 +5346,19 @@ async fn run_explicit_shell_command(
         Err(err) => {
             let error_text = err.to_string();
             let parsed_error = parse_chat_error(&error_text, None);
+            let assistant_tool_call_msg = build_tool_call_assistant_message(
+                tool_call_id.clone(),
+                "exec",
+                Some(tool_args.clone()),
+                client_seq,
+                Some(run_id),
+            );
+            if let Err(e) = session_store
+                .append(session_key, &assistant_tool_call_msg.to_value())
+                .await
+            {
+                warn!("failed to persist direct /sh assistant tool call: {e}");
+            }
             let tool_result_msg = PersistedMessage::tool_result(
                 tool_call_id.clone(),
                 "exec",
@@ -5205,7 +5421,7 @@ async fn run_explicit_shell_command(
         duration_ms: started.elapsed().as_millis() as u64,
         request_input_tokens: Some(0),
         request_output_tokens: Some(0),
-        message_index: user_message_index + 2, // +1 for user msg, +1 for tool result
+        message_index: user_message_index + 3, /* +1 tool call assistant, +1 tool result, +1 final assistant */
         reply_medium: ReplyMedium::Text,
         iterations: Some(1),
         tool_calls_made: Some(1),
@@ -5643,6 +5859,7 @@ async fn run_with_tools(
     client_seq: Option<u64>,
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
     active_tool_calls: Option<Arc<RwLock<HashMap<String, Vec<ActiveToolCall>>>>>,
+    active_partial_assistant: Option<Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
@@ -5712,6 +5929,7 @@ async fn run_with_tools(
     let session_key_for_events = session_key.to_string();
     let session_store_for_events = session_store.map(Arc::clone);
     let provider_name_for_events = provider_name.to_string();
+    let active_partial_for_events = active_partial_assistant.as_ref().map(Arc::clone);
     let (on_event, mut event_rx) = ordered_runner_event_callback();
     let channel_stream_dispatcher = ChannelStreamDispatcher::for_session(state, session_key)
         .await
@@ -5979,18 +6197,33 @@ async fn run_with_tools(
                             r
                         });
                         let tracked_reasoning = tool_reasoning_map.remove(&id);
-                        let tool_result_msg = PersistedMessage::tool_result_with_reasoning(
-                            id,
-                            name,
-                            tracked_args,
-                            success,
-                            persisted_result,
-                            error,
-                            tracked_reasoning,
+                        let assistant_tool_call_msg = build_tool_call_assistant_message(
+                            id.clone(),
+                            name.clone(),
+                            tracked_args.clone(),
+                            seq,
+                            Some(run_id.as_str()),
                         );
+                        let tool_result_msg = PersistedMessage::ToolResult {
+                            tool_call_id: id,
+                            tool_name: name,
+                            arguments: tracked_args,
+                            success,
+                            result: persisted_result,
+                            error,
+                            reasoning: tracked_reasoning,
+                            created_at: Some(now_ms()),
+                            run_id: Some(run_id.clone()),
+                        };
                         let store_clone = Arc::clone(store);
                         let sk_persist = sk.clone();
                         tokio::spawn(async move {
+                            if let Err(e) = store_clone
+                                .append(&sk_persist, &assistant_tool_call_msg.to_value())
+                                .await
+                            {
+                                warn!("failed to persist assistant tool call: {e}");
+                            }
                             if let Err(e) = store_clone
                                 .append(&sk_persist, &tool_result_msg.to_value())
                                 .await
@@ -6007,6 +6240,11 @@ async fn run_with_tools(
                     if let Some(ref map) = active_thinking_text {
                         map.write().await.insert(sk.clone(), text.clone());
                     }
+                    if let Some(ref map) = active_partial_for_events
+                        && let Some(draft) = map.write().await.get_mut(&sk)
+                    {
+                        draft.set_reasoning(&text);
+                    }
                     serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
@@ -6016,6 +6254,11 @@ async fn run_with_tools(
                     })
                 },
                 RunnerEvent::TextDelta(text) => {
+                    if let Some(ref map) = active_partial_for_events
+                        && let Some(draft) = map.write().await.get_mut(&sk)
+                    {
+                        draft.append_text(&text);
+                    }
                     if let Some(ref dispatcher) = channel_stream_for_events {
                         dispatcher.lock().await.send_delta(&text).await;
                     }
@@ -6283,9 +6526,9 @@ async fn run_with_tools(
                 return None;
             }
 
-            // Tool results are persisted between the user message and the
-            // assistant message, so the assistant index must account for them.
-            let assistant_message_index = user_message_index + 1 + tool_calls_made;
+            // Tool-using turns now persist both the assistant tool call frame
+            // and the tool result for each tool call before the final answer.
+            let assistant_message_index = user_message_index + 1 + (tool_calls_made * 2);
 
             // Generate & persist TTS audio for voice-medium web UI replies.
             let mut audio_warning: Option<String> = None;
@@ -6570,6 +6813,7 @@ async fn run_streaming(
     runtime_context: Option<&PromptRuntimeContext>,
     session_store: Option<&Arc<SessionStore>>,
     client_seq: Option<u64>,
+    active_partial_assistant: Option<Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
@@ -6617,6 +6861,11 @@ async fn run_streaming(
             match event {
                 StreamEvent::Delta(delta) => {
                     accumulated.push_str(&delta);
+                    if let Some(ref map) = active_partial_assistant
+                        && let Some(draft) = map.write().await.get_mut(session_key)
+                    {
+                        draft.append_text(&delta);
+                    }
                     if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
                         dispatcher.send_delta(&delta).await;
                     }
@@ -6635,6 +6884,11 @@ async fn run_streaming(
                 },
                 StreamEvent::ReasoningDelta(delta) => {
                     accumulated_reasoning.push_str(&delta);
+                    if let Some(ref map) = active_partial_assistant
+                        && let Some(draft) = map.write().await.get_mut(session_key)
+                    {
+                        draft.set_reasoning(&accumulated_reasoning);
+                    }
                     broadcast(
                         state,
                         "chat",
@@ -7966,6 +8220,7 @@ mod tests {
             },
             time::{Duration, Instant},
         },
+        tokio::sync::Notify,
         tokio_stream::Stream,
     };
 
@@ -7976,6 +8231,118 @@ mod tests {
     struct StaticProvider {
         name: String,
         id: String,
+    }
+
+    struct AbortThenContinueProvider {
+        call_count: AtomicUsize,
+        first_delta_processed: Arc<Notify>,
+        seen_messages: Arc<std::sync::Mutex<Vec<Vec<ChatMessage>>>>,
+    }
+
+    impl AbortThenContinueProvider {
+        fn new() -> Self {
+            Self {
+                call_count: AtomicUsize::new(0),
+                first_delta_processed: Arc::new(Notify::new()),
+                seen_messages: Arc::new(std::sync::Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for AbortThenContinueProvider {
+        fn name(&self) -> &str {
+            "abort-then-continue"
+        }
+
+        fn id(&self) -> &str {
+            "abort-then-continue-model"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+        ) -> Result<moltis_agents::model::CompletionResponse> {
+            anyhow::bail!("not implemented for test")
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let call_index = self.call_count.fetch_add(1, Ordering::SeqCst);
+            let first_delta_processed = Arc::clone(&self.first_delta_processed);
+            let seen_messages = Arc::clone(&self.seen_messages);
+            Box::pin(async_stream::stream! {
+                seen_messages
+                    .lock()
+                    .expect("abort-then-continue seen_messages mutex poisoned")
+                    .push(messages.clone());
+                if call_index == 0 {
+                    yield StreamEvent::Delta("Partial answer".to_string());
+                    first_delta_processed.notify_waiters();
+                    std::future::pending::<()>().await;
+                } else {
+                    yield StreamEvent::Delta("Continued answer".to_string());
+                    yield StreamEvent::Done(moltis_agents::model::Usage {
+                        input_tokens: 8,
+                        output_tokens: 4,
+                        ..Default::default()
+                    });
+                }
+            })
+        }
+    }
+
+    struct StreamingTextToolProvider;
+
+    #[async_trait]
+    impl LlmProvider for StreamingTextToolProvider {
+        fn name(&self) -> &str {
+            "streaming-text-tool"
+        }
+
+        fn id(&self) -> &str {
+            "streaming-text-tool-model"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+        ) -> Result<moltis_agents::model::CompletionResponse> {
+            anyhow::bail!("not implemented for test")
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let has_tool_result = messages
+                .iter()
+                .any(|msg| matches!(msg, ChatMessage::Tool { .. }));
+            Box::pin(async_stream::stream! {
+                if has_tool_result {
+                    yield StreamEvent::Delta("Tool run complete".to_string());
+                    yield StreamEvent::Done(moltis_agents::model::Usage {
+                        input_tokens: 12,
+                        output_tokens: 6,
+                        ..Default::default()
+                    });
+                } else {
+                    yield StreamEvent::Delta(
+                        "```tool_call\n{\"tool\":\"echo_tool\",\"arguments\":{\"text\":\"hi\"}}\n```"
+                            .to_string(),
+                    );
+                    yield StreamEvent::Done(moltis_agents::model::Usage {
+                        input_tokens: 10,
+                        output_tokens: 4,
+                        ..Default::default()
+                    });
+                }
+            })
+        }
     }
 
     #[async_trait]
@@ -11017,6 +11384,162 @@ mod tests {
                 .await
                 .get("test-session")
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_persists_partial_stream_and_followup_reuses_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        let provider = Arc::new(AbortThenContinueProvider::new());
+
+        let mut registry = ProviderRegistry::empty();
+        registry.register(
+            moltis_providers::ModelInfo {
+                id: "abort-then-continue-model".to_string(),
+                provider: "abort-then-continue".to_string(),
+                display_name: "Abort Then Continue".to_string(),
+                created_at: None,
+            },
+            provider.clone(),
+        );
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(registry)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new()),
+            Arc::clone(&store),
+            metadata,
+        );
+
+        let send_result = service
+            .send(serde_json::json!({ "text": "start streaming" }))
+            .await
+            .expect("chat.send should succeed");
+        let run_id = send_result["runId"]
+            .as_str()
+            .expect("runId should be returned")
+            .to_string();
+
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            provider.first_delta_processed.notified(),
+        )
+        .await
+        .expect("first streamed delta should be observed");
+
+        let abort_result = service
+            .abort(serde_json::json!({ "sessionKey": "main" }))
+            .await
+            .expect("chat.abort should succeed");
+        assert_eq!(abort_result["aborted"], true);
+        assert_eq!(abort_result["runId"], run_id);
+
+        let history = store.read("main").await.expect("read history after abort");
+        assert!(
+            history.iter().any(|msg| {
+                msg.get("role").and_then(Value::as_str) == Some("assistant")
+                    && msg.get("content").and_then(Value::as_str) == Some("Partial answer")
+            }),
+            "aborted run should persist the partial assistant output"
+        );
+
+        let continue_result = service
+            .send_sync(serde_json::json!({ "text": "continue" }))
+            .await
+            .expect("follow-up send_sync should succeed");
+        assert_eq!(continue_result["text"], "Continued answer");
+
+        let seen_messages = provider
+            .seen_messages
+            .lock()
+            .expect("abort-then-continue seen_messages mutex poisoned")
+            .clone();
+        assert!(seen_messages.len() >= 2, "provider should see both turns");
+
+        let follow_up_messages = &seen_messages[1];
+        assert!(
+            follow_up_messages.iter().any(|msg| matches!(
+                msg,
+                ChatMessage::Assistant {
+                    content: Some(text),
+                    tool_calls,
+                } if text == "Partial answer" && tool_calls.is_empty()
+            )),
+            "follow-up turn should include the aborted partial assistant output in prompt history"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_sync_persists_tool_call_assistant_frames_for_history_replay() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        let mut provider_registry = ProviderRegistry::empty();
+        provider_registry.register(
+            moltis_providers::ModelInfo {
+                id: "streaming-text-tool-model".to_string(),
+                provider: "streaming-text-tool".to_string(),
+                display_name: "Streaming Text Tool".to_string(),
+                created_at: None,
+            },
+            Arc::new(StreamingTextToolProvider),
+        );
+
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(DummyTool {
+            name: "echo_tool".to_string(),
+        }));
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(provider_registry)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new()),
+            Arc::clone(&store),
+            metadata,
+        )
+        .with_tools(Arc::new(RwLock::new(tool_registry)));
+
+        let send_result = service
+            .send_sync(serde_json::json!({ "text": "use the tool" }))
+            .await
+            .expect("send_sync should succeed");
+        assert_eq!(send_result["text"], "Tool run complete");
+
+        let history = store.read("main").await.expect("read history");
+        let assistant_tool_call = history
+            .iter()
+            .find(|msg| {
+                msg.get("role").and_then(Value::as_str) == Some("assistant")
+                    && msg.get("tool_calls").is_some()
+            })
+            .expect("assistant tool-call frame should be persisted");
+        let tool_result = history
+            .iter()
+            .find(|msg| msg.get("role").and_then(Value::as_str) == Some("tool_result"))
+            .expect("tool_result should be persisted");
+
+        assert_eq!(
+            assistant_tool_call["tool_calls"][0]["function"]["name"].as_str(),
+            Some("echo_tool")
+        );
+        assert_eq!(
+            assistant_tool_call["tool_calls"][0]["id"].as_str(),
+            tool_result["tool_call_id"].as_str()
+        );
+
+        let replay_messages = values_to_chat_messages(&history);
+        assert!(
+            replay_messages.iter().any(|msg| matches!(
+                msg,
+                ChatMessage::Tool { tool_call_id, .. }
+                    if Some(tool_call_id.as_str()) == tool_result["tool_call_id"].as_str()
+            )),
+            "persisted tool_result should round-trip into prompt history once the assistant tool-call frame exists"
         );
     }
 
