@@ -218,9 +218,12 @@ fn check_config(config_dir: Option<&Path>) -> Section {
         }
     }
 
-    // Semantic warnings (security, etc.)
+    // Semantic warnings (security, deprecated fields, etc.)
     for d in &result.diagnostics {
-        if d.category == "security" || d.category == "unknown-provider" {
+        if d.category == "security"
+            || d.category == "unknown-provider"
+            || d.category == "deprecated-field"
+        {
             let status = match d.severity {
                 Severity::Error => Status::Fail,
                 Severity::Warning => Status::Warn,

@@ -29,7 +29,7 @@ impl std::fmt::Display for Severity {
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
-    /// Category: "syntax", "unknown-field", "unknown-provider", "type-error",
+    /// Category: "syntax", "unknown-field", "deprecated-field", "unknown-provider", "type-error",
     /// "security", "file-ref"
     pub category: &'static str,
     /// Dotted path, e.g. "server.bnd"
@@ -451,10 +451,15 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("backend", Leaf),
                 ("provider", Leaf),
+                ("embedding_provider", Leaf),
                 ("disable_rag", Leaf),
                 ("base_url", Leaf),
+                ("embedding_base_url", Leaf),
                 ("model", Leaf),
+                ("embedding_model", Leaf),
                 ("api_key", Leaf),
+                ("embedding_api_key", Leaf),
+                ("embedding_dimensions", Leaf),
                 ("citations", Leaf),
                 ("llm_reranking", Leaf),
                 ("search_merge_strategy", Leaf),
@@ -769,12 +774,15 @@ pub fn validate_toml_str(toml_str: &str) -> ValidationResult {
     let schema = build_schema_map();
     check_unknown_fields(&toml_value, &schema, "", &mut diagnostics);
 
-    // 3. Provider name hints
+    // 3. Deprecation warnings on raw TOML keys
+    check_deprecated_fields(&toml_value, &mut diagnostics);
+
+    // 4. Provider name hints
     if let Some(providers) = toml_value.get("providers").and_then(|v| v.as_table()) {
         check_provider_names(providers, &mut diagnostics);
     }
 
-    // 4. Type check — attempt full deserialization
+    // 5. Type check — attempt full deserialization
     if let Err(e) = toml::from_str::<MoltisConfig>(toml_str) {
         diagnostics.push(Diagnostic {
             severity: Severity::Error,
@@ -784,7 +792,7 @@ pub fn validate_toml_str(toml_str: &str) -> ValidationResult {
         });
     }
 
-    // 5. Semantic warnings on parsed config (only if it parses)
+    // 6. Semantic warnings on parsed config (only if it parses)
     if let Ok(config) = toml::from_str::<MoltisConfig>(toml_str) {
         check_semantic_warnings(&config, &mut diagnostics);
     }
@@ -792,6 +800,44 @@ pub fn validate_toml_str(toml_str: &str) -> ValidationResult {
     ValidationResult {
         diagnostics,
         config_path: None,
+    }
+}
+
+fn check_deprecated_fields(toml_value: &toml::Value, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(memory) = toml_value.get("memory").and_then(|value| value.as_table()) else {
+        return;
+    };
+
+    check_deprecated_memory_field(memory, "embedding_provider", "provider", diagnostics);
+    check_deprecated_memory_field(memory, "embedding_base_url", "base_url", diagnostics);
+    check_deprecated_memory_field(memory, "embedding_model", "model", diagnostics);
+    check_deprecated_memory_field(memory, "embedding_api_key", "api_key", diagnostics);
+
+    if memory.contains_key("embedding_dimensions") {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "deprecated-field",
+            path: "memory.embedding_dimensions".into(),
+            message:
+                "deprecated field; ignored because embedding dimensions are determined by the provider response"
+                    .into(),
+        });
+    }
+}
+
+fn check_deprecated_memory_field(
+    memory: &toml::map::Map<String, toml::Value>,
+    legacy: &str,
+    replacement: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if memory.contains_key(legacy) {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "deprecated-field",
+            path: format!("memory.{legacy}"),
+            message: format!("deprecated field; use \"memory.{replacement}\" instead"),
+        });
     }
 }
 
@@ -1734,6 +1780,72 @@ disable_rag = true
         assert!(
             unknown.is_none(),
             "memory.disable_rag should be accepted as a known field"
+        );
+    }
+
+    #[test]
+    fn legacy_memory_embedding_fields_warn_but_do_not_error() {
+        let toml = r#"
+[memory]
+embedding_provider = "custom"
+embedding_model = "intfloat/multilingual-e5-small"
+embedding_base_url = "http://moltis-embeddings:7997/v1"
+embedding_dimensions = 384
+"#;
+        let result = validate_toml_str(toml);
+
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-field" && d.path.starts_with("memory.embedding_"))
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "legacy embedding fields should not be unknown: {:?}",
+            result.diagnostics
+        );
+
+        let deprecated: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "deprecated-field")
+            .collect();
+        assert_eq!(
+            deprecated.len(),
+            4,
+            "expected deprecation warnings for all legacy fields: {:?}",
+            result.diagnostics
+        );
+        assert!(
+            deprecated
+                .iter()
+                .any(|d| d.path == "memory.embedding_provider"
+                    && d.message.contains("memory.provider")),
+            "expected replacement warning for embedding_provider"
+        );
+        assert!(
+            deprecated
+                .iter()
+                .any(|d| d.path == "memory.embedding_base_url"
+                    && d.message.contains("memory.base_url")),
+            "expected replacement warning for embedding_base_url"
+        );
+        assert!(
+            deprecated
+                .iter()
+                .any(|d| d.path == "memory.embedding_model" && d.message.contains("memory.model")),
+            "expected replacement warning for embedding_model"
+        );
+        assert!(
+            deprecated
+                .iter()
+                .any(|d| d.path == "memory.embedding_dimensions" && d.message.contains("ignored")),
+            "expected ignored warning for embedding_dimensions"
+        );
+        assert!(
+            !result.has_errors(),
+            "legacy embedding fields should remain usable: {:?}",
+            result.diagnostics
         );
     }
 
