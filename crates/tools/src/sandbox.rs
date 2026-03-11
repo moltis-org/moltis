@@ -665,7 +665,10 @@ struct ContainerMount {
     destination: PathBuf,
 }
 
-static HOST_DATA_DIR_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> = OnceLock::new();
+static HOST_DATA_DIR_CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+#[cfg(test)]
+static TEST_CONTAINER_MOUNT_OVERRIDES: OnceLock<Mutex<HashMap<String, Vec<ContainerMount>>>> =
+    OnceLock::new();
 
 fn configured_host_data_dir(config: &SandboxConfig) -> Option<PathBuf> {
     let guest_data_dir = moltis_config::data_dir();
@@ -781,65 +784,99 @@ fn resolve_host_path_from_mounts(
         .map(|(_, resolved)| resolved)
 }
 
+#[cfg(test)]
+fn test_container_mount_override_key(cli: &str, reference: &str) -> String {
+    format!("{cli}:{reference}")
+}
+
 fn inspect_current_container_mounts(cli: &str, reference: &str) -> Vec<ContainerMount> {
-    let output = match std::process::Command::new(cli)
-        .args(["inspect", reference])
-        .output()
+    #[cfg(test)]
     {
-        Ok(output) if output.status.success() => output,
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            debug!(
-                cli,
-                reference,
-                stderr = %stderr.trim(),
-                "container inspect failed while auto-detecting host data dir"
-            );
-            return Vec::new();
-        },
-        Err(error) => {
-            debug!(
-                cli,
-                reference,
-                %error,
-                "could not inspect current container while auto-detecting host data dir"
-            );
-            return Vec::new();
-        },
-    };
-    parse_container_mounts_from_inspect(&String::from_utf8_lossy(&output.stdout))
+        let overrides = TEST_CONTAINER_MOUNT_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()));
+        let guard = overrides.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(mounts) = guard.get(&test_container_mount_override_key(cli, reference)) {
+            return mounts.clone();
+        }
+        return Vec::new();
+    }
+
+    #[cfg(not(test))]
+    {
+        let output = match std::process::Command::new(cli)
+            .args(["inspect", reference])
+            .output()
+        {
+            Ok(output) if output.status.success() => output,
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    cli,
+                    reference,
+                    stderr = %stderr.trim(),
+                    "container inspect failed while auto-detecting host data dir"
+                );
+                return Vec::new();
+            },
+            Err(error) => {
+                debug!(
+                    cli,
+                    reference,
+                    %error,
+                    "could not inspect current container while auto-detecting host data dir"
+                );
+                return Vec::new();
+            },
+        };
+        parse_container_mounts_from_inspect(&String::from_utf8_lossy(&output.stdout))
+    }
+}
+
+fn detect_host_data_dir_with_references(
+    cli: &str,
+    guest_data_dir: &FsPath,
+    references: &[String],
+) -> Option<PathBuf> {
+    references.iter().find_map(|reference| {
+        let mounts = inspect_current_container_mounts(cli, reference);
+        if mounts.is_empty() {
+            return None;
+        }
+        let resolved = resolve_host_path_from_mounts(guest_data_dir, &mounts)?;
+        debug!(
+            cli,
+            reference,
+            guest_path = %guest_data_dir.display(),
+            host_path = %resolved.display(),
+            "auto-detected host data dir from current container mounts"
+        );
+        Some(resolved)
+    })
+}
+
+fn host_data_dir_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
+    HOST_DATA_DIR_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn detect_host_data_dir(cli: &str, guest_data_dir: &FsPath) -> Option<PathBuf> {
-    let cache = HOST_DATA_DIR_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let cache_key = format!("{cli}:{}", guest_data_dir.display());
     {
-        let guard = cache.lock().unwrap_or_else(|error| error.into_inner());
+        let guard = host_data_dir_cache()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if let Some(cached) = guard.get(&cache_key) {
-            return cached.clone();
+            return Some(cached.clone());
         }
     }
 
-    let detected = current_container_references()
-        .into_iter()
-        .find_map(|reference| {
-            let mounts = inspect_current_container_mounts(cli, &reference);
-            if mounts.is_empty() {
-                return None;
-            }
-            let resolved = resolve_host_path_from_mounts(guest_data_dir, &mounts)?;
-            debug!(
-                cli,
-                reference,
-                guest_path = %guest_data_dir.display(),
-                host_path = %resolved.display(),
-                "auto-detected host data dir from current container mounts"
-            );
-            Some(resolved)
-        });
+    let detected =
+        detect_host_data_dir_with_references(cli, guest_data_dir, &current_container_references());
 
-    let mut guard = cache.lock().unwrap_or_else(|error| error.into_inner());
-    guard.insert(cache_key, detected.clone());
+    if let Some(path) = detected.clone() {
+        let mut guard = host_data_dir_cache()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.insert(cache_key, path);
+    }
     detected
 }
 
@@ -869,11 +906,9 @@ fn host_visible_data_dir(config: &SandboxConfig, cli: Option<&str>) -> PathBuf {
     if let Some(configured) = configured_host_data_dir(config) {
         return configured;
     }
-    if !cfg!(test) {
-        if let Some(cli) = cli {
-            if let Some(detected) = detect_host_data_dir(cli, &guest_data_dir) {
-                return detected;
-            }
+    if let Some(cli) = cli {
+        if let Some(detected) = detect_host_data_dir(cli, &guest_data_dir) {
+            return detected;
         }
     }
     guest_data_dir
@@ -938,6 +973,33 @@ fn sandbox_home_persistence_host_dir(
     }
 }
 
+fn guest_visible_sandbox_home_persistence_host_dir(
+    config: &SandboxConfig,
+    id: &SandboxId,
+) -> Option<PathBuf> {
+    let base = moltis_config::data_dir().join("sandbox").join("home");
+    match config.home_persistence {
+        HomePersistence::Off => None,
+        HomePersistence::Shared => Some(
+            config
+                .shared_home_dir
+                .as_ref()
+                .filter(|path| !path.as_os_str().is_empty())
+                .map(|path| {
+                    if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        moltis_config::data_dir().join(path)
+                    }
+                })
+                .unwrap_or_else(|| base.join("shared")),
+        ),
+        HomePersistence::Session => {
+            Some(base.join("session").join(sanitize_path_component(&id.key)))
+        },
+    }
+}
+
 fn ensure_sandbox_home_persistence_host_dir(
     config: &SandboxConfig,
     cli: Option<&str>,
@@ -946,11 +1008,15 @@ fn ensure_sandbox_home_persistence_host_dir(
     let Some(path) = sandbox_home_persistence_host_dir(config, cli, id) else {
         return Ok(None);
     };
+    let guest_visible_path = guest_visible_sandbox_home_persistence_host_dir(config, id);
     if let Err(error) = std::fs::create_dir_all(&path) {
-        debug!(
+        if guest_visible_path.as_ref() == Some(&path) {
+            return Err(error.into());
+        }
+        warn!(
             path = %path.display(),
             %error,
-            "could not pre-create sandbox persistence path; runtime may create it"
+            "could not pre-create translated sandbox persistence path; runtime may create it"
         );
     }
     Ok(Some(path))
@@ -5578,6 +5644,26 @@ mod tests {
 
     use super::*;
 
+    fn clear_host_data_dir_test_state() {
+        host_data_dir_cache()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+        let overrides = TEST_CONTAINER_MOUNT_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()));
+        overrides
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+    }
+
+    fn set_test_container_mount_override(cli: &str, reference: &str, mounts: Vec<ContainerMount>) {
+        let overrides = TEST_CONTAINER_MOUNT_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()));
+        overrides
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(test_container_mount_override_key(cli, reference), mounts);
+    }
+
     #[test]
     fn test_normalize_cgroup_container_ref() {
         assert_eq!(
@@ -5643,6 +5729,87 @@ mod tests {
             resolved,
             Some(PathBuf::from("/host/data/sandbox/home/shared"))
         );
+    }
+
+    #[test]
+    fn test_detect_host_data_dir_with_references_uses_mount_overrides() {
+        clear_host_data_dir_test_state();
+        let guest_data_dir = PathBuf::from("/home/moltis/.moltis");
+        set_test_container_mount_override("docker", "parent-container", vec![ContainerMount {
+            source: PathBuf::from("/srv/moltis/data"),
+            destination: guest_data_dir.clone(),
+        }]);
+
+        let detected =
+            detect_host_data_dir_with_references("docker", &guest_data_dir, &[String::from(
+                "parent-container",
+            )]);
+
+        assert_eq!(detected, Some(PathBuf::from("/srv/moltis/data")));
+    }
+
+    #[test]
+    fn test_detect_host_data_dir_does_not_cache_missing_result() {
+        clear_host_data_dir_test_state();
+        let guest_data_dir = PathBuf::from("/home/moltis/.moltis");
+        assert_eq!(detect_host_data_dir("docker", &guest_data_dir), None);
+        let cache_key = format!("docker:{}", guest_data_dir.display());
+        assert!(
+            !host_data_dir_cache()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains_key(&cache_key)
+        );
+
+        let reference = String::from("retry-container");
+
+        set_test_container_mount_override("docker", &reference, vec![ContainerMount {
+            source: PathBuf::from("/srv/moltis/data"),
+            destination: guest_data_dir.clone(),
+        }]);
+
+        let detected =
+            detect_host_data_dir_with_references("docker", &guest_data_dir, &[reference]);
+        assert_eq!(detected, Some(PathBuf::from("/srv/moltis/data")));
+    }
+
+    #[test]
+    fn test_ensure_sandbox_home_persistence_host_dir_propagates_guest_visible_create_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let blocking_file = temp_dir.path().join("blocking-file");
+        std::fs::write(&blocking_file, "x").unwrap();
+        let config = SandboxConfig {
+            home_persistence: HomePersistence::Shared,
+            shared_home_dir: Some(blocking_file.join("nested")),
+            ..Default::default()
+        };
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "sess-1".into(),
+        };
+
+        let result = ensure_sandbox_home_persistence_host_dir(&config, None, &id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ensure_sandbox_home_persistence_host_dir_allows_translated_create_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let blocking_file = temp_dir.path().join("blocking-file");
+        std::fs::write(&blocking_file, "x").unwrap();
+        let config = SandboxConfig {
+            host_data_dir: Some(blocking_file.join("host")),
+            ..Default::default()
+        };
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "sess-1".into(),
+        };
+
+        let result = ensure_sandbox_home_persistence_host_dir(&config, Some("docker"), &id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result, blocking_file.join("host/sandbox/home/shared"));
     }
 
     struct TestSandbox {
