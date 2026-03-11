@@ -457,8 +457,9 @@ fn needs_responses_api(model: &str) -> bool {
 /// Returns `true` if an error body from the Chat Completions API indicates
 /// that the model only supports the Responses API.
 fn is_responses_api_required_error(body: &str) -> bool {
-    body.contains("unsupported_api_for_model")
-        || body.contains("not accessible via the /chat/completions")
+    let lower = body.to_ascii_lowercase();
+    lower.contains("unsupported_api_for_model")
+        || lower.contains("not accessible via the /chat/completions")
 }
 
 // ── LlmProvider impl ────────────────────────────────────────────────────────
@@ -1459,6 +1460,10 @@ mod tests {
         ));
         assert!(is_responses_api_required_error(
             "This model is not accessible via the /chat/completions endpoint"
+        ));
+        // Case-insensitive: should still match with mixed casing
+        assert!(is_responses_api_required_error(
+            "Not Accessible Via The /chat/completions"
         ));
     }
 
