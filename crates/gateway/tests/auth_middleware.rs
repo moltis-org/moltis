@@ -1446,6 +1446,39 @@ async fn onboarding_accessible_with_session_after_setup() {
     );
 }
 
+/// After auth is reset, `/onboarding` must stay reachable even if the
+/// onboarding service still reports the instance as previously onboarded.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn onboarding_remains_accessible_after_auth_reset_when_onboarded() {
+    let (addr, store, _state) = start_server_with_onboarding(true, true).await;
+    store.set_initial_password("testpass123").await.unwrap();
+    store.reset_all().await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://{addr}/onboarding"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "auth-reset instances must render /onboarding instead of redirecting away"
+    );
+
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("id=\"onboardingRoot\""),
+        "/onboarding should render the onboarding shell after auth reset"
+    );
+}
+
 /// POST /api/auth/setup is rejected with 403 after setup is already complete.
 /// This prevents an attacker from resetting the password via the setup endpoint.
 #[cfg(feature = "web-ui")]
