@@ -3280,7 +3280,7 @@ pub async fn prepare_gateway(
             prefix: None,
             global_labels: vec![
                 ("service".to_string(), "moltis-gateway".to_string()),
-                ("version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
+                ("version".to_string(), moltis_config::VERSION.to_string()),
             ],
         };
         match moltis_metrics::init_metrics(metrics_config) {
@@ -5051,7 +5051,7 @@ pub async fn start_gateway(
         match crate::mdns::register(
             &instance,
             port,
-            env!("CARGO_PKG_VERSION"),
+            moltis_config::VERSION,
             Some(&instance_slug(config)),
         ) {
             Ok(daemon) => Some(daemon),

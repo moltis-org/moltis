@@ -356,7 +356,7 @@ async fn main() -> anyhow::Result<()> {
 
     init_telemetry(&cli, log_buffer.clone());
 
-    info!(version = env!("CARGO_PKG_VERSION"), "moltis starting");
+    info!(version = moltis_config::VERSION, "moltis starting");
 
     // Apply directory overrides before any command so all subcommands
     // (config check, db, sandbox, etc.) respect --config-dir / --data-dir.

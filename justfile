@@ -74,7 +74,7 @@ deb-all: deb-amd64 deb-arm64
 arch-pkg: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     ARCH=$(uname -m)
     PKG_DIR="target/arch-pkg"
     rm -rf "$PKG_DIR"
@@ -98,7 +98,7 @@ arch-pkg-x86_64:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release --target x86_64-unknown-linux-gnu
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     PKG_DIR="target/arch-pkg-x86_64"
     rm -rf "$PKG_DIR"
     mkdir -p "$PKG_DIR/usr/bin"
@@ -121,7 +121,7 @@ arch-pkg-aarch64:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release --target aarch64-unknown-linux-gnu
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     PKG_DIR="target/arch-pkg-aarch64"
     rm -rf "$PKG_DIR"
     mkdir -p "$PKG_DIR/usr/bin"
@@ -163,7 +163,7 @@ rpm-all: rpm-x86_64 rpm-aarch64
 appimage: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     ARCH=$(uname -m)
     APP_DIR="target/moltis.AppDir"
     rm -rf "$APP_DIR"
@@ -284,7 +284,7 @@ changelog-unreleased:
 
 # Generate release entries for unreleased commits under the provided version.
 changelog-release version:
-    git-cliff --config cliff.toml --unreleased --tag "v{{version}}" --strip all
+    git-cliff --config cliff.toml --unreleased --tag "{{version}}" --strip all
 
 # Commit all changes, push branch, create/update PR, and run local validation.
 # All args are optional; defaults are auto-generated from branch + changed files.
