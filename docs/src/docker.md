@@ -104,6 +104,21 @@ inside the Moltis container but without filesystem or network isolation.
 For full container-level isolation (filesystem boundaries, network policies),
 mount the Docker socket.
 
+If Moltis is itself running in Docker and your `data_dir()` mount is backed by
+a different host path than `/home/moltis/.moltis`, Moltis will try to discover
+that host path automatically from `docker inspect`/`podman inspect`. If that
+lookup fails, add this to `/home/moltis/.config/moltis/moltis.toml` inside the
+container:
+
+```toml
+[tools.exec.sandbox]
+host_data_dir = "/absolute/host/path/to/data"
+```
+
+For a bind mount like `-v ./data:/home/moltis/.moltis`, use the resolved host
+path to `./data`. Restart Moltis after changing the config so new sandbox
+containers pick up the corrected mount source.
+
 ### Security Consideration
 
 Mounting the Docker socket gives the container full access to the Docker

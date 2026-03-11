@@ -280,14 +280,17 @@ docs as a bug.
 1. File issues for remaining work
 2. Run quality gates
 3. Update issue status
-4. **Push**: `git pull --rebase && bd sync && git push && git status`
+4. **Push**: `git pull --rebase && bd dolt commit && git push && git status`
+   If this repo uses a Dolt remote for beads, also run `bd dolt pull` / `bd dolt push`.
 5. Clean up stashes/branches
 6. Hand off context
 
 ## Issue Tracking
 
 Uses **bd (beads)**: `bd ready`, `bd create "Title" --type task --priority 2`,
-`bd close <id>`, `bd sync` (run at session end). Full details: `bd prime`.
+`bd update <id> --claim`, `bd close <id>`. For Dolt-backed beads, use
+`bd dolt commit` instead of the removed `bd sync`, plus `bd dolt pull` /
+`bd dolt push` when a Dolt remote is configured. Full details: `bd prime`.
 
 ## Plans and Session History
 

@@ -1843,6 +1843,9 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Optional host-visible path for Moltis `data_dir()` when creating
+    /// sandbox containers from inside another container.
+    pub host_data_dir: Option<String>,
     /// Persistence strategy for `/home/sandbox`: off, session, or shared.
     pub home_persistence: HomePersistenceConfig,
     /// Optional host directory for shared `/home/sandbox` persistence.
@@ -2058,6 +2061,7 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            host_data_dir: None,
             home_persistence: HomePersistenceConfig::default(),
             shared_home_dir: None,
             image: None,
@@ -2586,6 +2590,7 @@ token = "xoxb-test"
         let sandbox = SandboxConfig::default();
         assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
         assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
+        assert!(sandbox.host_data_dir.is_none());
         assert!(sandbox.wasm_tool_limits.is_none());
     }
 
@@ -2604,6 +2609,7 @@ token = "xoxb-test"
 mode = "all"
 scope = "session"
 workspace_mount = "ro"
+host_data_dir = "/host/moltis-data"
 
 [wasm_tool_limits]
 default_memory = 2048
@@ -2616,6 +2622,7 @@ memory = 300
         )
         .unwrap();
 
+        assert_eq!(config.host_data_dir.as_deref(), Some("/host/moltis-data"));
         let limits = config.wasm_tool_limits.unwrap();
         assert_eq!(limits.default_memory, 2048);
         assert_eq!(limits.default_fuel, 5000);

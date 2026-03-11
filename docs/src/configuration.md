@@ -67,6 +67,7 @@ Commands run inside isolated containers for security:
 mode = "all"                    # "off", "non-main", or "all"
 scope = "session"               # "command", "session", or "global"
 workspace_mount = "ro"          # "ro", "rw", or "none"
+# host_data_dir = "/host/path/data"  # Optional override if auto-detection cannot resolve the host path
 home_persistence = "shared"     # "off", "session", or "shared" (default: "shared")
 # shared_home_dir = "/path/to/shared-home"  # Optional path for shared mode
 backend = "auto"                # "auto", "docker", or "apple-container"
@@ -85,6 +86,11 @@ packages = [
     "golang-go",
 ]
 ```
+
+If Moltis runs inside Docker and also mounts the host container socket
+(`/var/run/docker.sock`), Moltis now auto-detects the host path backing
+`/home/moltis/.moltis` from the parent container's mount table. If that
+inspection cannot resolve the correct path, set `host_data_dir` explicitly.
 
 ```admonish info
 When you modify the packages list and restart, Moltis automatically rebuilds the sandbox image with a new tag.

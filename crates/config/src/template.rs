@@ -247,6 +247,7 @@ workspace_mount = "ro"            # How to mount workspace in sandbox:
                                   #   "ro"   - Read-only (safe)
                                   #   "rw"   - Read-write (can modify files)
                                   #   "none" - No mount
+# host_data_dir = "/host/path/data"  # Optional override if auto-detection cannot resolve the host-visible data dir
 home_persistence = "shared"       # Persist /home/sandbox across container recreation:
                                   #   "off"     - Ephemeral home
                                   #   "session" - Per-session persisted home
