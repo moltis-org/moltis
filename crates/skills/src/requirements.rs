@@ -370,7 +370,7 @@ mod tests {
         let spec = InstallSpec {
             kind: InstallKind::Npm,
             formula: None,
-            package: Some("@anthropic/qmd".into()),
+            package: Some("@tobilu/qmd".into()),
             module: None,
             url: None,
             bins: vec!["qmd".into()],
@@ -386,6 +386,6 @@ mod tests {
         );
 
         let preview = install_command_preview(&spec).unwrap();
-        assert_eq!(preview, "npm install -g --ignore-scripts @anthropic/qmd");
+        assert_eq!(preview, "npm install -g --ignore-scripts @tobilu/qmd");
     }
 }
