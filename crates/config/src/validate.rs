@@ -275,6 +275,7 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("transport", Leaf),
             ("url", Leaf),
+            ("headers", Map(Box::new(Leaf))),
             ("oauth", mcp_oauth_override()),
         ]))
     };
