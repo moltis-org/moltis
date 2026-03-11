@@ -285,13 +285,6 @@ docs as a bug.
 5. Clean up stashes/branches
 6. Hand off context
 
-## Issue Tracking
-
-Uses **bd (beads)**: `bd ready`, `bd create "Title" --type task --priority 2`,
-`bd update <id> --claim`, `bd close <id>`. For Dolt-backed beads, use
-`bd dolt commit` instead of the removed `bd sync`, plus `bd dolt pull` /
-`bd dolt push` when a Dolt remote is configured. Full details: `bd prime`.
-
 ## Plans and Session History
 
 Plans in `prompts/`. After significant work, write summary to
