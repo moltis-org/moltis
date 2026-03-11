@@ -22,6 +22,9 @@ async function clickFirstVisibleButton(page, roleQuery) {
 async function waitForOnboardingStepLoaded(page) {
 	await expect(page.locator(".onboarding-card")).toBeVisible();
 	await expect(page.getByText("Loading…")).toHaveCount(0, { timeout: 10_000 });
+	await expect(page.getByText("Scanning OpenClaw installation…", { exact: true })).not.toBeVisible({
+		timeout: 10_000,
+	});
 }
 
 async function visibleOnboardingHeadingText(page) {
