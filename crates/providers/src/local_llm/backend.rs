@@ -1132,9 +1132,7 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
             } else {
                 // Strip any chat template stop tokens that slipped through
                 let cleaned = strip_chat_template_tokens(&line);
-                if !cleaned.is_empty()
-                    && tx.blocking_send(StreamEvent::Delta(cleaned)).is_err()
-                {
+                if !cleaned.is_empty() && tx.blocking_send(StreamEvent::Delta(cleaned)).is_err() {
                     break;
                 }
             }
