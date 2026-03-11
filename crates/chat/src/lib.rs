@@ -9952,8 +9952,9 @@ mod tests {
         let order =
             LiveModelService::build_priority_order(&["gpt-5.2".into(), "claude-opus-4-5".into()]);
         let ordered = LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
-        assert_eq!(ordered[0].id, m1.id);
-        assert_eq!(ordered[1].id, m2.id);
+        // Preferred group sorted alphabetically: "Claude Opus 4.5" < "GPT 5.2"
+        assert_eq!(ordered[0].id, m2.id);
+        assert_eq!(ordered[1].id, m1.id);
         assert_eq!(ordered[2].id, m3.id);
     }
 
@@ -9981,8 +9982,9 @@ mod tests {
         let order =
             LiveModelService::build_priority_order(&["gpt 5.2".into(), "claude-sonnet-4.5".into()]);
         let ordered = LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
-        assert_eq!(ordered[0].id, m1.id);
-        assert_eq!(ordered[1].id, m2.id);
+        // Preferred group sorted alphabetically: "Claude Sonnet 4.5" < "GPT-5.2"
+        assert_eq!(ordered[0].id, m2.id);
+        assert_eq!(ordered[1].id, m1.id);
         assert_eq!(ordered[2].id, m3.id);
     }
 
@@ -10009,9 +10011,11 @@ mod tests {
 
         let order = LiveModelService::build_priority_order(&[]);
         let ordered = LiveModelService::prioritize_models(&order, vec![&m1, &m2, &m3].into_iter());
-        assert_eq!(ordered[0].id, m2.id);
-        assert_eq!(ordered[1].id, m1.id);
-        assert_eq!(ordered[2].id, m3.id);
+        // Alphabetical: "Claude Sonnet 4.5" < "GPT-5.2"; among GPT-5.2
+        // ties, subscription_provider_rank breaks the tie (codex > openai).
+        assert_eq!(ordered[0].id, m3.id);
+        assert_eq!(ordered[1].id, m2.id);
+        assert_eq!(ordered[2].id, m1.id);
     }
 
     #[test]
