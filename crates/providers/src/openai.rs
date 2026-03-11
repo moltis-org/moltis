@@ -20,7 +20,8 @@ use {
     super::openai_compat::{
         SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage,
         parse_openai_compat_usage_from_payload, parse_tool_calls, process_openai_sse_line,
-        strip_think_tags, to_openai_tools, to_responses_api_tools, to_responses_input,
+        responses_output_index, split_responses_instructions_and_input, strip_think_tags,
+        to_openai_tools, to_responses_api_tools,
     },
     moltis_agents::model::{
         ChatMessage, CompletionResponse, LlmProvider, ModelMetadata, StreamEvent, Usage,
@@ -332,16 +333,6 @@ fn models_endpoint(base_url: &str) -> String {
 ///
 /// The Responses API includes `output_index` on most events. Falls back to
 /// `item_index` / `index` for robustness, then to `fallback`.
-fn ws_output_index(event: &serde_json::Value, fallback: usize) -> usize {
-    event
-        .get("output_index")
-        .or_else(|| event.get("item_index"))
-        .or_else(|| event.get("index"))
-        .and_then(serde_json::Value::as_u64)
-        .map(|i| i as usize)
-        .unwrap_or(fallback)
-}
-
 async fn fetch_models_from_api(
     api_key: secrecy::Secret<String>,
     base_url: String,
@@ -645,32 +636,6 @@ impl OpenAiProvider {
         )))
     }
 
-    fn split_responses_instructions_and_input(
-        messages: Vec<ChatMessage>,
-    ) -> (Option<String>, Vec<serde_json::Value>) {
-        let mut instruction_parts: Vec<String> = Vec::new();
-        let mut non_system: Vec<ChatMessage> = Vec::new();
-
-        for message in messages {
-            match message {
-                ChatMessage::System { content } => {
-                    if !content.trim().is_empty() {
-                        instruction_parts.push(content);
-                    }
-                },
-                other => non_system.push(other),
-            }
-        }
-
-        let instructions = if instruction_parts.is_empty() {
-            None
-        } else {
-            Some(instruction_parts.join("\n\n"))
-        };
-
-        (instructions, to_responses_input(&non_system))
-    }
-
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools_sse(
         &self,
@@ -873,7 +838,7 @@ impl OpenAiProvider {
                 }
             };
 
-            let (instructions, input) = Self::split_responses_instructions_and_input(messages);
+            let (instructions, input) = split_responses_instructions_and_input(messages);
             let mut response_payload = serde_json::json!({
                 "model": self.model,
                 "stream": true,
@@ -954,7 +919,7 @@ impl OpenAiProvider {
                         if evt["item"]["type"].as_str() == Some("function_call") {
                             let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
                             let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
-                            let index = ws_output_index(&evt, current_tool_index);
+                            let index = responses_output_index(&evt, current_tool_index);
                             current_tool_index = current_tool_index.max(index + 1);
                             tool_calls.insert(index, (id.clone(), name.clone()));
                             yield StreamEvent::ToolCallStart { id, name, index };
@@ -964,7 +929,7 @@ impl OpenAiProvider {
                         if let Some(delta) = evt["delta"].as_str()
                             && !delta.is_empty()
                         {
-                            let index = ws_output_index(&evt, current_tool_index.saturating_sub(1));
+                            let index = responses_output_index(&evt, current_tool_index.saturating_sub(1));
                             yield StreamEvent::ToolCallArgumentsDelta {
                                 index,
                                 delta: delta.to_string(),
@@ -972,7 +937,7 @@ impl OpenAiProvider {
                         }
                     }
                     "response.function_call_arguments.done" => {
-                        let index = ws_output_index(&evt, current_tool_index.saturating_sub(1));
+                        let index = responses_output_index(&evt, current_tool_index.saturating_sub(1));
                         if completed_tool_calls.insert(index) {
                             yield StreamEvent::ToolCallComplete { index };
                         }

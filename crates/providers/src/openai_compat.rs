@@ -3,11 +3,13 @@
 //! This module provides reusable functions for parsing OpenAI-style SSE streams
 //! that include tool calls. Used by openai.rs, github_copilot.rs, and kimi_code.rs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use {serde::Serialize, tracing::trace};
 
-use moltis_agents::model::{ChatMessage, StreamEvent, ToolCall, Usage, UserContent};
+use moltis_agents::model::{
+    ChatMessage, CompletionResponse, StreamEvent, ToolCall, Usage, UserContent,
+};
 
 // ============================================================================
 // OpenAI Tool Schema Types
@@ -133,7 +135,7 @@ pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
 
         // Ensure all properties are in required array.
         if let Some(props) = obj.get("properties").and_then(|p| p.as_object()).cloned() {
-            let originally_required: std::collections::HashSet<String> = obj
+            let originally_required: HashSet<String> = obj
                 .get("required")
                 .and_then(|r| r.as_array())
                 .map(|arr| {
@@ -868,6 +870,238 @@ pub fn finalize_stream(state: &mut StreamingToolState) -> Vec<StreamEvent> {
     }));
 
     events
+}
+
+// ============================================================================
+// Responses API helpers (shared by openai.rs and github_copilot.rs)
+// ============================================================================
+
+/// Split system messages into `instructions` and convert the rest to Responses
+/// API `input` items.
+///
+/// The Responses API uses a top-level `instructions` field instead of a system
+/// message role.  This function extracts all system messages, joins them with
+/// `\n\n`, and converts the remaining messages via [`to_responses_input`].
+#[must_use]
+pub fn split_responses_instructions_and_input(
+    messages: Vec<ChatMessage>,
+) -> (Option<String>, Vec<serde_json::Value>) {
+    let mut instruction_parts: Vec<String> = Vec::new();
+    let mut non_system: Vec<ChatMessage> = Vec::new();
+
+    for message in messages {
+        match message {
+            ChatMessage::System { content } => {
+                if !content.trim().is_empty() {
+                    instruction_parts.push(content);
+                }
+            },
+            other => non_system.push(other),
+        }
+    }
+
+    let instructions = if instruction_parts.is_empty() {
+        None
+    } else {
+        Some(instruction_parts.join("\n\n"))
+    };
+
+    (instructions, to_responses_input(&non_system))
+}
+
+/// Resolve the output index from a Responses API event.
+///
+/// The Responses API uses `output_index` for items and `index` for
+/// sub-item fields.  WebSocket events may also use `item_index`.
+/// Falls back to `fallback` if none of these keys are present.
+pub fn responses_output_index(event: &serde_json::Value, fallback: usize) -> usize {
+    event
+        .get("output_index")
+        .or_else(|| event.get("item_index"))
+        .or_else(|| event.get("index"))
+        .and_then(serde_json::Value::as_u64)
+        .map(|i| i as usize)
+        .unwrap_or(fallback)
+}
+
+/// State for tracking Responses API SSE streaming.
+#[derive(Default)]
+pub struct ResponsesStreamState {
+    /// Map from index -> (call_id, name)
+    pub tool_calls: HashMap<usize, (String, String)>,
+    /// Set of tool call indices that have already emitted `ToolCallComplete`.
+    pub completed_tool_calls: HashSet<usize>,
+    /// The next tool call index to assign.
+    pub current_tool_index: usize,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub cache_write_tokens: u32,
+}
+
+/// Process a single SSE data line from a Responses API stream.
+///
+/// Returns [`SseLineResult`] indicating whether to skip, yield events, or stop.
+///
+/// Handles the event types emitted by the Responses API:
+/// - `response.output_text.delta` → text delta
+/// - `response.output_item.added` (type=function_call) → tool call start
+/// - `response.function_call_arguments.delta` → tool call arguments delta
+/// - `response.function_call_arguments.done` → tool call complete
+/// - `response.completed` → parse usage, done
+/// - `error` / `response.failed` → error
+pub fn process_responses_sse_line(data: &str, state: &mut ResponsesStreamState) -> SseLineResult {
+    if data == "[DONE]" {
+        return SseLineResult::Done;
+    }
+
+    let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) else {
+        return SseLineResult::Skip;
+    };
+
+    match evt["type"].as_str().unwrap_or("") {
+        "response.output_text.delta" => {
+            if let Some(delta) = evt["delta"].as_str()
+                && !delta.is_empty()
+            {
+                SseLineResult::Events(vec![StreamEvent::Delta(delta.to_string())])
+            } else {
+                SseLineResult::Skip
+            }
+        },
+        "response.output_item.added" => {
+            if evt["item"]["type"].as_str() == Some("function_call") {
+                let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
+                let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
+                let index = responses_output_index(&evt, state.current_tool_index);
+                state.current_tool_index = state.current_tool_index.max(index + 1);
+                state.tool_calls.insert(index, (id.clone(), name.clone()));
+                SseLineResult::Events(vec![StreamEvent::ToolCallStart { id, name, index }])
+            } else {
+                SseLineResult::Skip
+            }
+        },
+        "response.function_call_arguments.delta" => {
+            if let Some(delta) = evt["delta"].as_str()
+                && !delta.is_empty()
+            {
+                let index =
+                    responses_output_index(&evt, state.current_tool_index.saturating_sub(1));
+                SseLineResult::Events(vec![StreamEvent::ToolCallArgumentsDelta {
+                    index,
+                    delta: delta.to_string(),
+                }])
+            } else {
+                SseLineResult::Skip
+            }
+        },
+        "response.function_call_arguments.done" => {
+            let index = responses_output_index(&evt, state.current_tool_index.saturating_sub(1));
+            if state.completed_tool_calls.insert(index) {
+                SseLineResult::Events(vec![StreamEvent::ToolCallComplete { index }])
+            } else {
+                SseLineResult::Skip
+            }
+        },
+        "response.completed" => {
+            if let Some(usage) = evt
+                .get("response")
+                .and_then(|response| response.get("usage"))
+            {
+                let parsed = parse_openai_compat_usage(usage);
+                state.input_tokens = parsed.input_tokens;
+                state.output_tokens = parsed.output_tokens;
+                state.cache_read_tokens = parsed.cache_read_tokens;
+                state.cache_write_tokens = parsed.cache_write_tokens;
+            }
+            SseLineResult::Done
+        },
+        "error" | "response.failed" => {
+            let msg = evt["error"]["message"]
+                .as_str()
+                .or_else(|| evt["response"]["error"]["message"].as_str())
+                .or_else(|| evt["message"].as_str())
+                .unwrap_or("unknown error");
+            SseLineResult::Events(vec![StreamEvent::Error(msg.to_string())])
+        },
+        _ => SseLineResult::Skip,
+    }
+}
+
+/// Generate the final events when a Responses API stream ends.
+///
+/// Emits `ToolCallComplete` for any pending tool calls and a final `Done` with
+/// accumulated usage.
+pub fn finalize_responses_stream(state: &mut ResponsesStreamState) -> Vec<StreamEvent> {
+    let mut events = Vec::new();
+
+    let mut pending: Vec<usize> = state.tool_calls.keys().copied().collect();
+    pending.sort_unstable();
+    for index in pending {
+        if state.completed_tool_calls.insert(index) {
+            events.push(StreamEvent::ToolCallComplete { index });
+        }
+    }
+
+    events.push(StreamEvent::Done(Usage {
+        input_tokens: state.input_tokens,
+        output_tokens: state.output_tokens,
+        cache_read_tokens: state.cache_read_tokens,
+        cache_write_tokens: state.cache_write_tokens,
+    }));
+
+    events
+}
+
+/// Parse a non-streaming Responses API JSON response into [`CompletionResponse`].
+///
+/// The Responses API returns an `output` array containing `message` items
+/// (with `content[].text`) and `function_call` items (with `call_id`, `name`,
+/// `arguments`).
+pub fn parse_responses_completion(resp: &serde_json::Value) -> CompletionResponse {
+    let mut text: Option<String> = None;
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+
+    if let Some(output) = resp.get("output").and_then(|o| o.as_array()) {
+        for item in output {
+            match item["type"].as_str().unwrap_or("") {
+                "message" => {
+                    if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                        for part in content {
+                            if part["type"].as_str() == Some("output_text")
+                                && let Some(t) = part["text"].as_str()
+                            {
+                                text = Some(text.map_or_else(|| t.to_string(), |prev| prev + t));
+                            }
+                        }
+                    }
+                },
+                "function_call" => {
+                    let id = item["call_id"].as_str().unwrap_or("").to_string();
+                    let name = item["name"].as_str().unwrap_or("").to_string();
+                    let args_str = item["arguments"].as_str().unwrap_or("{}");
+                    let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                    tool_calls.push(ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    });
+                },
+                _ => {},
+            }
+        }
+    }
+
+    let usage = resp
+        .get("usage")
+        .map(parse_openai_compat_usage)
+        .unwrap_or_default();
+
+    CompletionResponse {
+        text,
+        tool_calls,
+        usage,
+    }
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -2043,5 +2277,405 @@ mod tests {
             },
             _ => panic!("Expected Events"),
         }
+    }
+
+    // ============================================================
+    // Tests for split_responses_instructions_and_input
+    // ============================================================
+
+    #[test]
+    fn test_split_responses_extracts_system_as_instructions() {
+        let messages = vec![
+            ChatMessage::System {
+                content: "You are helpful.".into(),
+            },
+            ChatMessage::User {
+                content: UserContent::Text("Hello".into()),
+            },
+        ];
+        let (instructions, input) = split_responses_instructions_and_input(messages);
+        assert_eq!(instructions.as_deref(), Some("You are helpful."));
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["role"], "user");
+    }
+
+    #[test]
+    fn test_split_responses_no_system_messages() {
+        let messages = vec![ChatMessage::User {
+            content: UserContent::Text("Hello".into()),
+        }];
+        let (instructions, input) = split_responses_instructions_and_input(messages);
+        assert!(instructions.is_none());
+        assert_eq!(input.len(), 1);
+    }
+
+    #[test]
+    fn test_split_responses_multiple_system_messages_joined() {
+        let messages = vec![
+            ChatMessage::System {
+                content: "Rule 1".into(),
+            },
+            ChatMessage::System {
+                content: "Rule 2".into(),
+            },
+            ChatMessage::User {
+                content: UserContent::Text("Hello".into()),
+            },
+        ];
+        let (instructions, _) = split_responses_instructions_and_input(messages);
+        assert_eq!(instructions.as_deref(), Some("Rule 1\n\nRule 2"));
+    }
+
+    #[test]
+    fn test_split_responses_empty_system_skipped() {
+        let messages = vec![
+            ChatMessage::System {
+                content: "   ".into(),
+            },
+            ChatMessage::User {
+                content: UserContent::Text("Hello".into()),
+            },
+        ];
+        let (instructions, _) = split_responses_instructions_and_input(messages);
+        assert!(instructions.is_none());
+    }
+
+    // ============================================================
+    // Tests for responses_output_index
+    // ============================================================
+
+    #[test]
+    fn test_responses_output_index_output_index() {
+        let evt = serde_json::json!({"output_index": 2});
+        assert_eq!(responses_output_index(&evt, 0), 2);
+    }
+
+    #[test]
+    fn test_responses_output_index_item_index() {
+        let evt = serde_json::json!({"item_index": 3});
+        assert_eq!(responses_output_index(&evt, 0), 3);
+    }
+
+    #[test]
+    fn test_responses_output_index_index() {
+        let evt = serde_json::json!({"index": 1});
+        assert_eq!(responses_output_index(&evt, 0), 1);
+    }
+
+    #[test]
+    fn test_responses_output_index_fallback() {
+        let evt = serde_json::json!({"other": 5});
+        assert_eq!(responses_output_index(&evt, 42), 42);
+    }
+
+    #[test]
+    fn test_responses_output_index_priority() {
+        // output_index takes priority over item_index and index
+        let evt = serde_json::json!({"output_index": 1, "item_index": 2, "index": 3});
+        assert_eq!(responses_output_index(&evt, 0), 1);
+    }
+
+    // ============================================================
+    // Tests for process_responses_sse_line
+    // ============================================================
+
+    #[test]
+    fn test_responses_sse_done_marker() {
+        let mut state = ResponsesStreamState::default();
+        assert!(matches!(
+            process_responses_sse_line("[DONE]", &mut state),
+            SseLineResult::Done
+        ));
+    }
+
+    #[test]
+    fn test_responses_sse_invalid_json_skipped() {
+        let mut state = ResponsesStreamState::default();
+        assert!(matches!(
+            process_responses_sse_line("not json", &mut state),
+            SseLineResult::Skip
+        ));
+    }
+
+    #[test]
+    fn test_responses_sse_text_delta() {
+        let mut state = ResponsesStreamState::default();
+        let data = r#"{"type":"response.output_text.delta","delta":"Hello"}"#;
+        let result = process_responses_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(&events[0], StreamEvent::Delta(s) if s == "Hello"));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_responses_sse_empty_delta_skipped() {
+        let mut state = ResponsesStreamState::default();
+        let data = r#"{"type":"response.output_text.delta","delta":""}"#;
+        assert!(matches!(
+            process_responses_sse_line(data, &mut state),
+            SseLineResult::Skip
+        ));
+    }
+
+    #[test]
+    fn test_responses_sse_tool_call_start() {
+        let mut state = ResponsesStreamState::default();
+        let data = r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file"}}"#;
+        let result = process_responses_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(
+                    &events[0],
+                    StreamEvent::ToolCallStart { id, name, index }
+                    if id == "call_1" && name == "read_file" && *index == 0
+                ));
+            },
+            _ => panic!("Expected Events"),
+        }
+        assert!(state.tool_calls.contains_key(&0));
+        assert_eq!(state.current_tool_index, 1);
+    }
+
+    #[test]
+    fn test_responses_sse_tool_args_delta() {
+        let mut state = ResponsesStreamState::default();
+        // First start the tool
+        let start = r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file"}}"#;
+        let _ = process_responses_sse_line(start, &mut state);
+
+        let data = r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":"}"#;
+        let result = process_responses_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(
+                    &events[0],
+                    StreamEvent::ToolCallArgumentsDelta { index, delta }
+                    if *index == 0 && delta == "{\"path\":"
+                ));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_responses_sse_tool_call_done() {
+        let mut state = ResponsesStreamState::default();
+        state.tool_calls.insert(0, ("call_1".into(), "test".into()));
+        state.current_tool_index = 1;
+
+        let data = r#"{"type":"response.function_call_arguments.done","output_index":0}"#;
+        let result = process_responses_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(&events[0], StreamEvent::ToolCallComplete {
+                    index: 0
+                }));
+            },
+            _ => panic!("Expected Events"),
+        }
+        assert!(state.completed_tool_calls.contains(&0));
+    }
+
+    #[test]
+    fn test_responses_sse_tool_call_done_dedup() {
+        let mut state = ResponsesStreamState::default();
+        state.tool_calls.insert(0, ("call_1".into(), "test".into()));
+        state.current_tool_index = 1;
+        state.completed_tool_calls.insert(0);
+
+        // Second "done" for same index should be skipped
+        let data = r#"{"type":"response.function_call_arguments.done","output_index":0}"#;
+        assert!(matches!(
+            process_responses_sse_line(data, &mut state),
+            SseLineResult::Skip
+        ));
+    }
+
+    #[test]
+    fn test_responses_sse_completed_with_usage() {
+        let mut state = ResponsesStreamState::default();
+        let data = r#"{"type":"response.completed","response":{"usage":{"input_tokens":50,"output_tokens":20}}}"#;
+        let result = process_responses_sse_line(data, &mut state);
+        assert!(matches!(result, SseLineResult::Done));
+        assert_eq!(state.input_tokens, 50);
+        assert_eq!(state.output_tokens, 20);
+    }
+
+    #[test]
+    fn test_responses_sse_error() {
+        let mut state = ResponsesStreamState::default();
+        let data = r#"{"type":"error","error":{"message":"rate limited"}}"#;
+        let result = process_responses_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(&events[0], StreamEvent::Error(msg) if msg == "rate limited"));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_responses_sse_failed() {
+        let mut state = ResponsesStreamState::default();
+        let data =
+            r#"{"type":"response.failed","response":{"error":{"message":"model overloaded"}}}"#;
+        let result = process_responses_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(&events[0], StreamEvent::Error(msg) if msg == "model overloaded"));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_responses_sse_unknown_type_skipped() {
+        let mut state = ResponsesStreamState::default();
+        let data = r#"{"type":"response.created"}"#;
+        assert!(matches!(
+            process_responses_sse_line(data, &mut state),
+            SseLineResult::Skip
+        ));
+    }
+
+    // ============================================================
+    // Tests for finalize_responses_stream
+    // ============================================================
+
+    #[test]
+    fn test_finalize_responses_stream_with_pending_tools() {
+        let mut state = ResponsesStreamState::default();
+        state.tool_calls.insert(0, ("call_1".into(), "test".into()));
+        state
+            .tool_calls
+            .insert(1, ("call_2".into(), "test2".into()));
+        state.completed_tool_calls.insert(0); // only 0 is completed
+        state.input_tokens = 30;
+        state.output_tokens = 10;
+
+        let events = finalize_responses_stream(&mut state);
+        // Should emit ToolCallComplete for index 1 (pending) + Done
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], StreamEvent::ToolCallComplete {
+            index: 1
+        }));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::Done(usage) if usage.input_tokens == 30 && usage.output_tokens == 10
+        ));
+    }
+
+    #[test]
+    fn test_finalize_responses_stream_no_tools() {
+        let mut state = ResponsesStreamState {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
+
+        let events = finalize_responses_stream(&mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            StreamEvent::Done(usage) if usage.input_tokens == 10 && usage.output_tokens == 5
+        ));
+    }
+
+    // ============================================================
+    // Tests for parse_responses_completion
+    // ============================================================
+
+    #[test]
+    fn test_parse_responses_completion_text() {
+        let resp = serde_json::json!({
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello!"}]
+            }],
+            "usage": {"input_tokens": 15, "output_tokens": 3}
+        });
+        let result = parse_responses_completion(&resp);
+        assert_eq!(result.text.as_deref(), Some("Hello!"));
+        assert!(result.tool_calls.is_empty());
+        assert_eq!(result.usage.input_tokens, 15);
+        assert_eq!(result.usage.output_tokens, 3);
+    }
+
+    #[test]
+    fn test_parse_responses_completion_tool_call() {
+        let resp = serde_json::json!({
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_abc",
+                "name": "read_file",
+                "arguments": "{\"path\":\"/tmp/test.txt\"}"
+            }],
+            "usage": {"input_tokens": 20, "output_tokens": 10}
+        });
+        let result = parse_responses_completion(&resp);
+        assert!(result.text.is_none());
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "call_abc");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(result.tool_calls[0].arguments["path"], "/tmp/test.txt");
+    }
+
+    #[test]
+    fn test_parse_responses_completion_mixed() {
+        let resp = serde_json::json!({
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Let me read that file."}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"/tmp/a.txt\"}"
+                }
+            ],
+            "usage": {"input_tokens": 25, "output_tokens": 15}
+        });
+        let result = parse_responses_completion(&resp);
+        assert_eq!(result.text.as_deref(), Some("Let me read that file."));
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "read_file");
+    }
+
+    #[test]
+    fn test_parse_responses_completion_no_output() {
+        let resp = serde_json::json!({
+            "usage": {"input_tokens": 5, "output_tokens": 0}
+        });
+        let result = parse_responses_completion(&resp);
+        assert!(result.text.is_none());
+        assert!(result.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_responses_completion_no_usage() {
+        let resp = serde_json::json!({
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hi"}]
+            }]
+        });
+        let result = parse_responses_completion(&resp);
+        assert_eq!(result.text.as_deref(), Some("Hi"));
+        assert_eq!(result.usage.input_tokens, 0);
+        assert_eq!(result.usage.output_tokens, 0);
     }
 }
