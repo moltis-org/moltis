@@ -475,7 +475,7 @@ impl GatewayState {
             .unwrap_or_else(|| "unknown".into());
 
         Arc::new(Self {
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: moltis_config::VERSION.to_string(),
             hostname,
             auth,
             services,

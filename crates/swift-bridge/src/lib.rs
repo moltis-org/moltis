@@ -1377,8 +1377,8 @@ pub extern "C" fn moltis_version() -> *mut c_char {
     with_ffi_boundary(|| {
         emit_log("DEBUG", "bridge", "moltis_version called");
         let response = VersionResponse {
-            bridge_version: env!("CARGO_PKG_VERSION"),
-            moltis_version: env!("CARGO_PKG_VERSION"),
+            bridge_version: moltis_config::VERSION,
+            moltis_version: moltis_config::VERSION,
             config_dir: config_dir_string(),
         };
         emit_log(
@@ -3734,7 +3734,7 @@ mod tests {
             .get("bridge_version")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(version, moltis_config::VERSION);
 
         let config_dir = payload
             .get("config_dir")

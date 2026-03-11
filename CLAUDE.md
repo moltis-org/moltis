@@ -219,8 +219,9 @@ Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): descripti
 
 ### Releases
 
-- Never overwrite tags — always create new version. `[workspace.package].version` must match tag.
-- Use `./scripts/prepare-release.sh <version> [date]` for release prep.
+- Date-based versioning: `YYYYMMDD.NN` (e.g., `20260311.01`). Cargo.toml stays at static `0.1.0`; real version injected via `MOLTIS_VERSION` env var at build time.
+- Never overwrite tags — always create new version.
+- Use `./scripts/prepare-release.sh [YYYYMMDD.NN]` for release prep (auto-computes next version if omitted).
 - Deploy template tags updated automatically by CI — don't manually update.
 
 ### Lockfile

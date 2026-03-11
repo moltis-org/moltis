@@ -4,35 +4,23 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/prepare-release.sh <version> [release-date]
+Usage: ./scripts/prepare-release.sh [version]
 
 Examples:
-  ./scripts/prepare-release.sh 0.8.22
-  ./scripts/prepare-release.sh 0.8.22 2026-02-13
+  ./scripts/prepare-release.sh              # auto: YYYYMMDD.NN from today + next seq
+  ./scripts/prepare-release.sh 20260311.01  # explicit version
+
+Version format: YYYYMMDD.NN (date + two-digit daily sequence number).
 
 This command:
-1) bumps [workspace.package].version in Cargo.toml,
-2) generates release notes for <version> via git-cliff from unreleased commits,
-3) keeps a fresh empty [Unreleased] section at the top of CHANGELOG.md,
-4) syncs Cargo.lock via cargo fetch.
+1) generates release notes for <version> via git-cliff from unreleased commits,
+2) keeps a fresh empty [Unreleased] section at the top of CHANGELOG.md,
+3) syncs Cargo.lock via cargo fetch.
 EOF
 }
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+if [[ $# -gt 1 ]]; then
   usage
-  exit 1
-fi
-
-new_version="$1"
-release_date="${2:-$(date -u +%Y-%m-%d)}"
-
-if ! [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "invalid version: '$new_version' (expected x.y.z)" >&2
-  exit 1
-fi
-
-if ! [[ "$release_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-  echo "invalid release date: '$release_date' (expected YYYY-MM-DD)" >&2
   exit 1
 fi
 
@@ -49,52 +37,41 @@ if [[ ! -f Cargo.toml || ! -f CHANGELOG.md || ! -f cliff.toml ]]; then
   exit 1
 fi
 
+# Compute or validate version
+if [[ $# -eq 1 ]]; then
+  new_version="$1"
+  if ! [[ "$new_version" =~ ^[0-9]{8}\.[0-9]{1,2}$ ]]; then
+    echo "invalid version: '$new_version' (expected YYYYMMDD.NN)" >&2
+    exit 1
+  fi
+else
+  # Auto-compute: today's date + next sequence number
+  today="$(date -u +%Y%m%d)"
+  # Find highest existing seq for today's tags
+  max_seq=0
+  for tag in $(git tag -l "${today}.*" 2>/dev/null); do
+    seq="${tag#"${today}."}"
+    if [[ "$seq" =~ ^[0-9]+$ ]] && [[ "10#$seq" -gt "10#$max_seq" ]]; then
+      max_seq="$seq"
+    fi
+  done
+  next_seq=$((10#$max_seq + 1))
+  new_version="$(printf '%s.%02d' "$today" "$next_seq")"
+  echo "auto-computed version: $new_version"
+fi
+
+release_date="$(echo "$new_version" | sed 's/^\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)\..*/\1-\2-\3/')"
+
 if rg -q "^## \\[$new_version\\]" CHANGELOG.md; then
   echo "CHANGELOG.md already contains version $new_version" >&2
   exit 1
 fi
 
-cargo_tmp="$(mktemp)"
-if ! awk -v version="$new_version" '
-BEGIN {
-  in_workspace_package = 0
-  updated = 0
-}
-{
-  if ($0 == "[workspace.package]") {
-    in_workspace_package = 1
-    print
-    next
-  }
-  if (in_workspace_package == 1 && $0 ~ /^\[/) {
-    in_workspace_package = 0
-  }
-  if (in_workspace_package == 1 && $0 ~ /^version[[:space:]]*=/) {
-    sub(/"[^"]+"/, "\"" version "\"")
-    updated = 1
-  }
-  print
-}
-END {
-  if (updated == 0) {
-    exit 11
-  }
-}
-' Cargo.toml > "$cargo_tmp"; then
-  rc=$?
-  rm -f "$cargo_tmp"
-  if [[ "$rc" -eq 11 ]]; then
-    echo "failed to locate [workspace.package].version in Cargo.toml" >&2
-  fi
-  exit 1
-fi
-mv "$cargo_tmp" Cargo.toml
-
 release_section_tmp="$(mktemp)"
 if ! git-cliff \
   --config cliff.toml \
   --unreleased \
-  --tag "v$new_version" \
+  --tag "$new_version" \
   --strip all \
   > "$release_section_tmp"; then
   rm -f "$release_section_tmp"
@@ -168,7 +145,7 @@ BEGIN {
     next
   }
   if (skipping_old_unreleased == 1) {
-    if ($0 ~ /^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$/) {
+    if ($0 ~ /^## \[[0-9]/) {
       skipping_old_unreleased = 0
       print
     }

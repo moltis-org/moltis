@@ -13,6 +13,9 @@ pub mod migrate;
 pub mod schema;
 pub mod template;
 pub mod validate;
+pub mod version;
+
+pub use version::VERSION;
 
 pub use {
     error::{Error, Result},

@@ -39,7 +39,7 @@ Do this instead:
 1) Use conventional commits (`feat:`, `fix:`, `refactor:`, etc.).
 2) Preview unreleased notes with `just changelog-unreleased`.
 3) Generate release notes only during release prep:
-   `./scripts/prepare-release.sh <version> [YYYY-MM-DD]`
+   `./scripts/prepare-release.sh [YYYYMMDD.NN]`
 EOF
   exit 1
 fi

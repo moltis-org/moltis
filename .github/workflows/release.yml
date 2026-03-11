@@ -3,7 +3,7 @@ name: Build Packages
 on:
   push:
     tags:
-      - "v*"
+      - "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9][0-9]"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -42,6 +42,22 @@ jobs:
         with:
           advanced-security: false
           online-audits: false
+
+  validate-tag:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Validate Tag Format
+    permissions:
+      contents: read
+    steps:
+      - name: Check tag matches YYYYMMDD.NN
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^[0-9]{8}\.[0-9]{2}$ ]]; then
+            echo "::error::Tag '$TAG' must match YYYYMMDD.NN format"
+            exit 1
+          fi
 
   biome:
     needs: zizmor
@@ -258,36 +274,12 @@ jobs:
       - name: Resolve release version
         id: release_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Cargo workspace version matches release version
-        env:
-          VERSION: ${{ steps.release_version.outputs.version }}
-        run: |
-          CARGO_VERSION=$(awk '
-            $0 == "[workspace.package]" { in_section = 1; next }
-            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
-            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
-              if (match($0, /"[^"]+"/)) {
-                print substr($0, RSTART + 1, RLENGTH - 2)
-                exit
-              }
-            }
-          ' Cargo.toml)
-          if [[ -z "$CARGO_VERSION" ]]; then
-            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
-            exit 1
-          fi
-          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
-            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
-            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
-            exit 1
-          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -317,6 +309,7 @@ jobs:
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
+          MOLTIS_VERSION: ${{ steps.release_version.outputs.version }}
         run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Stage WASM assets for cargo-deb
@@ -374,36 +367,12 @@ jobs:
       - name: Resolve release version
         id: release_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Cargo workspace version matches release version
-        env:
-          VERSION: ${{ steps.release_version.outputs.version }}
-        run: |
-          CARGO_VERSION=$(awk '
-            $0 == "[workspace.package]" { in_section = 1; next }
-            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
-            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
-              if (match($0, /"[^"]+"/)) {
-                print substr($0, RSTART + 1, RLENGTH - 2)
-                exit
-              }
-            }
-          ' Cargo.toml)
-          if [[ -z "$CARGO_VERSION" ]]; then
-            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
-            exit 1
-          fi
-          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
-            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
-            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
-            exit 1
-          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -433,6 +402,7 @@ jobs:
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
+          MOLTIS_VERSION: ${{ steps.release_version.outputs.version }}
         run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Build .rpm package
@@ -507,20 +477,21 @@ jobs:
           cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
           cargo run -p moltis-wasm-precompile --release
 
-      - name: Build release binary
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$BUILD_TARGET"
-
       - name: Determine package version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
+        run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Build .pkg.tar.zst
         env:
@@ -614,20 +585,21 @@ jobs:
           cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
           cargo run -p moltis-wasm-precompile --release
 
-      - name: Build release binary
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$BUILD_TARGET"
-
       - name: Determine package version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
+        run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Build AppImage
         env:
@@ -714,10 +686,10 @@ jobs:
       - name: Resolve release version
         id: release_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -805,20 +777,21 @@ jobs:
           cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
           cargo run -p moltis-wasm-precompile --release
 
-      - name: Build release binary
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$BUILD_TARGET"
-
       - name: Determine package version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
+        run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Package binary
         env:
@@ -882,7 +855,19 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
+      - name: Determine package version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Build Swift bridge artifacts and generate Xcode project
+        env:
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
         run: |
           ./scripts/build-swift-bridge.sh
           ./scripts/generate-swift-project.sh
@@ -898,16 +883,6 @@ jobs:
             -destination "platform=macOS" \
             -derivedDataPath "$DERIVED_DATA_DIR" \
             build
-
-      - name: Determine package version
-        id: version
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Package macOS app
         env:
@@ -986,20 +961,22 @@ jobs:
           cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
           cargo run -p moltis-wasm-precompile --release
 
-      - name: Build release binary
-        shell: bash
-        run: cargo build --release --target "$BUILD_TARGET" --features embedded-assets,embedded-wasm
-
       - name: Determine package version
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        shell: bash
+        env:
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
+        run: cargo build --release --target "$BUILD_TARGET" --features embedded-assets,embedded-wasm
 
       - name: Package .exe
         shell: bash
@@ -1057,36 +1034,12 @@ jobs:
       - name: Resolve release version
         id: release_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Cargo workspace version matches release version
-        env:
-          VERSION: ${{ steps.release_version.outputs.version }}
-        run: |
-          CARGO_VERSION=$(awk '
-            $0 == "[workspace.package]" { in_section = 1; next }
-            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
-            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
-              if (match($0, /"[^"]+"/)) {
-                print substr($0, RSTART + 1, RLENGTH - 2)
-                exit
-              }
-            }
-          ' Cargo.toml)
-          if [[ -z "$CARGO_VERSION" ]]; then
-            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
-            exit 1
-          fi
-          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
-            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
-            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
-            exit 1
-          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
@@ -1112,6 +1065,7 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          build-args: MOLTIS_VERSION=${{ steps.release_version.outputs.version }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,"name=ghcr.io/${{ github.repository }}",push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.platform }}
@@ -1189,11 +1143,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CURRENT="${GITHUB_REF#refs/tags/v}"
+          CURRENT="${GITHUB_REF_NAME}"
           LATEST=$(gh api "repos/${{ github.repository }}/tags" --paginate --jq '.[].name' \
-            | sed 's/^v//' \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V | tail -1)
+            | grep -E '^[0-9]{8}\.[0-9]{2}$' \
+            | sort | tail -1)
           if [ "$CURRENT" = "$LATEST" ]; then
             echo "is_latest=true" >> "$GITHUB_OUTPUT"
           else
@@ -1207,8 +1160,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.check_latest.outputs.is_latest }}
+            type=match,pattern=\d{8}\.\d{2}
             type=sha
             type=raw,value=latest,enable=${{ steps.check_latest.outputs.is_latest }}
 
@@ -1394,7 +1346,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
+          VERSION="${TAG}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
           for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
@@ -1427,20 +1379,20 @@ jobs:
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-aarch64-apple-darwin.tar.gz"
                 sha256 "${SHA_aarch64_apple_darwin}"
               else
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-x86_64-apple-darwin.tar.gz"
                 sha256 "${SHA_x86_64_apple_darwin}"
               end
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-aarch64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_aarch64_unknown_linux_gnu}"
               else
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-x86_64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-x86_64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_x86_64_unknown_linux_gnu}"
               end
             end
@@ -1489,21 +1441,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
+          VERSION="${TAG}"
           echo "Updating deploy templates to version ${VERSION}"
 
-          # DigitalOcean App Platform
-          sed -i "s/tag: \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/tag: \"${VERSION}\"/" .do/deploy.template.yaml
+          # DigitalOcean App Platform (pattern matches both semver 0.10.18 and date 20260311.01)
+          sed -i "s/tag: \"[0-9][0-9.]*\"/tag: \"${VERSION}\"/" .do/deploy.template.yaml
 
           # Render
-          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" render.yaml
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9.]*|ghcr.io/moltis-org/moltis:${VERSION}|" render.yaml
 
           # Fly.io
-          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9.]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
 
           # Website releases.json
           jq --arg v "$VERSION" \
-            '.stable.version = $v | .stable.release_url = "https://github.com/moltis-org/moltis/releases/tag/v" + $v' \
+            '.stable.version = $v | .stable.release_url = "https://github.com/moltis-org/moltis/releases/tag/" + $v' \
             website/releases.json > website/releases.json.tmp \
             && mv website/releases.json.tmp website/releases.json
 

@@ -137,7 +137,7 @@ impl McpClient {
             capabilities: ClientCapabilities::default(),
             client_info: ClientInfo {
                 name: "moltis".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
+                version: moltis_config::VERSION.into(),
             },
         };
 
