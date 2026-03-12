@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -1570,12 +1571,39 @@ impl LiveModelService {
     ) -> Vec<&'a moltis_providers::ModelInfo> {
         let mut ordered: Vec<(usize, &'a moltis_providers::ModelInfo)> =
             models.enumerate().collect();
-        ordered.sort_by_key(|(idx, model)| {
-            (
-                Self::priority_rank(order, model),
-                subscription_provider_rank(&model.provider),
-                *idx,
-            )
+        ordered.sort_by(|(idx_a, a), (idx_b, b)| {
+            let rank_a = Self::priority_rank(order, a);
+            let rank_b = Self::priority_rank(order, b);
+            // Preferred (rank != MAX) first, then non-preferred
+            let bucket_a = if rank_a == usize::MAX {
+                1u8
+            } else {
+                0
+            };
+            let bucket_b = if rank_b == usize::MAX {
+                1u8
+            } else {
+                0
+            };
+            bucket_a
+                .cmp(&bucket_b)
+                .then_with(|| {
+                    if bucket_a == 0 {
+                        rank_a.cmp(&rank_b)
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .then_with(|| {
+                    a.display_name
+                        .to_lowercase()
+                        .cmp(&b.display_name.to_lowercase())
+                })
+                .then_with(|| {
+                    subscription_provider_rank(&a.provider)
+                        .cmp(&subscription_provider_rank(&b.provider))
+                })
+                .then_with(|| idx_a.cmp(idx_b))
         });
         ordered.into_iter().map(|(_, model)| model).collect()
     }
@@ -3280,7 +3308,7 @@ impl ChatService for LiveChatService {
             )
             .await;
 
-            let compact_params = serde_json::json!({ "_conn_id": conn_id });
+            let compact_params = serde_json::json!({ "_session_key": &session_key });
             match self.compact(compact_params).await {
                 Ok(_) => {
                     // Reload history after compaction.
@@ -7978,6 +8006,10 @@ mod tests {
         id: String,
     }
 
+    struct AutoCompactRegressionProvider {
+        context_window: u32,
+    }
+
     #[async_trait]
     impl LlmProvider for StaticProvider {
         fn name(&self) -> &str {
@@ -8001,6 +8033,48 @@ mod tests {
             _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for AutoCompactRegressionProvider {
+        fn name(&self) -> &str {
+            "test"
+        }
+
+        fn id(&self) -> &str {
+            "test::auto-compact"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+        ) -> Result<moltis_agents::model::CompletionResponse> {
+            anyhow::bail!("not implemented for test")
+        }
+
+        fn context_window(&self) -> u32 {
+            self.context_window
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let response = match messages.first() {
+                Some(ChatMessage::System { content })
+                    if content.contains("conversation summarizer") =>
+                {
+                    "summary"
+                },
+                _ => "final reply",
+            };
+
+            Box::pin(tokio_stream::iter(vec![
+                StreamEvent::Delta(response.to_string()),
+                StreamEvent::Done(moltis_agents::model::Usage::default()),
+            ]))
         }
     }
 
@@ -9188,6 +9262,103 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn auto_compact_uses_explicit_session_key_for_channel_sessions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        let state: Arc<dyn ChatRuntime> = Arc::new(MockChatRuntime::new());
+        let mut providers = ProviderRegistry::empty();
+        providers.register(
+            moltis_providers::ModelInfo {
+                id: "test::auto-compact".to_string(),
+                provider: "test".to_string(),
+                display_name: "Auto Compact Test".to_string(),
+                created_at: None,
+            },
+            Arc::new(AutoCompactRegressionProvider {
+                context_window: 100,
+            }),
+        );
+
+        let chat = LiveChatService::new(
+            Arc::new(RwLock::new(providers)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            state,
+            Arc::clone(&store),
+            metadata,
+        );
+
+        let session_key = "discord:acct:123";
+        store
+            .append(
+                session_key,
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": "existing response",
+                    "requestInputTokens": 94_u64,
+                    "requestOutputTokens": 1_u64
+                }),
+            )
+            .await
+            .expect("seed channel session history");
+
+        let send_result = chat
+            .send(serde_json::json!({
+                "text": "ping",
+                "_session_key": session_key
+            }))
+            .await
+            .expect("chat.send should succeed");
+        assert!(
+            send_result
+                .get("runId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+        );
+
+        let history = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let messages = store.read(session_key).await.unwrap_or_default();
+                let has_final_reply = messages.last().is_some_and(|message| {
+                    message.get("role").and_then(Value::as_str) == Some("assistant")
+                        && message.get("content").and_then(Value::as_str) == Some("final reply")
+                });
+                if has_final_reply {
+                    return messages;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("assistant reply should be persisted");
+
+        assert_eq!(history.len(), 3);
+        assert_eq!(
+            history[0].get("role").and_then(Value::as_str),
+            Some("assistant")
+        );
+        assert!(
+            history[0]
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.starts_with("[Conversation Summary]\n\nsummary"))
+        );
+        assert_eq!(history[1].get("role").and_then(Value::as_str), Some("user"));
+        assert_eq!(
+            history[2].get("content").and_then(Value::as_str),
+            Some("final reply")
+        );
+
+        let main_history = store.read("main").await.unwrap_or_default();
+        assert!(
+            main_history.is_empty(),
+            "auto-compact should not touch the default web session"
+        );
+    }
+
     #[test]
     fn format_channel_retry_message_rounds_up_seconds() {
         let error_obj = serde_json::json!({ "type": "rate_limit_exceeded" });
@@ -9989,9 +10160,11 @@ mod tests {
 
         let order = LiveModelService::build_priority_order(&[]);
         let ordered = LiveModelService::prioritize_models(&order, vec![&m1, &m2, &m3].into_iter());
-        assert_eq!(ordered[0].id, m2.id);
-        assert_eq!(ordered[1].id, m1.id);
-        assert_eq!(ordered[2].id, m3.id);
+        // Alphabetical: "Claude Sonnet 4.5" < "GPT-5.2"; among GPT-5.2
+        // ties, subscription_provider_rank breaks the tie (codex > openai).
+        assert_eq!(ordered[0].id, m3.id);
+        assert_eq!(ordered[1].id, m2.id);
+        assert_eq!(ordered[2].id, m1.id);
     }
 
     #[test]

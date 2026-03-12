@@ -259,74 +259,123 @@ fn is_message_not_modified_error(error: &RequestError) -> bool {
 
 fn telegram_html_to_plain_text(html: &str) -> String {
     let mut plain = String::with_capacity(html.len());
-    let mut chars = html.chars().peekable();
+    let mut remaining = html;
 
-    while let Some(ch) = chars.next() {
+    while let Some(ch) = remaining.chars().next() {
         if ch == '<' {
-            let mut tag = String::from(ch);
-            let mut closed = false;
-            for next in chars.by_ref() {
-                tag.push(next);
-                if next == '>' {
-                    closed = true;
-                    break;
+            if let Some((tag_name, consumed_len)) = consume_plain_text_html_tag(remaining) {
+                if is_plain_text_line_break_tag(&tag_name) && !plain.ends_with('\n') {
+                    plain.push('\n');
                 }
-            }
-
-            if !closed {
-                plain.push_str(&tag);
-                break;
-            }
-
-            let normalized = tag
-                .trim_start_matches('<')
-                .trim_end_matches('>')
-                .trim()
-                .to_ascii_lowercase();
-            if is_plain_text_line_break_tag(&normalized) && !plain.ends_with('\n') {
-                plain.push('\n');
-            }
-            continue;
-        }
-
-        if ch == '&' {
-            let mut entity = String::from(ch);
-            let mut terminated = false;
-            while let Some(&next) = chars.peek() {
-                entity.push(next);
-                chars.next();
-                if next == ';' {
-                    terminated = true;
-                    break;
-                }
-                if entity.len() > 12 {
-                    break;
-                }
-            }
-
-            if terminated && let Some(decoded) = decode_html_entity(&entity) {
-                plain.push_str(&decoded);
+                remaining = &remaining[consumed_len..];
                 continue;
             }
-
-            plain.push_str(&entity);
+        } else if ch == '&'
+            && let Some((decoded, consumed_len)) = consume_html_entity(remaining)
+        {
+            plain.push_str(&decoded);
+            remaining = &remaining[consumed_len..];
             continue;
         }
 
         plain.push(ch);
+        remaining = &remaining[ch.len_utf8()..];
     }
 
     plain.trim().to_string()
 }
 
-fn is_plain_text_line_break_tag(tag: &str) -> bool {
-    let tag_name = tag
-        .trim_start_matches('/')
-        .trim_end_matches('/')
-        .split_whitespace()
-        .next()
-        .unwrap_or("");
+fn consume_plain_text_html_tag(input: &str) -> Option<(String, usize)> {
+    let bytes = input.as_bytes();
+    if bytes.first().copied()? != b'<' {
+        return None;
+    }
 
+    let mut index = 1usize;
+    if bytes.get(index).copied() == Some(b'/') {
+        index += 1;
+    }
+
+    let name_start = index;
+    let first = bytes.get(index).copied()?;
+    if !first.is_ascii_alphabetic() {
+        return None;
+    }
+
+    while let Some(next) = bytes.get(index).copied() {
+        if next.is_ascii_alphanumeric() || next == b'-' {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    let tag_name = input[name_start..index].to_ascii_lowercase();
+    if !is_plain_text_html_tag_name(&tag_name) {
+        return None;
+    }
+
+    let mut quote = None;
+    while let Some(next) = bytes.get(index).copied() {
+        match quote {
+            Some(delimiter) if next == delimiter => quote = None,
+            Some(_) => {},
+            None if next == b'\'' || next == b'"' => quote = Some(next),
+            None if next == b'>' => return Some((tag_name, index + 1)),
+            None => {},
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn consume_html_entity(input: &str) -> Option<(String, usize)> {
+    if !input.starts_with('&') {
+        return None;
+    }
+
+    let mut entity = String::new();
+    for (index, ch) in input.char_indices() {
+        entity.push(ch);
+        let consumed_len = index + ch.len_utf8();
+        if ch == ';' {
+            return decode_html_entity(&entity).map(|decoded| (decoded, consumed_len));
+        }
+        if entity.len() > 12 {
+            return None;
+        }
+    }
+
+    None
+}
+
+fn is_plain_text_html_tag_name(tag_name: &str) -> bool {
+    matches!(
+        tag_name,
+        "a" | "b"
+            | "blockquote"
+            | "br"
+            | "code"
+            | "del"
+            | "div"
+            | "em"
+            | "i"
+            | "ins"
+            | "li"
+            | "p"
+            | "pre"
+            | "s"
+            | "span"
+            | "strike"
+            | "strong"
+            | "tg-emoji"
+            | "tg-spoiler"
+            | "u"
+    )
+}
+
+fn is_plain_text_line_break_tag(tag_name: &str) -> bool {
     matches!(tag_name, "blockquote" | "br" | "div" | "li" | "p" | "pre")
 }
 
@@ -345,6 +394,7 @@ fn decode_html_entity(entity: &str) -> Option<String> {
 fn decode_numeric_html_entity(entity: &str) -> Option<String> {
     let value = entity
         .strip_prefix("&#x")
+        .or_else(|| entity.strip_prefix("&#X"))
         .and_then(|hex| hex.strip_suffix(';'))
         .and_then(|hex| u32::from_str_radix(hex, 16).ok())
         .or_else(|| {
@@ -1207,6 +1257,20 @@ mod tests {
     }
 
     #[test]
+    fn telegram_html_to_plain_text_decodes_uppercase_hex_entities() {
+        let plain = telegram_html_to_plain_text("smile &#X1F642;");
+
+        assert_eq!(plain, "smile 🙂");
+    }
+
+    #[test]
+    fn telegram_html_to_plain_text_preserves_non_tag_angle_bracket_text() {
+        let plain = telegram_html_to_plain_text("<code>if a < b && c > d</code>");
+
+        assert_eq!(plain, "if a < b && c > d");
+    }
+
+    #[test]
     fn is_message_not_modified_error_detects_variant() {
         let err = RequestError::Api(ApiError::MessageNotModified);
         assert!(is_message_not_modified_error(&err));
@@ -1262,7 +1326,6 @@ mod tests {
                 .await
                 .expect("serve mock telegram api");
         });
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
         let bot = Bot::new("test-token").set_api_url(api_url);

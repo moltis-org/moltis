@@ -4,7 +4,8 @@
 // component that auto-rerenders from sessionStore signals.
 
 import { html } from "htm/preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
+import * as gon from "../gon.js";
 import {
 	makeBranchIcon,
 	makeChatIcon,
@@ -220,6 +221,34 @@ export function SessionList() {
 	var filterId = projectStore.projectFilterId.value;
 	var tab = sessionStore.sessionListTab.value;
 
+	// Hide session list when the vault is sealed — session data is
+	// encrypted and cannot be displayed.
+	var [vaultStatus, setVaultStatus] = useState(gon.get("vault_status"));
+	useEffect(() => {
+		setVaultStatus(gon.get("vault_status"));
+		gon.onChange("vault_status", setVaultStatus);
+		return () => gon.offChange("vault_status", setVaultStatus);
+	}, []);
+
+	// Spinner animation via setInterval
+	var spinnersRef = useRef(null);
+	useEffect(() => {
+		var idx = 0;
+		var timer = setInterval(() => {
+			idx = (idx + 1) % spinnerFrames.length;
+			if (!spinnersRef.current) return;
+			var els = spinnersRef.current.querySelectorAll(
+				".session-item.replying .session-spinner, .session-item.loading .session-spinner",
+			);
+			for (var el of els) el.textContent = spinnerFrames[idx];
+		}, 80);
+		return () => clearInterval(timer);
+	}, []);
+
+	if (vaultStatus === "sealed") {
+		return html`<div class="text-xs text-[var(--muted)] p-3">Vault is sealed</div>`;
+	}
+
 	var filtered = filterId ? allSessions.filter((s) => s.projectId === filterId) : allSessions;
 	if (tab === "sessions") {
 		filtered = filtered.filter((s) => !(s.key || "").startsWith("cron:"));
@@ -238,21 +267,6 @@ export function SessionList() {
 		}
 	});
 	var roots = filtered.filter((s) => !(s.parentSessionKey && keyMap[s.parentSessionKey]));
-
-	// Spinner animation via setInterval
-	var spinnersRef = useRef(null);
-	useEffect(() => {
-		var idx = 0;
-		var timer = setInterval(() => {
-			idx = (idx + 1) % spinnerFrames.length;
-			if (!spinnersRef.current) return;
-			var els = spinnersRef.current.querySelectorAll(
-				".session-item.replying .session-spinner, .session-item.loading .session-spinner",
-			);
-			for (var el of els) el.textContent = spinnerFrames[idx];
-		}, 80);
-		return () => clearInterval(timer);
-	}, []);
 
 	function renderTree(session, depth) {
 		var children = childrenMap[session.key] || [];
