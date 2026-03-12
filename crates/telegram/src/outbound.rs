@@ -282,7 +282,7 @@ fn telegram_html_to_plain_text(html: &str) -> String {
         remaining = &remaining[ch.len_utf8()..];
     }
 
-    plain.trim().to_string()
+    plain.trim_matches('\n').to_string()
 }
 
 fn consume_plain_text_html_tag(input: &str) -> Option<(String, usize)> {
@@ -1268,6 +1268,13 @@ mod tests {
         let plain = telegram_html_to_plain_text("<code>if a < b && c > d</code>");
 
         assert_eq!(plain, "if a < b && c > d");
+    }
+
+    #[test]
+    fn telegram_html_to_plain_text_preserves_preformatted_indentation() {
+        let plain = telegram_html_to_plain_text("<pre>    indented</pre>");
+
+        assert_eq!(plain, "    indented");
     }
 
     #[test]
