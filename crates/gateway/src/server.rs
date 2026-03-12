@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, Secret};
 
 use {
     axum::{
@@ -1689,27 +1689,26 @@ pub async fn prepare_gateway(
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
-                        url: entry.url.clone(),
+                        url: entry.url.clone().map(Secret::new),
+                        headers: entry
+                            .headers
+                            .iter()
+                            .map(|(key, value)| (key.clone(), Secret::new(value.clone())))
+                            .collect(),
                         oauth,
                     });
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
-        let mcp_manager = Arc::new(moltis_mcp::McpManager::new(merged));
-        live_mcp = Arc::new(crate::mcp_service::LiveMcpService::new(Arc::clone(
-            &mcp_manager,
-        )));
-        // Start enabled servers in the background; sync tools once done.
-        let mgr = Arc::clone(&mcp_manager);
-        let mcp_for_sync = Arc::clone(&live_mcp);
-        tokio::spawn(async move {
-            let started = mgr.start_enabled().await;
-            if !started.is_empty() {
-                tracing::info!(servers = ?started, "MCP servers started");
-            }
-            // Sync newly started tools into the agent tool registry.
-            mcp_for_sync.sync_tools_if_ready().await;
-        });
+        let mcp_manager = Arc::new(moltis_mcp::McpManager::new_with_env_overrides(
+            merged,
+            config_env_overrides.clone(),
+        ));
+        live_mcp = Arc::new(crate::mcp_service::LiveMcpService::new(
+            Arc::clone(&mcp_manager),
+            config_env_overrides.clone(),
+            None,
+        ));
         services.mcp = live_mcp.clone() as Arc<dyn crate::services::McpService>;
     }
     startup_mem_probe.checkpoint("services.core_wired");
@@ -1859,6 +1858,24 @@ pub async fn prepare_gateway(
             config_env_overrides.clone()
         },
     };
+    live_mcp
+        .manager()
+        .set_env_overrides(runtime_env_overrides.clone())
+        .await;
+    live_mcp
+        .set_credential_store(Arc::clone(&credential_store))
+        .await;
+    // Start enabled MCP servers only after runtime env overrides are available,
+    // so URL/header placeholders backed by Settings env vars resolve on boot.
+    let mgr = Arc::clone(live_mcp.manager());
+    let mcp_for_sync = Arc::clone(&live_mcp);
+    tokio::spawn(async move {
+        let started = mgr.start_enabled().await;
+        if !started.is_empty() {
+            tracing::info!(servers = ?started, "MCP servers started");
+        }
+        mcp_for_sync.sync_tools_if_ready().await;
+    });
 
     // Initialize WebAuthn registry for passkey support.
     // Each hostname the user may access from gets its own RP ID + origins entry
@@ -3366,7 +3383,7 @@ pub async fn prepare_gateway(
         if !credential_store.is_setup_complete() && !credential_store.is_auth_disabled() {
             let code = std::env::var("MOLTIS_E2E_SETUP_CODE")
                 .unwrap_or_else(|_| crate::auth_routes::generate_setup_code());
-            state.inner.write().await.setup_code = Some(secrecy::Secret::new(code.clone()));
+            state.inner.write().await.setup_code = Some(Secret::new(code.clone()));
             Some(code)
         } else {
             None
