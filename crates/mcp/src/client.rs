@@ -13,6 +13,7 @@ use moltis_metrics::{counter, gauge, histogram, labels, mcp as mcp_metrics};
 use crate::{
     auth::SharedAuthProvider,
     error::{Context, Error, Result},
+    remote::ResolvedRemoteConfig,
     sse_transport::SseTransport,
     traits::{McpClientTrait, McpTransport},
     transport::StdioTransport,
@@ -80,9 +81,13 @@ impl McpClient {
     }
 
     /// Connect to a remote MCP server over HTTP/SSE.
-    pub async fn connect_sse(server_name: &str, url: &str) -> Result<Self> {
-        info!(server = %server_name, url = %url, "connecting to MCP server via SSE");
-        let transport = SseTransport::new(url)?;
+    pub async fn connect_sse(server_name: &str, remote: &ResolvedRemoteConfig) -> Result<Self> {
+        info!(
+            server = %server_name,
+            url = %remote.display_url(),
+            "connecting to MCP server via SSE"
+        );
+        let transport = SseTransport::new_with_remote(remote.clone())?;
 
         let mut client = Self {
             server_name: server_name.into(),
@@ -102,11 +107,15 @@ impl McpClient {
     /// Connect to a remote MCP server over HTTP/SSE with an OAuth auth provider.
     pub async fn connect_sse_with_auth(
         server_name: &str,
-        url: &str,
+        remote: &ResolvedRemoteConfig,
         auth: SharedAuthProvider,
     ) -> Result<Self> {
-        info!(server = %server_name, url = %url, "connecting to MCP server via SSE (with auth)");
-        let transport = SseTransport::with_auth(url, auth)?;
+        info!(
+            server = %server_name,
+            url = %remote.display_url(),
+            "connecting to MCP server via SSE (with auth)"
+        );
+        let transport = SseTransport::with_auth_remote(remote.clone(), auth)?;
 
         let mut client = Self {
             server_name: server_name.into(),

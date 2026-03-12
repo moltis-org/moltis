@@ -1,9 +1,14 @@
 //! Live MCP service implementation backed by `McpManager`.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use {
-    anyhow::Result, async_trait::async_trait, serde_json::Value, tokio::sync::RwLock, tracing::info,
+    anyhow::Result,
+    async_trait::async_trait,
+    secrecy::{ExposeSecret, Secret},
+    serde_json::Value,
+    tokio::sync::RwLock,
+    tracing::{info, warn},
 };
 
 use {
@@ -105,15 +110,6 @@ fn parse_server_config(
         existing.map(|cfg| cfg.args.clone()).unwrap_or_default()
     };
 
-    let env: std::collections::HashMap<String, String> = if params.get("env").is_some() {
-        params
-            .get("env")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default()
-    } else {
-        existing.map(|cfg| cfg.env.clone()).unwrap_or_default()
-    };
-
     let enabled = params
         .get("enabled")
         .and_then(|v| v.as_bool())
@@ -124,15 +120,37 @@ fn parse_server_config(
         if params.get("url").is_some_and(Value::is_null) {
             None
         } else {
-            params.get("url").and_then(|v| v.as_str()).map(String::from)
+            params
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|value| Secret::new(value.to_string()))
         }
     } else {
         existing.and_then(|cfg| cfg.url.clone())
     };
 
+    let headers = if matches!(transport, moltis_mcp::TransportType::Sse) {
+        if params.get("headers").is_some() {
+            parse_secret_string_map(params.get("headers").unwrap_or(&Value::Null))
+        } else {
+            existing.map(|cfg| cfg.headers.clone()).unwrap_or_default()
+        }
+    } else {
+        HashMap::new()
+    };
+
+    let env = if matches!(transport, moltis_mcp::TransportType::Sse) {
+        HashMap::new()
+    } else if params.get("env").is_some() {
+        parse_string_map(params.get("env").unwrap_or(&Value::Null))
+    } else {
+        existing.map(|cfg| cfg.env.clone()).unwrap_or_default()
+    };
+
     if matches!(transport, moltis_mcp::TransportType::Sse)
         && url
-            .as_deref()
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
             .is_none_or(|candidate| candidate.trim().is_empty())
     {
         return Err(ServiceError::message(
@@ -180,9 +198,25 @@ fn parse_server_config(
         env,
         enabled,
         transport,
-        url,
+        url: if matches!(transport, moltis_mcp::TransportType::Sse) {
+            url
+        } else {
+            None
+        },
+        headers,
         oauth,
     })
+}
+
+fn parse_string_map(value: &Value) -> HashMap<String, String> {
+    serde_json::from_value(value.clone()).unwrap_or_default()
+}
+
+fn parse_secret_string_map(value: &Value) -> HashMap<String, Secret<String>> {
+    parse_string_map(value)
+        .into_iter()
+        .map(|(key, value)| (key, Secret::new(value)))
+        .collect()
 }
 
 // ── LiveMcpService ──────────────────────────────────────────────────────────
@@ -193,13 +227,21 @@ pub struct LiveMcpService {
     /// Shared tool registry for syncing MCP tools into the agent loop.
     /// Set after construction via `set_tool_registry`.
     tool_registry: RwLock<Option<Arc<RwLock<ToolRegistry>>>>,
+    config_env_overrides: HashMap<String, String>,
+    credential_store: RwLock<Option<Arc<crate::auth::CredentialStore>>>,
 }
 
 impl LiveMcpService {
-    pub fn new(manager: Arc<moltis_mcp::McpManager>) -> Self {
+    pub fn new(
+        manager: Arc<moltis_mcp::McpManager>,
+        config_env_overrides: HashMap<String, String>,
+        credential_store: Option<Arc<crate::auth::CredentialStore>>,
+    ) -> Self {
         Self {
             manager,
             tool_registry: RwLock::new(None),
+            config_env_overrides,
+            credential_store: RwLock::new(credential_store),
         }
     }
 
@@ -221,6 +263,43 @@ impl LiveMcpService {
     pub fn manager(&self) -> &Arc<moltis_mcp::McpManager> {
         &self.manager
     }
+
+    pub async fn set_credential_store(&self, credential_store: Arc<crate::auth::CredentialStore>) {
+        *self.credential_store.write().await = Some(credential_store);
+    }
+
+    async fn refresh_manager_env_overrides(&self) {
+        let credential_store = self.credential_store.read().await.clone();
+        let env_overrides = if let Some(store) = credential_store {
+            match store.get_all_env_values().await {
+                Ok(db_env_vars) => merge_env_overrides(&self.config_env_overrides, db_env_vars),
+                Err(error) => {
+                    warn!(%error, "failed to refresh MCP env overrides from credential store");
+                    self.config_env_overrides.clone()
+                },
+            }
+        } else {
+            self.config_env_overrides.clone()
+        };
+
+        self.manager.set_env_overrides(env_overrides).await;
+    }
+}
+
+fn merge_env_overrides(
+    base_overrides: &HashMap<String, String>,
+    additional: Vec<(String, String)>,
+) -> HashMap<String, String> {
+    // Config `[env]` values stay authoritative so checked-in config cannot be
+    // silently shadowed by mutable UI-managed entries from the credential store.
+    let mut merged = base_overrides.clone();
+    for (key, value) in additional {
+        if key.trim().is_empty() || value.trim().is_empty() {
+            continue;
+        }
+        merged.entry(key).or_insert(value);
+    }
+    merged
 }
 
 #[async_trait]
@@ -242,6 +321,7 @@ impl McpService for LiveMcpService {
             .filter(|v| !v.is_empty())
             .map(ToOwned::to_owned);
         let config = parse_server_config(&params, None)?;
+        self.refresh_manager_env_overrides().await;
 
         // If a server with this name already exists, append a numeric suffix.
         let final_name = {
@@ -324,6 +404,7 @@ impl McpService for LiveMcpService {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(ToOwned::to_owned);
+        self.refresh_manager_env_overrides().await;
 
         match self.manager.enable_server(name).await {
             Ok(_) => {
@@ -405,6 +486,7 @@ impl McpService for LiveMcpService {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
+        self.refresh_manager_env_overrides().await;
 
         self.manager
             .restart_server(name)
@@ -430,6 +512,7 @@ impl McpService for LiveMcpService {
             .cloned()
             .ok_or_else(|| format!("MCP server '{name}' not found"))?;
         let config = parse_server_config(&params, Some(&existing))?;
+        self.refresh_manager_env_overrides().await;
 
         self.manager
             .update_server(name, config)
@@ -452,6 +535,7 @@ impl McpService for LiveMcpService {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .ok_or_else(|| "missing 'redirectUri' parameter".to_string())?;
+        self.refresh_manager_env_overrides().await;
 
         let auth_url = self
             .manager
@@ -477,6 +561,7 @@ impl McpService for LiveMcpService {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .ok_or_else(|| "missing 'redirectUri' parameter".to_string())?;
+        self.refresh_manager_env_overrides().await;
 
         let auth_url = self
             .manager
@@ -500,6 +585,7 @@ impl McpService for LiveMcpService {
             .get("code")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'code' parameter".to_string())?;
+        self.refresh_manager_env_overrides().await;
 
         let server_name = self
             .manager
@@ -518,7 +604,11 @@ impl McpService for LiveMcpService {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, moltis_mcp::McpRegistry};
+    use {
+        super::*,
+        moltis_mcp::McpRegistry,
+        secrecy::{ExposeSecret, Secret},
+    };
 
     #[test]
     fn parse_server_config_allows_sse_without_command() {
@@ -540,7 +630,13 @@ mod tests {
 
         assert!(matches!(cfg.transport, moltis_mcp::TransportType::Sse));
         assert_eq!(cfg.command, "");
-        assert_eq!(cfg.url.as_deref(), Some("https://mcp.linear.app/mcp"));
+        assert_eq!(
+            cfg.url
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("https://mcp.linear.app/mcp")
+        );
     }
 
     #[test]
@@ -580,7 +676,7 @@ mod tests {
     fn parse_server_config_update_preserves_existing_sse_fields() {
         let existing = moltis_mcp::McpServerConfig {
             transport: moltis_mcp::TransportType::Sse,
-            url: Some("https://mcp.linear.app/mcp".to_string()),
+            url: Some(Secret::new("https://mcp.linear.app/mcp".to_string())),
             ..Default::default()
         };
 
@@ -599,7 +695,13 @@ mod tests {
         };
 
         assert!(matches!(cfg.transport, moltis_mcp::TransportType::Sse));
-        assert_eq!(cfg.url.as_deref(), Some("https://mcp.linear.app/mcp"));
+        assert_eq!(
+            cfg.url
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("https://mcp.linear.app/mcp")
+        );
         assert!(!cfg.enabled);
     }
 
@@ -607,7 +709,7 @@ mod tests {
     fn parse_server_config_update_preserves_oauth_when_omitted() {
         let existing = moltis_mcp::McpServerConfig {
             transport: moltis_mcp::TransportType::Sse,
-            url: Some("https://mcp.linear.app/mcp".to_string()),
+            url: Some(Secret::new("https://mcp.linear.app/mcp".to_string())),
             oauth: Some(moltis_mcp::McpOAuthConfig {
                 client_id: "linear-client".to_string(),
                 auth_url: "https://linear.app/oauth/authorize".to_string(),
@@ -639,6 +741,126 @@ mod tests {
         assert_eq!(oauth.auth_url, "https://linear.app/oauth/authorize");
         assert_eq!(oauth.token_url, "https://api.linear.app/oauth/token");
         assert_eq!(oauth.scopes, vec!["read".to_string(), "write".to_string()]);
+    }
+
+    #[test]
+    fn parse_server_config_preserves_and_replaces_sse_headers() {
+        let existing = moltis_mcp::McpServerConfig {
+            transport: moltis_mcp::TransportType::Sse,
+            url: Some(Secret::new("https://mcp.linear.app/mcp".to_string())),
+            headers: HashMap::from([(
+                "Authorization".to_string(),
+                Secret::new("Bearer old-secret".to_string()),
+            )]),
+            ..Default::default()
+        };
+
+        let preserved = parse_server_config(
+            &serde_json::json!({
+                "transport": "sse"
+            }),
+            Some(&existing),
+        );
+        assert!(
+            preserved.is_ok(),
+            "expected header preservation, got: {preserved:?}"
+        );
+        let Ok(preserved) = preserved else {
+            panic!("header preservation unexpectedly failed");
+        };
+        assert_eq!(preserved.headers.len(), 1);
+        assert_eq!(
+            preserved
+                .headers
+                .get("Authorization")
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("Bearer old-secret")
+        );
+
+        let replaced = parse_server_config(
+            &serde_json::json!({
+                "transport": "sse",
+                "headers": {
+                    "X-Workspace": "team-alpha"
+                }
+            }),
+            Some(&existing),
+        );
+        assert!(
+            replaced.is_ok(),
+            "expected header replacement, got: {replaced:?}"
+        );
+        let Ok(replaced) = replaced else {
+            panic!("header replacement unexpectedly failed");
+        };
+        assert_eq!(replaced.headers.len(), 1);
+        assert_eq!(
+            replaced
+                .headers
+                .get("X-Workspace")
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("team-alpha")
+        );
+    }
+
+    #[test]
+    fn parse_server_config_allows_clearing_sse_headers() {
+        let existing = moltis_mcp::McpServerConfig {
+            transport: moltis_mcp::TransportType::Sse,
+            url: Some(Secret::new("https://mcp.linear.app/mcp".to_string())),
+            headers: HashMap::from([(
+                "Authorization".to_string(),
+                Secret::new("Bearer old-secret".to_string()),
+            )]),
+            ..Default::default()
+        };
+
+        let cleared = parse_server_config(
+            &serde_json::json!({
+                "transport": "sse",
+                "headers": {}
+            }),
+            Some(&existing),
+        );
+        assert!(
+            cleared.is_ok(),
+            "expected header clearing, got: {cleared:?}"
+        );
+        let Ok(cleared) = cleared else {
+            panic!("header clearing unexpectedly failed");
+        };
+        assert!(cleared.headers.is_empty());
+    }
+
+    #[test]
+    fn merge_env_overrides_keeps_config_values_authoritative() {
+        let base = HashMap::from([
+            ("OPENAI_API_KEY".to_string(), "config-openai".to_string()),
+            ("BRAVE_API_KEY".to_string(), "config-brave".to_string()),
+        ]);
+
+        let merged = merge_env_overrides(&base, vec![
+            ("OPENAI_API_KEY".to_string(), "ui-openai".to_string()),
+            (
+                "PERPLEXITY_API_KEY".to_string(),
+                "ui-perplexity".to_string(),
+            ),
+        ]);
+
+        assert_eq!(
+            merged.get("OPENAI_API_KEY").map(String::as_str),
+            Some("config-openai")
+        );
+        assert_eq!(
+            merged.get("PERPLEXITY_API_KEY").map(String::as_str),
+            Some("ui-perplexity")
+        );
+        assert_eq!(
+            merged.get("BRAVE_API_KEY").map(String::as_str),
+            Some("config-brave")
+        );
     }
 
     #[tokio::test]

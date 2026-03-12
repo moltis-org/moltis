@@ -52,6 +52,31 @@ async function maybeSkipAuth(page) {
 	return true;
 }
 
+async function maybeCompleteIdentity(page) {
+	const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
+	if (!(await isVisible(identityHeading))) return false;
+
+	const userNameInput = page.getByPlaceholder("e.g. Alice");
+	if (!(await isVisible(userNameInput))) return false;
+	try {
+		await userNameInput.fill("E2E User");
+	} catch (error) {
+		const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
+		if (await isVisible(llmHeading)) return false;
+		throw error;
+	}
+
+	const agentNameInput = page.getByPlaceholder("e.g. Rex");
+	if ((await agentNameInput.count()) > 0 && (await isVisible(agentNameInput))) {
+		await agentNameInput.fill("E2E Bot");
+	}
+
+	await page.getByRole("button", { name: "Continue", exact: true }).click();
+	await waitForOnboardingStepLoaded(page);
+	await waitForStepToDisappear(identityHeading);
+	return true;
+}
+
 async function maybeSkipOpenClawImport(page) {
 	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
 	if (!(await isVisible(importHeading))) return false;
@@ -85,20 +110,19 @@ async function maybeSkipOpenClawImport(page) {
 }
 
 async function moveToLlmStep(page) {
-	await waitForOnboardingStepLoaded(page);
-
 	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
-	if (await isVisible(llmHeading)) return true;
-
-	if (await maybeSkipAuth(page)) {
+	for (let i = 0; i < 40; i++) {
 		await waitForOnboardingStepLoaded(page);
-	}
-	if (await isVisible(llmHeading)) return true;
+		if (await isVisible(llmHeading)) {
+			await waitForLlmStepReady(page);
+			return true;
+		}
 
-	if (await maybeSkipOpenClawImport(page)) {
-		await waitForOnboardingStepLoaded(page);
+		if (await maybeSkipOpenClawImport(page)) continue;
+		if (await maybeSkipAuth(page)) continue;
+		if (await maybeCompleteIdentity(page)) continue;
+		await page.waitForTimeout(500);
 	}
-	if (await isVisible(llmHeading)) return true;
 	await waitForLlmStepReady(page);
 	return true;
 }

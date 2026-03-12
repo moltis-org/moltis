@@ -1273,6 +1273,9 @@ pub struct McpServerEntry {
     /// URL for SSE transport. Required when `transport` is "sse".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Custom headers for remote HTTP/SSE transport.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
     /// Manual OAuth override for servers that don't support standard discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<McpOAuthOverrideEntry>,

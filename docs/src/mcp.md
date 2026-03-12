@@ -23,8 +23,10 @@ MCP is an open protocol that lets AI assistants connect to external tools and da
 
 1. Go to **Settings** → **MCP Servers**
 2. Click **Add Server**
-3. Enter the server configuration
+3. For remote Streamable HTTP servers, enter the server URL and any optional request headers
 4. Click **Save**
+
+After saving a remote server, Moltis only shows a sanitized URL plus header names/count in the UI and status views. Stored header values stay hidden.
 
 ### Via Configuration
 
@@ -41,9 +43,12 @@ args = ["-y", "@modelcontextprotocol/server-github"]
 env = { GITHUB_TOKEN = "ghp_..." }
 
 [mcp.servers.remote_api]
-url = "https://mcp.example.com/mcp"
 transport = "sse"
+url = "https://mcp.example.com/mcp?api_key=$REMOTE_MCP_KEY"
+headers = { Authorization = "Bearer ${REMOTE_MCP_TOKEN}" }
 ```
+
+Remote URLs and headers support `$NAME` and `${NAME}` placeholders. For live remote servers, placeholder values resolve from Moltis-managed env overrides, either `[env]` in config or **Settings** → **Environment Variables**.
 
 ## Popular MCP Servers
 
@@ -75,7 +80,27 @@ env = { API_KEY = "secret", DEBUG = "true" }
 # Optional: remote transport
 transport = "sse"               # "stdio" (default) or "sse"
 url = "https://mcp.example.com/mcp"  # Required when transport = "sse"
+headers = { "x-api-key" = "$REMOTE_MCP_KEY" }  # Optional request headers
 ```
+
+## Remote SSE Secrets and Placeholders
+
+Remote MCP servers often expect API keys or bearer tokens in the URL query string or request headers. Moltis supports both patterns.
+
+```toml
+[mcp.servers.linear_remote]
+transport = "sse"
+url = "https://mcp.example.com/mcp?api_key=$REMOTE_MCP_KEY"
+headers = {
+  Authorization = "Bearer ${REMOTE_MCP_TOKEN}",
+  "x-workspace" = "team-a",
+}
+```
+
+- Use `$NAME` or `${NAME}` placeholders in remote `url` and `headers`
+- Placeholder values resolve from Moltis-managed env overrides, either `[env]` in config or **Settings** → **Environment Variables**
+- UI and API status payloads only expose sanitized URLs plus header names/count, not raw header values
+- Query-string secrets are redacted when Moltis displays a remote URL after save
 
 ## Server Lifecycle
 
@@ -175,6 +200,7 @@ In the web UI, go to **Settings** → **MCP Servers** to see:
 
 - Connection status (connected/disconnected/error)
 - Available tools
+- Sanitized remote URL and configured header names
 - Recent errors
 
 ### View Logs
@@ -238,6 +264,7 @@ MCP servers run with the same permissions as Moltis. Only use servers from trust
 - **Review server code** before running
 - **Limit file access** — use specific paths, not `/`
 - **Use environment variables** for secrets
+- **Prefer placeholders** in remote URLs and headers (`$NAME` / `${NAME}`) instead of hardcoding secrets repeatedly
 - **Network isolation** — run untrusted servers in containers
 
 ## Troubleshooting
