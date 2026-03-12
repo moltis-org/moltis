@@ -6209,7 +6209,10 @@ mod tests {
 
     #[test]
     fn test_create_sandbox_off() {
-        let config = SandboxConfig::default();
+        let config = SandboxConfig {
+            mode: SandboxMode::Off,
+            ..Default::default()
+        };
         let sandbox = create_sandbox(config);
         let id = SandboxId {
             scope: SandboxScope::Session,
