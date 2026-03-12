@@ -22,6 +22,19 @@ async function clickFirstVisibleButton(page, roleQuery) {
 async function waitForOnboardingStepLoaded(page) {
 	await expect(page.locator(".onboarding-card")).toBeVisible();
 	await expect(page.getByText("Loading…")).toHaveCount(0, { timeout: 10_000 });
+	await expect(page.getByText("Scanning OpenClaw installation…", { exact: true })).not.toBeVisible({
+		timeout: 10_000,
+	});
+}
+
+async function waitForLlmStepReady(page) {
+	const llmLoading = page.getByText("Loading LLMs…", { exact: true });
+	if (await isVisible(llmLoading)) {
+		await expect(llmLoading).not.toBeVisible({ timeout: 10_000 });
+	}
+
+	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
+	await expect(llmHeading).toBeVisible({ timeout: 10_000 });
 }
 
 async function waitForStepToDisappear(locator) {
@@ -86,9 +99,7 @@ async function moveToLlmStep(page) {
 		await waitForOnboardingStepLoaded(page);
 	}
 	if (await isVisible(llmHeading)) return true;
-
-	// ProviderStep can render a transient loading shell before its heading exists.
-	await expect(llmHeading).toBeVisible({ timeout: 20_000 });
+	await waitForLlmStepReady(page);
 	return true;
 }
 
