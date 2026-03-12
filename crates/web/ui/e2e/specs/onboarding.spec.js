@@ -104,14 +104,17 @@ async function moveToLlmStep(page) {
 	if (await isVisible(llmHeading)) return true;
 
 	// Onboarding step order can vary by environment (auth/import/identity may appear
-	// before LLM). Try each known pre-LLM step until one advances the wizard.
-	for (let i = 0; i < 4; i++) {
+	// before LLM). Some steps, like OpenClaw import, also spend time loading async
+	// state after the card itself is visible, so keep polling instead of bailing
+	// out on the first pass with no actionable heading yet.
+	for (let i = 0; i < 20; i++) {
 		if (await isVisible(llmHeading)) return true;
 
 		if (await maybeSkipOpenClawImport(page)) continue;
 		if (await maybeSkipAuth(page)) continue;
 		if (await maybeCompleteIdentity(page)) continue;
-		break;
+
+		await page.waitForTimeout(500);
 	}
 
 	const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
