@@ -838,5 +838,6 @@ mod tests {
         assert!(should_redirect_from_onboarding(true, false));
         assert!(!should_redirect_from_onboarding(true, true));
         assert!(!should_redirect_from_onboarding(false, false));
+        assert!(!should_redirect_from_onboarding(false, true));
     }
 }
