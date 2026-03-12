@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -1570,12 +1571,39 @@ impl LiveModelService {
     ) -> Vec<&'a moltis_providers::ModelInfo> {
         let mut ordered: Vec<(usize, &'a moltis_providers::ModelInfo)> =
             models.enumerate().collect();
-        ordered.sort_by_key(|(idx, model)| {
-            (
-                Self::priority_rank(order, model),
-                subscription_provider_rank(&model.provider),
-                *idx,
-            )
+        ordered.sort_by(|(idx_a, a), (idx_b, b)| {
+            let rank_a = Self::priority_rank(order, a);
+            let rank_b = Self::priority_rank(order, b);
+            // Preferred (rank != MAX) first, then non-preferred
+            let bucket_a = if rank_a == usize::MAX {
+                1u8
+            } else {
+                0
+            };
+            let bucket_b = if rank_b == usize::MAX {
+                1u8
+            } else {
+                0
+            };
+            bucket_a
+                .cmp(&bucket_b)
+                .then_with(|| {
+                    if bucket_a == 0 {
+                        rank_a.cmp(&rank_b)
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .then_with(|| {
+                    a.display_name
+                        .to_lowercase()
+                        .cmp(&b.display_name.to_lowercase())
+                })
+                .then_with(|| {
+                    subscription_provider_rank(&a.provider)
+                        .cmp(&subscription_provider_rank(&b.provider))
+                })
+                .then_with(|| idx_a.cmp(idx_b))
         });
         ordered.into_iter().map(|(_, model)| model).collect()
     }
@@ -10132,9 +10160,11 @@ mod tests {
 
         let order = LiveModelService::build_priority_order(&[]);
         let ordered = LiveModelService::prioritize_models(&order, vec![&m1, &m2, &m3].into_iter());
-        assert_eq!(ordered[0].id, m2.id);
-        assert_eq!(ordered[1].id, m1.id);
-        assert_eq!(ordered[2].id, m3.id);
+        // Alphabetical: "Claude Sonnet 4.5" < "GPT-5.2"; among GPT-5.2
+        // ties, subscription_provider_rank breaks the tie (codex > openai).
+        assert_eq!(ordered[0].id, m3.id);
+        assert_eq!(ordered[1].id, m2.id);
+        assert_eq!(ordered[2].id, m1.id);
     }
 
     #[test]

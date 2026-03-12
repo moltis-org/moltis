@@ -83,7 +83,9 @@ async fn run_mcp_scan(installed_dir: &Path) -> anyhow::Result<Value> {
     Ok(parsed)
 }
 
-fn is_protected_discovered_skill(name: &str) -> bool {
+/// Returns `true` for discovered skill names that are protected and cannot be
+/// deleted from the UI (e.g. built-in template/tmux skills).
+pub fn is_protected_discovered_skill(name: &str) -> bool {
     matches!(name, "template-skill" | "template" | "tmux")
 }
 
@@ -940,9 +942,9 @@ fn delete_discovered_skill(source_type: &str, params: &Value) -> ServiceResult {
         .ok_or_else(|| "missing 'skill' parameter".to_string())?;
 
     if is_protected_discovered_skill(skill_name) {
-        return Err(
-            format!("skill '{skill_name}' is protected and cannot be deleted from the UI").into(),
-        );
+        return Err(ServiceError::forbidden(format!(
+            "skill '{skill_name}' is protected and cannot be deleted from the UI"
+        )));
     }
 
     if !moltis_skills::parse::validate_name(skill_name) {
