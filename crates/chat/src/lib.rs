@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -1586,6 +1587,13 @@ impl LiveModelService {
             };
             bucket_a
                 .cmp(&bucket_b)
+                .then_with(|| {
+                    if bucket_a == 0 {
+                        rank_a.cmp(&rank_b)
+                    } else {
+                        Ordering::Equal
+                    }
+                })
                 .then_with(|| {
                     a.display_name
                         .to_lowercase()
@@ -9952,9 +9960,8 @@ mod tests {
         let order =
             LiveModelService::build_priority_order(&["gpt-5.2".into(), "claude-opus-4-5".into()]);
         let ordered = LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
-        // Preferred group sorted alphabetically: "Claude Opus 4.5" < "GPT 5.2"
-        assert_eq!(ordered[0].id, m2.id);
-        assert_eq!(ordered[1].id, m1.id);
+        assert_eq!(ordered[0].id, m1.id);
+        assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
     }
 
@@ -9982,9 +9989,8 @@ mod tests {
         let order =
             LiveModelService::build_priority_order(&["gpt 5.2".into(), "claude-sonnet-4.5".into()]);
         let ordered = LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
-        // Preferred group sorted alphabetically: "Claude Sonnet 4.5" < "GPT-5.2"
-        assert_eq!(ordered[0].id, m2.id);
-        assert_eq!(ordered[1].id, m1.id);
+        assert_eq!(ordered[0].id, m1.id);
+        assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
     }
 

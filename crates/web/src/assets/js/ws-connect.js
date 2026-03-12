@@ -5,6 +5,7 @@ import * as S from "./state.js";
 
 var reconnectTimer = null;
 var lastOpts = null;
+var authRedirectPending = false;
 
 /** Registry of server-request handlers keyed by method name (v4 bidir RPC). */
 var serverRequestHandlers = {};
@@ -12,6 +13,12 @@ var serverRequestHandlers = {};
 function resolveLocale() {
 	return getPreferredLocale();
 }
+
+function resetAuthRedirectGuard() {
+	authRedirectPending = false;
+}
+
+window.addEventListener("moltis:auth-status-sync-complete", resetAuthRedirectGuard);
 
 /**
  * Register a handler for server-initiated RPC requests (v4 bidirectional RPC).
@@ -37,8 +44,6 @@ export function onServerRequest(method, handler) {
  * @param {(wasConnected: boolean) => void} [opts.onDisconnected]
  * @param {{ factor?: number, max?: number }} [opts.backoff] — default {1.5, 5000}
  */
-var authRedirectPending = false;
-
 export function connectWs(opts) {
 	lastOpts = opts;
 	var backoff = Object.assign({ factor: 1.5, max: 5000 }, opts.backoff);

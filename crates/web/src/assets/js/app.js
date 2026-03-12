@@ -311,6 +311,8 @@ window.addEventListener("moltis:auth-status-changed", () => {
 			clearSensitiveData();
 			window.location.assign("/login");
 		}
+	}).finally(() => {
+		window.dispatchEvent(new CustomEvent("moltis:auth-status-sync-complete"));
 	});
 });
 

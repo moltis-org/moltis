@@ -748,4 +748,118 @@ test.describe("WebSocket connection lifecycle", () => {
 		// In local no-password mode, /login immediately routes back to chat.
 		await expect.poll(() => new URL(page.url()).pathname).toMatch(/^\/(?:login|chats\/.+)$/);
 	});
+
+	test("UNAUTHORIZED redirect guard resets after auth sync completes", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.addInitScript(() => {
+			const originalFetch = window.fetch.bind(window);
+			window.fetch = (...args) => {
+				const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
+				if (url.endsWith("/api/auth/status")) {
+					return Promise.resolve(
+						new Response(
+							JSON.stringify({
+								authenticated: false,
+								setup_required: false,
+								auth_disabled: false,
+								localhost_only: false,
+								has_password: true,
+								has_passkeys: false,
+							}),
+							{
+								status: 200,
+								headers: { "Content-Type": "application/json" },
+							},
+						),
+					);
+				}
+				return originalFetch(...args);
+			};
+		});
+
+		await page.goto("/login");
+		await page.waitForLoadState("domcontentloaded");
+
+		const counts = await page.evaluate(async () => {
+			const loginScript = document.querySelector('script[type="module"][src*="js/login-app.js"]');
+			if (!loginScript) throw new Error("login module script not found");
+
+			const loginUrl = new URL(loginScript.src, window.location.origin);
+			const prefix = loginUrl.href.slice(0, loginUrl.href.length - "js/login-app.js".length);
+
+			class FakeWebSocket {
+				constructor(url) {
+					this.url = url;
+					this.sent = [];
+					FakeWebSocket.instance = this;
+				}
+
+				send(data) {
+					this.sent.push(JSON.parse(data));
+				}
+
+				close() {}
+			}
+
+			const originalWebSocket = window.WebSocket;
+			window.WebSocket = FakeWebSocket;
+			window.__authChangedEvents = 0;
+			window.addEventListener("moltis:auth-status-changed", () => {
+				window.__authChangedEvents += 1;
+			});
+
+			try {
+				const wsModule = await import(`${prefix}js/ws-connect.js?e2e=${Date.now()}`);
+				wsModule.connectWs({});
+
+				const ws = FakeWebSocket.instance;
+				if (!ws) throw new Error("fake websocket was not created");
+				ws.onopen();
+
+				const connectFrame = ws.sent.find((frame) => frame.method === "connect");
+				if (!connectFrame) throw new Error("connect frame was not sent");
+
+				ws.onmessage({
+					data: JSON.stringify({
+						type: "res",
+						id: connectFrame.id,
+						ok: true,
+						payload: { type: "hello-ok" },
+					}),
+				});
+
+				const unauthorizedFrame = JSON.stringify({
+					type: "res",
+					id: "unauthorized-1",
+					ok: false,
+					error: { code: "UNAUTHORIZED", message: "expired" },
+				});
+
+				ws.onmessage({ data: unauthorizedFrame });
+				const afterFirst = window.__authChangedEvents;
+
+				ws.onmessage({ data: unauthorizedFrame });
+				const afterBurst = window.__authChangedEvents;
+
+				window.dispatchEvent(new CustomEvent("moltis:auth-status-sync-complete"));
+
+				ws.onmessage({ data: unauthorizedFrame });
+				return {
+					afterFirst,
+					afterBurst,
+					afterReset: window.__authChangedEvents,
+				};
+			} finally {
+				window.WebSocket = originalWebSocket;
+			}
+		});
+
+		expect(counts).toEqual({
+			afterFirst: 1,
+			afterBurst: 1,
+			afterReset: 2,
+		});
+		expect(pageErrors).toEqual([]);
+	});
 });
