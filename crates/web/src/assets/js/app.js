@@ -300,20 +300,22 @@ function refreshAuthChrome() {
 }
 
 window.addEventListener("moltis:auth-status-changed", () => {
-	refreshAuthChrome().then((auth) => {
-		if (!auth) return;
-		if (auth.setup_required) {
-			clearSensitiveData();
-			window.location.assign("/onboarding");
-			return;
-		}
-		if (!auth.authenticated) {
-			clearSensitiveData();
-			window.location.assign("/login");
-		}
-	}).finally(() => {
-		window.dispatchEvent(new CustomEvent("moltis:auth-status-sync-complete"));
-	});
+	refreshAuthChrome()
+		.then((auth) => {
+			if (!auth) return;
+			if (auth.setup_required) {
+				clearSensitiveData();
+				window.location.assign("/onboarding");
+				return;
+			}
+			if (!auth.authenticated) {
+				clearSensitiveData();
+				window.location.assign("/login");
+			}
+		})
+		.finally(() => {
+			window.dispatchEvent(new CustomEvent("moltis:auth-status-sync-complete"));
+		});
 });
 
 /**
