@@ -113,7 +113,8 @@ test.describe("Cron jobs page", () => {
 		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
 
 		await expect(page.locator('[data-field="schedKind"] option[value="at"]')).toHaveText("Run Once");
-		await expect(page.getByText(/Leave blank to use your local timezone/)).toBeVisible();
+		await expect(page.locator('[data-field="schedKind"]')).toHaveValue("cron");
+		await expect(page.getByText(/Leave blank to use UTC/)).toBeVisible();
 		await expect(page.getByText(/Adds this text to the main session as a system event/)).toBeVisible();
 		await expect(page.locator('[data-field="message"]')).toHaveAttribute(
 			"placeholder",

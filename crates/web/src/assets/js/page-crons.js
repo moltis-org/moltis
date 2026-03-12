@@ -214,8 +214,8 @@ var systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 function cronTimezoneHelpText() {
 	return systemTimezone
-		? `Leave blank to use your local timezone (${systemTimezone}).`
-		: "Leave blank to use your local timezone.";
+		? `Leave blank to use UTC. Enter ${systemTimezone} to use your local timezone.`
+		: "Leave blank to use UTC. Enter a timezone like Europe/Paris to use your local timezone.";
 }
 
 function HeartbeatSection() {
