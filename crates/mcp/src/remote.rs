@@ -180,8 +180,10 @@ fn build_header_map(
     env_overrides: &HashMap<String, String>,
 ) -> Result<HeaderMap> {
     let mut resolved = HeaderMap::new();
+    let mut ordered_headers: Vec<_> = headers.iter().collect();
+    ordered_headers.sort_by_cached_key(|(name, _)| (name.to_ascii_lowercase(), (*name).clone()));
 
-    for (name, raw_value) in headers {
+    for (name, raw_value) in ordered_headers {
         if is_reserved_header(name) {
             return Err(Error::message(format!(
                 "remote MCP header '{}' is reserved",
