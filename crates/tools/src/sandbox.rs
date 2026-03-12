@@ -6214,6 +6214,7 @@ mod tests {
             ..Default::default()
         };
         let sandbox = create_sandbox(config);
+        assert_eq!(sandbox.backend_name(), "none");
         let id = SandboxId {
             scope: SandboxScope::Session,
             key: "test".into(),
