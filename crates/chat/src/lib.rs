@@ -311,6 +311,20 @@ fn session_token_usage_from_messages(messages: &[Value]) -> SessionTokenUsage {
 }
 
 #[must_use]
+fn assistant_message_is_visible(message: &Value) -> bool {
+    if message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return true;
+    }
+
+    ["content", "reasoning"].iter().any(|field| {
+        message
+            .get(*field)
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty())
+    })
+}
+
+#[must_use]
 fn estimate_text_tokens(text: &str) -> u64 {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -3731,7 +3745,9 @@ impl ChatService for LiveChatService {
                             "title": "Timed out",
                             "detail": detail,
                         });
+                        state.set_run_error(&run_id_clone, detail.clone()).await;
                         deliver_channel_error(&state, &session_key_clone, &error_obj).await;
+                        terminal_runs.write().await.insert(run_id_clone.clone());
                         broadcast(
                             &state,
                             "chat",
@@ -4205,14 +4221,7 @@ impl ChatService for LiveChatService {
         // history coherence but should not be shown in the UI.
         let visible: Vec<Value> = messages
             .into_iter()
-            .filter(|msg| {
-                if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
-                    return true;
-                }
-                msg.get("content")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|s| !s.trim().is_empty())
-            })
+            .filter(assistant_message_is_visible)
             .collect();
         Ok(serde_json::json!(visible))
     }
@@ -6286,19 +6295,15 @@ async fn run_with_tools(
                             created_at: Some(now_ms()),
                             run_id: Some(run_id.clone()),
                         };
-                        let store_clone = Arc::clone(store);
-                        let sk_persist = sk.clone();
-                        tokio::spawn(async move {
-                            persist_tool_history_pair(
-                                &store_clone,
-                                &sk_persist,
-                                assistant_tool_call_msg,
-                                tool_result_msg,
-                                "failed to persist assistant tool call",
-                                "failed to persist tool result",
-                            )
-                            .await;
-                        });
+                        persist_tool_history_pair(
+                            store,
+                            &sk,
+                            assistant_tool_call_msg,
+                            tool_result_msg,
+                            "failed to persist assistant tool call",
+                            "failed to persist tool result",
+                        )
+                        .await;
                     }
 
                     payload
@@ -8797,6 +8802,28 @@ mod tests {
         let usage = session_token_usage_from_messages(&messages);
         assert_eq!(usage.current_request_input_tokens, 33);
         assert_eq!(usage.current_request_output_tokens, 11);
+    }
+
+    #[test]
+    fn assistant_message_is_visible_for_reasoning_only_messages() {
+        let message = serde_json::json!({
+            "role": "assistant",
+            "content": "   ",
+            "reasoning": "Need to think first",
+        });
+
+        assert!(assistant_message_is_visible(&message));
+    }
+
+    #[test]
+    fn assistant_message_is_not_visible_when_content_and_reasoning_are_blank() {
+        let message = serde_json::json!({
+            "role": "assistant",
+            "content": "   ",
+            "reasoning": "\n\t",
+        });
+
+        assert!(!assistant_message_is_visible(&message));
     }
 
     #[test]
