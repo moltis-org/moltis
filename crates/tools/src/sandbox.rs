@@ -6209,8 +6209,13 @@ mod tests {
 
     #[test]
     fn test_create_sandbox_off() {
-        let config = SandboxConfig::default();
+        let config = SandboxConfig {
+            mode: SandboxMode::Off,
+            ..Default::default()
+        };
         let sandbox = create_sandbox(config);
+        assert_eq!(sandbox.backend_name(), "none");
+        assert!(!sandbox.is_real());
         let id = SandboxId {
             scope: SandboxScope::Session,
             key: "test".into(),
