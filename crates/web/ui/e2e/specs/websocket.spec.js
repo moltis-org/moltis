@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {
 	if (typeof message !== "string") return false;
@@ -41,6 +41,20 @@ async function expectRpcOk(page, method, params) {
 	const response = await sendRpcFromPage(page, method, params);
 	expect(response?.ok, `RPC ${method} failed: ${response?.error?.message || "unknown error"}`).toBeTruthy();
 	return response;
+}
+
+async function waitForChatSessionReady(page) {
+	await page.waitForFunction(
+		async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) return false;
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var state = await import(`${prefix}js/state.js`);
+			return !(state.sessionSwitchInProgress || state.chatBatchLoading);
+		},
+		{ timeout: 10_000 },
+	);
 }
 
 test.describe("WebSocket connection lifecycle", () => {
@@ -604,8 +618,9 @@ test.describe("WebSocket connection lifecycle", () => {
 
 	test("thinking text is preserved as reasoning disclosure when tool call follows", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await page.goto("/chats/main");
+		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
 
 		await expectRpcOk(page, "chat.clear", {});
 
