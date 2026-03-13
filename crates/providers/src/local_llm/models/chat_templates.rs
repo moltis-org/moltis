@@ -508,7 +508,10 @@ mod tests {
         let result = format_messages(&messages, ChatTemplateHint::ChatML);
         // Should only have one system block, not two
         let system_count = result.matches("<|im_start|>system").count();
-        assert_eq!(system_count, 1, "Expected only one system message block after merging");
+        assert_eq!(
+            system_count, 1,
+            "Expected only one system message block after merging"
+        );
         assert!(result.contains("You are helpful."));
         assert!(result.contains("Be concise."));
     }
