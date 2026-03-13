@@ -598,15 +598,7 @@ impl LlmProvider for RegistryModelProvider {
 /// Resolve an API key from config (Secret) or environment variable,
 /// keeping the value wrapped in `Secret<String>` to avoid leaking it.
 fn env_value(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            env_overrides
-                .get(key)
-                .cloned()
-                .filter(|value| !value.trim().is_empty())
-        })
+    moltis_config::env_value_with_overrides(env_overrides, key)
 }
 
 /// Resolve an API key from config (Secret) or environment variable,
@@ -621,6 +613,7 @@ fn resolve_api_key(
         .get(provider)
         .and_then(|e| e.api_key.clone())
         .or_else(|| env_value(env_overrides, env_key).map(secrecy::Secret::new))
+        .or_else(|| moltis_config::generic_provider_api_key_from_env(provider, env_overrides))
         .filter(|s| !s.expose_secret().is_empty())
 }
 
@@ -3009,6 +3002,21 @@ mod tests {
 
         let reg = ProviderRegistry::from_env_with_config_and_overrides(&config, &env_overrides);
         assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
+    }
+
+    #[test]
+    fn openai_registers_with_generic_provider_env_override() {
+        let config = ProvidersConfig::default();
+        let env_overrides = HashMap::from([
+            ("MOLTIS_PROVIDER".to_string(), "openai".to_string()),
+            (
+                "MOLTIS_API_KEY".to_string(),
+                "sk-test-openai-generic".to_string(),
+            ),
+        ]);
+
+        let reg = ProviderRegistry::from_env_with_config_and_overrides(&config, &env_overrides);
+        assert!(reg.list_models().iter().any(|m| m.provider == "openai"));
     }
 
     #[test]

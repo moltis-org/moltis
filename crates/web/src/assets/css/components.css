@@ -1284,7 +1284,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
-  max-height: 240px;
+  max-height: 320px;
   overflow-y: auto;
   margin-top: 4px;
 }

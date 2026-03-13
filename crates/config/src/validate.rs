@@ -29,7 +29,7 @@ impl std::fmt::Display for Severity {
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
-    /// Category: "syntax", "unknown-field", "unknown-provider", "type-error",
+    /// Category: "syntax", "unknown-field", "deprecated-field", "unknown-provider", "type-error",
     /// "security", "file-ref"
     pub category: &'static str,
     /// Dotted path, e.g. "server.bnd"
@@ -275,6 +275,7 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("transport", Leaf),
             ("url", Leaf),
+            ("headers", Map(Box::new(Leaf))),
             ("oauth", mcp_oauth_override()),
         ]))
     };
@@ -451,10 +452,15 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("backend", Leaf),
                 ("provider", Leaf),
+                ("embedding_provider", Leaf),
                 ("disable_rag", Leaf),
                 ("base_url", Leaf),
+                ("embedding_base_url", Leaf),
                 ("model", Leaf),
+                ("embedding_model", Leaf),
                 ("api_key", Leaf),
+                ("embedding_api_key", Leaf),
+                ("embedding_dimensions", Leaf),
                 ("citations", Leaf),
                 ("llm_reranking", Leaf),
                 ("search_merge_strategy", Leaf),
@@ -769,22 +775,28 @@ pub fn validate_toml_str(toml_str: &str) -> ValidationResult {
     let schema = build_schema_map();
     check_unknown_fields(&toml_value, &schema, "", &mut diagnostics);
 
-    // 3. Provider name hints
+    // 3. Deprecation warnings on raw TOML keys
+    let conflicting_replacements = check_deprecated_fields(&toml_value, &mut diagnostics);
+
+    // 4. Provider name hints
     if let Some(providers) = toml_value.get("providers").and_then(|v| v.as_table()) {
         check_provider_names(providers, &mut diagnostics);
     }
 
-    // 4. Type check — attempt full deserialization
+    // 5. Type check — attempt full deserialization
     if let Err(e) = toml::from_str::<MoltisConfig>(toml_str) {
-        diagnostics.push(Diagnostic {
-            severity: Severity::Error,
-            category: "type-error",
-            path: String::new(),
-            message: format!("type error: {e}"),
-        });
+        let message = format!("type error: {e}");
+        if !should_suppress_deprecated_conflict_type_error(&message, &conflicting_replacements) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "type-error",
+                path: String::new(),
+                message,
+            });
+        }
     }
 
-    // 5. Semantic warnings on parsed config (only if it parses)
+    // 6. Semantic warnings on parsed config (only if it parses)
     if let Ok(config) = toml::from_str::<MoltisConfig>(toml_str) {
         check_semantic_warnings(&config, &mut diagnostics);
     }
@@ -792,6 +804,92 @@ pub fn validate_toml_str(toml_str: &str) -> ValidationResult {
     ValidationResult {
         diagnostics,
         config_path: None,
+    }
+}
+
+fn check_deprecated_fields(
+    toml_value: &toml::Value,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<&'static str> {
+    let Some(memory) = toml_value.get("memory").and_then(|value| value.as_table()) else {
+        return Vec::new();
+    };
+
+    let mut conflicting_replacements = Vec::new();
+    if check_deprecated_memory_field(memory, "embedding_provider", "provider", diagnostics) {
+        conflicting_replacements.push("provider");
+    }
+    if check_deprecated_memory_field(memory, "embedding_base_url", "base_url", diagnostics) {
+        conflicting_replacements.push("base_url");
+    }
+    if check_deprecated_memory_field(memory, "embedding_model", "model", diagnostics) {
+        conflicting_replacements.push("model");
+    }
+    if check_deprecated_memory_field(memory, "embedding_api_key", "api_key", diagnostics) {
+        conflicting_replacements.push("api_key");
+    }
+    check_deprecated_ignored_memory_field(
+        memory,
+        "embedding_dimensions",
+        "deprecated field; ignored because embedding dimensions are determined by the provider response",
+        diagnostics,
+    );
+    conflicting_replacements
+}
+
+fn should_suppress_deprecated_conflict_type_error(
+    message: &str,
+    conflicting_replacements: &[&str],
+) -> bool {
+    conflicting_replacements
+        .iter()
+        .any(|replacement| message.contains(&format!("duplicate field `{replacement}`")))
+}
+
+fn check_deprecated_memory_field(
+    memory: &toml::map::Map<String, toml::Value>,
+    legacy: &str,
+    replacement: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> bool {
+    if !memory.contains_key(legacy) {
+        return false;
+    }
+
+    if memory.contains_key(replacement) {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "deprecated-field",
+            path: format!("memory.{legacy}"),
+            message: format!(
+                "deprecated field conflicts with \"memory.{replacement}\"; remove \"memory.{legacy}\""
+            ),
+        });
+        return true;
+    }
+
+    diagnostics.push(Diagnostic {
+        severity: Severity::Warning,
+        category: "deprecated-field",
+        path: format!("memory.{legacy}"),
+        message: format!("deprecated field; use \"memory.{replacement}\" instead"),
+    });
+    false
+}
+
+fn check_deprecated_ignored_memory_field(
+    memory: &toml::map::Map<String, toml::Value>,
+    legacy: &str,
+    message: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if memory.contains_key(legacy) {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "deprecated-field",
+            path: format!("memory.{legacy}"),
+            message: message.into(),
+        });
     }
 }
 
@@ -1735,6 +1833,123 @@ disable_rag = true
             unknown.is_none(),
             "memory.disable_rag should be accepted as a known field"
         );
+    }
+
+    #[test]
+    fn legacy_memory_embedding_fields_warn_but_do_not_error() {
+        let toml = r#"
+[memory]
+embedding_provider = "custom"
+embedding_model = "intfloat/multilingual-e5-small"
+embedding_base_url = "http://moltis-embeddings:7997/v1"
+embedding_dimensions = 384
+"#;
+        let result = validate_toml_str(toml);
+
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-field" && d.path.starts_with("memory.embedding_"))
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "legacy embedding fields should not be unknown: {:?}",
+            result.diagnostics
+        );
+
+        let deprecated: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "deprecated-field")
+            .collect();
+        assert_eq!(
+            deprecated.len(),
+            4,
+            "expected deprecation warnings for all legacy fields: {:?}",
+            result.diagnostics
+        );
+        assert!(
+            deprecated
+                .iter()
+                .any(|d| d.path == "memory.embedding_provider"
+                    && d.message.contains("memory.provider")),
+            "expected replacement warning for embedding_provider"
+        );
+        assert!(
+            deprecated
+                .iter()
+                .any(|d| d.path == "memory.embedding_base_url"
+                    && d.message.contains("memory.base_url")),
+            "expected replacement warning for embedding_base_url"
+        );
+        assert!(
+            deprecated
+                .iter()
+                .any(|d| d.path == "memory.embedding_model" && d.message.contains("memory.model")),
+            "expected replacement warning for embedding_model"
+        );
+        assert!(
+            deprecated
+                .iter()
+                .any(|d| d.path == "memory.embedding_dimensions" && d.message.contains("ignored")),
+            "expected ignored warning for embedding_dimensions"
+        );
+        assert!(
+            !result.has_errors(),
+            "legacy embedding fields should remain usable: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn conflicting_legacy_and_modern_memory_field_reports_targeted_error() {
+        let toml = r#"
+[memory]
+provider = "custom"
+embedding_provider = "custom"
+"#;
+        let result = validate_toml_str(toml);
+
+        let conflict = result
+            .diagnostics
+            .iter()
+            .find(|d| {
+                d.category == "deprecated-field"
+                    && d.severity == Severity::Error
+                    && d.path == "memory.embedding_provider"
+            })
+            .unwrap_or_else(|| {
+                panic!("expected targeted conflict error: {:?}", result.diagnostics)
+            });
+        assert!(
+            conflict
+                .message
+                .contains("remove \"memory.embedding_provider\""),
+            "expected removal guidance, got: {}",
+            conflict.message
+        );
+
+        let type_error = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "type-error");
+        assert!(
+            type_error.is_none(),
+            "expected duplicate-field type error to be suppressed: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn duplicate_field_suppression_matches_only_conflicting_replacements() {
+        assert!(should_suppress_deprecated_conflict_type_error(
+            "type error: duplicate field `provider`",
+            &["provider"]
+        ));
+        assert!(!should_suppress_deprecated_conflict_type_error(
+            "type error: duplicate field `base_url`",
+            &["provider"]
+        ));
     }
 
     #[test]

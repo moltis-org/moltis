@@ -6,18 +6,21 @@
 //! - Tool bridge adapting MCP tools to the agent tool interface (`tool_bridge`)
 //! - Server lifecycle management (`manager`)
 //! - Persisted server registry (`registry`)
+//!
+//! Remote HTTP/SSE servers keep secret-bearing values (URLs, header values)
+//! in secret-aware types and only expose sanitized display projections.
 
 pub mod auth;
 pub mod client;
 pub mod error;
 pub mod manager;
 pub mod registry;
+pub mod remote;
+pub mod sse_transport;
 pub mod tool_bridge;
 pub mod traits;
 pub mod transport;
 pub mod types;
-
-pub mod sse_transport;
 
 pub use {
     auth::{McpAuthProvider, McpAuthState, McpOAuthOverride, McpOAuthProvider, SharedAuthProvider},

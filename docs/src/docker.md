@@ -20,6 +20,10 @@ docker run -d \
 
 Open https://localhost:13131 in your browser and configure your LLM provider to start chatting.
 
+For unattended bootstraps, add `MOLTIS_PASSWORD`, `MOLTIS_PROVIDER`, and
+`MOLTIS_API_KEY` before first start. That pre-configures auth plus one LLM
+provider so you can skip the browser setup wizard entirely.
+
 ### Ports
 
 | Port | Purpose |
@@ -269,9 +273,29 @@ docker run -d \
 
 Features like web search (Brave), embeddings, and LLM provider API calls read
 keys from process environment variables (`std::env::var`). In Docker, there are
-two ways to provide these:
+three ways to provide these:
 
-**Option 1: `docker -e` flags** (takes precedence)
+**Option 1: Generic first-run LLM bootstrap** (best for one provider)
+
+Use this when you want a minimal `docker compose` file with one chat provider
+and no manual setup:
+
+```yaml
+services:
+  moltis:
+    image: ghcr.io/moltis-org/moltis:latest
+    environment:
+      MOLTIS_PASSWORD: "change-me"
+      MOLTIS_PROVIDER: "openai"
+      MOLTIS_API_KEY: "sk-..."
+```
+
+`MOLTIS_PROVIDER` must be a Moltis provider name such as `openai`,
+`anthropic`, `gemini`, `groq`, `openrouter`, or `mistral`. The shorter
+aliases `PROVIDER` and `API_KEY` also work, but the `MOLTIS_*` names are
+preferred because they are less likely to collide with other containers.
+
+**Option 2: Provider-specific `docker -e` flags** (takes precedence for that provider)
 
 ```bash
 docker run -d \
@@ -282,7 +306,7 @@ docker run -d \
   ghcr.io/moltis-org/moltis:latest
 ```
 
-**Option 2: `[env]` section in `moltis.toml`**
+**Option 3: `[env]` section in `moltis.toml`**
 
 Add an `[env]` section to your config file. These variables are injected into
 the Moltis process at startup, making them available to all features:
