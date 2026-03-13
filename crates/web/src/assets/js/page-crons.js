@@ -212,6 +212,12 @@ function collectHeartbeatForm(form) {
 
 var systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+function cronTimezoneHelpText() {
+	return systemTimezone
+		? `Leave blank to use UTC. Enter ${systemTimezone} to use your local timezone.`
+		: "Leave blank to use UTC. Enter a timezone like Europe/Paris to use your local timezone.";
+}
+
 function HeartbeatSection() {
 	var cfg = heartbeatConfig.value;
 	var saving = heartbeatSaving.value;
@@ -671,6 +677,17 @@ function CronModal() {
 		payloadKind.value = e.target.value === "main" ? "systemEvent" : "agentTurn";
 	}
 
+	function payloadTypeHelpText() {
+		if (payloadKind.value === "agentTurn") {
+			return "Starts an isolated agent turn with this prompt. Enable channel delivery below to send the result to a chat.";
+		}
+		return "Adds this text to the main session as a system event when the job runs.";
+	}
+
+	function messagePlaceholder() {
+		return payloadKind.value === "agentTurn" ? "Prompt sent to the agent" : "Message sent to the main session";
+	}
+
 	function onSave(e) {
 		e.preventDefault();
 		var form = e.target.closest(".provider-key-form");
@@ -745,6 +762,7 @@ function CronModal() {
         value=${isEdit && job.schedule.kind === "cron" ? job.schedule.expr || "" : ""} />
       <input data-field="tz" class="provider-key-input" placeholder="Timezone (optional, e.g. Europe/Paris)"
         value=${isEdit && job.schedule.kind === "cron" ? job.schedule.tz || "" : ""} />
+      <p class="text-xs text-[var(--muted)] mt-1">${cronTimezoneHelpText()}</p>
     `;
 	}
 
@@ -765,7 +783,7 @@ function CronModal() {
         onChange=${(e) => {
 					schedKind.value = e.target.value;
 				}}>
-        <option value="at">At (one-shot)</option>
+        <option value="at">Run Once</option>
         <option value="every">Every (interval)</option>
         <option value="cron">Cron (expression)</option>
       </select>
@@ -779,10 +797,11 @@ function CronModal() {
         <option value="systemEvent">System Event</option>
         <option value="agentTurn">Agent Turn</option>
       </select>
+      <p class="text-xs text-[var(--muted)] mt-1">${payloadTypeHelpText()}</p>
 
       <label class="text-xs text-[var(--muted)]">Message</label>
       <textarea data-field="message" class="provider-key-input textarea-sm ${errorField.value === "message" ? "field-error" : ""}"
-        placeholder="Message text" value=${messageText.value}
+        placeholder=${messagePlaceholder()} value=${messageText.value}
         onInput=${(e) => {
 					messageText.value = e.target.value;
 				}}></textarea>

@@ -106,6 +106,28 @@ test.describe("Cron jobs page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("cron modal clarifies schedule, timezone, and payload copy", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		await expect(page.locator('[data-field="schedKind"] option[value="at"]')).toHaveText("Run Once");
+		await expect(page.locator('[data-field="schedKind"]')).toHaveValue("cron");
+		await expect(page.getByText(/Leave blank to use UTC/)).toBeVisible();
+		await expect(page.getByText(/Adds this text to the main session as a system event/)).toBeVisible();
+		await expect(page.locator('[data-field="message"]')).toHaveAttribute(
+			"placeholder",
+			"Message sent to the main session",
+		);
+
+		await page.locator('[data-field="payloadKind"]').selectOption("agentTurn");
+		await expect(page.getByText(/Starts an isolated agent turn with this prompt/)).toBeVisible();
+		await expect(page.locator('[data-field="message"]')).toHaveAttribute("placeholder", "Prompt sent to the agent");
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("auto-sync: switching payload kind updates session target", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/crons");
