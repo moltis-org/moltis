@@ -27,6 +27,28 @@ async function waitForOnboardingStepLoaded(page) {
 	});
 }
 
+async function visibleOnboardingHeadingText(page) {
+	const headings = page.locator(".onboarding-card h2");
+	const count = await headings.count();
+	for (let i = 0; i < count; i++) {
+		const heading = headings.nth(i);
+		if (!(await isVisible(heading))) continue;
+		const text = (await heading.textContent())?.trim();
+		if (text) return text;
+	}
+	return null;
+}
+
+async function waitForOnboardingHeadingAdvance(page, previousHeading) {
+	if (!previousHeading) return true;
+	try {
+		await expect.poll(() => visibleOnboardingHeadingText(page), { timeout: 10_000 }).not.toBe(previousHeading);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 async function waitForLlmStepReady(page) {
 	const llmLoading = page.getByText("Loading LLMs…", { exact: true });
 	if (await isVisible(llmLoading)) {
@@ -80,6 +102,7 @@ async function maybeCompleteIdentity(page) {
 async function maybeSkipOpenClawImport(page) {
 	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
 	if (!(await isVisible(importHeading))) return false;
+	const headingBefore = await visibleOnboardingHeadingText(page);
 
 	const card = page.locator(".onboarding-card");
 	const skipForNow = card.getByText("Skip for now", { exact: true });
@@ -105,7 +128,28 @@ async function maybeSkipOpenClawImport(page) {
 		return false;
 	}
 	await waitForOnboardingStepLoaded(page);
-	await waitForStepToDisappear(importHeading);
+	if (await waitForOnboardingHeadingAdvance(page, headingBefore)) return true;
+
+	await expect
+		.poll(
+			async () => {
+				if (await isVisible(importHeading)) return "import";
+				const heading = await visibleOnboardingHeadingText(page);
+				if (heading) return heading;
+				const loadingLlms = page.getByText("Loading LLMs…", { exact: true });
+				if (await isVisible(loadingLlms)) return "loading-llm";
+				return "transitioning";
+			},
+			{ timeout: 10_000 },
+		)
+		.not.toBe("import");
+	return true;
+}
+
+async function maybeWaitForLlmLoading(page) {
+	const loadingLlms = page.getByText("Loading LLMs…", { exact: true });
+	if (!(await isVisible(loadingLlms))) return false;
+	await expect(loadingLlms).toHaveCount(0, { timeout: 10_000 });
 	return true;
 }
 
@@ -114,6 +158,10 @@ async function moveToLlmStep(page) {
 	for (let i = 0; i < 40; i++) {
 		await waitForOnboardingStepLoaded(page);
 		if (await isVisible(llmHeading)) {
+			await waitForLlmStepReady(page);
+			return true;
+		}
+		if (await maybeWaitForLlmLoading(page)) {
 			await waitForLlmStepReady(page);
 			return true;
 		}

@@ -6237,12 +6237,11 @@ mod tests {
         };
         let sandbox = create_sandbox(config);
         assert_eq!(sandbox.backend_name(), "none");
+        assert!(!sandbox.is_real());
         let id = SandboxId {
             scope: SandboxScope::Session,
             key: "test".into(),
         };
-        assert_eq!(sandbox.backend_name(), "none");
-        assert!(!sandbox.is_real());
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             sandbox.ensure_ready(&id, None).await.unwrap();

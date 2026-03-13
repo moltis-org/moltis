@@ -742,8 +742,8 @@ pub(crate) fn should_redirect_to_onboarding(path: &str, onboarded: bool) -> bool
     !is_onboarding_path(path) && !onboarded
 }
 
-pub(crate) fn should_redirect_from_onboarding(onboarded: bool) -> bool {
-    onboarded
+pub(crate) fn should_redirect_from_onboarding(onboarded: bool, auth_setup_pending: bool) -> bool {
+    onboarded && !auth_setup_pending
 }
 
 fn is_onboarding_path(path: &str) -> bool {
@@ -831,5 +831,13 @@ mod tests {
         };
         let json = serde_json::to_value(snapshot).unwrap();
         assert_eq!(json.get("localLlamaCpp").and_then(|v| v.as_u64()), Some(4));
+    }
+
+    #[test]
+    fn onboarding_redirect_waits_for_auth_recovery() {
+        assert!(should_redirect_from_onboarding(true, false));
+        assert!(!should_redirect_from_onboarding(true, true));
+        assert!(!should_redirect_from_onboarding(false, false));
+        assert!(!should_redirect_from_onboarding(false, true));
     }
 }
