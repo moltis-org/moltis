@@ -48,14 +48,54 @@ fn role_content(msg: &ChatMessage) -> (&str, &str) {
     }
 }
 
+/// Merge consecutive system messages into a single system message.
+/// This prevents Jinja template errors in GGUF models that expect
+/// at most one system message at the beginning of the conversation.
+#[must_use]
+fn merge_consecutive_system_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    let mut result = Vec::with_capacity(messages.len());
+    let mut pending_system_content: Option<String> = None;
+
+    for msg in messages {
+        match msg {
+            ChatMessage::System { content } => {
+                // Accumulate system message content
+                if let Some(ref mut existing) = pending_system_content {
+                    existing.push('\n');
+                    existing.push_str(content);
+                } else {
+                    pending_system_content = Some(content.clone());
+                }
+            },
+            other => {
+                // Flush any pending system message before adding non-system message
+                if let Some(content) = pending_system_content.take() {
+                    result.push(ChatMessage::System { content });
+                }
+                result.push(other.clone());
+            },
+        }
+    }
+
+    // Flush any remaining system message at the end
+    if let Some(content) = pending_system_content {
+        result.push(ChatMessage::System { content });
+    }
+
+    result
+}
+
 /// Format messages using the specified chat template.
 #[must_use]
 pub fn format_messages(messages: &[ChatMessage], hint: ChatTemplateHint) -> String {
+    // Merge consecutive system messages to prevent Jinja template errors
+    let merged_messages = merge_consecutive_system_messages(messages);
+
     match hint {
-        ChatTemplateHint::Auto | ChatTemplateHint::ChatML => format_chatml(messages),
-        ChatTemplateHint::Llama3 => format_llama3(messages),
-        ChatTemplateHint::Mistral => format_mistral(messages),
-        ChatTemplateHint::DeepSeek => format_deepseek(messages),
+        ChatTemplateHint::Auto | ChatTemplateHint::ChatML => format_chatml(&merged_messages),
+        ChatTemplateHint::Llama3 => format_llama3(&merged_messages),
+        ChatTemplateHint::Mistral => format_mistral(&merged_messages),
+        ChatTemplateHint::DeepSeek => format_deepseek(&merged_messages),
     }
 }
 
@@ -68,11 +108,28 @@ pub fn format_messages(messages: &[ChatMessage], hint: ChatTemplateHint) -> Stri
 /// {user_message}<|im_end|>
 /// <|im_start|>assistant
 /// ```
+///
+/// System messages are consolidated at the beginning to avoid Jinja template
+/// errors with models that require system messages to come first.
 fn format_chatml(messages: &[ChatMessage]) -> String {
     let mut output = String::new();
 
+    // First, output all system messages to satisfy templates that require
+    // system messages at the beginning (e.g., Qwen via llama.cpp).
+    for msg in messages {
+        if let ChatMessage::System { content } = msg {
+            output.push_str("<|im_start|>system\n");
+            output.push_str(content);
+            output.push_str("<|im_end|>\n");
+        }
+    }
+
+    // Then output all non-system messages in order.
     for msg in messages {
         let (role, content) = role_content(msg);
+        if role == "system" {
+            continue; // Already handled above.
+        }
 
         output.push_str("<|im_start|>");
         output.push_str(role);
@@ -95,11 +152,28 @@ fn format_chatml(messages: &[ChatMessage]) -> String {
 ///
 /// {user_message}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 /// ```
+///
+/// System messages are consolidated at the beginning to avoid Jinja template
+/// errors with models that require system messages to come first.
 fn format_llama3(messages: &[ChatMessage]) -> String {
     let mut output = String::from("<|begin_of_text|>");
 
+    // First, output all system messages to satisfy templates that require
+    // system messages at the beginning.
+    for msg in messages {
+        if let ChatMessage::System { content } = msg {
+            output.push_str("<|start_header_id|>system<|end_header_id|>\n\n");
+            output.push_str(content);
+            output.push_str("<|eot_id|>");
+        }
+    }
+
+    // Then output all non-system messages in order.
     for msg in messages {
         let (role, content) = role_content(msg);
+        if role == "system" {
+            continue; // Already handled above.
+        }
 
         output.push_str("<|start_header_id|>");
         output.push_str(role);
@@ -166,18 +240,30 @@ fn format_mistral(messages: &[ChatMessage]) -> String {
 /// <|User|>{user_message}
 /// <|Assistant|>
 /// ```
+///
+/// System messages are consolidated at the beginning to avoid Jinja template
+/// errors with models that require system messages to come first.
 fn format_deepseek(messages: &[ChatMessage]) -> String {
     let mut output = String::from("<|begin▁of▁sentence|>");
 
+    // First, output all system messages to satisfy templates that require
+    // system messages at the beginning.
+    for msg in messages {
+        if let ChatMessage::System { content } = msg {
+            output.push_str("system\n");
+            output.push_str(content);
+            output.push('\n');
+        }
+    }
+
+    // Then output all non-system messages in order.
     for msg in messages {
         let (role, content) = role_content(msg);
+        if role == "system" {
+            continue; // Already handled above.
+        }
 
         match role {
-            "system" => {
-                output.push_str("system\n");
-                output.push_str(content);
-                output.push('\n');
-            },
             "user" => {
                 output.push_str("<|User|>");
                 output.push_str(content);
@@ -321,5 +407,109 @@ mod tests {
 
         let result = format_llama3(&empty);
         assert!(result.ends_with("<|start_header_id|>assistant<|end_header_id|>\n\n"));
+    }
+
+    #[test]
+    fn test_merge_consecutive_system_messages() {
+        let messages = vec![
+            ChatMessage::system("You are a helpful assistant."),
+            ChatMessage::system("Be concise."),
+            ChatMessage::user("Hello!"),
+        ];
+
+        let merged = merge_consecutive_system_messages(&messages);
+        assert_eq!(merged.len(), 2);
+        assert!(matches!(merged[0], ChatMessage::System { .. }));
+        assert!(matches!(merged[1], ChatMessage::User { .. }));
+
+        // Check that system messages were merged
+        if let ChatMessage::System { content } = &merged[0] {
+            assert!(content.contains("You are a helpful assistant."));
+            assert!(content.contains("Be concise."));
+        } else {
+            panic!("Expected system message");
+        }
+    }
+
+    #[test]
+    fn test_merge_multiple_system_messages_with_user_between() {
+        let messages = vec![
+            ChatMessage::system("First system message."),
+            ChatMessage::user("User message."),
+            ChatMessage::system("Second system message."),
+            ChatMessage::system("Third system message."),
+            ChatMessage::assistant("Assistant response."),
+        ];
+
+        let merged = merge_consecutive_system_messages(&messages);
+        assert_eq!(merged.len(), 4);
+        assert!(matches!(merged[0], ChatMessage::System { .. }));
+        assert!(matches!(merged[1], ChatMessage::User { .. }));
+        assert!(matches!(merged[2], ChatMessage::System { .. }));
+        assert!(matches!(merged[3], ChatMessage::Assistant { .. }));
+
+        // Check first system message is unchanged
+        if let ChatMessage::System { content } = &merged[0] {
+            assert_eq!(content, "First system message.");
+        }
+
+        // Check second and third system messages were merged
+        if let ChatMessage::System { content } = &merged[2] {
+            assert!(content.contains("Second system message."));
+            assert!(content.contains("Third system message."));
+        }
+    }
+
+    #[test]
+    fn test_no_merge_for_single_system_message() {
+        let messages = vec![
+            ChatMessage::system("Single system message."),
+            ChatMessage::user("Hello!"),
+        ];
+
+        let merged = merge_consecutive_system_messages(&messages);
+        assert_eq!(merged.len(), 2);
+
+        if let ChatMessage::System { content } = &merged[0] {
+            assert_eq!(content, "Single system message.");
+        } else {
+            panic!("Expected system message");
+        }
+    }
+
+    #[test]
+    fn test_merge_system_messages_at_end() {
+        let messages = vec![
+            ChatMessage::user("Hello!"),
+            ChatMessage::system("First system message."),
+            ChatMessage::system("Second system message."),
+        ];
+
+        let merged = merge_consecutive_system_messages(&messages);
+        assert_eq!(merged.len(), 2);
+        assert!(matches!(merged[0], ChatMessage::User { .. }));
+        assert!(matches!(merged[1], ChatMessage::System { .. }));
+
+        if let ChatMessage::System { content } = &merged[1] {
+            assert!(content.contains("First system message."));
+            assert!(content.contains("Second system message."));
+        }
+    }
+
+    #[test]
+    fn test_format_messages_with_merged_system_messages() {
+        // Test that format_messages properly merges system messages before formatting
+        let messages = vec![
+            ChatMessage::system("You are helpful."),
+            ChatMessage::system("Be concise."),
+            ChatMessage::user("Hello!"),
+        ];
+
+        let result = format_messages(&messages, ChatTemplateHint::ChatML);
+        // Should only have one system block, not two
+        let system_count = result.matches("<|im_start|>system").count();
+        assert_eq!(system_count, 1, "Expected only one system message block after merging");
+        assert!(result.contains("You are helpful."));
+        assert!(result.contains("Be concise."));
     }
 }
