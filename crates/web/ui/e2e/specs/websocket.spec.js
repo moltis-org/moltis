@@ -57,6 +57,48 @@ async function waitForChatSessionReady(page) {
 	);
 }
 
+async function mockRpcErrorResponse(page, method, message) {
+	await page.evaluate(
+		async ({ targetMethod, errorMessage }) => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			if (!window.__origWebsocketSpecWsSend) {
+				window.__origWebsocketSpecWsSend = ws.send.bind(ws);
+			}
+
+			ws.send = (payload) => {
+				try {
+					var parsed = JSON.parse(payload);
+					if (parsed?.method === targetMethod) {
+						var resolver = stateModule.pending?.[parsed.id];
+						if (typeof resolver === "function") {
+							delete stateModule.pending[parsed.id];
+							resolver({
+								ok: false,
+								error: {
+									code: "INTERNAL",
+									message: errorMessage,
+								},
+							});
+						}
+						return;
+					}
+				} catch (_err) {
+					// Fall through to the original sender.
+				}
+				return window.__origWebsocketSpecWsSend(payload);
+			};
+		},
+		{ targetMethod: method, errorMessage: message },
+	);
+}
+
 test.describe("WebSocket connection lifecycle", () => {
 	test("status shows connected after page load", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -342,9 +384,11 @@ test.describe("WebSocket connection lifecycle", () => {
 
 	test("voice fallback action shows error when generation RPC fails", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await page.goto("/chats/main");
+		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
 		await expectRpcOk(page, "chat.clear", {});
+		await mockRpcErrorResponse(page, "sessions.voice.generate", "Voice generation failed for test.");
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -363,7 +407,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
 		await assistant.locator(".msg-voice-action").click();
 		await expect(assistant.locator(".msg-voice-action")).toHaveText("Retry voice");
-		await expect(assistant.locator(".msg-voice-warning")).not.toHaveText("");
+		await expect(assistant.locator(".msg-voice-warning")).toContainText("Voice generation failed for test.");
 		expect(pageErrors).toEqual([]);
 	});
 
