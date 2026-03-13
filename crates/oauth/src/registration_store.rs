@@ -3,11 +3,12 @@
 //! Stores client credentials at `~/.config/moltis/mcp_oauth_registrations.json`
 //! so that re-registration is avoided on subsequent connections.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, fmt::Write as _, path::PathBuf};
 
 use {
     secrecy::Secret,
     serde::{Deserialize, Serialize},
+    sha2::{Digest, Sha256},
     tracing::{debug, info, warn},
 };
 
@@ -64,16 +65,17 @@ impl RegistrationStore {
 
     /// Load a stored registration for the given server URL.
     pub fn load(&self, server_url: &str) -> Option<StoredRegistration> {
+        let server_key = server_lookup_key(server_url);
         let data = match std::fs::read_to_string(&self.path) {
             Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!(path = %self.path.display(), server_url, "registration file not found");
+                debug!(path = %self.path.display(), server_key, "registration file not found");
                 return None;
             },
             Err(e) => {
                 warn!(
                     path = %self.path.display(),
-                    server_url,
+                    server_key,
                     error = %e,
                     "registration file read failed"
                 );
@@ -86,7 +88,7 @@ impl RegistrationStore {
             Err(e) => {
                 warn!(
                     path = %self.path.display(),
-                    server_url,
+                    server_key,
                     error = %e,
                     "registration file parse failed"
                 );
@@ -94,13 +96,17 @@ impl RegistrationStore {
             },
         };
 
-        match map.get(server_url).cloned() {
+        match map
+            .get(&server_key)
+            .cloned()
+            .or_else(|| map.get(server_url).cloned())
+        {
             Some(reg) => {
-                debug!(server_url, client_id = %reg.client_id, "loaded stored registration");
+                debug!(server_key, client_id = %reg.client_id, "loaded stored registration");
                 Some(reg)
             },
             None => {
-                debug!(server_url, "no stored registration found");
+                debug!(server_key, "no stored registration found");
                 None
             },
         }
@@ -108,7 +114,8 @@ impl RegistrationStore {
 
     /// Save a registration for the given server URL.
     pub fn save(&self, server_url: &str, reg: &StoredRegistration) -> Result<()> {
-        info!(server_url, client_id = %reg.client_id, "saving MCP OAuth registration");
+        let server_key = server_lookup_key(server_url);
+        info!(server_key, client_id = %reg.client_id, "saving MCP OAuth registration");
 
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -119,7 +126,8 @@ impl RegistrationStore {
             .and_then(|d| serde_json::from_str(&d).ok())
             .unwrap_or_default();
 
-        map.insert(server_url.to_string(), reg.clone());
+        map.remove(server_url);
+        map.insert(server_key, reg.clone());
 
         let data = serde_json::to_string_pretty(&map)?;
         std::fs::write(&self.path, &data)?;
@@ -136,7 +144,8 @@ impl RegistrationStore {
 
     /// Delete a stored registration.
     pub fn delete(&self, server_url: &str) -> Result<()> {
-        info!(server_url, "deleting MCP OAuth registration");
+        let server_key = server_lookup_key(server_url);
+        info!(server_key, "deleting MCP OAuth registration");
 
         let data = match std::fs::read_to_string(&self.path) {
             Ok(d) => d,
@@ -144,12 +153,23 @@ impl RegistrationStore {
         };
 
         let mut map: HashMap<String, StoredRegistration> = serde_json::from_str(&data)?;
+        map.remove(&server_key);
         map.remove(server_url);
 
         let data = serde_json::to_string_pretty(&map)?;
         std::fs::write(&self.path, &data)?;
         Ok(())
     }
+}
+
+fn server_lookup_key(server_url: &str) -> String {
+    let digest = Sha256::digest(server_url.as_bytes());
+    let mut key = String::with_capacity("sha256:".len() + digest.len() * 2);
+    key.push_str("sha256:");
+    for byte in digest {
+        let _ = write!(&mut key, "{byte:02x}");
+    }
+    key
 }
 
 impl Default for RegistrationStore {
@@ -187,9 +207,14 @@ mod tests {
     fn roundtrip_save_load() {
         let (_dir, store) = temp_store();
         let reg = sample_registration();
+        let raw_url = "https://mcp.example.com?api_key=super-secret";
 
-        store.save("https://mcp.example.com", &reg).unwrap();
-        let loaded = store.load("https://mcp.example.com").unwrap();
+        store.save(raw_url, &reg).unwrap();
+        let file_contents = std::fs::read_to_string(&store.path).unwrap();
+        assert!(!file_contents.contains(raw_url));
+        assert!(!file_contents.contains("super-secret"));
+
+        let loaded = store.load(raw_url).unwrap();
 
         assert_eq!(loaded.client_id, "test-client");
         assert_eq!(
@@ -213,15 +238,32 @@ mod tests {
     }
 
     #[test]
-    fn delete_registration() {
+    fn load_supports_legacy_raw_url_keys() {
         let (_dir, store) = temp_store();
         let reg = sample_registration();
 
-        store.save("https://mcp.example.com", &reg).unwrap();
-        assert!(store.load("https://mcp.example.com").is_some());
+        let data = serde_json::json!({
+            "https://mcp.example.com?token=legacy-secret": reg
+        });
+        std::fs::write(&store.path, serde_json::to_string_pretty(&data).unwrap()).unwrap();
 
-        store.delete("https://mcp.example.com").unwrap();
-        assert!(store.load("https://mcp.example.com").is_none());
+        let loaded = store
+            .load("https://mcp.example.com?token=legacy-secret")
+            .unwrap();
+        assert_eq!(loaded.client_id, "test-client");
+    }
+
+    #[test]
+    fn delete_registration() {
+        let (_dir, store) = temp_store();
+        let reg = sample_registration();
+        let raw_url = "https://mcp.example.com?api_key=delete-me";
+
+        store.save(raw_url, &reg).unwrap();
+        assert!(store.load(raw_url).is_some());
+
+        store.delete(raw_url).unwrap();
+        assert!(store.load(raw_url).is_none());
     }
 
     #[test]

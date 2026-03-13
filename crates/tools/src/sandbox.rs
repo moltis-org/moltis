@@ -39,13 +39,11 @@ async fn provision_packages(cli: &str, container_name: &str, packages: &[String]
     let pkg_list = packages.join(" ");
     info!(container = container_name, packages = %pkg_list, "provisioning sandbox packages");
     let output = tokio::process::Command::new(cli)
-        .args([
-            "exec",
+        .args(container_exec_shell_args(
+            cli,
             container_name,
-            "sh",
-            "-c",
-            &format!("apt-get update -qq && apt-get install -y -qq {pkg_list} 2>&1 | tail -5"),
-        ])
+            format!("apt-get update -qq && apt-get install -y -qq {pkg_list} 2>&1 | tail -5"),
+        ))
         .output()
         .await?;
     if !output.status.success() {
@@ -640,7 +638,7 @@ fn canonical_sandbox_packages(packages: &[String]) -> Vec<String> {
 const SANDBOX_HOME_DIR: &str = "/home/sandbox";
 const GOGCLI_MODULE_PATH: &str = "github.com/steipete/gogcli/cmd/gog";
 const GOGCLI_VERSION: &str = "latest";
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const APPLE_CONTAINER_SAFE_WORKDIR: &str = "/tmp";
 
 fn sanitize_path_component(input: &str) -> String {
@@ -1041,17 +1039,22 @@ WORKDIR {SANDBOX_HOME_DIR}\n"
     )
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS: u64 = 2_147_483_647;
 
-#[cfg(target_os = "macos")]
-fn apple_container_bootstrap_command() -> String {
-    format!(
-        "mkdir -p {SANDBOX_HOME_DIR} && if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep {APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS}; fi"
-    )
+#[cfg(any(target_os = "macos", test))]
+fn apple_container_wrap_shell_command(shell_command: String) -> String {
+    format!("mkdir -p {SANDBOX_HOME_DIR} && {shell_command}")
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
+fn apple_container_bootstrap_command() -> String {
+    apple_container_wrap_shell_command(format!(
+        "if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep {APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS}; fi"
+    ))
+}
+
+#[cfg(any(target_os = "macos", test))]
 fn apple_container_run_args(
     name: &str,
     image: &str,
@@ -1083,13 +1086,32 @@ fn apple_container_run_args(
     args
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn apple_container_exec_args(name: &str, shell_command: String) -> Vec<String> {
     vec![
         "exec".to_string(),
         "--workdir".to_string(),
         APPLE_CONTAINER_SAFE_WORKDIR.to_string(),
         name.to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        apple_container_wrap_shell_command(shell_command),
+    ]
+}
+
+fn container_exec_shell_args(
+    cli: &str,
+    container_name: &str,
+    shell_command: String,
+) -> Vec<String> {
+    #[cfg(any(target_os = "macos", test))]
+    if cli == "container" {
+        return apple_container_exec_args(container_name, shell_command);
+    }
+
+    vec![
+        "exec".to_string(),
+        container_name.to_string(),
         "sh".to_string(),
         "-c".to_string(),
         shell_command,
@@ -6209,8 +6231,13 @@ mod tests {
 
     #[test]
     fn test_create_sandbox_off() {
-        let config = SandboxConfig::default();
+        let config = SandboxConfig {
+            mode: SandboxMode::Off,
+            ..Default::default()
+        };
         let sandbox = create_sandbox(config);
+        assert_eq!(sandbox.backend_name(), "none");
+        assert!(!sandbox.is_real());
         let id = SandboxId {
             scope: SandboxScope::Session,
             key: "test".into(),
@@ -6776,7 +6803,6 @@ mod tests {
         assert!(!is_apple_container_unavailable_error("permission denied"));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn test_should_restart_after_readiness_error() {
         assert!(should_restart_after_readiness_error(
@@ -6793,7 +6819,6 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn test_apple_container_bootstrap_command_uses_portable_sleep() {
         let command = apple_container_bootstrap_command();
@@ -6804,7 +6829,6 @@ mod tests {
         assert!(!command.contains("exec sleep infinity"));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
         let args =
@@ -6829,7 +6853,6 @@ mod tests {
         assert_eq!(args, expected);
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn test_apple_container_run_args_with_home_volume() {
         let args = apple_container_run_args(
@@ -6860,9 +6883,8 @@ mod tests {
         assert_eq!(args, expected);
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn test_apple_container_exec_args_pin_workdir() {
+    fn test_apple_container_exec_args_pin_workdir_and_bootstrap_home() {
         let args = apple_container_exec_args("moltis-sandbox-test", "true".to_string());
         let expected = vec![
             "exec",
@@ -6871,11 +6893,39 @@ mod tests {
             "moltis-sandbox-test",
             "sh",
             "-c",
-            "true",
+            "mkdir -p /home/sandbox && true",
         ]
         .into_iter()
         .map(str::to_string)
         .collect::<Vec<_>>();
+        assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn test_container_exec_shell_args_apple_container_uses_safe_wrapper() {
+        let args = container_exec_shell_args("container", "moltis-sandbox-test", "echo hi".into());
+        let expected = vec![
+            "exec",
+            "--workdir",
+            "/tmp",
+            "moltis-sandbox-test",
+            "sh",
+            "-c",
+            "mkdir -p /home/sandbox && echo hi",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+        assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn test_container_exec_shell_args_docker_keeps_standard_exec_shape() {
+        let args = container_exec_shell_args("docker", "moltis-sandbox-test", "echo hi".into());
+        let expected = vec!["exec", "moltis-sandbox-test", "sh", "-c", "echo hi"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
         assert_eq!(args, expected);
     }
 

@@ -10,6 +10,8 @@ use {async_trait::async_trait, serde_json::Value, tracing::warn};
 pub enum ServiceError {
     #[error("{message}")]
     Message { message: String },
+    #[error("{message}")]
+    Forbidden { message: String },
     #[error("{0}")]
     Serde(#[from] serde_json::Error),
 }
@@ -18,6 +20,13 @@ impl ServiceError {
     #[must_use]
     pub fn message(message: impl std::fmt::Display) -> Self {
         Self::Message {
+            message: message.to_string(),
+        }
+    }
+
+    #[must_use]
+    pub fn forbidden(message: impl std::fmt::Display) -> Self {
+        Self::Forbidden {
             message: message.to_string(),
         }
     }
@@ -37,7 +46,11 @@ impl From<&str> for ServiceError {
 
 impl From<ServiceError> for moltis_protocol::ErrorShape {
     fn from(err: ServiceError) -> Self {
-        Self::new(moltis_protocol::error_codes::UNAVAILABLE, err.to_string())
+        let code = match &err {
+            ServiceError::Forbidden { .. } => moltis_protocol::error_codes::FORBIDDEN,
+            _ => moltis_protocol::error_codes::UNAVAILABLE,
+        };
+        Self::new(code, err.to_string())
     }
 }
 

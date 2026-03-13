@@ -212,7 +212,10 @@ docker run -d \
   ghcr.io/moltis-org/moltis:latest
 ```
 
-Open `https://localhost:13131` and complete the setup. See [Docker docs](https://docs.moltis.org/docker.html) for Podman, OrbStack, TLS trust, and persistence details.
+Open `https://localhost:13131` and complete the setup. For unattended Docker
+deployments, set `MOLTIS_PASSWORD`, `MOLTIS_PROVIDER`, and `MOLTIS_API_KEY`
+before first boot to skip the setup wizard. See [Docker docs](https://docs.moltis.org/docker.html)
+for Podman, OrbStack, TLS trust, and persistence details.
 
 ### Cloud Deployment
 

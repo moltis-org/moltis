@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -1571,12 +1572,39 @@ impl LiveModelService {
     ) -> Vec<&'a moltis_providers::ModelInfo> {
         let mut ordered: Vec<(usize, &'a moltis_providers::ModelInfo)> =
             models.enumerate().collect();
-        ordered.sort_by_key(|(idx, model)| {
-            (
-                Self::priority_rank(order, model),
-                subscription_provider_rank(&model.provider),
-                *idx,
-            )
+        ordered.sort_by(|(idx_a, a), (idx_b, b)| {
+            let rank_a = Self::priority_rank(order, a);
+            let rank_b = Self::priority_rank(order, b);
+            // Preferred (rank != MAX) first, then non-preferred
+            let bucket_a = if rank_a == usize::MAX {
+                1u8
+            } else {
+                0
+            };
+            let bucket_b = if rank_b == usize::MAX {
+                1u8
+            } else {
+                0
+            };
+            bucket_a
+                .cmp(&bucket_b)
+                .then_with(|| {
+                    if bucket_a == 0 {
+                        rank_a.cmp(&rank_b)
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .then_with(|| {
+                    a.display_name
+                        .to_lowercase()
+                        .cmp(&b.display_name.to_lowercase())
+                })
+                .then_with(|| {
+                    subscription_provider_rank(&a.provider)
+                        .cmp(&subscription_provider_rank(&b.provider))
+                })
+                .then_with(|| idx_a.cmp(idx_b))
         });
         ordered.into_iter().map(|(_, model)| model).collect()
     }
@@ -2402,12 +2430,41 @@ fn build_tool_call_assistant_message(
     }
 }
 
+async fn persist_tool_history_pair(
+    session_store: &Arc<SessionStore>,
+    session_key: &str,
+    assistant_tool_call_msg: PersistedMessage,
+    tool_result_msg: PersistedMessage,
+    assistant_warn_context: &str,
+    tool_result_warn_context: &str,
+) {
+    if let Err(e) = session_store
+        .append(session_key, &assistant_tool_call_msg.to_value())
+        .await
+    {
+        warn!("{assistant_warn_context}: {e}");
+        warn!(
+            session = %session_key,
+            "skipping tool result persistence to avoid orphaned tool history"
+        );
+        return;
+    }
+
+    if let Err(e) = session_store
+        .append(session_key, &tool_result_msg.to_value())
+        .await
+    {
+        warn!("{tool_result_warn_context}: {e}");
+    }
+}
+
 pub struct LiveChatService {
     providers: Arc<RwLock<ProviderRegistry>>,
     model_store: Arc<RwLock<DisabledModelsStore>>,
     state: Arc<dyn ChatRuntime>,
     active_runs: Arc<RwLock<HashMap<String, AbortHandle>>>,
     active_runs_by_session: Arc<RwLock<HashMap<String, String>>>,
+    terminal_runs: Arc<RwLock<HashSet<String>>>,
     tool_registry: Arc<RwLock<ToolRegistry>>,
     session_store: Arc<SessionStore>,
     session_metadata: Arc<SqliteSessionMetadata>,
@@ -2447,6 +2504,7 @@ impl LiveChatService {
             state,
             active_runs: Arc::new(RwLock::new(HashMap::new())),
             active_runs_by_session: Arc::new(RwLock::new(HashMap::new())),
+            terminal_runs: Arc::new(RwLock::new(HashSet::new())),
             tool_registry: Arc::new(RwLock::new(ToolRegistry::new())),
             session_store,
             session_metadata,
@@ -2521,6 +2579,7 @@ impl LiveChatService {
     async fn abort_run_handle(
         active_runs: &Arc<RwLock<HashMap<String, AbortHandle>>>,
         active_runs_by_session: &Arc<RwLock<HashMap<String, String>>>,
+        terminal_runs: &Arc<RwLock<HashSet<String>>>,
         run_id: Option<&str>,
         session_key: Option<&str>,
     ) -> (Option<String>, bool) {
@@ -2535,6 +2594,10 @@ impl LiveChatService {
         let Some(target_run_id) = resolved_run_id.clone() else {
             return (None, false);
         };
+
+        if terminal_runs.read().await.contains(&target_run_id) {
+            return (resolved_run_id, false);
+        }
 
         let aborted = if let Some(handle) = active_runs.write().await.remove(&target_run_id) {
             handle.abort();
@@ -3000,6 +3063,7 @@ impl ChatService for LiveChatService {
             let active_tool_calls = Arc::clone(&self.active_tool_calls);
             let active_partial_assistant = Arc::clone(&self.active_partial_assistant);
             let active_reply_medium = Arc::clone(&self.active_reply_medium);
+            let terminal_runs = Arc::clone(&self.terminal_runs);
             let session_store = Arc::clone(&self.session_store);
             let session_metadata = Arc::clone(&self.session_metadata);
             let tool_registry = Arc::clone(&self.tool_registry);
@@ -3027,6 +3091,7 @@ impl ChatService for LiveChatService {
                     &run_id_clone,
                     &tool_registry,
                     &session_store,
+                    &terminal_runs,
                     &session_key_clone,
                     &shell_command,
                     user_message_index,
@@ -3074,6 +3139,7 @@ impl ChatService for LiveChatService {
                     .await
                     .remove(&session_key_clone);
                 active_tool_calls.write().await.remove(&session_key_clone);
+                terminal_runs.write().await.remove(&run_id_clone);
                 active_partial_assistant
                     .write()
                     .await
@@ -3448,7 +3514,7 @@ impl ChatService for LiveChatService {
             )
             .await;
 
-            let compact_params = serde_json::json!({ "_conn_id": conn_id });
+            let compact_params = serde_json::json!({ "_session_key": &session_key });
             match self.compact(compact_params).await {
                 Ok(_) => {
                     // Reload history after compaction.
@@ -3559,6 +3625,7 @@ impl ChatService for LiveChatService {
 
         let message_queue = Arc::clone(&self.message_queue);
         let state_for_drain = Arc::clone(&self.state);
+        let terminal_runs = Arc::clone(&self.terminal_runs);
         let deferred_channel_target = deferred_channel_target.clone();
 
         let handle = tokio::spawn(async move {
@@ -3611,6 +3678,7 @@ impl ChatService for LiveChatService {
                         Some(&session_store),
                         client_seq,
                         Some(Arc::clone(&active_partial_assistant)),
+                        &terminal_runs,
                     )
                     .await
                 } else {
@@ -3640,6 +3708,7 @@ impl ChatService for LiveChatService {
                         Some(Arc::clone(&active_thinking_text)),
                         Some(Arc::clone(&active_tool_calls)),
                         Some(Arc::clone(&active_partial_assistant)),
+                        &terminal_runs,
                     )
                     .await
                 }
@@ -3724,6 +3793,7 @@ impl ChatService for LiveChatService {
                 .await
                 .remove(&session_key_clone);
             active_tool_calls.write().await.remove(&session_key_clone);
+            terminal_runs.write().await.remove(&run_id_clone);
             active_partial_assistant
                 .write()
                 .await
@@ -3917,6 +3987,7 @@ impl ChatService for LiveChatService {
 
         // send_sync is text-only (used by API calls and channels).
         let user_content = UserContent::text(&text);
+        let terminal_runs = Arc::new(RwLock::new(HashSet::new()));
         let result = if stream_only {
             run_streaming(
                 &state,
@@ -3937,6 +4008,7 @@ impl ChatService for LiveChatService {
                 Some(&self.session_store),
                 None, // send_sync: no client seq
                 None, // send_sync: no partial assistant tracking
+                &terminal_runs,
             )
             .await
         } else {
@@ -3966,6 +4038,7 @@ impl ChatService for LiveChatService {
                 None,  // send_sync: no thinking text tracking
                 None,  // send_sync: no tool call tracking
                 None,  // send_sync: no partial assistant tracking
+                &terminal_runs,
             )
             .await
         };
@@ -4048,6 +4121,7 @@ impl ChatService for LiveChatService {
         let (resolved_run_id, aborted) = Self::abort_run_handle(
             &self.active_runs,
             &self.active_runs_by_session,
+            &self.terminal_runs,
             run_id,
             session_key,
         )
@@ -5231,6 +5305,7 @@ async fn run_explicit_shell_command(
     run_id: &str,
     tool_registry: &Arc<RwLock<ToolRegistry>>,
     session_store: &Arc<SessionStore>,
+    terminal_runs: &Arc<RwLock<HashSet<String>>>,
     session_key: &str,
     command: &str,
     user_message_index: usize,
@@ -5298,12 +5373,6 @@ async fn run_explicit_shell_command(
                 client_seq,
                 Some(run_id),
             );
-            if let Err(e) = session_store
-                .append(session_key, &assistant_tool_call_msg.to_value())
-                .await
-            {
-                warn!("failed to persist direct /sh assistant tool call: {e}");
-            }
             let tool_result_msg = PersistedMessage::tool_result(
                 tool_call_id.clone(),
                 "exec",
@@ -5312,12 +5381,15 @@ async fn run_explicit_shell_command(
                 Some(capped.clone()),
                 None,
             );
-            if let Err(e) = session_store
-                .append(session_key, &tool_result_msg.to_value())
-                .await
-            {
-                warn!("failed to persist direct /sh tool result: {e}");
-            }
+            persist_tool_history_pair(
+                session_store,
+                session_key,
+                assistant_tool_call_msg,
+                tool_result_msg,
+                "failed to persist direct /sh assistant tool call",
+                "failed to persist direct /sh tool result",
+            )
+            .await;
 
             broadcast(
                 state,
@@ -5353,12 +5425,6 @@ async fn run_explicit_shell_command(
                 client_seq,
                 Some(run_id),
             );
-            if let Err(e) = session_store
-                .append(session_key, &assistant_tool_call_msg.to_value())
-                .await
-            {
-                warn!("failed to persist direct /sh assistant tool call: {e}");
-            }
             let tool_result_msg = PersistedMessage::tool_result(
                 tool_call_id.clone(),
                 "exec",
@@ -5367,12 +5433,15 @@ async fn run_explicit_shell_command(
                 None,
                 Some(error_text.clone()),
             );
-            if let Err(e) = session_store
-                .append(session_key, &tool_result_msg.to_value())
-                .await
-            {
-                warn!("failed to persist direct /sh tool error: {e}");
-            }
+            persist_tool_history_pair(
+                session_store,
+                session_key,
+                assistant_tool_call_msg,
+                tool_result_msg,
+                "failed to persist direct /sh assistant tool call",
+                "failed to persist direct /sh tool error",
+            )
+            .await;
 
             broadcast(
                 state,
@@ -5432,6 +5501,7 @@ async fn run_explicit_shell_command(
     };
     #[allow(clippy::unwrap_used)] // serializing known-valid struct
     let payload = serde_json::to_value(&final_payload).unwrap();
+    terminal_runs.write().await.insert(run_id.to_string());
     broadcast(state, "chat", payload, BroadcastOpts::default()).await;
 
     AssistantTurnOutput {
@@ -5860,6 +5930,7 @@ async fn run_with_tools(
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
     active_tool_calls: Option<Arc<RwLock<HashMap<String, Vec<ActiveToolCall>>>>>,
     active_partial_assistant: Option<Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>>,
+    terminal_runs: &Arc<RwLock<HashSet<String>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
@@ -6218,18 +6289,15 @@ async fn run_with_tools(
                         let store_clone = Arc::clone(store);
                         let sk_persist = sk.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = store_clone
-                                .append(&sk_persist, &assistant_tool_call_msg.to_value())
-                                .await
-                            {
-                                warn!("failed to persist assistant tool call: {e}");
-                            }
-                            if let Err(e) = store_clone
-                                .append(&sk_persist, &tool_result_msg.to_value())
-                                .await
-                            {
-                                warn!("failed to persist tool result: {e}");
-                            }
+                            persist_tool_history_pair(
+                                &store_clone,
+                                &sk_persist,
+                                assistant_tool_call_msg,
+                                tool_result_msg,
+                                "failed to persist assistant tool call",
+                                "failed to persist tool result",
+                            )
+                            .await;
                         });
                     }
 
@@ -6522,6 +6590,7 @@ async fn run_with_tools(
                 };
                 #[allow(clippy::unwrap_used)] // serializing known-valid struct
                 let payload_val = serde_json::to_value(&error_payload).unwrap();
+                terminal_runs.write().await.insert(run_id.to_string());
                 broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                 return None;
             }
@@ -6589,6 +6658,7 @@ async fn run_with_tools(
             };
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
             let payload_val = serde_json::to_value(&final_payload).unwrap();
+            terminal_runs.write().await.insert(run_id.to_string());
             broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
 
             if !is_silent {
@@ -6635,6 +6705,7 @@ async fn run_with_tools(
             };
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
             let payload_val = serde_json::to_value(&error_payload).unwrap();
+            terminal_runs.write().await.insert(run_id.to_string());
             broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
             None
         },
@@ -6814,6 +6885,7 @@ async fn run_streaming(
     session_store: Option<&Arc<SessionStore>>,
     client_seq: Option<u64>,
     active_partial_assistant: Option<Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>>,
+    terminal_runs: &Arc<RwLock<HashSet<String>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
     let persona = load_prompt_persona_for_agent(agent_id);
@@ -6995,6 +7067,7 @@ async fn run_streaming(
                         };
                         #[allow(clippy::unwrap_used)] // serializing known-valid struct
                         let payload_val = serde_json::to_value(&error_payload).unwrap();
+                        terminal_runs.write().await.insert(run_id.to_string());
                         broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                         return None;
                     }
@@ -7061,6 +7134,7 @@ async fn run_streaming(
                     };
                     #[allow(clippy::unwrap_used)] // serializing known-valid struct
                     let payload_val = serde_json::to_value(&final_payload).unwrap();
+                    terminal_runs.write().await.insert(run_id.to_string());
                     broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
 
                     if !is_silent {
@@ -7161,6 +7235,7 @@ async fn run_streaming(
                     };
                     #[allow(clippy::unwrap_used)] // serializing known-valid struct
                     let payload_val = serde_json::to_value(&error_payload).unwrap();
+                    terminal_runs.write().await.insert(run_id.to_string());
                     broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                     return None;
                 },
@@ -8345,6 +8420,9 @@ mod tests {
         }
     }
 
+    struct AutoCompactRegressionProvider {
+        context_window: u32,
+    }
     #[async_trait]
     impl LlmProvider for StaticProvider {
         fn name(&self) -> &str {
@@ -8368,6 +8446,48 @@ mod tests {
             _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for AutoCompactRegressionProvider {
+        fn name(&self) -> &str {
+            "test"
+        }
+
+        fn id(&self) -> &str {
+            "test::auto-compact"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+        ) -> Result<moltis_agents::model::CompletionResponse> {
+            anyhow::bail!("not implemented for test")
+        }
+
+        fn context_window(&self) -> u32 {
+            self.context_window
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let response = match messages.first() {
+                Some(ChatMessage::System { content })
+                    if content.contains("conversation summarizer") =>
+                {
+                    "summary"
+                },
+                _ => "final reply",
+            };
+
+            Box::pin(tokio_stream::iter(vec![
+                StreamEvent::Delta(response.to_string()),
+                StreamEvent::Done(moltis_agents::model::Usage::default()),
+            ]))
         }
     }
 
@@ -9555,6 +9675,103 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn auto_compact_uses_explicit_session_key_for_channel_sessions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        let state: Arc<dyn ChatRuntime> = Arc::new(MockChatRuntime::new());
+        let mut providers = ProviderRegistry::empty();
+        providers.register(
+            moltis_providers::ModelInfo {
+                id: "test::auto-compact".to_string(),
+                provider: "test".to_string(),
+                display_name: "Auto Compact Test".to_string(),
+                created_at: None,
+            },
+            Arc::new(AutoCompactRegressionProvider {
+                context_window: 100,
+            }),
+        );
+
+        let chat = LiveChatService::new(
+            Arc::new(RwLock::new(providers)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            state,
+            Arc::clone(&store),
+            metadata,
+        );
+
+        let session_key = "discord:acct:123";
+        store
+            .append(
+                session_key,
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": "existing response",
+                    "requestInputTokens": 94_u64,
+                    "requestOutputTokens": 1_u64
+                }),
+            )
+            .await
+            .expect("seed channel session history");
+
+        let send_result = chat
+            .send(serde_json::json!({
+                "text": "ping",
+                "_session_key": session_key
+            }))
+            .await
+            .expect("chat.send should succeed");
+        assert!(
+            send_result
+                .get("runId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+        );
+
+        let history = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let messages = store.read(session_key).await.unwrap_or_default();
+                let has_final_reply = messages.last().is_some_and(|message| {
+                    message.get("role").and_then(Value::as_str) == Some("assistant")
+                        && message.get("content").and_then(Value::as_str) == Some("final reply")
+                });
+                if has_final_reply {
+                    return messages;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("assistant reply should be persisted");
+
+        assert_eq!(history.len(), 3);
+        assert_eq!(
+            history[0].get("role").and_then(Value::as_str),
+            Some("assistant")
+        );
+        assert!(
+            history[0]
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.starts_with("[Conversation Summary]\n\nsummary"))
+        );
+        assert_eq!(history[1].get("role").and_then(Value::as_str), Some("user"));
+        assert_eq!(
+            history[2].get("content").and_then(Value::as_str),
+            Some("final reply")
+        );
+
+        let main_history = store.read("main").await.unwrap_or_default();
+        assert!(
+            main_history.is_empty(),
+            "auto-compact should not touch the default web session"
+        );
+    }
+
     #[test]
     fn format_channel_retry_message_rounds_up_seconds() {
         let error_obj = serde_json::json!({ "type": "rate_limit_exceeded" });
@@ -9685,6 +9902,10 @@ mod tests {
         )
     }
 
+    fn make_terminal_runs() -> Arc<RwLock<HashSet<String>>> {
+        Arc::new(RwLock::new(HashSet::new()))
+    }
+
     #[tokio::test]
     async fn same_session_runs_are_serialized() {
         let locks = make_session_locks();
@@ -9758,6 +9979,7 @@ mod tests {
     #[tokio::test]
     async fn abort_run_handle_resolves_run_from_session_key() {
         let (active_runs, active_runs_by_session) = make_active_run_maps();
+        let terminal_runs = make_terminal_runs();
 
         let task = tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -9775,6 +9997,7 @@ mod tests {
         let (resolved_run_id, aborted) = LiveChatService::abort_run_handle(
             &active_runs,
             &active_runs_by_session,
+            &terminal_runs,
             None,
             Some("main"),
         )
@@ -9791,6 +10014,7 @@ mod tests {
     #[tokio::test]
     async fn abort_run_handle_by_run_id_clears_session_lookup() {
         let (active_runs, active_runs_by_session) = make_active_run_maps();
+        let terminal_runs = make_terminal_runs();
 
         let task = tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -9808,6 +10032,7 @@ mod tests {
         let (resolved_run_id, aborted) = LiveChatService::abort_run_handle(
             &active_runs,
             &active_runs_by_session,
+            &terminal_runs,
             Some("run-b"),
             None,
         )
@@ -9817,6 +10042,51 @@ mod tests {
         assert!(active_runs.read().await.is_empty());
         assert!(active_runs_by_session.read().await.is_empty());
 
+        let err = task.await.expect_err("task should be cancelled");
+        assert!(err.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn abort_run_handle_ignores_terminal_run() {
+        let (active_runs, active_runs_by_session) = make_active_run_maps();
+        let terminal_runs = make_terminal_runs();
+
+        let task = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        active_runs
+            .write()
+            .await
+            .insert("run-c".to_string(), task.abort_handle());
+        active_runs_by_session
+            .write()
+            .await
+            .insert("main".to_string(), "run-c".to_string());
+        terminal_runs.write().await.insert("run-c".to_string());
+
+        let (resolved_run_id, aborted) = LiveChatService::abort_run_handle(
+            &active_runs,
+            &active_runs_by_session,
+            &terminal_runs,
+            Some("run-c"),
+            None,
+        )
+        .await;
+
+        assert_eq!(resolved_run_id.as_deref(), Some("run-c"));
+        assert!(!aborted);
+        assert!(active_runs.read().await.contains_key("run-c"));
+        assert_eq!(
+            active_runs_by_session
+                .read()
+                .await
+                .get("main")
+                .map(String::as_str),
+            Some("run-c")
+        );
+
+        task.abort();
         let err = task.await.expect_err("task should be cancelled");
         assert!(err.is_cancelled());
     }
@@ -10356,9 +10626,11 @@ mod tests {
 
         let order = LiveModelService::build_priority_order(&[]);
         let ordered = LiveModelService::prioritize_models(&order, vec![&m1, &m2, &m3].into_iter());
-        assert_eq!(ordered[0].id, m2.id);
-        assert_eq!(ordered[1].id, m1.id);
-        assert_eq!(ordered[2].id, m3.id);
+        // Alphabetical: "Claude Sonnet 4.5" < "GPT-5.2"; among GPT-5.2
+        // ties, subscription_provider_rank breaks the tie (codex > openai).
+        assert_eq!(ordered[0].id, m3.id);
+        assert_eq!(ordered[1].id, m2.id);
+        assert_eq!(ordered[2].id, m1.id);
     }
 
     #[test]
