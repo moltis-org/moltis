@@ -2478,6 +2478,7 @@ pub struct LiveChatService {
     state: Arc<dyn ChatRuntime>,
     active_runs: Arc<RwLock<HashMap<String, AbortHandle>>>,
     active_runs_by_session: Arc<RwLock<HashMap<String, String>>>,
+    active_event_forwarders: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<String>>>>,
     terminal_runs: Arc<RwLock<HashSet<String>>>,
     tool_registry: Arc<RwLock<ToolRegistry>>,
     session_store: Arc<SessionStore>,
@@ -2518,6 +2519,7 @@ impl LiveChatService {
             state,
             active_runs: Arc::new(RwLock::new(HashMap::new())),
             active_runs_by_session: Arc::new(RwLock::new(HashMap::new())),
+            active_event_forwarders: Arc::new(RwLock::new(HashMap::new())),
             terminal_runs: Arc::new(RwLock::new(HashSet::new())),
             tool_registry: Arc::new(RwLock::new(ToolRegistry::new())),
             session_store,
@@ -2645,6 +2647,28 @@ impl LiveChatService {
             .await
             .iter()
             .find_map(|(key, active_run_id)| (active_run_id == target_run_id).then(|| key.clone()))
+    }
+
+    async fn wait_for_event_forwarder(
+        active_event_forwarders: &Arc<RwLock<HashMap<String, tokio::task::JoinHandle<String>>>>,
+        session_key: &str,
+    ) -> String {
+        let handle = active_event_forwarders.write().await.remove(session_key);
+        let Some(handle) = handle else {
+            return String::new();
+        };
+
+        match handle.await {
+            Ok(reasoning) => reasoning,
+            Err(e) => {
+                warn!(
+                    session = %session_key,
+                    error = %e,
+                    "runner event forwarder task failed"
+                );
+                String::new()
+            },
+        }
     }
 
     async fn persist_partial_assistant_on_abort(
@@ -3639,6 +3663,7 @@ impl ChatService for LiveChatService {
 
         let message_queue = Arc::clone(&self.message_queue);
         let state_for_drain = Arc::clone(&self.state);
+        let active_event_forwarders = Arc::clone(&self.active_event_forwarders);
         let terminal_runs = Arc::clone(&self.terminal_runs);
         let deferred_channel_target = deferred_channel_target.clone();
 
@@ -3722,6 +3747,7 @@ impl ChatService for LiveChatService {
                         Some(Arc::clone(&active_thinking_text)),
                         Some(Arc::clone(&active_tool_calls)),
                         Some(Arc::clone(&active_partial_assistant)),
+                        &active_event_forwarders,
                         &terminal_runs,
                     )
                     .await
@@ -3797,6 +3823,12 @@ impl ChatService for LiveChatService {
                     session_metadata.touch(&session_key_clone, count).await;
                 }
             }
+
+            let _ = LiveChatService::wait_for_event_forwarder(
+                &active_event_forwarders,
+                &session_key_clone,
+            )
+            .await;
 
             active_runs.write().await.remove(&run_id_clone);
             let mut runs_by_session = active_runs_by_session.write().await;
@@ -4003,6 +4035,7 @@ impl ChatService for LiveChatService {
 
         // send_sync is text-only (used by API calls and channels).
         let user_content = UserContent::text(&text);
+        let active_event_forwarders = Arc::new(RwLock::new(HashMap::new()));
         let terminal_runs = Arc::new(RwLock::new(HashSet::new()));
         let result = if stream_only {
             run_streaming(
@@ -4054,6 +4087,7 @@ impl ChatService for LiveChatService {
                 None,  // send_sync: no thinking text tracking
                 None,  // send_sync: no tool call tracking
                 None,  // send_sync: no partial assistant tracking
+                &active_event_forwarders,
                 &terminal_runs,
             )
             .await
@@ -4151,6 +4185,7 @@ impl ChatService for LiveChatService {
         );
 
         if aborted && let Some(key) = resolved_session_key.as_deref() {
+            let _ = Self::wait_for_event_forwarder(&self.active_event_forwarders, key).await;
             let partial = self.persist_partial_assistant_on_abort(key).await;
             self.active_thinking_text.write().await.remove(key);
             self.active_tool_calls.write().await.remove(key);
@@ -5939,6 +5974,7 @@ async fn run_with_tools(
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
     active_tool_calls: Option<Arc<RwLock<HashMap<String, Vec<ActiveToolCall>>>>>,
     active_partial_assistant: Option<Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>>,
+    active_event_forwarders: &Arc<RwLock<HashMap<String, tokio::task::JoinHandle<String>>>>,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
@@ -6408,6 +6444,10 @@ async fn run_with_tools(
         }
         latest_reasoning
     });
+    active_event_forwarders
+        .write()
+        .await
+        .insert(session_key.to_string(), event_forwarder);
 
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
     let chat_history = values_to_chat_messages(history_raw);
@@ -6531,13 +6571,8 @@ async fn run_with_tools(
     // Ensure all runner events (including deltas) are broadcast in order before
     // emitting terminal final/error frames.
     drop(on_event);
-    let reasoning_text = match event_forwarder.await {
-        Ok(reasoning) => reasoning,
-        Err(e) => {
-            warn!(run_id, error = %e, "runner event forwarder task failed");
-            String::new()
-        },
-    };
+    let reasoning_text =
+        LiveChatService::wait_for_event_forwarder(active_event_forwarders, session_key).await;
     let reasoning = {
         let trimmed = reasoning_text.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
@@ -11684,6 +11719,109 @@ mod tests {
                 .get("test-session")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn abort_waits_for_pending_tool_history_before_persisting_partial() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(ProviderRegistry::empty())),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new()),
+            Arc::clone(&store),
+            metadata,
+        );
+
+        let session_key = "main";
+        let run_id = "run-with-pending-tool-history";
+
+        service
+            .active_partial_assistant
+            .write()
+            .await
+            .insert(session_key.to_string(), {
+                let mut draft =
+                    ActiveAssistantDraft::new(run_id, "test-model", "test-provider", None);
+                draft.append_text("Partial answer");
+                draft
+            });
+        service
+            .active_runs_by_session
+            .write()
+            .await
+            .insert(session_key.to_string(), run_id.to_string());
+        let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        service
+            .active_runs
+            .write()
+            .await
+            .insert(run_id.to_string(), handle.abort_handle());
+
+        let store_for_forwarder = Arc::clone(&store);
+        let session_key_for_forwarder = session_key.to_string();
+        let run_id_for_forwarder = run_id.to_string();
+        let event_forwarder = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let assistant_tool_call_msg = build_tool_call_assistant_message(
+                "tool-call-1",
+                "echo_tool",
+                Some(serde_json::json!({"text": "hi"})),
+                None,
+                Some(&run_id_for_forwarder),
+            );
+            let tool_result_msg = PersistedMessage::ToolResult {
+                tool_call_id: "tool-call-1".to_string(),
+                tool_name: "echo_tool".to_string(),
+                arguments: Some(serde_json::json!({"text": "hi"})),
+                success: true,
+                result: Some(serde_json::json!({"text": "hi"})),
+                error: None,
+                reasoning: Some("Need to use the tool first".to_string()),
+                created_at: Some(now_ms()),
+                run_id: Some(run_id_for_forwarder),
+            };
+            persist_tool_history_pair(
+                &store_for_forwarder,
+                &session_key_for_forwarder,
+                assistant_tool_call_msg,
+                tool_result_msg,
+                "failed to persist assistant tool call",
+                "failed to persist tool result",
+            )
+            .await;
+            "Need to use the tool first".to_string()
+        });
+        service
+            .active_event_forwarders
+            .write()
+            .await
+            .insert(session_key.to_string(), event_forwarder);
+
+        let abort_result = service
+            .abort(serde_json::json!({ "sessionKey": session_key }))
+            .await
+            .expect("chat.abort should succeed");
+        assert_eq!(abort_result["aborted"], true);
+        assert_eq!(abort_result["runId"], run_id);
+
+        let history = store
+            .read(session_key)
+            .await
+            .expect("read history after abort");
+        assert_eq!(
+            history.len(),
+            3,
+            "tool history should be flushed before abort partial"
+        );
+        assert_eq!(history[0]["role"].as_str(), Some("assistant"));
+        assert!(history[0]["tool_calls"].is_array());
+        assert_eq!(history[1]["role"].as_str(), Some("tool_result"));
+        assert_eq!(history[2]["role"].as_str(), Some("assistant"));
+        assert_eq!(history[2]["content"].as_str(), Some("Partial answer"));
     }
 
     #[tokio::test]
