@@ -1109,6 +1109,9 @@ fn container_exec_shell_args(
         return apple_container_exec_args(container_name, shell_command);
     }
 
+    #[cfg(not(any(target_os = "macos", test)))]
+    let _ = cli;
+
     vec![
         "exec".to_string(),
         container_name.to_string(),
@@ -4355,7 +4358,7 @@ impl AppleContainerSandbox {
 }
 
 /// State of an Apple Container as observed via `container inspect`.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContainerState {
     Running,
@@ -4480,7 +4483,7 @@ fn is_apple_container_unavailable_error(stderr: &str) -> bool {
         || (lower.contains("not found") && lower.contains("container"))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn should_restart_after_readiness_error(error_text: &str, state: ContainerState) -> bool {
     is_apple_container_unavailable_error(error_text) && state == ContainerState::Stopped
 }

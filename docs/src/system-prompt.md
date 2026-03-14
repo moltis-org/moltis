@@ -122,6 +122,13 @@ Host: host=moltis-devbox | os=macos | arch=aarch64 | shell=zsh | time=2026-02-17
 Sandbox(exec): enabled=true | mode=all | backend=docker | scope=session | image=moltis-sandbox:abc123 | workspace_mount=ro | network=disabled
 ```
 
+For channel-bound sessions, the host line also includes surface metadata so the
+LLM knows where it is operating, for example:
+
+```text
+Host: ... | session=telegram:bot-main:123456 | surface=telegram | session_kind=channel | channel_type=telegram | channel_account=bot-main | channel_chat_id=123456 | channel_chat_type=private
+```
+
 When tools are included, an **Execution routing** block explains how `exec`
 routes commands between sandbox and host.
 
@@ -130,6 +137,8 @@ The runtime context is populated at request time in `chat.rs` by detecting:
 - Host name, OS, architecture, shell
 - Active LLM provider and model
 - Session key
+- Runtime surface and session kind (`web`, `channel`, `cron`, `heartbeat`)
+- Channel binding metadata (`channel_type`, `channel_account`, `channel_chat_id`, `channel_chat_type`) when available
 - Sudo availability
 - Timezone and accept-language from the browser
 - Geolocation (from browser or `USER.md`)
