@@ -1404,7 +1404,7 @@ fn restore_saved_local_llm_models(
             return;
         }
 
-        crate::local_llm_setup::register_saved_local_models(registry);
+        crate::local_llm_setup::register_saved_local_models(registry, providers_config);
     }
 
     #[cfg(not(feature = "local-llm"))]

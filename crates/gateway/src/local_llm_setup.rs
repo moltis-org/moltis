@@ -11,6 +11,7 @@ use std::{
 
 use {
     async_trait::async_trait,
+    base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD},
     serde::{Deserialize, Serialize},
     serde_json::Value,
     tokio::sync::{OnceCell, RwLock, watch},
@@ -696,7 +697,11 @@ impl LocalModelEntry {
         Some((self.hf_repo.as_deref()?, self.hf_filename.as_deref()?))
     }
 
-    fn resolved_model_path(&self, cache_dir: &Path) -> anyhow::Result<Option<PathBuf>> {
+    fn resolved_model_path(
+        &self,
+        default_model_path: Option<&Path>,
+        cache_dir: &Path,
+    ) -> anyhow::Result<Option<PathBuf>> {
         if let Some((hf_repo, hf_filename)) = self.custom_gguf_source() {
             return local_gguf::models::custom_model_path(hf_repo, hf_filename, cache_dir)
                 .map(Some);
@@ -704,6 +709,10 @@ impl LocalModelEntry {
 
         if let Some(path) = &self.model_path {
             return Ok(Some(path.clone()));
+        }
+
+        if self.hf_repo.is_none() && self.hf_filename.is_none() {
+            return Ok(default_model_path.map(Path::to_path_buf));
         }
 
         Ok(None)
@@ -731,25 +740,10 @@ impl LocalModelEntry {
     }
 }
 
-fn slugify_model_component(value: &str) -> String {
-    let mut slug = String::new();
-    let mut last_was_dash = false;
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch.to_ascii_lowercase());
-            last_was_dash = false;
-        } else if !last_was_dash {
-            slug.push('-');
-            last_was_dash = true;
-        }
-    }
-    slug.trim_matches('-').to_string()
-}
-
 fn custom_gguf_model_id(hf_repo: &str, hf_filename: &str) -> String {
-    let repo_slug = slugify_model_component(hf_repo);
-    let filename_slug = slugify_model_component(hf_filename);
-    format!("custom-{repo_slug}-{filename_slug}")
+    let repo_component = URL_SAFE_NO_PAD.encode(hf_repo);
+    let filename_component = URL_SAFE_NO_PAD.encode(hf_filename);
+    format!("custom-gguf-{repo_component}.{filename_component}")
 }
 
 fn legacy_custom_gguf_model_id(hf_repo: &str) -> String {
@@ -795,6 +789,7 @@ fn status_from_saved_config(config: Option<&LocalLlmConfig>) -> LocalLlmStatus {
 
 fn build_local_provider_entry(
     entry: &LocalModelEntry,
+    default_model_path: Option<&Path>,
 ) -> anyhow::Result<(
     moltis_providers::ModelInfo,
     Arc<local_llm::LocalLlmProvider>,
@@ -802,7 +797,7 @@ fn build_local_provider_entry(
     let cache_dir = local_gguf::models::default_models_dir();
     let llm_config = local_llm::LocalLlmConfig {
         model_id: entry.model_id.clone(),
-        model_path: entry.resolved_model_path(&cache_dir)?,
+        model_path: entry.resolved_model_path(default_model_path, &cache_dir)?,
         backend: entry.backend_type(),
         context_size: None,
         gpu_layers: entry.gpu_layers,
@@ -817,6 +812,16 @@ fn build_local_provider_entry(
         created_at: None,
     };
     Ok((info, provider))
+}
+
+fn configured_local_model_path_override(
+    providers_config: &moltis_config::schema::ProvidersConfig,
+) -> Option<PathBuf> {
+    providers_config
+        .get("local")
+        .and_then(|entry| entry.base_url.as_deref())
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
 }
 
 fn unregister_local_model_from_registry(registry: &mut ProviderRegistry, model_id: &str) {
@@ -844,19 +849,38 @@ fn register_local_model_entry(
     registry: &mut ProviderRegistry,
     entry: &LocalModelEntry,
 ) -> anyhow::Result<()> {
-    let (info, provider) = build_local_provider_entry(entry)?;
+    let (info, provider) = build_local_provider_entry(entry, None)?;
     unregister_local_model_from_registry(registry, &entry.model_id);
     registry.register(info, provider);
     Ok(())
 }
 
-pub fn register_saved_local_models(registry: &mut ProviderRegistry) {
+fn register_local_model_entry_with_default_model_path(
+    registry: &mut ProviderRegistry,
+    entry: &LocalModelEntry,
+    default_model_path: Option<&Path>,
+) -> anyhow::Result<()> {
+    let (info, provider) = build_local_provider_entry(entry, default_model_path)?;
+    unregister_local_model_from_registry(registry, &entry.model_id);
+    registry.register(info, provider);
+    Ok(())
+}
+
+pub fn register_saved_local_models(
+    registry: &mut ProviderRegistry,
+    providers_config: &moltis_config::schema::ProvidersConfig,
+) {
     let Some(config) = LocalLlmConfig::load() else {
         return;
     };
+    let default_model_path = configured_local_model_path_override(providers_config);
 
     for entry in &config.models {
-        if let Err(error) = register_local_model_entry(registry, entry) {
+        if let Err(error) = register_local_model_entry_with_default_model_path(
+            registry,
+            entry,
+            default_model_path.as_deref(),
+        ) {
             warn!(model_id = %entry.model_id, %error, "failed to register saved local model");
         }
     }
@@ -1102,7 +1126,9 @@ impl LocalLlmService for LiveLocalLlmService {
         // Save configuration (add to existing models)
         let entry = LocalModelEntry {
             model_id: model_id.clone(),
-            model_path: None,
+            model_path: configured_local_model_path_override(
+                &moltis_config::loader::discover_and_load().providers,
+            ),
             hf_repo: None,
             hf_filename: None,
             gpu_layers: 0,
@@ -1935,8 +1961,20 @@ mod tests {
 
     #[test]
     fn test_custom_model_id_generation() {
+        let repo = "Qwen/Qwen3-4B-GGUF";
+        let filename = "Qwen3-4B-Q4_K_M.gguf";
         let model_id = custom_gguf_model_id("Qwen/Qwen3-4B-GGUF", "Qwen3-4B-Q4_K_M.gguf");
-        assert_eq!(model_id, "custom-qwen-qwen3-4b-gguf-qwen3-4b-q4-k-m-gguf");
+        let encoded = model_id.strip_prefix("custom-gguf-").unwrap();
+        let (repo_component, filename_component) = encoded.split_once('.').unwrap();
+
+        assert_eq!(
+            URL_SAFE_NO_PAD.decode(repo_component).unwrap(),
+            repo.as_bytes()
+        );
+        assert_eq!(
+            URL_SAFE_NO_PAD.decode(filename_component).unwrap(),
+            filename.as_bytes()
+        );
     }
 
     #[test]
@@ -1944,6 +1982,14 @@ mod tests {
         let repo = "Qwen/Qwen3-4B-GGUF";
         let first = custom_gguf_model_id(repo, "Qwen3-4B-Q4_K_M.gguf");
         let second = custom_gguf_model_id(repo, "Qwen3-4B-Q6_K.gguf");
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn test_custom_model_id_generation_avoids_lossy_slug_collisions() {
+        let first = custom_gguf_model_id("org-a/model", "quant/file.gguf");
+        let second = custom_gguf_model_id("org/a-model", "quant-file.gguf");
 
         assert_ne!(first, second);
     }
@@ -2011,7 +2057,7 @@ mod tests {
             backend: "GGUF".into(),
         };
 
-        let resolved = entry.resolved_model_path(cache_dir).unwrap();
+        let resolved = entry.resolved_model_path(None, cache_dir).unwrap();
         assert_eq!(
             resolved,
             Some(
@@ -2037,7 +2083,7 @@ mod tests {
             backend: "GGUF".into(),
         };
 
-        let resolved = entry.resolved_model_path(cache_dir).unwrap();
+        let resolved = entry.resolved_model_path(None, cache_dir).unwrap();
         assert_eq!(
             resolved,
             Some(
@@ -2048,6 +2094,27 @@ mod tests {
                     .join("Qwen3-4B-Q4_K_M.gguf")
             )
         );
+    }
+
+    #[test]
+    fn test_builtin_model_path_resolution_uses_provider_override() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+        let override_path = Path::new("/tmp/custom-built-in-model.gguf");
+        let entry = LocalModelEntry {
+            model_id: "qwen2.5-coder-7b-q4_k_m".into(),
+            model_path: None,
+            hf_repo: None,
+            hf_filename: None,
+            gpu_layers: 0,
+            backend: "GGUF".into(),
+        };
+
+        let resolved = entry
+            .resolved_model_path(Some(override_path), cache_dir)
+            .unwrap();
+
+        assert_eq!(resolved, Some(override_path.to_path_buf()));
     }
 
     #[test]
@@ -2086,7 +2153,10 @@ mod tests {
         config.save().unwrap();
 
         let mut registry = ProviderRegistry::empty();
-        register_saved_local_models(&mut registry);
+        register_saved_local_models(
+            &mut registry,
+            &moltis_config::schema::ProvidersConfig::default(),
+        );
 
         assert!(registry.get(&entry.model_id).is_some());
         let registered = registry
@@ -2171,7 +2241,7 @@ mod tests {
 
         let mut registry = ProviderRegistry::empty();
         for entry in [&legacy_entry, &stale_entry, &active_entry] {
-            let (info, provider) = build_local_provider_entry(entry).unwrap();
+            let (info, provider) = build_local_provider_entry(entry, None).unwrap();
             registry.register(info, provider);
         }
 
