@@ -1065,6 +1065,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_add_accepts_delivery_fields_for_agent_turn() {
+        let tool = make_tool();
+        let add_result = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "delivered run",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "post an update",
+                        "deliver": true,
+                        "channel": "bot-main",
+                        "to": "123456"
+                    },
+                    "sessionTarget": "isolated"
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(add_result["payload"]["kind"], "agentTurn");
+        assert_eq!(add_result["payload"]["deliver"], true);
+        assert_eq!(add_result["payload"]["channel"], "bot-main");
+        assert_eq!(add_result["payload"]["to"], "123456");
+    }
+
+    #[tokio::test]
     async fn test_update_accepts_host_execution_string() {
         let tool = make_tool();
         let add_result = tool
@@ -1092,6 +1120,45 @@ mod tests {
 
         assert_eq!(updated["sandbox"]["enabled"], false);
         assert!(updated["sandbox"]["image"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_update_accepts_delivery_fields_in_patch() {
+        let tool = make_tool();
+        let add_result = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "toggle delivery",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": { "kind": "agentTurn", "message": "run task" },
+                    "sessionTarget": "isolated"
+                }
+            }))
+            .await
+            .unwrap();
+        let id = add_result["id"].as_str().unwrap();
+
+        let updated = tool
+            .execute(json!({
+                "action": "update",
+                "id": id,
+                "patch": {
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "run task",
+                        "deliver": true,
+                        "channel": "bot-main",
+                        "to": "123456"
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(updated["payload"]["deliver"], true);
+        assert_eq!(updated["payload"]["channel"], "bot-main");
+        assert_eq!(updated["payload"]["to"], "123456");
     }
 
     #[test]

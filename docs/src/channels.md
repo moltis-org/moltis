@@ -89,6 +89,28 @@ For detailed configuration, see the per-channel pages:
 
 You can also use the web UI's **Channels** tab for guided setup with each platform.
 
+## Proactive Outbound Messaging
+
+Agents are not limited to replying in the current chat. Moltis supports three
+main outbound patterns:
+
+- **`send_message` tool** for direct proactive messages to any configured channel account/chat
+- **Cron job delivery** for background jobs that should post their final output to a channel
+- **Heartbeat delivery** for periodic heartbeat acknowledgements sent to a chosen chat
+
+Example `send_message` tool call:
+
+```json
+{
+  "account_id": "my-telegram-bot",
+  "to": "123456789",
+  "text": "Deployment finished successfully."
+}
+```
+
+`account_id` is the configured channel account name from `moltis.toml`, and
+`to` is the destination chat, peer, or room identifier for that platform.
+
 ## Access Control
 
 All channels share the same access control model with three settings:

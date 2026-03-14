@@ -1349,6 +1349,36 @@ fn log_startup_config_storage_diagnostics() {
     }
 }
 
+async fn maybe_deliver_cron_output(
+    outbound: Option<Arc<dyn moltis_channels::ChannelOutbound>>,
+    req: &moltis_cron::service::AgentTurnRequest,
+    delivery_text: &str,
+) {
+    if !req.deliver || delivery_text.trim().is_empty() {
+        return;
+    }
+
+    let (Some(channel_account), Some(chat_id)) = (&req.channel, &req.to) else {
+        return;
+    };
+
+    if let Some(outbound) = outbound {
+        if let Err(error) = outbound
+            .send_text(channel_account, chat_id, delivery_text, None)
+            .await
+        {
+            tracing::warn!(
+                channel = %channel_account,
+                to = %chat_id,
+                error = %error,
+                "cron job channel delivery failed"
+            );
+        }
+    } else {
+        tracing::debug!("cron job delivery requested but no channel outbound configured");
+    }
+}
+
 /// A fully wired gateway (app router + shared state), ready to be served.
 ///
 /// Created by [`prepare_gateway`]. Callers bind their own TCP listener and
@@ -2260,29 +2290,8 @@ pub async fn prepare_gateway(
                 text.clone()
             };
 
-            // Deliver output to a channel if requested.
-            if req.deliver
-                && !delivery_text.trim().is_empty()
-                && let (Some(channel_account), Some(chat_id)) = (&req.channel, &req.to)
-            {
-                if let Some(outbound) = state.services.channel_outbound_arc() {
-                    if let Err(e) = outbound
-                        .send_text(channel_account, chat_id, &delivery_text, None)
-                        .await
-                    {
-                        tracing::warn!(
-                            channel = %channel_account,
-                            to = %chat_id,
-                            error = %e,
-                            "cron job channel delivery failed"
-                        );
-                    }
-                } else {
-                    tracing::debug!(
-                        "cron job delivery requested but no channel outbound configured"
-                    );
-                }
-            }
+            maybe_deliver_cron_output(state.services.channel_outbound_arc(), &req, &delivery_text)
+                .await;
 
             Ok(moltis_cron::service::AgentTurnResult {
                 output: text,
@@ -6312,8 +6321,125 @@ pub(crate) async fn discover_and_build_hooks(
 mod tests {
     use {
         super::*,
+        async_trait::async_trait,
+        moltis_common::types::ReplyPayload,
         std::collections::{HashMap, HashSet},
+        tokio::sync::Mutex,
     };
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct DeliveredMessage {
+        account_id: String,
+        to: String,
+        text: String,
+        reply_to: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct RecordingChannelOutbound {
+        delivered: Mutex<Vec<DeliveredMessage>>,
+    }
+
+    #[async_trait]
+    impl moltis_channels::ChannelOutbound for RecordingChannelOutbound {
+        async fn send_text(
+            &self,
+            account_id: &str,
+            to: &str,
+            text: &str,
+            reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            self.delivered.lock().await.push(DeliveredMessage {
+                account_id: account_id.to_string(),
+                to: to.to_string(),
+                text: text.to_string(),
+                reply_to: reply_to.map(ToString::to_string),
+            });
+            Ok(())
+        }
+
+        async fn send_media(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _payload: &ReplyPayload,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn cron_delivery_request() -> moltis_cron::service::AgentTurnRequest {
+        moltis_cron::service::AgentTurnRequest {
+            message: "Run background summary".to_string(),
+            model: None,
+            timeout_secs: None,
+            deliver: true,
+            channel: Some("bot-main".to_string()),
+            to: Some("123456".to_string()),
+            session_target: moltis_cron::types::SessionTarget::Isolated,
+            sandbox: moltis_cron::types::CronSandboxConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn maybe_deliver_cron_output_sends_to_configured_channel() {
+        let outbound = Arc::new(RecordingChannelOutbound::default());
+        let req = cron_delivery_request();
+
+        maybe_deliver_cron_output(
+            Some(outbound.clone() as Arc<dyn moltis_channels::ChannelOutbound>),
+            &req,
+            "Daily digest ready",
+        )
+        .await;
+
+        let delivered = outbound.delivered.lock().await.clone();
+        assert_eq!(delivered, vec![DeliveredMessage {
+            account_id: "bot-main".to_string(),
+            to: "123456".to_string(),
+            text: "Daily digest ready".to_string(),
+            reply_to: None,
+        }]);
+    }
+
+    #[tokio::test]
+    async fn maybe_deliver_cron_output_skips_blank_messages() {
+        let outbound = Arc::new(RecordingChannelOutbound::default());
+        let req = cron_delivery_request();
+
+        maybe_deliver_cron_output(
+            Some(outbound.clone() as Arc<dyn moltis_channels::ChannelOutbound>),
+            &req,
+            "   ",
+        )
+        .await;
+
+        assert!(outbound.delivered.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn maybe_deliver_cron_output_skips_when_deliver_is_false() {
+        let outbound = Arc::new(RecordingChannelOutbound::default());
+        let mut req = cron_delivery_request();
+        req.deliver = false;
+
+        maybe_deliver_cron_output(
+            Some(outbound.clone() as Arc<dyn moltis_channels::ChannelOutbound>),
+            &req,
+            "should not be sent",
+        )
+        .await;
+
+        assert!(outbound.delivered.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn maybe_deliver_cron_output_skips_when_no_outbound_configured() {
+        let req = cron_delivery_request();
+
+        maybe_deliver_cron_output(None, &req, "Daily digest ready").await;
+    }
 
     #[test]
     fn summarize_model_ids_for_logs_returns_all_when_within_limit() {

@@ -390,7 +390,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
 		await waitForChatSessionReady(page);
-		await expectRpcOk(page, "chat.clear", {});
+		await clearChatAndWait(page);
 		await mockRpcErrorResponse(page, "sessions.voice.generate", "Voice generation failed for test.");
 
 		await expectRpcOk(page, "system-event", {
@@ -407,6 +407,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		});
 
 		var assistant = page.locator("#messages .msg.assistant").last();
+		await expect(assistant).toContainText("try generating voice now");
 		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
 		await assistant.locator(".msg-voice-action").click();
 		await expect(assistant.locator(".msg-voice-action")).toHaveText("Retry voice");
