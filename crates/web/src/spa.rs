@@ -29,8 +29,13 @@ pub async fn spa_fallback(State(state): State<AppState>, uri: Uri) -> impl IntoR
 
 pub async fn onboarding_handler(State(state): State<AppState>) -> impl IntoResponse {
     let onboarded = onboarding_completed(&state.gateway).await;
+    let auth_setup_pending = state
+        .gateway
+        .credential_store
+        .as_ref()
+        .is_some_and(|store| store.is_auth_disabled() || !store.is_setup_complete());
 
-    if should_redirect_from_onboarding(onboarded) {
+    if should_redirect_from_onboarding(onboarded, auth_setup_pending) {
         return Redirect::to("/").into_response();
     }
 

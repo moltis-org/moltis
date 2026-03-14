@@ -47,6 +47,53 @@ fn sanitize_tool_name(name: &str) -> &str {
         .unwrap_or(trimmed)
 }
 
+const MALFORMED_TOOL_RETRY_PROMPT: &str = "Your tool call was malformed. Retry with exact format:\n\
+     ```tool_call\n{\"tool\": \"name\", \"arguments\": {...}}\n```";
+const EMPTY_TOOL_NAME_RETRY_PROMPT: &str = "Your structured tool call had an empty tool name. Retry the same tool call using the intended tool's exact name and the same arguments.";
+
+fn find_empty_tool_name_call(tool_calls: &[ToolCall]) -> Option<&ToolCall> {
+    tool_calls
+        .iter()
+        .find(|tc| sanitize_tool_name(&tc.name).is_empty())
+}
+
+fn has_named_tool_call(tool_calls: &[ToolCall]) -> bool {
+    tool_calls
+        .iter()
+        .any(|tc| !sanitize_tool_name(&tc.name).is_empty())
+}
+
+fn empty_tool_name_retry_prompt(tool_call: &ToolCall) -> String {
+    format!(
+        "{EMPTY_TOOL_NAME_RETRY_PROMPT}\nExact arguments JSON:\n{}",
+        tool_call.arguments
+    )
+}
+
+fn record_answer_text(last_answer_text: &mut String, text: &Option<String>) {
+    if let Some(text) = text.as_ref()
+        && !text.is_empty()
+    {
+        last_answer_text.clone_from(text);
+    }
+}
+
+fn streaming_tool_call_message_content(
+    last_answer_text: &mut String,
+    accumulated_text: &str,
+    accumulated_reasoning: &str,
+) -> Option<String> {
+    if !accumulated_reasoning.is_empty() {
+        Some(accumulated_reasoning.to_string())
+    } else if !accumulated_text.is_empty() {
+        last_answer_text.clear();
+        last_answer_text.push_str(accumulated_text);
+        Some(accumulated_text.to_string())
+    } else {
+        None
+    }
+}
+
 /// Error patterns that indicate the context window has been exceeded.
 const CONTEXT_WINDOW_PATTERNS: &[&str] = &[
     "context_length_exceeded",
@@ -656,6 +703,7 @@ pub async fn run_agent_loop_with_context(
     let mut rate_limit_backoff_ms: Option<u64> = None;
     let mut last_answer_text = String::new();
     let mut malformed_retry_count: u8 = 0;
+    let mut empty_tool_name_retry_count: u8 = 0;
 
     loop {
         iterations += 1;
@@ -793,10 +841,7 @@ pub async fn run_agent_loop_with_context(
             messages.push(ChatMessage::assistant(
                 response.text.as_deref().unwrap_or(""),
             ));
-            messages.push(ChatMessage::user(
-                "Your tool call was malformed. Retry with exact format:\n\
-                 ```tool_call\n{\"tool\": \"name\", \"arguments\": {...}}\n```",
-            ));
+            messages.push(ChatMessage::user(MALFORMED_TOOL_RETRY_PROMPT));
             continue;
         }
 
@@ -838,6 +883,28 @@ pub async fn run_agent_loop_with_context(
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
             }];
+        }
+
+        if let Some(tc) = find_empty_tool_name_call(&response.tool_calls) {
+            if has_named_tool_call(&response.tool_calls) {
+                warn!(
+                    tool_call_id = %tc.id,
+                    "structured tool call batch contains both empty and valid tool names; preserving valid sibling tool calls and falling back to normal tool error handling"
+                );
+            } else if empty_tool_name_retry_count == 0 {
+                empty_tool_name_retry_count += 1;
+                info!(tool_call_id = %tc.id, "detected structured tool call with empty name, requesting retry");
+                record_answer_text(&mut last_answer_text, &response.text);
+                messages.push(ChatMessage::assistant(
+                    response.text.as_deref().unwrap_or(""),
+                ));
+                messages.push(ChatMessage::user(empty_tool_name_retry_prompt(tc)));
+                continue;
+            }
+            warn!(
+                tool_call_id = %tc.id,
+                "structured tool call still has empty name after retry; falling back to normal tool error handling"
+            );
         }
 
         for tc in &response.tool_calls {
@@ -922,11 +989,7 @@ pub async fn run_agent_loop_with_context(
         // empty, this becomes the result. Don't emit as ThinkingText because
         // it may be the actual answer (e.g. a table produced before a cleanup
         // tool call like `browser close`).
-        if let Some(ref text) = response.text
-            && !text.is_empty()
-        {
-            last_answer_text.clone_from(text);
-        }
+        record_answer_text(&mut last_answer_text, &response.text);
         messages.push(ChatMessage::assistant_with_tools(
             response.text.clone(),
             response.tool_calls.clone(),
@@ -1192,6 +1255,7 @@ pub async fn run_agent_loop_streaming(
     // this is used as the final response text instead of returning silent.
     let mut last_answer_text = String::new();
     let mut malformed_retry_count: u8 = 0;
+    let mut empty_tool_name_retry_count: u8 = 0;
 
     loop {
         iterations += 1;
@@ -1451,10 +1515,7 @@ pub async fn run_agent_loop_streaming(
             malformed_retry_count += 1;
             info!("detected malformed tool call in stream, requesting retry");
             messages.push(ChatMessage::assistant(&accumulated_text));
-            messages.push(ChatMessage::user(
-                "Your tool call was malformed. Retry with exact format:\n\
-                 ```tool_call\n{\"tool\": \"name\", \"arguments\": {...}}\n```",
-            ));
+            messages.push(ChatMessage::user(MALFORMED_TOOL_RETRY_PROMPT));
             continue;
         }
 
@@ -1489,6 +1550,30 @@ pub async fn run_agent_loop_streaming(
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
             }];
+        }
+
+        if let Some(tc) = find_empty_tool_name_call(&tool_calls) {
+            if has_named_tool_call(&tool_calls) {
+                warn!(
+                    tool_call_id = %tc.id,
+                    "streamed tool call batch contains both empty and valid tool names; preserving valid sibling tool calls and falling back to normal tool error handling"
+                );
+            } else if empty_tool_name_retry_count == 0 {
+                empty_tool_name_retry_count += 1;
+                info!(tool_call_id = %tc.id, "detected structured tool call with empty name in stream, requesting retry");
+                let retry_text = streaming_tool_call_message_content(
+                    &mut last_answer_text,
+                    &accumulated_text,
+                    &accumulated_reasoning,
+                );
+                messages.push(ChatMessage::assistant(retry_text.unwrap_or_default()));
+                messages.push(ChatMessage::user(empty_tool_name_retry_prompt(tc)));
+                continue;
+            }
+            warn!(
+                tool_call_id = %tc.id,
+                "structured tool call in stream still has empty name after retry; falling back to normal tool error handling"
+            );
         }
 
         // Dispatch AfterLLMCall hook — may block tool execution.
@@ -2176,6 +2261,1402 @@ mod tests {
         assert_eq!(result.text, "Done!");
         assert_eq!(result.iterations, 2);
         assert_eq!(result.tool_calls_made, 1);
+    }
+
+    fn last_user_text(messages: &[ChatMessage]) -> &str {
+        messages
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                ChatMessage::User {
+                    content: UserContent::Text(text),
+                } => Some(text.as_str()),
+                _ => None,
+            })
+            .unwrap_or("")
+    }
+
+    fn last_tool_text(messages: &[ChatMessage]) -> &str {
+        messages
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                ChatMessage::Tool { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .unwrap_or("")
+    }
+
+    fn has_tool_message_containing(messages: &[ChatMessage], needle: &str) -> bool {
+        messages.iter().any(|message| match message {
+            ChatMessage::Tool { content, .. } => content.contains(needle),
+            _ => false,
+        })
+    }
+
+    struct EmptyToolNameProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for EmptyToolNameProvider {
+        fn name(&self) -> &str {
+            "mock-empty-tool-name"
+        }
+
+        fn id(&self) -> &str {
+            "mock-empty-tool-name"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![ToolCall {
+                        id: "call_empty".into(),
+                        name: "   ".into(),
+                        arguments: serde_json::json!({"text": "hello"}),
+                    }],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                }),
+                1 => {
+                    let retry_prompt = last_user_text(messages);
+                    assert!(
+                        retry_prompt.contains("empty tool name"),
+                        "runner should ask for a retry, got: {retry_prompt}"
+                    );
+                    assert!(
+                        !retry_prompt.contains("```tool_call"),
+                        "structured retry should not ask for text tool-call fences: {retry_prompt}"
+                    );
+                    assert!(
+                        retry_prompt.contains("\"text\":\"hello\""),
+                        "structured retry should preserve the original arguments, got: {retry_prompt}"
+                    );
+                    Ok(CompletionResponse {
+                        text: None,
+                        tool_calls: vec![ToolCall {
+                            id: "call_echo".into(),
+                            name: "echo_tool".into(),
+                            arguments: serde_json::json!({"text": "hello"}),
+                        }],
+                        usage: Usage {
+                            input_tokens: 8,
+                            output_tokens: 4,
+                            ..Default::default()
+                        },
+                    })
+                },
+                _ => {
+                    let tool_content = messages
+                        .iter()
+                        .find_map(|m| match m {
+                            ChatMessage::Tool { content, .. } => Some(content.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("");
+                    assert!(
+                        tool_content.contains("\"text\":\"hello\""),
+                        "tool result should include echoed payload, got: {tool_content}"
+                    );
+                    Ok(CompletionResponse {
+                        text: Some("Done after retry".into()),
+                        tool_calls: vec![],
+                        usage: Usage {
+                            input_tokens: 6,
+                            output_tokens: 3,
+                            ..Default::default()
+                        },
+                    })
+                },
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_structured_tool_name_retries_non_streaming() {
+        let provider = Arc::new(EmptyToolNameProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tool"),
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Done after retry");
+        assert_eq!(result.iterations, 3, "retry + tool call + final text");
+        assert_eq!(
+            result.tool_calls_made, 1,
+            "blank-name call must not execute"
+        );
+
+        let tool_starts: Vec<String> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                RunnerEvent::ToolCallStart { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_starts, vec!["echo_tool".to_string()]);
+    }
+
+    struct MalformedThenEmptyToolNameProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MalformedThenEmptyToolNameProvider {
+        fn name(&self) -> &str {
+            "mock-malformed-then-empty-tool-name"
+        }
+
+        fn id(&self) -> &str {
+            "mock-malformed-then-empty-tool-name"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Ok(CompletionResponse {
+                    text: Some("```tool_call\n{\"tool\":".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                }),
+                1 => {
+                    let retry_prompt = last_user_text(messages);
+                    assert!(
+                        retry_prompt.contains("Retry with exact format"),
+                        "runner should use malformed tool retry prompt first, got: {retry_prompt}"
+                    );
+                    assert!(
+                        retry_prompt.contains("```tool_call"),
+                        "malformed retry should keep the text fallback format, got: {retry_prompt}"
+                    );
+                    Ok(CompletionResponse {
+                        text: None,
+                        tool_calls: vec![ToolCall {
+                            id: "call_empty_after_text_retry".into(),
+                            name: " ".into(),
+                            arguments: serde_json::json!({"text": "hello"}),
+                        }],
+                        usage: Usage {
+                            input_tokens: 9,
+                            output_tokens: 4,
+                            ..Default::default()
+                        },
+                    })
+                },
+                2 => {
+                    let retry_prompt = last_user_text(messages);
+                    assert!(
+                        retry_prompt.contains("empty tool name"),
+                        "runner should grant a dedicated empty-name retry, got: {retry_prompt}"
+                    );
+                    assert!(
+                        !retry_prompt.contains("```tool_call"),
+                        "empty-name retry should stay on structured tool calls, got: {retry_prompt}"
+                    );
+                    assert!(
+                        retry_prompt.contains("\"text\":\"hello\""),
+                        "structured retry should preserve the original arguments, got: {retry_prompt}"
+                    );
+                    Ok(CompletionResponse {
+                        text: None,
+                        tool_calls: vec![ToolCall {
+                            id: "call_echo_after_dual_retry".into(),
+                            name: "echo_tool".into(),
+                            arguments: serde_json::json!({"text": "hello"}),
+                        }],
+                        usage: Usage {
+                            input_tokens: 8,
+                            output_tokens: 4,
+                            ..Default::default()
+                        },
+                    })
+                },
+                _ => {
+                    let tool_content = messages
+                        .iter()
+                        .find_map(|m| match m {
+                            ChatMessage::Tool { content, .. } => Some(content.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("");
+                    assert!(
+                        tool_content.contains("\"text\":\"hello\""),
+                        "tool result should include echoed payload, got: {tool_content}"
+                    );
+                    Ok(CompletionResponse {
+                        text: Some("Done after two retries".into()),
+                        tool_calls: vec![],
+                        usage: Usage {
+                            input_tokens: 6,
+                            output_tokens: 3,
+                            ..Default::default()
+                        },
+                    })
+                },
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_tool_name_retry_does_not_consume_malformed_retry_budget_non_streaming() {
+        let provider = Arc::new(MalformedThenEmptyToolNameProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tool"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Done after two retries");
+        assert_eq!(result.iterations, 4, "two retries + tool call + final text");
+        assert_eq!(
+            result.tool_calls_made, 1,
+            "only the valid tool call should execute"
+        );
+    }
+
+    struct EmptyToolNameRetryPreservesAnswerTextProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for EmptyToolNameRetryPreservesAnswerTextProvider {
+        fn name(&self) -> &str {
+            "mock-empty-tool-name-answer-text"
+        }
+
+        fn id(&self) -> &str {
+            "mock-empty-tool-name-answer-text"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Ok(CompletionResponse {
+                    text: Some("Table answer to preserve".into()),
+                    tool_calls: vec![ToolCall {
+                        id: "call_empty_with_text".into(),
+                        name: " ".into(),
+                        arguments: serde_json::json!({"text": "hello"}),
+                    }],
+                    usage: Usage::default(),
+                }),
+                1 => Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![ToolCall {
+                        id: "call_echo_after_retry".into(),
+                        name: "echo_tool".into(),
+                        arguments: serde_json::json!({"text": "hello"}),
+                    }],
+                    usage: Usage::default(),
+                }),
+                _ => Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![],
+                    usage: Usage::default(),
+                }),
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_tool_name_retry_preserves_last_answer_text_non_streaming() {
+        let provider = Arc::new(EmptyToolNameRetryPreservesAnswerTextProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tool"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Table answer to preserve");
+        assert_eq!(result.iterations, 3);
+        assert_eq!(result.tool_calls_made, 1);
+    }
+
+    struct RepeatedEmptyToolNameProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for RepeatedEmptyToolNameProvider {
+        fn name(&self) -> &str {
+            "mock-repeated-empty-tool-name"
+        }
+
+        fn id(&self) -> &str {
+            "mock-repeated-empty-tool-name"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![ToolCall {
+                        id: "call_empty_first".into(),
+                        name: " ".into(),
+                        arguments: serde_json::json!({"text": "hello"}),
+                    }],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                }),
+                1 => {
+                    let retry_prompt = last_user_text(messages);
+                    assert!(
+                        retry_prompt.contains("\"text\":\"hello\""),
+                        "structured retry should preserve the original arguments, got: {retry_prompt}"
+                    );
+                    Ok(CompletionResponse {
+                        text: None,
+                        tool_calls: vec![ToolCall {
+                            id: "call_empty_second".into(),
+                            name: "".into(),
+                            arguments: serde_json::json!({"text": "hello"}),
+                        }],
+                        usage: Usage {
+                            input_tokens: 8,
+                            output_tokens: 4,
+                            ..Default::default()
+                        },
+                    })
+                },
+                2 => {
+                    let tool_content = last_tool_text(messages);
+                    assert!(
+                        tool_content.contains("unknown tool:"),
+                        "second empty-name call should fall back to normal tool error feedback, got: {tool_content}"
+                    );
+                    Ok(CompletionResponse {
+                        text: None,
+                        tool_calls: vec![ToolCall {
+                            id: "call_echo_after_unknown_tool".into(),
+                            name: "echo_tool".into(),
+                            arguments: serde_json::json!({"text": "hello"}),
+                        }],
+                        usage: Usage {
+                            input_tokens: 7,
+                            output_tokens: 4,
+                            ..Default::default()
+                        },
+                    })
+                },
+                _ => Ok(CompletionResponse {
+                    text: Some("Recovered after unknown tool feedback".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 6,
+                        output_tokens: 3,
+                        ..Default::default()
+                    },
+                }),
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_repeated_empty_tool_name_falls_back_to_unknown_tool_non_streaming() {
+        let provider = Arc::new(RepeatedEmptyToolNameProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tool"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Recovered after unknown tool feedback");
+        assert_eq!(
+            result.iterations, 4,
+            "retry + unknown tool feedback + valid tool call + final text"
+        );
+        assert_eq!(
+            result.tool_calls_made, 2,
+            "the repeated empty-name call should still produce normal tool feedback"
+        );
+    }
+
+    struct MixedEmptyAndValidToolNameProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MixedEmptyAndValidToolNameProvider {
+        fn name(&self) -> &str {
+            "mock-mixed-empty-and-valid-tool-name"
+        }
+
+        fn id(&self) -> &str {
+            "mock-mixed-empty-and-valid-tool-name"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![
+                        ToolCall {
+                            id: "call_empty_sibling".into(),
+                            name: " ".into(),
+                            arguments: serde_json::json!({"text": "bad"}),
+                        },
+                        ToolCall {
+                            id: "call_echo_sibling".into(),
+                            name: "echo_tool".into(),
+                            arguments: serde_json::json!({"text": "good"}),
+                        },
+                    ],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                }),
+                _ => {
+                    assert!(
+                        !last_user_text(messages).contains("empty tool name"),
+                        "mixed tool-call batches should not trigger the empty-name retry prompt"
+                    );
+                    assert!(
+                        has_tool_message_containing(messages, "unknown tool:"),
+                        "empty-name sibling should still produce normal tool error feedback"
+                    );
+                    assert!(
+                        has_tool_message_containing(messages, "\"text\":\"good\""),
+                        "valid sibling tool call should still execute"
+                    );
+                    Ok(CompletionResponse {
+                        text: Some("Handled mixed batch".into()),
+                        tool_calls: vec![],
+                        usage: Usage {
+                            input_tokens: 6,
+                            output_tokens: 3,
+                            ..Default::default()
+                        },
+                    })
+                },
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mixed_empty_and_valid_tool_names_execute_valid_siblings_non_streaming() {
+        let provider = Arc::new(MixedEmptyAndValidToolNameProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tools"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Handled mixed batch");
+        assert_eq!(
+            result.iterations, 2,
+            "mixed batch should not consume an extra retry turn"
+        );
+        assert_eq!(
+            result.tool_calls_made, 2,
+            "the valid sibling tool call should still execute alongside normal unknown-tool feedback"
+        );
+    }
+
+    struct EmptyToolNameStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for EmptyToolNameStreamProvider {
+        fn name(&self) -> &str {
+            "mock-empty-tool-name-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-empty-tool-name-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(_messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::ToolCallStart {
+                        id: "call_empty".into(),
+                        name: " ".into(),
+                        index: 0,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 0,
+                        delta: r#"{"text":"hello"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 0 },
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ])),
+                1 => {
+                    let retry_prompt = last_user_text(&messages);
+                    assert!(
+                        retry_prompt.contains("empty tool name"),
+                        "runner should ask for a retry, got: {retry_prompt}"
+                    );
+                    assert!(
+                        !retry_prompt.contains("```tool_call"),
+                        "structured retry should not ask for text tool-call fences: {retry_prompt}"
+                    );
+                    assert!(
+                        retry_prompt.contains("\"text\":\"hello\""),
+                        "structured retry should preserve the original arguments, got: {retry_prompt}"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::ToolCallStart {
+                            id: "call_echo".into(),
+                            name: "echo_tool".into(),
+                            index: 0,
+                        },
+                        StreamEvent::ToolCallArgumentsDelta {
+                            index: 0,
+                            delta: r#"{"text":"hello"}"#.into(),
+                        },
+                        StreamEvent::ToolCallComplete { index: 0 },
+                        StreamEvent::Done(Usage {
+                            input_tokens: 8,
+                            output_tokens: 4,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+                _ => {
+                    let tool_content = messages
+                        .iter()
+                        .find_map(|m| match m {
+                            ChatMessage::Tool { content, .. } => Some(content.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("");
+                    assert!(
+                        tool_content.contains("\"text\":\"hello\""),
+                        "tool result should include echoed payload, got: {tool_content}"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::Delta("Done after retry".into()),
+                        StreamEvent::Done(Usage {
+                            input_tokens: 6,
+                            output_tokens: 3,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_structured_tool_name_retries_streaming() {
+        let provider = Arc::new(EmptyToolNameStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tool"),
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Done after retry");
+        assert_eq!(result.iterations, 3, "retry + tool call + final text");
+        assert_eq!(
+            result.tool_calls_made, 1,
+            "blank-name call must not execute"
+        );
+
+        let tool_starts: Vec<String> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                RunnerEvent::ToolCallStart { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_starts, vec!["echo_tool".to_string()]);
+    }
+
+    struct MalformedThenEmptyToolNameStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MalformedThenEmptyToolNameStreamProvider {
+        fn name(&self) -> &str {
+            "mock-malformed-then-empty-tool-name-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-malformed-then-empty-tool-name-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("```tool_call\n{\"tool\":".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ])),
+                1 => {
+                    let retry_prompt = last_user_text(&messages);
+                    assert!(
+                        retry_prompt.contains("Retry with exact format"),
+                        "runner should use malformed tool retry prompt first, got: {retry_prompt}"
+                    );
+                    assert!(
+                        retry_prompt.contains("```tool_call"),
+                        "malformed retry should keep the text fallback format, got: {retry_prompt}"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::ToolCallStart {
+                            id: "call_empty_after_text_retry".into(),
+                            name: " ".into(),
+                            index: 0,
+                        },
+                        StreamEvent::ToolCallArgumentsDelta {
+                            index: 0,
+                            delta: r#"{"text":"hello"}"#.into(),
+                        },
+                        StreamEvent::ToolCallComplete { index: 0 },
+                        StreamEvent::Done(Usage {
+                            input_tokens: 9,
+                            output_tokens: 4,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+                2 => {
+                    let retry_prompt = last_user_text(&messages);
+                    assert!(
+                        retry_prompt.contains("empty tool name"),
+                        "runner should grant a dedicated empty-name retry, got: {retry_prompt}"
+                    );
+                    assert!(
+                        !retry_prompt.contains("```tool_call"),
+                        "empty-name retry should stay on structured tool calls, got: {retry_prompt}"
+                    );
+                    assert!(
+                        retry_prompt.contains("\"text\":\"hello\""),
+                        "structured retry should preserve the original arguments, got: {retry_prompt}"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::ToolCallStart {
+                            id: "call_echo_after_dual_retry".into(),
+                            name: "echo_tool".into(),
+                            index: 0,
+                        },
+                        StreamEvent::ToolCallArgumentsDelta {
+                            index: 0,
+                            delta: r#"{"text":"hello"}"#.into(),
+                        },
+                        StreamEvent::ToolCallComplete { index: 0 },
+                        StreamEvent::Done(Usage {
+                            input_tokens: 8,
+                            output_tokens: 4,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+                _ => {
+                    let tool_content = messages
+                        .iter()
+                        .find_map(|m| match m {
+                            ChatMessage::Tool { content, .. } => Some(content.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("");
+                    assert!(
+                        tool_content.contains("\"text\":\"hello\""),
+                        "tool result should include echoed payload, got: {tool_content}"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::Delta("Done after two retries".into()),
+                        StreamEvent::Done(Usage {
+                            input_tokens: 6,
+                            output_tokens: 3,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_tool_name_retry_does_not_consume_malformed_retry_budget_streaming() {
+        let provider = Arc::new(MalformedThenEmptyToolNameStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tool"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Done after two retries");
+        assert_eq!(result.iterations, 4, "two retries + tool call + final text");
+        assert_eq!(
+            result.tool_calls_made, 1,
+            "only the valid tool call should execute"
+        );
+    }
+
+    struct EmptyToolNameRetryPreservesReasoningStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for EmptyToolNameRetryPreservesReasoningStreamProvider {
+        fn name(&self) -> &str {
+            "mock-empty-tool-name-preserve-reasoning-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-empty-tool-name-preserve-reasoning-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::ReasoningDelta("Need to inspect tool output first".into()),
+                    StreamEvent::ToolCallStart {
+                        id: "call_empty_reasoning".into(),
+                        name: " ".into(),
+                        index: 0,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 0,
+                        delta: r#"{"text":"hello"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 0 },
+                    StreamEvent::Done(Usage::default()),
+                ])),
+                1 => {
+                    let assistant_content = messages
+                        .iter()
+                        .rev()
+                        .find_map(|message| match message {
+                            ChatMessage::Assistant {
+                                content,
+                                tool_calls,
+                            } if tool_calls.is_empty() => content.as_deref(),
+                            _ => None,
+                        })
+                        .unwrap_or("");
+                    assert_eq!(
+                        assistant_content, "Need to inspect tool output first",
+                        "retry path should preserve streamed reasoning context"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::ToolCallStart {
+                            id: "call_echo_after_reasoning_retry".into(),
+                            name: "echo_tool".into(),
+                            index: 0,
+                        },
+                        StreamEvent::ToolCallArgumentsDelta {
+                            index: 0,
+                            delta: r#"{"text":"hello"}"#.into(),
+                        },
+                        StreamEvent::ToolCallComplete { index: 0 },
+                        StreamEvent::Done(Usage::default()),
+                    ]))
+                },
+                _ => Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Done after reasoning-preserving retry".into()),
+                    StreamEvent::Done(Usage::default()),
+                ])),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_tool_name_retry_preserves_reasoning_context_streaming() {
+        let provider = Arc::new(EmptyToolNameRetryPreservesReasoningStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tool"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Done after reasoning-preserving retry");
+        assert_eq!(result.iterations, 3);
+        assert_eq!(result.tool_calls_made, 1);
+    }
+
+    struct RepeatedEmptyToolNameStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for RepeatedEmptyToolNameStreamProvider {
+        fn name(&self) -> &str {
+            "mock-repeated-empty-tool-name-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-repeated-empty-tool-name-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::ToolCallStart {
+                        id: "call_empty_first".into(),
+                        name: " ".into(),
+                        index: 0,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 0,
+                        delta: r#"{"text":"hello"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 0 },
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ])),
+                1 => {
+                    let retry_prompt = last_user_text(&messages);
+                    assert!(
+                        retry_prompt.contains("\"text\":\"hello\""),
+                        "structured retry should preserve the original arguments, got: {retry_prompt}"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::ToolCallStart {
+                            id: "call_empty_second".into(),
+                            name: "".into(),
+                            index: 0,
+                        },
+                        StreamEvent::ToolCallArgumentsDelta {
+                            index: 0,
+                            delta: r#"{"text":"hello"}"#.into(),
+                        },
+                        StreamEvent::ToolCallComplete { index: 0 },
+                        StreamEvent::Done(Usage {
+                            input_tokens: 8,
+                            output_tokens: 4,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+                2 => {
+                    let tool_content = last_tool_text(&messages);
+                    assert!(
+                        tool_content.contains("unknown tool:"),
+                        "second empty-name call should fall back to normal tool error feedback, got: {tool_content}"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::ToolCallStart {
+                            id: "call_echo_after_unknown_tool".into(),
+                            name: "echo_tool".into(),
+                            index: 0,
+                        },
+                        StreamEvent::ToolCallArgumentsDelta {
+                            index: 0,
+                            delta: r#"{"text":"hello"}"#.into(),
+                        },
+                        StreamEvent::ToolCallComplete { index: 0 },
+                        StreamEvent::Done(Usage {
+                            input_tokens: 7,
+                            output_tokens: 4,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+                _ => Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Recovered after unknown tool feedback".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 6,
+                        output_tokens: 3,
+                        ..Default::default()
+                    }),
+                ])),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_repeated_empty_tool_name_falls_back_to_unknown_tool_streaming() {
+        let provider = Arc::new(RepeatedEmptyToolNameStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tool"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Recovered after unknown tool feedback");
+        assert_eq!(
+            result.iterations, 4,
+            "retry + unknown tool feedback + valid tool call + final text"
+        );
+        assert_eq!(
+            result.tool_calls_made, 2,
+            "the repeated empty-name call should still produce normal tool feedback"
+        );
+    }
+
+    struct MixedEmptyAndValidToolNameStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MixedEmptyAndValidToolNameStreamProvider {
+        fn name(&self) -> &str {
+            "mock-mixed-empty-and-valid-tool-name-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-mixed-empty-and-valid-tool-name-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::ToolCallStart {
+                        id: "call_empty_sibling".into(),
+                        name: " ".into(),
+                        index: 0,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 0,
+                        delta: r#"{"text":"bad"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 0 },
+                    StreamEvent::ToolCallStart {
+                        id: "call_echo_sibling".into(),
+                        name: "echo_tool".into(),
+                        index: 1,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 1,
+                        delta: r#"{"text":"good"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 1 },
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ])),
+                _ => {
+                    assert!(
+                        !last_user_text(&messages).contains("empty tool name"),
+                        "mixed streamed tool-call batches should not trigger the empty-name retry prompt"
+                    );
+                    assert!(
+                        has_tool_message_containing(&messages, "unknown tool:"),
+                        "empty-name sibling should still produce normal tool error feedback"
+                    );
+                    assert!(
+                        has_tool_message_containing(&messages, "\"text\":\"good\""),
+                        "valid streamed sibling tool call should still execute"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::Delta("Handled mixed batch".into()),
+                        StreamEvent::Done(Usage {
+                            input_tokens: 6,
+                            output_tokens: 3,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mixed_empty_and_valid_tool_names_execute_valid_siblings_streaming() {
+        let provider = Arc::new(MixedEmptyAndValidToolNameStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tools"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Handled mixed batch");
+        assert_eq!(
+            result.iterations, 2,
+            "mixed streamed batch should not consume an extra retry turn"
+        );
+        assert_eq!(
+            result.tool_calls_made, 2,
+            "the valid streamed sibling tool call should still execute alongside normal unknown-tool feedback"
+        );
     }
 
     /// Mock provider that calls the "exec" tool (native) and verifies result fed back.

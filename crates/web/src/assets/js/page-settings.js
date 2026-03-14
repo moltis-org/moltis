@@ -2703,6 +2703,19 @@ function VoiceSection() {
 		}
 	}
 
+	function humanizeMicError(err) {
+		if (err.name === "OverconstrainedError" || (err.message && /constraint/i.test(err.message))) {
+			return "No compatible microphone found. Check your audio input device.";
+		}
+		if (err.name === "NotFoundError" || err.name === "NotAllowedError") {
+			return "Microphone access denied or no microphone found. Check browser permissions.";
+		}
+		if (err.name === "NotReadableError") {
+			return "Microphone is in use by another application.";
+		}
+		return err.message || "STT test failed";
+	}
+
 	// Test a voice provider (TTS or STT)
 	async function testVoiceProvider(providerId, type) {
 		// If already recording for this provider, stop it
@@ -2831,13 +2844,7 @@ function VoiceSection() {
 					rerender();
 				};
 			} catch (err) {
-				if (err.name === "NotAllowedError") {
-					setVoiceErr("Microphone permission denied");
-				} else if (err.name === "NotFoundError") {
-					setVoiceErr("No microphone found");
-				} else {
-					setVoiceErr(err.message || "STT test failed");
-				}
+				setVoiceErr(humanizeMicError(err));
 				setVoiceTesting(null);
 			}
 		}

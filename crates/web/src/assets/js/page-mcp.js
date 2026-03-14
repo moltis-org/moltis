@@ -97,6 +97,81 @@ function parseEnvLines(text) {
 	return env;
 }
 
+function safeRemoteUrlText(server) {
+	return typeof server.url === "string" ? server.url.trim() : "";
+}
+
+function remoteHeaderNames(server) {
+	var names = [];
+	if (Array.isArray(server.header_names)) {
+		names = server.header_names;
+	} else if (Array.isArray(server.headerNames)) {
+		names = server.headerNames;
+	} else if (server.headers && typeof server.headers === "object") {
+		names = Object.keys(server.headers);
+	}
+	return names.filter((name) => typeof name === "string" && name.trim()).map((name) => name.trim());
+}
+
+function remoteHeaderCount(server) {
+	var explicitCount =
+		typeof server.header_count === "number"
+			? server.header_count
+			: typeof server.headerCount === "number"
+				? server.headerCount
+				: null;
+	if (explicitCount !== null && Number.isFinite(explicitCount) && explicitCount >= 0) return explicitCount;
+	return remoteHeaderNames(server).length;
+}
+
+function remoteHeaderSummary(server) {
+	var names = remoteHeaderNames(server);
+	var count = remoteHeaderCount(server);
+	if (count === 0 && names.length === 0) return "none configured";
+	if (names.length === 0) return `${count} configured`;
+	var label = count === 1 ? "1 total" : `${count} total`;
+	return `${names.join(", ")} (${label})`;
+}
+
+function buildSseEditPayload(server, editUrlText, editHeadersText, clearHeaders) {
+	var isExistingSse = (server.transport || "stdio") === "sse";
+	var replacementUrl = editUrlText.trim();
+	if (!(replacementUrl || isExistingSse)) {
+		return { error: "Remote MCP servers require a URL" };
+	}
+	var payload = {
+		command: "",
+		args: [],
+	};
+	if (replacementUrl) payload.url = replacementUrl;
+
+	var replacementHeaders = editHeadersText.trim();
+	if (clearHeaders) {
+		payload.headers = {};
+	} else if (replacementHeaders) {
+		payload.headers = parseEnvLines(editHeadersText);
+	} else if (!isExistingSse) {
+		payload.headers = {};
+	}
+	return { payload };
+}
+
+function buildStdioEditPayload(editCmdText, editArgsText, editEnvText) {
+	var command = editCmdText.trim();
+	if (!command) {
+		return { error: "Local stdio servers require a command" };
+	}
+	return {
+		payload: {
+			command,
+			args: editArgsText.split(/\s+/).filter(Boolean),
+			env: parseEnvLines(editEnvText),
+			headers: {},
+			url: null,
+		},
+	};
+}
+
 // ── Featured MCP servers ────────────────────────────────────
 var featuredServers = [
 	{
@@ -170,7 +245,7 @@ function authStateLabel(state) {
 	return "OAuth not required";
 }
 
-function ConfigForm({ server, argsVal, envVal, urlVal, onCancel }) {
+function ConfigForm({ server, argsVal, envVal, urlVal, headerVal, onCancel }) {
 	var isSse = server.transport === "sse";
 	return html`<div class="mt-2 flex flex-col gap-1.5">
 	    ${server.hint && html`<div class="text-xs text-[var(--warn)]">${server.hint}</div>`}
@@ -183,6 +258,19 @@ function ConfigForm({ server, argsVal, envVal, urlVal, onCancel }) {
 							urlVal.value = e.target.value;
 						}}
 	          class="provider-key-input w-full font-mono" />
+	        <div class="text-xs text-[var(--muted)] mt-1">Optional request headers go below, one per line as KEY=VALUE. URL query values may use <code>$NAME</code> or <code>${"{NAME}"}</code> placeholders from Settings → Environment Variables.</div>
+	      </div>
+	      <div class="project-edit-group">
+	        <div class="text-xs text-[var(--muted)] mb-1">Request headers (optional, KEY=VALUE per line)</div>
+	        <textarea value=${headerVal.value}
+	          onInput=${(e) => {
+							headerVal.value = e.target.value;
+						}}
+	          rows="3"
+	          class="provider-key-input w-full resize-y font-mono text-sm"
+	          placeholder="Authorization=Bearer ..."
+	        />
+	        <div class="text-xs text-[var(--muted)] mt-1">Stored header values stay hidden after save. Header values may also use <code>$NAME</code> or <code>${"{NAME}"}</code> placeholders.</div>
 	      </div>`
 					: html`<div class="project-edit-group">
 	      <div class="text-xs text-[var(--muted)] mb-1">Arguments</div>
@@ -226,10 +314,9 @@ function FeaturedCard(props) {
 	var argsVal = useSignal((f.args || []).join(" "));
 	var envVal = useSignal((f.envKeys || []).map((k) => `${k}=`).join("\n"));
 	var urlVal = useSignal(f.url || "");
+	var headerVal = useSignal("");
 
-	var needsConfig = Boolean(
-		f.requiresConfig || (f.envKeys && f.envKeys.length > 0) || (f.transport === "sse" && !f.url),
-	);
+	var needsConfig = Boolean(f.requiresConfig || (f.envKeys && f.envKeys.length > 0) || f.transport === "sse");
 	var isSse = f.transport === "sse";
 
 	function onAdd() {
@@ -245,11 +332,12 @@ function FeaturedCard(props) {
 				installing.value = false;
 				return;
 			}
+			var headers = parseEnvLines(headerVal.value);
 			addServer({
 				name: f.name,
 				command: "",
 				args: [],
-				env: {},
+				headers,
 				transport: "sse",
 				url,
 			}).then(() => {
@@ -289,7 +377,7 @@ function FeaturedCard(props) {
     ${
 			configuring.value &&
 			html`<div class="px-3 pb-3 border border-t-0 border-[var(--border)] rounded-b-[var(--radius-sm)]">
-	        <${ConfigForm} server=${f} argsVal=${argsVal} envVal=${envVal} urlVal=${urlVal} onCancel=${() => {
+	        <${ConfigForm} server=${f} argsVal=${argsVal} envVal=${envVal} urlVal=${urlVal} headerVal=${headerVal} onCancel=${() => {
 						configuring.value = false;
 					}} />
 	      </div>`
@@ -361,6 +449,7 @@ function InstallBox() {
 	var showEnv = useSignal(false);
 	var transportType = useSignal("stdio");
 	var sseUrl = useSignal("");
+	var sseHeaders = useSignal("");
 
 	var isSse = transportType.value === "sse";
 	var canAdd = isSse ? sseUrl.value.trim().length > 0 : cmdLine.value.trim().length > 0;
@@ -371,16 +460,18 @@ function InstallBox() {
 		adding.value = true;
 		if (isSse) {
 			var sseName = detectedName || "remote";
+			var headers = parseEnvLines(sseHeaders.value);
 			addServer({
 				name: sseName,
 				command: "",
 				args: [],
-				env: {},
+				headers,
 				transport: "sse",
 				url: sseUrl.value.trim(),
 			}).then(() => {
 				adding.value = false;
 				sseUrl.value = "";
+				sseHeaders.value = "";
 			});
 			return;
 		}
@@ -441,7 +532,17 @@ function InstallBox() {
 					}}
 	        onKeyDown=${onKey} />
 	      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">Name: <span class="font-mono text-[var(--text-strong)]">${detectedName}</span></div>`}
-	      <div class="text-xs text-[var(--muted)] mt-1">If the server requires OAuth, your browser opens for sign-in when you enable or restart it.</div>
+	      <div class="text-xs text-[var(--muted)] mt-1">If the server requires OAuth, your browser opens for sign-in when you enable or restart it. URL query values may use <code>$NAME</code> or <code>${"{NAME}"}</code> placeholders from Settings → Environment Variables.</div>
+	    </div>
+	    <div class="project-edit-group mb-2">
+	      <div class="text-xs text-[var(--muted)] mb-1">Request headers (optional, KEY=VALUE per line)</div>
+	      <textarea class="provider-key-input w-full min-h-[72px] resize-y font-mono text-sm" placeholder="Authorization=Bearer ..."
+	        rows="3"
+	        value=${sseHeaders.value}
+	        onInput=${(e) => {
+						sseHeaders.value = e.target.value;
+					}} />
+	      <div class="text-xs text-[var(--muted)] mt-1">Optional request headers are sent to the remote MCP host. Stored header values stay hidden after save, and values may use <code>$NAME</code> or <code>${"{NAME}"}</code> placeholders.</div>
 	    </div>`
 		}
     ${
@@ -484,10 +585,14 @@ function ServerCard({ server }) {
 	var editArgs = useSignal("");
 	var editEnv = useSignal("");
 	var editUrl = useSignal("");
+	var editHeaders = useSignal("");
+	var clearHeaders = useSignal(false);
 	var saving = useSignal(false);
 	var reauthing = useSignal(false);
 	var isSse = (server.transport || "stdio") === "sse";
 	var authState = server.auth_state || "not_required";
+	var currentSafeUrl = safeRemoteUrlText(server);
+	var currentHeaderSummary = remoteHeaderSummary(server);
 
 	async function toggleTools() {
 		expanded.value = !expanded.value;
@@ -550,7 +655,7 @@ function ServerCard({ server }) {
 		e.stopPropagation();
 		reauthing.value = true;
 		try {
-			await startMcpOAuth(server.name, server.auth_url || null);
+			await startMcpOAuth(server.name, null);
 			showToast(`OAuth started for "${server.name}"`, "success");
 		} catch (error) {
 			showToast(`Failed to start OAuth: ${error.message}`, "error");
@@ -567,40 +672,29 @@ function ServerCard({ server }) {
 		editEnv.value = Object.entries(server.env || {})
 			.map(([k, v]) => `${k}=${v}`)
 			.join("\n");
-		editUrl.value = server.url || "";
+		editUrl.value = "";
+		editHeaders.value = "";
+		clearHeaders.value = false;
 		editing.value = true;
 	}
 
 	async function saveEdit() {
 		saving.value = true;
 		var transport = editTransport.value === "sse" ? "sse" : "stdio";
+		var editResult =
+			transport === "sse"
+				? buildSseEditPayload(server, editUrl.value, editHeaders.value, clearHeaders.value)
+				: buildStdioEditPayload(editCmd.value, editArgs.value, editEnv.value);
+		if (editResult.error) {
+			showToast(editResult.error, "error");
+			saving.value = false;
+			return;
+		}
 		var payload = {
 			name: server.name,
 			transport,
+			...editResult.payload,
 		};
-		if (transport === "sse") {
-			var url = editUrl.value.trim();
-			if (!url) {
-				showToast("Remote MCP servers require a URL", "error");
-				saving.value = false;
-				return;
-			}
-			payload.command = "";
-			payload.args = [];
-			payload.env = {};
-			payload.url = url;
-		} else {
-			var command = editCmd.value.trim();
-			if (!command) {
-				showToast("Local stdio servers require a command", "error");
-				saving.value = false;
-				return;
-			}
-			payload.command = command;
-			payload.args = editArgs.value.split(/\s+/).filter(Boolean);
-			payload.env = parseEnvLines(editEnv.value);
-			payload.url = null;
-		}
 		var res = await sendRpc("mcp.update", payload);
 		if (res?.ok) {
 			showToast(`Updated "${server.name}"`, "success");
@@ -677,12 +771,34 @@ function ServerCard({ server }) {
 	        ${
 						editTransport.value === "sse" &&
 						html`<div class="project-edit-group mb-2">
-	          <div class="text-xs text-[var(--muted)] mb-1">Server URL</div>
+	          <div class="text-xs text-[var(--muted)] mb-1">Current URL</div>
+	          <div class="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]">${currentSafeUrl || "(stored URL hidden until the API returns sanitized text)"}</div>
+	          <div class="text-xs text-[var(--muted)] mt-2 mb-1">Replace URL (leave blank to keep the current URL)</div>
 	          <input type="text" class="provider-key-input w-full font-mono" value=${editUrl.value}
+	            placeholder=${currentSafeUrl || "https://mcp.example.com/mcp"}
 	            onInput=${(e) => {
 								editUrl.value = e.target.value;
 							}} />
-	          <div class="text-xs text-[var(--muted)] mt-1">OAuth (if required) runs in your browser when the server is enabled.</div>
+	          <div class="text-xs text-[var(--muted)] mt-1">Leave this blank to preserve the stored URL. Query values may use <code>$NAME</code> or <code>${"{NAME}"}</code> placeholders. OAuth, if required, runs in your browser when the server is enabled.</div>
+	        </div>
+	        <div class="project-edit-group mb-2">
+	          <div class="text-xs text-[var(--muted)] mb-1">Current headers</div>
+	          <div class="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]">${currentHeaderSummary}</div>
+	          <div class="mt-2">
+	            <button onClick=${() => {
+								clearHeaders.value = !clearHeaders.value;
+							}}
+	              class="provider-btn provider-btn-secondary provider-btn-sm">${clearHeaders.value ? "Keep stored headers" : "Clear stored headers"}</button>
+	          </div>
+	          <div class="text-xs text-[var(--muted)] mt-2 mb-1">Replace headers (optional, KEY=VALUE per line)</div>
+	          <textarea class="provider-key-input w-full min-h-[72px] resize-y font-mono text-sm" rows="3"
+	            placeholder="Authorization=Bearer ..."
+	            value=${editHeaders.value}
+	            disabled=${clearHeaders.value}
+	            onInput=${(e) => {
+								editHeaders.value = e.target.value;
+							}} />
+	          <div class="text-xs text-[var(--muted)] mt-1">${clearHeaders.value ? html`Saving now removes every stored header for this remote server.` : html`Leave blank to preserve stored headers. Enter new lines to replace them, or click <strong>Clear stored headers</strong> to remove them entirely. Use <code>$NAME</code> or <code>${"{NAME}"}</code> for env-backed values.`}</div>
 	        </div>`
 					}
 	        ${
@@ -731,19 +847,16 @@ function ServerCard({ server }) {
 					? html`<div>
 	      <div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
 	        <span class="opacity-60">URL</span>
-	        <code class="font-mono text-[var(--text)]">${server.url || "(missing URL)"}</code>
+	        <code class="font-mono text-[var(--text)]">${currentSafeUrl || "(stored URL hidden until the API returns sanitized text)"}</code>
+	      </div>
+	      <div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
+	        <span class="opacity-60">HEADERS</span>
+	        <code class="font-mono text-[var(--text)]">${currentHeaderSummary}</code>
 	      </div>
 	      <div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
 	        <span class="opacity-60">AUTH</span>
 	        <span class="${authState === "failed" ? "text-[var(--error)]" : "text-[var(--text)]"}">${authStateLabel(authState)}</span>
 	      </div>
-	      ${
-					server.auth_url &&
-					html`<div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
-	        <span class="opacity-60">AUTH URL</span>
-	        <code class="font-mono text-[var(--text)] overflow-hidden text-ellipsis whitespace-nowrap">${server.auth_url}</code>
-	      </div>`
-				}
 	      ${
 					(authState === "awaiting_browser" || authState === "failed") &&
 					html`<div class="py-1.5">

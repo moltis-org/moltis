@@ -1036,19 +1036,11 @@ fn set_provider_enabled_in_config(provider: &str, enabled: bool) -> ServiceResul
 }
 
 fn normalize_provider_name(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    moltis_config::normalize_provider_name(value).unwrap_or_default()
 }
 
 fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            env_overrides
-                .get(key)
-                .cloned()
-                .filter(|value| !value.trim().is_empty())
-        })
+    moltis_config::env_value_with_overrides(env_overrides, key)
 }
 
 fn ui_offered_provider_order(config: &ProvidersConfig) -> Vec<String> {
@@ -1115,6 +1107,14 @@ pub fn detect_auto_provider_sources_with_overrides(
             && env_value_with_overrides(env_overrides, env_key).is_some()
         {
             sources.push(format!("env:{env_key}"));
+        }
+        if provider.auth_type == AuthType::ApiKey
+            && let Some(source) = moltis_config::generic_provider_env_source_for_provider(
+                provider.name,
+                env_overrides,
+            )
+        {
+            sources.push(source);
         }
 
         if config
@@ -1419,6 +1419,12 @@ impl LiveProviderSetupService {
         // Check if the provider has an API key set via env
         if let Some(env_key) = provider.env_key
             && env_value_with_overrides(&self.env_overrides, env_key).is_some()
+        {
+            return true;
+        }
+        if provider.auth_type == AuthType::ApiKey
+            && moltis_config::generic_provider_api_key_from_env(provider.name, &self.env_overrides)
+                .is_some()
         {
             return true;
         }
@@ -3392,6 +3398,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn available_marks_provider_configured_from_generic_provider_env() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None)
+            .with_env_overrides(HashMap::from([
+                ("MOLTIS_PROVIDER".to_string(), "openai".to_string()),
+                (
+                    "MOLTIS_API_KEY".to_string(),
+                    "sk-test-openai-generic".to_string(),
+                ),
+            ]));
+
+        let result = svc.available().await.unwrap();
+        let arr = result
+            .as_array()
+            .expect("providers.available should return array");
+        let openai = arr
+            .iter()
+            .find(|provider| provider.get("name").and_then(|v| v.as_str()) == Some("openai"))
+            .expect("openai should be present");
+
+        assert_eq!(
+            openai.get("configured").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
     async fn available_hides_unconfigured_providers_not_in_offered_list() {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
@@ -3454,6 +3489,31 @@ mod tests {
         assert!(
             github_copilot_idx < openai_idx && openai_idx < anthropic_idx,
             "offered provider order should be preserved, got: {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn available_accepts_offered_provider_aliases() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let config = ProvidersConfig {
+            offered: vec!["claude".into()],
+            ..ProvidersConfig::default()
+        };
+        let svc = LiveProviderSetupService::new(registry, config, None);
+        let result = svc.available().await.unwrap();
+        let arr = result
+            .as_array()
+            .expect("providers.available should return array");
+        let names: Vec<&str> = arr
+            .iter()
+            .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
+            .collect();
+
+        assert!(
+            names.contains(&"anthropic"),
+            "anthropic should be visible when offered contains alias 'claude', got: {names:?}"
         );
     }
 
@@ -4091,6 +4151,22 @@ mod tests {
             ..Default::default()
         });
         assert!(has_explicit_provider_settings(&model_only));
+    }
+
+    #[test]
+    fn detect_auto_provider_sources_includes_generic_provider_env() {
+        let detected = detect_auto_provider_sources_with_overrides(
+            &ProvidersConfig::default(),
+            None,
+            &HashMap::from([
+                ("PROVIDER".to_string(), "openai".to_string()),
+                ("API_KEY".to_string(), "sk-test-openai-generic".to_string()),
+            ]),
+        );
+
+        assert!(detected.iter().any(|source| {
+            source.provider == "openai" && source.source == "env:PROVIDER+API_KEY"
+        }));
     }
 
     #[tokio::test]
