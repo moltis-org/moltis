@@ -43,6 +43,46 @@ async function expectRpcOk(page, method, params) {
 	return response;
 }
 
+async function setVoiceGenerateRpcError(page, errorMessage) {
+	await page.evaluate(async (desiredErrorMessage) => {
+		const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+		if (!appScript) throw new Error("app module script not found");
+		const appUrl = new URL(appScript.src, window.location.origin);
+		const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+		const stateModule = await import(`${prefix}js/state.js`);
+		const ws = stateModule.ws;
+		if (!ws) throw new Error("websocket unavailable");
+
+		if (!window.__origVoiceGenerateWsSend) {
+			window.__origVoiceGenerateWsSend = ws.send.bind(ws);
+		}
+
+		ws.send = (payload) => {
+			try {
+				const parsed = JSON.parse(payload);
+				if (parsed?.method === "sessions.voice.generate") {
+					queueMicrotask(() => {
+						const pending = stateModule.pending?.[parsed.id];
+						if (!pending) return;
+						pending({
+							ok: false,
+							error: {
+								code: "INTERNAL",
+								message: desiredErrorMessage,
+							},
+						});
+						delete stateModule.pending[parsed.id];
+					});
+					return;
+				}
+			} catch (_err) {
+				// Fall through to the original sender.
+			}
+			return window.__origVoiceGenerateWsSend(payload);
+		};
+	}, errorMessage);
+}
+
 test.describe("WebSocket connection lifecycle", () => {
 	test("status shows connected after page load", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -331,6 +371,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
 		await expectRpcOk(page, "chat.clear", {});
+		await setVoiceGenerateRpcError(page, "forced voice generation failure for E2E");
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -349,6 +390,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
 		await assistant.locator(".msg-voice-action").click();
 		await expect(assistant.locator(".msg-voice-action")).toHaveText("Retry voice");
+		await expect(assistant.locator(".msg-voice-warning")).toContainText("forced voice generation failure for E2E");
 		await expect(assistant.locator(".msg-voice-warning")).not.toHaveText("");
 		expect(pageErrors).toEqual([]);
 	});
