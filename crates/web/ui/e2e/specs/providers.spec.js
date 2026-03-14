@@ -108,4 +108,63 @@ test.describe("Provider setup page", () => {
 
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("custom local model download progress modal renders without JS errors", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await openProvidersPage(page);
+
+		await page.evaluate(async () => {
+			const [providers, events, state] = await Promise.all([
+				import("/assets/js/providers.js"),
+				import("/assets/js/events.js"),
+				import("/assets/js/state.js"),
+			]);
+
+			state.setWs({
+				readyState: WebSocket.OPEN,
+				send(raw) {
+					const frame = JSON.parse(raw);
+					const respond = (payload) => {
+						queueMicrotask(() => {
+							const pending = state.pending[frame.id];
+							if (!pending) return;
+							pending(payload);
+							delete state.pending[frame.id];
+						});
+					};
+
+					if (frame.method === "providers.local.status") {
+						respond({ ok: true, payload: { status: "ready", model_id: "custom-test" } });
+						return;
+					}
+
+					if (frame.method === "models.list" || frame.method === "providers.available") {
+						respond({ ok: true, payload: [] });
+						return;
+					}
+
+					respond({ ok: true, payload: {} });
+				},
+			});
+
+			providers.showModelDownloadProgress({ id: "custom-test", displayName: "Custom.gguf" }, { name: "local-llm" });
+
+			const listeners = events.eventListeners["local-llm.download"] || [];
+			for (const listener of listeners.slice()) {
+				listener({
+					modelId: "custom-test",
+					progress: 50,
+					downloaded: 50 * 1024 * 1024,
+					total: 100 * 1024 * 1024,
+				});
+			}
+		});
+
+		await expect(page.getByText("Downloading Custom.gguf...", { exact: true })).toBeVisible();
+		await expect(page.getByText("50.0 MB / 100.0 MB", { exact: true })).toBeVisible();
+		await expect
+			.poll(async () => page.locator("#providerModalBody").textContent())
+			.toContain("Custom.gguf configured successfully!");
+		expect(pageErrors).toEqual([]);
+	});
 });
