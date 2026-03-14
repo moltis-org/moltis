@@ -147,7 +147,7 @@ Each job specifies where its agent turn runs:
 |--------|-------------|
 | `"main"` | Inject a `systemEvent` into the main session. Use this for reminders that should continue the main conversation. |
 | `"isolated"` | Run an `agentTurn` in a throwaway cron session. Use this for background jobs and channel delivery. |
-| `named("<name>")` | Internal/persistent cron session used by system jobs such as heartbeat. |
+| `named("<name>")` | Internal/persistent cron session used by system jobs such as heartbeat. Not user-configurable through the `cron` tool. |
 
 ## Security
 

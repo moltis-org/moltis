@@ -6418,6 +6418,29 @@ mod tests {
         assert!(outbound.delivered.lock().await.is_empty());
     }
 
+    #[tokio::test]
+    async fn maybe_deliver_cron_output_skips_when_deliver_is_false() {
+        let outbound = Arc::new(RecordingChannelOutbound::default());
+        let mut req = cron_delivery_request();
+        req.deliver = false;
+
+        maybe_deliver_cron_output(
+            Some(outbound.clone() as Arc<dyn moltis_channels::ChannelOutbound>),
+            &req,
+            "should not be sent",
+        )
+        .await;
+
+        assert!(outbound.delivered.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn maybe_deliver_cron_output_skips_when_no_outbound_configured() {
+        let req = cron_delivery_request();
+
+        maybe_deliver_cron_output(None, &req, "Daily digest ready").await;
+    }
+
     #[test]
     fn summarize_model_ids_for_logs_returns_all_when_within_limit() {
         let model_ids = vec!["a", "b", "c"]
