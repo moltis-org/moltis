@@ -1394,10 +1394,22 @@ pub(crate) struct BannerMeta {
     pub tailscale_reset_on_exit: bool,
 }
 
-fn restore_saved_local_llm_models(registry: &mut ProviderRegistry) {
+fn restore_saved_local_llm_models(
+    registry: &mut ProviderRegistry,
+    providers_config: &moltis_config::schema::ProvidersConfig,
+) {
     #[cfg(feature = "local-llm")]
     {
+        if !providers_config.is_enabled("local") {
+            return;
+        }
+
         crate::local_llm_setup::register_saved_local_models(registry);
+    }
+
+    #[cfg(not(feature = "local-llm"))]
+    {
+        let _ = (registry, providers_config);
     }
 }
 
@@ -1520,7 +1532,7 @@ pub async fn prepare_gateway(
     ));
     {
         let mut reg = registry.write().await;
-        restore_saved_local_llm_models(&mut reg);
+        restore_saved_local_llm_models(&mut reg, &effective_providers);
     }
     let (provider_summary, providers_available_at_startup) = {
         let reg = registry.read().await;
@@ -3448,6 +3460,7 @@ pub async fn prepare_gateway(
         let registry_for_startup_discovery = Arc::clone(&registry);
         let state_for_startup_discovery = Arc::clone(&state);
         let provider_config_for_startup_discovery = effective_providers.clone();
+        let provider_config_for_registry_rebuild = provider_config_for_startup_discovery.clone();
         let env_overrides_for_startup_discovery = config_env_overrides.clone();
         tokio::spawn(async move {
             let startup_discovery_started = std::time::Instant::now();
@@ -3469,7 +3482,7 @@ pub async fn prepare_gateway(
             let prefetched_models: usize = prefetched.values().map(Vec::len).sum();
             let mut new_registry = match tokio::task::spawn_blocking(move || {
                 ProviderRegistry::from_config_with_prefetched(
-                    &provider_config_for_startup_discovery,
+                    &provider_config_for_registry_rebuild,
                     &env_overrides_for_startup_discovery,
                     &prefetched,
                 )
@@ -3486,7 +3499,10 @@ pub async fn prepare_gateway(
                 },
             };
 
-            restore_saved_local_llm_models(&mut new_registry);
+            restore_saved_local_llm_models(
+                &mut new_registry,
+                &provider_config_for_startup_discovery,
+            );
             let provider_summary = new_registry.provider_summary();
             let model_count = new_registry.list_models().len();
             {
@@ -6446,7 +6462,10 @@ mod tests {
             remote_provider,
         );
 
-        restore_saved_local_llm_models(&mut rebuilt_registry);
+        restore_saved_local_llm_models(
+            &mut rebuilt_registry,
+            &moltis_config::schema::ProvidersConfig::default(),
+        );
 
         assert!(
             rebuilt_registry
@@ -6456,6 +6475,49 @@ mod tests {
         );
         assert!(
             rebuilt_registry
+                .list_models()
+                .iter()
+                .any(|model| raw_model_id(&model.id) == saved_entry.model_id)
+        );
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn restore_saved_local_llm_models_skips_when_local_provider_is_disabled() {
+        let _guard = LocalModelConfigTestGuard::new();
+        let config_dir = tempfile::tempdir().unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+        moltis_config::set_config_dir(config_dir.path().to_path_buf());
+        moltis_config::set_data_dir(data_dir.path().to_path_buf());
+
+        let saved_entry = crate::local_llm_setup::LocalModelEntry {
+            model_id: "custom-qwen".into(),
+            model_path: Some(PathBuf::from("/tmp/custom-qwen.gguf")),
+            hf_repo: Some("Qwen/Qwen3-4B-GGUF".into()),
+            hf_filename: Some("Qwen3-4B-Q4_K_M.gguf".into()),
+            gpu_layers: 0,
+            backend: "GGUF".into(),
+        };
+        crate::local_llm_setup::LocalLlmConfig {
+            models: vec![saved_entry.clone()],
+        }
+        .save()
+        .unwrap();
+
+        let mut providers_config = moltis_config::schema::ProvidersConfig::default();
+        providers_config.providers.insert(
+            "local-llm".into(),
+            moltis_config::schema::ProviderEntry {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+
+        let mut rebuilt_registry = ProviderRegistry::empty();
+        restore_saved_local_llm_models(&mut rebuilt_registry, &providers_config);
+
+        assert!(
+            !rebuilt_registry
                 .list_models()
                 .iter()
                 .any(|model| raw_model_id(&model.id) == saved_entry.model_id)
