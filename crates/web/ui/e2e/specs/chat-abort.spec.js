@@ -115,6 +115,72 @@ test.describe("Chat abort", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("aborted broadcast keeps partial assistant output in UI and history cache", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await expectRpcOk(page, "chat.clear", {});
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "thinking",
+				runId: "run-chat-abort-partial",
+			},
+		});
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "delta",
+				runId: "run-chat-abort-partial",
+				text: "Partial answer",
+			},
+		});
+
+		await expect(page.locator(".msg.assistant")).toContainText("Partial answer");
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "aborted",
+				runId: "run-chat-abort-partial",
+				messageIndex: 0,
+				partialMessage: {
+					role: "assistant",
+					content: "Partial answer",
+					model: "mock-model",
+					provider: "mock",
+					run_id: "run-chat-abort-partial",
+					created_at: Date.now(),
+				},
+			},
+		});
+
+		await expect(page.locator("#thinkingIndicator")).toHaveCount(0, { timeout: 5_000 });
+		await expect(page.locator(".msg.assistant")).toContainText("Partial answer");
+
+		const cachedHistory = await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var cache = await import(`${prefix}js/stores/session-history-cache.js`);
+			return cache.getSessionHistory("main");
+		});
+
+		expect(cachedHistory).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: "assistant",
+					content: "Partial answer",
+					run_id: "run-chat-abort-partial",
+					historyIndex: 0,
+				}),
+			]),
+		);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("chat.peek RPC returns result", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
