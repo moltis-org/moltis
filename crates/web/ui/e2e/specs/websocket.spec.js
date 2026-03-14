@@ -43,6 +43,11 @@ async function expectRpcOk(page, method, params) {
 	return response;
 }
 
+async function clearChatAndWait(page) {
+	await expectRpcOk(page, "chat.clear", {});
+	await expect(page.locator("#messages")).toBeEmpty({ timeout: 10_000 });
+}
+
 test.describe("WebSocket connection lifecycle", () => {
 	test("status shows connected after page load", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -191,7 +196,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
-		await expectRpcOk(page, "chat.clear", {});
+		await clearChatAndWait(page);
 
 		const markdownTableText = [
 			"Here are nearby cafes:",
@@ -258,7 +263,7 @@ test.describe("WebSocket connection lifecycle", () => {
 	test("final footer shows token speed with slow/fast tones", async ({ page }) => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
-		await expectRpcOk(page, "chat.clear", {});
+		await clearChatAndWait(page);
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -303,7 +308,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
-		await expectRpcOk(page, "chat.clear", {});
+		await clearChatAndWait(page);
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
