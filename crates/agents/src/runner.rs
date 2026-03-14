@@ -57,6 +57,12 @@ fn find_empty_tool_name_call(tool_calls: &[ToolCall]) -> Option<&ToolCall> {
         .find(|tc| sanitize_tool_name(&tc.name).is_empty())
 }
 
+fn has_named_tool_call(tool_calls: &[ToolCall]) -> bool {
+    tool_calls
+        .iter()
+        .any(|tc| !sanitize_tool_name(&tc.name).is_empty())
+}
+
 fn empty_tool_name_retry_prompt(tool_call: &ToolCall) -> String {
     format!(
         "{EMPTY_TOOL_NAME_RETRY_PROMPT}\nExact arguments JSON:\n{}",
@@ -856,7 +862,12 @@ pub async fn run_agent_loop_with_context(
         }
 
         if let Some(tc) = find_empty_tool_name_call(&response.tool_calls) {
-            if empty_tool_name_retry_count == 0 {
+            if has_named_tool_call(&response.tool_calls) {
+                warn!(
+                    tool_call_id = %tc.id,
+                    "structured tool call batch contains both empty and valid tool names; preserving valid sibling tool calls and falling back to normal tool error handling"
+                );
+            } else if empty_tool_name_retry_count == 0 {
                 empty_tool_name_retry_count += 1;
                 info!(tool_call_id = %tc.id, "detected structured tool call with empty name, requesting retry");
                 messages.push(ChatMessage::assistant(
@@ -1521,7 +1532,12 @@ pub async fn run_agent_loop_streaming(
         }
 
         if let Some(tc) = find_empty_tool_name_call(&tool_calls) {
-            if empty_tool_name_retry_count == 0 {
+            if has_named_tool_call(&tool_calls) {
+                warn!(
+                    tool_call_id = %tc.id,
+                    "streamed tool call batch contains both empty and valid tool names; preserving valid sibling tool calls and falling back to normal tool error handling"
+                );
+            } else if empty_tool_name_retry_count == 0 {
                 empty_tool_name_retry_count += 1;
                 info!(tool_call_id = %tc.id, "detected structured tool call with empty name in stream, requesting retry");
                 messages.push(ChatMessage::assistant(&accumulated_text));
@@ -2245,6 +2261,13 @@ mod tests {
             .unwrap_or("")
     }
 
+    fn has_tool_message_containing(messages: &[ChatMessage], needle: &str) -> bool {
+        messages.iter().any(|message| match message {
+            ChatMessage::Tool { content, .. } => content.contains(needle),
+            _ => false,
+        })
+    }
+
     struct EmptyToolNameProvider {
         call_count: std::sync::atomic::AtomicUsize,
     }
@@ -2666,6 +2689,117 @@ mod tests {
         assert_eq!(
             result.tool_calls_made, 2,
             "the repeated empty-name call should still produce normal tool feedback"
+        );
+    }
+
+    struct MixedEmptyAndValidToolNameProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MixedEmptyAndValidToolNameProvider {
+        fn name(&self) -> &str {
+            "mock-mixed-empty-and-valid-tool-name"
+        }
+
+        fn id(&self) -> &str {
+            "mock-mixed-empty-and-valid-tool-name"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![
+                        ToolCall {
+                            id: "call_empty_sibling".into(),
+                            name: " ".into(),
+                            arguments: serde_json::json!({"text": "bad"}),
+                        },
+                        ToolCall {
+                            id: "call_echo_sibling".into(),
+                            name: "echo_tool".into(),
+                            arguments: serde_json::json!({"text": "good"}),
+                        },
+                    ],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                }),
+                _ => {
+                    assert!(
+                        !last_user_text(messages).contains("empty tool name"),
+                        "mixed tool-call batches should not trigger the empty-name retry prompt"
+                    );
+                    assert!(
+                        has_tool_message_containing(messages, "unknown tool:"),
+                        "empty-name sibling should still produce normal tool error feedback"
+                    );
+                    assert!(
+                        has_tool_message_containing(messages, "\"text\":\"good\""),
+                        "valid sibling tool call should still execute"
+                    );
+                    Ok(CompletionResponse {
+                        text: Some("Handled mixed batch".into()),
+                        tool_calls: vec![],
+                        usage: Usage {
+                            input_tokens: 6,
+                            output_tokens: 3,
+                            ..Default::default()
+                        },
+                    })
+                },
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mixed_empty_and_valid_tool_names_execute_valid_siblings_non_streaming() {
+        let provider = Arc::new(MixedEmptyAndValidToolNameProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tools"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Handled mixed batch");
+        assert_eq!(
+            result.iterations, 2,
+            "mixed batch should not consume an extra retry turn"
+        );
+        assert_eq!(
+            result.tool_calls_made, 2,
+            "the valid sibling tool call should still execute alongside normal unknown-tool feedback"
         );
     }
 
@@ -3156,6 +3290,137 @@ mod tests {
         assert_eq!(
             result.tool_calls_made, 2,
             "the repeated empty-name call should still produce normal tool feedback"
+        );
+    }
+
+    struct MixedEmptyAndValidToolNameStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MixedEmptyAndValidToolNameStreamProvider {
+        fn name(&self) -> &str {
+            "mock-mixed-empty-and-valid-tool-name-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-mixed-empty-and-valid-tool-name-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match count {
+                0 => Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::ToolCallStart {
+                        id: "call_empty_sibling".into(),
+                        name: " ".into(),
+                        index: 0,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 0,
+                        delta: r#"{"text":"bad"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 0 },
+                    StreamEvent::ToolCallStart {
+                        id: "call_echo_sibling".into(),
+                        name: "echo_tool".into(),
+                        index: 1,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 1,
+                        delta: r#"{"text":"good"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 1 },
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ])),
+                _ => {
+                    assert!(
+                        !last_user_text(&messages).contains("empty tool name"),
+                        "mixed streamed tool-call batches should not trigger the empty-name retry prompt"
+                    );
+                    assert!(
+                        has_tool_message_containing(&messages, "unknown tool:"),
+                        "empty-name sibling should still produce normal tool error feedback"
+                    );
+                    assert!(
+                        has_tool_message_containing(&messages, "\"text\":\"good\""),
+                        "valid streamed sibling tool call should still execute"
+                    );
+                    Box::pin(tokio_stream::iter(vec![
+                        StreamEvent::Delta("Handled mixed batch".into()),
+                        StreamEvent::Done(Usage {
+                            input_tokens: 6,
+                            output_tokens: 3,
+                            ..Default::default()
+                        }),
+                    ]))
+                },
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mixed_empty_and_valid_tool_names_execute_valid_siblings_streaming() {
+        let provider = Arc::new(MixedEmptyAndValidToolNameStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &UserContent::text("Use the tools"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Handled mixed batch");
+        assert_eq!(
+            result.iterations, 2,
+            "mixed streamed batch should not consume an extra retry turn"
+        );
+        assert_eq!(
+            result.tool_calls_made, 2,
+            "the valid streamed sibling tool call should still execute alongside normal unknown-tool feedback"
         );
     }
 
