@@ -307,7 +307,9 @@ impl AgentTool for ExecTool {
             }
         });
 
-        if self.node_provider.is_some()
+        // Only show the node parameter when a default node is configured.
+        // This prevents model confusion when running in local mode without nodes.
+        if self.node_provider.is_some() && self.default_node.is_some()
             && let Some(obj) = properties.as_object_mut()
         {
             obj.insert(
@@ -353,7 +355,20 @@ impl AgentTool for ExecTool {
             .or_else(|| self.default_node.clone());
         if let (Some(provider), Some(node_ref)) = (&self.node_provider, node_ref) {
             let node_id = provider.resolve_node_id(&node_ref).await.ok_or_else(|| {
-                Error::message(format!("node '{node_ref}' not found or not connected"))
+                if node_ref.is_empty() {
+                    Error::message(
+                        "node parameter provided but is empty. \
+                         Remove the 'node' parameter to execute on the local host, \
+                         or specify a valid node ID or name if you have configured nodes."
+                    )
+                } else {
+                    Error::message(format!(
+                        "node '{}' not found or not connected. \
+                         Remove the 'node' parameter to execute on the local host, \
+                         or verify your node configuration if you intended to use remote execution.",
+                        node_ref
+                    ))
+                }
             })?;
 
             let cwd = params.get("working_dir").and_then(|v| v.as_str());
