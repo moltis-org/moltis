@@ -112,6 +112,7 @@ impl TelegramOutbound {
         {
             Ok(message) => Ok(message.id),
             Err(e) => {
+                let plain_chunk = telegram_html_to_plain_text(chunk);
                 warn!(
                     account_id,
                     chat_id = to,
@@ -120,7 +121,7 @@ impl TelegramOutbound {
                 );
                 let message = self
                     .run_telegram_request_with_retry(account_id, to, "send message (plain)", || {
-                        let mut plain_req = bot.send_message(chat_id, chunk);
+                        let mut plain_req = bot.send_message(chat_id, &plain_chunk);
                         if silent {
                             plain_req = plain_req.disable_notification(true);
                         }
@@ -159,6 +160,7 @@ impl TelegramOutbound {
                 if is_message_not_modified_error(&e) {
                     return Ok(());
                 }
+                let plain_chunk = telegram_html_to_plain_text(chunk);
                 warn!(
                     account_id,
                     chat_id = to,
@@ -167,7 +169,7 @@ impl TelegramOutbound {
                 );
                 match self
                     .run_telegram_request_with_retry(account_id, to, "edit message (plain)", || {
-                        let plain_req = bot.edit_message_text(chat_id, message_id, chunk);
+                        let plain_req = bot.edit_message_text(chat_id, message_id, &plain_chunk);
                         async move { plain_req.await }
                     })
                     .await
@@ -253,6 +255,156 @@ fn retry_after_duration(error: &RequestError) -> Option<Duration> {
 
 fn is_message_not_modified_error(error: &RequestError) -> bool {
     matches!(error, RequestError::Api(ApiError::MessageNotModified))
+}
+
+fn telegram_html_to_plain_text(html: &str) -> String {
+    let mut plain = String::with_capacity(html.len());
+    let mut remaining = html;
+
+    while let Some(ch) = remaining.chars().next() {
+        if ch == '<' {
+            if let Some((tag_name, consumed_len)) = consume_plain_text_html_tag(remaining) {
+                if is_plain_text_line_break_tag(&tag_name) && !plain.ends_with('\n') {
+                    plain.push('\n');
+                }
+                remaining = &remaining[consumed_len..];
+                continue;
+            }
+        } else if ch == '&'
+            && let Some((decoded, consumed_len)) = consume_html_entity(remaining)
+        {
+            plain.push_str(&decoded);
+            remaining = &remaining[consumed_len..];
+            continue;
+        }
+
+        plain.push(ch);
+        remaining = &remaining[ch.len_utf8()..];
+    }
+
+    plain.trim_matches('\n').to_string()
+}
+
+fn consume_plain_text_html_tag(input: &str) -> Option<(String, usize)> {
+    let bytes = input.as_bytes();
+    if bytes.first().copied()? != b'<' {
+        return None;
+    }
+
+    let mut index = 1usize;
+    if bytes.get(index).copied() == Some(b'/') {
+        index += 1;
+    }
+
+    let name_start = index;
+    let first = bytes.get(index).copied()?;
+    if !first.is_ascii_alphabetic() {
+        return None;
+    }
+
+    while let Some(next) = bytes.get(index).copied() {
+        if next.is_ascii_alphanumeric() || next == b'-' {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    let tag_name = input[name_start..index].to_ascii_lowercase();
+    if !is_plain_text_html_tag_name(&tag_name) {
+        return None;
+    }
+
+    let mut quote = None;
+    while let Some(next) = bytes.get(index).copied() {
+        match quote {
+            Some(delimiter) if next == delimiter => quote = None,
+            Some(_) => {},
+            None if next == b'\'' || next == b'"' => quote = Some(next),
+            None if next == b'>' => return Some((tag_name, index + 1)),
+            None => {},
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn consume_html_entity(input: &str) -> Option<(String, usize)> {
+    if !input.starts_with('&') {
+        return None;
+    }
+
+    let mut entity = String::new();
+    for (index, ch) in input.char_indices() {
+        entity.push(ch);
+        let consumed_len = index + ch.len_utf8();
+        if ch == ';' {
+            return decode_html_entity(&entity).map(|decoded| (decoded, consumed_len));
+        }
+        if entity.len() > 12 {
+            return None;
+        }
+    }
+
+    None
+}
+
+fn is_plain_text_html_tag_name(tag_name: &str) -> bool {
+    matches!(
+        tag_name,
+        "a" | "b"
+            | "blockquote"
+            | "br"
+            | "code"
+            | "del"
+            | "div"
+            | "em"
+            | "i"
+            | "ins"
+            | "li"
+            | "p"
+            | "pre"
+            | "s"
+            | "span"
+            | "strike"
+            | "strong"
+            | "tg-emoji"
+            | "tg-spoiler"
+            | "u"
+    )
+}
+
+fn is_plain_text_line_break_tag(tag_name: &str) -> bool {
+    matches!(tag_name, "blockquote" | "br" | "div" | "li" | "p" | "pre")
+}
+
+fn decode_html_entity(entity: &str) -> Option<String> {
+    match entity {
+        "&amp;" => Some("&".to_string()),
+        "&lt;" => Some("<".to_string()),
+        "&gt;" => Some(">".to_string()),
+        "&quot;" => Some("\"".to_string()),
+        "&apos;" | "&#39;" => Some("'".to_string()),
+        "&nbsp;" | "&#160;" => Some(" ".to_string()),
+        _ => decode_numeric_html_entity(entity),
+    }
+}
+
+fn decode_numeric_html_entity(entity: &str) -> Option<String> {
+    let value = entity
+        .strip_prefix("&#x")
+        .or_else(|| entity.strip_prefix("&#X"))
+        .and_then(|hex| hex.strip_suffix(';'))
+        .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+        .or_else(|| {
+            entity
+                .strip_prefix("&#")
+                .and_then(|decimal| decimal.strip_suffix(';'))
+                .and_then(|decimal| decimal.parse::<u32>().ok())
+        })?;
+
+    char::from_u32(value).map(|ch| ch.to_string())
 }
 
 trait RequestResultExt<T> {
@@ -969,8 +1121,92 @@ impl ChannelStreamOutbound for TelegramOutbound {
 mod tests {
     use {
         super::*,
-        std::{collections::HashMap, sync::Arc, time::Duration},
+        axum::{Json, Router, extract::State, http::StatusCode, routing::post},
+        moltis_channels::gating::DmPolicy,
+        secrecy::Secret,
+        serde::{Deserialize, Serialize},
+        std::{
+            collections::HashMap,
+            sync::{Arc, Mutex},
+            time::Duration,
+        },
+        tokio::sync::oneshot,
+        tokio_util::sync::CancellationToken,
     };
+
+    use crate::{config::TelegramAccountConfig, otp::OtpState, state::AccountState};
+
+    #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+    struct SendMessageRequest {
+        chat_id: i64,
+        text: String,
+        #[serde(default)]
+        parse_mode: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TelegramApiResponse {
+        ok: bool,
+        result: TelegramMessageResult,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TelegramMessageResult {
+        message_id: i64,
+        date: i64,
+        chat: TelegramChat,
+        text: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TelegramChat {
+        id: i64,
+        #[serde(rename = "type")]
+        chat_type: String,
+    }
+
+    #[derive(Clone)]
+    struct MockTelegramApi {
+        requests: Arc<Mutex<Vec<SendMessageRequest>>>,
+    }
+
+    async fn send_message_handler(
+        State(state): State<MockTelegramApi>,
+        Json(body): Json<SendMessageRequest>,
+    ) -> (StatusCode, Json<serde_json::Value>) {
+        state
+            .requests
+            .lock()
+            .expect("lock requests")
+            .push(body.clone());
+
+        if body.parse_mode.as_deref() == Some("HTML") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": "Bad Request: can't parse entities: unsupported start tag"
+                })),
+            );
+        }
+
+        (
+            StatusCode::OK,
+            Json(serde_json::json!(TelegramApiResponse {
+                ok: true,
+                result: TelegramMessageResult {
+                    message_id: 1,
+                    date: 0,
+                    chat: TelegramChat {
+                        id: body.chat_id,
+                        chat_type: "private".to_string(),
+                    },
+                    text: body.text,
+                },
+            })),
+        )
+    }
 
     #[tokio::test]
     async fn send_location_unknown_account_returns_error() {
@@ -1005,6 +1241,43 @@ mod tests {
     }
 
     #[test]
+    fn telegram_html_to_plain_text_strips_tags_and_decodes_entities() {
+        let plain = telegram_html_to_plain_text(
+            "<b>Hello</b> &amp; <i>world</i><br><code>&lt;ok&gt;</code>",
+        );
+
+        assert_eq!(plain, "Hello & world\n<ok>");
+    }
+
+    #[test]
+    fn telegram_html_to_plain_text_decodes_numeric_entities() {
+        let plain = telegram_html_to_plain_text("it&#39;s &#x1F642;");
+
+        assert_eq!(plain, "it's 🙂");
+    }
+
+    #[test]
+    fn telegram_html_to_plain_text_decodes_uppercase_hex_entities() {
+        let plain = telegram_html_to_plain_text("smile &#X1F642;");
+
+        assert_eq!(plain, "smile 🙂");
+    }
+
+    #[test]
+    fn telegram_html_to_plain_text_preserves_non_tag_angle_bracket_text() {
+        let plain = telegram_html_to_plain_text("<code>if a < b && c > d</code>");
+
+        assert_eq!(plain, "if a < b && c > d");
+    }
+
+    #[test]
+    fn telegram_html_to_plain_text_preserves_preformatted_indentation() {
+        let plain = telegram_html_to_plain_text("<pre>    indented</pre>");
+
+        assert_eq!(plain, "    indented");
+    }
+
+    #[test]
     fn is_message_not_modified_error_detects_variant() {
         let err = RequestError::Api(ApiError::MessageNotModified);
         assert!(is_message_not_modified_error(&err));
@@ -1035,6 +1308,84 @@ mod tests {
         assert!(!should_send_stream_completion_notification(
             true, false, false
         ));
+    }
+
+    #[tokio::test]
+    async fn send_html_fallback_sends_plain_text_without_raw_tags() {
+        let recorded_requests = Arc::new(Mutex::new(Vec::<SendMessageRequest>::new()));
+        let mock_api = MockTelegramApi {
+            requests: Arc::clone(&recorded_requests),
+        };
+        let app = Router::new()
+            .route("/{*path}", post(send_message_handler))
+            .with_state(mock_api);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let addr = listener.local_addr().expect("local addr");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("serve mock telegram api");
+        });
+
+        let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
+        let bot = Bot::new("test-token").set_api_url(api_url);
+
+        let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+        let outbound = Arc::new(TelegramOutbound {
+            accounts: Arc::clone(&accounts),
+        });
+        let account_id = "test-account";
+
+        {
+            let mut map = accounts.write().expect("accounts write lock");
+            map.insert(account_id.to_string(), AccountState {
+                bot: bot.clone(),
+                bot_username: Some("test_bot".to_string()),
+                account_id: account_id.to_string(),
+                config: TelegramAccountConfig {
+                    token: Secret::new("test-token".to_string()),
+                    dm_policy: DmPolicy::Open,
+                    ..Default::default()
+                },
+                outbound: Arc::clone(&outbound),
+                cancel: CancellationToken::new(),
+                message_log: None,
+                event_sink: None,
+                otp: Mutex::new(OtpState::new(300)),
+            });
+        }
+
+        outbound
+            .send_html(
+                account_id,
+                "42",
+                "<b>Hello</b> &amp; <i>world</i><br><code>&lt;ok&gt;</code>",
+                None,
+            )
+            .await
+            .expect("send html");
+
+        {
+            let requests = recorded_requests.lock().expect("requests lock");
+            assert_eq!(requests.len(), 2, "expected HTML send plus plain fallback");
+            assert_eq!(requests[0].parse_mode.as_deref(), Some("HTML"));
+            assert_eq!(
+                requests[0].text,
+                "<b>Hello</b> &amp; <i>world</i><br><code>&lt;ok&gt;</code>"
+            );
+            assert_eq!(requests[1].parse_mode, None);
+            assert_eq!(requests[1].text, "Hello & world\n<ok>");
+        }
+
+        let _ = shutdown_tx.send(());
+        server.await.expect("server join");
     }
 
     #[test]

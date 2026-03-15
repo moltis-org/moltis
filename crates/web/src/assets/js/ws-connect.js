@@ -5,6 +5,7 @@ import * as S from "./state.js";
 
 var reconnectTimer = null;
 var lastOpts = null;
+var authRedirectPending = false;
 
 /** Registry of server-request handlers keyed by method name (v4 bidir RPC). */
 var serverRequestHandlers = {};
@@ -12,6 +13,12 @@ var serverRequestHandlers = {};
 function resolveLocale() {
 	return getPreferredLocale();
 }
+
+function resetAuthRedirectGuard() {
+	authRedirectPending = false;
+}
+
+window.addEventListener("moltis:auth-status-sync-complete", resetAuthRedirectGuard);
 
 /**
  * Register a handler for server-initiated RPC requests (v4 bidirectional RPC).
@@ -87,6 +94,14 @@ export function connectWs(opts) {
 		}
 		if (frame?.type === "res" && frame.error) {
 			frame.error = localizeRpcError(frame.error);
+			// When an RPC response indicates auth failure, trigger the
+			// auth-status-changed flow so the UI redirects to login
+			// instead of showing stale/broken data. Use a flag to
+			// avoid dispatching multiple times when several RPCs fail.
+			if (frame.error.code === "UNAUTHORIZED" && !authRedirectPending) {
+				authRedirectPending = true;
+				window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
+			}
 		}
 		if (frame.type === "res" && frame.id && S.pending[frame.id]) {
 			S.pending[frame.id](frame);

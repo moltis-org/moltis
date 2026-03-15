@@ -25,6 +25,13 @@ export function onChange(key, fn) {
 	listeners[key].push(fn);
 }
 
+export function offChange(key, fn) {
+	var arr = listeners[key];
+	if (!arr) return;
+	var idx = arr.indexOf(fn);
+	if (idx !== -1) arr.splice(idx, 1);
+}
+
 export function refresh() {
 	return fetch(`/api/gon?_=${Date.now()}`, {
 		cache: "no-store",

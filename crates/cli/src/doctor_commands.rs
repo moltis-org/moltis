@@ -218,14 +218,9 @@ fn check_config(config_dir: Option<&Path>) -> Section {
         }
     }
 
-    // Semantic warnings (security, etc.)
+    // Semantic warnings (security, deprecated fields, etc.)
     for d in &result.diagnostics {
-        if d.category == "security" || d.category == "unknown-provider" {
-            let status = match d.severity {
-                Severity::Error => Status::Fail,
-                Severity::Warning => Status::Warn,
-                Severity::Info => Status::Info,
-            };
+        if let Some(status) = config_validation_status(d) {
             let msg = if d.path.is_empty() {
                 d.message.clone()
             } else {
@@ -257,6 +252,21 @@ fn check_config(config_dir: Option<&Path>) -> Section {
     }
 
     section
+}
+
+fn config_validation_status(diagnostic: &moltis_config::Diagnostic) -> Option<Status> {
+    if diagnostic.category != "security"
+        && diagnostic.category != "unknown-provider"
+        && diagnostic.category != "deprecated-field"
+    {
+        return None;
+    }
+
+    Some(match diagnostic.severity {
+        Severity::Error => Status::Fail,
+        Severity::Warning => Status::Warn,
+        Severity::Info => Status::Info,
+    })
 }
 
 // ── 2. Security audit ───────────────────────────────────────────────────────
@@ -680,7 +690,10 @@ fn check_mcp_servers(config: &MoltisConfig) -> Section {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {super::*, moltis_config::MoltisConfig};
+    use {
+        super::*,
+        moltis_config::{MoltisConfig, validate::Diagnostic},
+    };
 
     #[test]
     fn status_labels() {
@@ -715,6 +728,18 @@ mod tests {
         let (errors, warnings) = print_report(&[section]);
         assert_eq!(errors, 1);
         assert_eq!(warnings, 2);
+    }
+
+    #[test]
+    fn config_validation_status_warns_for_deprecated_field() {
+        let diagnostic = Diagnostic {
+            severity: Severity::Warning,
+            category: "deprecated-field",
+            path: "memory.embedding_provider".into(),
+            message: "deprecated field; use \"memory.provider\" instead".into(),
+        };
+
+        assert_eq!(config_validation_status(&diagnostic), Some(Status::Warn));
     }
 
     #[test]
@@ -835,6 +860,7 @@ mod tests {
             command: "node".to_string(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: false,
             transport: String::new(),
             url: None,
@@ -855,6 +881,7 @@ mod tests {
             command: String::new(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: true,
             transport: String::new(),
             url: None,
@@ -875,6 +902,7 @@ mod tests {
             command: String::new(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: true,
             transport: "sse".to_string(),
             url: Some("http://localhost:3000/sse".to_string()),
@@ -895,6 +923,7 @@ mod tests {
             command: String::new(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: true,
             transport: "sse".to_string(),
             url: None,
@@ -918,6 +947,7 @@ mod tests {
             command: "definitely-not-a-real-command-xyz123".to_string(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: true,
             transport: String::new(),
             url: None,

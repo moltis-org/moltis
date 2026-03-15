@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {
 	if (typeof message !== "string") return false;
@@ -43,6 +43,65 @@ async function expectRpcOk(page, method, params) {
 	return response;
 }
 
+async function clearChatAndWait(page) {
+	await expectRpcOk(page, "chat.clear", {});
+	await expect(page.locator("#messages")).toBeEmpty({ timeout: 10_000 });
+}
+async function waitForChatSessionReady(page) {
+	await page.waitForFunction(
+		async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) return false;
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var state = await import(`${prefix}js/state.js`);
+			return !(state.sessionSwitchInProgress || state.chatBatchLoading);
+		},
+		{ timeout: 10_000 },
+	);
+}
+
+async function mockRpcErrorResponse(page, method, message) {
+	await page.evaluate(
+		async ({ targetMethod, errorMessage }) => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			if (!window.__origWebsocketSpecWsSend) {
+				window.__origWebsocketSpecWsSend = ws.send.bind(ws);
+			}
+
+			ws.send = (payload) => {
+				try {
+					var parsed = JSON.parse(payload);
+					if (parsed?.method === targetMethod) {
+						var resolver = stateModule.pending?.[parsed.id];
+						if (typeof resolver === "function") {
+							delete stateModule.pending[parsed.id];
+							resolver({
+								ok: false,
+								error: {
+									code: "INTERNAL",
+									message: errorMessage,
+								},
+							});
+						}
+						return;
+					}
+				} catch (_err) {
+					// Fall through to the original sender.
+				}
+				return window.__origWebsocketSpecWsSend(payload);
+			};
+		},
+		{ targetMethod: method, errorMessage: message },
+	);
+}
 test.describe("WebSocket connection lifecycle", () => {
 	test("status shows connected after page load", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -191,7 +250,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
-		await expectRpcOk(page, "chat.clear", {});
+		await clearChatAndWait(page);
 
 		const markdownTableText = [
 			"Here are nearby cafes:",
@@ -258,7 +317,7 @@ test.describe("WebSocket connection lifecycle", () => {
 	test("final footer shows token speed with slow/fast tones", async ({ page }) => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
-		await expectRpcOk(page, "chat.clear", {});
+		await clearChatAndWait(page);
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -303,7 +362,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
-		await expectRpcOk(page, "chat.clear", {});
+		await clearChatAndWait(page);
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -328,9 +387,11 @@ test.describe("WebSocket connection lifecycle", () => {
 
 	test("voice fallback action shows error when generation RPC fails", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await page.goto("/chats/main");
+		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
-		await expectRpcOk(page, "chat.clear", {});
+		await waitForChatSessionReady(page);
+		await clearChatAndWait(page);
+		await mockRpcErrorResponse(page, "sessions.voice.generate", "Voice generation failed for test.");
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -346,10 +407,11 @@ test.describe("WebSocket connection lifecycle", () => {
 		});
 
 		var assistant = page.locator("#messages .msg.assistant").last();
+		await expect(assistant).toContainText("try generating voice now");
 		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
 		await assistant.locator(".msg-voice-action").click();
 		await expect(assistant.locator(".msg-voice-action")).toHaveText("Retry voice");
-		await expect(assistant.locator(".msg-voice-warning")).not.toHaveText("");
+		await expect(assistant.locator(".msg-voice-warning")).toContainText("Voice generation failed for test.");
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -604,8 +666,9 @@ test.describe("WebSocket connection lifecycle", () => {
 
 	test("thinking text is preserved as reasoning disclosure when tool call follows", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await page.goto("/chats/main");
+		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
 
 		await expectRpcOk(page, "chat.clear", {});
 
@@ -747,5 +810,119 @@ test.describe("WebSocket connection lifecycle", () => {
 
 		// In local no-password mode, /login immediately routes back to chat.
 		await expect.poll(() => new URL(page.url()).pathname).toMatch(/^\/(?:login|chats\/.+)$/);
+	});
+
+	test("UNAUTHORIZED redirect guard resets after auth sync completes", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.addInitScript(() => {
+			const originalFetch = window.fetch.bind(window);
+			window.fetch = (...args) => {
+				const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
+				if (url.endsWith("/api/auth/status")) {
+					return Promise.resolve(
+						new Response(
+							JSON.stringify({
+								authenticated: false,
+								setup_required: false,
+								auth_disabled: false,
+								localhost_only: false,
+								has_password: true,
+								has_passkeys: false,
+							}),
+							{
+								status: 200,
+								headers: { "Content-Type": "application/json" },
+							},
+						),
+					);
+				}
+				return originalFetch(...args);
+			};
+		});
+
+		await page.goto("/login");
+		await page.waitForLoadState("domcontentloaded");
+
+		const counts = await page.evaluate(async () => {
+			const loginScript = document.querySelector('script[type="module"][src*="js/login-app.js"]');
+			if (!loginScript) throw new Error("login module script not found");
+
+			const loginUrl = new URL(loginScript.src, window.location.origin);
+			const prefix = loginUrl.href.slice(0, loginUrl.href.length - "js/login-app.js".length);
+
+			class FakeWebSocket {
+				constructor(url) {
+					this.url = url;
+					this.sent = [];
+					FakeWebSocket.instance = this;
+				}
+
+				send(data) {
+					this.sent.push(JSON.parse(data));
+				}
+
+				close() {}
+			}
+
+			const originalWebSocket = window.WebSocket;
+			window.WebSocket = FakeWebSocket;
+			window.__authChangedEvents = 0;
+			window.addEventListener("moltis:auth-status-changed", () => {
+				window.__authChangedEvents += 1;
+			});
+
+			try {
+				const wsModule = await import(`${prefix}js/ws-connect.js?e2e=${Date.now()}`);
+				wsModule.connectWs({});
+
+				const ws = FakeWebSocket.instance;
+				if (!ws) throw new Error("fake websocket was not created");
+				ws.onopen();
+
+				const connectFrame = ws.sent.find((frame) => frame.method === "connect");
+				if (!connectFrame) throw new Error("connect frame was not sent");
+
+				ws.onmessage({
+					data: JSON.stringify({
+						type: "res",
+						id: connectFrame.id,
+						ok: true,
+						payload: { type: "hello-ok" },
+					}),
+				});
+
+				const unauthorizedFrame = JSON.stringify({
+					type: "res",
+					id: "unauthorized-1",
+					ok: false,
+					error: { code: "UNAUTHORIZED", message: "expired" },
+				});
+
+				ws.onmessage({ data: unauthorizedFrame });
+				const afterFirst = window.__authChangedEvents;
+
+				ws.onmessage({ data: unauthorizedFrame });
+				const afterBurst = window.__authChangedEvents;
+
+				window.dispatchEvent(new CustomEvent("moltis:auth-status-sync-complete"));
+
+				ws.onmessage({ data: unauthorizedFrame });
+				return {
+					afterFirst,
+					afterBurst,
+					afterReset: window.__authChangedEvents,
+				};
+			} finally {
+				window.WebSocket = originalWebSocket;
+			}
+		});
+
+		expect(counts).toEqual({
+			afterFirst: 1,
+			afterBurst: 1,
+			afterReset: 2,
+		});
+		expect(pageErrors).toEqual([]);
 	});
 });

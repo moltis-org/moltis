@@ -1702,7 +1702,7 @@ function renderLocalModelSelection(provider, sysInfo, modelsData) {
 }
 
 // Create a card for HuggingFace search result
-function createHfSearchResultCard(model, _provider) {
+function createHfSearchResultCard(model, provider) {
 	var card = document.createElement("div");
 	card.className = "model-card";
 
@@ -1768,8 +1768,7 @@ function createHfSearchResultCard(model, _provider) {
 		if (res?.ok) {
 			fetchModels();
 			if (S.refreshProvidersPage) S.refreshProvidersPage();
-			status.innerHTML = `<div class="provider-status">${model.displayName} configured!</div>`;
-			setTimeout(closeProviderModal, 1500);
+			showModelDownloadProgress({ id: res.payload.modelId, displayName: model.displayName }, provider);
 		} else {
 			var err = res?.error?.message || "Failed to configure model";
 			status.innerHTML = `<div class="text-sm text-[var(--error)]">${err}</div>`;
@@ -1842,6 +1841,75 @@ function createModelCard(model, provider, totalRamGb) {
 	card.addEventListener("click", () => selectLocalModel(model, provider));
 
 	return card;
+}
+
+export function showModelDownloadProgress(model, provider) {
+	var m = els();
+	m.modal.classList.remove("hidden");
+	m.body.textContent = "";
+
+	var wrapper = document.createElement("div");
+	wrapper.className = "provider-key-form";
+
+	var status = document.createElement("div");
+	status.className = "text-sm text-[var(--text)]";
+	status.textContent = `Configuring ${model.displayName}...`;
+	wrapper.appendChild(status);
+
+	var progress = document.createElement("div");
+	progress.className = "download-progress mt-4";
+
+	var progressBar = document.createElement("div");
+	progressBar.className = "download-progress-bar";
+	progressBar.style.width = "0%";
+	progress.appendChild(progressBar);
+
+	var progressText = document.createElement("div");
+	progressText.className = "text-xs text-[var(--muted)] mt-2";
+	progress.appendChild(progressText);
+
+	wrapper.appendChild(progress);
+	m.body.appendChild(wrapper);
+
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: download progress handler with many states
+	var off = onEvent("local-llm.download", (payload) => {
+		if (payload.modelId !== model.id) return;
+
+		if (payload.error) {
+			status.textContent = payload.error;
+			status.className = "text-sm text-[var(--error)]";
+			off();
+			return;
+		}
+
+		if (payload.complete) {
+			status.textContent = `${model.displayName} downloaded successfully!`;
+			status.className = "provider-status";
+			progressBar.style.width = "100%";
+			progressText.textContent = "";
+			off();
+			fetchModels();
+			if (S.refreshProvidersPage) S.refreshProvidersPage();
+			setTimeout(closeProviderModal, 1500);
+			return;
+		}
+
+		if (payload.progress != null) {
+			progressBar.style.width = `${payload.progress.toFixed(1)}%`;
+			status.textContent = `Downloading ${model.displayName}...`;
+		}
+		if (payload.downloaded != null) {
+			var downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
+			if (payload.total != null) {
+				var totalMb = (payload.total / (1024 * 1024)).toFixed(1);
+				progressText.textContent = `${downloadedMb} MB / ${totalMb} MB`;
+			} else {
+				progressText.textContent = `${downloadedMb} MB downloaded`;
+			}
+		}
+	});
+
+	pollLocalStatus(model, provider, status, progress, off);
 }
 
 function selectLocalModel(model, provider) {

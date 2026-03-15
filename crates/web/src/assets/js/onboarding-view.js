@@ -424,16 +424,31 @@ function AuthStep({ onNext, skippable }) {
 
 			<form onSubmit=${onOptionalPassword} class="flex flex-col gap-3">
 				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Password</label>
-					<input type="password" class="provider-key-input w-full"
-						value=${optPw} onInput=${(e) => setOptPw(e.target.value)}
-						placeholder="At least 8 characters" autofocus />
+					<label for="onboarding-passkey-password" class="text-xs text-[var(--muted)] mb-1 block">Password</label>
+					<input
+						id="onboarding-passkey-password"
+						type="password"
+						name="password"
+						autocomplete="new-password"
+						class="provider-key-input w-full"
+						value=${optPw}
+						onInput=${(e) => setOptPw(e.target.value)}
+						placeholder="At least 8 characters"
+						autofocus
+					/>
 				</div>
 				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
-					<input type="password" class="provider-key-input w-full"
-						value=${optPwConfirm} onInput=${(e) => setOptPwConfirm(e.target.value)}
-						placeholder="Repeat password" />
+					<label for="onboarding-passkey-password-confirm" class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
+					<input
+						id="onboarding-passkey-password-confirm"
+						type="password"
+						name="confirm_password"
+						autocomplete="new-password"
+						class="provider-key-input w-full"
+						value=${optPwConfirm}
+						onInput=${(e) => setOptPwConfirm(e.target.value)}
+						placeholder="Repeat password"
+					/>
 				</div>
 				${error && html`<${ErrorPanel} message=${error} />`}
 				<div class="flex flex-wrap items-center gap-3 mt-1">
@@ -519,18 +534,33 @@ function AuthStep({ onNext, skippable }) {
 		${
 			method === "password" &&
 			html`<form onSubmit=${onPasswordSubmit} class="flex flex-col gap-3">
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Password${localhostOnly ? "" : " *"}</label>
-				<input type="password" class="provider-key-input w-full"
-					value=${password} onInput=${(e) => setPassword(e.target.value)}
-					placeholder=${localhostOnly ? "Optional on localhost" : "At least 8 characters"} autofocus />
-			</div>
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
-				<input type="password" class="provider-key-input w-full"
-					value=${confirm} onInput=${(e) => setConfirm(e.target.value)}
-					placeholder="Repeat password" />
-			</div>
+				<div>
+					<label for="onboarding-password" class="text-xs text-[var(--muted)] mb-1 block">Password${localhostOnly ? "" : " *"}</label>
+					<input
+						id="onboarding-password"
+						type="password"
+						name="password"
+						autocomplete="new-password"
+						class="provider-key-input w-full"
+						value=${password}
+						onInput=${(e) => setPassword(e.target.value)}
+						placeholder=${localhostOnly ? "Optional on localhost" : "At least 8 characters"}
+						autofocus
+					/>
+				</div>
+				<div>
+					<label for="onboarding-password-confirm" class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
+					<input
+						id="onboarding-password-confirm"
+						type="password"
+						name="confirm_password"
+						autocomplete="new-password"
+						class="provider-key-input w-full"
+						value=${confirm}
+						onInput=${(e) => setConfirm(e.target.value)}
+						placeholder="Repeat password"
+					/>
+				</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex flex-wrap items-center gap-3 mt-1">
 				<button type="submit" class="provider-btn" disabled=${saving}>
@@ -3208,13 +3238,13 @@ function SummaryStep({ onBack, onFinish }) {
 			${
 				data.tailscale !== null
 					? html`<${SummaryRow}
-					icon=${data.tailscale?.connected ? html`<${CheckIcon} />` : data.tailscale?.installed ? html`<${WarnIcon} />` : html`<${InfoIcon} />`}
+					icon=${data.tailscale?.tailscale_up ? html`<${CheckIcon} />` : data.tailscale?.installed ? html`<${WarnIcon} />` : html`<${InfoIcon} />`}
 					label="Tailscale">
 					${
-						data.tailscale?.connected
+						data.tailscale?.tailscale_up
 							? html`Connected`
 							: data.tailscale?.installed
-								? html`Installed but not connected`
+								? html`Installed but not connected — <a href="/settings/tailscale" class="text-[var(--accent)] underline">Configure in Settings</a>`
 								: html`Not installed. Install Tailscale for secure remote access.`
 					}
 				<//>`

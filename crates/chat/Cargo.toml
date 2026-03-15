@@ -41,6 +41,7 @@ push-notifications = ["dep:chrono"]
 web-ui             = ["dep:chrono"]
 
 [dev-dependencies]
+async-stream   = { workspace = true }
 moltis-channels = { workspace = true }
 sqlx            = { workspace = true }
 tempfile        = { workspace = true }
