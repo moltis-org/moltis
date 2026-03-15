@@ -258,8 +258,8 @@ impl BrowserPool {
     }
 
     /// Clean up idle browser instances and instances that have exceeded the
-    /// hard TTL (30 minutes). The TTL prevents Chromium memory leaks from
-    /// accumulating in long-lived browser instances.
+    /// hard TTL ([`MAX_BROWSER_INSTANCE_LIFETIME`]). The TTL prevents Chromium
+    /// memory leaks from accumulating in long-lived browser instances.
     pub async fn cleanup_idle(&self) {
         let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
         let now = Instant::now();
@@ -353,6 +353,7 @@ impl BrowserPool {
         let session_timeout_ms = browserless_session_timeout_ms(
             self.config.idle_timeout_secs,
             self.config.navigation_timeout_ms,
+            MAX_BROWSER_INSTANCE_LIFETIME.as_secs(),
         );
         let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
         let container_host = self.config.container_host.clone();

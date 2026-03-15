@@ -378,14 +378,24 @@ fn build_container_launch_args(
     format!("DEFAULT_LAUNCH_ARGS=[{joined}]")
 }
 
+/// Compute the browserless container `TIMEOUT` (in ms) from pool lifecycle settings.
+///
+/// The result is `max(idle_timeout_secs, max_instance_lifetime_secs)` converted
+/// to milliseconds, then floored against `navigation_timeout_ms` so that a single
+/// long navigation cannot exceed the container's own timeout. The final value is
+/// capped at `max_instance_lifetime_secs * 1000` to prevent disagree­ment with the
+/// Moltis-side hard TTL when `navigation_timeout_ms` is very large.
 pub(crate) fn browserless_session_timeout_ms(
     idle_timeout_secs: u64,
     navigation_timeout_ms: u64,
+    max_instance_lifetime_secs: u64,
 ) -> u64 {
+    let ceiling_ms = max_instance_lifetime_secs.saturating_mul(1000);
     idle_timeout_secs
-        .max(crate::pool::MAX_BROWSER_INSTANCE_LIFETIME.as_secs())
+        .max(max_instance_lifetime_secs)
         .saturating_mul(1000)
         .max(navigation_timeout_ms)
+        .min(ceiling_ms)
 }
 
 fn browserless_container_env(session_timeout_ms: u64) -> Vec<String> {
@@ -1090,20 +1100,30 @@ mod tests {
 
     #[test]
     fn test_browserless_session_timeout_uses_moltis_lifecycle_floor() {
-        let timeout_ms = browserless_session_timeout_ms(300, 30_000);
+        // idle (300s) < max_lifetime (1800s), nav (30s) < ceiling → uses max_lifetime
+        let timeout_ms = browserless_session_timeout_ms(300, 30_000, 1800);
         assert_eq!(timeout_ms, 1_800_000);
     }
 
     #[test]
-    fn test_browserless_session_timeout_respects_longer_idle_timeout() {
-        let timeout_ms = browserless_session_timeout_ms(3_600, 30_000);
-        assert_eq!(timeout_ms, 3_600_000);
+    fn test_browserless_session_timeout_caps_at_max_lifetime() {
+        // idle (3600s) > max_lifetime (1800s) → capped at max_lifetime ceiling
+        let timeout_ms = browserless_session_timeout_ms(3_600, 30_000, 1800);
+        assert_eq!(timeout_ms, 1_800_000);
     }
 
     #[test]
-    fn test_browserless_session_timeout_respects_longer_navigation_timeout() {
-        let timeout_ms = browserless_session_timeout_ms(60, 3_900_000);
-        assert_eq!(timeout_ms, 3_900_000);
+    fn test_browserless_session_timeout_caps_large_navigation_timeout() {
+        // nav timeout (3.9M ms = 65 min) exceeds max_lifetime (30 min) → capped
+        let timeout_ms = browserless_session_timeout_ms(60, 3_900_000, 1800);
+        assert_eq!(timeout_ms, 1_800_000);
+    }
+
+    #[test]
+    fn test_browserless_session_timeout_nav_within_ceiling() {
+        // nav timeout (600s = 10 min) within ceiling → uses max_lifetime as base
+        let timeout_ms = browserless_session_timeout_ms(60, 600_000, 1800);
+        assert_eq!(timeout_ms, 1_800_000);
     }
 
     #[test]
