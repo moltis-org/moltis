@@ -155,6 +155,9 @@ async function maybeWaitForLlmLoading(page) {
 
 async function moveToLlmStep(page) {
 	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
+	// Onboarding step order can vary by environment, and the OpenClaw import step
+	// is populated asynchronously after the card first appears. Keep polling until
+	// a real pre-LLM step is visible and can advance.
 	for (let i = 0; i < 40; i++) {
 		await waitForOnboardingStepLoaded(page);
 		if (await isVisible(llmHeading)) {
@@ -169,7 +172,15 @@ async function moveToLlmStep(page) {
 		if (await maybeSkipOpenClawImport(page)) continue;
 		if (await maybeSkipAuth(page)) continue;
 		if (await maybeCompleteIdentity(page)) continue;
-		await page.waitForTimeout(500);
+
+		const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
+		if (await isVisible(backBtn)) {
+			await backBtn.click();
+			continue;
+		}
+
+		// Wait for a step transition instead of a fixed delay
+		await waitForOnboardingStepLoaded(page);
 	}
 	await waitForLlmStepReady(page);
 	return true;
