@@ -12,7 +12,7 @@ use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     moltis_browser::{BrowserManager, BrowserRequest},
-    std::{collections::HashMap, sync::Arc},
+    std::{borrow::Cow, collections::HashMap, sync::Arc},
     tokio::sync::{OnceCell, RwLock},
     tracing::debug,
 };
@@ -37,11 +37,17 @@ pub struct BrowserTool {
     /// Track the most recent browser session ID per chat/session context.
     /// This prevents pool exhaustion when the LLM forgets to pass session_id,
     /// without reusing a stale browser across different chats.
+    /// Bounded to [`MAX_TRACKED_SESSIONS`] to prevent unbounded growth when
+    /// chats end without an explicit browser close action.
     session_ids: RwLock<HashMap<String, String>>,
 }
 
 impl BrowserTool {
     const DEFAULT_SESSION_KEY: &'static str = "main";
+    /// Maximum number of tracked browser sessions. When exceeded the oldest
+    /// entry (by insertion order, approximated by picking an arbitrary key) is
+    /// evicted to prevent unbounded memory growth from abandoned chats.
+    const MAX_TRACKED_SESSIONS: usize = 128;
 
     /// Create a new browser tool from browser configuration.
     pub fn new(config: moltis_browser::BrowserConfig) -> Self {
@@ -68,8 +74,11 @@ impl BrowserTool {
         Some(Self::new(browser_config))
     }
 
-    fn cache_key(session_key: Option<&str>) -> String {
-        session_key.unwrap_or(Self::DEFAULT_SESSION_KEY).to_string()
+    fn cache_key(session_key: Option<&str>) -> Cow<'static, str> {
+        match session_key {
+            Some(k) => Cow::Owned(k.to_string()),
+            None => Cow::Borrowed(Self::DEFAULT_SESSION_KEY),
+        }
     }
 
     /// Clear the tracked browser session for the current chat/session context
@@ -84,6 +93,14 @@ impl BrowserTool {
     async fn save_session(&self, session_key: &str, session_id: &str) {
         if !session_id.is_empty() {
             let mut guard = self.session_ids.write().await;
+            // Evict an arbitrary entry when at capacity to bound memory.
+            if guard.len() >= Self::MAX_TRACKED_SESSIONS
+                && !guard.contains_key(session_key)
+                && let Some(evict_key) = guard.keys().next().cloned()
+            {
+                debug!(evicted = %evict_key, "browser session cache full, evicting entry");
+                guard.remove(&evict_key);
+            }
             guard.insert(session_key.to_string(), session_id.to_string());
         }
     }
@@ -364,6 +381,42 @@ mod tests {
             Some("browser-session-two".to_string())
         );
         assert_eq!(tool.get_saved_session("web:session:three").await, None);
+    }
+
+    #[tokio::test]
+    async fn empty_session_id_is_not_saved() {
+        let config = moltis_config::schema::BrowserConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let tool = BrowserTool::from_config(&config).unwrap();
+        tool.save_session("web:session:one", "").await;
+        assert_eq!(tool.get_saved_session("web:session:one").await, None);
+    }
+
+    #[tokio::test]
+    async fn session_cache_evicts_when_full() {
+        let config = moltis_config::schema::BrowserConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let tool = BrowserTool::from_config(&config).unwrap();
+
+        // Fill the cache to capacity
+        for i in 0..BrowserTool::MAX_TRACKED_SESSIONS {
+            tool.save_session(&format!("session-{i}"), &format!("sid-{i}"))
+                .await;
+        }
+        assert_eq!(
+            tool.session_ids.read().await.len(),
+            BrowserTool::MAX_TRACKED_SESSIONS
+        );
+
+        // Adding one more should evict an entry and stay at capacity
+        tool.save_session("session-new", "sid-new").await;
+        let guard = tool.session_ids.read().await;
+        assert_eq!(guard.len(), BrowserTool::MAX_TRACKED_SESSIONS);
+        assert_eq!(guard.get("session-new"), Some(&"sid-new".to_string()));
     }
 
     #[tokio::test]
