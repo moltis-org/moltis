@@ -449,7 +449,7 @@ function StatusBar() {
 	if (!s) return html`<div class="cron-status-bar">Loading\u2026</div>`;
 	var parts = [
 		s.running ? "Running" : "Stopped",
-		`${s.jobCount} job${s.jobCount !== 1 ? "s" : ""}`,
+		`${s.jobCount} job${s.jobCount === 1 ? "" : "s"}`,
 		`${s.enabledCount} enabled`,
 	];
 	if (s.nextRunAtMs) {
@@ -962,11 +962,9 @@ function CronJobsPanel() {
 
 function CronsPage() {
 	return html`
-    <div>
-      <div class="flex-1 overflow-y-auto">
-        ${activeSection.value === "jobs" && html`<${CronJobsPanel} />`}
-        ${activeSection.value === "heartbeat" && html`<${HeartbeatPanel} />`}
-      </div>
+    <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      ${activeSection.value === "jobs" && html`<${CronJobsPanel} />`}
+      ${activeSection.value === "heartbeat" && html`<${HeartbeatPanel} />`}
     </div>
     <${CronModal} />
     <${ConfirmDialog} />
