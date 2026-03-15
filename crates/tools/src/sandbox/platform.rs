@@ -1,6 +1,8 @@
 //! Lightweight platform-specific sandbox backends.
 
 use async_trait::async_trait;
+#[cfg(target_os = "linux")]
+use tracing::debug;
 
 use {
     super::types::{Sandbox, SandboxConfig, SandboxId, truncate_output_for_display},

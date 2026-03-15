@@ -573,7 +573,7 @@ fn test_docker_home_persistence_args_session_uses_host_data_dir_override() {
 }
 
 #[test]
-fn test_create_sandbox_off() {
+fn test_create_sandbox_off_uses_no_sandbox() {
     let config = SandboxConfig {
         mode: SandboxMode::Off,
         ..Default::default()
