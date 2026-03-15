@@ -133,13 +133,14 @@ function remoteHeaderSummary(server) {
 	return `${names.join(", ")} (${label})`;
 }
 
-function buildSseEditPayload(server, editUrlText, editHeadersText, clearHeaders) {
+function buildSseEditPayload(server, editUrlText, editHeadersText, clearHeaders, editDisplayName) {
 	var isExistingSse = (server.transport || "stdio") === "sse";
 	var replacementUrl = editUrlText.trim();
 	if (!(replacementUrl || isExistingSse)) {
 		return { error: "Remote MCP servers require a URL" };
 	}
 	var payload = {
+			display_name: editDisplayName.value.trim() || null,
 		command: "",
 		args: [],
 	};
@@ -243,6 +244,17 @@ function authStateLabel(state) {
 	if (state === "authenticated") return "OAuth connected";
 	if (state === "failed") return "OAuth failed";
 	return "OAuth not required";
+}
+
+/** Render server name with optional technical ID badge */
+function renderServerName(server) {
+	var displayName = server.display_name || server.name;
+	var showTechnical = server.display_name && server.display_name !== server.name;
+	if (showTechnical) {
+		return html`<span class="text-sm font-medium text-[var(--text-strong)]">${displayName}</span>
+			<span class="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-mono">${server.name}</span>`;
+	}
+	return html`<span class="text-sm font-medium text-[var(--text-strong)]">${displayName}</span>`;
 }
 
 function ConfigForm({ server, argsVal, envVal, urlVal, headerVal, onCancel }) {
@@ -450,6 +462,7 @@ function InstallBox() {
 	var transportType = useSignal("stdio");
 	var sseUrl = useSignal("");
 	var sseHeaders = useSignal("");
+	var displayNameVal = useSignal("");
 
 	var isSse = transportType.value === "sse";
 	var canAdd = isSse ? sseUrl.value.trim().length > 0 : cmdLine.value.trim().length > 0;
@@ -463,6 +476,7 @@ function InstallBox() {
 			var headers = parseEnvLines(sseHeaders.value);
 			addServer({
 				name: sseName,
+				display_name: displayNameVal.value.trim() || sseName,
 				command: "",
 				args: [],
 				headers,
@@ -472,6 +486,7 @@ function InstallBox() {
 				adding.value = false;
 				sseUrl.value = "";
 				sseHeaders.value = "";
+			displayNameVal.value = "";
 			});
 			return;
 		}
@@ -482,6 +497,7 @@ function InstallBox() {
 		var env = parseEnvLines(envVal.value);
 		addServer({
 			name,
+		display_name: displayNameVal.value.trim() || name,
 			command,
 			args: argsList,
 			env,
@@ -489,6 +505,7 @@ function InstallBox() {
 			adding.value = false;
 			cmdLine.value = "";
 			envVal.value = "";
+			displayNameVal.value = "";
 		});
 	}
 
@@ -518,7 +535,15 @@ function InstallBox() {
 					cmdLine.value = e.target.value;
 				}}
         onKeyDown=${onKey} />
-      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">Name: <span class="font-mono text-[var(--text-strong)]">${detectedName}</span> <span class="opacity-60">(editable after adding)</span></div>`}
+      ${detectedName && html`<div class="project-edit-group mt-2">
+        <div class="text-xs text-[var(--muted)] mb-1">Display name (optional)</div>
+        <input type="text" class="provider-key-input w-full" placeholder="${detectedName}"
+          value=${displayNameVal.value}
+          onInput=${(e) => {
+						displayNameVal.value = e.target.value;
+					}} />
+        <div class="text-xs text-[var(--muted)] mt-1">Technical ID: <span class="font-mono">${detectedName}</span></div>
+      </div>`}
     </div>`
 		}
     ${
@@ -531,7 +556,15 @@ function InstallBox() {
 						sseUrl.value = e.target.value;
 					}}
 	        onKeyDown=${onKey} />
-	      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">Name: <span class="font-mono text-[var(--text-strong)]">${detectedName}</span></div>`}
+	      ${detectedName && html`<div class="project-edit-group mt-2">
+	        <div class="text-xs text-[var(--muted)] mb-1">Display name (optional)</div>
+	        <input type="text" class="provider-key-input w-full" placeholder="${detectedName}"
+	          value=${displayNameVal.value}
+	          onInput=${(e) => {
+							displayNameVal.value = e.target.value;
+						}} />
+	        <div class="text-xs text-[var(--muted)] mt-1">Technical ID: <span class="font-mono">${detectedName}</span></div>
+	      </div>`}
 	      <div class="text-xs text-[var(--muted)] mt-1">If the server requires OAuth, your browser opens for sign-in when you enable or restart it. URL query values may use <code>$NAME</code> or <code>${"{NAME}"}</code> placeholders from Settings → Environment Variables.</div>
 	    </div>
 	    <div class="project-edit-group mb-2">
@@ -586,6 +619,7 @@ function ServerCard({ server }) {
 	var editEnv = useSignal("");
 	var editUrl = useSignal("");
 	var editHeaders = useSignal("");
+	var editDisplayName = useSignal("");
 	var clearHeaders = useSignal(false);
 	var saving = useSignal(false);
 	var reauthing = useSignal(false);
@@ -675,6 +709,7 @@ function ServerCard({ server }) {
 		editUrl.value = "";
 		editHeaders.value = "";
 		clearHeaders.value = false;
+		editDisplayName.value = server.display_name || "";
 		editing.value = true;
 	}
 
@@ -683,7 +718,7 @@ function ServerCard({ server }) {
 		var transport = editTransport.value === "sse" ? "sse" : "stdio";
 		var editResult =
 			transport === "sse"
-				? buildSseEditPayload(server, editUrl.value, editHeaders.value, clearHeaders.value)
+				? buildSseEditPayload(server, editUrl.value, editHeaders.value, clearHeaders.value, editDisplayName.value)
 				: buildStdioEditPayload(editCmd.value, editArgs.value, editEnv.value);
 		if (editResult.error) {
 			showToast(editResult.error, "error");
@@ -691,6 +726,7 @@ function ServerCard({ server }) {
 			return;
 		}
 		var payload = {
+			display_name: editDisplayName.value.trim() || null,
 			name: server.name,
 			transport,
 			...editResult.payload,
@@ -725,7 +761,7 @@ function ServerCard({ server }) {
       <div class="flex items-center gap-2">
         <span class="text-[0.65rem] text-[var(--muted)] transition-transform duration-150 ${expanded.value ? "rotate-90" : ""}">\u25B6</span>
         <${StatusBadge} state=${server.state} />
-        <span class="font-mono text-sm font-medium text-[var(--text-strong)]">${server.name}</span>
+        <${renderServerName} server=${server} />
         <span class="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">${server.state || "stopped"}</span>
         <span class="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">${transportLabel(server.transport)}</span>
         <span class="text-xs text-[var(--muted)]">${server.tool_count} tool${server.tool_count !== 1 ? "s" : ""}${server.state === "running" && server.tool_count > 0 ? ` · ~${server.tool_count * 300} tokens` : ""}</span>
@@ -768,7 +804,17 @@ function ServerCard({ server }) {
 	              class="provider-btn provider-btn-sm ${editTransport.value === "sse" ? "" : "provider-btn-secondary"}">SSE (remote)</button>
 	          </div>
 	        </div>
-	        ${
+        ${
+		html`<div class="project-edit-group mb-2">
+		  <div class="text-xs text-[var(--muted)] mb-1">Display name (optional)</div>
+		  <input type="text" class="provider-key-input w-full" value=${editDisplayName.value}
+		    placeholder="${server.display_name || server.name}"
+		    onInput=${(e) => {
+						editDisplayName.value = e.target.value;
+					}} />
+		  <div class="text-xs text-[var(--muted)] mt-1">Technical ID: <span class="font-mono">${server.name}</span></div>
+		</div>`
+		}
 						editTransport.value === "sse" &&
 						html`<div class="project-edit-group mb-2">
 	          <div class="text-xs text-[var(--muted)] mb-1">Current URL</div>
