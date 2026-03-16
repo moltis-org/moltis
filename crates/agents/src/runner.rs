@@ -53,6 +53,7 @@ fn sanitize_tool_name(name: &str) -> Cow<'_, str> {
         .unwrap_or(trimmed);
 
     // Strip `functions_` prefix (OpenAI legacy artifact from some models).
+    // INVARIANT: no registered tool name starts with "functions_".
     let without_prefix = unquoted.strip_prefix("functions_").unwrap_or(unquoted);
 
     // Strip trailing `_\d+` suffix (parallel-call indexing from some models).
@@ -1053,7 +1054,7 @@ pub async fn run_agent_loop_with_context(
                 // Dispatch BeforeToolCall hook — may block or modify arguments.
                 let hook_registry = hook_registry.clone();
                 let session_key = session_key_for_hooks.clone();
-                let tc_name = tc.name.clone();
+                let tc_name = sanitized.to_string();
                 let _tc_id = tc.id.clone();
 
                 if let Some(ref ctx) = tool_context
@@ -1739,7 +1740,7 @@ pub async fn run_agent_loop_streaming(
 
                 let hook_registry = hook_registry.clone();
                 let session_key = session_key_for_hooks.clone();
-                let tc_name = tc.name.clone();
+                let tc_name = sanitized.to_string();
 
                 if let Some(ref ctx) = tool_context
                     && let (Some(args_obj), Some(ctx_obj)) = (args.as_object_mut(), ctx.as_object())
