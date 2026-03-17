@@ -504,9 +504,7 @@ impl OpenAiProvider {
     }
 
     fn requires_top_level_system_prompt(&self) -> bool {
-        self.model.starts_with("MiniMax-")
-            || self.provider_name.eq_ignore_ascii_case("minimax")
-            || self.base_url.to_ascii_lowercase().contains("minimax")
+        false
     }
 
     fn prepare_request_messages(
@@ -1338,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn minimax_serialization_extracts_system_messages() {
+    fn minimax_serialization_keeps_system_messages_in_history() {
         let provider = OpenAiProvider::new_with_name(
             Secret::new("test-key".to_string()),
             "MiniMax-M2.1".to_string(),
@@ -1351,9 +1349,11 @@ mod tests {
             ChatMessage::system("sys b"),
         ]);
         let (history, system_prompt) = provider.prepare_request_messages(serialized);
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0]["role"], "user");
-        assert_eq!(system_prompt.as_deref(), Some("sys a\n\nsys b"));
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0]["role"], "system");
+        assert_eq!(history[1]["role"], "user");
+        assert_eq!(history[2]["role"], "system");
+        assert!(system_prompt.is_none());
     }
 
     #[test]
@@ -1451,7 +1451,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn minimax_stream_request_uses_top_level_system_prompt() {
+    async fn minimax_stream_request_keeps_system_message_in_messages_array() {
         let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n\
                    data: [DONE]\n\n";
         let (base_url, captured) = start_sse_mock(sse.to_string()).await;
@@ -1472,18 +1472,15 @@ mod tests {
         let reqs = captured.lock().unwrap();
         assert_eq!(reqs.len(), 1);
         let body = reqs[0].body.as_ref().expect("request should have a body");
-        assert_eq!(body["system"], "stay deterministic");
+        assert!(body.get("system").is_none());
 
         let history = body["messages"]
             .as_array()
             .expect("messages should be an array");
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0]["role"], "user");
-        assert!(
-            history
-                .iter()
-                .all(|entry| entry["role"].as_str() != Some("system"))
-        );
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0]["role"], "system");
+        assert_eq!(history[0]["content"], "stay deterministic");
+        assert_eq!(history[1]["role"], "user");
     }
 
     #[tokio::test]
