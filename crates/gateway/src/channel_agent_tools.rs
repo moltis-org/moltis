@@ -107,6 +107,10 @@ mod tests {
             Ok(json!({}))
         }
 
+        async fn account_config(&self, _params: Value) -> ServiceResult {
+            Ok(json!({}))
+        }
+
         async fn logout(&self, _params: Value) -> ServiceResult {
             Ok(json!({}))
         }
@@ -173,6 +177,10 @@ mod tests {
         #[async_trait]
         impl ChannelService for FailingChannelService {
             async fn status(&self) -> ServiceResult {
+                Ok(json!({}))
+            }
+
+            async fn account_config(&self, _: Value) -> ServiceResult {
                 Ok(json!({}))
             }
 
