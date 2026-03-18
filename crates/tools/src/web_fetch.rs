@@ -237,6 +237,10 @@ fn extract_content(
 /// Simple HTML to text conversion: strip tags, decode basic entities,
 /// collapse whitespace. A lightweight alternative to a full readability
 /// crate — good enough for most pages.
+///
+/// Uses `char_indices()` to iterate, ensuring all string slicing happens
+/// at valid UTF-8 char boundaries. This prevents panics on pages with
+/// replacement characters from lossy UTF-8 decoding (e.g. GBK, Big5).
 fn html_to_text(html: &str) -> String {
     let mut result = String::with_capacity(html.len() / 2);
     let mut in_tag = false;
@@ -245,88 +249,91 @@ fn html_to_text(html: &str) -> String {
     let mut last_was_space = false;
 
     let html_lower = html.to_lowercase();
-    let bytes = html.as_bytes();
-    let lower_bytes = html_lower.as_bytes();
 
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'<' {
-            // Check for script/style open/close tags.
-            if i + 7 < lower_bytes.len() && &lower_bytes[i..i + 7] == b"<script" {
+    let chars: Vec<(usize, char)> = html.char_indices().collect();
+    let lower_chars: Vec<(usize, char)> = html_lower.char_indices().collect();
+
+    let mut ci = 0; // char-level index into `chars`
+    while ci < chars.len() {
+        let (_byte_pos, ch) = chars[ci];
+
+        if ch == '<' {
+            // Check for script/style open/close tags using the lowercased
+            // string, but index via char positions for boundary safety.
+            let lower_remaining: String = lower_chars[ci..].iter().map(|(_, c)| c).collect();
+
+            if lower_remaining.starts_with("<script") {
                 in_script = true;
             }
-            if i + 9 < lower_bytes.len() && &lower_bytes[i..i + 9] == b"</script>" {
+            if lower_remaining.starts_with("</script>") {
                 in_script = false;
             }
-            if i + 6 < lower_bytes.len() && &lower_bytes[i..i + 6] == b"<style" {
+            if lower_remaining.starts_with("<style") {
                 in_style = true;
             }
-            if i + 8 < lower_bytes.len() && &lower_bytes[i..i + 8] == b"</style>" {
+            if lower_remaining.starts_with("</style>") {
                 in_style = false;
             }
 
             // Block-level tags → newline.
-            if !in_script && !in_style {
-                let tag_start = &html_lower[i..];
-                if tag_start.starts_with("<br")
-                    || tag_start.starts_with("<p")
-                    || tag_start.starts_with("</p")
-                    || tag_start.starts_with("<div")
-                    || tag_start.starts_with("</div")
-                    || tag_start.starts_with("<h")
-                    || tag_start.starts_with("</h")
-                    || tag_start.starts_with("<li")
-                {
-                    if !result.ends_with('\n') {
-                        result.push('\n');
-                    }
-                    last_was_space = true;
+            if !in_script && !in_style
+                && (lower_remaining.starts_with("<br")
+                    || lower_remaining.starts_with("<p")
+                    || lower_remaining.starts_with("</p")
+                    || lower_remaining.starts_with("<div")
+                    || lower_remaining.starts_with("</div")
+                    || lower_remaining.starts_with("<h")
+                    || lower_remaining.starts_with("</h")
+                    || lower_remaining.starts_with("<li"))
+            {
+                if !result.ends_with('\n') {
+                    result.push('\n');
                 }
+                last_was_space = true;
             }
 
             in_tag = true;
-            i += 1;
+            ci += 1;
             continue;
         }
 
-        if bytes[i] == b'>' {
+        if ch == '>' {
             in_tag = false;
-            i += 1;
+            ci += 1;
             continue;
         }
 
         if in_tag || in_script || in_style {
-            i += 1;
+            ci += 1;
             continue;
         }
 
-        // Decode HTML entities.
-        if bytes[i] == b'&' {
-            let rest = &html[i..];
-            if let Some(semi) = rest.find(';') {
-                let entity = &rest[..semi + 1];
+        // Decode HTML entities (safe: uses char-boundary-aware slicing).
+        if ch == '&' {
+            let remaining: String = chars[ci..].iter().map(|(_, c)| c).collect();
+            if let Some(semi) = remaining.find(';') {
+                let entity = &remaining[..semi + 1];
                 let decoded = match entity {
-                    "&amp;" => "&",
-                    "&lt;" => "<",
-                    "&gt;" => ">",
-                    "&quot;" => "\"",
-                    "&apos;" | "&#39;" => "'",
-                    "&nbsp;" | "&#160;" => " ",
-                    _ => {
-                        // Skip unknown entities.
-                        i += 1;
-                        continue;
-                    },
+                    "&amp;" => Some("&"),
+                    "&lt;" => Some("<"),
+                    "&gt;" => Some(">"),
+                    "&quot;" => Some("\""),
+                    "&apos;" | "&#39;" => Some("'"),
+                    "&nbsp;" | "&#160;" => Some(" "),
+                    _ => None,
                 };
-                result.push_str(decoded);
-                last_was_space = decoded == " ";
-                i += entity.len();
-                continue;
+                if let Some(decoded) = decoded {
+                    result.push_str(decoded);
+                    last_was_space = decoded == " ";
+                    // Advance past the entity (count chars in entity string).
+                    ci += entity.chars().count();
+                    continue;
+                }
             }
+            // Fall through: treat '&' as literal character.
         }
 
-        let ch = bytes[i] as char;
-        if ch.is_ascii_whitespace() {
+        if ch.is_ascii_whitespace() || ch.is_whitespace() {
             if !last_was_space {
                 result.push(' ');
                 last_was_space = true;
@@ -335,7 +342,7 @@ fn html_to_text(html: &str) -> String {
             result.push(ch);
             last_was_space = false;
         }
-        i += 1;
+        ci += 1;
     }
 
     result.trim().to_string()
@@ -579,7 +586,47 @@ mod tests {
         assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
     }
 
-    // --- Cache tests ---
+    // --- Regression tests for #420: multibyte char boundary safety ---
+
+    #[test]
+    fn test_html_to_text_replacement_chars() {
+        // Simulates content from lossy UTF-8 decoding of legacy pages.
+        // U+FFFD (�) is 3 bytes in UTF-8 — slicing at byte+1 would panic
+        // with the old byte-walking approach.
+        let html = "<p>Hello \u{FFFD}\u{FFFD}\u{FFFD} world</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("Hello"));
+        assert!(text.contains("world"));
+        // Must not panic — that's the main assertion.
+    }
+
+    #[test]
+    fn test_html_to_text_cjk_characters() {
+        // Chinese/Japanese/Korean characters are multibyte in UTF-8.
+        let html = "<h1>タイトル</h1><p>日本語のテスト</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("タイトル"));
+        assert!(text.contains("日本語のテスト"));
+    }
+
+    #[test]
+    fn test_html_to_text_mixed_encoding_content() {
+        // Mixed ASCII + multibyte + entities + tags.
+        let html = "<div>Price: &lt;¥500&gt;</div><script>var x='テスト';</script><p>End \u{FFFD}</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("Price:"));
+        assert!(text.contains("<¥500>"));
+        assert!(text.contains("End"));
+        assert!(!text.contains("var x")); // Script content stripped.
+    }
+
+    #[test]
+    fn test_html_to_text_entity_with_multibyte_neighbors() {
+        // Entity surrounded by multibyte characters.
+        let html = "<p>東京&amp;大阪</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("東京&大阪"));
+    }
 
     #[test]
     fn test_cache_hit_and_miss() {
