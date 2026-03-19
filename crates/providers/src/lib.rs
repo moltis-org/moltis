@@ -886,6 +886,14 @@ const DEEPSEEK_MODELS: &[(&str, &str)] = &[
 /// Known Moonshot models.
 const MOONSHOT_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5")];
 
+/// Known Novita AI models.
+/// See: <https://novita.ai/docs/llm-api>
+const NOVITA_MODELS: &[(&str, &str)] = &[
+    ("moonshotai/kimi-k2.5", "Kimi K2.5 (Novita)"),
+    ("deepseek/deepseek-v3.2", "DeepSeek V3.2 (Novita)"),
+    ("zai-org/glm-5", "GLM-5 (Novita)"),
+];
+
 /// Known Google Gemini models.
 /// See: <https://ai.google.dev/gemini-api/docs/models>
 const GEMINI_MODELS: &[(&str, &str)] = &[
@@ -1026,6 +1034,16 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "GEMINI_BASE_URL",
         default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
         models: GEMINI_MODELS,
+        supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
+    },
+    OpenAiCompatDef {
+        config_name: "novita",
+        env_key: "NOVITA_API_KEY",
+        env_base_url_key: "NOVITA_BASE_URL",
+        default_base_url: "https://api.novita.ai/openai",
+        models: NOVITA_MODELS,
         supports_model_discovery: true,
         requires_api_key: true,
         local_only: false,
@@ -2789,6 +2807,7 @@ mod tests {
         assert!(!ZAI_MODELS.is_empty());
         assert!(!MOONSHOT_MODELS.is_empty());
         assert!(!GEMINI_MODELS.is_empty());
+        assert!(!NOVITA_MODELS.is_empty());
     }
 
     #[test]
@@ -2811,6 +2830,7 @@ mod tests {
             ZAI_MODELS,
             MOONSHOT_MODELS,
             GEMINI_MODELS,
+            NOVITA_MODELS,
         ] {
             let mut ids: Vec<&str> = models.iter().map(|(id, _)| *id).collect();
             ids.sort();
@@ -4045,5 +4065,38 @@ mod tests {
         assert!(!supports_reasoning_for_model("gpt-4o"));
         assert!(!supports_reasoning_for_model("gpt-5.2"));
         assert!(!supports_reasoning_for_model("claude-3-haiku-20240307"));
+    }
+
+    #[test]
+    fn novita_provider_is_registered() {
+        let def = OPENAI_COMPAT_PROVIDERS
+            .iter()
+            .find(|d| d.config_name == "novita")
+            .expect("novita not in OPENAI_COMPAT_PROVIDERS");
+        assert_eq!(def.env_key, "NOVITA_API_KEY");
+        assert_eq!(def.default_base_url, "https://api.novita.ai/openai");
+        assert!(def.requires_api_key);
+        assert!(!def.local_only);
+    }
+
+    #[test]
+    fn novita_model_ids_are_chat_capable() {
+        for (model_id, _) in NOVITA_MODELS {
+            assert!(
+                is_chat_capable_model(model_id),
+                "novita model {model_id} should be chat capable"
+            );
+        }
+    }
+
+    #[test]
+    fn novita_context_windows() {
+        // moonshotai/kimi-k2.5 — capability ID is "kimi-k2.5" → 128k
+        assert_eq!(
+            context_window_for_model("moonshotai/kimi-k2.5"),
+            128_000
+        );
+        // zai-org/glm-5 — capability ID is "glm-5" → 128k
+        assert_eq!(context_window_for_model("zai-org/glm-5"), 128_000);
     }
 }

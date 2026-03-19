@@ -845,6 +845,15 @@ pub fn known_providers() -> Vec<KnownProvider> {
             key_optional: false,
         },
         KnownProvider {
+            name: "novita",
+            display_name: "Novita AI",
+            auth_type: AuthType::ApiKey,
+            env_key: Some("NOVITA_API_KEY"),
+            default_base_url: Some("https://api.novita.ai/openai"),
+            requires_model: false,
+            key_optional: false,
+        },
+        KnownProvider {
             name: "venice",
             display_name: "Venice",
             auth_type: AuthType::ApiKey,
@@ -3964,6 +3973,7 @@ mod tests {
         assert!(names.contains(&"moonshot"), "missing moonshot");
         assert!(names.contains(&"zai"), "missing zai");
         assert!(names.contains(&"kimi-code"), "missing kimi-code");
+        assert!(names.contains(&"novita"), "missing novita");
         assert!(names.contains(&"venice"), "missing venice");
         assert!(names.contains(&"ollama"), "missing ollama");
         // OAuth providers
@@ -3991,6 +4001,7 @@ mod tests {
             ("moonshot", "MOONSHOT_API_KEY"),
             ("zai", "Z_API_KEY"),
             ("kimi-code", "KIMI_API_KEY"),
+            ("novita", "NOVITA_API_KEY"),
             ("venice", "VENICE_API_KEY"),
             ("ollama", "OLLAMA_API_KEY"),
         ];
@@ -4022,6 +4033,7 @@ mod tests {
             "moonshot",
             "zai",
             "kimi-code",
+            "novita",
             "venice",
             "ollama",
         ] {
@@ -4059,6 +4071,7 @@ mod tests {
             "moonshot",
             "zai",
             "kimi-code",
+            "novita",
             "venice",
             "ollama",
             "github-copilot",
