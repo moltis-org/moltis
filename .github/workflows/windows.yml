@@ -1,0 +1,42 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [main, feat/*]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: ./.github/actions/checkout
+
+      - uses: ./.github/actions/rust-toolchain
+        with:
+          toolchain: stable
+
+      - uses: ./.github/actions/rust-cache
+        with:
+          key: windows
+
+      - name: Build
+        run: cargo build --release -p moltis
+
+      - name: Upload binary
+        uses: ./.github/actions/upload-artifact
+        with:
+          name: moltis-windows
+          path: target/release/moltis.exe
+          if-no-files-found: warn

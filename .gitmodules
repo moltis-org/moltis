@@ -1,0 +1,12 @@
+[submodule ".github/actions/checkout"]
+	path = .github/actions/checkout
+	url = https://github.com/meta-introspector/checkout.git
+[submodule ".github/actions/rust-toolchain"]
+	path = .github/actions/rust-toolchain
+	url = https://github.com/meta-introspector/rust-toolchain.git
+[submodule ".github/actions/rust-cache"]
+	path = .github/actions/rust-cache
+	url = https://github.com/meta-introspector/rust-cache.git
+[submodule ".github/actions/upload-artifact"]
+	path = .github/actions/upload-artifact
+	url = https://github.com/meta-introspector/upload-artifact.git

@@ -648,6 +648,62 @@ mod urlencoding {
     }
 }
 
+// ---------------------------------------------------------------------------
+// zkPerf witness recording
+// ---------------------------------------------------------------------------
+
+/// Record a search witness to `~/.moltis/witness/` for diagnostics.
+/// Best-effort: failures are logged but never propagate.
+fn record_search_witness(
+    query: &str,
+    provider: &str,
+    elapsed: Duration,
+    result: Option<&serde_json::Value>,
+    error: Option<&str>,
+) {
+    let _ = record_search_witness_inner(query, provider, elapsed, result, error)
+        .map_err(|e| debug!("witness write skipped: {e}"));
+}
+
+fn record_search_witness_inner(
+    query: &str,
+    provider: &str,
+    elapsed: Duration,
+    result: Option<&serde_json::Value>,
+    error: Option<&str>,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let witness_dir = moltis_config::data_dir().join("witness");
+    std::fs::create_dir_all(&witness_dir)?;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let slug: String = query
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ')
+        .take(40)
+        .collect::<String>()
+        .replace(' ', "_");
+    let filename = format!("{ts}_{slug}.witness.json");
+
+    let witness = serde_json::json!({
+        "tool": "web_search",
+        "query": query,
+        "provider": provider,
+        "elapsed_ms": elapsed.as_millis() as u64,
+        "success": error.is_none(),
+        "error": error,
+        "result": result,
+        "timestamp": ts,
+        "platform": std::env::consts::OS,
+    });
+
+    std::fs::write(witness_dir.join(&filename), serde_json::to_string_pretty(&witness)?)?;
+    debug!("witness recorded: {filename}");
+    Ok(())
+}
+
 #[async_trait]
 impl AgentTool for WebSearchTool {
     fn name(&self) -> &str {
@@ -726,21 +782,24 @@ impl AgentTool for WebSearchTool {
 
         debug!("web_search: {query} (count={count})");
 
+        let start = Instant::now();
+        let provider_name = format!("{:?}", self.provider);
+
         // When no API key is configured, skip the provider entirely and go
         // straight to the DuckDuckGo fallback. This avoids a pointless
         // round-trip that always returns an error and prevents the LLM from
         // retrying repeatedly.
-        let result = if self.fallback_enabled && api_key.is_empty() {
+        let outcome = if self.fallback_enabled && api_key.is_empty() {
             warn!(
                 provider = ?self.provider,
                 "search API key not configured, using DuckDuckGo directly"
             );
-            self.search_duckduckgo(query, count).await?
+            self.search_duckduckgo(query, count).await
         } else {
             match &self.provider {
                 SearchProvider::Brave => {
                     self.search_brave(query, count, &params, accept_language, &api_key)
-                        .await?
+                        .await
                 },
                 SearchProvider::Perplexity {
                     base_url_override,
@@ -749,11 +808,31 @@ impl AgentTool for WebSearchTool {
                     let base_url =
                         resolve_perplexity_base_url(base_url_override.as_deref(), &api_key);
                     self.search_perplexity(query, &api_key, &base_url, model)
-                        .await?
+                        .await
                 },
             }
         };
 
+        let elapsed = start.elapsed();
+
+        // Record witness for diagnostics (best-effort, never blocks the result).
+        let witness_result = match &outcome {
+            Ok(val) => Some(val.clone()),
+            Err(_) => None,
+        };
+        let witness_error = match &outcome {
+            Ok(_) => None,
+            Err(e) => Some(e.to_string()),
+        };
+        record_search_witness(
+            query,
+            &provider_name,
+            elapsed,
+            witness_result.as_ref(),
+            witness_error.as_deref(),
+        );
+
+        let result = outcome?;
         self.cache_set(cache_key, result.clone());
         Ok(result)
     }
