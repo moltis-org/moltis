@@ -7,4 +7,5 @@ export-build-witness
 
 # temporary data files
 data-locate-pipelight-shell-feb-28.txt
-data-locate-pipelite-shell-feb-28.txt
+data-locate-pipelite-shell-feb-28.txttarget/
+target/

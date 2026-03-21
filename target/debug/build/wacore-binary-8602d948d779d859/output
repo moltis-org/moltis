@@ -1,2 +1,0 @@
-cargo:rerun-if-changed=src/tokens.json
-cargo:rerun-if-changed=build.rs

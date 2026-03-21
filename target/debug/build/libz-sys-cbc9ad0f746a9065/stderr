@@ -1,4 +1,0 @@
-src/smoke.c:1:10: fatal error: zlib.h: No such file or directory
-    1 | #include <zlib.h>
-      |          ^~~~~~~~
-compilation terminated.
