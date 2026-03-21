@@ -5,6 +5,39 @@ use {
     tracing::{debug, info, trace, warn},
 };
 
+/// Record a zkperf witness for every tool execution (best-effort, never blocks).
+fn record_tool_witness(
+    tool_name: &str,
+    params: &serde_json::Value,
+    elapsed: std::time::Duration,
+    result: Option<&serde_json::Value>,
+    error: Option<&str>,
+) {
+    let _ = (|| -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let dir = moltis_config::data_dir().join("witness");
+        std::fs::create_dir_all(&dir)?;
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let slug: String = tool_name.chars().take(30).collect();
+        let witness = serde_json::json!({
+            "tool": tool_name,
+            "params": params,
+            "elapsed_ms": elapsed.as_millis() as u64,
+            "success": error.is_none(),
+            "error": error,
+            "result": result,
+            "timestamp": ts,
+            "platform": std::env::consts::OS,
+        });
+        std::fs::write(
+            dir.join(format!("{ts}_{slug}.witness.json")),
+            serde_json::to_string(&witness)?,
+        )?;
+        Ok(())
+    })();
+}
+
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
 
@@ -1118,12 +1151,16 @@ pub async fn run_agent_loop_with_context(
                     }
 
                     if let Some(tool) = tool {
+                        let witness_args = args.clone();
+                        let t0 = std::time::Instant::now();
                         match tool.execute(args).await {
                             Ok(val) => {
-                                // Check if the result indicates a logical failure
-                                // (e.g., BrowserResponse with success: false)
                                 let has_error = val.get("error").is_some()
                                     || val.get("success") == Some(&serde_json::json!(false));
+                                record_tool_witness(
+                                    &tc_name, &witness_args, t0.elapsed(), Some(&val),
+                                    if has_error { val.get("error").and_then(|e| e.as_str()) } else { None },
+                                );
                                 let error_msg = if has_error {
                                     val.get("error")
                                         .and_then(|e| e.as_str())
@@ -1153,8 +1190,8 @@ pub async fn run_agent_loop_with_context(
                                 }
                             },
                             Err(e) => {
+                                record_tool_witness(&tc_name, &witness_args, t0.elapsed(), None, Some(&e.to_string()));
                                 let err_str = e.to_string();
-                                // Dispatch AfterToolCall hook on failure.
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
@@ -1747,12 +1784,16 @@ pub async fn run_agent_loop_streaming(
                     }
 
                     if let Some(tool) = tool {
+                        let witness_args = args.clone();
+                        let t0 = std::time::Instant::now();
                         match tool.execute(args).await {
                             Ok(val) => {
-                                // Check if the result indicates a logical failure
-                                // (e.g., BrowserResponse with success: false)
                                 let has_error = val.get("error").is_some()
                                     || val.get("success") == Some(&serde_json::json!(false));
+                                record_tool_witness(
+                                    &tc_name, &witness_args, t0.elapsed(), Some(&val),
+                                    if has_error { val.get("error").and_then(|e| e.as_str()) } else { None },
+                                );
                                 let error_msg = if has_error {
                                     val.get("error")
                                         .and_then(|e| e.as_str())
@@ -1780,6 +1821,7 @@ pub async fn run_agent_loop_streaming(
                                 }
                             }
                             Err(e) => {
+                                record_tool_witness(&tc_name, &witness_args, t0.elapsed(), None, Some(&e.to_string()));
                                 let err_str = e.to_string();
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {

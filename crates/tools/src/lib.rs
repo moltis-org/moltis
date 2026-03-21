@@ -36,3 +36,4 @@ pub mod skill_tools;
 pub mod spawn_agent;
 pub mod web_fetch;
 pub mod web_search;
+pub mod witness_download;
