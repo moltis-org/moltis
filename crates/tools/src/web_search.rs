@@ -736,17 +736,17 @@ impl AgentTool for WebSearchTool {
         // straight to the DuckDuckGo fallback. This avoids a pointless
         // round-trip that always returns an error and prevents the LLM from
         // retrying repeatedly.
-        let result = if self.fallback_enabled && api_key.is_empty() {
+        let outcome = if self.fallback_enabled && api_key.is_empty() {
             warn!(
                 provider = ?self.provider,
                 "search API key not configured, using DuckDuckGo directly"
             );
-            self.search_duckduckgo(query, count).await?
+            self.search_duckduckgo(query, count).await
         } else {
             match &self.provider {
                 SearchProvider::Brave => {
                     self.search_brave(query, count, &params, accept_language, &api_key)
-                        .await?
+                        .await
                 },
                 SearchProvider::Perplexity {
                     base_url_override,
@@ -755,11 +755,12 @@ impl AgentTool for WebSearchTool {
                     let base_url =
                         resolve_perplexity_base_url(base_url_override.as_deref(), &api_key);
                     self.search_perplexity(query, &api_key, &base_url, model)
-                        .await?
+                        .await
                 },
             }
         };
 
+        let result = outcome?;
         self.cache_set(cache_key, result.clone());
         Ok(result)
     }

@@ -79,3 +79,4 @@ pub mod wasm_limits;
 pub mod wasm_tool_runner;
 pub mod web_fetch;
 pub mod web_search;
+pub mod witness_download;
