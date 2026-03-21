@@ -1,0 +1,9 @@
+/mnt/data1/time-2026/02-february/27/links/moltis/target/debug/deps/gix_transport-5d10f30ca1297e98.d: /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/lib.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/mod.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/traits.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/capabilities.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/non_io_types.rs
+
+/mnt/data1/time-2026/02-february/27/links/moltis/target/debug/deps/libgix_transport-5d10f30ca1297e98.rmeta: /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/lib.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/mod.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/traits.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/capabilities.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/non_io_types.rs
+
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/lib.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/mod.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/traits.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/capabilities.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-transport-0.53.0/src/client/non_io_types.rs:

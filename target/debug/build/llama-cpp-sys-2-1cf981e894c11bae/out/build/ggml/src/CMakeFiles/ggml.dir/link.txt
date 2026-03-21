@@ -1,0 +1,2 @@
+/nix/store/kbw2j1vag664b3sj3rjwz9v53cqx87sb-gcc-wrapper-15.2.0/bin/ar qc libggml.a "CMakeFiles/ggml.dir/ggml-backend-reg.cpp.o"
+/nix/store/kbw2j1vag664b3sj3rjwz9v53cqx87sb-gcc-wrapper-15.2.0/bin/ranlib libggml.a

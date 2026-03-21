@@ -1,0 +1,2 @@
+/nix/store/kbw2j1vag664b3sj3rjwz9v53cqx87sb-gcc-wrapper-15.2.0/bin/ar qc libcpp-httplib.a "CMakeFiles/cpp-httplib.dir/httplib.cpp.o"
+/nix/store/kbw2j1vag664b3sj3rjwz9v53cqx87sb-gcc-wrapper-15.2.0/bin/ranlib libcpp-httplib.a

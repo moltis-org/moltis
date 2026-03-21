@@ -1,0 +1,10 @@
+/mnt/data1/time-2026/02-february/27/links/moltis/target/debug/deps/gix_config_value-b3ac005b44afac00.d: /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/lib.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/boolean.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/color.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/integer.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/path.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/types.rs
+
+/mnt/data1/time-2026/02-february/27/links/moltis/target/debug/deps/libgix_config_value-b3ac005b44afac00.rmeta: /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/lib.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/boolean.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/color.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/integer.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/path.rs /home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/types.rs
+
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/lib.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/boolean.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/color.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/integer.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/path.rs:
+/home/mdupont/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.17.0/src/types.rs:

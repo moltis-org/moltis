@@ -10,3 +10,9 @@
 [submodule ".github/actions/upload-artifact"]
 	path = .github/actions/upload-artifact
 	url = https://github.com/meta-introspector/upload-artifact.git
+[submodule ".github/actions/install-nix-action"]
+	path = .github/actions/install-nix-action
+	url = https://github.com/meta-introspector/install-nix-action.git
+[submodule ".github/actions/cachix-action"]
+	path = .github/actions/cachix-action
+	url = https://github.com/meta-introspector/cachix-action.git

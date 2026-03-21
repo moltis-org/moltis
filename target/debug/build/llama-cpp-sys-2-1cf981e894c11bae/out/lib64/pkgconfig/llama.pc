@@ -1,0 +1,10 @@
+prefix=/mnt/data1/time-2026/02-february/27/links/moltis/target/debug/build/llama-cpp-sys-2-1cf981e894c11bae/out
+exec_prefix=/mnt/data1/time-2026/02-february/27/links/moltis/target/debug/build/llama-cpp-sys-2-1cf981e894c11bae/out
+libdir=/mnt/data1/time-2026/02-february/27/links/moltis/target/debug/build/llama-cpp-sys-2-1cf981e894c11bae/out/lib64
+includedir=/mnt/data1/time-2026/02-february/27/links/moltis/target/debug/build/llama-cpp-sys-2-1cf981e894c11bae/out/include
+
+Name: llama
+Description: Port of Facebook's LLaMA model in C/C++
+Version: 0.0.0
+Libs: -L${libdir} -lggml -lggml-base -lllama
+Cflags: -I${includedir}

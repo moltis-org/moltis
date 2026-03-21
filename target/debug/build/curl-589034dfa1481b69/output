@@ -1,0 +1,2 @@
+cargo:rustc-check-cfg=cfg(need_openssl_init,need_openssl_probe,)
+cargo:rustc-cfg=need_openssl_probe

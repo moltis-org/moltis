@@ -11,26 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: meta-introspector/checkout@v4
+      with:
+        submodules: recursive
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v20
-      with:
-        nix_path: nixpkgs=channel:nixos-unstable
+      uses: meta-introspector/install-nix-action@v20
 
-    # - name: Setup Cachix (optional, if you have one)
-    #   uses: cachix/cachix-action@v12
-    #   with:
-    #     name: moltis-cache # Replace with your Cachix cache name
-    #     # authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}' # Uncomment if your cache is private
+    - name: Setup Cachix
+      uses: meta-introspector/cachix-action@v12
+      with:
+        name: meta-introspector
+        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
     - name: Build project with Nix
       run: nix build
-
-    # Placeholder for 'org meta-introspector' integration
-    # Please provide more details on what "use org meta-introspector for all uses" entails.
-    # For example:
-    # - Is there a specific action from org/meta-introspector to run?
-    # - Should a specific flake input from org/meta-introspector be added to flake.nix?
-    # - Does it involve cloning a repository and running a script from it?
-    # - Is it simply a declaration for auditing/reporting purposes?
