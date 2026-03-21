@@ -18,6 +18,7 @@
           src = ./.;
           cargoBuildFlags = [ "-p" "moltis" ];
           cargoLock.lockFile = ./Cargo.lock;
+          doCheck = false; # tests run separately in checks.auth-tests
 
           meta = with pkgs.lib; {
             description = "Personal AI gateway inspired by OpenClaw";
