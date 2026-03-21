@@ -24,6 +24,7 @@
           src = ./.;
           cargoBuildFlags = [ "-p" "moltis" ];
           cargoLock.lockFile = ./Cargo.lock;
+          doCheck = false; # tests run separately in checks.auth-tests
 
           RUSTC = "${rustToolchain}/bin/rustc";
           CARGO = "${rustToolchain}/bin/cargo";
