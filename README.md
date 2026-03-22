@@ -1,6 +1,9 @@
 <div align="center">
 
 <a href="https://moltis.org"><img src="https://raw.githubusercontent.com/moltis-org/moltis/main/website/favicon.svg" alt="Moltis" width="64"></a>
+  <a href="https://gitcgr.com/moltis-org/moltis">
+    <img src="https://gitcgr.com/badge/moltis-org/moltis.svg" alt="gitcgr" />
+  </a>
 
 # Moltis — A Rust-native claw you can trust
 
