@@ -502,6 +502,7 @@ type McpServer {
 	transport: String
 	url: String
 	toolCount: Int
+	displayName: String
 }
 
 type McpTool {
