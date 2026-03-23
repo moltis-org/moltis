@@ -15,6 +15,7 @@ async-trait           = { workspace = true }
 base64                = { workspace = true }
 bytes                 = { workspace = true }
 futures               = { workspace = true }
+html2text             = { workspace = true }
 image                 = { workspace = true }
 ipnet                 = { workspace = true }
 moltis-agents         = { workspace = true }

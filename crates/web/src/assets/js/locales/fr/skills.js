@@ -53,7 +53,7 @@ export default {
 	deletedSkill: "Deleted {{name}}",
 	disabledSkill: "Disabled {{name}}",
 	cannotDisableUnknownSource: "Cannot disable: unknown source for skill.",
-	deleteSkillConfirm: 'Delete skill "{{name}}"? This removes the SKILL.md file.',
+	deleteSkillConfirm: 'Delete skill "{{name}}"? This removes the entire skill directory.',
 	disabling: "Disabling...",
 	deleting: "Deleting...",
 

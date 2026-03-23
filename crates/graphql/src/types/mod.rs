@@ -582,6 +582,8 @@ pub struct McpServer {
     pub url: Option<String>,
     #[serde(default)]
     pub tool_count: Option<u64>,
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, SimpleObject, Deserialize)]

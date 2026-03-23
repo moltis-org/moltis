@@ -41,6 +41,9 @@ pub struct ServerStatus {
     /// Pending OAuth URL to open in browser (when auth_state is awaiting_browser).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_url: Option<String>,
+    /// Custom display name for the server (shown in UI).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 /// Mutable state behind the single `RwLock` on [`McpManager`].
@@ -399,6 +402,7 @@ impl McpManager {
                 header_names: header_names(&config.headers),
                 auth_state,
                 auth_url: None,
+                display_name: config.display_name.clone(),
             });
         }
         statuses

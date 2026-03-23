@@ -417,6 +417,10 @@ pub struct GatewayState {
     pub seq: AtomicU64,
     /// Sequential counter for TTS test phrase round-robin picking.
     pub tts_phrase_counter: AtomicUsize,
+    /// Live count of connected nodes.  Shared with `ExecTool` via the
+    /// `GatewayNodeExecProvider` so `parameters_schema()` can check it
+    /// without awaiting the inner lock.
+    pub node_count: Arc<AtomicUsize>,
 
     // ── Mutable runtime state (single lock) ─────────────────────────────────
     /// All mutable runtime state, behind a single lock.
@@ -506,6 +510,7 @@ impl GatewayState {
                 crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter::new(),
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
+            node_count: Arc::new(AtomicUsize::new(0)),
             #[cfg(feature = "graphql")]
             graphql_broadcast: {
                 let (tx, _) = tokio::sync::broadcast::channel(256);
@@ -860,6 +865,11 @@ impl GatewayState {
 
         drop(inner);
 
+        // Reset the atomic node counter so has_connected_nodes() reflects
+        // reality. The normal WS cleanup path won't decrement because
+        // unregister_by_conn returns None after clear().
+        self.node_count.store(0, Ordering::Relaxed);
+
         #[cfg(feature = "metrics")]
         moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(0.0);
 
@@ -992,6 +1002,51 @@ mod tests {
         // Should not panic.
         state.disconnect_all_clients("noop").await;
         assert_eq!(state.client_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn disconnect_all_clients_resets_node_count() {
+        use {
+            crate::nodes::NodeSession,
+            std::{collections::HashMap, time::Instant},
+        };
+
+        let state = test_state();
+
+        // Register a node so the counter goes up.
+        let node = NodeSession {
+            node_id: "node-1".into(),
+            conn_id: "conn-1".into(),
+            display_name: None,
+            platform: "macos".into(),
+            version: "0.1.0".into(),
+            capabilities: vec![],
+            commands: vec![],
+            permissions: HashMap::new(),
+            path_env: None,
+            remote_ip: None,
+            connected_at: Instant::now(),
+            mem_total: None,
+            mem_available: None,
+            cpu_count: None,
+            cpu_usage: None,
+            uptime_secs: None,
+            services: vec![],
+            last_telemetry: None,
+            disk_total: None,
+            disk_available: None,
+            runtimes: vec![],
+            providers: vec![],
+        };
+        state.inner.write().await.nodes.register(node);
+        state.node_count.fetch_add(1, Ordering::Relaxed);
+
+        assert_eq!(state.node_count.load(Ordering::Relaxed), 1);
+
+        state.disconnect_all_clients("test").await;
+
+        // node_count must be reset to 0 so has_connected_nodes() returns false.
+        assert_eq!(state.node_count.load(Ordering::Relaxed), 0);
     }
 
     // ── Subscription tests ──────────────────────────────────────────────

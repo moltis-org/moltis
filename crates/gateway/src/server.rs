@@ -1408,6 +1408,7 @@ pub async fn prepare_gateway_core(
                             .map(|(key, value)| (key.clone(), Secret::new(value.clone())))
                             .collect(),
                         oauth,
+                        display_name: entry.display_name.clone(),
                     });
             }
         }
@@ -3236,10 +3237,13 @@ pub async fn prepare_gateway_core(
         // Always attach the node exec provider so the LLM can target nodes
         // via the `node` parameter. When tools.exec.host = "node", also set
         // the default node so commands route there without an explicit param.
+        // The `node` parameter only appears in the tool schema when at least
+        // one node is connected (tracked via the shared `node_count` atomic).
         {
-            let provider = Arc::new(crate::node_exec::GatewayNodeExecProvider::new(Arc::clone(
-                &state,
-            )));
+            let provider = Arc::new(crate::node_exec::GatewayNodeExecProvider::new(
+                Arc::clone(&state),
+                Arc::clone(&state.node_count),
+            ));
             let default_node = if config.tools.exec.host == "node" {
                 config.tools.exec.node.clone()
             } else {
@@ -3516,6 +3520,11 @@ pub async fn prepare_gateway_core(
             tool_registry.register(Box::new(moltis_tools::skill_tools::DeleteSkillTool::new(
                 data_dir.clone(),
             )));
+            if config.skills.enable_agent_sidecar_files {
+                tool_registry.register(Box::new(
+                    moltis_tools::skill_tools::WriteSkillFilesTool::new(data_dir.clone()),
+                ));
+            }
         }
 
         // Register branch session tool for session forking.

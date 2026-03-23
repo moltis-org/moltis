@@ -1237,6 +1237,9 @@ pub struct SkillsConfig {
     /// Skills to always load (by name) without explicit activation.
     #[serde(default)]
     pub auto_load: Vec<String>,
+    /// Whether agents may write supplementary files inside personal skill directories.
+    #[serde(default)]
+    pub enable_agent_sidecar_files: bool,
 }
 
 fn default_true() -> bool {
@@ -1279,6 +1282,9 @@ pub struct McpServerEntry {
     /// Manual OAuth override for servers that don't support standard discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<McpOAuthOverrideEntry>,
+    /// Custom display name for the server (shown in UI instead of technical ID).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 /// Manual OAuth configuration override for an MCP server.
@@ -2383,6 +2389,16 @@ mod tests {
         let loc = GeoLocation::now(37.0, -122.0, Some("San Francisco".to_string()));
         assert_eq!(loc.place.as_deref(), Some("San Francisco"));
         assert!(loc.updated_at.is_some());
+    }
+
+    #[test]
+    fn skills_config_sidecar_files_default_disabled() {
+        let toml = r#"
+[skills]
+enabled = true
+"#;
+        let parsed: MoltisConfig = toml::from_str(toml).unwrap();
+        assert!(!parsed.skills.enable_agent_sidecar_files);
     }
 
     #[test]

@@ -3,7 +3,14 @@
 //! When `tools.exec.host = "node"`, the gateway forwards shell commands to a
 //! connected headless node instead of executing them locally or in a sandbox.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use {
     async_trait::async_trait,
@@ -309,11 +316,14 @@ fn parse_exec_result(value: &serde_json::Value) -> anyhow::Result<NodeExecResult
 /// `GatewayState`.
 pub struct GatewayNodeExecProvider {
     state: Arc<GatewayState>,
+    node_count: Arc<AtomicUsize>,
 }
 
 impl GatewayNodeExecProvider {
-    pub fn new(state: Arc<GatewayState>) -> Self {
-        Self { state }
+    /// Create with the shared node counter from `GatewayState` so that
+    /// `has_connected_nodes()` reflects the real connection state.
+    pub fn new(state: Arc<GatewayState>, node_count: Arc<AtomicUsize>) -> Self {
+        Self { state, node_count }
     }
 }
 
@@ -337,6 +347,10 @@ impl moltis_tools::exec::NodeExecProvider for GatewayNodeExecProvider {
 
     async fn resolve_node_id(&self, node_ref: &str) -> Option<String> {
         resolve_node_id(&self.state, node_ref).await
+    }
+
+    fn has_connected_nodes(&self) -> bool {
+        self.node_count.load(Ordering::Relaxed) > 0
     }
 }
 

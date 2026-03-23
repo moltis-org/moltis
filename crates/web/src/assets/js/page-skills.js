@@ -407,7 +407,7 @@ function SkillDetail(props) {
 			return;
 		}
 		if (isDisc && d.enabled) {
-			requestConfirm(`Delete skill "${d.name}"? This removes the SKILL.md file.`, {
+			requestConfirm(`Delete skill "${d.name}"? This removes the entire skill directory.`, {
 				confirmLabel: "Delete",
 				danger: true,
 			}).then((yes) => {
@@ -697,7 +697,7 @@ function EnabledSkillsTable() {
 			return;
 		}
 		if (isDiscovered(skill)) {
-			requestConfirm(`Delete skill "${skill.name}"? This removes the SKILL.md file.`, {
+			requestConfirm(`Delete skill "${skill.name}"? This removes the entire skill directory.`, {
 				confirmLabel: "Delete",
 				danger: true,
 			}).then((yes) => {

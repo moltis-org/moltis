@@ -385,6 +385,7 @@ fn build_schema_map() -> KnownKeys {
                 ("enabled", Leaf),
                 ("search_paths", Leaf),
                 ("auto_load", Leaf),
+                ("enable_agent_sidecar_files", Leaf),
             ])),
         ),
         (

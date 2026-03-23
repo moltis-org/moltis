@@ -121,6 +121,24 @@ If no search API key is configured:
 - with `duckduckgo_fallback = false` (default), Moltis returns a clear hint to set `BRAVE_API_KEY` or `PERPLEXITY_API_KEY`
 - with `duckduckgo_fallback = true`, Moltis attempts DuckDuckGo HTML search, which may hit CAPTCHA/rate limits
 
+## Skills
+
+Configure skill discovery and agent-managed personal skills:
+
+```toml
+[skills]
+enabled = true
+auto_load = ["commit"]
+enable_agent_sidecar_files = false  # Opt-in: allow agents to write sidecar text files in personal skills
+```
+
+`enable_agent_sidecar_files` is disabled by default. When enabled, Moltis
+registers the `write_skill_files` tool so agents can write supplementary files
+such as `script.sh`, `Dockerfile`, templates, or `_meta.json` inside
+`<data_dir>/skills/<name>/`. Writes stay confined to that personal skill
+directory, reject path traversal and symlink escapes, and are recorded in
+`~/.moltis/logs/security-audit.jsonl`.
+
 ## Chat Message Queue
 
 When a new message arrives while an agent run is already active, Moltis can either

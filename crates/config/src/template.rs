@@ -429,9 +429,10 @@ allowed_domains = []              # Empty = all domains allowed
 [skills]
 enabled = true                    # Enable skills system
 search_paths = []                 # Additional directories to search for skills
-                                  # Default locations: ~/.config/moltis/skills/, ./skills/
+                                  # Default locations include ~/.moltis/skills/
 auto_load = []                    # Skills to always load without explicit activation
                                   # Example: ["code-review", "commit"]
+enable_agent_sidecar_files = false # Allow agents to write supplementary text files inside personal skill dirs
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MCP SERVERS
