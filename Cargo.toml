@@ -235,6 +235,7 @@ metrics                     = "0.24"
 metrics-exporter-prometheus = "0.16"
 metrics-tracing-context     = "0.16"
 # Content processing
+html2text      = "0.16"
 image          = { default-features = false, features = ["jpeg", "png", "webp"], version = "0.25" }
 ipnet          = "2"
 mdns-sd        = "0.18"
