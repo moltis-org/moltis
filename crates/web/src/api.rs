@@ -558,11 +558,13 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
         let discoverer = FsSkillDiscoverer::new(search_paths);
         if let Ok(discovered) = discoverer.discover().await {
             for s in discovered {
+                let protected = moltis_gateway::services::is_protected_discovered_skill(&s.name);
                 skills.push(serde_json::json!({
                     "name": s.name,
                     "description": s.description,
                     "source": s.source,
                     "enabled": true,
+                    "protected": protected,
                 }));
             }
         }

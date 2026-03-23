@@ -19,10 +19,12 @@ use {
 };
 
 use crate::{
-    container::BrowserContainer,
+    container::{BrowserContainer, browserless_session_timeout_ms},
     error::Error,
     types::{BrowserConfig, BrowserPreference},
 };
+
+pub(crate) const MAX_BROWSER_INSTANCE_LIFETIME: Duration = Duration::from_secs(30 * 60);
 
 /// Get current system memory usage as a percentage (0-100).
 fn get_memory_usage_percent() -> u8 {
@@ -256,10 +258,9 @@ impl BrowserPool {
     }
 
     /// Clean up idle browser instances and instances that have exceeded the
-    /// hard TTL (30 minutes). The TTL prevents Chromium memory leaks from
-    /// accumulating in long-lived browser instances.
+    /// hard TTL ([`MAX_BROWSER_INSTANCE_LIFETIME`]). The TTL prevents Chromium
+    /// memory leaks from accumulating in long-lived browser instances.
     pub async fn cleanup_idle(&self) {
-        const MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
         let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
         let now = Instant::now();
 
@@ -270,7 +271,8 @@ impl BrowserPool {
             for (sid, instance) in instances.iter() {
                 if let Ok(inst) = instance.try_lock() {
                     let idle = now.duration_since(inst.last_used) > idle_timeout;
-                    let expired = now.duration_since(inst.created_at) > MAX_LIFETIME;
+                    let expired =
+                        now.duration_since(inst.created_at) > MAX_BROWSER_INSTANCE_LIFETIME;
                     if idle || expired {
                         if expired {
                             info!(
@@ -348,6 +350,11 @@ impl BrowserPool {
         let vw = self.config.viewport_width;
         let vh = self.config.viewport_height;
         let low_mem = self.config.low_memory_threshold_mb;
+        let session_timeout_ms = browserless_session_timeout_ms(
+            self.config.idle_timeout_secs,
+            self.config.navigation_timeout_ms,
+            MAX_BROWSER_INSTANCE_LIFETIME.as_secs(),
+        );
         let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
         let container_host = self.config.container_host.clone();
 
@@ -388,6 +395,7 @@ impl BrowserPool {
                 vw,
                 vh,
                 low_mem,
+                session_timeout_ms,
                 profile_dir.as_deref(),
                 &container_host,
             )

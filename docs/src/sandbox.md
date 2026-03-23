@@ -299,6 +299,24 @@ home_persistence = "session"   # "off", "session", or "shared" (default)
 
 Moltis stores persisted homes under `data_dir()/sandbox/home/`.
 
+## Docker-in-Docker workspace mounts
+
+When Moltis runs inside a container and launches Docker-backed sandboxes via a
+mounted container socket, the sandbox bind mount source must be a host-visible
+path. Moltis auto-detects this by inspecting the parent container's mounts. If
+that lookup fails or you want to pin the value explicitly, set
+`host_data_dir`:
+
+```toml
+[tools.exec.sandbox]
+host_data_dir = "/srv/moltis/data"
+```
+
+This remaps sandbox workspace mounts and default sandbox persistence paths from
+the guest `data_dir()` to the host path you provide. It is mainly an override
+for Docker-in-Docker deployments where mount auto-detection is unavailable or
+ambiguous.
+
 ## Network policy
 
 By default, sandbox containers have no network access (`no_network = true`).

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish (for example v0.3.0)"
+        description: "Release tag to publish (for example 20260311.01)"
         required: true
         type: string
 
@@ -38,7 +38,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
+          VERSION="${TAG}"
 
           for i in $(seq 1 30); do
             COUNT=0
@@ -68,7 +68,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
+          VERSION="${TAG}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
           for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
@@ -99,20 +99,20 @@ jobs:
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-aarch64-apple-darwin.tar.gz"
                 sha256 "${SHA_aarch64_apple_darwin}"
               else
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-x86_64-apple-darwin.tar.gz"
                 sha256 "${SHA_x86_64_apple_darwin}"
               end
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-aarch64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_aarch64_unknown_linux_gnu}"
               else
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-x86_64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-x86_64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_x86_64_unknown_linux_gnu}"
               end
             end

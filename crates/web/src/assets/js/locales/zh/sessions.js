@@ -11,6 +11,12 @@ export default {
 		},
 	},
 
+	// Session list tabs
+	tabs: {
+		sessions: "会话",
+		cron: "定时任务",
+	},
+
 	// Session list
 	list: {
 		newSession: "新建会话",

@@ -175,11 +175,21 @@ See [Quickstart](https://docs.moltis.org/quickstart.html) for gateway startup, m
 
 ### Build & Run
 
+Requires [just](https://github.com/casey/just) (command runner) and Node.js (for Tailwind CSS).
+
 ```bash
 git clone https://github.com/moltis-org/moltis.git
 cd moltis
-cargo build --release
-cargo run --release
+just build-css                  # Build Tailwind CSS for the web UI
+just build-release              # Build in release mode
+cargo run --release --bin moltis
+```
+
+For a full release build including WASM sandbox tools:
+
+```bash
+just build-release-with-wasm    # Builds WASM artifacts + release binary
+cargo run --release --bin moltis
 ```
 
 Open `https://moltis.localhost:3000`. On first run, a setup code is printed to
@@ -202,7 +212,10 @@ docker run -d \
   ghcr.io/moltis-org/moltis:latest
 ```
 
-Open `https://localhost:13131` and complete the setup. See [Docker docs](https://docs.moltis.org/docker.html) for Podman, OrbStack, TLS trust, and persistence details.
+Open `https://localhost:13131` and complete the setup. For unattended Docker
+deployments, set `MOLTIS_PASSWORD`, `MOLTIS_PROVIDER`, and `MOLTIS_API_KEY`
+before first boot to skip the setup wizard. See [Docker docs](https://docs.moltis.org/docker.html)
+for Podman, OrbStack, TLS trust, and persistence details.
 
 ### Cloud Deployment
 

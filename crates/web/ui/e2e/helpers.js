@@ -6,9 +6,8 @@ const { expect } = require("@playwright/test");
  */
 async function expectPageContentMounted(page) {
 	await expect
-		// biome-ignore lint/suspicious/useAwait: page.evaluate returns a Promise
 		.poll(
-			async () => {
+			() => {
 				return page.evaluate(() => {
 					const el = document.getElementById("pageContent");
 					if (!el) return 0;
@@ -131,10 +130,34 @@ async function createSession(page) {
 	await expectPageContentMounted(page);
 }
 
+/**
+ * Open the chat "More controls" modal and wait for it to be visible.
+ */
+async function openChatMoreModal(page) {
+	const modal = page.locator("#chatMoreModal");
+	if (await modal.isVisible().catch(() => false)) return modal;
+	await expect(page.locator("#chatMoreBtn")).toBeVisible({ timeout: 10_000 });
+	await page.locator("#chatMoreBtn").click();
+	await expect(modal).toBeVisible({ timeout: 10_000 });
+	return modal;
+}
+
+/**
+ * Close the chat "More controls" modal by clicking the backdrop.
+ */
+async function closeChatMoreModal(page) {
+	const modal = page.locator("#chatMoreModal");
+	if (!(await modal.isVisible().catch(() => false))) return;
+	await modal.click({ position: { x: 8, y: 8 } });
+	await expect(modal).toBeHidden({ timeout: 10_000 });
+}
+
 module.exports = {
 	expectPageContentMounted,
 	watchPageErrors,
 	waitForWsConnected,
 	navigateAndWait,
 	createSession,
+	openChatMoreModal,
+	closeChatMoreModal,
 };

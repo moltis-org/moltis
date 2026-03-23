@@ -9,6 +9,7 @@ use std::{fmt::Write, path::Path, sync::atomic::AtomicI32};
 
 use {
     async_trait::async_trait,
+    serde::{Serialize, de::DeserializeOwned},
     wacore::{
         appstate::{hash::HashState, processor::AppStateMutationMAC},
         store::{
@@ -52,6 +53,29 @@ pub struct SledStore {
 
 fn json_err(e: serde_json::Error) -> StoreError {
     StoreError::Serialization(e.to_string())
+}
+
+fn postcard_err(e: postcard::Error) -> StoreError {
+    StoreError::Serialization(e.to_string())
+}
+
+/// Format tag prefixed to every encoded record.
+const FORMAT_POSTCARD: u8 = 0x01;
+
+fn encode_persistent<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    let body = postcard::to_allocvec(value).map_err(postcard_err)?;
+    let mut buf = Vec::with_capacity(1 + body.len());
+    buf.push(FORMAT_POSTCARD);
+    buf.extend_from_slice(&body);
+    Ok(buf)
+}
+
+fn decode_persistent<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    if bytes.first() == Some(&FORMAT_POSTCARD) {
+        return postcard::from_bytes::<T>(&bytes[1..]).map_err(postcard_err);
+    }
+    // Legacy: untagged data is JSON (pre-postcard migration).
+    serde_json::from_slice(bytes).map_err(json_err)
 }
 
 impl SledStore {
@@ -226,13 +250,13 @@ impl SignalStore for SledStore {
 impl AppSyncStore for SledStore {
     async fn get_sync_key(&self, key_id: &[u8]) -> Result<Option<AppStateSyncKey>> {
         match self.sync_keys.get(key_id).map_err(db_err)? {
-            Some(v) => Ok(Some(serde_json::from_slice(&v).map_err(json_err)?)),
+            Some(v) => Ok(Some(decode_persistent(&v)?)),
             None => Ok(None),
         }
     }
 
     async fn set_sync_key(&self, key_id: &[u8], key: AppStateSyncKey) -> Result<()> {
-        let val = serde_json::to_vec(&key).map_err(json_err)?;
+        let val = encode_persistent(&key)?;
         self.sync_keys
             .insert(key_id, val.as_slice())
             .map_err(db_err)?;
@@ -245,13 +269,13 @@ impl AppSyncStore for SledStore {
             .get(name.as_bytes())
             .map_err(db_err)?
         {
-            Some(v) => Ok(serde_json::from_slice(&v).map_err(json_err)?),
+            Some(v) => decode_persistent(&v),
             None => Ok(HashState::default()),
         }
     }
 
     async fn set_version(&self, name: &str, state: HashState) -> Result<()> {
-        let val = serde_json::to_vec(&state).map_err(json_err)?;
+        let val = encode_persistent(&state)?;
         self.app_state_versions
             .insert(name.as_bytes(), val.as_slice())
             .map_err(db_err)?;
@@ -273,7 +297,7 @@ impl AppSyncStore for SledStore {
                 .map_err(db_err)?;
             indexes.push(mac.index_mac.clone());
         }
-        let idx_val = serde_json::to_vec(&indexes).map_err(json_err)?;
+        let idx_val = encode_persistent(&indexes)?;
         self.mutation_mac_indexes
             .insert(version_key.as_bytes(), idx_val.as_slice())
             .map_err(db_err)?;
@@ -330,7 +354,7 @@ impl ProtocolStore for SledStore {
             .get(group_jid.as_bytes())
             .map_err(db_err)?
         {
-            Some(v) => Ok(serde_json::from_slice(&v).map_err(json_err)?),
+            Some(v) => decode_persistent(&v),
             None => Ok(Vec::new()),
         }
     }
@@ -338,7 +362,7 @@ impl ProtocolStore for SledStore {
     async fn add_skdm_recipients(&self, group_jid: &str, device_jids: &[String]) -> Result<()> {
         let mut current = self.get_skdm_recipients(group_jid).await?;
         current.extend(device_jids.iter().cloned());
-        let val = serde_json::to_vec(&current).map_err(json_err)?;
+        let val = encode_persistent(&current)?;
         self.skdm_recipients
             .insert(group_jid.as_bytes(), val.as_slice())
             .map_err(db_err)?;
@@ -354,7 +378,7 @@ impl ProtocolStore for SledStore {
 
     async fn get_lid_mapping(&self, lid: &str) -> Result<Option<LidPnMappingEntry>> {
         match self.lid_mappings.get(lid.as_bytes()).map_err(db_err)? {
-            Some(v) => Ok(Some(serde_json::from_slice(&v).map_err(json_err)?)),
+            Some(v) => Ok(Some(decode_persistent(&v)?)),
             None => Ok(None),
         }
     }
@@ -371,7 +395,7 @@ impl ProtocolStore for SledStore {
         self.pn_mappings
             .insert(entry.phone_number.as_bytes(), entry.lid.as_bytes())
             .map_err(db_err)?;
-        let val = serde_json::to_vec(entry).map_err(json_err)?;
+        let val = encode_persistent(entry)?;
         self.lid_mappings
             .insert(entry.lid.as_bytes(), val.as_slice())
             .map_err(db_err)?;
@@ -382,7 +406,7 @@ impl ProtocolStore for SledStore {
         let mut result = Vec::new();
         for entry in self.lid_mappings.iter() {
             let (_, v) = entry.map_err(db_err)?;
-            let mapping: LidPnMappingEntry = serde_json::from_slice(&v).map_err(json_err)?;
+            let mapping: LidPnMappingEntry = decode_persistent(&v)?;
             result.push(mapping);
         }
         Ok(result)
@@ -417,7 +441,7 @@ impl ProtocolStore for SledStore {
     }
 
     async fn update_device_list(&self, record: DeviceListRecord) -> Result<()> {
-        let val = serde_json::to_vec(&record).map_err(json_err)?;
+        let val = encode_persistent(&record)?;
         self.device_list_records
             .insert(record.user.as_bytes(), val.as_slice())
             .map_err(db_err)?;
@@ -430,7 +454,7 @@ impl ProtocolStore for SledStore {
             .get(user.as_bytes())
             .map_err(db_err)?
         {
-            Some(v) => Ok(Some(serde_json::from_slice(&v).map_err(json_err)?)),
+            Some(v) => Ok(Some(decode_persistent(&v)?)),
             None => Ok(None),
         }
     }
@@ -470,7 +494,7 @@ impl ProtocolStore for SledStore {
 #[async_trait]
 impl DeviceStore for SledStore {
     async fn save(&self, device: &wacore::store::Device) -> Result<()> {
-        let val = serde_json::to_vec(device).map_err(json_err)?;
+        let val = encode_persistent(device)?;
         self.device_data
             .insert(b"device", val.as_slice())
             .map_err(db_err)?;
@@ -479,7 +503,7 @@ impl DeviceStore for SledStore {
 
     async fn load(&self) -> Result<Option<wacore::store::Device>> {
         match self.device_data.get(b"device").map_err(db_err)? {
-            Some(v) => Ok(Some(serde_json::from_slice(&v).map_err(json_err)?)),
+            Some(v) => Ok(Some(decode_persistent(&v)?)),
             None => Ok(None),
         }
     }
@@ -616,6 +640,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn app_state_persistence_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            let key = AppStateSyncKey {
+                key_data: vec![10, 20, 30],
+                fingerprint: vec![40, 50],
+                timestamp: 98765,
+            };
+            store.set_sync_key(b"persist-key", key).await.unwrap();
+            store
+                .set_version("regular_high", HashState {
+                    version: 9,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            let loaded_key = store.get_sync_key(b"persist-key").await.unwrap();
+            assert!(loaded_key.is_some());
+            assert_eq!(loaded_key.unwrap().timestamp, 98765);
+
+            let loaded_state = store.get_version("regular_high").await.unwrap();
+            assert_eq!(loaded_state.version, 9);
+        }
+    }
+
+    #[tokio::test]
     async fn skdm_recipients() {
         let store = temp_store();
         let recips = store.get_skdm_recipients("group1").await.unwrap();
@@ -693,6 +749,37 @@ mod tests {
         let loaded = store.get_devices("user1").await.unwrap();
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().devices.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn device_list_persistence_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            store
+                .update_device_list(DeviceListRecord {
+                    user: "persist-user".into(),
+                    devices: vec![DeviceInfo {
+                        device_id: 7,
+                        key_index: Some(2),
+                    }],
+                    timestamp: 1234,
+                    phash: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            let loaded = store.get_devices("persist-user").await.unwrap();
+            assert!(loaded.is_some());
+            let loaded = loaded.unwrap();
+            assert_eq!(loaded.devices.len(), 1);
+            assert_eq!(loaded.devices[0].device_id, 7);
+            assert_eq!(loaded.timestamp, 1234);
+        }
     }
 
     #[tokio::test]

@@ -1553,6 +1553,14 @@ pub async fn start_gateway(
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
 ) -> anyhow::Result<()> {
+    // Install a process-level rustls CryptoProvider early, before any channel
+    // plugin (Slack, Discord, etc.) creates outbound TLS connections via
+    // hyper-rustls.  Without this, `--no-tls` deployments skip the TLS cert
+    // setup path where `install_default()` previously lived, causing a panic
+    // the first time an outbound HTTPS request is made (see #329).
+    #[cfg(feature = "tls")]
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let prepared = prepare_gateway(
         bind,
         port,

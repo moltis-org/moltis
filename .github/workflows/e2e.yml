@@ -26,6 +26,7 @@ permissions: {}
 
 jobs:
   local-validation:
+    if: ${{ github.actor != 'dependabot[bot]' }}
     name: Local E2E Validation
     runs-on: ubuntu-latest
     permissions:

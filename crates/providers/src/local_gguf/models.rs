@@ -3,10 +3,10 @@
 //! Defines available models with HuggingFace URLs, memory requirements,
 //! and chat template hints.
 
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use {
-    anyhow::Context,
+    anyhow::{Context, bail},
     futures::StreamExt,
     tracing::{debug, info},
 };
@@ -369,7 +369,7 @@ pub fn default_models_dir() -> PathBuf {
 
 /// Check if a GGUF model file is cached locally.
 #[must_use]
-pub fn is_gguf_model_cached(model: &GgufModelDef, cache_dir: &std::path::Path) -> bool {
+pub fn is_gguf_model_cached(model: &GgufModelDef, cache_dir: &Path) -> bool {
     if model.backend != ModelBackend::Gguf {
         return false;
     }
@@ -377,9 +377,107 @@ pub fn is_gguf_model_cached(model: &GgufModelDef, cache_dir: &std::path::Path) -
     model_path.exists()
 }
 
+fn validate_hf_filename_path(hf_filename: &str) -> anyhow::Result<&Path> {
+    if hf_filename.trim().is_empty() {
+        bail!("GGUF filename cannot be empty");
+    }
+
+    let path = Path::new(hf_filename);
+    if path.is_absolute() {
+        bail!("GGUF filename must be a relative path");
+    }
+
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {},
+            _ => bail!("GGUF filename must not contain '.' or '..' path components"),
+        }
+    }
+
+    Ok(path)
+}
+
+fn validate_hf_repo_path(hf_repo: &str) -> anyhow::Result<Vec<&str>> {
+    if hf_repo.trim().is_empty() {
+        bail!("Hugging Face repo cannot be empty");
+    }
+
+    if hf_repo.contains('\\') {
+        bail!("Hugging Face repo must use '/' path separators");
+    }
+
+    let parts: Vec<&str> = hf_repo.split('/').collect();
+    if parts.is_empty() {
+        bail!("Hugging Face repo cannot be empty");
+    }
+
+    for part in &parts {
+        if part.is_empty() || *part == "." || *part == ".." {
+            bail!("Hugging Face repo contains invalid path component: {part:?}");
+        }
+        if part.contains(':') {
+            bail!("Hugging Face repo contains invalid path component: {part:?}");
+        }
+    }
+
+    Ok(parts)
+}
+
+fn custom_model_download_url(hf_repo: &str, hf_filename: &str) -> anyhow::Result<String> {
+    let repo_parts = validate_hf_repo_path(hf_repo)?;
+    let hf_path = validate_hf_filename_path(hf_filename)?;
+    let mut url =
+        reqwest::Url::parse("https://huggingface.co").context("parsing Hugging Face base URL")?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("Hugging Face base URL cannot be a base"))?;
+        for part in repo_parts {
+            segments.push(part);
+        }
+        segments.push("resolve");
+        segments.push("main");
+        for component in hf_path.components() {
+            if let Component::Normal(part) = component {
+                let part = part.to_string_lossy();
+                segments.push(part.as_ref());
+            }
+        }
+    }
+    Ok(url.to_string())
+}
+
+/// Compute the cache path for a custom GGUF model from Hugging Face.
+pub fn custom_model_path(
+    hf_repo: &str,
+    hf_filename: &str,
+    cache_dir: &Path,
+) -> anyhow::Result<PathBuf> {
+    let hf_path = validate_hf_filename_path(hf_filename)?;
+    let repo_parts = validate_hf_repo_path(hf_repo)?;
+    let mut model_path = cache_dir.join("custom");
+    for part in repo_parts {
+        model_path.push(part);
+    }
+    for component in hf_path.components() {
+        if let Component::Normal(part) = component {
+            model_path.push(part);
+        }
+    }
+    Ok(model_path)
+}
+
+/// Check if a custom GGUF model file is cached locally.
+#[must_use]
+pub fn is_custom_model_cached(hf_repo: &str, hf_filename: &str, cache_dir: &Path) -> bool {
+    custom_model_path(hf_repo, hf_filename, cache_dir)
+        .map(|path| path.exists())
+        .unwrap_or(false)
+}
+
 /// Check if an MLX model directory is cached locally.
 #[must_use]
-pub fn is_mlx_model_cached(model: &GgufModelDef, cache_dir: &std::path::Path) -> bool {
+pub fn is_mlx_model_cached(model: &GgufModelDef, cache_dir: &Path) -> bool {
     if model.backend != ModelBackend::Mlx {
         return false;
     }
@@ -396,7 +494,7 @@ pub fn is_mlx_model_cached(model: &GgufModelDef, cache_dir: &std::path::Path) ->
 
 /// Check if a model is cached (based on its backend type).
 #[must_use]
-pub fn is_model_cached(model: &GgufModelDef, cache_dir: &std::path::Path) -> bool {
+pub fn is_model_cached(model: &GgufModelDef, cache_dir: &Path) -> bool {
     match model.backend {
         ModelBackend::Gguf => is_gguf_model_cached(model, cache_dir),
         ModelBackend::Mlx => is_mlx_model_cached(model, cache_dir),
@@ -406,10 +504,7 @@ pub fn is_model_cached(model: &GgufModelDef, cache_dir: &std::path::Path) -> boo
 /// Ensure a model is downloaded, returning the path to the GGUF file.
 ///
 /// Downloads from HuggingFace if not present in the cache.
-pub async fn ensure_model(
-    model: &GgufModelDef,
-    cache_dir: &std::path::Path,
-) -> anyhow::Result<PathBuf> {
+pub async fn ensure_model(model: &GgufModelDef, cache_dir: &Path) -> anyhow::Result<PathBuf> {
     ensure_model_with_progress(model, cache_dir, |_| {}).await
 }
 
@@ -418,7 +513,7 @@ pub async fn ensure_model(
 /// The progress callback is called periodically during download with the current progress.
 pub async fn ensure_model_with_progress<F>(
     model: &GgufModelDef,
-    cache_dir: &std::path::Path,
+    cache_dir: &Path,
     mut on_progress: F,
 ) -> anyhow::Result<PathBuf>
 where
@@ -430,110 +525,43 @@ where
         return Ok(model_path);
     }
 
-    debug!(cache_dir = %cache_dir.display(), "ensuring cache directory exists");
-    tokio::fs::create_dir_all(cache_dir)
-        .await
-        .context("creating models cache dir")?;
-
     let url = model.hf_url();
-    info!(
-        url = %url,
-        model = model.id,
-        backend = %model.backend,
-        "downloading model from HuggingFace"
-    );
+    download_gguf_file_with_progress(&url, &model_path, model.id, &mut on_progress).await
+}
 
-    let download_start = std::time::Instant::now();
+/// Ensure a custom GGUF model is downloaded, returning the path to the file.
+pub async fn ensure_custom_model(
+    hf_repo: &str,
+    hf_filename: &str,
+    cache_dir: &Path,
+) -> anyhow::Result<PathBuf> {
+    ensure_custom_model_with_progress(hf_repo, hf_filename, cache_dir, |_| {}).await
+}
 
-    let response = reqwest::get(&url)
-        .await
-        .context("downloading GGUF model")?
-        .error_for_status()
-        .context("GGUF model download failed")?;
-
-    let total = response.content_length();
-    let mut downloaded: u64 = 0;
-
-    if let Some(size) = total {
-        debug!(total_size_mb = size / (1024 * 1024), "download size known");
+/// Ensure a custom GGUF model is downloaded with progress reporting.
+pub async fn ensure_custom_model_with_progress<F>(
+    hf_repo: &str,
+    hf_filename: &str,
+    cache_dir: &Path,
+    mut on_progress: F,
+) -> anyhow::Result<PathBuf>
+where
+    F: FnMut(DownloadProgress),
+{
+    let model_path = custom_model_path(hf_repo, hf_filename, cache_dir)?;
+    if model_path.exists() {
+        info!(
+            path = %model_path.display(),
+            hf_repo,
+            hf_filename,
+            "custom GGUF model found in cache"
+        );
+        return Ok(model_path);
     }
 
-    // Report initial progress
-    on_progress(DownloadProgress { downloaded, total });
-
-    // Stream the download to a temp file
-    let tmp_path = model_path.with_extension("tmp");
-    debug!(tmp_path = %tmp_path.display(), "creating temp file for download");
-    let mut file = tokio::fs::File::create(&tmp_path)
-        .await
-        .context("creating temp file")?;
-
-    let mut stream = response.bytes_stream();
-    let mut last_report = std::time::Instant::now();
-    let mut last_log = std::time::Instant::now();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("reading chunk")?;
-        downloaded += chunk.len() as u64;
-
-        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
-            .await
-            .context("writing chunk")?;
-
-        // Report progress at most every 100ms to avoid flooding
-        if last_report.elapsed() >= std::time::Duration::from_millis(100) {
-            on_progress(DownloadProgress { downloaded, total });
-            last_report = std::time::Instant::now();
-        }
-
-        // Log progress every 5 seconds for visibility
-        if last_log.elapsed() >= std::time::Duration::from_secs(5) {
-            let percent = total
-                .map(|t| (downloaded as f64 / t as f64 * 100.0) as u32)
-                .unwrap_or(0);
-            debug!(
-                downloaded_mb = downloaded / (1024 * 1024),
-                percent, "download progress"
-            );
-            last_log = std::time::Instant::now();
-        }
-    }
-
-    // Final progress report
-    on_progress(DownloadProgress { downloaded, total });
-
-    // Flush and close the file before renaming
-    tokio::io::AsyncWriteExt::flush(&mut file)
-        .await
-        .context("flushing file")?;
-    drop(file);
-
-    debug!(
-        from = %tmp_path.display(),
-        to = %model_path.display(),
-        "renaming temp file to final location"
-    );
-    tokio::fs::rename(&tmp_path, &model_path)
-        .await
-        .context("renaming model file")?;
-
-    let download_duration = download_start.elapsed();
-    let download_speed_mbps = if download_duration.as_secs_f64() > 0.0 {
-        (downloaded as f64 / (1024.0 * 1024.0)) / download_duration.as_secs_f64()
-    } else {
-        0.0
-    };
-
-    info!(
-        path = %model_path.display(),
-        size_mb = downloaded / (1024 * 1024),
-        duration_secs = download_duration.as_secs_f64(),
-        speed_mbps = format!("{:.1}", download_speed_mbps),
-        model = model.id,
-        "model downloaded successfully"
-    );
-
-    Ok(model_path)
+    let url = custom_model_download_url(hf_repo, hf_filename)?;
+    let label = format!("{hf_repo}/{hf_filename}");
+    download_gguf_file_with_progress(&url, &model_path, &label, &mut on_progress).await
 }
 
 // ── MLX Model Download ───────────────────────────────────────────────────────
@@ -541,17 +569,14 @@ where
 /// Ensure an MLX model is downloaded, returning the path to the model directory.
 ///
 /// MLX models are directories containing multiple files (config.json, model.safetensors, etc.).
-pub async fn ensure_mlx_model(
-    model: &GgufModelDef,
-    cache_dir: &std::path::Path,
-) -> anyhow::Result<PathBuf> {
+pub async fn ensure_mlx_model(model: &GgufModelDef, cache_dir: &Path) -> anyhow::Result<PathBuf> {
     ensure_mlx_model_with_progress(model, cache_dir, |_| {}).await
 }
 
 /// Ensure an MLX model is downloaded with progress reporting.
 pub async fn ensure_mlx_model_with_progress<F>(
     model: &GgufModelDef,
-    cache_dir: &std::path::Path,
+    cache_dir: &Path,
     mut on_progress: F,
 ) -> anyhow::Result<PathBuf>
 where
@@ -780,10 +805,119 @@ where
     Ok(downloaded)
 }
 
+async fn download_gguf_file_with_progress<F>(
+    url: &str,
+    model_path: &Path,
+    model_label: &str,
+    mut on_progress: F,
+) -> anyhow::Result<PathBuf>
+where
+    F: FnMut(DownloadProgress),
+{
+    let cache_dir = model_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("invalid model cache path"))?;
+    debug!(cache_dir = %cache_dir.display(), "ensuring cache directory exists");
+    tokio::fs::create_dir_all(cache_dir)
+        .await
+        .context("creating models cache dir")?;
+
+    info!(url = %url, model = model_label, "downloading model from HuggingFace");
+
+    let download_start = std::time::Instant::now();
+
+    let response = reqwest::get(url)
+        .await
+        .context("downloading GGUF model")?
+        .error_for_status()
+        .context("GGUF model download failed")?;
+
+    let total = response.content_length();
+    let mut downloaded: u64 = 0;
+
+    if let Some(size) = total {
+        debug!(total_size_mb = size / (1024 * 1024), "download size known");
+    }
+
+    on_progress(DownloadProgress { downloaded, total });
+
+    let tmp_path = model_path.with_extension("tmp");
+    debug!(tmp_path = %tmp_path.display(), "creating temp file for download");
+    let mut file = tokio::fs::File::create(&tmp_path)
+        .await
+        .context("creating temp file")?;
+
+    let mut stream = response.bytes_stream();
+    let mut last_report = std::time::Instant::now();
+    let mut last_log = std::time::Instant::now();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("reading chunk")?;
+        downloaded += chunk.len() as u64;
+
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
+            .context("writing chunk")?;
+
+        if last_report.elapsed() >= std::time::Duration::from_millis(100) {
+            on_progress(DownloadProgress { downloaded, total });
+            last_report = std::time::Instant::now();
+        }
+
+        if last_log.elapsed() >= std::time::Duration::from_secs(5) {
+            let percent = total
+                .map(|t| (downloaded as f64 / t as f64 * 100.0) as u32)
+                .unwrap_or(0);
+            debug!(
+                downloaded_mb = downloaded / (1024 * 1024),
+                percent, "download progress"
+            );
+            last_log = std::time::Instant::now();
+        }
+    }
+
+    on_progress(DownloadProgress { downloaded, total });
+
+    tokio::io::AsyncWriteExt::flush(&mut file)
+        .await
+        .context("flushing file")?;
+    drop(file);
+
+    debug!(
+        from = %tmp_path.display(),
+        to = %model_path.display(),
+        "renaming temp file to final location"
+    );
+    tokio::fs::rename(&tmp_path, model_path)
+        .await
+        .context("renaming model file")?;
+
+    let download_duration = download_start.elapsed();
+    let download_speed_mbps = if download_duration.as_secs_f64() > 0.0 {
+        (downloaded as f64 / (1024.0 * 1024.0)) / download_duration.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    info!(
+        path = %model_path.display(),
+        size_mb = downloaded / (1024 * 1024),
+        duration_secs = download_duration.as_secs_f64(),
+        speed_mbps = format!("{:.1}", download_speed_mbps),
+        model = model_label,
+        "model downloaded successfully"
+    );
+
+    Ok(model_path.to_path_buf())
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        axum::{Router, routing::get},
+    };
 
     #[test]
     fn test_find_model() {
@@ -962,6 +1096,117 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_model_path_scopes_repo_and_filename() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let path =
+            custom_model_path("Qwen/Qwen3-4B-GGUF", "Qwen3-4B-Q4_K_M.gguf", cache_dir).unwrap();
+
+        assert_eq!(
+            path,
+            cache_dir
+                .join("custom")
+                .join("Qwen")
+                .join("Qwen3-4B-GGUF")
+                .join("Qwen3-4B-Q4_K_M.gguf")
+        );
+    }
+
+    #[test]
+    fn test_custom_model_path_rejects_parent_segments() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let result = custom_model_path("Qwen/Qwen3-4B-GGUF", "../escape.gguf", cache_dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_custom_model_path_rejects_invalid_repo_segments() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let result = custom_model_path("../escape", "Qwen3-4B-Q4_K_M.gguf", cache_dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_custom_model_path_rejects_backslash_repo_separators() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let result = custom_model_path(
+            r"foo\..\..\AppData\Roaming/model",
+            "Qwen3-4B-Q4_K_M.gguf",
+            cache_dir,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_custom_model_path_rejects_windows_drive_prefix_repo_components() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let result = custom_model_path("C:/Users/Public/model", "Qwen3-4B-Q4_K_M.gguf", cache_dir);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_custom_model_path_distinguishes_repo_collisions() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let first = custom_model_path("foo/bar__baz", "model.gguf", cache_dir).unwrap();
+        let second = custom_model_path("foo__bar/baz", "model.gguf", cache_dir).unwrap();
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn test_is_custom_model_cached_returns_true_when_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+        let path =
+            custom_model_path("Qwen/Qwen3-4B-GGUF", "Qwen3-4B-Q4_K_M.gguf", cache_dir).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"fake model content").unwrap();
+
+        assert!(is_custom_model_cached(
+            "Qwen/Qwen3-4B-GGUF",
+            "Qwen3-4B-Q4_K_M.gguf",
+            cache_dir
+        ));
+    }
+
+    #[test]
+    fn test_custom_model_download_url_encodes_repo_and_filename_segments() {
+        let url = custom_model_download_url("some org/model name", "quant file.gguf").unwrap();
+
+        assert_eq!(
+            url,
+            "https://huggingface.co/some%20org/model%20name/resolve/main/quant%20file.gguf"
+        );
+    }
+
+    #[test]
+    fn test_custom_model_download_url_rejects_backslash_repo_separators() {
+        let result =
+            custom_model_download_url(r"foo\..\..\AppData\Roaming/model", "quant file.gguf");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_custom_model_download_url_rejects_windows_drive_prefix_repo_components() {
+        let result = custom_model_download_url("C:/Users/Public/model", "quant file.gguf");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_is_gguf_model_cached_returns_false_for_mlx_model() {
         let temp_dir = tempfile::tempdir().unwrap();
         let cache_dir = temp_dir.path();
@@ -1120,5 +1365,40 @@ mod tests {
         let model = model.unwrap();
         assert_eq!(model.backend, ModelBackend::Mlx);
         assert_eq!(model.hf_repo, "mlx-community/Llama-3.2-1B-Instruct-4bit");
+    }
+
+    #[tokio::test]
+    async fn test_download_gguf_file_with_progress_downloads_to_target_path() {
+        async fn handler() -> &'static str {
+            "fake gguf content"
+        }
+
+        let app = Router::new().route("/model.gguf", get(handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let model_path = temp_dir
+            .path()
+            .join("custom")
+            .join("repo")
+            .join("model.gguf");
+        let mut updates = Vec::new();
+
+        let downloaded = download_gguf_file_with_progress(
+            &format!("http://{addr}/model.gguf"),
+            &model_path,
+            "test-model",
+            |progress| updates.push(progress.downloaded),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(downloaded, model_path);
+        assert_eq!(std::fs::read(&model_path).unwrap(), b"fake gguf content");
+        assert!(!updates.is_empty());
     }
 }

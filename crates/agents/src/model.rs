@@ -1,8 +1,13 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use {async_trait::async_trait, tokio_stream::Stream};
 
 use crate::multimodal::parse_data_uri;
+
+// ── Reasoning effort ──────────────────────────────────────────────────────
+
+/// Re-export from config so downstream crates can use `moltis_agents::model::ReasoningEffort`.
+pub use moltis_config::schema::ReasoningEffort;
 
 // ── Typed chat messages ─────────────────────────────────────────────────────
 
@@ -184,6 +189,12 @@ impl ChatMessage {
 /// the persisted JSON, not in `ChatMessage`.
 pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage> {
     let mut messages = Vec::with_capacity(values.len());
+    // Track tool_call IDs emitted by assistant messages so we only include
+    // tool/tool_result messages that have a matching assistant tool_call.
+    // Orphan tool results (e.g. from explicit /sh commands) would cause
+    // provider API errors.
+    let mut pending_tool_call_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     for (i, val) in values.iter().enumerate() {
         let Some(role) = val["role"].as_str() else {
             tracing::warn!(index = i, "skipping message with missing/invalid role");
@@ -227,7 +238,7 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
             },
             "assistant" => {
                 let content = val["content"].as_str().map(|s| s.to_string());
-                let tool_calls = val["tool_calls"]
+                let tool_calls: Vec<ToolCall> = val["tool_calls"]
                     .as_array()
                     .map(|tcs| {
                         tcs.iter()
@@ -246,6 +257,9 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                             .collect()
                     })
                     .unwrap_or_default();
+                for tc in &tool_calls {
+                    pending_tool_call_ids.insert(tc.id.clone());
+                }
                 messages.push(ChatMessage::Assistant {
                     content,
                     tool_calls,
@@ -253,6 +267,10 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
             },
             "tool" => {
                 let tool_call_id = val["tool_call_id"].as_str().unwrap_or("").to_string();
+                if !pending_tool_call_ids.remove(&tool_call_id) {
+                    tracing::debug!(tool_call_id, "skipping orphan tool message");
+                    continue;
+                }
                 let content = if let Some(s) = val["content"].as_str() {
                     s.to_string()
                 } else {
@@ -260,9 +278,27 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                 };
                 messages.push(ChatMessage::tool(tool_call_id, content));
             },
-            // tool_result entries are UI-only metadata (persisted tool execution
-            // output); they are not part of the LLM conversation context.
-            "tool_result" => continue,
+            // tool_result entries are persisted tool execution output; convert
+            // them to standard tool messages so the LLM sees its own results.
+            "tool_result" => {
+                let tool_call_id = val["tool_call_id"].as_str().unwrap_or("").to_string();
+                if !pending_tool_call_ids.remove(&tool_call_id) {
+                    tracing::debug!(tool_call_id, "skipping orphan tool_result message");
+                    continue;
+                }
+                let content = if let Some(err) = val["error"].as_str() {
+                    format!("Error: {err}")
+                } else if let Some(result) = val.get("result") {
+                    if let Some(s) = result.as_str() {
+                        s.to_string()
+                    } else {
+                        result.to_string()
+                    }
+                } else {
+                    String::new()
+                };
+                messages.push(ChatMessage::tool(tool_call_id, content));
+            },
             // notice entries are UI-only informational messages.
             "notice" => continue,
             other => {
@@ -377,6 +413,26 @@ pub trait LlmProvider: Send + Sync {
         _tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream(messages)
+    }
+
+    /// Configured reasoning effort for this provider instance, if any.
+    ///
+    /// Providers that support extended thinking (Anthropic, OpenAI o-series)
+    /// use this value when building API requests.
+    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        None
+    }
+
+    /// Return a new provider with reasoning effort set, if supported.
+    ///
+    /// Returns `None` for providers that don't support reasoning effort.
+    /// Used by sub-agent spawning to apply per-agent reasoning settings
+    /// without mutating the shared registry provider.
+    fn with_reasoning_effort(
+        self: Arc<Self>,
+        _effort: ReasoningEffort,
+    ) -> Option<Arc<dyn LlmProvider>> {
+        None
     }
 
     /// Fetch runtime model metadata from the provider API.
@@ -604,15 +660,25 @@ mod tests {
 
     #[test]
     fn convert_tool_message() {
-        let values = vec![serde_json::json!({
-            "role": "tool",
-            "tool_call_id": "call_1",
-            "content": "result data"
-        })];
+        let values = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "result data"
+            }),
+        ];
         let msgs = values_to_chat_messages(&values);
-        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs.len(), 2);
         assert!(
-            matches!(&msgs[0], ChatMessage::Tool { tool_call_id, content } if tool_call_id == "call_1" && content == "result data")
+            matches!(&msgs[1], ChatMessage::Tool { tool_call_id, content } if tool_call_id == "call_1" && content == "result data")
         );
     }
 
@@ -632,7 +698,14 @@ mod tests {
         let original = [
             ChatMessage::system("sys"),
             ChatMessage::user("hi"),
-            ChatMessage::assistant("hello"),
+            ChatMessage::Assistant {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "exec".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+            },
             ChatMessage::tool("call_1", "result"),
         ];
         let values: Vec<serde_json::Value> = original.iter().map(|m| m.to_openai_value()).collect();
@@ -670,12 +743,42 @@ mod tests {
     }
 
     #[test]
-    fn convert_skips_tool_result_entries() {
+    fn convert_includes_tool_result_with_matching_assistant() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "run ls"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{\"command\":\"ls\"}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "exec",
+                "success": true,
+                "result": {"stdout": "file.txt", "exit_code": 0}
+            }),
+            serde_json::json!({"role": "assistant", "content": "done"}),
+        ];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 4);
+        assert!(matches!(&msgs[0], ChatMessage::User { .. }));
+        assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+        assert!(matches!(&msgs[2], ChatMessage::Tool { .. }));
+        assert!(matches!(&msgs[3], ChatMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn convert_skips_orphan_tool_result() {
+        // Orphan tool_result (e.g. from /sh) with no matching assistant tool_calls
         let values = vec![
             serde_json::json!({"role": "user", "content": "run ls"}),
             serde_json::json!({
                 "role": "tool_result",
-                "tool_call_id": "call_1",
+                "tool_call_id": "call_orphan",
                 "tool_name": "exec",
                 "success": true,
                 "result": {"stdout": "file.txt", "exit_code": 0}
@@ -699,6 +802,72 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert!(matches!(&msgs[0], ChatMessage::User { .. }));
         assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn convert_tool_result_to_tool_message() {
+        let values = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{\"command\":\"ls\"}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "exec",
+                "success": true,
+                "result": {"stdout": "file.txt", "exit_code": 0}
+            }),
+        ];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 2);
+        match &msgs[1] {
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
+                assert_eq!(tool_call_id, "call_1");
+                assert!(content.contains("file.txt"));
+            },
+            other => panic!("expected Tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_tool_result_error_to_tool_message() {
+        let values = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_2",
+                    "function": {"name": "exec", "arguments": "{\"command\":\"bad_cmd\"}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_2",
+                "tool_name": "exec",
+                "success": false,
+                "error": "command not found"
+            }),
+        ];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 2);
+        match &msgs[1] {
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
+                assert_eq!(tool_call_id, "call_2");
+                assert_eq!(content, "Error: command not found");
+            },
+            other => panic!("expected Tool, got {other:?}"),
+        }
     }
 
     // ── ModelMetadata default trait impl ────────────────────────────

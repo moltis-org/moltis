@@ -11,6 +11,7 @@ metrics = ["dep:moltis-metrics"]
 async-trait    = { workspace = true }
 futures        = { workspace = true }
 moltis-common  = { workspace = true }
+moltis-config  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 moltis-oauth   = { workspace = true }
 reqwest        = { workspace = true }

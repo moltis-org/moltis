@@ -121,7 +121,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/moltis-org/moltis"
 rust-version = "1.91"
-version      = "0.10.11"
+version      = "0.1.0"
 
 [workspace.dependencies]
 # APNS
@@ -133,6 +133,7 @@ askama     = "0.15"
 axum       = { features = ["ws"], version = "0.8" }
 axum-extra = "0.10"
 # Serialization
+postcard   = { features = ["alloc"], version = "1.1" }
 serde      = { features = ["derive"], version = "1" }
 serde_json = "1"
 # Error handling
@@ -275,8 +276,8 @@ shell-words           = "1"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
-wasmtime              = { features = ["component-model"], version = "30" }
-wasmtime-wasi         = "30"
+wasmtime              = { features = ["component-model"], version = "36" }
+wasmtime-wasi         = "36"
 which                 = "8"
 wit-bindgen           = "0.41"
 wit-bindgen-rt        = { features = ["bitflags"], version = "0.41" }

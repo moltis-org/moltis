@@ -495,6 +495,13 @@ fi
 # Verify Cargo.lock is in sync (same as CI's `cargo fetch --locked`).
 run_check "local/lockfile" "cargo fetch --locked"
 
+# Ensure generated CSS exists (Tailwind output is not committed; worktrees and
+# fresh clones won't have it).
+if [[ ! -f crates/web/src/assets/style.css ]]; then
+  echo "style.css missing — building CSS with Tailwind..."
+  run_check "local/build-css" "just build-css"
+fi
+
 # Lint runs first to warm the cargo build cache (clippy compiles all targets).
 # These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"

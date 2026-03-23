@@ -10,9 +10,13 @@ pub mod env_subst;
 pub mod error;
 pub mod loader;
 pub mod migrate;
+pub mod provider_env;
 pub mod schema;
 pub mod template;
 pub mod validate;
+pub mod version;
+
+pub use version::VERSION;
 
 pub use {
     error::{Error, Result},
@@ -25,9 +29,13 @@ pub use {
         load_memory_md_for_agent, load_soul, load_soul_for_agent, load_tools_md,
         load_tools_md_for_agent, load_user, memory_path, resolve_identity,
         resolve_identity_from_config, save_config, save_identity, save_identity_for_agent,
-        save_raw_config, save_soul, save_user, set_config_dir, set_data_dir, set_share_dir,
-        share_dir, soul_path, tools_path, update_config, user_global_config_dir,
+        save_raw_config, save_soul, save_soul_for_agent, save_user, set_config_dir, set_data_dir,
+        set_share_dir, share_dir, soul_path, tools_path, update_config, user_global_config_dir,
         user_global_config_dir_if_different, user_path,
+    },
+    provider_env::{
+        GenericProviderEnv, env_value_with_overrides, generic_provider_api_key_from_env,
+        generic_provider_env, generic_provider_env_source_for_provider, normalize_provider_name,
     },
     schema::{
         AgentIdentity, AgentPreset, AgentsConfig, AuthConfig, CalDavAccountConfig, CalDavConfig,

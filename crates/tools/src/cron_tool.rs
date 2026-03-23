@@ -142,6 +142,24 @@ fn normalize_schedule_value(schedule: &mut Value) -> Result<()> {
                 "timeMs",
                 "time_ms",
             ]);
+            // Resolve delay_ms (relative offset from now) into an absolute at_ms.
+            // This lets the LLM specify "in 10 minutes" without computing epoch timestamps.
+            take_alias(obj, "delay_ms", &[
+                "delayMs",
+                "delay",
+                "in",
+                "in_ms",
+                "offset_ms",
+            ]);
+            if let Some(delay_raw) = obj.remove("delay_ms") {
+                let delay = parse_interval_millis(&delay_raw, "schedule.delay_ms")?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                obj.entry("at_ms".to_string()).or_insert(json!(now + delay));
+                obj.entry("kind".to_string()).or_insert(json!("at"));
+            }
             take_alias(obj, "every_ms", &[
                 "everyMs",
                 "every",
@@ -649,10 +667,11 @@ impl AgentTool for CronTool {
                         "name": { "type": "string", "description": "Human-readable job name" },
                         "schedule": {
                             "type": "object",
-                            "description": "Schedule object. Use {kind:'at', at_ms}, {kind:'every', every_ms, anchor_ms?}, or {kind:'cron', expr, tz?}. This tool also accepts shorthand schedule strings/numbers at runtime.",
+                            "description": "Schedule object. For one-off jobs use {kind:'at', delay_ms} where delay_ms is milliseconds from now (e.g. 600000 for 10 min) — never compute at_ms yourself. For recurring use {kind:'every', every_ms} or {kind:'cron', expr, tz?}.",
                             "properties": {
                                 "kind": { "type": "string", "enum": ["at", "every", "cron"] },
-                                "at_ms": { "type": "integer", "description": "Used when kind='at'" },
+                                "delay_ms": { "type": "integer", "description": "Milliseconds from now to run the job (server resolves to absolute time). Preferred over at_ms." },
+                                "at_ms": { "type": "integer", "description": "Absolute epoch milliseconds. Use delay_ms instead unless you have an exact timestamp." },
                                 "every_ms": { "type": "integer", "description": "Used when kind='every'" },
                                 "anchor_ms": { "type": "integer", "description": "Optional anchor when kind='every'" },
                                 "expr": { "type": "string", "description": "Cron expression used when kind='cron'" },
@@ -1046,6 +1065,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_add_accepts_delivery_fields_for_agent_turn() {
+        let tool = make_tool();
+        let add_result = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "delivered run",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "post an update",
+                        "deliver": true,
+                        "channel": "bot-main",
+                        "to": "123456"
+                    },
+                    "sessionTarget": "isolated"
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(add_result["payload"]["kind"], "agentTurn");
+        assert_eq!(add_result["payload"]["deliver"], true);
+        assert_eq!(add_result["payload"]["channel"], "bot-main");
+        assert_eq!(add_result["payload"]["to"], "123456");
+    }
+
+    #[tokio::test]
     async fn test_update_accepts_host_execution_string() {
         let tool = make_tool();
         let add_result = tool
@@ -1073,6 +1120,45 @@ mod tests {
 
         assert_eq!(updated["sandbox"]["enabled"], false);
         assert!(updated["sandbox"]["image"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_update_accepts_delivery_fields_in_patch() {
+        let tool = make_tool();
+        let add_result = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "toggle delivery",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": { "kind": "agentTurn", "message": "run task" },
+                    "sessionTarget": "isolated"
+                }
+            }))
+            .await
+            .unwrap();
+        let id = add_result["id"].as_str().unwrap();
+
+        let updated = tool
+            .execute(json!({
+                "action": "update",
+                "id": id,
+                "patch": {
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "run task",
+                        "deliver": true,
+                        "channel": "bot-main",
+                        "to": "123456"
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(updated["payload"]["deliver"], true);
+        assert_eq!(updated["payload"]["channel"], "bot-main");
+        assert_eq!(updated["payload"]["to"], "123456");
     }
 
     #[test]

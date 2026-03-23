@@ -1,101 +1,98 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.13/schema.json",
-  "vcs": {
-    "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
-  },
-  "files": {
-    "includes": [
-      "crates/web/src/assets/js/**/*.js",
-      "crates/web/ui/**/*.js"
-    ]
-  },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "recommended": true,
-      "a11y": {
-        "recommended": true
-      },
-      "complexity": {
-        "recommended": true,
-        "noExcessiveCognitiveComplexity": "warn",
-        "noUselessTypeConstraint": "error",
-        "useDateNow": "error",
-        "useSimplifiedLogicExpression": "warn"
-      },
-      "correctness": {
-        "recommended": true,
-        "noInnerDeclarations": "off",
-        "noNodejsModules": "off",
-        "noUndeclaredDependencies": "off",
-        "noUnusedFunctionParameters": "warn",
-        "noUnusedImports": "error",
-        "noUnusedPrivateClassMembers": "error",
-        "noUnusedVariables": "error",
-        "useHookAtTopLevel": "error"
-      },
-      "performance": {
-        "recommended": true,
-        "noBarrelFile": "warn",
-        "noReExportAll": "warn"
-      },
-      "security": {
-        "recommended": true
-      },
-      "style": {
-        "recommended": true,
-        "noDefaultExport": "off",
-        "useFilenamingConvention": "off",
-        "useNamingConvention": "off",
-        "noNegationElse": "error",
-        "noParameterAssign": "off",
-        "useCollapsedElseIf": "error",
-        "useCollapsedIf": "error",
-        "useConst": "error",
-        "useDefaultParameterLast": "error",
-        "useExponentiationOperator": "error",
-        "useForOf": "error",
-        "useSelfClosingElements": "error",
-        "useShorthandAssign": "error",
-        "useSingleVarDeclarator": "off",
-        "useTemplate": "error",
-        "useThrowNewError": "error"
-      },
-      "suspicious": {
-        "recommended": true,
-        "noAssignInExpressions": "off",
-        "noConsole": "off",
-        "noDoubleEquals": "error",
-        "noEmptyBlockStatements": "warn",
-        "noEvolvingTypes": "warn",
-        "useAwait": "warn"
-      },
-      "nursery": {
-        "noShadow": "warn",
-        "noUnusedExpressions": "warn"
-      }
-    }
-  },
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "tab",
-    "indentWidth": 2,
-    "lineWidth": 120
-  },
-  "javascript": {
-    "formatter": {
-      "quoteStyle": "double",
-      "semicolons": "always"
-    }
-  },
-  "assist": {
-    "enabled": true,
-    "actions": {
-      "source": {
-        "organizeImports": "on"
-      }
-    }
-  }
+	"$schema": "https://biomejs.dev/schemas/2.4.6/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": ["crates/web/src/assets/js/**/*.js", "crates/web/ui/**/*.js"]
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"a11y": {
+				"recommended": true
+			},
+			"complexity": {
+				"recommended": true,
+				"noExcessiveCognitiveComplexity": "warn",
+				"noUselessTypeConstraint": "error",
+				"useDateNow": "error",
+				"useSimplifiedLogicExpression": "warn"
+			},
+			"correctness": {
+				"recommended": true,
+				"noInnerDeclarations": "off",
+				"noNodejsModules": "off",
+				"noUndeclaredDependencies": "off",
+				"noUnusedFunctionParameters": "warn",
+				"noUnusedImports": "error",
+				"noUnusedPrivateClassMembers": "error",
+				"noUnusedVariables": "error",
+				"useHookAtTopLevel": "error"
+			},
+			"performance": {
+				"recommended": true,
+				"noBarrelFile": "warn",
+				"noReExportAll": "warn"
+			},
+			"security": {
+				"recommended": true
+			},
+			"style": {
+				"recommended": true,
+				"noDefaultExport": "off",
+				"useFilenamingConvention": "off",
+				"useNamingConvention": "off",
+				"noNegationElse": "error",
+				"noParameterAssign": "off",
+				"useCollapsedElseIf": "error",
+				"useCollapsedIf": "error",
+				"useConst": "error",
+				"useDefaultParameterLast": "error",
+				"useExponentiationOperator": "error",
+				"useForOf": "error",
+				"useSelfClosingElements": "error",
+				"useShorthandAssign": "error",
+				"useSingleVarDeclarator": "off",
+				"useTemplate": "error",
+				"useThrowNewError": "error"
+			},
+			"suspicious": {
+				"recommended": true,
+				"noAssignInExpressions": "off",
+				"noConsole": "off",
+				"noDoubleEquals": "error",
+				"noEmptyBlockStatements": "warn",
+				"noEvolvingTypes": "warn",
+				"useAwait": "warn",
+				"noUnusedExpressions": "warn"
+			},
+			"nursery": {
+				"noShadow": "warn"
+			}
+		}
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineWidth": 120
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"semicolons": "always"
+		}
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	}
 }

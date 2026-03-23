@@ -38,12 +38,21 @@ pub fn register(
 ) -> anyhow::Result<ServiceDaemon> {
     let daemon = ServiceDaemon::new()?;
 
+    // Use a stable synthetic hostname instead of the system hostname to avoid
+    // two problems:
+    //   1. Double-suffix: macOS often returns a hostname already ending in
+    //      `.local`, producing `foo.local.local.` — an invalid mDNS name.
+    //   2. Conflict: mdns_sd runs its own mDNS stack on port 5353 and would
+    //      advertise A records for the system hostname, competing with macOS
+    //      mDNSResponder which already owns that name.
+    // The actual hostname is still surfaced to clients via the `hostname`
+    // property in the TXT record.
     let host = hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "moltis-gateway".to_string());
 
-    let host_label = format!("{host}.local.");
+    let host_label = "moltis-gateway.local.".to_string();
 
     let port_value = port.to_string();
     let properties = [

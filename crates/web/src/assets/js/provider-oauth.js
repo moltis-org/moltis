@@ -43,3 +43,10 @@ export function startProviderOAuth(providerName) {
 		redirectUri: `${window.location.origin}/auth/callback`,
 	}).then(normalizeOAuthStartResponse);
 }
+
+export function completeProviderOAuth(providerName, callback) {
+	return sendRpc("providers.oauth.complete", {
+		provider: providerName,
+		callback,
+	});
+}

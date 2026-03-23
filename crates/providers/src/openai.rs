@@ -20,7 +20,8 @@ use {
     super::openai_compat::{
         SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage,
         parse_openai_compat_usage_from_payload, parse_tool_calls, process_openai_sse_line,
-        strip_think_tags, to_openai_tools, to_responses_api_tools, to_responses_input,
+        responses_output_index, split_responses_instructions_and_input, strip_think_tags,
+        to_openai_tools, to_responses_api_tools,
     },
     moltis_agents::model::{
         ChatMessage, CompletionResponse, LlmProvider, ModelMetadata, StreamEvent, Usage,
@@ -36,6 +37,8 @@ pub struct OpenAiProvider {
     stream_transport: ProviderStreamTransport,
     metadata_cache: tokio::sync::OnceCell<ModelMetadata>,
     tool_mode_override: Option<moltis_config::ToolMode>,
+    /// Optional reasoning effort level for o-series models.
+    reasoning_effort: Option<moltis_agents::model::ReasoningEffort>,
 }
 
 const OPENAI_MODELS_ENDPOINT_PATH: &str = "/models";
@@ -330,16 +333,6 @@ fn models_endpoint(base_url: &str) -> String {
 ///
 /// The Responses API includes `output_index` on most events. Falls back to
 /// `item_index` / `index` for robustness, then to `fallback`.
-fn ws_output_index(event: &serde_json::Value, fallback: usize) -> usize {
-    event
-        .get("output_index")
-        .or_else(|| event.get("item_index"))
-        .or_else(|| event.get("index"))
-        .and_then(serde_json::Value::as_u64)
-        .map(|i| i as usize)
-        .unwrap_or(fallback)
-}
-
 async fn fetch_models_from_api(
     api_key: secrecy::Secret<String>,
     base_url: String,
@@ -438,6 +431,7 @@ impl OpenAiProvider {
             stream_transport: ProviderStreamTransport::Sse,
             metadata_cache: tokio::sync::OnceCell::new(),
             tool_mode_override: None,
+            reasoning_effort: None,
         }
     }
 
@@ -456,6 +450,7 @@ impl OpenAiProvider {
             stream_transport: ProviderStreamTransport::Sse,
             metadata_cache: tokio::sync::OnceCell::new(),
             tool_mode_override: None,
+            reasoning_effort: None,
         }
     }
 
@@ -471,10 +466,41 @@ impl OpenAiProvider {
         self
     }
 
+    /// Return the reasoning effort string if configured.
+    fn reasoning_effort_str(&self) -> Option<&'static str> {
+        use moltis_agents::model::ReasoningEffort;
+        self.reasoning_effort.map(|e| match e {
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+        })
+    }
+
+    /// Apply `reasoning_effort` for the **Chat Completions** API (used by
+    /// `complete()` and `stream_with_tools_sse()`).
+    ///
+    /// Format: `"reasoning_effort": "high"` (top-level string field).
+    fn apply_reasoning_effort_chat(&self, body: &mut serde_json::Value) {
+        if let Some(effort) = self.reasoning_effort_str() {
+            body["reasoning_effort"] = serde_json::json!(effort);
+        }
+    }
+
+    /// Apply `reasoning_effort` for the **Responses** API (used by
+    /// `stream_with_tools_websocket()`).
+    ///
+    /// Format: `"reasoning": { "effort": "high" }` (nested object).
+    fn apply_reasoning_effort_responses(&self, body: &mut serde_json::Value) {
+        if let Some(effort) = self.reasoning_effort_str() {
+            body["reasoning"] = serde_json::json!({ "effort": effort });
+        }
+    }
+
     fn requires_reasoning_content_on_tool_messages(&self) -> bool {
         self.provider_name.eq_ignore_ascii_case("moonshot")
             || self.base_url.contains("moonshot.ai")
             || self.base_url.contains("moonshot.cn")
+            || self.model.starts_with("kimi-")
     }
 
     fn requires_top_level_system_prompt(&self) -> bool {
@@ -610,32 +636,6 @@ impl OpenAiProvider {
         )))
     }
 
-    fn split_responses_instructions_and_input(
-        messages: Vec<ChatMessage>,
-    ) -> (Option<String>, Vec<serde_json::Value>) {
-        let mut instruction_parts: Vec<String> = Vec::new();
-        let mut non_system: Vec<ChatMessage> = Vec::new();
-
-        for message in messages {
-            match message {
-                ChatMessage::System { content } => {
-                    if !content.trim().is_empty() {
-                        instruction_parts.push(content);
-                    }
-                },
-                other => non_system.push(other),
-            }
-        }
-
-        let instructions = if instruction_parts.is_empty() {
-            None
-        } else {
-            Some(instruction_parts.join("\n\n"))
-        };
-
-        (instructions, to_responses_input(&non_system))
-    }
-
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools_sse(
         &self,
@@ -660,10 +660,13 @@ impl OpenAiProvider {
                 body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
             }
 
+            self.apply_reasoning_effort_chat(&mut body);
+
             debug!(
                 model = %self.model,
                 messages_count = openai_messages.len(),
                 tools_count = tools.len(),
+                reasoning_effort = ?self.reasoning_effort,
                 "openai stream_with_tools request (sse)"
             );
             trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai stream request body (sse)");
@@ -835,7 +838,7 @@ impl OpenAiProvider {
                 }
             };
 
-            let (instructions, input) = Self::split_responses_instructions_and_input(messages);
+            let (instructions, input) = split_responses_instructions_and_input(messages);
             let mut response_payload = serde_json::json!({
                 "model": self.model,
                 "stream": true,
@@ -850,6 +853,8 @@ impl OpenAiProvider {
                 response_payload["tool_choice"] = serde_json::json!("auto");
             }
 
+            self.apply_reasoning_effort_responses(&mut response_payload);
+
             let create_event = serde_json::json!({
                 "type": "response.create",
                 "response": response_payload,
@@ -858,6 +863,7 @@ impl OpenAiProvider {
             debug!(
                 model = %self.model,
                 tools_count = tools.len(),
+                reasoning_effort = ?self.reasoning_effort,
                 "openai stream_with_tools request (websocket)"
             );
             trace!(event = %create_event, "openai websocket create event");
@@ -913,7 +919,7 @@ impl OpenAiProvider {
                         if evt["item"]["type"].as_str() == Some("function_call") {
                             let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
                             let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
-                            let index = ws_output_index(&evt, current_tool_index);
+                            let index = responses_output_index(&evt, current_tool_index);
                             current_tool_index = current_tool_index.max(index + 1);
                             tool_calls.insert(index, (id.clone(), name.clone()));
                             yield StreamEvent::ToolCallStart { id, name, index };
@@ -923,7 +929,7 @@ impl OpenAiProvider {
                         if let Some(delta) = evt["delta"].as_str()
                             && !delta.is_empty()
                         {
-                            let index = ws_output_index(&evt, current_tool_index.saturating_sub(1));
+                            let index = responses_output_index(&evt, current_tool_index.saturating_sub(1));
                             yield StreamEvent::ToolCallArgumentsDelta {
                                 index,
                                 delta: delta.to_string(),
@@ -931,7 +937,7 @@ impl OpenAiProvider {
                         }
                     }
                     "response.function_call_arguments.done" => {
-                        let index = ws_output_index(&evt, current_tool_index.saturating_sub(1));
+                        let index = responses_output_index(&evt, current_tool_index.saturating_sub(1));
                         if completed_tool_calls.insert(index) {
                             yield StreamEvent::ToolCallComplete { index };
                         }
@@ -996,6 +1002,27 @@ impl OpenAiProvider {
 impl LlmProvider for OpenAiProvider {
     fn name(&self) -> &str {
         &self.provider_name
+    }
+
+    fn reasoning_effort(&self) -> Option<moltis_agents::model::ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    fn with_reasoning_effort(
+        self: std::sync::Arc<Self>,
+        effort: moltis_agents::model::ReasoningEffort,
+    ) -> Option<std::sync::Arc<dyn LlmProvider>> {
+        Some(std::sync::Arc::new(Self {
+            api_key: self.api_key.clone(),
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            provider_name: self.provider_name.clone(),
+            client: self.client,
+            stream_transport: self.stream_transport,
+            metadata_cache: tokio::sync::OnceCell::new(),
+            tool_mode_override: self.tool_mode_override,
+            reasoning_effort: Some(effort),
+        }))
     }
 
     fn id(&self) -> &str {
@@ -1091,10 +1118,13 @@ impl LlmProvider for OpenAiProvider {
             body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
         }
 
+        self.apply_reasoning_effort_chat(&mut body);
+
         debug!(
             model = %self.model,
             messages_count = messages.len(),
             tools_count = tools.len(),
+            reasoning_effort = ?self.reasoning_effort,
             "openai complete request"
         );
         trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai request body");
@@ -1964,5 +1994,70 @@ mod tests {
             },
             other => panic!("expected stream error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn apply_reasoning_effort_chat_injects_top_level_field() {
+        let mut provider = OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        );
+        provider.reasoning_effort = Some(moltis_agents::model::ReasoningEffort::High);
+
+        let mut body = serde_json::json!({ "model": "o3", "messages": [] });
+        provider.apply_reasoning_effort_chat(&mut body);
+
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn apply_reasoning_effort_responses_injects_nested_field() {
+        let mut provider = OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        );
+        provider.reasoning_effort = Some(moltis_agents::model::ReasoningEffort::Medium);
+
+        let mut body = serde_json::json!({ "model": "o3", "input": [] });
+        provider.apply_reasoning_effort_responses(&mut body);
+
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn apply_reasoning_effort_skipped_when_none() {
+        let provider = OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        );
+        let mut body = serde_json::json!({ "model": "o3", "messages": [] });
+        provider.apply_reasoning_effort_chat(&mut body);
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn with_reasoning_effort_creates_new_provider() {
+        use moltis_agents::model::{LlmProvider, ReasoningEffort};
+        let provider = Arc::new(OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        ));
+        assert!(provider.reasoning_effort().is_none());
+
+        let with_effort = provider
+            .with_reasoning_effort(ReasoningEffort::Medium)
+            .expect("openai supports reasoning_effort");
+        assert_eq!(
+            with_effort.reasoning_effort(),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(with_effort.id(), "o3");
     }
 }

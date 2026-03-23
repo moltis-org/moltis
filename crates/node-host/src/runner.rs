@@ -148,7 +148,7 @@ impl NodeHost {
             client: ClientInfo {
                 id: self.config.node_id.clone(),
                 display_name: self.config.display_name.clone(),
-                version: env!("CARGO_PKG_VERSION").into(),
+                version: moltis_config::VERSION.into(),
                 platform: self.config.platform.clone(),
                 device_family: None,
                 model_identifier: None,

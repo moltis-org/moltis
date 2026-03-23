@@ -1379,8 +1379,8 @@ pub extern "C" fn moltis_version() -> *mut c_char {
     with_ffi_boundary(|| {
         emit_log("DEBUG", "bridge", "moltis_version called");
         let response = VersionResponse {
-            bridge_version: env!("CARGO_PKG_VERSION"),
-            moltis_version: env!("CARGO_PKG_VERSION"),
+            bridge_version: moltis_config::VERSION,
+            moltis_version: moltis_config::VERSION,
             config_dir: config_dir_string(),
         };
         emit_log(
@@ -2559,7 +2559,7 @@ pub extern "C" fn moltis_get_soul() -> *mut c_char {
 
     with_ffi_boundary(|| {
         emit_log("DEBUG", "bridge", "moltis_get_soul called");
-        let soul = moltis_config::load_soul();
+        let soul = moltis_config::load_soul_for_agent("main");
         encode_json(&GetSoulResponse { soul })
     })
 }
@@ -2577,7 +2577,7 @@ pub extern "C" fn moltis_save_soul(request_json: *const c_char) -> *mut c_char {
         };
 
         emit_log("INFO", "bridge.config", "Saving soul from settings");
-        match moltis_config::save_soul(request.soul.as_deref()) {
+        match moltis_config::save_soul_for_agent("main", request.soul.as_deref()) {
             Ok(path) => {
                 emit_log(
                     "INFO",
@@ -2614,7 +2614,7 @@ pub extern "C" fn moltis_save_identity(request_json: *const c_char) -> *mut c_ch
         };
 
         emit_log("INFO", "bridge.config", "Saving identity from settings");
-        match moltis_config::save_identity(&identity) {
+        match moltis_config::save_identity_for_agent("main", &identity) {
             Ok(path) => {
                 emit_log(
                     "INFO",
@@ -3736,7 +3736,7 @@ mod tests {
             .get("bridge_version")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(version, moltis_config::VERSION);
 
         let config_dir = payload
             .get("config_dir")

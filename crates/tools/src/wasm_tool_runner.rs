@@ -30,7 +30,7 @@ use crate::{
 #[cfg(feature = "wasm")]
 struct WasmStoreState {
     limiter: WasmResourceLimiter,
-    table: wasmtime::component::ResourceTable,
+    table: wasmtime_wasi::ResourceTable,
     wasi: wasmtime_wasi::WasiCtx,
     http_host: Option<HttpHostImpl>,
 }
@@ -40,7 +40,7 @@ impl WasmStoreState {
     fn new(memory_limit_bytes: usize, http_host: Option<HttpHostImpl>) -> Self {
         Self {
             limiter: WasmResourceLimiter::new(memory_limit_bytes),
-            table: wasmtime::component::ResourceTable::new(),
+            table: wasmtime_wasi::ResourceTable::new(),
             wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
             http_host,
         }
@@ -48,16 +48,12 @@ impl WasmStoreState {
 }
 
 #[cfg(feature = "wasm")]
-impl wasmtime_wasi::IoView for WasmStoreState {
-    fn table(&mut self) -> &mut wasmtime::component::ResourceTable {
-        &mut self.table
-    }
-}
-
-#[cfg(feature = "wasm")]
 impl wasmtime_wasi::WasiView for WasmStoreState {
-    fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
-        &mut self.wasi
+    fn ctx(&mut self) -> wasmtime_wasi::WasiCtxView<'_> {
+        wasmtime_wasi::WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -715,7 +711,7 @@ impl WasmToolInstance {
             Ok(Self::Http(tool))
         } else {
             let mut linker = wasmtime::component::Linker::new(engine.engine());
-            wasmtime_wasi::add_to_linker_sync(&mut linker)
+            wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
                 .context("failed to link wasi preview2")?;
             let tool = pure_tool::PureTool::instantiate(store, component, &linker)
                 .with_context(|| format!("failed to instantiate pure-tool component `{label}`"))?;

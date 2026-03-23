@@ -8,7 +8,6 @@
 const { test: base, expect } = require("@playwright/test");
 
 var test = base.extend({
-	// biome-ignore lint/correctness/noUnusedVariables: Playwright fixture signature requires destructured params even when unused
 	page: async ({ page, context }, use, testInfo) => {
 		await use(page);
 
@@ -34,7 +33,9 @@ var test = base.extend({
 				}
 			}
 
-			var md = ["## Error Context", "", `**Test**: ${testInfo.title}`, `**Status**: ${testInfo.status}`, ""].concat(parts).join("\n");
+			var md = ["## Error Context", "", `**Test**: ${testInfo.title}`, `**Status**: ${testInfo.status}`, ""]
+				.concat(parts)
+				.join("\n");
 
 			await testInfo.attach("error-context", {
 				body: Buffer.from(md, "utf-8"),

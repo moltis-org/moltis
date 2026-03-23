@@ -59,6 +59,17 @@ pub enum NodeAction {
         foreground: bool,
     },
 
+    /// Run the node agent using saved config from `node.json`.
+    ///
+    /// This is the command invoked by the OS service (launchd / systemd).
+    /// It reads connection parameters from `~/.moltis/node.json`, which
+    /// is written by `moltis node add`.
+    Run {
+        /// Override the maximum command timeout in seconds.
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+
     /// Disconnect this machine and remove the node service.
     Remove,
 
@@ -132,6 +143,41 @@ pub async fn handle_node(action: NodeAction) -> Result<()> {
                 );
                 Ok(())
             }
+        },
+
+        NodeAction::Run { timeout } => {
+            let data_dir = moltis_config::data_dir();
+            let config = moltis_node_host::ServiceConfig::load(&data_dir)
+                .map_err(|e| anyhow::anyhow!(
+                    "cannot load node config: {e}\nRun `moltis node add` first to register this machine."
+                ))?;
+
+            let exec_timeout = Duration::from_secs(timeout.unwrap_or(config.timeout));
+
+            let node_config = moltis_node_host::NodeConfig {
+                gateway_url: config.gateway_url,
+                device_token: config.device_token,
+                node_id: config
+                    .node_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                display_name: config.display_name,
+                platform: std::env::consts::OS.into(),
+                caps: vec![
+                    "system.run".into(),
+                    "system.which".into(),
+                    "system.providers".into(),
+                ],
+                commands: vec![
+                    "system.run".into(),
+                    "system.which".into(),
+                    "system.providers".into(),
+                ],
+                exec_timeout,
+                working_dir: config.working_dir,
+            };
+
+            let node = moltis_node_host::NodeHost::new(node_config);
+            node.run().await
         },
 
         NodeAction::Remove => {

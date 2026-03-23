@@ -7,6 +7,22 @@ use {
     serde::{Deserialize, Serialize},
 };
 
+// ── Reasoning effort ──────────────────────────────────────────────────────
+
+/// Reasoning/thinking effort level for models that support extended thinking.
+///
+/// Maps to provider-specific parameters:
+/// - **Anthropic**: `thinking.budget_tokens` (low=4096, medium=10240, high=32768)
+/// - **OpenAI**: `reasoning_effort` field on o-series models
+/// - **Other providers**: ignored if unsupported
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
+
 /// Agent identity (name, emoji, theme).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -338,6 +354,12 @@ pub struct AgentPreset {
     pub sessions: Option<SessionAccessPolicyConfig>,
     /// Persistent per-agent memory configuration.
     pub memory: Option<PresetMemoryConfig>,
+    /// Reasoning/thinking effort level for models that support extended thinking.
+    ///
+    /// Controls extended thinking for models that support it (e.g. Claude Opus,
+    /// OpenAI o-series). Higher values enable deeper reasoning but increase
+    /// latency and token usage.
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -1052,17 +1074,21 @@ pub struct MemoryEmbeddingConfig {
     /// Memory backend: "builtin" (default) or "qmd" for QMD sidecar.
     pub backend: Option<String>,
     /// Embedding provider: "local", "ollama", "openai", "custom", or None for auto-detect.
+    #[serde(alias = "embedding_provider")]
     pub provider: Option<String>,
     /// Disable RAG embeddings and force keyword-only memory search.
     #[serde(default)]
     pub disable_rag: bool,
     /// Base URL for the embedding API (e.g. "http://localhost:11434/v1" for Ollama).
+    #[serde(alias = "embedding_base_url")]
     pub base_url: Option<String>,
     /// Model name (e.g. "nomic-embed-text" for Ollama, "text-embedding-3-small" for OpenAI).
+    #[serde(alias = "embedding_model")]
     pub model: Option<String>,
     /// API key (optional for local endpoints like Ollama).
     #[serde(
         default,
+        alias = "embedding_api_key",
         serialize_with = "serialize_option_secret",
         skip_serializing_if = "Option::is_none"
     )]
@@ -1247,6 +1273,9 @@ pub struct McpServerEntry {
     /// URL for SSE transport. Required when `transport` is "sse".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Custom headers for remote HTTP/SSE transport.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
     /// Manual OAuth override for servers that don't support standard discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<McpOAuthOverrideEntry>,
@@ -1821,6 +1850,9 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Optional host-visible path for Moltis `data_dir()` when creating
+    /// sandbox containers from inside another container.
+    pub host_data_dir: Option<String>,
     /// Persistence strategy for `/home/sandbox`: off, session, or shared.
     pub home_persistence: HomePersistenceConfig,
     /// Optional host directory for shared `/home/sandbox` persistence.
@@ -2036,6 +2068,7 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            host_data_dir: None,
             home_persistence: HomePersistenceConfig::default(),
             shared_home_dir: None,
             image: None,
@@ -2297,6 +2330,8 @@ impl ProvidersConfig {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret;
+
     use super::*;
 
     #[test]
@@ -2564,6 +2599,7 @@ token = "xoxb-test"
         let sandbox = SandboxConfig::default();
         assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
         assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
+        assert!(sandbox.host_data_dir.is_none());
         assert!(sandbox.wasm_tool_limits.is_none());
     }
 
@@ -2582,6 +2618,7 @@ token = "xoxb-test"
 mode = "all"
 scope = "session"
 workspace_mount = "ro"
+host_data_dir = "/host/moltis-data"
 
 [wasm_tool_limits]
 default_memory = 2048
@@ -2594,6 +2631,7 @@ memory = 300
         )
         .unwrap();
 
+        assert_eq!(config.host_data_dir.as_deref(), Some("/host/moltis-data"));
         let limits = config.wasm_tool_limits.unwrap();
         assert_eq!(limits.default_memory, 2048);
         assert_eq!(limits.default_fuel, 5000);
@@ -2688,6 +2726,39 @@ url = "http://192.168.0.9:11434"
         .unwrap();
 
         assert_eq!(entry.base_url.as_deref(), Some("http://192.168.0.9:11434"));
+    }
+
+    #[test]
+    fn memory_embedding_legacy_aliases_map_to_current_fields() {
+        let config: MoltisConfig = toml::from_str(
+            r#"
+[memory]
+embedding_provider = "custom"
+embedding_base_url = "http://moltis-embeddings:7997/v1"
+embedding_model = "intfloat/multilingual-e5-small"
+embedding_api_key = "secret-key"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.memory.provider.as_deref(), Some("custom"));
+        assert_eq!(
+            config.memory.base_url.as_deref(),
+            Some("http://moltis-embeddings:7997/v1")
+        );
+        assert_eq!(
+            config.memory.model.as_deref(),
+            Some("intfloat/multilingual-e5-small")
+        );
+        assert_eq!(
+            config
+                .memory
+                .api_key
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("secret-key")
+        );
     }
 
     #[test]

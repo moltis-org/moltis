@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 use {
     tracing::{debug, info, warn},
@@ -15,9 +15,37 @@ use moltis_channels::{
 
 use crate::{
     access::{self, AccessDenied},
+    config::WhatsAppAccountConfig,
     otp::{OTP_CHALLENGE_MSG, OtpInitResult, OtpVerifyResult},
     state::{AccountState, AccountStateMap, has_bot_watermark},
 };
+
+fn mirror_connected(accounts: &AccountStateMap, account_id: &str, connected: bool) {
+    let map = accounts.read().unwrap_or_else(|e| e.into_inner());
+    if let Some(state) = map.get(account_id) {
+        state.connected.store(connected, Ordering::Relaxed);
+    }
+}
+
+fn mirror_latest_qr(accounts: &AccountStateMap, account_id: &str, qr: Option<String>) {
+    let mut map = accounts.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(state) = map.get_mut(account_id)
+        && let Ok(mut latest_qr) = state.latest_qr.write()
+    {
+        *latest_qr = qr;
+    }
+}
+
+fn current_config(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    fallback: &WhatsAppAccountConfig,
+) -> WhatsAppAccountConfig {
+    let map = accounts.read().unwrap_or_else(|e| e.into_inner());
+    map.get(account_id)
+        .map(|s| s.config.clone())
+        .unwrap_or_else(|| fallback.clone())
+}
 
 /// Process an incoming whatsapp-rust event for the given account.
 pub async fn handle_event(
@@ -34,6 +62,7 @@ pub async fn handle_event(
             if let Ok(mut qr) = state.latest_qr.write() {
                 *qr = Some(code.clone());
             }
+            mirror_latest_qr(&accounts, &state.account_id, Some(code.clone()));
 
             if let Some(ref sink) = state.event_sink {
                 sink.emit(ChannelEvent::PairingQrCode {
@@ -46,14 +75,14 @@ pub async fn handle_event(
         },
         Event::Connected(_) => {
             info!(account_id = %state.account_id, "WhatsApp connected");
-            state
-                .connected
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            state.connected.store(true, Ordering::Relaxed);
+            mirror_connected(&accounts, &state.account_id, true);
 
             // Clear QR data once connected.
             if let Ok(mut qr) = state.latest_qr.write() {
                 *qr = None;
             }
+            mirror_latest_qr(&accounts, &state.account_id, None);
 
             let display_name = state.client.get_push_name().await;
             let display = if display_name.is_empty() {
@@ -84,15 +113,13 @@ pub async fn handle_event(
         },
         Event::Disconnected(_) => {
             info!(account_id = %state.account_id, "WhatsApp disconnected");
-            state
-                .connected
-                .store(false, std::sync::atomic::Ordering::Relaxed);
+            state.connected.store(false, Ordering::Relaxed);
+            mirror_connected(&accounts, &state.account_id, false);
         },
         Event::LoggedOut(_) => {
             warn!(account_id = %state.account_id, "WhatsApp logged out");
-            state
-                .connected
-                .store(false, std::sync::atomic::Ordering::Relaxed);
+            state.connected.store(false, Ordering::Relaxed);
+            mirror_connected(&accounts, &state.account_id, false);
             if let Some(ref sink) = state.event_sink {
                 sink.emit(ChannelEvent::AccountDisabled {
                     channel_type: ChannelType::Whatsapp,
@@ -195,6 +222,7 @@ async fn handle_message(
         .unwrap_or("");
 
     let message_kind = classify_message(&msg, text);
+    let effective_config = current_config(accounts, &state.account_id, &state.config);
 
     // Access control. Self-chat messages from the account owner always bypass
     // access control — the owner is inherently authorized.
@@ -207,7 +235,13 @@ async fn handle_message(
     let access_result = if is_owner_self_chat {
         Ok(())
     } else {
-        access::check_access(&state.config, is_group, &peer_id, Some(&username), group_id)
+        access::check_access(
+            &effective_config,
+            is_group,
+            &peer_id,
+            Some(&username),
+            group_id,
+        )
     };
     let access_granted = access_result.is_ok();
 
@@ -265,7 +299,8 @@ async fn handle_message(
         );
 
         // OTP self-approval for non-allowlisted DM users.
-        if reason == AccessDenied::NotOnAllowlist && !is_group && state.config.otp_self_approval {
+        if reason == AccessDenied::NotOnAllowlist && !is_group && effective_config.otp_self_approval
+        {
             handle_otp_flow(
                 accounts,
                 &state.account_id,
@@ -324,7 +359,7 @@ async fn handle_message(
         sender_name,
         username: Some(username),
         message_kind: Some(message_kind),
-        model: state.config.model.clone(),
+        model: effective_config.model.clone(),
         audio_filename: None,
     };
 

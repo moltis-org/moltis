@@ -19,7 +19,7 @@ pub async fn run_onboarding() -> Result<()> {
         identity_name = cfg.identity.name;
         user_name = cfg.user.name;
     }
-    if let Some(id) = moltis_config::load_identity()
+    if let Some(id) = moltis_config::load_identity_for_agent("main")
         && id.name.is_some()
     {
         identity_name = id.name;
@@ -62,7 +62,8 @@ pub async fn run_onboarding() -> Result<()> {
     config.user = state.user;
 
     let path = save_config(&config).context("failed to save onboarding config")?;
-    moltis_config::save_identity(&config.identity).context("failed to save identity")?;
+    moltis_config::save_identity_for_agent("main", &config.identity)
+        .context("failed to save identity")?;
     moltis_config::save_user(&config.user).context("failed to save user")?;
     println!("Config saved to {}", path.display());
     println!("Onboarding complete!");

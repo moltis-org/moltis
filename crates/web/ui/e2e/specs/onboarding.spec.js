@@ -22,6 +22,9 @@ async function clickFirstVisibleButton(page, roleQuery) {
 async function waitForOnboardingStepLoaded(page) {
 	await expect(page.locator(".onboarding-card")).toBeVisible();
 	await expect(page.getByText("Loading…")).toHaveCount(0, { timeout: 10_000 });
+	await expect(page.getByText("Scanning OpenClaw installation…", { exact: true })).not.toBeVisible({
+		timeout: 10_000,
+	});
 }
 
 async function visibleOnboardingHeadingText(page) {
@@ -39,30 +42,41 @@ async function visibleOnboardingHeadingText(page) {
 async function waitForOnboardingHeadingAdvance(page, previousHeading) {
 	if (!previousHeading) return true;
 	try {
-		await expect
-			.poll(() => visibleOnboardingHeadingText(page), { timeout: 10_000 })
-			.not.toBe(previousHeading);
+		await expect.poll(() => visibleOnboardingHeadingText(page), { timeout: 10_000 }).not.toBe(previousHeading);
 		return true;
 	} catch {
 		return false;
 	}
 }
 
+async function waitForLlmStepReady(page) {
+	const llmLoading = page.getByText("Loading LLMs…", { exact: true });
+	if (await isVisible(llmLoading)) {
+		await expect(llmLoading).not.toBeVisible({ timeout: 10_000 });
+	}
+
+	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
+	await expect(llmHeading).toBeVisible({ timeout: 10_000 });
+}
+
+async function waitForStepToDisappear(locator) {
+	await expect.poll(() => isVisible(locator), { timeout: 10_000 }).toBeFalsy();
+}
+
 async function maybeSkipAuth(page) {
 	const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
 	if (!(await isVisible(authHeading))) return false;
-	const headingBefore = await visibleOnboardingHeadingText(page);
 
 	const clicked = await clickFirstVisibleButton(page, { name: /skip/i });
 	expect(clicked).toBeTruthy();
 	await waitForOnboardingStepLoaded(page);
-	return waitForOnboardingHeadingAdvance(page, headingBefore);
+	await waitForStepToDisappear(authHeading);
+	return true;
 }
 
 async function maybeCompleteIdentity(page) {
 	const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
 	if (!(await isVisible(identityHeading))) return false;
-	const headingBefore = await visibleOnboardingHeadingText(page);
 
 	const userNameInput = page.getByPlaceholder("e.g. Alice");
 	if (!(await isVisible(userNameInput))) return false;
@@ -81,7 +95,8 @@ async function maybeCompleteIdentity(page) {
 
 	await page.getByRole("button", { name: "Continue", exact: true }).click();
 	await waitForOnboardingStepLoaded(page);
-	return waitForOnboardingHeadingAdvance(page, headingBefore);
+	await waitForStepToDisappear(identityHeading);
+	return true;
 }
 
 async function maybeSkipOpenClawImport(page) {
@@ -89,39 +104,85 @@ async function maybeSkipOpenClawImport(page) {
 	if (!(await isVisible(importHeading))) return false;
 	const headingBefore = await visibleOnboardingHeadingText(page);
 
-	// The import step has "Skip for now" (when detected) or "Skip" (when not detected).
-	const skipped = await clickFirstVisibleButton(page, { name: /^Skip( for now)?$/i });
-	if (!skipped) {
-		const continued = await clickFirstVisibleButton(page, { name: "Continue", exact: true });
-		if (!continued) return false;
+	const card = page.locator(".onboarding-card");
+	const skipForNow = card.getByText("Skip for now", { exact: true });
+	const skipButton = card.getByRole("button", { name: "Skip", exact: true });
+	const continueButton = card.getByRole("button", { name: "Continue", exact: true });
+
+	await expect
+		.poll(
+			async () => {
+				return (await isVisible(skipForNow)) || (await isVisible(skipButton)) || (await isVisible(continueButton));
+			},
+			{ timeout: 10_000 },
+		)
+		.toBeTruthy();
+
+	if (await isVisible(skipForNow)) {
+		await skipForNow.click();
+	} else if (await isVisible(skipButton)) {
+		await skipButton.click();
+	} else if (await isVisible(continueButton)) {
+		await continueButton.click();
+	} else {
+		return false;
 	}
 	await waitForOnboardingStepLoaded(page);
-	return waitForOnboardingHeadingAdvance(page, headingBefore);
+	if (await waitForOnboardingHeadingAdvance(page, headingBefore)) return true;
+
+	await expect
+		.poll(
+			async () => {
+				if (await isVisible(importHeading)) return "import";
+				const heading = await visibleOnboardingHeadingText(page);
+				if (heading) return heading;
+				const loadingLlms = page.getByText("Loading LLMs…", { exact: true });
+				if (await isVisible(loadingLlms)) return "loading-llm";
+				return "transitioning";
+			},
+			{ timeout: 10_000 },
+		)
+		.not.toBe("import");
+	return true;
+}
+
+async function maybeWaitForLlmLoading(page) {
+	const loadingLlms = page.getByText("Loading LLMs…", { exact: true });
+	if (!(await isVisible(loadingLlms))) return false;
+	await expect(loadingLlms).toHaveCount(0, { timeout: 10_000 });
+	return true;
 }
 
 async function moveToLlmStep(page) {
-	await waitForOnboardingStepLoaded(page);
-
 	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
-	if (await isVisible(llmHeading)) return true;
-
-	// Onboarding step order can vary by environment (auth/import/identity may appear
-	// before LLM). Try each known pre-LLM step until one advances the wizard.
-	for (let i = 0; i < 4; i++) {
-		if (await isVisible(llmHeading)) return true;
+	// Onboarding step order can vary by environment, and the OpenClaw import step
+	// is populated asynchronously after the card first appears. Keep polling until
+	// a real pre-LLM step is visible and can advance.
+	for (let i = 0; i < 40; i++) {
+		await waitForOnboardingStepLoaded(page);
+		if (await isVisible(llmHeading)) {
+			await waitForLlmStepReady(page);
+			return true;
+		}
+		if (await maybeWaitForLlmLoading(page)) {
+			await waitForLlmStepReady(page);
+			return true;
+		}
 
 		if (await maybeSkipOpenClawImport(page)) continue;
 		if (await maybeSkipAuth(page)) continue;
 		if (await maybeCompleteIdentity(page)) continue;
-		break;
-	}
 
-	const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
-	if (await isVisible(backBtn)) {
-		await backBtn.click();
-	}
+		const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
+		if (await isVisible(backBtn)) {
+			await backBtn.click();
+			continue;
+		}
 
-	await expect(llmHeading).toBeVisible({ timeout: 10_000 });
+		// Wait for a step transition instead of a fixed delay
+		await waitForOnboardingStepLoaded(page);
+	}
+	await waitForLlmStepReady(page);
 	return true;
 }
 
@@ -305,6 +366,12 @@ test.describe("Onboarding wizard", () => {
 		await expect(passwordCard).toBeVisible();
 
 		await passwordCard.click();
+		const passwordInput = page.getByLabel(/^Password(?: \*)?$/);
+		const confirmPasswordInput = page.getByLabel("Confirm password", { exact: true });
+		await expect(passwordInput).toHaveAttribute("type", "password");
+		await expect(passwordInput).toHaveAttribute("autocomplete", "new-password");
+		await expect(confirmPasswordInput).toHaveAttribute("type", "password");
+		await expect(confirmPasswordInput).toHaveAttribute("autocomplete", "new-password");
 		await expect(page.getByRole("button", { name: /Set password|Skip/i }).first()).toBeVisible();
 	});
 

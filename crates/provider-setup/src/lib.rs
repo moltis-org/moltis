@@ -22,6 +22,7 @@ use {
     moltis_config::schema::ProvidersConfig,
     moltis_oauth::{
         CallbackServer, OAuthFlow, TokenStore, callback_port, device_flow, load_oauth_config,
+        parse_callback_input,
     },
     moltis_providers::{ProviderRegistry, raw_model_id},
 };
@@ -1035,19 +1036,11 @@ fn set_provider_enabled_in_config(provider: &str, enabled: bool) -> ServiceResul
 }
 
 fn normalize_provider_name(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    moltis_config::normalize_provider_name(value).unwrap_or_default()
 }
 
 fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            env_overrides
-                .get(key)
-                .cloned()
-                .filter(|value| !value.trim().is_empty())
-        })
+    moltis_config::env_value_with_overrides(env_overrides, key)
 }
 
 fn ui_offered_provider_order(config: &ProvidersConfig) -> Vec<String> {
@@ -1114,6 +1107,14 @@ pub fn detect_auto_provider_sources_with_overrides(
             && env_value_with_overrides(env_overrides, env_key).is_some()
         {
             sources.push(format!("env:{env_key}"));
+        }
+        if provider.auth_type == AuthType::ApiKey
+            && let Some(source) = moltis_config::generic_provider_env_source_for_provider(
+                provider.name,
+                env_overrides,
+            )
+        {
+            sources.push(source);
         }
 
         if config
@@ -1418,6 +1419,12 @@ impl LiveProviderSetupService {
         // Check if the provider has an API key set via env
         if let Some(env_key) = provider.env_key
             && env_value_with_overrides(&self.env_overrides, env_key).is_some()
+        {
+            return true;
+        }
+        if provider.auth_type == AuthType::ApiKey
+            && moltis_config::generic_provider_api_key_from_env(provider.name, &self.env_overrides)
+                .is_some()
         {
             return true;
         }
@@ -1934,18 +1941,19 @@ impl ProviderSetupService for LiveProviderSetupService {
         let verifier = auth_req.pkce.verifier.clone();
         let expected_state = auth_req.state.clone();
 
+        let pending = PendingOAuthFlow {
+            provider_name: provider_name.clone(),
+            oauth_config: oauth_config_for_pending,
+            verifier: verifier.clone(),
+        };
+        self.pending_oauth
+            .write()
+            .await
+            .insert(expected_state.clone(), pending);
+
         // Browser/server callback mode: callback lands on this gateway instance,
         // then `/auth/callback` completes the exchange with `oauth_complete`.
         if use_server_callback {
-            let pending = PendingOAuthFlow {
-                provider_name,
-                oauth_config: oauth_config_for_pending,
-                verifier,
-            };
-            self.pending_oauth
-                .write()
-                .await
-                .insert(expected_state, pending);
             return Ok(serde_json::json!({
                 "authUrl": auth_url,
             }));
@@ -1957,9 +1965,26 @@ impl ProviderSetupService for LiveProviderSetupService {
         let config = self.effective_config();
         let env_overrides = self.env_overrides.clone();
         let bind_addr = self.callback_bind_addr.clone();
+        let pending_oauth = Arc::clone(&self.pending_oauth);
+        let callback_state = expected_state.clone();
         tokio::spawn(async move {
-            match CallbackServer::wait_for_code(port, expected_state, &bind_addr).await {
+            match CallbackServer::wait_for_code(port, callback_state, &bind_addr).await {
                 Ok(code) => {
+                    // If a manual pasted callback already completed this flow,
+                    // skip duplicate exchange.
+                    let state_is_pending = pending_oauth
+                        .write()
+                        .await
+                        .remove(&expected_state)
+                        .is_some();
+                    if !state_is_pending {
+                        tracing::debug!(
+                            provider = %provider_name,
+                            "OAuth callback received after flow was already completed manually"
+                        );
+                        return;
+                    }
+
                     match flow.exchange(&code, &verifier).await {
                         Ok(tokens) => {
                             if let Err(e) = token_store.save(&provider_name, &tokens) {
@@ -1996,6 +2021,15 @@ impl ProviderSetupService for LiveProviderSetupService {
                     }
                 },
                 Err(e) => {
+                    // Ignore callback timeout/noise after successful manual completion.
+                    if pending_oauth.read().await.get(&expected_state).is_none() {
+                        tracing::debug!(
+                            provider = %provider_name,
+                            error = %e,
+                            "OAuth callback wait ended after flow was completed elsewhere"
+                        );
+                        return;
+                    }
                     tracing::error!(
                         provider = %provider_name,
                         error = %e,
@@ -2011,23 +2045,58 @@ impl ProviderSetupService for LiveProviderSetupService {
     }
 
     async fn oauth_complete(&self, params: Value) -> ServiceResult {
+        let parsed_callback = params
+            .get("callback")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(parse_callback_input)
+            .transpose()
+            .map_err(ServiceError::message)?;
+
         let code = params
             .get("code")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'code' parameter".to_string())?
-            .to_string();
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| parsed_callback.as_ref().map(|parsed| parsed.code.clone()))
+            .ok_or_else(|| "missing 'code' parameter".to_string())?;
         let state = params
             .get("state")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'state' parameter".to_string())?
-            .to_string();
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| parsed_callback.as_ref().map(|parsed| parsed.state.clone()))
+            .ok_or_else(|| "missing 'state' parameter".to_string())?;
+        let requested_provider = params
+            .get("provider")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
 
-        let pending = self
-            .pending_oauth
-            .write()
-            .await
-            .remove(&state)
-            .ok_or_else(|| "unknown or expired OAuth state".to_string())?;
+        let pending = {
+            let mut pending_oauth = self.pending_oauth.write().await;
+            let pending = pending_oauth
+                .get(&state)
+                .cloned()
+                .ok_or_else(|| "unknown or expired OAuth state".to_string())?;
+
+            if let Some(provider) = requested_provider.as_deref()
+                && provider != pending.provider_name
+            {
+                return Err(ServiceError::message(format!(
+                    "provider mismatch for OAuth state: expected '{}', got '{}'",
+                    pending.provider_name, provider
+                )));
+            }
+
+            pending_oauth
+                .remove(&state)
+                .ok_or_else(|| "unknown or expired OAuth state".to_string())?
+        };
 
         let flow = OAuthFlow::new(pending.oauth_config);
         let tokens = flow
@@ -3329,6 +3398,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn available_marks_provider_configured_from_generic_provider_env() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None)
+            .with_env_overrides(HashMap::from([
+                ("MOLTIS_PROVIDER".to_string(), "openai".to_string()),
+                (
+                    "MOLTIS_API_KEY".to_string(),
+                    "sk-test-openai-generic".to_string(),
+                ),
+            ]));
+
+        let result = svc.available().await.unwrap();
+        let arr = result
+            .as_array()
+            .expect("providers.available should return array");
+        let openai = arr
+            .iter()
+            .find(|provider| provider.get("name").and_then(|v| v.as_str()) == Some("openai"))
+            .expect("openai should be present");
+
+        assert_eq!(
+            openai.get("configured").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
     async fn available_hides_unconfigured_providers_not_in_offered_list() {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
@@ -3391,6 +3489,31 @@ mod tests {
         assert!(
             github_copilot_idx < openai_idx && openai_idx < anthropic_idx,
             "offered provider order should be preserved, got: {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn available_accepts_offered_provider_aliases() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let config = ProvidersConfig {
+            offered: vec!["claude".into()],
+            ..ProvidersConfig::default()
+        };
+        let svc = LiveProviderSetupService::new(registry, config, None);
+        let result = svc.available().await.unwrap();
+        let arr = result
+            .as_array()
+            .expect("providers.available should return array");
+        let names: Vec<&str> = arr
+            .iter()
+            .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
+            .collect();
+
+        assert!(
+            names.contains(&"anthropic"),
+            "anthropic should be visible when offered contains alias 'claude', got: {names:?}"
         );
     }
 
@@ -3664,6 +3787,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth_start_stores_pending_state_for_registered_redirect_provider() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+
+        let result = svc
+            .oauth_start(serde_json::json!({
+                "provider": "openai-codex",
+            }))
+            .await
+            .expect("oauth start should succeed");
+
+        if result
+            .get("alreadyAuthenticated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        let auth_url = result
+            .get("authUrl")
+            .and_then(|v| v.as_str())
+            .expect("missing authUrl");
+        let parsed = reqwest::Url::parse(auth_url).expect("authUrl should be a valid URL");
+        let state = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned())
+            .expect("oauth authUrl should include state");
+
+        assert!(
+            svc.pending_oauth.read().await.contains_key(&state),
+            "pending oauth map should track non-device flow state for manual completion"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_complete_accepts_callback_input_parameter() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+
+        let result = svc
+            .oauth_complete(serde_json::json!({
+                "callback": "http://localhost:1455/auth/callback?code=fake&state=missing",
+            }))
+            .await;
+
+        let err = result.expect_err("missing state should fail");
+        assert!(
+            err.to_string().contains("unknown or expired OAuth state"),
+            "expected parsed callback to reach pending-state validation, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_complete_rejects_provider_mismatch_without_consuming_state() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+
+        let start_result = match svc
+            .oauth_start(serde_json::json!({
+                "provider": "openai-codex",
+            }))
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => panic!("oauth start should succeed: {error}"),
+        };
+
+        if start_result
+            .get("alreadyAuthenticated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        let auth_url = match start_result.get("authUrl").and_then(|v| v.as_str()) {
+            Some(value) => value,
+            None => panic!("missing authUrl"),
+        };
+        let parsed = match reqwest::Url::parse(auth_url) {
+            Ok(value) => value,
+            Err(error) => panic!("authUrl should be valid: {error}"),
+        };
+        let state = match parsed
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned())
+        {
+            Some(value) => value,
+            None => panic!("oauth authUrl should include state"),
+        };
+
+        let mismatch_result = svc
+            .oauth_complete(serde_json::json!({
+                "provider": "github-copilot",
+                "callback": format!("http://localhost:1455/auth/callback?code=fake&state={state}"),
+            }))
+            .await;
+        let mismatch_error = match mismatch_result {
+            Ok(_) => panic!("provider mismatch should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            mismatch_error
+                .to_string()
+                .contains("provider mismatch for OAuth state"),
+            "unexpected mismatch error: {mismatch_error}"
+        );
+        assert!(
+            svc.pending_oauth.read().await.contains_key(&state),
+            "provider mismatch should not consume pending OAuth state"
+        );
+    }
+
+    #[tokio::test]
     async fn oauth_status_returns_not_authenticated() {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
@@ -3904,6 +4151,22 @@ mod tests {
             ..Default::default()
         });
         assert!(has_explicit_provider_settings(&model_only));
+    }
+
+    #[test]
+    fn detect_auto_provider_sources_includes_generic_provider_env() {
+        let detected = detect_auto_provider_sources_with_overrides(
+            &ProvidersConfig::default(),
+            None,
+            &HashMap::from([
+                ("PROVIDER".to_string(), "openai".to_string()),
+                ("API_KEY".to_string(), "sk-test-openai-generic".to_string()),
+            ]),
+        );
+
+        assert!(detected.iter().any(|source| {
+            source.provider == "openai" && source.source == "env:PROVIDER+API_KEY"
+        }));
     }
 
     #[tokio::test]

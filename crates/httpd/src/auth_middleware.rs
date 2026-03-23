@@ -12,7 +12,7 @@ use axum::{
     response::{IntoResponse, Json, Redirect},
 };
 #[cfg(feature = "web-ui")]
-use tracing::warn;
+use tracing::{debug, warn};
 
 use moltis_gateway::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
@@ -139,20 +139,47 @@ pub async fn auth_gate(
                     })),
                 )
                     .into_response()
-            } else {
-                // Allow all page paths through during setup — the SPA
-                // handles onboarding redirects itself (spa_fallback
-                // redirects to /onboarding when not yet onboarded).
-                // This prevents a redirect loop when the instance is
-                // already onboarded but auth credentials haven't been
-                // configured yet (#310).
+            } else if is_local || path == "/onboarding" || path == "/onboarding/" {
+                // Local connections and /onboarding pass through during
+                // setup.  Local: the SPA handles onboarding redirects
+                // itself.  Remote /onboarding: the page's own auth step
+                // (step 0) requires a setup code, so it is safe to
+                // render without full auth (#310, #350).
                 request.extensions_mut().insert(AuthIdentity {
                     method: AuthMethod::Loopback,
                 });
                 next.run(request).await
+            } else {
+                // Remote connections to other pages when auth is not
+                // configured yet: redirect to a static "setup required"
+                // page instead of passing through, which would cause a
+                // redirect loop between `/` and `/onboarding` (#350).
+                Redirect::to("/setup-required").into_response()
             }
         },
         AuthResult::Unauthorized => {
+            // During onboarding, local requests may lack a valid session
+            // cookie (e.g. STT test button uses HTTP fetch, not WS).
+            // Allow only the paths the wizard needs — not all of /api/*.
+            if is_local && is_onboarding_bypass_path(path) {
+                let onboarded = state
+                    .gateway
+                    .services
+                    .onboarding
+                    .wizard_status()
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
+                    .unwrap_or(true);
+                if !onboarded {
+                    debug!(path, remote = %addr, "auth bypass: local request during onboarding");
+                    request.extensions_mut().insert(AuthIdentity {
+                        method: AuthMethod::Loopback,
+                    });
+                    return next.run(request).await;
+                }
+            }
+
             if path.starts_with("/api/") || path.starts_with("/ws/") {
                 if path.starts_with("/ws/") {
                     let has_bearer = bearer_token(request.headers()).is_some();
@@ -187,12 +214,31 @@ pub async fn auth_gate(
 fn is_public_path(path: &str) -> bool {
     matches!(
         path,
-        "/health" | "/auth/callback" | "/manifest.json" | "/sw.js" | "/login"
+        "/health"
+            | "/auth/callback"
+            | "/manifest.json"
+            | "/sw.js"
+            | "/login"
+            | "/setup-required"
+            | "/ws"
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/api/public/")
         || path.starts_with("/api/channels/msteams/")
         || path.starts_with("/assets/")
         || path.starts_with("/share/")
+}
+
+/// Paths eligible for the onboarding auth bypass (local + not-yet-onboarded).
+///
+/// Kept narrow so that privileged endpoints like `/api/config` or
+/// `/api/restart` are never reachable without credentials.
+#[cfg(feature = "web-ui")]
+fn is_onboarding_bypass_path(path: &str) -> bool {
+    path.starts_with("/api/sessions/")  // STT upload / media
+        || path.starts_with("/api/bootstrap")
+        || path == "/api/gon"
+        || path.starts_with("/api/tailscale/")
+        || path.starts_with("/ws/") // WS RPCs (voice, provider config)
 }
 
 // ── Vault guard ─────────────────────────────────────────────────────────────

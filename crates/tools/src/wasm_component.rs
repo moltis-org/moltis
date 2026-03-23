@@ -261,13 +261,16 @@ impl http_tool::moltis::tool::outgoing_handler::Host for HttpHostImpl {
 #[cfg(feature = "wasm")]
 pub fn add_http_outgoing_handler_to_linker<T>(
     linker: &mut wasmtime::component::Linker<T>,
-    host_getter: impl Fn(&mut T) -> &mut HttpHostImpl + Copy + Send + Sync + 'static,
+    host_getter: fn(&mut T) -> &mut HttpHostImpl,
 ) -> anyhow::Result<()>
 where
     T: 'static,
 {
-    http_tool::moltis::tool::outgoing_handler::add_to_linker_get_host(linker, host_getter)
-        .context("failed to add outgoing-handler to linker")?;
+    http_tool::moltis::tool::outgoing_handler::add_to_linker::<
+        T,
+        wasmtime::component::HasSelf<HttpHostImpl>,
+    >(linker, host_getter)
+    .context("failed to add outgoing-handler to linker")?;
     Ok(())
 }
 

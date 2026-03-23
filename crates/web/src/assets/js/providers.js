@@ -5,7 +5,7 @@ import { sendRpc } from "./helpers.js";
 import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
-import { startProviderOAuth } from "./provider-oauth.js";
+import { completeProviderOAuth, startProviderOAuth } from "./provider-oauth.js";
 import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
@@ -55,6 +55,13 @@ var BYOM_PROVIDERS = ["venice"];
 var VALIDATION_HINT_TEXT = "Validation can take up to 20 seconds for some providers.";
 var VALIDATION_HINT_RUNNING_TEXT = "Validating models... this can take up to 20 seconds.";
 var VALIDATION_PROGRESS_EVENT = "providers.validate.progress";
+var oauthStatusTimer = null;
+
+function clearOAuthStatusTimer() {
+	if (!oauthStatusTimer) return;
+	clearInterval(oauthStatusTimer);
+	oauthStatusTimer = null;
+}
 
 function normalizeEndpointForCompare(rawUrl) {
 	if (!rawUrl) return null;
@@ -176,6 +183,7 @@ export function openProviderModal() {
 }
 
 export function closeProviderModal() {
+	clearOAuthStatusTimer();
 	els().modal.classList.add("hidden");
 }
 
@@ -854,18 +862,88 @@ export function showOAuthFlow(provider) {
 	desc.textContent = `Click below to authenticate with ${provider.displayName} via OAuth.`;
 	wrapper.appendChild(desc);
 
+	var manualWrap = document.createElement("div");
+	manualWrap.className = "flex flex-col gap-2 mt-2 hidden";
+
+	var manualHint = document.createElement("div");
+	manualHint.className = "text-xs text-[var(--muted)]";
+	manualHint.textContent = "If localhost callback fails, paste the redirect URL (or code#state) below.";
+	manualWrap.appendChild(manualHint);
+
+	var manualInput = document.createElement("input");
+	manualInput.type = "text";
+	manualInput.className = "provider-key-input w-full";
+	manualInput.placeholder = "http://localhost:1455/auth/callback?code=...&state=...";
+	manualWrap.appendChild(manualInput);
+
+	var manualBtns = document.createElement("div");
+	manualBtns.className = "btn-row";
+	var manualSubmitBtn = document.createElement("button");
+	manualSubmitBtn.className = "provider-btn provider-btn-secondary";
+	manualSubmitBtn.textContent = "Submit Callback";
+	manualBtns.appendChild(manualSubmitBtn);
+	manualWrap.appendChild(manualBtns);
+	wrapper.appendChild(manualWrap);
+
 	var btns = document.createElement("div");
 	btns.className = "btn-row";
 
 	var backBtn = document.createElement("button");
 	backBtn.className = "provider-btn provider-btn-secondary";
 	backBtn.textContent = "Back";
-	backBtn.addEventListener("click", openProviderModal);
+	backBtn.addEventListener("click", () => {
+		clearOAuthStatusTimer();
+		openProviderModal();
+	});
 	btns.appendChild(backBtn);
 
 	var connectBtn = document.createElement("button");
 	connectBtn.className = "provider-btn";
 	connectBtn.textContent = "Connect";
+	var oauthCompleted = false;
+
+	function finishOAuthOnce() {
+		if (oauthCompleted) return;
+		oauthCompleted = true;
+		clearOAuthStatusTimer();
+		showOAuthModelSelector(provider);
+	}
+
+	function setManualSubmitting(submitting) {
+		manualSubmitBtn.disabled = submitting;
+		manualInput.disabled = submitting;
+		manualSubmitBtn.textContent = submitting ? "Submitting..." : "Submit Callback";
+	}
+
+	manualSubmitBtn.addEventListener("click", () => {
+		var callback = manualInput.value.trim();
+		if (!callback) {
+			desc.classList.add("text-error");
+			desc.textContent = "Paste the callback URL (or code#state) to continue.";
+			return;
+		}
+		setManualSubmitting(true);
+		completeProviderOAuth(provider.name, callback)
+			.then((res) => {
+				if (res?.ok) {
+					connectBtn.textContent = "Connected";
+					desc.classList.remove("text-error");
+					desc.textContent = `${provider.displayName} connected successfully!`;
+					finishOAuthOnce();
+					return;
+				}
+				desc.classList.add("text-error");
+				desc.textContent = res?.error?.message || "Failed to complete OAuth callback.";
+			})
+			.catch((error) => {
+				desc.classList.add("text-error");
+				desc.textContent = error?.message || "Failed to complete OAuth callback.";
+			})
+			.finally(() => {
+				setManualSubmitting(false);
+			});
+	});
+
 	connectBtn.addEventListener("click", () => {
 		connectBtn.disabled = true;
 		connectBtn.textContent = "Starting...";
@@ -874,15 +952,17 @@ export function showOAuthFlow(provider) {
 				connectBtn.textContent = "Connected";
 				desc.classList.remove("text-error");
 				desc.textContent = `${provider.displayName} is already connected (imported credentials found).`;
-				showOAuthModelSelector(provider);
+				finishOAuthOnce();
 			} else if (result.status === "browser") {
 				window.open(result.authUrl, "_blank");
 				connectBtn.textContent = "Waiting for auth...";
-				pollOAuthStatus(provider);
+				manualWrap.classList.remove("hidden");
+				pollOAuthStatus(provider, finishOAuthOnce);
 			} else if (result.status === "device") {
 				connectBtn.textContent = "Waiting for auth...";
 				desc.classList.remove("text-error");
 				desc.textContent = "";
+				manualWrap.classList.add("hidden");
 				var linkEl = document.createElement("a");
 				linkEl.href = result.verificationUrl;
 				linkEl.target = "_blank";
@@ -894,10 +974,12 @@ export function showOAuthFlow(provider) {
 				desc.appendChild(linkEl);
 				desc.appendChild(document.createTextNode(" and enter code: "));
 				desc.appendChild(codeEl);
-				pollOAuthStatus(provider);
+				pollOAuthStatus(provider, finishOAuthOnce);
 			} else {
+				clearOAuthStatusTimer();
 				connectBtn.disabled = false;
 				connectBtn.textContent = "Connect";
+				manualWrap.classList.add("hidden");
 				desc.textContent = result.error || "Failed to start OAuth";
 				desc.classList.add("text-error");
 			}
@@ -908,14 +990,15 @@ export function showOAuthFlow(provider) {
 	m.body.appendChild(wrapper);
 }
 
-function pollOAuthStatus(provider) {
+function pollOAuthStatus(provider, onAuthenticated) {
 	var m = els();
 	var attempts = 0;
 	var maxAttempts = 60;
-	var timer = setInterval(() => {
+	clearOAuthStatusTimer();
+	oauthStatusTimer = setInterval(() => {
 		attempts++;
 		if (attempts > maxAttempts) {
-			clearInterval(timer);
+			clearOAuthStatusTimer();
 			m.body.textContent = "";
 			var timeout = document.createElement("div");
 			timeout.className = "text-xs text-[var(--error)]";
@@ -925,7 +1008,11 @@ function pollOAuthStatus(provider) {
 		}
 		sendRpc("providers.oauth.status", { provider: provider.name }).then((res) => {
 			if (res?.ok && res.payload && res.payload.authenticated) {
-				clearInterval(timer);
+				clearOAuthStatusTimer();
+				if (typeof onAuthenticated === "function") {
+					onAuthenticated();
+					return;
+				}
 				showOAuthModelSelector(provider);
 			}
 		});
@@ -1505,7 +1592,7 @@ function renderLocalModelSelection(provider, sysInfo, modelsData) {
 
 	searchBtn.addEventListener("click", doSearch);
 	searchInput.addEventListener("keydown", (e) => {
-		if (e.key === "Enter") doSearch();
+		if (e.key === "Enter" && !e.isComposing) doSearch();
 	});
 
 	// Auto-search with debounce when user stops typing
@@ -1615,7 +1702,7 @@ function renderLocalModelSelection(provider, sysInfo, modelsData) {
 }
 
 // Create a card for HuggingFace search result
-function createHfSearchResultCard(model, _provider) {
+function createHfSearchResultCard(model, provider) {
 	var card = document.createElement("div");
 	card.className = "model-card";
 
@@ -1681,8 +1768,7 @@ function createHfSearchResultCard(model, _provider) {
 		if (res?.ok) {
 			fetchModels();
 			if (S.refreshProvidersPage) S.refreshProvidersPage();
-			status.innerHTML = `<div class="provider-status">${model.displayName} configured!</div>`;
-			setTimeout(closeProviderModal, 1500);
+			showModelDownloadProgress({ id: res.payload.modelId, displayName: model.displayName }, provider);
 		} else {
 			var err = res?.error?.message || "Failed to configure model";
 			status.innerHTML = `<div class="text-sm text-[var(--error)]">${err}</div>`;
@@ -1755,6 +1841,75 @@ function createModelCard(model, provider, totalRamGb) {
 	card.addEventListener("click", () => selectLocalModel(model, provider));
 
 	return card;
+}
+
+export function showModelDownloadProgress(model, provider) {
+	var m = els();
+	m.modal.classList.remove("hidden");
+	m.body.textContent = "";
+
+	var wrapper = document.createElement("div");
+	wrapper.className = "provider-key-form";
+
+	var status = document.createElement("div");
+	status.className = "text-sm text-[var(--text)]";
+	status.textContent = `Configuring ${model.displayName}...`;
+	wrapper.appendChild(status);
+
+	var progress = document.createElement("div");
+	progress.className = "download-progress mt-4";
+
+	var progressBar = document.createElement("div");
+	progressBar.className = "download-progress-bar";
+	progressBar.style.width = "0%";
+	progress.appendChild(progressBar);
+
+	var progressText = document.createElement("div");
+	progressText.className = "text-xs text-[var(--muted)] mt-2";
+	progress.appendChild(progressText);
+
+	wrapper.appendChild(progress);
+	m.body.appendChild(wrapper);
+
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: download progress handler with many states
+	var off = onEvent("local-llm.download", (payload) => {
+		if (payload.modelId !== model.id) return;
+
+		if (payload.error) {
+			status.textContent = payload.error;
+			status.className = "text-sm text-[var(--error)]";
+			off();
+			return;
+		}
+
+		if (payload.complete) {
+			status.textContent = `${model.displayName} downloaded successfully!`;
+			status.className = "provider-status";
+			progressBar.style.width = "100%";
+			progressText.textContent = "";
+			off();
+			fetchModels();
+			if (S.refreshProvidersPage) S.refreshProvidersPage();
+			setTimeout(closeProviderModal, 1500);
+			return;
+		}
+
+		if (payload.progress != null) {
+			progressBar.style.width = `${payload.progress.toFixed(1)}%`;
+			status.textContent = `Downloading ${model.displayName}...`;
+		}
+		if (payload.downloaded != null) {
+			var downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
+			if (payload.total != null) {
+				var totalMb = (payload.total / (1024 * 1024)).toFixed(1);
+				progressText.textContent = `${downloadedMb} MB / ${totalMb} MB`;
+			} else {
+				progressText.textContent = `${downloadedMb} MB downloaded`;
+			}
+		}
+	});
+
+	pollLocalStatus(model, provider, status, progress, off);
 }
 
 function selectLocalModel(model, provider) {

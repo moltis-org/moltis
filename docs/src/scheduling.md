@@ -7,13 +7,17 @@ other actions on a flexible schedule.
 ## Heartbeat
 
 The **heartbeat** is a special system cron job (`__heartbeat__`) that runs
-periodically (default: every 15 minutes). It gives the agent an opportunity to
+periodically (default: every 30 minutes). It gives the agent an opportunity to
 check reminders, run deferred tasks, and react to events that occurred while
 the user was away.
 
 The heartbeat prompt is assembled from `HEARTBEAT.md` in the workspace data
 directory. If the file is empty and no pending events exist, the heartbeat
 turn is skipped to save tokens.
+
+Heartbeat replies can also be delivered to a configured channel destination via
+`[heartbeat] deliver`, `channel`, and `to` in `moltis.toml`, or from the web UI
+under **Settings -> Heartbeat**.
 
 ## Event-Driven Heartbeat Wake
 
@@ -78,7 +82,7 @@ Jobs support several schedule kinds:
 | Kind | Fields | Description |
 |------|--------|-------------|
 | `every` | `every_ms` | Repeat at a fixed interval (milliseconds) |
-| `cron` | `cron_expr` | Standard cron expression (e.g. `"0 */6 * * *"`) |
+| `cron` | `expr`, optional `tz` | Standard cron expression (e.g. `"0 */6 * * *"`) |
 | `at` | `at_ms` | Run once at a specific Unix timestamp (ms) |
 
 ## Cron Tool
@@ -87,6 +91,7 @@ The agent manages jobs through the built-in `cron` tool. Available actions:
 
 - **`add`** — Create a new job
 - **`list`** — List all jobs
+- **`run`** — Trigger a job immediately
 - **`update`** — Patch an existing job (name, schedule, enabled, wakeMode, etc.)
 - **`remove`** — Delete a job
 - **`runs`** — View recent execution history for a job
@@ -97,14 +102,52 @@ Set `deleteAfterRun: true` to automatically remove a job after its first
 execution. Combined with the `at` schedule, this is useful for deferred
 one-time tasks (reminders, follow-ups).
 
+## Channel Delivery
+
+Background agent turns can deliver their final output to a configured channel
+account/chat after the run completes.
+
+Use all of the following together:
+
+- `sessionTarget: "isolated"`
+- `payload.kind: "agentTurn"`
+- `payload.deliver: true`
+- `payload.channel: "<account_id>"`
+- `payload.to: "<chat_or_peer_id>"`
+
+Example:
+
+```json
+{
+  "action": "add",
+  "job": {
+    "name": "daily summary",
+    "schedule": { "kind": "cron", "expr": "0 9 * * *", "tz": "Europe/Paris" },
+    "sessionTarget": "isolated",
+    "payload": {
+      "kind": "agentTurn",
+      "message": "Summarize yesterday's activity and send it to Telegram.",
+      "deliver": true,
+      "channel": "my-telegram-bot",
+      "to": "123456789"
+    }
+  }
+}
+```
+
+Channel delivery is separate from session targeting. The cron job still runs in
+an isolated cron session, then Moltis forwards the finished output to the
+requested channel destination.
+
 ## Session Targeting
 
 Each job specifies where its agent turn runs:
 
 | Target | Description |
 |--------|-------------|
-| `"main"` | The main UI session (default) |
-| `{ "channel": "<name>" }` | A specific channel session |
+| `"main"` | Inject a `systemEvent` into the main session. Use this for reminders that should continue the main conversation. |
+| `"isolated"` | Run an `agentTurn` in a throwaway cron session. Use this for background jobs and channel delivery. |
+| `named("<name>")` | Internal/persistent cron session used by system jobs such as heartbeat. Not user-configurable through the `cron` tool. |
 
 ## Security
 

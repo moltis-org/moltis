@@ -346,7 +346,7 @@ function AllowlistInput({ value, onChange }) {
 	}
 
 	function onKeyDown(e) {
-		if (e.key === "Enter" || e.key === ",") {
+		if ((e.key === "Enter" || e.key === ",") && !e.isComposing) {
 			e.preventDefault();
 			if (input.value.trim()) addTag(input.value);
 		} else if (e.key === "Backspace" && !input.value && value.length > 0) {

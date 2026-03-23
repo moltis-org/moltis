@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, openChatMoreModal, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {
 	if (typeof message !== "string") return false;
@@ -65,6 +65,8 @@ async function getChatSeq(page) {
 }
 
 async function openFullContextWithRetry(page) {
+	const chatMoreModal = page.locator("#chatMoreModal");
+	const fullContextModal = page.locator("#fullContextModal");
 	const toggleBtn = page.locator("#fullContextBtn");
 	const panel = page.locator("#fullContextPanel");
 	const copyBtn = panel.getByRole("button", { name: "Copy", exact: true });
@@ -78,12 +80,16 @@ async function openFullContextWithRetry(page) {
 			fullContextRpc?.error?.message?.includes("no LLM providers configured") ||
 			fullContextRpc?.error?.message?.includes("chat not configured");
 
-		const panelVisible = await panel.isVisible().catch(() => false);
-		if (panelVisible) {
-			await toggleBtn.click();
+		if (await fullContextModal.isVisible().catch(() => false)) {
+			await page.locator("#fullContextModalCloseBtn").click();
+			await expect(fullContextModal).toBeHidden({ timeout: 8_000 });
 		}
 
+		await openChatMoreModal(page);
+		await expect(toggleBtn).toBeVisible({ timeout: 8_000 });
 		await toggleBtn.click();
+		await expect(chatMoreModal).toBeHidden({ timeout: 8_000 });
+		await expect(fullContextModal).toBeVisible({ timeout: 8_000 });
 		await expect(panel).toBeVisible();
 
 		const result = await expect

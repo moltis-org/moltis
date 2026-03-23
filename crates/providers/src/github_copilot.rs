@@ -19,8 +19,10 @@ use {
 
 use {
     super::openai_compat::{
-        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
-        parse_tool_calls, process_openai_sse_line, to_openai_tools,
+        ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
+        finalize_stream, parse_openai_compat_usage_from_payload, parse_responses_completion,
+        parse_tool_calls, process_openai_sse_line, process_responses_sse_line,
+        split_responses_instructions_and_input, to_openai_tools, to_responses_api_tools,
     },
     moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
 };
@@ -186,6 +188,9 @@ pub const COPILOT_MODELS: &[(&str, &str)] = &[
     ("gpt-4.1", "GPT-4.1 (Copilot)"),
     ("gpt-4.1-mini", "GPT-4.1 Mini (Copilot)"),
     ("gpt-4.1-nano", "GPT-4.1 Nano (Copilot)"),
+    ("gpt-5.4", "GPT-5.4 (Copilot)"),
+    ("gpt-5.4-pro", "GPT-5.4 Pro (Copilot)"),
+    ("gpt-5.2-pro", "GPT-5.2 Pro (Copilot)"),
     ("o1", "o1 (Copilot)"),
     ("o1-mini", "o1-mini (Copilot)"),
     ("o3-mini", "o3-mini (Copilot)"),
@@ -440,6 +445,23 @@ pub fn available_models() -> Vec<super::DiscoveredModel> {
     super::merge_discovered_with_fallback_catalog(discovered, fallback)
 }
 
+// ── Responses API helpers ────────────────────────────────────────────────────
+
+/// Returns `true` if the given model is known to require the Responses API
+/// (`/responses`) instead of Chat Completions (`/chat/completions`).
+fn needs_responses_api(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("gpt-5.4") || m == "gpt-5.2-pro" || m.starts_with("codex-")
+}
+
+/// Returns `true` if an error body from the Chat Completions API indicates
+/// that the model only supports the Responses API.
+fn is_responses_api_required_error(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("unsupported_api_for_model")
+        || lower.contains("not accessible via the /chat/completions")
+}
+
 // ── LlmProvider impl ────────────────────────────────────────────────────────
 
 #[async_trait]
@@ -461,6 +483,10 @@ impl LlmProvider for GitHubCopilotProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
+        if needs_responses_api(&self.model) {
+            return self.complete_responses(messages, tools).await;
+        }
+
         let token = self.get_valid_copilot_token().await?;
 
         let openai_messages: Vec<serde_json::Value> =
@@ -497,6 +523,18 @@ impl LlmProvider for GitHubCopilotProvider {
         if !status.is_success() {
             let retry_after_ms = super::retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
+
+            // Fallback: if the model requires Responses API, retry with it.
+            if status == reqwest::StatusCode::BAD_REQUEST
+                && is_responses_api_required_error(&body_text)
+            {
+                debug!(
+                    model = %self.model,
+                    "chat completions returned unsupported_api_for_model, retrying with responses API"
+                );
+                return self.complete_responses(messages, tools).await;
+            }
+
             warn!(status = %status, body = %body_text, "github-copilot API error");
             anyhow::bail!(
                 "{}",
@@ -534,6 +572,225 @@ impl LlmProvider for GitHubCopilotProvider {
 
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        if needs_responses_api(&self.model) {
+            return self.stream_responses_api(messages, tools);
+        }
+        self.stream_chat_completions(messages, tools)
+    }
+}
+
+impl GitHubCopilotProvider {
+    /// Non-streaming completion via the Responses API (`/responses`).
+    async fn complete_responses(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+    ) -> anyhow::Result<CompletionResponse> {
+        let token = self.get_valid_copilot_token().await?;
+
+        let (instructions, input) = split_responses_instructions_and_input(messages.to_vec());
+
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "input": input,
+        });
+        if let Some(instructions) = instructions {
+            body["instructions"] = serde_json::Value::String(instructions);
+        }
+        if !tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
+            body["tool_choice"] = serde_json::json!("auto");
+        }
+
+        debug!(
+            model = %self.model,
+            messages_count = messages.len(),
+            tools_count = tools.len(),
+            "github-copilot complete_responses request"
+        );
+        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot responses request body");
+
+        let http_resp = self
+            .client
+            .post(format!("{COPILOT_API_BASE}/responses"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .header("Editor-Version", EDITOR_VERSION)
+            .header("User-Agent", COPILOT_USER_AGENT)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = http_resp.status();
+        if !status.is_success() {
+            let retry_after_ms = super::retry_after_ms_from_headers(http_resp.headers());
+            let body_text = http_resp.text().await.unwrap_or_default();
+            warn!(status = %status, body = %body_text, "github-copilot responses API error");
+            anyhow::bail!(
+                "{}",
+                super::with_retry_after_marker(
+                    format!("GitHub Copilot Responses API error HTTP {status}: {body_text}"),
+                    retry_after_ms,
+                )
+            );
+        }
+
+        let resp = http_resp.json::<serde_json::Value>().await?;
+        trace!(response = %resp, "github-copilot responses raw response");
+
+        Ok(parse_responses_completion(&resp))
+    }
+
+    /// Streaming via the Responses API (`/responses`) with SSE.
+    fn stream_responses_api(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(async_stream::stream! {
+            let token = match self.get_valid_copilot_token().await {
+                Ok(t) => t,
+                Err(e) => {
+                    yield StreamEvent::Error(e.to_string());
+                    return;
+                }
+            };
+
+            let (instructions, input) =
+                split_responses_instructions_and_input(messages);
+
+            let mut body = serde_json::json!({
+                "model": self.model,
+                "stream": true,
+                "input": input,
+            });
+            if let Some(instructions) = instructions {
+                body["instructions"] = serde_json::Value::String(instructions);
+            }
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+
+            debug!(
+                model = %self.model,
+                tools_count = tools.len(),
+                "github-copilot stream_responses_api request"
+            );
+            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot responses stream request body");
+
+            let resp = match self
+                .client
+                .post(format!("{COPILOT_API_BASE}/responses"))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("Editor-Version", EDITOR_VERSION)
+                .header("User-Agent", COPILOT_USER_AGENT)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => {
+                    if let Err(e) = r.error_for_status_ref() {
+                        let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                        let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
+                        let body_text = r.text().await.unwrap_or_default();
+                        yield StreamEvent::Error(super::with_retry_after_marker(
+                            format!("HTTP {status}: {body_text}"),
+                            retry_after_ms,
+                        ));
+                        return;
+                    }
+                    r
+                }
+                Err(e) => {
+                    yield StreamEvent::Error(e.to_string());
+                    return;
+                }
+            };
+
+            let mut byte_stream = resp.bytes_stream();
+            let mut buf = String::new();
+            let mut state = ResponsesStreamState::default();
+
+            while let Some(chunk) = byte_stream.next().await {
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(e) => {
+                        yield StreamEvent::Error(e.to_string());
+                        return;
+                    }
+                };
+                buf.push_str(&String::from_utf8_lossy(&chunk));
+
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim().to_string();
+                    buf = buf[pos + 1..].to_string();
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    let Some(data) = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                    else {
+                        continue;
+                    };
+
+                    match process_responses_sse_line(data, &mut state) {
+                        SseLineResult::Done => {
+                            for event in finalize_responses_stream(&mut state) {
+                                yield event;
+                            }
+                            return;
+                        }
+                        SseLineResult::Events(events) => {
+                            for event in events {
+                                yield event;
+                            }
+                        }
+                        SseLineResult::Skip => {}
+                    }
+                }
+            }
+
+            // Process any remaining data in the buffer.
+            let line = buf.trim().to_string();
+            if !line.is_empty()
+                && let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+            {
+                match process_responses_sse_line(data, &mut state) {
+                    SseLineResult::Done => {
+                        for event in finalize_responses_stream(&mut state) {
+                            yield event;
+                        }
+                        return;
+                    }
+                    SseLineResult::Events(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                    }
+                    SseLineResult::Skip => {}
+                }
+            }
+
+            for event in finalize_responses_stream(&mut state) {
+                yield event;
+            }
+        })
+    }
+
+    /// Streaming via the Chat Completions API (`/chat/completions`) with SSE.
+    #[allow(clippy::collapsible_if)]
+    fn stream_chat_completions(
         &self,
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
@@ -584,6 +841,25 @@ impl LlmProvider for GitHubCopilotProvider {
                         let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
                         let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
                         let body_text = r.text().await.unwrap_or_default();
+
+                        // Fallback: if this is an unsupported API error,
+                        // switch to Responses API streaming.
+                        if status == 400
+                            && is_responses_api_required_error(&body_text)
+                        {
+                            debug!(
+                                model = %self.model,
+                                "chat completions returned unsupported_api_for_model, \
+                                 falling back to responses API streaming"
+                            );
+                            let mut responses_stream =
+                                self.stream_responses_api(messages, tools);
+                            while let Some(event) = responses_stream.next().await {
+                                yield event;
+                            }
+                            return;
+                        }
+
                         yield StreamEvent::Error(super::with_retry_after_marker(
                             format!("HTTP {status}: {body_text}"),
                             retry_after_ms,
@@ -689,7 +965,32 @@ mod tests {
         body: Option<serde_json::Value>,
     }
 
-    /// Start a mock HTTP server, returning (base_url, captured_requests).
+    /// Capture a request and return a JSON response.
+    async fn capture_and_respond(
+        req: Request,
+        captured: Arc<Mutex<Vec<CapturedRequest>>>,
+        resp_body: serde_json::Value,
+    ) -> axum::Json<serde_json::Value> {
+        let headers: Vec<(String, String)> = req
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+
+        let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
+            .await
+            .unwrap_or_default();
+        let body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
+
+        captured
+            .lock()
+            .unwrap()
+            .push(CapturedRequest { headers, body });
+
+        axum::Json(resp_body)
+    }
+
+    /// Start a mock HTTP server with `/chat/completions`, returning (base_url, captured_requests).
     async fn start_mock_with_capture(
         response_body: serde_json::Value,
     ) -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
@@ -700,26 +1001,7 @@ mod tests {
         let app = Router::new().route(
             "/chat/completions",
             post(move |req: Request| {
-                let cap = captured_clone.clone();
-                let resp = resp_body.clone();
-                async move {
-                    let headers: Vec<(String, String)> = req
-                        .headers()
-                        .iter()
-                        .map(|(k, v)| {
-                            (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
-                        })
-                        .collect();
-
-                    let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
-                        .await
-                        .unwrap_or_default();
-                    let body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
-
-                    cap.lock().unwrap().push(CapturedRequest { headers, body });
-
-                    axum::Json(resp)
-                }
+                capture_and_respond(req, captured_clone.clone(), resp_body.clone())
             }),
         );
 
@@ -730,6 +1012,47 @@ mod tests {
         });
 
         (format!("http://{addr}"), captured)
+    }
+
+    /// Start a mock HTTP server with both `/chat/completions` and `/responses`
+    /// endpoints.
+    async fn start_mock_with_both_endpoints(
+        chat_response: serde_json::Value,
+        responses_response: serde_json::Value,
+    ) -> (
+        String,
+        Arc<Mutex<Vec<CapturedRequest>>>,
+        Arc<Mutex<Vec<CapturedRequest>>>,
+    ) {
+        let chat_captured: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
+        let responses_captured: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let chat_cap = chat_captured.clone();
+        let resp_cap = responses_captured.clone();
+        let chat_resp = chat_response.clone();
+        let resp_resp = responses_response.clone();
+
+        let app = Router::new()
+            .route(
+                "/chat/completions",
+                post(move |req: Request| {
+                    capture_and_respond(req, chat_cap.clone(), chat_resp.clone())
+                }),
+            )
+            .route(
+                "/responses",
+                post(move |req: Request| {
+                    capture_and_respond(req, resp_cap.clone(), resp_resp.clone())
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (format!("http://{addr}"), chat_captured, responses_captured)
     }
 
     fn mock_completion_response() -> serde_json::Value {
@@ -810,6 +1133,48 @@ mod tests {
                 tool_calls,
                 usage,
             })
+        }
+
+        async fn complete_responses(
+            &self,
+            messages: &[ChatMessage],
+            tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            let token = "mock-copilot-token";
+
+            let (instructions, input) = split_responses_instructions_and_input(messages.to_vec());
+
+            let mut body = serde_json::json!({
+                "model": self.model,
+                "input": input,
+            });
+            if let Some(instructions) = instructions {
+                body["instructions"] = serde_json::Value::String(instructions);
+            }
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+
+            let http_resp = self
+                .client
+                .post(format!("{}/responses", self.base_url))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("Editor-Version", EDITOR_VERSION)
+                .header("User-Agent", COPILOT_USER_AGENT)
+                .json(&body)
+                .send()
+                .await?;
+
+            let status = http_resp.status();
+            if !status.is_success() {
+                let body_text = http_resp.text().await.unwrap_or_default();
+                anyhow::bail!("Copilot Responses API error HTTP {status}: {body_text}");
+            }
+
+            let resp = http_resp.json::<serde_json::Value>().await?;
+            Ok(parse_responses_completion(&resp))
         }
     }
 
@@ -1066,5 +1431,161 @@ mod tests {
             !has_integration_id,
             "copilot-integration-id header should NOT be sent"
         );
+    }
+
+    // ── Responses API tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn needs_responses_api_gpt54() {
+        assert!(needs_responses_api("gpt-5.4"));
+        assert!(needs_responses_api("gpt-5.4-pro"));
+        assert!(needs_responses_api("GPT-5.4")); // case-insensitive
+        assert!(needs_responses_api("gpt-5.2-pro"));
+        assert!(needs_responses_api("codex-mini"));
+    }
+
+    #[test]
+    fn needs_responses_api_false_for_older_models() {
+        assert!(!needs_responses_api("gpt-4o"));
+        assert!(!needs_responses_api("gpt-4.1"));
+        assert!(!needs_responses_api("gpt-4.1-mini"));
+        assert!(!needs_responses_api("o3-mini"));
+        assert!(!needs_responses_api("claude-sonnet-4"));
+    }
+
+    #[test]
+    fn is_responses_api_required_error_matches() {
+        assert!(is_responses_api_required_error(
+            r#"{"error": {"code": "unsupported_api_for_model"}}"#
+        ));
+        assert!(is_responses_api_required_error(
+            "This model is not accessible via the /chat/completions endpoint"
+        ));
+        // Case-insensitive: should still match with mixed casing
+        assert!(is_responses_api_required_error(
+            "Not Accessible Via The /chat/completions"
+        ));
+    }
+
+    #[test]
+    fn is_responses_api_required_error_no_match() {
+        assert!(!is_responses_api_required_error("rate limit exceeded"));
+        assert!(!is_responses_api_required_error("model not found"));
+    }
+
+    fn mock_responses_api_response() -> serde_json::Value {
+        serde_json::json!({
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello from Responses API!"}]
+            }],
+            "usage": {"input_tokens": 12, "output_tokens": 4}
+        })
+    }
+
+    #[tokio::test]
+    async fn complete_responses_parses_text() {
+        let (base_url, _, responses_captured) = start_mock_with_both_endpoints(
+            mock_completion_response(),
+            mock_responses_api_response(),
+        )
+        .await;
+        let provider = mock_provider(&base_url, "gpt-5.4");
+
+        let messages = vec![ChatMessage::User {
+            content: moltis_agents::model::UserContent::Text("hello".into()),
+        }];
+        let resp = provider.complete_responses(&messages, &[]).await.unwrap();
+
+        assert_eq!(resp.text.as_deref(), Some("Hello from Responses API!"));
+        assert!(resp.tool_calls.is_empty());
+        assert_eq!(resp.usage.input_tokens, 12);
+        assert_eq!(resp.usage.output_tokens, 4);
+
+        // Verify request was sent to /responses
+        let reqs = responses_captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        let body = reqs[0].body.as_ref().unwrap();
+        assert_eq!(body["model"], "gpt-5.4");
+        assert!(body.get("input").is_some());
+    }
+
+    #[tokio::test]
+    async fn complete_responses_with_tools() {
+        let responses_body = serde_json::json!({
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_resp_1",
+                "name": "read_file",
+                "arguments": "{\"path\":\"/tmp/test.txt\"}"
+            }],
+            "usage": {"input_tokens": 30, "output_tokens": 15}
+        });
+
+        let (base_url, _, responses_captured) =
+            start_mock_with_both_endpoints(mock_completion_response(), responses_body).await;
+        let provider = mock_provider(&base_url, "gpt-5.4");
+
+        let messages = vec![ChatMessage::User {
+            content: moltis_agents::model::UserContent::Text("read file".into()),
+        }];
+        let tools = vec![serde_json::json!({
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+        })];
+        let resp = provider
+            .complete_responses(&messages, &tools)
+            .await
+            .unwrap();
+
+        assert!(resp.text.is_none());
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].id, "call_resp_1");
+        assert_eq!(resp.tool_calls[0].name, "read_file");
+
+        // Verify tools sent in Responses API format (flat, not nested)
+        let reqs = responses_captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        let sent_tools = body["tools"].as_array().unwrap();
+        assert_eq!(sent_tools.len(), 1);
+        assert_eq!(sent_tools[0]["name"], "read_file");
+        assert!(
+            sent_tools[0].get("function").is_none(),
+            "should use flat format"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_responses_sends_instructions() {
+        let (base_url, _, responses_captured) = start_mock_with_both_endpoints(
+            mock_completion_response(),
+            mock_responses_api_response(),
+        )
+        .await;
+        let provider = mock_provider(&base_url, "gpt-5.4");
+
+        let messages = vec![
+            ChatMessage::System {
+                content: "You are helpful.".into(),
+            },
+            ChatMessage::User {
+                content: moltis_agents::model::UserContent::Text("hello".into()),
+            },
+        ];
+        provider.complete_responses(&messages, &[]).await.unwrap();
+
+        let reqs = responses_captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        assert_eq!(body["instructions"], "You are helpful.");
+    }
+
+    #[test]
+    fn copilot_models_include_gpt54() {
+        let ids: Vec<&str> = COPILOT_MODELS.iter().map(|(id, _)| *id).collect();
+        assert!(ids.contains(&"gpt-5.4"), "missing gpt-5.4");
+        assert!(ids.contains(&"gpt-5.4-pro"), "missing gpt-5.4-pro");
+        assert!(ids.contains(&"gpt-5.2-pro"), "missing gpt-5.2-pro");
     }
 }

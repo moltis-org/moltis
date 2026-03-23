@@ -104,13 +104,13 @@ impl WasmComponentEngine {
 
     pub fn create_http_linker<T>(
         &self,
-        host_getter: impl Fn(&mut T) -> &mut HttpHostImpl + Copy + Send + Sync + 'static,
+        host_getter: fn(&mut T) -> &mut HttpHostImpl,
     ) -> Result<wasmtime::component::Linker<T>>
     where
         T: WasiView + 'static,
     {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
-        wasmtime_wasi::add_to_linker_sync(&mut linker)?;
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
         add_http_outgoing_handler_to_linker(&mut linker, host_getter)?;
         Ok(linker)
     }

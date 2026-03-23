@@ -12,6 +12,7 @@ moltis-common   = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-media    = { workspace = true }
 moltis-metrics  = { optional = true, workspace = true }
+postcard        = { workspace = true }
 rand            = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }

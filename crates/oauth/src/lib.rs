@@ -1,3 +1,4 @@
+pub mod callback_input;
 pub mod callback_server;
 mod config_dir;
 pub mod defaults;
@@ -12,6 +13,7 @@ pub mod storage;
 pub mod types;
 
 pub use {
+    callback_input::{ParsedCallbackInput, parse_callback_input},
     callback_server::CallbackServer,
     defaults::{callback_port, load_oauth_config},
     device_flow::DeviceCodeResponse,

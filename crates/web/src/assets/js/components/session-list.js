@@ -4,7 +4,8 @@
 // component that auto-rerenders from sessionStore signals.
 
 import { html } from "htm/preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
+import * as gon from "../gon.js";
 import {
 	makeBranchIcon,
 	makeChatIcon,
@@ -218,20 +219,16 @@ export function SessionList() {
 	var activeKey = sessionStore.activeSessionKey.value;
 	var refreshingKey = sessionStore.refreshInProgressKey.value;
 	var filterId = projectStore.projectFilterId.value;
+	var tab = sessionStore.sessionListTab.value;
 
-	var filtered = filterId ? allSessions.filter((s) => s.projectId === filterId) : allSessions;
-
-	// Build parent→children map for tree rendering
-	var childrenMap = {};
-	var keyMap = {};
-	filtered.forEach((s) => {
-		keyMap[s.key] = s;
-		if (s.parentSessionKey) {
-			if (!childrenMap[s.parentSessionKey]) childrenMap[s.parentSessionKey] = [];
-			childrenMap[s.parentSessionKey].push(s);
-		}
-	});
-	var roots = filtered.filter((s) => !(s.parentSessionKey && keyMap[s.parentSessionKey]));
+	// Hide session list when the vault is sealed — session data is
+	// encrypted and cannot be displayed.
+	var [vaultStatus, setVaultStatus] = useState(gon.get("vault_status"));
+	useEffect(() => {
+		setVaultStatus(gon.get("vault_status"));
+		gon.onChange("vault_status", setVaultStatus);
+		return () => gon.offChange("vault_status", setVaultStatus);
+	}, []);
 
 	// Spinner animation via setInterval
 	var spinnersRef = useRef(null);
@@ -247,6 +244,29 @@ export function SessionList() {
 		}, 80);
 		return () => clearInterval(timer);
 	}, []);
+
+	if (vaultStatus === "sealed") {
+		return html`<div class="text-xs text-[var(--muted)] p-3">Vault is sealed</div>`;
+	}
+
+	var filtered = filterId ? allSessions.filter((s) => s.projectId === filterId) : allSessions;
+	if (tab === "sessions") {
+		filtered = filtered.filter((s) => !(s.key || "").startsWith("cron:"));
+	} else if (tab === "cron") {
+		filtered = filtered.filter((s) => (s.key || "").startsWith("cron:"));
+	}
+
+	// Build parent→children map for tree rendering
+	var childrenMap = {};
+	var keyMap = {};
+	filtered.forEach((s) => {
+		keyMap[s.key] = s;
+		if (s.parentSessionKey) {
+			if (!childrenMap[s.parentSessionKey]) childrenMap[s.parentSessionKey] = [];
+			childrenMap[s.parentSessionKey].push(s);
+		}
+	});
+	var roots = filtered.filter((s) => !(s.parentSessionKey && keyMap[s.parentSessionKey]));
 
 	function renderTree(session, depth) {
 		var children = childrenMap[session.key] || [];

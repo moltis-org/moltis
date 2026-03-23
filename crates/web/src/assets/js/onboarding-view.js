@@ -23,7 +23,7 @@ import { t } from "./i18n.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
-import { startProviderOAuth } from "./provider-oauth.js";
+import { completeProviderOAuth, startProviderOAuth } from "./provider-oauth.js";
 import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
@@ -424,16 +424,31 @@ function AuthStep({ onNext, skippable }) {
 
 			<form onSubmit=${onOptionalPassword} class="flex flex-col gap-3">
 				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Password</label>
-					<input type="password" class="provider-key-input w-full"
-						value=${optPw} onInput=${(e) => setOptPw(e.target.value)}
-						placeholder="At least 8 characters" autofocus />
+					<label for="onboarding-passkey-password" class="text-xs text-[var(--muted)] mb-1 block">Password</label>
+					<input
+						id="onboarding-passkey-password"
+						type="password"
+						name="password"
+						autocomplete="new-password"
+						class="provider-key-input w-full"
+						value=${optPw}
+						onInput=${(e) => setOptPw(e.target.value)}
+						placeholder="At least 8 characters"
+						autofocus
+					/>
 				</div>
 				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
-					<input type="password" class="provider-key-input w-full"
-						value=${optPwConfirm} onInput=${(e) => setOptPwConfirm(e.target.value)}
-						placeholder="Repeat password" />
+					<label for="onboarding-passkey-password-confirm" class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
+					<input
+						id="onboarding-passkey-password-confirm"
+						type="password"
+						name="confirm_password"
+						autocomplete="new-password"
+						class="provider-key-input w-full"
+						value=${optPwConfirm}
+						onInput=${(e) => setOptPwConfirm(e.target.value)}
+						placeholder="Repeat password"
+					/>
 				</div>
 				${error && html`<${ErrorPanel} message=${error} />`}
 				<div class="flex flex-wrap items-center gap-3 mt-1">
@@ -519,18 +534,33 @@ function AuthStep({ onNext, skippable }) {
 		${
 			method === "password" &&
 			html`<form onSubmit=${onPasswordSubmit} class="flex flex-col gap-3">
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Password${localhostOnly ? "" : " *"}</label>
-				<input type="password" class="provider-key-input w-full"
-					value=${password} onInput=${(e) => setPassword(e.target.value)}
-					placeholder=${localhostOnly ? "Optional on localhost" : "At least 8 characters"} autofocus />
-			</div>
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
-				<input type="password" class="provider-key-input w-full"
-					value=${confirm} onInput=${(e) => setConfirm(e.target.value)}
-					placeholder="Repeat password" />
-			</div>
+				<div>
+					<label for="onboarding-password" class="text-xs text-[var(--muted)] mb-1 block">Password${localhostOnly ? "" : " *"}</label>
+					<input
+						id="onboarding-password"
+						type="password"
+						name="password"
+						autocomplete="new-password"
+						class="provider-key-input w-full"
+						value=${password}
+						onInput=${(e) => setPassword(e.target.value)}
+						placeholder=${localhostOnly ? "Optional on localhost" : "At least 8 characters"}
+						autofocus
+					/>
+				</div>
+				<div>
+					<label for="onboarding-password-confirm" class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
+					<input
+						id="onboarding-password-confirm"
+						type="password"
+						name="confirm_password"
+						autocomplete="new-password"
+						class="provider-key-input w-full"
+						value=${confirm}
+						onInput=${(e) => setConfirm(e.target.value)}
+						placeholder="Repeat password"
+					/>
+				</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex flex-wrap items-center gap-3 mt-1">
 				<button type="submit" class="provider-btn" disabled=${saving}>
@@ -692,6 +722,9 @@ function OnboardingProviderRow({
 	setModelSearch,
 	oauthProvider,
 	oauthInfo,
+	oauthCallbackInput,
+	setOauthCallbackInput,
+	oauthSubmitting,
 	localProvider,
 	sysInfo,
 	localModels,
@@ -712,6 +745,7 @@ function OnboardingProviderRow({
 	onSaveKey,
 	onToggleModel,
 	onSaveModels,
+	onSubmitOAuthCallback,
 	onCancelOAuth,
 	onConfigureLocalModel,
 	onCancelLocal,
@@ -864,21 +898,41 @@ function OnboardingProviderRow({
 			</div>`
 				: null
 		}
-		${
-			isOAuth
-				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
-				${
-					oauthInfo?.status === "device"
-						? html`<div class="text-sm text-[var(--text)]">
+			${
+				isOAuth
+					? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+					${
+						oauthInfo?.status === "device"
+							? html`<div class="text-sm text-[var(--text)]">
 						Open <a href=${oauthInfo.uri} target="_blank" class="text-[var(--accent)] underline">${oauthInfo.uri}</a> and enter code:<strong class="font-mono ml-1">${oauthInfo.code}</strong>
 					</div>`
-						: html`<div class="text-sm text-[var(--muted)]">Waiting for authentication\u2026</div>`
-				}
-				${error ? html`<${ErrorPanel} message=${error} />` : null}
-				<button class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelOAuth}>Cancel</button>
-			</div>`
-				: null
-		}
+							: html`<div class="text-sm text-[var(--muted)]">Waiting for authentication\u2026</div>`
+					}
+					${
+						oauthInfo?.status === "device"
+							? null
+							: html`<div class="text-xs text-[var(--muted)]">If localhost callback fails, paste the redirect URL (or code#state) below.</div>
+							<input
+								type="text"
+								class="provider-key-input w-full"
+								placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+								value=${oauthCallbackInput}
+								onInput=${(event) => setOauthCallbackInput(event.target.value)}
+								disabled=${oauthSubmitting}
+							/>
+							<button
+								class="provider-btn provider-btn-secondary provider-btn-sm self-start"
+								onClick=${() => onSubmitOAuthCallback(provider.name)}
+								disabled=${oauthSubmitting}
+							>
+								${oauthSubmitting ? "Submitting..." : "Submit Callback"}
+							</button>`
+					}
+					${error ? html`<${ErrorPanel} message=${error} />` : null}
+					<button class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelOAuth}>Cancel</button>
+				</div>`
+					: null
+			}
 		${
 			isLocal
 				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
@@ -1064,6 +1118,8 @@ function ProviderStep({ onNext, onBack }) {
 
 	// OAuth state
 	var [oauthInfo, setOauthInfo] = useState(null);
+	var [oauthCallbackInput, setOauthCallbackInput] = useState("");
+	var [oauthSubmitting, setOauthSubmitting] = useState(false);
 	var oauthTimerRef = useRef(null);
 
 	// Local state
@@ -1140,6 +1196,8 @@ function ProviderStep({ onNext, onBack }) {
 		setModel("");
 		setError(null);
 		setOauthInfo(null);
+		setOauthCallbackInput("");
+		setOauthSubmitting(false);
 		setSysInfo(null);
 		setLocalModels([]);
 		if (oauthTimerRef.current) {
@@ -1388,6 +1446,8 @@ function ProviderStep({ onNext, onBack }) {
 	function startOAuth(p) {
 		setOauthProvider(p.name);
 		setOauthInfo({ status: "starting" });
+		setOauthCallbackInput("");
+		setOauthSubmitting(false);
 		startProviderOAuth(p.name).then((result) => {
 			if (result.status === "already") {
 				onOAuthAuthenticated(p.name);
@@ -1406,6 +1466,8 @@ function ProviderStep({ onNext, onBack }) {
 				setError(result.error || "Failed to start OAuth");
 				setOauthProvider(null);
 				setOauthInfo(null);
+				setOauthCallbackInput("");
+				setOauthSubmitting(false);
 			}
 		});
 	}
@@ -1415,6 +1477,8 @@ function ProviderStep({ onNext, onBack }) {
 
 		setOauthProvider(null);
 		setOauthInfo(null);
+		setOauthCallbackInput("");
+		setOauthSubmitting(false);
 
 		if (provModels.length > 0) {
 			setModelSelectProvider(providerName);
@@ -1444,6 +1508,8 @@ function ProviderStep({ onNext, onBack }) {
 				setError("OAuth timed out. Please try again.");
 				setOauthProvider(null);
 				setOauthInfo(null);
+				setOauthCallbackInput("");
+				setOauthSubmitting(false);
 				return;
 			}
 			sendRpc("providers.oauth.status", { provider: p.name }).then((res) => {
@@ -1463,7 +1529,38 @@ function ProviderStep({ onNext, onBack }) {
 		}
 		setOauthProvider(null);
 		setOauthInfo(null);
+		setOauthCallbackInput("");
+		setOauthSubmitting(false);
 		setError(null);
+	}
+
+	function submitOAuthCallback(providerName) {
+		var callback = oauthCallbackInput.trim();
+		if (!callback) {
+			setError("Paste the callback URL (or code#state) to continue.");
+			return;
+		}
+
+		setOauthSubmitting(true);
+		setError(null);
+		completeProviderOAuth(providerName, callback)
+			.then((res) => {
+				if (res?.ok) {
+					if (oauthTimerRef.current) {
+						clearInterval(oauthTimerRef.current);
+						oauthTimerRef.current = null;
+					}
+					onOAuthAuthenticated(providerName);
+					return;
+				}
+				setError(res?.error?.message || "Failed to complete OAuth callback.");
+			})
+			.catch((err) => {
+				setError(err?.message || "Failed to complete OAuth callback.");
+			})
+			.finally(() => {
+				setOauthSubmitting(false);
+			});
 	}
 
 	// ── Local model flow ─────────────────────────────────────
@@ -1543,10 +1640,13 @@ function ProviderStep({ onNext, onBack }) {
 				selectedModels=${configuring === p.name ? selectedModels : new Set()}
 				probeResults=${configuring === p.name ? probeResults : new Map()}
 				modelSearch=${configuring === p.name ? modelSearch : ""}
-				setModelSearch=${setModelSearch}
-				oauthProvider=${oauthProvider}
-				oauthInfo=${oauthInfo}
-				localProvider=${localProvider}
+					setModelSearch=${setModelSearch}
+					oauthProvider=${oauthProvider}
+					oauthInfo=${oauthInfo}
+					oauthCallbackInput=${oauthCallbackInput}
+					setOauthCallbackInput=${setOauthCallbackInput}
+					oauthSubmitting=${oauthSubmitting}
+					localProvider=${localProvider}
 				sysInfo=${sysInfo}
 				localModels=${localModels}
 				selectedBackend=${selectedBackend}
@@ -1563,10 +1663,11 @@ function ProviderStep({ onNext, onBack }) {
 				validationResult=${validationResults[p.name] || null}
 				onStartConfigure=${onStartConfigure}
 				onCancelConfigure=${closeAll}
-				onSaveKey=${onSaveKey}
-				onToggleModel=${onToggleModel}
-				onSaveModels=${onSaveSelectedModels}
-				onCancelOAuth=${cancelOAuth}
+					onSaveKey=${onSaveKey}
+					onToggleModel=${onToggleModel}
+					onSaveModels=${onSaveSelectedModels}
+					onSubmitOAuthCallback=${submitOAuthCallback}
+					onCancelOAuth=${cancelOAuth}
 				onConfigureLocalModel=${configureLocalModel}
 				onCancelLocal=${cancelLocal}
 			/>`,
@@ -3137,13 +3238,13 @@ function SummaryStep({ onBack, onFinish }) {
 			${
 				data.tailscale !== null
 					? html`<${SummaryRow}
-					icon=${data.tailscale?.connected ? html`<${CheckIcon} />` : data.tailscale?.installed ? html`<${WarnIcon} />` : html`<${InfoIcon} />`}
+					icon=${data.tailscale?.tailscale_up ? html`<${CheckIcon} />` : data.tailscale?.installed ? html`<${WarnIcon} />` : html`<${InfoIcon} />`}
 					label="Tailscale">
 					${
-						data.tailscale?.connected
+						data.tailscale?.tailscale_up
 							? html`Connected`
 							: data.tailscale?.installed
-								? html`Installed but not connected`
+								? html`Installed but not connected — <a href="/settings/tailscale" class="text-[var(--accent)] underline">Configure in Settings</a>`
 								: html`Not installed. Install Tailscale for secure remote access.`
 					}
 				<//>`

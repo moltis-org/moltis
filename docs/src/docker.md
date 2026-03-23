@@ -20,6 +20,10 @@ docker run -d \
 
 Open https://localhost:13131 in your browser and configure your LLM provider to start chatting.
 
+For unattended bootstraps, add `MOLTIS_PASSWORD`, `MOLTIS_PROVIDER`, and
+`MOLTIS_API_KEY` before first start. That pre-configures auth plus one LLM
+provider so you can skip the browser setup wizard entirely.
+
 ### Ports
 
 | Port | Purpose |
@@ -90,14 +94,34 @@ Moltis runs LLM-generated shell commands inside isolated containers for
 security. When Moltis itself runs in a container, it needs access to the host's
 container runtime to create these sandbox containers.
 
-**Without the socket mount**, sandbox execution is disabled. The agent will
-still work for chat-only interactions, but any tool that runs shell commands
-will fail.
-
 ```bash
-# Required for sandbox execution
+# Recommended for full container isolation
 -v /var/run/docker.sock:/var/run/docker.sock
 ```
+
+**Without the socket mount**, Moltis automatically falls back to the
+[restricted-host sandbox](sandbox.md#restricted-host-sandbox), which provides
+lightweight isolation by clearing environment variables, restricting `PATH`,
+and applying resource limits via `ulimit`. Commands will execute successfully
+inside the Moltis container but without filesystem or network isolation.
+
+For full container-level isolation (filesystem boundaries, network policies),
+mount the Docker socket.
+
+If Moltis is itself running in Docker and your `data_dir()` mount is backed by
+a different host path than `/home/moltis/.moltis`, Moltis will try to discover
+that host path automatically from `docker inspect`/`podman inspect`. If that
+lookup fails, add this to `/home/moltis/.config/moltis/moltis.toml` inside the
+container:
+
+```toml
+[tools.exec.sandbox]
+host_data_dir = "/absolute/host/path/to/data"
+```
+
+For a bind mount like `-v ./data:/home/moltis/.moltis`, use the resolved host
+path to `./data`. Restart Moltis after changing the config so new sandbox
+containers pick up the corrected mount source.
 
 ### Security Consideration
 
@@ -105,10 +129,6 @@ Mounting the Docker socket gives the container full access to the Docker
 daemon. This is equivalent to root access on the host for practical purposes.
 Only run Moltis containers from trusted sources (official images from
 `ghcr.io/moltis-org/moltis`).
-
-If you cannot mount the Docker socket, Moltis will run in "no sandbox" mode —
-commands execute directly inside the Moltis container itself, which provides
-no isolation.
 
 ## Docker Compose
 
@@ -253,9 +273,29 @@ docker run -d \
 
 Features like web search (Brave), embeddings, and LLM provider API calls read
 keys from process environment variables (`std::env::var`). In Docker, there are
-two ways to provide these:
+three ways to provide these:
 
-**Option 1: `docker -e` flags** (takes precedence)
+**Option 1: Generic first-run LLM bootstrap** (best for one provider)
+
+Use this when you want a minimal `docker compose` file with one chat provider
+and no manual setup:
+
+```yaml
+services:
+  moltis:
+    image: ghcr.io/moltis-org/moltis:latest
+    environment:
+      MOLTIS_PASSWORD: "change-me"
+      MOLTIS_PROVIDER: "openai"
+      MOLTIS_API_KEY: "sk-..."
+```
+
+`MOLTIS_PROVIDER` must be a Moltis provider name such as `openai`,
+`anthropic`, `gemini`, `groq`, `openrouter`, or `mistral`. The shorter
+aliases `PROVIDER` and `API_KEY` also work, but the `MOLTIS_*` names are
+preferred because they are less likely to collide with other containers.
+
+**Option 2: Provider-specific `docker -e` flags** (takes precedence for that provider)
 
 ```bash
 docker run -d \
@@ -266,7 +306,7 @@ docker run -d \
   ghcr.io/moltis-org/moltis:latest
 ```
 
-**Option 2: `[env]` section in `moltis.toml`**
+**Option 3: `[env]` section in `moltis.toml`**
 
 Add an `[env]` section to your config file. These variables are injected into
 the Moltis process at startup, making them available to all features:
@@ -347,8 +387,9 @@ docker exec -it moltis moltis auth login --provider openai-codex
 ```
 
 The CLI opens a browser on the machine where you run the command and handles
-the OAuth callback locally. Tokens are saved to the config volume and picked
-up by the running gateway automatically.
+the OAuth callback locally. If automatic callback capture fails, Moltis prompts
+you to paste the callback URL (or `code#state`) into the terminal. Tokens are
+saved to the config volume and picked up by the running gateway automatically.
 
 ### Permission denied on bind mounts
 
