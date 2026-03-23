@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{convert::Infallible, fmt, path::PathBuf, str::FromStr};
 
 /// Citation mode for memory search results.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -12,8 +12,8 @@ pub enum CitationMode {
     Auto,
 }
 
-impl std::str::FromStr for CitationMode {
-    type Err = std::convert::Infallible;
+impl FromStr for CitationMode {
+    type Err = Infallible;
 
     /// Parse from string (case-insensitive). Never fails - defaults to Auto.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -22,6 +22,36 @@ impl std::str::FromStr for CitationMode {
             "off" | "false" | "no" | "never" => Self::Off,
             _ => Self::Auto,
         })
+    }
+}
+
+/// Strategy for merging vector and keyword search results.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MergeStrategy {
+    /// Reciprocal Rank Fusion — rank-based, score-magnitude-agnostic.
+    #[default]
+    Rrf,
+    /// Linear weighted blend of raw scores.
+    Linear,
+}
+
+impl FromStr for MergeStrategy {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "linear" => Self::Linear,
+            _ => Self::Rrf,
+        })
+    }
+}
+
+impl fmt::Display for MergeStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rrf => f.write_str("rrf"),
+            Self::Linear => f.write_str("linear"),
+        }
     }
 }
 
@@ -54,6 +84,8 @@ pub struct MemoryConfig {
     pub citations: CitationMode,
     /// Whether to enable LLM reranking for hybrid search results.
     pub llm_reranking: bool,
+    /// Strategy for merging vector and keyword search results.
+    pub merge_strategy: MergeStrategy,
 }
 
 impl Default for MemoryConfig {
@@ -71,6 +103,7 @@ impl Default for MemoryConfig {
             batch_threshold: 50,
             citations: CitationMode::default(),
             llm_reranking: false,
+            merge_strategy: MergeStrategy::default(),
         }
     }
 }

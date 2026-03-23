@@ -1,8 +1,10 @@
+pub mod callback_input;
 pub mod callback_server;
 mod config_dir;
 pub mod defaults;
 pub mod device_flow;
 pub mod discovery;
+pub mod error;
 pub mod flow;
 pub mod kimi;
 pub mod pkce;
@@ -11,6 +13,7 @@ pub mod storage;
 pub mod types;
 
 pub use {
+    callback_input::{ParsedCallbackInput, parse_callback_input},
     callback_server::CallbackServer,
     defaults::{callback_port, load_oauth_config},
     device_flow::DeviceCodeResponse,
@@ -24,3 +27,5 @@ pub use {
     storage::TokenStore,
     types::{OAuthConfig, OAuthTokens, PkceChallenge, serialize_option_secret, serialize_secret},
 };
+
+pub use error::{Error, Result};

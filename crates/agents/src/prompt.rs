@@ -4,6 +4,43 @@ use {
     moltis_skills::types::SkillMetadata,
 };
 
+// ── Model family detection ──────────────────────────────────────────────────
+
+/// Broad model family classification, used to tune text-based tool prompts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelFamily {
+    Llama,
+    Qwen,
+    Mistral,
+    DeepSeek,
+    Gemma,
+    Phi,
+    Unknown,
+}
+
+impl ModelFamily {
+    /// Detect the model family from a model identifier string.
+    #[must_use]
+    pub fn from_model_id(id: &str) -> Self {
+        let lower = id.to_ascii_lowercase();
+        if lower.contains("llama") {
+            Self::Llama
+        } else if lower.contains("qwen") {
+            Self::Qwen
+        } else if lower.contains("mistral") || lower.contains("mixtral") {
+            Self::Mistral
+        } else if lower.contains("deepseek") {
+            Self::DeepSeek
+        } else if lower.contains("gemma") {
+            Self::Gemma
+        } else if lower.contains("phi") {
+            Self::Phi
+        } else {
+            Self::Unknown
+        }
+    }
+}
+
 /// Runtime context for the host process running the current agent turn.
 #[derive(Debug, Clone, Default)]
 pub struct PromptHostRuntimeContext {
@@ -18,6 +55,19 @@ pub struct PromptHostRuntimeContext {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub session_key: Option<String>,
+    /// Runtime surface the assistant is currently operating in
+    /// (for example: "web", "telegram", "discord", "cron", "heartbeat").
+    pub surface: Option<String>,
+    /// High-level session kind (`web`, `channel`, `cron`).
+    pub session_kind: Option<String>,
+    /// Active channel type when running in a channel-bound session.
+    pub channel_type: Option<String>,
+    /// Active channel account identifier when running in a channel-bound session.
+    pub channel_account_id: Option<String>,
+    /// Active channel chat/recipient ID when running in a channel-bound session.
+    pub channel_chat_id: Option<String>,
+    /// Best-effort channel chat type (for example `private`, `group`, `channel`).
+    pub channel_chat_type: Option<String>,
     /// Persistent Moltis workspace root (`data_dir`), e.g. `~/.moltis`
     /// or `/home/moltis/.moltis` in containerized deploys.
     pub data_dir: Option<String>,
@@ -48,11 +98,38 @@ pub struct PromptSandboxRuntimeContext {
     pub session_override: Option<bool>,
 }
 
+/// Info about a single connected remote node, injected into the system prompt.
+#[derive(Debug, Clone)]
+pub struct PromptNodeInfo {
+    pub node_id: String,
+    pub display_name: Option<String>,
+    pub platform: String,
+    pub capabilities: Vec<String>,
+    pub cpu_count: Option<u32>,
+    pub cpu_usage: Option<f32>,
+    pub mem_total: Option<u64>,
+    pub mem_available: Option<u64>,
+    pub telemetry_stale: bool,
+    pub disk_total: Option<u64>,
+    pub disk_available: Option<u64>,
+    pub runtimes: Vec<String>,
+    /// `(provider_name, model_list)` pairs discovered on the node.
+    pub providers: Vec<(String, Vec<String>)>,
+}
+
+/// Runtime context about connected remote nodes.
+#[derive(Debug, Clone, Default)]
+pub struct PromptNodesRuntimeContext {
+    pub nodes: Vec<PromptNodeInfo>,
+    pub default_node_id: Option<String>,
+}
+
 /// Combined runtime context injected into the system prompt.
 #[derive(Debug, Clone, Default)]
 pub struct PromptRuntimeContext {
     pub host: PromptHostRuntimeContext,
     pub sandbox: Option<PromptSandboxRuntimeContext>,
+    pub nodes: Option<PromptNodesRuntimeContext>,
 }
 
 /// Suffix appended to the system prompt when the user's reply medium is voice.
@@ -63,7 +140,10 @@ pub struct PromptRuntimeContext {
 /// misses.
 pub const VOICE_REPLY_SUFFIX: &str = "\n\n\
 ## Voice Reply Mode\n\n\
-The user will hear your response as spoken audio. Write for speech, not for reading:\n\
+The user is speaking to you via voice messages. Their messages are transcribed from \
+speech-to-text, so treat this as a spoken conversation. You will hear their words as \
+text, and your response will be converted to spoken audio for them.\n\n\
+Write for speech, not for reading:\n\
 - Use natural, conversational sentences. No bullet lists, numbered lists, or headings.\n\
 - NEVER include raw URLs. Instead describe the resource by name \
 (e.g. \"the Rust documentation website\" instead of \"https://doc.rust-lang.org\").\n\
@@ -165,21 +245,86 @@ const PROJECT_CONTEXT_MAX_CHARS: usize = 8_000;
 /// Maximum number of characters from each workspace file (`AGENTS.md`,
 /// `TOOLS.md`) injected into the prompt.
 const WORKSPACE_FILE_MAX_CHARS: usize = 6_000;
-const EXEC_ROUTING_GUIDANCE: &str = "Execution routing:\n\
+const EXEC_ROUTING_GUIDANCE_SANDBOX: &str = "Execution routing:\n\
 - `exec` runs inside sandbox when `Sandbox(exec): enabled=true`.\n\
 - When sandbox is disabled, `exec` runs on the host and may require approval.\n\
 - In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
-- Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
-- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n\
-- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\n";
-const TOOL_CALL_GUIDANCE: &str = concat!(
-    "## How to call tools\n\n",
-    "For a tool call, output ONLY this JSON block:\n\n",
-    "```tool_call\n",
-    "{\"tool\": \"<tool_name>\", \"arguments\": {<arguments>}}\n",
-    "```\n\n",
-    "No text before or after the block. After execution, continue normally.\n\n",
-);
+- Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n";
+const EXEC_ROUTING_SANDBOX_CLOSING: &str = "- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
+const EXEC_ROUTING_GUIDANCE_HOST_ONLY: &str = "Execution routing:\n\
+- `exec` runs on the host and may require approval.\n";
+const EXEC_ROUTING_SUDO_HINT: &str =
+    "- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n";
+/// Build model-family-aware tool call guidance for text-based tool mode.
+fn tool_call_guidance(model_id: Option<&str>) -> String {
+    let _family = model_id
+        .map(ModelFamily::from_model_id)
+        .unwrap_or(ModelFamily::Unknown);
+
+    let mut g = String::with_capacity(800);
+    g.push_str("## How to call tools\n\n");
+    g.push_str("When you need to use a tool, output EXACTLY this fenced block:\n\n");
+    g.push_str("```tool_call\n");
+    g.push_str("{\"tool\": \"<tool_name>\", \"arguments\": {<arguments>}}\n");
+    g.push_str("```\n\n");
+    g.push_str("**Rules:**\n");
+    g.push_str("- The JSON must be valid. No comments, no trailing commas.\n");
+    g.push_str("- One tool call per fenced block. You may include multiple blocks.\n");
+    g.push_str("- Wait for the tool result before continuing.\n");
+    g.push_str("- You may include brief reasoning text before the block.\n\n");
+
+    // Few-shot example
+    g.push_str("**Example:**\n");
+    g.push_str("User: What files are in the current directory?\n");
+    g.push_str("Assistant: I'll list the files for you.\n");
+    g.push_str("```tool_call\n");
+    g.push_str("{\"tool\": \"exec\", \"arguments\": {\"command\": \"ls -la\"}}\n");
+    g.push_str("```\n\n");
+
+    g
+}
+
+/// Format a tool schema in compact human-readable form for text-mode prompts.
+///
+/// Output: `### tool_name\ndescription\nParams: param1 (type, required), param2 (type)\n`
+///
+/// This is much shorter than dumping full JSON schema, saving ~60% context tokens.
+fn format_compact_tool_schema(schema: &serde_json::Value) -> String {
+    let name = schema["name"].as_str().unwrap_or("unknown");
+    let desc = schema["description"].as_str().unwrap_or("");
+    let params = &schema["parameters"];
+
+    let mut out = format!("### {name}\n{desc}\n");
+
+    if let Some(properties) = params.get("properties").and_then(|v| v.as_object()) {
+        let required: Vec<&str> = params
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+
+        let mut param_parts: Vec<String> = Vec::with_capacity(properties.len());
+        for (param_name, param_schema) in properties {
+            let type_str = param_schema
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("any");
+            if required.contains(&param_name.as_str()) {
+                param_parts.push(format!("{param_name} ({type_str}, required)"));
+            } else {
+                param_parts.push(format!("{param_name} ({type_str})"));
+            }
+        }
+
+        if !param_parts.is_empty() {
+            out.push_str("Params: ");
+            out.push_str(&param_parts.join(", "));
+            out.push('\n');
+        }
+    }
+    out.push('\n');
+    out
+}
 const TOOL_GUIDELINES: &str = concat!(
     "## Guidelines\n\n",
     "- Start with a normal conversational response. Do not call tools for greetings, small talk, ",
@@ -237,8 +382,9 @@ fn build_system_prompt_full(
     append_skills_section(&mut prompt, include_tools, skills);
     append_workspace_files_section(&mut prompt, agents_text, tools_text);
     append_memory_section(&mut prompt, memory_text, &tool_schemas);
+    let model_id = runtime_context.and_then(|ctx| ctx.host.model.as_deref());
     append_available_tools_section(&mut prompt, native_tools, &tool_schemas);
-    append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas);
+    append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas, model_id);
     append_guidelines_section(&mut prompt, include_tools);
     append_runtime_datetime_tail(&mut prompt, runtime_context);
 
@@ -258,11 +404,8 @@ fn append_identity_and_user_sections(
             (Some(name), None) => parts.push(format!("Your name is {name}.")),
             _ => {},
         }
-        if let Some(creature) = id.creature.as_deref() {
-            parts.push(format!("You are a {creature}."));
-        }
-        if let Some(vibe) = id.vibe.as_deref() {
-            parts.push(format!("Your vibe: {vibe}."));
+        if let Some(theme) = id.theme.as_deref() {
+            parts.push(format!("Your theme: {theme}."));
         }
         if !parts.is_empty() {
             prompt.push_str(&parts.join(" "));
@@ -293,6 +436,64 @@ fn append_project_context(prompt: &mut String, project_context: Option<&str>) {
     }
 }
 
+fn format_node_runtime_line(node: &PromptNodeInfo) -> String {
+    let name = node.display_name.as_deref().unwrap_or(&node.node_id);
+    let mut parts = vec![node.platform.clone()];
+    if !node.capabilities.is_empty() {
+        parts.push(format!("caps: {}", node.capabilities.join(",")));
+    }
+    if let Some(cpus) = node.cpu_count {
+        parts.push(format!("{cpus} cores"));
+    }
+    if let Some(usage) = node.cpu_usage {
+        parts.push(format!("{usage:.0}% cpu"));
+    }
+    if let (Some(avail), Some(total)) = (node.mem_available, node.mem_total) {
+        let avail_gb = avail as f64 / 1_073_741_824.0;
+        let total_gb = total as f64 / 1_073_741_824.0;
+        parts.push(format!("{avail_gb:.0}GB/{total_gb:.0}GB mem"));
+    }
+    if let (Some(avail), Some(total)) = (node.disk_available, node.disk_total) {
+        let avail_gb = avail as f64 / 1_073_741_824.0;
+        let total_gb = total as f64 / 1_073_741_824.0;
+        parts.push(format!("disk: {avail_gb:.0}GB/{total_gb:.0}GB free"));
+    }
+    if !node.runtimes.is_empty() {
+        parts.push(format!("runtimes: {}", node.runtimes.join(",")));
+    }
+    if !node.providers.is_empty() {
+        let names: Vec<&str> = node.providers.iter().map(|(n, _)| n.as_str()).collect();
+        parts.push(format!("providers: {}", names.join(",")));
+    }
+    let suffix = if node.telemetry_stale {
+        " (stale)"
+    } else {
+        ""
+    };
+    format!("{name} ({}{suffix})", parts.join(", "))
+}
+
+fn format_nodes_runtime_section(nodes_ctx: &PromptNodesRuntimeContext) -> Option<String> {
+    if nodes_ctx.nodes.is_empty() {
+        return None;
+    }
+    let node_descs: Vec<String> = nodes_ctx
+        .nodes
+        .iter()
+        .map(format_node_runtime_line)
+        .collect();
+    let mut line = format!("Nodes: {}", node_descs.join(" | "));
+    if let Some(ref default) = nodes_ctx.default_node_id {
+        line.push_str(&format!(" [default: {default}]"));
+    }
+    Some(line)
+}
+
+const NODE_ROUTING_GUIDANCE: &str = "\
+- When nodes are connected, the `exec` tool accepts an optional `node` parameter to target a specific node.\n\
+- Omitting `node` runs on the session's default node (shown as [default: ...] above), or locally if none is set.\n\
+- Use node telemetry (CPU, memory) to pick appropriate targets for resource-intensive tasks.\n\n";
+
 fn append_runtime_section(
     prompt: &mut String,
     runtime_context: Option<&PromptRuntimeContext>,
@@ -304,7 +505,11 @@ fn append_runtime_section(
 
     let host_line = format_host_runtime_line(&runtime.host);
     let sandbox_line = runtime.sandbox.as_ref().map(format_sandbox_runtime_line);
-    if host_line.is_none() && sandbox_line.is_none() {
+    let nodes_line = runtime
+        .nodes
+        .as_ref()
+        .and_then(format_nodes_runtime_section);
+    if host_line.is_none() && sandbox_line.is_none() && nodes_line.is_none() {
         return;
     }
 
@@ -313,12 +518,32 @@ fn append_runtime_section(
         prompt.push_str(&line);
         prompt.push('\n');
     }
+    let has_sandbox = sandbox_line.is_some();
     if let Some(line) = sandbox_line {
         prompt.push_str(&line);
         prompt.push('\n');
     }
+    let has_nodes = nodes_line.is_some();
+    if let Some(line) = nodes_line {
+        prompt.push_str(&line);
+        prompt.push('\n');
+    }
     if include_tools {
-        prompt.push_str(EXEC_ROUTING_GUIDANCE);
+        if has_sandbox {
+            prompt.push_str(EXEC_ROUTING_GUIDANCE_SANDBOX);
+        } else {
+            prompt.push_str(EXEC_ROUTING_GUIDANCE_HOST_ONLY);
+        }
+        if runtime.host.sudo_non_interactive == Some(true) {
+            prompt.push_str(EXEC_ROUTING_SUDO_HINT);
+        }
+        if has_sandbox {
+            prompt.push_str(EXEC_ROUTING_SANDBOX_CLOSING);
+        }
+        prompt.push('\n');
+        if has_nodes {
+            prompt.push_str(NODE_ROUTING_GUIDANCE);
+        }
     } else {
         prompt.push('\n');
     }
@@ -449,14 +674,9 @@ fn append_available_tools_section(
         return;
     }
 
+    // Text-mode: use compact schema format to save context tokens.
     for schema in tool_schemas {
-        let name = schema["name"].as_str().unwrap_or("unknown");
-        let desc = schema["description"].as_str().unwrap_or("");
-        let params = &schema["parameters"];
-        prompt.push_str(&format!(
-            "### {name}\n{desc}\n\nParameters:\n```json\n{}\n```\n\n",
-            serde_json::to_string(params).unwrap_or_default()
-        ));
+        prompt.push_str(&format_compact_tool_schema(schema));
     }
 }
 
@@ -464,9 +684,10 @@ fn append_tool_call_guidance(
     prompt: &mut String,
     native_tools: bool,
     tool_schemas: &[serde_json::Value],
+    model_id: Option<&str>,
 ) {
     if !native_tools && !tool_schemas.is_empty() {
-        prompt.push_str(TOOL_CALL_GUIDANCE);
+        prompt.push_str(&tool_call_guidance(model_id));
     }
 }
 
@@ -527,6 +748,12 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         ("provider", host.provider.as_deref()),
         ("model", host.model.as_deref()),
         ("session", host.session_key.as_deref()),
+        ("surface", host.surface.as_deref()),
+        ("session_kind", host.session_kind.as_deref()),
+        ("channel_type", host.channel_type.as_deref()),
+        ("channel_account", host.channel_account_id.as_deref()),
+        ("channel_chat_id", host.channel_chat_id.as_deref()),
+        ("channel_chat_type", host.channel_chat_type.as_deref()),
         ("data_dir", host.data_dir.as_deref()),
     ] {
         push_non_empty_runtime_field(&mut parts, key, value);
@@ -719,8 +946,7 @@ mod tests {
         let identity = AgentIdentity {
             name: Some("Momo".into()),
             emoji: Some("🦜".into()),
-            creature: Some("parrot".into()),
-            vibe: Some("cheerful and curious".into()),
+            theme: Some("cheerful parrot".into()),
         };
         let user = UserProfile {
             name: Some("Alice".into()),
@@ -741,8 +967,7 @@ mod tests {
             None,
         );
         assert!(prompt.contains("Your name is Momo 🦜."));
-        assert!(prompt.contains("You are a parrot."));
-        assert!(prompt.contains("Your vibe: cheerful and curious."));
+        assert!(prompt.contains("Your theme: cheerful parrot."));
         assert!(prompt.contains("The user's name is Alice."));
         // Default soul should be injected when soul is None.
         assert!(prompt.contains("## Soul"));
@@ -832,6 +1057,12 @@ mod tests {
                 provider: Some("openai".into()),
                 model: Some("gpt-5".into()),
                 session_key: Some("main".into()),
+                surface: None,
+                session_kind: None,
+                channel_type: None,
+                channel_account_id: None,
+                channel_chat_id: None,
+                channel_chat_type: None,
                 data_dir: Some("/home/moltis/.moltis".into()),
                 sudo_non_interactive: Some(true),
                 sudo_status: Some("passwordless".into()),
@@ -852,6 +1083,7 @@ mod tests {
                 no_network: Some(true),
                 session_override: Some(true),
             }),
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -889,6 +1121,121 @@ mod tests {
         assert!(prompt.contains("Execution routing:"));
         assert!(prompt.contains("`~` and relative paths resolve under"));
         assert!(prompt.contains("Sandbox/host routing changes are expected runtime behavior"));
+        // Sudo hint appears because sudo_non_interactive=true is set.
+        assert!(prompt.contains("sudo_non_interactive=true` means non-interactive sudo"));
+    }
+
+    #[test]
+    fn test_runtime_context_sandbox_without_sudo_omits_sudo_hint() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("devbox".into()),
+                ..Default::default()
+            },
+            sandbox: Some(PromptSandboxRuntimeContext {
+                exec_sandboxed: true,
+                mode: Some("all".into()),
+                backend: Some("docker".into()),
+                home: Some("/home/sandbox".into()),
+                ..Default::default()
+            }),
+            nodes: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("Sandbox(exec): enabled=true"));
+        assert!(prompt.contains("Execution routing:"));
+        assert!(prompt.contains("runs inside sandbox"));
+        assert!(prompt.contains("Sandbox/host routing changes are expected runtime behavior"));
+        // Sudo hint must NOT appear when sudo_non_interactive is unset.
+        assert!(!prompt.contains("sudo_non_interactive=true` means non-interactive sudo"));
+    }
+
+    #[test]
+    fn test_runtime_context_no_sandbox_uses_host_only_routing() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("container-host".into()),
+                os: Some("linux".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+            nodes: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("## Runtime"));
+        assert!(prompt.contains("Host: host=container-host"));
+        // No sandbox line should appear.
+        assert!(!prompt.contains("Sandbox(exec)"));
+        // Host-only routing guidance should be used.
+        assert!(prompt.contains("Execution routing:"));
+        assert!(prompt.contains("`exec` runs on the host"));
+        // Sandbox-specific guidance should NOT appear.
+        assert!(!prompt.contains("runs inside sandbox"));
+        assert!(!prompt.contains("Sandbox/host routing changes"));
+        // Sudo hint should NOT appear when sudo_non_interactive is not set.
+        assert!(!prompt.contains("sudo_non_interactive"));
+    }
+
+    #[test]
+    fn test_runtime_context_no_sandbox_with_sudo_includes_sudo_hint() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("container-host".into()),
+                sudo_non_interactive: Some(true),
+                ..Default::default()
+            },
+            sandbox: None,
+            nodes: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("`exec` runs on the host"));
+        assert!(!prompt.contains("runs inside sandbox"));
+        assert!(prompt.contains("sudo_non_interactive=true` means non-interactive sudo"));
     }
 
     #[test]
@@ -901,6 +1248,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -921,6 +1269,46 @@ mod tests {
     }
 
     #[test]
+    fn test_runtime_context_includes_channel_surface_fields_when_set() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                session_key: Some("telegram:bot-main:123456".into()),
+                surface: Some("telegram".into()),
+                session_kind: Some("channel".into()),
+                channel_type: Some("telegram".into()),
+                channel_account_id: Some("bot-main".into()),
+                channel_chat_id: Some("123456".into()),
+                channel_chat_type: Some("private".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+            nodes: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("surface=telegram"));
+        assert!(prompt.contains("session_kind=channel"));
+        assert!(prompt.contains("channel_type=telegram"));
+        assert!(prompt.contains("channel_account=bot-main"));
+        assert!(prompt.contains("channel_chat_id=123456"));
+        assert!(prompt.contains("channel_chat_type=private"));
+    }
+
+    #[test]
     fn test_runtime_context_omits_location_when_none() {
         let tools = ToolRegistry::new();
         let runtime = PromptRuntimeContext {
@@ -930,6 +1318,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -956,10 +1345,8 @@ mod tests {
                 host: Some("moltis-devbox".into()),
                 ..Default::default()
             },
-            sandbox: Some(PromptSandboxRuntimeContext {
-                exec_sandboxed: false,
-                ..Default::default()
-            }),
+            sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_minimal_runtime(
@@ -975,7 +1362,7 @@ mod tests {
 
         assert!(prompt.contains("## Runtime"));
         assert!(prompt.contains("Host: host=moltis-devbox"));
-        assert!(prompt.contains("Sandbox(exec): enabled=false"));
+        assert!(!prompt.contains("Sandbox(exec)"));
         assert!(!prompt.contains("Execution routing:"));
     }
 
@@ -1185,6 +1572,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -1215,6 +1603,7 @@ mod tests {
                 ..Default::default()
             },
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -1245,6 +1634,7 @@ mod tests {
         let runtime = PromptRuntimeContext {
             host: PromptHostRuntimeContext::default(),
             sandbox: None,
+            nodes: None,
         };
 
         let prompt = build_system_prompt_with_session_runtime(
@@ -1263,5 +1653,147 @@ mod tests {
 
         assert!(!prompt.contains("The current user datetime is "));
         assert!(!prompt.contains("The current user date is "));
+    }
+
+    // ── Phase 4: ModelFamily, compact schema, tool call guidance ────────
+
+    #[test]
+    fn model_family_detects_llama() {
+        assert_eq!(
+            ModelFamily::from_model_id("llama3.1:8b"),
+            ModelFamily::Llama
+        );
+        assert_eq!(
+            ModelFamily::from_model_id("meta-llama/Llama-3.3-70B"),
+            ModelFamily::Llama,
+        );
+    }
+
+    #[test]
+    fn model_family_detects_qwen() {
+        assert_eq!(ModelFamily::from_model_id("qwen2.5:7b"), ModelFamily::Qwen);
+        assert_eq!(
+            ModelFamily::from_model_id("Qwen/Qwen2.5-Coder-32B"),
+            ModelFamily::Qwen,
+        );
+    }
+
+    #[test]
+    fn model_family_detects_mistral() {
+        assert_eq!(
+            ModelFamily::from_model_id("mistral:latest"),
+            ModelFamily::Mistral,
+        );
+        assert_eq!(
+            ModelFamily::from_model_id("mixtral-8x7b"),
+            ModelFamily::Mistral,
+        );
+    }
+
+    #[test]
+    fn model_family_detects_others() {
+        assert_eq!(
+            ModelFamily::from_model_id("deepseek-coder-v2:16b"),
+            ModelFamily::DeepSeek,
+        );
+        assert_eq!(ModelFamily::from_model_id("gemma:7b"), ModelFamily::Gemma);
+        assert_eq!(ModelFamily::from_model_id("phi-3:mini"), ModelFamily::Phi);
+    }
+
+    #[test]
+    fn model_family_unknown_for_unrecognized() {
+        assert_eq!(ModelFamily::from_model_id("gpt-4o"), ModelFamily::Unknown,);
+        assert_eq!(
+            ModelFamily::from_model_id("claude-3-opus"),
+            ModelFamily::Unknown,
+        );
+    }
+
+    #[test]
+    fn compact_schema_formats_required_and_optional_params() {
+        let schema = serde_json::json!({
+            "name": "exec",
+            "description": "Run a shell command",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout": {"type": "integer"}
+                },
+                "required": ["command"]
+            }
+        });
+        let out = format_compact_tool_schema(&schema);
+        assert!(out.contains("### exec"));
+        assert!(out.contains("Run a shell command"));
+        assert!(out.contains("command (string, required)"));
+        assert!(out.contains("timeout (integer)"));
+    }
+
+    #[test]
+    fn compact_schema_no_params_section_when_empty() {
+        let schema = serde_json::json!({
+            "name": "noop",
+            "description": "Does nothing",
+            "parameters": {"type": "object", "properties": {}}
+        });
+        let out = format_compact_tool_schema(&schema);
+        assert!(out.contains("### noop"));
+        assert!(!out.contains("Params:"));
+    }
+
+    #[test]
+    fn tool_call_guidance_includes_fenced_example() {
+        let g = tool_call_guidance(Some("llama3.1:8b"));
+        assert!(g.contains("```tool_call"));
+        assert!(g.contains("\"tool\":"));
+        assert!(g.contains("Example:"));
+    }
+
+    #[test]
+    fn tool_call_guidance_works_with_no_model() {
+        let g = tool_call_guidance(None);
+        assert!(g.contains("## How to call tools"));
+        assert!(g.contains("```tool_call"));
+    }
+
+    #[test]
+    fn text_mode_prompt_uses_compact_schema() {
+        let mut tools = ToolRegistry::new();
+        struct ParamTool;
+        #[async_trait::async_trait]
+        impl crate::tool_registry::AgentTool for ParamTool {
+            fn name(&self) -> &str {
+                "exec"
+            }
+
+            fn description(&self) -> &str {
+                "Run a shell command"
+            }
+
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "timeout": {"type": "integer"}
+                    },
+                    "required": ["command"]
+                })
+            }
+
+            async fn execute(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+                Ok(serde_json::json!({}))
+            }
+        }
+        tools.register(Box::new(ParamTool));
+
+        let prompt = build_system_prompt(&tools, false, None);
+        // Text-mode should use compact format
+        assert!(prompt.contains("### exec"));
+        assert!(prompt.contains("Params: command (string, required)"));
+        // Should include tool call guidance
+        assert!(prompt.contains("## How to call tools"));
+        assert!(prompt.contains("```tool_call"));
     }
 }

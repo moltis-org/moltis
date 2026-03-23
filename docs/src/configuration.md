@@ -28,18 +28,25 @@ agent_max_iterations = 25       # Max tool call iterations per run
 
 ## LLM Providers
 
-Provider API keys are stored separately in `~/.config/moltis/provider_keys.json` for security. Configure them through the web UI or directly in the JSON file.
+Configure providers through the web UI or directly in `moltis.toml`. API keys can be set
+via environment variables (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or
+in the config file.
 
 ```toml
 [providers]
-offered = ["openai", "anthropic", "local-llm"]
+offered = ["anthropic", "openai", "gemini"]
+
+[providers.anthropic]
+enabled = true
 
 [providers.openai]
 enabled = true
 models = ["gpt-5.3", "gpt-5.2"]
+stream_transport = "sse"        # "sse", "websocket", or "auto"
 
-[providers.anthropic]
+[providers.gemini]
 enabled = true
+models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
 
 [providers.local-llm]
 enabled = true
@@ -49,9 +56,7 @@ models = ["qwen2.5-coder-7b-q4_k_m"]
 priority_models = ["gpt-5.2"]
 ```
 
-See [Providers](providers.md) for detailed provider configuration.
-
-*More providers are coming soon.*
+See [Providers](providers.md) for the full list of supported providers and configuration options.
 
 ## Sandbox Configuration
 
@@ -62,6 +67,9 @@ Commands run inside isolated containers for security:
 mode = "all"                    # "off", "non-main", or "all"
 scope = "session"               # "command", "session", or "global"
 workspace_mount = "ro"          # "ro", "rw", or "none"
+# host_data_dir = "/host/path/data"  # Optional override if auto-detection cannot resolve the host path
+home_persistence = "shared"     # "off", "session", or "shared" (default: "shared")
+# shared_home_dir = "/path/to/shared-home"  # Optional path for shared mode
 backend = "auto"                # "auto", "docker", or "apple-container"
 no_network = true
 
@@ -70,12 +78,19 @@ packages = [
     "curl",
     "git",
     "jq",
+    "tmux",
     "python3",
     "python3-pip",
     "nodejs",
     "npm",
+    "golang-go",
 ]
 ```
+
+If Moltis runs inside Docker and also mounts the host container socket
+(`/var/run/docker.sock`), Moltis now auto-detects the host path backing
+`/home/moltis/.moltis` from the parent container's mount table. If that
+inspection cannot resolve the correct path, set `host_data_dir` explicitly.
 
 ```admonish info
 When you modify the packages list and restart, Moltis automatically rebuilds the sandbox image with a new tag.
@@ -105,6 +120,24 @@ If no search API key is configured:
 
 - with `duckduckgo_fallback = false` (default), Moltis returns a clear hint to set `BRAVE_API_KEY` or `PERPLEXITY_API_KEY`
 - with `duckduckgo_fallback = true`, Moltis attempts DuckDuckGo HTML search, which may hit CAPTCHA/rate limits
+
+## Skills
+
+Configure skill discovery and agent-managed personal skills:
+
+```toml
+[skills]
+enabled = true
+auto_load = ["commit"]
+enable_agent_sidecar_files = false  # Opt-in: allow agents to write sidecar text files in personal skills
+```
+
+`enable_agent_sidecar_files` is disabled by default. When enabled, Moltis
+registers the `write_skill_files` tool so agents can write supplementary files
+such as `script.sh`, `Dockerfile`, templates, or `_meta.json` inside
+`<data_dir>/skills/<name>/`. Writes stay confined to that personal skill
+directory, reject path traversal and symlink escapes, and are recorded in
+`~/.moltis/logs/security-audit.jsonl`.
 
 ## Chat Message Queue
 
@@ -182,15 +215,55 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 env = { GITHUB_TOKEN = "ghp_..." }
+
+[mcp.servers.remote_api]
+transport = "sse"
+url = "https://mcp.example.com/mcp?api_key=$REMOTE_MCP_KEY"
+headers = { Authorization = "Bearer ${REMOTE_MCP_TOKEN}" }
 ```
+
+Remote MCP URLs and headers support `$NAME` or `${NAME}` placeholders. For live remote servers, values resolve from Moltis-managed env overrides, either `[env]` in config or **Settings** → **Environment Variables**.
 
 ## Telegram Integration
 
 ```toml
 [channels.telegram.my-bot]
 token = "123456:ABC..."
-allowed_users = [123456789]     # Telegram user IDs allowed to chat
+dm_policy = "allowlist"
+allowlist = ["123456789"]       # Telegram user IDs or usernames (strings)
 ```
+
+See [Telegram](telegram.md) for full configuration reference and setup instructions.
+
+## Discord Integration
+
+```toml
+[channels]
+offered = ["telegram", "discord"]
+
+[channels.discord.my-bot]
+token = "MTIzNDU2Nzg5.example.bot-token"
+dm_policy = "allowlist"
+mention_mode = "mention"
+allowlist = ["your_username"]
+```
+
+See [Discord](discord.md) for full configuration reference and setup instructions.
+
+## Slack Integration
+
+```toml
+[channels]
+offered = ["slack"]
+
+[channels.slack.my-bot]
+bot_token = "xoxb-..."
+app_token = "xapp-..."
+dm_policy = "allowlist"
+allowlist = ["U123456789"]
+```
+
+See [Slack](slack.md) for full configuration reference and setup instructions.
 
 ## TLS / HTTPS
 
@@ -284,15 +357,17 @@ agent_timeout_secs = 600
 agent_max_iterations = 25
 
 [providers]
-offered = ["openai", "anthropic", "local-llm"]
+offered = ["anthropic", "openai", "gemini"]
 
 [tools.exec.sandbox]
 mode = "all"
 scope = "session"
 workspace_mount = "ro"
+home_persistence = "session"
+# shared_home_dir = "/path/to/shared-home"
 backend = "auto"
 no_network = true
-packages = ["curl", "git", "jq", "python3", "nodejs"]
+packages = ["curl", "git", "jq", "python3", "nodejs", "golang-go"]
 
 [memory]
 backend = "builtin"

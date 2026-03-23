@@ -9,12 +9,16 @@
 use std::sync::Arc;
 
 use {
-    anyhow::{Context, Result, bail},
     async_trait::async_trait,
     secrecy::{ExposeSecret, Secret},
     tokio::sync::RwLock,
     tracing::{debug, info, warn},
     url::Url,
+};
+
+use crate::{
+    error::{Context, Error, Result},
+    remote::sanitize_url_for_display,
 };
 
 use moltis_oauth::{
@@ -84,7 +88,8 @@ pub struct McpOAuthOverride {
 /// OAuth 2.1 provider for a single MCP server.
 pub struct McpOAuthProvider {
     server_name: String,
-    server_url: String,
+    server_url: Secret<String>,
+    server_url_display: String,
     http_client: reqwest::Client,
     token_store: TokenStore,
     registration_store: RegistrationStore,
@@ -108,7 +113,8 @@ impl McpOAuthProvider {
     pub fn new(server_name: &str, server_url: &str) -> Self {
         Self {
             server_name: server_name.to_string(),
-            server_url: server_url.to_string(),
+            server_url: Secret::new(server_url.to_string()),
+            server_url_display: sanitize_url_for_display(server_url),
             http_client: reqwest::Client::new(),
             token_store: TokenStore::new(),
             registration_store: RegistrationStore::new(),
@@ -129,7 +135,8 @@ impl McpOAuthProvider {
     ) -> Self {
         Self {
             server_name: server_name.to_string(),
-            server_url: server_url.to_string(),
+            server_url: Secret::new(server_url.to_string()),
+            server_url_display: sanitize_url_for_display(server_url),
             http_client: reqwest::Client::new(),
             token_store,
             registration_store,
@@ -176,9 +183,12 @@ impl McpOAuthProvider {
             (
                 ov.client_id.clone(),
                 ov.token_url.clone(),
-                Some(self.server_url.clone()),
+                Some(self.server_url.expose_secret().to_string()),
             )
-        } else if let Some(reg) = self.registration_store.load(&self.server_url) {
+        } else if let Some(reg) = self
+            .registration_store
+            .load(self.server_url.expose_secret())
+        {
             (reg.client_id, reg.token_endpoint, Some(reg.resource))
         } else {
             return Ok(None); // Can't refresh without knowing where to send the request
@@ -200,7 +210,9 @@ impl McpOAuthProvider {
         let flow = OAuthFlow::new(config);
         match flow.refresh(refresh_token.expose_secret()).await {
             Ok(new_tokens) => {
-                self.token_store.save(&self.store_key(), &new_tokens)?;
+                self.token_store
+                    .save(&self.store_key(), &new_tokens)
+                    .context("failed to persist refreshed OAuth tokens")?;
                 info!(server = %self.server_name, "MCP OAuth token refreshed");
                 Ok(Some(new_tokens))
             },
@@ -224,13 +236,15 @@ impl McpOAuthProvider {
                     ov.auth_url.clone(),
                     ov.token_url.clone(),
                     ov.scopes.clone(),
-                    self.server_url.clone(),
+                    self.server_url.expose_secret().to_string(),
                 )
             } else {
                 // Full discovery flow
                 // Re-register for each interactive flow so redirect URI always
                 // matches the current web origin callback.
-                let _ = self.registration_store.delete(&self.server_url);
+                let _ = self
+                    .registration_store
+                    .delete(self.server_url.expose_secret());
                 let header = if let Some(v) = www_authenticate {
                     Some(v.to_string())
                 } else {
@@ -250,15 +264,20 @@ impl McpOAuthProvider {
             extra_auth_params: Vec::new(),
             device_flow: false,
         };
+        let resource_display = config
+            .resource
+            .as_deref()
+            .map(sanitize_url_for_display)
+            .unwrap_or_default();
 
         info!(
             server = %self.server_name,
-            resource = %config.resource.as_deref().unwrap_or(""),
+            resource = %resource_display,
             "starting MCP OAuth authorization flow"
         );
 
         let flow = OAuthFlow::new(config.clone());
-        let auth_req = flow.start()?;
+        let auth_req = flow.start().context("failed to start OAuth flow")?;
 
         *self.pending_oauth.write().await = Some(PendingOAuthFlow {
             state: auth_req.state.clone(),
@@ -268,11 +287,7 @@ impl McpOAuthProvider {
         });
         *self.state.write().await = McpAuthState::AwaitingBrowser;
 
-        info!(
-            server = %self.server_name,
-            auth_url = %auth_req.url,
-            "MCP OAuth authorization URL prepared"
-        );
+        info!(server = %self.server_name, "MCP OAuth authorization URL prepared");
 
         Ok(auth_req.url)
     }
@@ -299,7 +314,9 @@ impl McpOAuthProvider {
             .await
             .context("OAuth token exchange failed")?;
 
-        self.token_store.save(&self.store_key(), &tokens)?;
+        self.token_store
+            .save(&self.store_key(), &tokens)
+            .context("failed to persist exchanged OAuth tokens")?;
         *self.cached_token.write().await = Some(tokens);
         *self.state.write().await = McpAuthState::Authenticated;
 
@@ -340,14 +357,14 @@ impl McpOAuthProvider {
         www_authenticate: Option<&str>,
         redirect_uri: &str,
     ) -> Result<(String, String, String, Vec<String>, String)> {
-        let server_url = Url::parse(&self.server_url)
-            .with_context(|| format!("invalid MCP server URL: {}", self.server_url))?;
+        let server_url = Url::parse(self.server_url.expose_secret())
+            .with_context(|| format!("invalid MCP server URL: {}", self.server_url_display))?;
         let origin = Self::origin_url(&server_url);
         let has_path = server_url.path() != "/" && !server_url.path().is_empty();
 
         debug!(
             server = %self.server_name,
-            server_url = %server_url,
+            server_url = %self.server_url_display,
             origin = %origin,
             has_path,
             www_authenticate = ?www_authenticate,
@@ -391,7 +408,9 @@ impl McpOAuthProvider {
                     .context("no authorization_servers in protected resource metadata")?;
                 let as_url = Url::parse(as_url_str)
                     .with_context(|| format!("invalid authorization server URL: {as_url_str}"))?;
-                let as_meta = fetch_as_metadata(&self.http_client, &as_url).await?;
+                let as_meta = fetch_as_metadata(&self.http_client, &as_url)
+                    .await
+                    .context("failed to fetch authorization server metadata")?;
                 (as_meta, resource)
             },
             Err(e) => {
@@ -402,22 +421,28 @@ impl McpOAuthProvider {
                 );
                 // Fall back: fetch AS metadata. Try the server URL first, then
                 // the origin if the server has a non-trivial path.
-                let as_meta = match fetch_as_metadata(&self.http_client, &server_url).await {
-                    Ok(meta) => meta,
-                    Err(path_err) if has_path => {
-                        debug!(
-                            server = %self.server_name,
-                            origin = %origin,
-                            "AS metadata unavailable at path-aware URL, trying origin"
-                        );
-                        fetch_as_metadata(&self.http_client, &origin).await.with_context(|| {
+                let as_meta =
+                    match fetch_as_metadata(&self.http_client, &server_url).await {
+                        Ok(meta) => meta,
+                        Err(path_err) if has_path => {
+                            debug!(
+                                server = %self.server_name,
+                                origin = %origin,
+                                "AS metadata unavailable at path-aware URL, trying origin"
+                            );
+                            fetch_as_metadata(&self.http_client, &origin).await.with_context(|| {
                             format!(
-                                "AS metadata unavailable at both {server_url} and {origin}: {path_err}"
+                                "AS metadata unavailable at both {} and {origin}: {path_err}",
+                                self.server_url_display
                             )
                         })?
-                    },
-                    Err(e) => return Err(e),
-                };
+                        },
+                        Err(e) => {
+                            return Err(Error::message(format!(
+                                "failed to fetch authorization server metadata: {e}"
+                            )));
+                        },
+                    };
                 // When resource metadata is unavailable we fall back to origin
                 // as the resource indicator to avoid path-scoped audience mismatches.
                 let resource = Self::origin_resource(&server_url);
@@ -431,12 +456,15 @@ impl McpOAuthProvider {
             auth_endpoint = %as_meta.authorization_endpoint,
             token_endpoint = %as_meta.token_endpoint,
             registration = ?as_meta.registration_endpoint,
-            resource = %resource,
+            resource = %sanitize_url_for_display(&resource),
             "resolved OAuth endpoints"
         );
 
         // Step 3: Dynamic client registration (or use cached)
-        let client_id = if let Some(cached) = self.registration_store.load(&self.server_url) {
+        let client_id = if let Some(cached) = self
+            .registration_store
+            .load(self.server_url.expose_secret())
+        {
             debug!(
                 server = %self.server_name,
                 client_id = %cached.client_id,
@@ -453,7 +481,8 @@ impl McpOAuthProvider {
                 vec![redirect_uri.to_string()],
                 &format!("moltis ({})", self.server_name),
             )
-            .await?;
+            .await
+            .context("failed to register OAuth client")?;
 
             // Persist registration
             let stored = StoredRegistration {
@@ -467,11 +496,15 @@ impl McpOAuthProvider {
                     .map(|d| d.as_secs())
                     .unwrap_or(0),
             };
-            self.registration_store.save(&self.server_url, &stored)?;
+            self.registration_store
+                .save(self.server_url.expose_secret(), &stored)
+                .context("failed to persist OAuth registration")?;
 
             reg.client_id
         } else {
-            bail!("AS does not support dynamic client registration and no client_id configured");
+            return Err(Error::message(
+                "AS does not support dynamic client registration and no client_id configured",
+            ));
         };
 
         Ok((
@@ -708,6 +741,8 @@ mod tests {
         let expired = OAuthTokens {
             access_token: Secret::new("test".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(now - 100),
         };
         assert!(McpOAuthProvider::is_token_expired(&expired));
@@ -716,6 +751,8 @@ mod tests {
         let near_expiry = OAuthTokens {
             access_token: Secret::new("test".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(now + 30),
         };
         assert!(McpOAuthProvider::is_token_expired(&near_expiry));
@@ -724,6 +761,8 @@ mod tests {
         let valid = OAuthTokens {
             access_token: Secret::new("test".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(now + 3600),
         };
         assert!(!McpOAuthProvider::is_token_expired(&valid));
@@ -732,6 +771,8 @@ mod tests {
         let no_expiry = OAuthTokens {
             access_token: Secret::new("test".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: None,
         };
         assert!(!McpOAuthProvider::is_token_expired(&no_expiry));
@@ -755,6 +796,8 @@ mod tests {
         let tokens = OAuthTokens {
             access_token: Secret::new("cached-token".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(now + 3600),
         };
         token_store.save("mcp:test-server", &tokens).unwrap();
@@ -800,6 +843,8 @@ mod tests {
         let tokens = OAuthTokens {
             access_token: Secret::new("expired-token".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(0), // long expired
         };
         token_store.save("mcp:test-server", &tokens).unwrap();

@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     env_subst::substitute_env,
-    schema::{AgentIdentity, MoltisConfig, UserProfile},
+    schema::{AgentIdentity, MoltisConfig, ResolvedIdentity, UserProfile},
 };
 
 /// Generate a random available port by binding to port 0 and reading the assigned port.
@@ -28,6 +28,9 @@ static CONFIG_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Override for the data directory, set via `set_data_dir()`.
 static DATA_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Override for the share directory, set via `set_share_dir()`.
+static SHARE_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Set a custom config directory. When set, config discovery only looks in
 /// this directory (project-local and user-global paths are skipped).
@@ -71,21 +74,70 @@ fn data_dir_override() -> Option<PathBuf> {
         .clone()
 }
 
+/// Set a custom share directory (for tests or alternative layouts).
+pub fn set_share_dir(path: PathBuf) {
+    *SHARE_DIR_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+}
+
+/// Clear the share directory override, restoring default discovery.
+pub fn clear_share_dir() {
+    *SHARE_DIR_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+fn share_dir_override() -> Option<PathBuf> {
+    SHARE_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// Returns the share directory for external assets (web files, WASM components).
+///
+/// Resolution order:
+/// 1. Programmatic override via `set_share_dir()`
+/// 2. `MOLTIS_SHARE_DIR` env var
+/// 3. `/usr/share/moltis/` (Linux system packages) — only if it exists
+/// 4. `data_dir()/share/` (`~/.moltis/share/`) — only if it exists
+/// 5. `None` (fall back to embedded assets)
+pub fn share_dir() -> Option<PathBuf> {
+    if let Some(dir) = share_dir_override() {
+        return Some(dir);
+    }
+    if let Ok(dir) = std::env::var("MOLTIS_SHARE_DIR")
+        && !dir.is_empty()
+    {
+        return Some(PathBuf::from(dir));
+    }
+    // System packages (Linux)
+    let system = PathBuf::from("/usr/share/moltis");
+    if system.is_dir() {
+        return Some(system);
+    }
+    // User data directory
+    let user = data_dir().join("share");
+    if user.is_dir() {
+        return Some(user);
+    }
+    None
+}
+
 /// Load config from the given path (any supported format).
 ///
 /// After parsing, `MOLTIS_*` env vars are applied as overrides.
-pub fn load_config(path: &Path) -> anyhow::Result<MoltisConfig> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+pub fn load_config(path: &Path) -> crate::Result<MoltisConfig> {
+    let raw = std::fs::read_to_string(path).map_err(|source| {
+        crate::Error::external(format!("failed to read {}", path.display()), source)
+    })?;
     let raw = substitute_env(&raw);
     let config = parse_config(&raw, path)?;
     Ok(apply_env_overrides(config))
 }
 
 /// Load and parse the config file with env substitution and includes.
-pub fn load_config_value(path: &Path) -> anyhow::Result<serde_json::Value> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+pub fn load_config_value(path: &Path) -> crate::Result<serde_json::Value> {
+    let raw = std::fs::read_to_string(path).map_err(|source| {
+        crate::Error::external(format!("failed to read {}", path.display()), source)
+    })?;
     let raw = substitute_env(&raw);
     parse_config_value(&raw, path)
 }
@@ -101,7 +153,7 @@ pub fn load_config_value(path: &Path) -> anyhow::Result<serde_json::Value> {
 /// If the config has port 0 (either from defaults or missing `[server]` section),
 /// a random available port is generated and saved to the config file.
 pub fn discover_and_load() -> MoltisConfig {
-    if let Some(path) = find_config_file() {
+    let mut cfg = if let Some(path) = find_config_file() {
         debug!(path = %path.display(), "loading config");
         match load_config(&path) {
             Ok(mut cfg) => {
@@ -120,10 +172,11 @@ pub fn discover_and_load() -> MoltisConfig {
                         warn!(error = %e, "failed to save config with generated port");
                     }
                 }
-                return cfg; // env overrides already applied by load_config
+                cfg // env overrides already applied by load_config
             },
             Err(e) => {
                 warn!(path = %path.display(), error = %e, "failed to load config, using defaults");
+                apply_env_overrides(MoltisConfig::default())
             },
         }
     } else {
@@ -147,9 +200,20 @@ pub fn discover_and_load() -> MoltisConfig {
                 "wrote default config template"
             );
         }
-        return apply_env_overrides(config);
+        apply_env_overrides(config)
+    };
+
+    // Merge markdown agent definitions (TOML presets take precedence).
+    let agent_defs = crate::agent_defs::discover_agent_defs();
+    if !agent_defs.is_empty() {
+        debug!(
+            count = agent_defs.len(),
+            "discovered markdown agent definitions"
+        );
+        crate::agent_defs::merge_agent_defs(&mut cfg.agents.presets, agent_defs);
     }
-    apply_env_overrides(MoltisConfig::default())
+
+    cfg
 }
 
 /// Find the first config file in standard locations.
@@ -285,21 +349,78 @@ pub fn memory_path() -> PathBuf {
     data_dir().join("MEMORY.md")
 }
 
+/// Return the workspace directory for a named agent: `data_dir()/agents/<id>`.
+pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
+    data_dir().join("agents").join(agent_id)
+}
+
 /// Load identity values from `IDENTITY.md` frontmatter if present.
 pub fn load_identity() -> Option<AgentIdentity> {
     let path = identity_path();
     let content = std::fs::read_to_string(path).ok()?;
     let frontmatter = extract_yaml_frontmatter(&content)?;
     let identity = parse_identity_frontmatter(frontmatter);
-    if identity.name.is_none()
-        && identity.emoji.is_none()
-        && identity.creature.is_none()
-        && identity.vibe.is_none()
-    {
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
         None
     } else {
         Some(identity)
     }
+}
+
+/// Load identity values for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/IDENTITY.md` first and
+/// falls back to the root `IDENTITY.md`.
+pub fn load_identity_for_agent(agent_id: &str) -> Option<AgentIdentity> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("IDENTITY.md");
+        if main_path.exists() {
+            // File exists — return parsed content or None (empty sentinel).
+            // Do NOT fall back to root so cleared identities stay cleared.
+            return load_identity_from_path(&main_path);
+        }
+        return load_identity();
+    }
+    load_identity_from_path(&agent_workspace_dir(agent_id).join("IDENTITY.md"))
+}
+
+/// Build a fully-resolved identity by merging all sources:
+/// `moltis.toml` `[identity]` + `IDENTITY.md` frontmatter + `USER.md` + `SOUL.md`.
+///
+/// This is the single source of truth used by both the gateway (`identity_get`)
+/// and the Swift FFI bridge.
+pub fn resolve_identity() -> ResolvedIdentity {
+    let config = discover_and_load();
+    resolve_identity_from_config(&config)
+}
+
+/// Like [`resolve_identity`] but accepts a pre-loaded config.
+pub fn resolve_identity_from_config(config: &MoltisConfig) -> ResolvedIdentity {
+    let mut id = ResolvedIdentity::from_config(config);
+
+    // Read from `agents/main/IDENTITY.md` first (primary), falling back to
+    // root `IDENTITY.md` (legacy).  This mirrors the read path in
+    // `load_identity_for_agent("main")`.
+    if let Some(file_identity) = load_identity_for_agent("main") {
+        if let Some(name) = file_identity.name {
+            id.name = name;
+        }
+        if let Some(emoji) = file_identity.emoji {
+            id.emoji = Some(emoji);
+        }
+        if let Some(theme) = file_identity.theme {
+            id.theme = Some(theme);
+        }
+    }
+
+    if let Some(file_user) = load_user()
+        && let Some(name) = file_user.name
+    {
+        id.user_name = Some(name);
+    }
+
+    id.soul = load_soul_for_agent("main");
+    id
 }
 
 /// Load user values from `USER.md` frontmatter if present.
@@ -392,8 +513,24 @@ pub fn load_soul() -> Option<String> {
     }
 }
 
+/// Load SOUL.md for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/SOUL.md` first and
+/// falls back to the root `SOUL.md`.
+pub fn load_soul_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("SOUL.md");
+        if main_path.exists() {
+            // File exists — return content or None (explicit clear).
+            return load_workspace_markdown(main_path);
+        }
+        return load_soul();
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("SOUL.md"))
+}
+
 /// Write `DEFAULT_SOUL` to `SOUL.md` when the file doesn't already exist.
-fn write_default_soul() -> anyhow::Result<()> {
+fn write_default_soul() -> crate::Result<()> {
     let path = soul_path();
     if path.exists() {
         return Ok(());
@@ -411,9 +548,21 @@ pub fn load_agents_md() -> Option<String> {
     load_workspace_markdown(agents_path())
 }
 
+/// Load AGENTS.md for a specific agent, falling back to the root file.
+pub fn load_agents_md_for_agent(agent_id: &str) -> Option<String> {
+    let agent_path = agent_workspace_dir(agent_id).join("AGENTS.md");
+    load_workspace_markdown(agent_path).or_else(load_agents_md)
+}
+
 /// Load TOOLS.md from the workspace root (`data_dir`) if present and non-empty.
 pub fn load_tools_md() -> Option<String> {
     load_workspace_markdown(tools_path())
+}
+
+/// Load TOOLS.md for a specific agent, falling back to the root file.
+pub fn load_tools_md_for_agent(agent_id: &str) -> Option<String> {
+    let agent_path = agent_workspace_dir(agent_id).join("TOOLS.md");
+    load_workspace_markdown(agent_path).or_else(load_tools_md)
 }
 
 /// Load HEARTBEAT.md from the workspace root (`data_dir`) if present and non-empty.
@@ -426,12 +575,27 @@ pub fn load_memory_md() -> Option<String> {
     load_workspace_markdown(memory_path())
 }
 
+/// Load MEMORY.md for a specific agent workspace.
+///
+/// For `"main"`, this checks `data_dir()/agents/main/MEMORY.md` first and
+/// falls back to the root `MEMORY.md`.
+pub fn load_memory_md_for_agent(agent_id: &str) -> Option<String> {
+    if agent_id == "main" {
+        let main_path = agent_workspace_dir("main").join("MEMORY.md");
+        if let Some(memory) = load_workspace_markdown(main_path) {
+            return Some(memory);
+        }
+        return load_memory_md();
+    }
+    load_workspace_markdown(agent_workspace_dir(agent_id).join("MEMORY.md"))
+}
+
 /// Persist SOUL.md in the workspace root (`data_dir`).
 ///
 /// - `Some(non-empty)` writes `SOUL.md` with the given content
 /// - `None` or empty writes an empty `SOUL.md` so that `load_soul()`
 ///   returns `None` without re-seeding the default
-pub fn save_soul(soul: Option<&str>) -> anyhow::Result<PathBuf> {
+pub fn save_soul(soul: Option<&str>) -> crate::Result<PathBuf> {
     let path = soul_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -449,13 +613,30 @@ pub fn save_soul(soul: Option<&str>) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
+/// Persist SOUL.md into an agent's workspace directory.
+///
+/// For the main agent this writes to `agents/main/SOUL.md` so that
+/// `load_soul_for_agent("main")` picks it up on the primary read path.
+pub fn save_soul_for_agent(agent_id: &str, soul: Option<&str>) -> crate::Result<PathBuf> {
+    let dir = agent_workspace_dir(agent_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("SOUL.md");
+    match soul.map(str::trim) {
+        Some(content) if !content.is_empty() => {
+            std::fs::write(&path, content)?;
+        },
+        _ => {
+            std::fs::write(&path, "")?;
+        },
+    }
+    Ok(path)
+}
+
 /// Persist identity values to `IDENTITY.md` using YAML frontmatter.
-pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
+pub fn save_identity(identity: &AgentIdentity) -> crate::Result<PathBuf> {
     let path = identity_path();
-    let has_values = identity.name.is_some()
-        || identity.emoji.is_some()
-        || identity.creature.is_some()
-        || identity.vibe.is_some();
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
 
     if !has_values {
         if path.exists() {
@@ -475,11 +656,8 @@ pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
     if let Some(emoji) = identity.emoji.as_deref() {
         yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
     }
-    if let Some(creature) = identity.creature.as_deref() {
-        yaml_lines.push(format!("creature: {}", yaml_scalar(creature)));
-    }
-    if let Some(vibe) = identity.vibe.as_deref() {
-        yaml_lines.push(format!("vibe: {}", yaml_scalar(vibe)));
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
     }
     let yaml = yaml_lines.join("\n");
     let content = format!(
@@ -490,8 +668,40 @@ pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
+/// Persist identity values for an agent into its workspace directory.
+pub fn save_identity_for_agent(agent_id: &str, identity: &AgentIdentity) -> crate::Result<PathBuf> {
+    let dir = agent_workspace_dir(agent_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("IDENTITY.md");
+
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
+
+    if !has_values {
+        // Write an empty sentinel so load_identity_for_agent won't fall back
+        // to a stale root IDENTITY.md on upgraded installs.
+        std::fs::write(&path, "")?;
+        return Ok(path);
+    }
+
+    let mut yaml_lines = Vec::new();
+    if let Some(name) = identity.name.as_deref() {
+        yaml_lines.push(format!("name: {}", yaml_scalar(name)));
+    }
+    if let Some(emoji) = identity.emoji.as_deref() {
+        yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
+    }
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
+    }
+
+    let content = format!("---\n{}\n---\n", yaml_lines.join("\n"));
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
 /// Persist user values to `USER.md` using YAML frontmatter.
-pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
+pub fn save_user(user: &UserProfile) -> crate::Result<PathBuf> {
     let path = user_path();
     let has_values = user.name.is_some() || user.timezone.is_some() || user.location.is_some();
 
@@ -532,7 +742,7 @@ pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
+pub fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return None;
@@ -545,6 +755,10 @@ fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
 
 fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
     let mut identity = AgentIdentity::default();
+    // Legacy fields for backward compat with old IDENTITY.md files.
+    let mut creature: Option<String> = None;
+    let mut vibe: Option<String> = None;
+
     for raw in frontmatter.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -561,11 +775,25 @@ fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
         match key {
             "name" => identity.name = Some(value.to_string()),
             "emoji" => identity.emoji = Some(value.to_string()),
-            "creature" => identity.creature = Some(value.to_string()),
-            "vibe" => identity.vibe = Some(value.to_string()),
+            "theme" => identity.theme = Some(value.to_string()),
+            // Backward compat: compose legacy creature/vibe into theme.
+            "creature" => creature = Some(value.to_string()),
+            "vibe" => vibe = Some(value.to_string()),
             _ => {},
         }
     }
+
+    // If no explicit `theme` was set, compose from legacy creature/vibe.
+    if identity.theme.is_none() {
+        let composed = match (vibe, creature) {
+            (Some(v), Some(c)) => Some(format!("{v} {c}")),
+            (Some(v), None) => Some(v),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        };
+        identity.theme = composed;
+    }
+
     identity
 }
 
@@ -650,6 +878,17 @@ fn load_workspace_markdown(path: PathBuf) -> Option<String> {
     }
 }
 
+fn load_identity_from_path(path: &Path) -> Option<AgentIdentity> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let frontmatter = extract_yaml_frontmatter(&content)?;
+    let identity = parse_identity_frontmatter(frontmatter);
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
+        None
+    } else {
+        Some(identity)
+    }
+}
+
 fn strip_leading_html_comments(content: &str) -> &str {
     let mut rest = content;
     loop {
@@ -696,7 +935,7 @@ static CONFIG_SAVE_LOCK: Mutex<ConfigSaveState> = Mutex::new(ConfigSaveState { t
 ///
 /// Acquires a process-wide lock so concurrent callers cannot race.
 /// Returns the path written to.
-pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBuf> {
+pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> crate::Result<PathBuf> {
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
@@ -710,7 +949,7 @@ pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBu
 /// Creates parent directories if needed. Returns the path written to.
 ///
 /// Prefer [`update_config`] for read-modify-write cycles to avoid races.
-pub fn save_config(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
+pub fn save_config(config: &MoltisConfig) -> crate::Result<PathBuf> {
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
@@ -721,9 +960,9 @@ pub fn save_config(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
 ///
 /// Validates the input by parsing it first. Acquires the config save lock
 /// so concurrent callers cannot race.  Returns the path written to.
-pub fn save_raw_config(toml_str: &str) -> anyhow::Result<PathBuf> {
-    let _: MoltisConfig =
-        toml::from_str(toml_str).map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
+pub fn save_raw_config(toml_str: &str) -> crate::Result<PathBuf> {
+    let _: MoltisConfig = toml::from_str(toml_str)
+        .map_err(|source| crate::Error::external(format!("invalid config: {source}"), source))?;
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = find_or_default_config_path();
     guard.target_path = Some(path.clone());
@@ -739,12 +978,12 @@ pub fn save_raw_config(toml_str: &str) -> anyhow::Result<PathBuf> {
 ///
 /// For existing TOML files, this preserves user comments by merging the new
 /// serialized values into the current document structure before writing.
-pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result<PathBuf> {
+pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let toml_str =
-        toml::to_string_pretty(config).map_err(|e| anyhow::anyhow!("serialize config: {e}"))?;
+    let toml_str = toml::to_string_pretty(config)
+        .map_err(|source| crate::Error::external("serialize config", source))?;
 
     let is_toml_path = path
         .extension()
@@ -768,14 +1007,14 @@ pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result
     Ok(path.to_path_buf())
 }
 
-fn merge_toml_preserving_comments(path: &Path, updated_toml: &str) -> anyhow::Result<()> {
+fn merge_toml_preserving_comments(path: &Path, updated_toml: &str) -> crate::Result<()> {
     let current_toml = std::fs::read_to_string(path)?;
     let mut current_doc = current_toml
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| anyhow::anyhow!("parse existing TOML: {e}"))?;
+        .map_err(|source| crate::Error::external("parse existing TOML", source))?;
     let updated_doc = updated_toml
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| anyhow::anyhow!("parse updated TOML: {e}"))?;
+        .map_err(|source| crate::Error::external("parse updated TOML", source))?;
 
     merge_toml_tables(current_doc.as_table_mut(), updated_doc.as_table());
     std::fs::write(path, current_doc.to_string())?;
@@ -818,7 +1057,7 @@ fn merge_toml_items(current: &mut toml_edit::Item, updated: &toml_edit::Item) {
 /// Write the default config file to the user-global config path.
 /// Only called when no config file exists yet.
 /// Uses a comprehensive template with all options documented.
-fn write_default_config(path: &Path, config: &MoltisConfig) -> anyhow::Result<()> {
+fn write_default_config(path: &Path, config: &MoltisConfig) -> crate::Result<()> {
     if path.exists() {
         return Ok(());
     }
@@ -842,8 +1081,8 @@ fn write_default_config(path: &Path, config: &MoltisConfig) -> anyhow::Result<()
 ///
 /// The config is serialized to a JSON value, env overrides are merged in,
 /// then deserialized back. Only env vars with the `MOLTIS_` prefix are
-/// considered. `MOLTIS_CONFIG_DIR`, `MOLTIS_DATA_DIR`, `MOLTIS_ASSETS_DIR`,
-/// `MOLTIS_TOKEN`, `MOLTIS_PASSWORD`, `MOLTIS_TAILSCALE`,
+/// considered. `MOLTIS_CONFIG_DIR`, `MOLTIS_DATA_DIR`, `MOLTIS_SHARE_DIR`,
+/// `MOLTIS_ASSETS_DIR`, `MOLTIS_TOKEN`, `MOLTIS_PASSWORD`, `MOLTIS_TAILSCALE`,
 /// `MOLTIS_WEBAUTHN_RP_ID`, and `MOLTIS_WEBAUTHN_ORIGIN` are excluded
 /// (they are handled separately).
 pub fn apply_env_overrides(config: MoltisConfig) -> MoltisConfig {
@@ -861,6 +1100,7 @@ fn apply_env_overrides_with(
     const EXCLUDED: &[&str] = &[
         "MOLTIS_CONFIG_DIR",
         "MOLTIS_DATA_DIR",
+        "MOLTIS_SHARE_DIR",
         "MOLTIS_ASSETS_DIR",
         "MOLTIS_TOKEN",
         "MOLTIS_PASSWORD",
@@ -964,18 +1204,20 @@ fn set_nested(root: &mut serde_json::Value, path: &[String], val: serde_json::Va
     }
 }
 
-fn parse_config(raw: &str, path: &Path) -> anyhow::Result<MoltisConfig> {
+fn parse_config(raw: &str, path: &Path) -> crate::Result<MoltisConfig> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("toml");
 
     match ext {
         "toml" => Ok(toml::from_str(raw)?),
         "yaml" | "yml" => Ok(serde_yaml::from_str(raw)?),
         "json" => Ok(serde_json::from_str(raw)?),
-        _ => anyhow::bail!("unsupported config format: .{ext}"),
+        _ => Err(crate::Error::message(format!(
+            "unsupported config format: .{ext}"
+        ))),
     }
 }
 
-fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Value> {
+fn parse_config_value(raw: &str, path: &Path) -> crate::Result<serde_json::Value> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("toml");
 
     match ext {
@@ -988,7 +1230,9 @@ fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Valu
             Ok(serde_json::to_value(v)?)
         },
         "json" => Ok(serde_json::from_str(raw)?),
-        _ => anyhow::bail!("unsupported config format: .{ext}"),
+        _ => Err(crate::Error::message(format!(
+            "unsupported config format: .{ext}"
+        ))),
     }
 }
 
@@ -1184,6 +1428,22 @@ mod tests {
             raw.contains("\"collect\"  - Buffer messages, concatenate as single message"),
             "generated template should document the collect queue option"
         );
+        assert!(
+            raw.contains("\"tmux\""),
+            "generated template should include tmux in sandbox packages"
+        );
+
+        let parsed: MoltisConfig = parse_config(&raw, &path).expect("parse generated config");
+        assert!(
+            parsed
+                .tools
+                .exec
+                .sandbox
+                .packages
+                .iter()
+                .any(|pkg| pkg == "tmux"),
+            "parsed config should include tmux in sandbox packages"
+        );
     }
 
     #[test]
@@ -1279,8 +1539,7 @@ name = "Rex"
         let identity = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: Some("🐶".to_string()),
-            creature: Some("dog".to_string()),
-            vibe: Some("chill".to_string()),
+            theme: Some("chill dog golden retriever".to_string()),
         };
 
         let path = save_identity(&identity).expect("save identity");
@@ -1290,8 +1549,7 @@ name = "Rex"
         let loaded = load_identity().expect("load identity");
         assert_eq!(loaded.name.as_deref(), Some("Rex"));
         assert_eq!(loaded.emoji.as_deref(), Some("🐶"), "raw file:\n{raw}");
-        assert_eq!(loaded.creature.as_deref(), Some("dog"));
-        assert_eq!(loaded.vibe.as_deref(), Some("chill"));
+        assert_eq!(loaded.theme.as_deref(), Some("chill dog golden retriever"));
 
         clear_data_dir();
     }
@@ -1305,8 +1563,7 @@ name = "Rex"
         let seeded = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: None,
-            creature: None,
-            vibe: None,
+            theme: None,
         };
         let path = save_identity(&seeded).expect("seed identity");
         assert!(path.exists());
@@ -1624,6 +1881,86 @@ name = "Rex"
 
         let on_disk = std::fs::read_to_string(dir.path().join("SOUL.md")).unwrap();
         assert_eq!(on_disk, custom);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_for_agent_writes_to_agent_dir() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let custom = "Agent soul content.";
+        save_soul_for_agent("main", Some(custom)).expect("save_soul_for_agent");
+
+        let agent_soul = dir.path().join("agents/main/SOUL.md");
+        assert!(agent_soul.exists(), "SOUL.md should exist in agents/main/");
+        assert_eq!(std::fs::read_to_string(&agent_soul).unwrap(), custom);
+
+        // load_soul_for_agent must find the agent-level file.
+        let loaded = load_soul_for_agent("main");
+        assert_eq!(loaded.as_deref(), Some(custom));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_for_agent_none_clears() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        save_soul_for_agent("main", Some("initial")).expect("save");
+        save_soul_for_agent("main", None).expect("clear");
+
+        let agent_soul = dir.path().join("agents/main/SOUL.md");
+        assert!(agent_soul.exists(), "file should remain after clearing");
+        assert!(
+            std::fs::read_to_string(&agent_soul).unwrap().is_empty(),
+            "file should be empty after clearing"
+        );
+
+        clear_data_dir();
+    }
+
+    // ── share_dir tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn share_dir_override_takes_precedence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_share_dir(dir.path().to_path_buf());
+
+        let result = share_dir();
+        assert_eq!(result, Some(dir.path().to_path_buf()));
+
+        clear_share_dir();
+    }
+
+    #[test]
+    fn share_dir_returns_none_when_no_source() {
+        clear_share_dir();
+        // Without an override, env var, or existing directories, share_dir
+        // should return None (unless /usr/share/moltis or ~/.moltis/share
+        // happens to exist on the test machine).
+        let _ = share_dir();
+    }
+
+    #[test]
+    fn share_dir_data_dir_fallback() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+        clear_share_dir();
+
+        // Without the share/ subdirectory, should not return data_dir/share
+        let result = share_dir();
+        assert_ne!(result, Some(dir.path().join("share")));
+
+        // Create the share/ subdirectory
+        std::fs::create_dir(dir.path().join("share")).unwrap();
+        let result = share_dir();
+        assert_eq!(result, Some(dir.path().join("share")));
 
         clear_data_dir();
     }

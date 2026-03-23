@@ -10,7 +10,7 @@ flate2                = { workspace = true }
 moltis-config         = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 notify-debouncer-full = { optional = true, workspace = true }
-reqwest               = { workspace = true }
+reqwest               = { optional = true, workspace = true }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
 serde_yaml            = { workspace = true }
@@ -19,7 +19,8 @@ tokio                 = { workspace = true }
 tracing               = { workspace = true }
 
 [features]
-default      = []
+default      = ["install"]
+install      = ["dep:reqwest"]
 file-watcher = ["dep:notify-debouncer-full"]
 metrics      = ["dep:moltis-metrics"]
 

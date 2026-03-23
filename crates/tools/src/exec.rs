@@ -1,15 +1,16 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 #[cfg(feature = "metrics")]
 use std::time::Instant;
 
 use {
-    anyhow::{Result, bail},
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     tokio::process::Command,
     tracing::{debug, info, warn},
 };
+
+use crate::{Result, error::Error};
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{
@@ -17,6 +18,19 @@ use moltis_metrics::{
 };
 
 use moltis_agents::tool_registry::AgentTool;
+
+/// Event describing a completed exec invocation, passed to the completion callback.
+#[derive(Debug, Clone)]
+pub struct ExecCompletionEvent {
+    pub command: String,
+    pub exit_code: i32,
+    pub stdout_preview: String,
+    pub stderr_preview: String,
+}
+
+/// Callback fired after every exec completion. Used to enqueue system events
+/// and wake the heartbeat.
+pub type ExecCompletionFn = Arc<dyn Fn(ExecCompletionEvent) + Send + Sync>;
 
 use crate::{
     approval::{ApprovalAction, ApprovalDecision, ApprovalManager},
@@ -36,6 +50,30 @@ pub trait ApprovalBroadcaster: Send + Sync {
 #[async_trait]
 pub trait EnvVarProvider: Send + Sync {
     async fn get_env_vars(&self) -> Vec<(String, secrecy::Secret<String>)>;
+}
+
+/// Provider that routes command execution to a remote node.
+///
+/// Implemented by the gateway crate to bridge `ExecTool` (in tools) with
+/// `node_exec::exec_on_node` (in gateway) without a direct dependency.
+#[async_trait]
+pub trait NodeExecProvider: Send + Sync {
+    /// Execute a shell command on a remote node.
+    async fn exec_on_node(
+        &self,
+        node_id: &str,
+        command: &str,
+        timeout_secs: u64,
+        cwd: Option<&str>,
+        env: Option<&HashMap<String, String>>,
+    ) -> anyhow::Result<ExecResult>;
+
+    /// Resolve a node reference (id or display name) to a node_id.
+    async fn resolve_node_id(&self, node_ref: &str) -> Option<String>;
+
+    /// Whether any nodes are currently connected.  This is called from the
+    /// sync `parameters_schema()` path so it must not block.
+    fn has_connected_nodes(&self) -> bool;
 }
 
 /// Result of a shell command execution.
@@ -75,6 +113,7 @@ fn truncate_output_for_display(output: &mut String, max_output_bytes: usize) {
 }
 
 /// Execute a shell command with timeout and output limits.
+#[tracing::instrument(skip(opts), fields(timeout_secs = opts.timeout.as_secs()))]
 pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> {
     debug!(
         command,
@@ -100,15 +139,15 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
     let child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             if let Some(ref dir) = opts.working_dir {
-                anyhow::anyhow!(
+                Error::message(format!(
                     "failed to start command: working directory '{}' does not exist",
                     dir.display()
-                )
+                ))
             } else {
-                anyhow::anyhow!("failed to start command: shell 'sh' not found")
+                Error::message("failed to start command: shell 'sh' not found")
             }
         } else {
-            anyhow::anyhow!("failed to start command: {e}")
+            Error::message(format!("failed to start command: {e}"))
         }
     })?;
 
@@ -137,10 +176,13 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
                 exit_code,
             })
         },
-        Ok(Err(e)) => bail!("failed to run command: {e}"),
+        Ok(Err(e)) => Err(Error::message(format!("failed to run command: {e}"))),
         Err(_) => {
             warn!(command, "exec timeout");
-            bail!("command timed out after {}s", opts.timeout.as_secs())
+            Err(Error::message(format!(
+                "command timed out after {}s",
+                opts.timeout.as_secs()
+            )))
         },
     }
 }
@@ -156,6 +198,11 @@ pub struct ExecTool {
     sandbox_id: Option<SandboxId>,
     sandbox_router: Option<Arc<SandboxRouter>>,
     env_provider: Option<Arc<dyn EnvVarProvider>>,
+    completion_callback: Option<ExecCompletionFn>,
+    /// When set, commands are forwarded to a remote node instead of local exec.
+    node_provider: Option<Arc<dyn NodeExecProvider>>,
+    /// Default node id or display name (from `tools.exec.node` config).
+    default_node: Option<String>,
 }
 
 impl Default for ExecTool {
@@ -170,6 +217,9 @@ impl Default for ExecTool {
             sandbox_id: None,
             sandbox_router: None,
             env_provider: None,
+            completion_callback: None,
+            node_provider: None,
+            default_node: None,
         }
     }
 }
@@ -205,6 +255,30 @@ impl ExecTool {
         self
     }
 
+    /// Attach a callback that fires after every exec completion.
+    pub fn with_completion_callback(mut self, cb: ExecCompletionFn) -> Self {
+        self.completion_callback = Some(cb);
+        self
+    }
+
+    /// Route command execution to a remote node instead of local/sandbox.
+    pub fn with_node_provider(
+        mut self,
+        provider: Arc<dyn NodeExecProvider>,
+        default_node: Option<String>,
+    ) -> Self {
+        self.node_provider = Some(provider);
+        self.default_node = default_node;
+        self
+    }
+
+    /// Check whether any remote nodes are currently connected.
+    fn has_connected_nodes(&self) -> bool {
+        self.node_provider
+            .as_ref()
+            .is_some_and(|p| p.has_connected_nodes())
+    }
+
     /// Clean up sandbox resources. Call on session end.
     pub async fn cleanup(&self) -> Result<()> {
         if let Some(ref id) = self.sandbox_id {
@@ -221,31 +295,49 @@ impl AgentTool for ExecTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command on the server. Returns stdout, stderr, and exit code."
+        if self.has_connected_nodes() {
+            "Execute a shell command on the server or a remote node. Returns stdout, stderr, and exit code."
+        } else {
+            "Execute a shell command on the server. Returns stdout, stderr, and exit code."
+        }
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
+        let mut properties = serde_json::json!({
+            "command": {
+                "type": "string",
+                "description": "The shell command to execute"
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds (default 30, max 1800)"
+            },
+            "working_dir": {
+                "type": "string",
+                "description": "Working directory for the command"
+            }
+        });
+
+        if self.has_connected_nodes()
+            && let Some(obj) = properties.as_object_mut()
+        {
+            obj.insert(
+                "node".to_string(),
+                serde_json::json!({
+                    "type": "string",
+                    "description": "Node name or ID to run on. Omit to use the session's default node."
+                }),
+            );
+        }
+
         serde_json::json!({
             "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute"
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Timeout in seconds (default 30, max 1800)"
-                },
-                "working_dir": {
-                    "type": "string",
-                    "description": "Working directory for the command"
-                }
-            },
+            "properties": properties,
             "required": ["command"]
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         #[cfg(feature = "metrics")]
         let start = Instant::now();
         #[cfg(feature = "metrics")]
@@ -254,13 +346,53 @@ impl AgentTool for ExecTool {
         let command = params
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'command' parameter"))?;
+            .ok_or_else(|| Error::message("missing 'command' parameter"))?;
 
         let timeout_secs = params
             .get("timeout")
             .and_then(|v| v.as_u64())
             .unwrap_or(self.default_timeout.as_secs())
             .min(1800); // cap at 30 minutes
+
+        // Node execution: forward to a remote node if configured.
+        // When a node is explicitly requested via param or a default is set, route
+        // to that node. Otherwise fall through to local/sandbox execution.
+        let node_ref = params
+            .get("node")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| self.default_node.clone());
+        if let (Some(provider), Some(node_ref)) = (&self.node_provider, node_ref) {
+            let node_id = provider.resolve_node_id(&node_ref).await.ok_or_else(|| {
+                Error::message(format!("node '{node_ref}' not found or not connected"))
+            })?;
+
+            let cwd = params.get("working_dir").and_then(|v| v.as_str());
+
+            info!(
+                command,
+                node_id = %node_id,
+                timeout_secs,
+                "exec forwarding to remote node"
+            );
+
+            let result = provider
+                .exec_on_node(&node_id, command, timeout_secs, cwd, None)
+                .await
+                .map_err(|e| Error::message(format!("node exec failed: {e}")))?;
+
+            if let Some(ref cb) = self.completion_callback {
+                let preview_len = 200;
+                cb(ExecCompletionEvent {
+                    command: command.to_string(),
+                    exit_code: result.exit_code,
+                    stdout_preview: result.stdout.chars().take(preview_len).collect(),
+                    stderr_preview: result.stderr.chars().take(preview_len).collect(),
+                });
+            }
+
+            return Ok(serde_json::to_value(&result)?);
+        }
 
         // Check sandbox state early — we need it for working_dir resolution.
         let session_key = params.get("_session_key").and_then(|v| v.as_str());
@@ -271,14 +403,15 @@ impl AgentTool for ExecTool {
         };
 
         // Check whether the backend is a real container runtime.  When the
-        // backend is "none" (no Docker/container runtime available), commands
-        // run directly on the host even when the session mode says "sandboxed".
-        // Using /home/sandbox as the working directory would fail with ENOENT
-        // on the host, so we must fall back to the host data directory.
+        // backend is "none" or "restricted-host" (no container runtime),
+        // commands run directly on the host even when the session mode says
+        // "sandboxed".  Using /home/sandbox as the working directory would
+        // fail with ENOENT on the host, so we must fall back to the host
+        // data directory.
         let has_container_backend = if let Some(ref router) = self.sandbox_router {
-            router.backend_name() != "none"
+            !matches!(router.backend_name(), "none" | "restricted-host")
         } else {
-            self.sandbox.backend_name() != "none"
+            !matches!(self.sandbox.backend_name(), "none" | "restricted-host")
         };
 
         // Resolve working directory.  When sandboxed *with a real container
@@ -377,10 +510,15 @@ impl AgentTool for ExecTool {
                         info!(command, "command approved");
                     },
                     ApprovalDecision::Denied => {
-                        bail!("command denied by user: {command}");
+                        return Err(
+                            Error::message(format!("command denied by user: {command}")).into()
+                        );
                     },
                     ApprovalDecision::Timeout => {
-                        bail!("approval timed out for command: {command}");
+                        return Err(Error::message(format!(
+                            "approval timed out for command: {command}"
+                        ))
+                        .into());
                     },
                 }
             }
@@ -414,7 +552,35 @@ impl AgentTool for ExecTool {
                 let image = router.resolve_image(sk, None).await;
                 let backend = router.backend();
                 info!(session = sk, sandbox_id = %id, backend = backend.backend_name(), image, "sandbox ensure_ready");
-                backend.ensure_ready(&id, Some(&image)).await?;
+                let announce_prepare = router.mark_preparing_once(sk).await;
+                if announce_prepare {
+                    router.emit_event(crate::sandbox::SandboxEvent::Preparing {
+                        session_key: sk.to_string(),
+                        backend: backend.backend_name().to_string(),
+                        image: image.clone(),
+                    });
+                }
+
+                if let Err(error) = backend.ensure_ready(&id, Some(&image)).await {
+                    if announce_prepare {
+                        router.clear_prepared_session(sk).await;
+                        router.emit_event(crate::sandbox::SandboxEvent::PrepareFailed {
+                            session_key: sk.to_string(),
+                            backend: backend.backend_name().to_string(),
+                            image: image.clone(),
+                            error: error.to_string(),
+                        });
+                    }
+                    return Err(error.into());
+                }
+
+                if announce_prepare {
+                    router.emit_event(crate::sandbox::SandboxEvent::Prepared {
+                        session_key: sk.to_string(),
+                        backend: backend.backend_name().to_string(),
+                        image: image.clone(),
+                    });
+                }
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
                 let mut sandbox_result = backend.exec(&id, command, &opts).await?;
                 for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
@@ -501,6 +667,19 @@ impl AgentTool for ExecTool {
             stderr_len = result.stderr.len(),
             "exec tool completed"
         );
+
+        // Fire completion callback (used to enqueue heartbeat events).
+        if let Some(ref cb) = self.completion_callback {
+            let preview_len = 200;
+            let stdout_preview = result.stdout.chars().take(preview_len).collect();
+            let stderr_preview = result.stderr.chars().take(preview_len).collect();
+            cb(ExecCompletionEvent {
+                command: command.to_string(),
+                exit_code: result.exit_code,
+                stdout_preview,
+                stderr_preview,
+            });
+        }
 
         // Record metrics
         #[cfg(feature = "metrics")]
@@ -843,7 +1022,7 @@ mod tests {
         async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             if self.cleanup_should_fail {
-                bail!("cleanup failed");
+                return Err(Error::message("cleanup failed"));
             }
             Ok(())
         }
@@ -1268,5 +1447,39 @@ mod tests {
             msg.contains("working directory"),
             "error should mention 'working directory', got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_completion_callback_fires() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = Arc::clone(&called);
+        let cb: ExecCompletionFn = Arc::new(move |event| {
+            assert_eq!(event.command, "echo callback");
+            assert_eq!(event.exit_code, 0);
+            assert!(event.stdout_preview.contains("callback"));
+            called_clone.store(true, Ordering::SeqCst);
+        });
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_completion_callback(cb);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
+        tool.execute(serde_json::json!({ "command": "echo callback" }))
+            .await
+            .unwrap();
+        assert!(called.load(Ordering::SeqCst), "callback should have fired");
+    }
+
+    #[tokio::test]
+    async fn test_no_callback_by_default() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tool = ExecTool {
+            working_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        // Should work fine without a callback.
+        let result = tool
+            .execute(serde_json::json!({ "command": "echo default" }))
+            .await
+            .unwrap();
+        assert_eq!(result["exit_code"], 0);
     }
 }

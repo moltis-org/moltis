@@ -218,14 +218,9 @@ fn check_config(config_dir: Option<&Path>) -> Section {
         }
     }
 
-    // Semantic warnings (security, etc.)
+    // Semantic warnings (security, deprecated fields, etc.)
     for d in &result.diagnostics {
-        if d.category == "security" || d.category == "unknown-provider" {
-            let status = match d.severity {
-                Severity::Error => Status::Fail,
-                Severity::Warning => Status::Warn,
-                Severity::Info => Status::Info,
-            };
+        if let Some(status) = config_validation_status(d) {
             let msg = if d.path.is_empty() {
                 d.message.clone()
             } else {
@@ -257,6 +252,21 @@ fn check_config(config_dir: Option<&Path>) -> Section {
     }
 
     section
+}
+
+fn config_validation_status(diagnostic: &moltis_config::Diagnostic) -> Option<Status> {
+    if diagnostic.category != "security"
+        && diagnostic.category != "unknown-provider"
+        && diagnostic.category != "deprecated-field"
+    {
+        return None;
+    }
+
+    Some(match diagnostic.severity {
+        Severity::Error => Status::Fail,
+        Severity::Warning => Status::Warn,
+        Severity::Info => Status::Info,
+    })
 }
 
 // ── 2. Security audit ───────────────────────────────────────────────────────
@@ -501,7 +511,8 @@ fn check_providers(config: &MoltisConfig) -> Section {
             .iter()
             .find(|(pname, ..)| *pname == name.as_str());
 
-        let has_env_key = env_info.is_some_and(|(_, env, _)| std::env::var(env).is_ok());
+        let has_env_key = env_info.is_some_and(|(_, env, _)| std::env::var(env).is_ok())
+            || (name == "gemini" && std::env::var("GOOGLE_API_KEY").is_ok());
         let is_optional = env_info.is_some_and(|(_, _, opt)| *opt);
 
         if has_config_key || has_env_key {
@@ -679,7 +690,10 @@ fn check_mcp_servers(config: &MoltisConfig) -> Section {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {super::*, moltis_config::MoltisConfig};
+    use {
+        super::*,
+        moltis_config::{MoltisConfig, validate::Diagnostic},
+    };
 
     #[test]
     fn status_labels() {
@@ -714,6 +728,18 @@ mod tests {
         let (errors, warnings) = print_report(&[section]);
         assert_eq!(errors, 1);
         assert_eq!(warnings, 2);
+    }
+
+    #[test]
+    fn config_validation_status_warns_for_deprecated_field() {
+        let diagnostic = Diagnostic {
+            severity: Severity::Warning,
+            category: "deprecated-field",
+            path: "memory.embedding_provider".into(),
+            message: "deprecated field; use \"memory.provider\" instead".into(),
+        };
+
+        assert_eq!(config_validation_status(&diagnostic), Some(Status::Warn));
     }
 
     #[test]
@@ -834,10 +860,12 @@ mod tests {
             command: "node".to_string(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: false,
             transport: String::new(),
             url: None,
             oauth: None,
+            display_name: None,
         };
         config.mcp.servers.insert("test".to_string(), entry);
 
@@ -854,10 +882,12 @@ mod tests {
             command: String::new(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: true,
             transport: String::new(),
             url: None,
             oauth: None,
+            display_name: None,
         };
         config.mcp.servers.insert("broken".to_string(), entry);
 
@@ -874,10 +904,12 @@ mod tests {
             command: String::new(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: true,
             transport: "sse".to_string(),
             url: Some("http://localhost:3000/sse".to_string()),
             oauth: None,
+            display_name: None,
         };
         config.mcp.servers.insert("remote".to_string(), entry);
 
@@ -894,10 +926,12 @@ mod tests {
             command: String::new(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: true,
             transport: "sse".to_string(),
             url: None,
             oauth: None,
+            display_name: None,
         };
         config.mcp.servers.insert("broken-sse".to_string(), entry);
 
@@ -917,10 +951,12 @@ mod tests {
             command: "definitely-not-a-real-command-xyz123".to_string(),
             args: vec![],
             env: Default::default(),
+            headers: Default::default(),
             enabled: true,
             transport: String::new(),
             url: None,
             oauth: None,
+            display_name: None,
         };
         config.mcp.servers.insert("bad".to_string(), entry);
 

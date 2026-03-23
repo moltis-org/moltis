@@ -4,20 +4,9 @@ name              = "moltis-agents"
 version.workspace = true
 
 [features]
-default                 = ["metrics", "skills-install", "provider-openai", "provider-ollama", "provider-anthropic", "provider-async-openai", "provider-genai"]
-local-llm               = ["dep:directories", "dep:encoding_rs", "dep:llama-cpp-2", "dep:reqwest", "dep:sysinfo"]
-local-llm-cuda          = ["llama-cpp-2/cuda", "local-llm"]
-local-llm-metal         = ["llama-cpp-2/metal", "local-llm"]
-metrics                 = ["dep:moltis-metrics"]
-skills-install          = ["moltis-skills/install"]
-provider-anthropic      = ["dep:reqwest"]
-provider-async-openai   = ["dep:async-openai"]
-provider-genai          = ["dep:genai"]
-provider-github-copilot = ["dep:reqwest", "dep:moltis-oauth"]
-provider-kimi-code      = ["dep:reqwest", "dep:moltis-oauth"]
-provider-ollama         = ["provider-openai"]
-provider-openai         = ["dep:reqwest"]
-provider-openai-codex   = ["dep:reqwest", "dep:base64", "dep:moltis-oauth"]
+default        = ["metrics", "skills-install"]
+metrics        = ["dep:moltis-metrics"]
+skills-install = ["moltis-skills/install"]
 
 [dependencies]
 anyhow          = { workspace = true }
@@ -28,7 +17,7 @@ moltis-common   = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-sessions = { workspace = true }
 moltis-skills   = { default-features = false, path = "../skills" }
-reqwest         = { optional = true, workspace = true }
+reqwest         = { workspace = true }
 secrecy         = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
@@ -38,16 +27,8 @@ tokio-stream    = { workspace = true }
 tracing         = { workspace = true }
 uuid            = { workspace = true }
 
-# Optional LLM provider crates
-async-openai   = { optional = true, workspace = true }
-base64         = { optional = true, workspace = true }
-directories    = { optional = true, workspace = true }
-encoding_rs    = { optional = true, workspace = true }
-genai          = { optional = true, workspace = true }
-llama-cpp-2    = { optional = true, workspace = true }
+# Optional
 moltis-metrics = { optional = true, workspace = true }
-moltis-oauth   = { optional = true, workspace = true }
-sysinfo        = { optional = true, workspace = true }
 
 [dev-dependencies]
 axum     = { workspace = true }

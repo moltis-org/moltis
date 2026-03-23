@@ -37,8 +37,12 @@ QMD is an optional external sidecar that provides enhanced search capabilities:
 - **Hybrid search with LLM reranking**: Combines both methods with an LLM pass for optimal relevance
 
 To use QMD:
-1. Install QMD separately from [github.com/tobi/qmd](https://github.com/tobi/qmd)
-2. Enable it in Settings > Memory > Backend
+1. Install the QMD CLI from [github.com/tobi/qmd](https://github.com/tobi/qmd): `npm install -g --ignore-scripts @tobilu/qmd` or `bun add -g @tobilu/qmd`
+2. Verify the binary is on your `PATH`: `qmd --version`
+3. Enable it in Settings > Memory > Backend
+
+Moltis invokes the `qmd` CLI directly for indexing and search, so the memory
+backend does not require a separate background daemon.
 
 ## Features
 
@@ -282,6 +286,7 @@ systems.
 
 ### QMD not available
 
-1. Verify QMD is installed: `qmd --version`
-2. Check that the path is correct in settings
-3. Ensure QMD has indexed your collections: `qmd stats`
+1. Install QMD if needed: `npm install -g --ignore-scripts @tobilu/qmd` or `bun add -g @tobilu/qmd`
+2. Verify QMD is installed: `qmd --version`
+3. Check that the path is correct in settings
+4. Ensure QMD has indexed your collections: `qmd stats`

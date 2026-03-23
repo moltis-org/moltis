@@ -1,8 +1,11 @@
 //! Persistence trait and implementations for cron jobs.
 
-use {anyhow::Result, async_trait::async_trait};
+use async_trait::async_trait;
 
-use crate::types::{CronJob, CronRunRecord};
+use crate::{
+    Result,
+    types::{CronJob, CronRunRecord},
+};
 
 /// Persistence backend for cron jobs and run history.
 #[async_trait]

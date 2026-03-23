@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moltis.org/.well-known/moltis-install.schema.json",
+  "title": "Moltis Install Root Manifest",
+  "description": "Stable machine-readable entrypoint for agent-driven Moltis install/bootstrap.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "id",
+    "name",
+    "homepage",
+    "discovery",
+    "release_channels",
+    "install",
+    "post_install",
+    "start",
+    "handoff"
+  ],
+  "properties": {
+    "manifest_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri"
+    },
+    "docs": {
+      "type": "string",
+      "format": "uri"
+    },
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "llms_txt_uri",
+        "agent_card_uri",
+        "api_catalog_uri"
+      ],
+      "properties": {
+        "llms_txt_uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "agent_card_uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "api_catalog_uri": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "release_channels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_channel",
+        "channels"
+      ],
+      "properties": {
+        "default_channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channels": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z0-9][a-z0-9_-]*$": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "manifest"
+              ],
+              "properties": {
+                "manifest": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "install": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "script_url",
+        "command_preview"
+      ],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "shell_script"
+          ]
+        },
+        "script_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "command_preview": {
+          "type": "string"
+        },
+        "release_manifest_schema": {
+          "type": "string",
+          "format": "uri"
+        },
+        "verify": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "release_page_url": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      }
+    },
+    "post_install": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "description",
+          "run",
+          "optional"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "run": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "optional": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "start": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run",
+        "url_hint",
+        "healthchecks"
+      ],
+      "properties": {
+        "run": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "url_hint": {
+          "type": "string"
+        },
+        "healthchecks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "url",
+              "timeout_seconds"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "http"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "user_message_template"
+      ],
+      "properties": {
+        "user_message_template": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

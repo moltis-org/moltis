@@ -1,0 +1,74 @@
+{
+  "manifest_version": "1",
+  "id": "moltis.org/install",
+  "name": "Moltis",
+  "homepage": "https://moltis.org",
+  "docs": "https://docs.moltis.org",
+  "discovery": {
+    "llms_txt_uri": "https://moltis.org/llms.txt",
+    "agent_card_uri": "https://moltis.org/.well-known/agent-card.json",
+    "api_catalog_uri": "https://moltis.org/.well-known/api-catalog"
+  },
+  "release_channels": {
+    "default_channel": "stable",
+    "channels": {
+      "stable": {
+        "manifest": "https://moltis.org/.well-known/moltis-install/channels/stable.json"
+      }
+    }
+  },
+  "install": {
+    "strategy": "shell_script",
+    "script_url": "https://www.moltis.org/install.sh",
+    "command_preview": "curl -fsSL https://www.moltis.org/install.sh | sh",
+    "release_manifest_schema": "https://moltis.org/.well-known/moltis-install.release.schema.json",
+    "verify": {
+      "release_page_url": "https://github.com/moltis-org/moltis/releases"
+    }
+  },
+  "post_install": [
+    {
+      "id": "openclaw-detect",
+      "description": "Detect an OpenClaw installation and collect import inventory",
+      "run": [
+        "moltis",
+        "import",
+        "detect",
+        "--json"
+      ],
+      "optional": true
+    },
+    {
+      "id": "openclaw-import",
+      "description": "Import OpenClaw identity/providers/skills/memory/channels/sessions/mcp",
+      "run": [
+        "moltis",
+        "import",
+        "all",
+        "--json"
+      ],
+      "optional": true
+    }
+  ],
+  "start": {
+    "run": [
+      "moltis",
+      "gateway",
+      "--bind",
+      "0.0.0.0",
+      "--port",
+      "13131"
+    ],
+    "url_hint": "http://<host>:13131",
+    "healthchecks": [
+      {
+        "type": "http",
+        "url": "http://127.0.0.1:13131/api/gon",
+        "timeout_seconds": 8
+      }
+    ]
+  },
+  "handoff": {
+    "user_message_template": "Moltis is ready. Please visit {url} to complete setup and sign in."
+  }
+}

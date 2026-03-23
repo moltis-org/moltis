@@ -19,7 +19,8 @@ use {
 };
 
 use crate::{
-    services::{ServiceResult, SessionService, TtsService},
+    agent_persona::AgentPersonaStore,
+    services::{ServiceError, ServiceResult, SessionService, TtsService},
     session_types::{PatchParams, VoiceGenerateParams, VoiceTarget, parse_params},
     share_store::{
         ShareSnapshot, ShareStore, ShareVisibility, SharedImageAsset, SharedImageSet,
@@ -32,6 +33,10 @@ const SHARE_BOUNDARY_NOTICE: &str =
 const SHARE_PREVIEW_MAX_IMAGE_WIDTH: u32 = 430;
 const SHARE_PREVIEW_MAX_IMAGE_HEIGHT: u32 = 430;
 const SHARE_REDACTED_VALUE: &str = "[REDACTED]";
+const SESSION_PREVIEW_MAX_CHARS: usize = 200;
+const UI_HISTORY_MAX_BYTES: usize = 2 * 1024 * 1024;
+const UI_HISTORY_MIN_MESSAGES: usize = 120;
+const UI_HISTORY_TRIM_STEP: usize = 50;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,6 +115,18 @@ fn message_text(msg: &Value) -> Option<String> {
     }
 }
 
+fn sanitize_tts_text(text: &str) -> String {
+    #[cfg(feature = "voice")]
+    {
+        moltis_voice::tts::sanitize_text_for_tts(text).to_string()
+    }
+
+    #[cfg(not(feature = "voice"))]
+    {
+        text.to_string()
+    }
+}
+
 /// Truncate a string to `max` chars, appending "…" if truncated.
 fn truncate_preview(s: &str, max: usize) -> String {
     if s.len() <= max {
@@ -119,16 +136,10 @@ fn truncate_preview(s: &str, max: usize) -> String {
     }
 }
 
-/// Extract preview from a single message (used for first-message preview in chat).
-pub(crate) fn extract_preview_from_value(msg: &Value) -> Option<String> {
-    message_text(msg).map(|t| truncate_preview(&t, 200))
-}
-
 /// Build a preview by combining user and assistant messages until we
 /// have enough text (target ~80 chars). Skips tool_result messages.
 fn extract_preview(history: &[Value]) -> Option<String> {
     const TARGET: usize = 80;
-    const MAX: usize = 200;
 
     let mut combined = String::new();
     for msg in history {
@@ -150,7 +161,32 @@ fn extract_preview(history: &[Value]) -> Option<String> {
     if combined.is_empty() {
         return None;
     }
-    Some(truncate_preview(&combined, MAX))
+    Some(truncate_preview(&combined, SESSION_PREVIEW_MAX_CHARS))
+}
+
+fn trim_ui_history(mut history: Vec<Value>) -> (Vec<Value>, usize) {
+    if history.is_empty() {
+        return (history, 0);
+    }
+
+    let mut dropped = 0usize;
+    loop {
+        let size = serde_json::to_vec(&history).map_or(0, |buf| buf.len());
+        if size <= UI_HISTORY_MAX_BYTES || history.len() <= UI_HISTORY_MIN_MESSAGES {
+            break;
+        }
+
+        let removable = history.len().saturating_sub(UI_HISTORY_MIN_MESSAGES);
+        if removable == 0 {
+            break;
+        }
+
+        let trim_count = removable.min(UI_HISTORY_TRIM_STEP);
+        history.drain(0..trim_count);
+        dropped += trim_count;
+    }
+
+    (history, dropped)
 }
 
 fn value_u64(msg: &Value, key: &str) -> Option<u64> {
@@ -766,6 +802,7 @@ async fn to_shared_message(
 pub struct LiveSessionService {
     store: Arc<SessionStore>,
     metadata: Arc<SqliteSessionMetadata>,
+    agent_persona_store: Option<Arc<AgentPersonaStore>>,
     tts_service: Option<Arc<dyn TtsService>>,
     share_store: Option<Arc<ShareStore>>,
     sandbox_router: Option<Arc<SandboxRouter>>,
@@ -780,6 +817,7 @@ impl LiveSessionService {
         Self {
             store,
             metadata,
+            agent_persona_store: None,
             tts_service: None,
             share_store: None,
             sandbox_router: None,
@@ -792,6 +830,11 @@ impl LiveSessionService {
 
     pub fn with_sandbox_router(mut self, router: Arc<SandboxRouter>) -> Self {
         self.sandbox_router = Some(router);
+        self
+    }
+
+    pub fn with_agent_persona_store(mut self, store: Arc<AgentPersonaStore>) -> Self {
+        self.agent_persona_store = Some(store);
         self
     }
 
@@ -827,6 +870,105 @@ impl LiveSessionService {
         self.browser_service = Some(browser);
         self
     }
+
+    async fn default_agent_id(&self) -> String {
+        if let Some(ref store) = self.agent_persona_store {
+            return store
+                .default_id()
+                .await
+                .unwrap_or_else(|_| "main".to_string());
+        }
+        "main".to_string()
+    }
+
+    async fn resolve_agent_id_for_entry(
+        &self,
+        entry: &moltis_sessions::metadata::SessionEntry,
+        patch_if_invalid: bool,
+    ) -> String {
+        let fallback = self.default_agent_id().await;
+        let Some(agent_id) = entry
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return fallback;
+        };
+
+        if agent_id == "main" {
+            return "main".to_string();
+        }
+
+        if let Some(ref store) = self.agent_persona_store {
+            match store.get(agent_id).await {
+                Ok(Some(_)) => {
+                    return agent_id.to_string();
+                },
+                Ok(None) => {
+                    warn!(
+                        session = %entry.key,
+                        agent_id,
+                        fallback = %fallback,
+                        "session references unknown agent, falling back to default"
+                    );
+                },
+                Err(error) => {
+                    warn!(
+                        session = %entry.key,
+                        agent_id,
+                        fallback = %fallback,
+                        %error,
+                        "failed to resolve session agent, falling back to default"
+                    );
+                },
+            }
+        } else {
+            return agent_id.to_string();
+        }
+
+        if patch_if_invalid {
+            let _ = self
+                .metadata
+                .set_agent_id(&entry.key, Some(&fallback))
+                .await;
+        }
+        fallback
+    }
+
+    async fn ensure_entry_agent_id(
+        &self,
+        key: &str,
+        inherit_from_key: Option<&str>,
+    ) -> Option<moltis_sessions::metadata::SessionEntry> {
+        let entry = self.metadata.get(key).await?;
+        if entry
+            .agent_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+        {
+            let effective = self.resolve_agent_id_for_entry(&entry, true).await;
+            if entry.agent_id.as_deref() == Some(effective.as_str()) {
+                return Some(entry);
+            }
+            let mut updated = entry;
+            updated.agent_id = Some(effective);
+            return Some(updated);
+        }
+
+        let fallback = if let Some(parent_key) = inherit_from_key {
+            if let Some(parent) = self.metadata.get(parent_key).await {
+                self.resolve_agent_id_for_entry(&parent, false).await
+            } else {
+                self.default_agent_id().await
+            }
+        } else {
+            self.default_agent_id().await
+        };
+
+        let _ = self.metadata.set_agent_id(key, Some(&fallback)).await;
+        self.metadata.get(key).await
+    }
 }
 
 #[async_trait]
@@ -835,7 +977,8 @@ impl SessionService for LiveSessionService {
         let all = self.metadata.list().await;
 
         let mut entries: Vec<Value> = Vec::with_capacity(all.len());
-        for e in all {
+        for mut e in all {
+            let agent_id = self.resolve_agent_id_for_entry(&e, false).await;
             // Check if this session is the active one for its channel binding.
             let active_channel = if let Some(ref binding_json) = e.channel_binding {
                 if let Ok(target) =
@@ -857,6 +1000,23 @@ impl SessionService for LiveSessionService {
                 false
             };
 
+            // Backfill preview for sessions that have messages but no preview yet.
+            if e.preview.is_none()
+                && e.message_count > 0
+                && let Ok(history) = self.store.read(&e.key).await
+            {
+                let new_preview = extract_preview(&history);
+                if let Some(ref preview) = new_preview {
+                    self.metadata.set_preview(&e.key, Some(preview)).await;
+                    e.preview = new_preview;
+                }
+            }
+
+            let preview = e
+                .preview
+                .as_deref()
+                .map(|p| truncate_preview(p, SESSION_PREVIEW_MAX_CHARS));
+
             entries.push(serde_json::json!({
                 "id": e.id,
                 "key": e.key,
@@ -875,7 +1035,10 @@ impl SessionService for LiveSessionService {
                 "parentSessionKey": e.parent_session_key,
                 "forkPoint": e.fork_point,
                 "mcpDisabled": e.mcp_disabled,
-                "preview": e.preview,
+                "preview": preview,
+                "agent_id": agent_id,
+                "agentId": agent_id,
+                "node_id": e.node_id,
                 "version": e.version,
             }));
         }
@@ -893,7 +1056,7 @@ impl SessionService for LiveSessionService {
             .store
             .read_last_n(key, limit)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         Ok(serde_json::json!({ "messages": filter_ui_history(messages) }))
     }
 
@@ -902,25 +1065,74 @@ impl SessionService for LiveSessionService {
             .get("key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let include_history = params
+            .get("include_history")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let inherit_from_key = params
+            .get("inherit_agent_from")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.trim().is_empty());
 
-        let entry = self
-            .metadata
+        self.metadata
             .upsert(key, None)
             .await
-            .map_err(|e| e.to_string())?;
-        let history = self.store.read(key).await.map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
+        let entry = self
+            .ensure_entry_agent_id(key, inherit_from_key)
+            .await
+            .ok_or_else(|| format!("session '{key}' not found after resolve"))?;
+        if !include_history {
+            if entry.message_count == 0
+                && let Some(ref hooks) = self.hook_registry
+            {
+                let payload = moltis_common::hooks::HookPayload::SessionStart {
+                    session_key: key.to_string(),
+                };
+                if let Err(e) = hooks.dispatch(&payload).await {
+                    warn!(session = %key, error = %e, "SessionStart hook failed");
+                }
+            }
+
+            return Ok(serde_json::json!({
+                "entry": {
+                    "id": entry.id,
+                    "key": entry.key,
+                    "label": entry.label,
+                    "model": entry.model,
+                    "createdAt": entry.created_at,
+                    "updatedAt": entry.updated_at,
+                    "messageCount": entry.message_count,
+                    "projectId": entry.project_id,
+                    "archived": entry.archived,
+                    "sandbox_enabled": entry.sandbox_enabled,
+                    "sandbox_image": entry.sandbox_image,
+                    "worktree_branch": entry.worktree_branch,
+                    "mcpDisabled": entry.mcp_disabled,
+                    "agent_id": entry.agent_id,
+                    "agentId": entry.agent_id,
+                    "node_id": entry.node_id,
+                    "version": entry.version,
+                },
+                "history": [],
+                "historyTruncated": false,
+                "historyDroppedCount": 0,
+            }));
+        }
+
+        let raw_history = self.store.read(key).await.map_err(ServiceError::message)?;
 
         // Recompute preview from combined messages every time resolve runs,
         // so sessions get the latest multi-message preview algorithm.
-        if !history.is_empty() {
-            let new_preview = extract_preview(&history);
+        if !raw_history.is_empty() {
+            let new_preview = extract_preview(&raw_history);
             if new_preview.as_deref() != entry.preview.as_deref() {
                 self.metadata.set_preview(key, new_preview.as_deref()).await;
             }
         }
 
         // Dispatch SessionStart hook for newly created sessions (empty history).
-        if history.is_empty()
+        if raw_history.is_empty()
             && let Some(ref hooks) = self.hook_registry
         {
             let payload = moltis_common::hooks::HookPayload::SessionStart {
@@ -930,6 +1142,8 @@ impl SessionService for LiveSessionService {
                 warn!(session = %key, error = %e, "SessionStart hook failed");
             }
         }
+
+        let (history, dropped_count) = trim_ui_history(filter_ui_history(raw_history));
 
         Ok(serde_json::json!({
             "entry": {
@@ -946,9 +1160,14 @@ impl SessionService for LiveSessionService {
                 "sandbox_image": entry.sandbox_image,
                 "worktree_branch": entry.worktree_branch,
                 "mcpDisabled": entry.mcp_disabled,
+                "agent_id": entry.agent_id,
+                "agentId": entry.agent_id,
+                "node_id": entry.node_id,
                 "version": entry.version,
             },
-            "history": filter_ui_history(history),
+            "history": history,
+            "historyTruncated": dropped_count > 0,
+            "historyDroppedCount": dropped_count,
         }))
     }
 
@@ -963,7 +1182,7 @@ impl SessionService for LiveSessionService {
             .ok_or_else(|| format!("session '{key}' not found"))?;
         if p.label.is_some() {
             if entry.channel_binding.is_some() {
-                return Err("cannot rename a channel-bound session".to_string());
+                return Err("cannot rename a channel-bound session".into());
             }
             let _ = self.metadata.upsert(key, p.label).await;
         }
@@ -1044,6 +1263,9 @@ impl SessionService for LiveSessionService {
             "sandbox_image": entry.sandbox_image,
             "worktree_branch": entry.worktree_branch,
             "mcpDisabled": entry.mcp_disabled,
+            "agent_id": entry.agent_id,
+            "agentId": entry.agent_id,
+            "node_id": entry.node_id,
             "version": entry.version,
         }))
     }
@@ -1051,16 +1273,16 @@ impl SessionService for LiveSessionService {
     async fn voice_generate(&self, params: Value) -> ServiceResult {
         let p: VoiceGenerateParams = parse_params(params)?;
         let key = &p.key;
-        let target = p.target().map_err(|e| e.to_string())?;
+        let target = p.target().map_err(ServiceError::message)?;
 
         let tts = self
             .tts_service
             .as_ref()
             .ok_or_else(|| "session voice generation is not configured".to_string())?;
 
-        let mut history = self.store.read(key).await.map_err(|e| e.to_string())?;
+        let mut history = self.store.read(key).await.map_err(ServiceError::message)?;
         if history.is_empty() {
-            return Err(format!("session '{key}' has no messages"));
+            return Err(format!("session '{key}' has no messages").into());
         }
 
         let target_index = match &target {
@@ -1077,7 +1299,7 @@ impl SessionService for LiveSessionService {
             .get(target_index)
             .ok_or_else(|| format!("message index {target_index} is out of range"))?;
         if target_msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
-            return Err("target message is not an assistant response".to_string());
+            return Err("target message is not an assistant response".into());
         }
 
         if let Some(existing_audio) = target_msg.get("audio").and_then(|v| v.as_str())
@@ -1095,11 +1317,9 @@ impl SessionService for LiveSessionService {
 
         let text = message_text(target_msg)
             .ok_or_else(|| "assistant message has no text content to synthesize".to_string())?;
-        let sanitized = moltis_voice::tts::sanitize_text_for_tts(&text)
-            .trim()
-            .to_string();
+        let sanitized = sanitize_tts_text(&text).trim().to_string();
         if sanitized.is_empty() {
-            return Err("assistant message has no speakable text for TTS".to_string());
+            return Err("assistant message has no speakable text for TTS".into());
         }
 
         let status_value = tts
@@ -1107,9 +1327,9 @@ impl SessionService for LiveSessionService {
             .await
             .map_err(|e| format!("failed to check TTS status: {e}"))?;
         let status: TtsStatusPayload = serde_json::from_value(status_value)
-            .map_err(|_| "invalid TTS status payload".to_string())?;
+            .map_err(|_| ServiceError::message("invalid TTS status payload"))?;
         if !status.enabled {
-            return Err("TTS is disabled or provider is not configured".to_string());
+            return Err("TTS is disabled or provider is not configured".into());
         }
         if let Some(max_text_length) = status.max_text_length
             && sanitized.len() > max_text_length
@@ -1118,7 +1338,8 @@ impl SessionService for LiveSessionService {
                 "text exceeds max length ({} > {})",
                 sanitized.len(),
                 max_text_length
-            ));
+            )
+            .into());
         }
 
         let convert_value = tts
@@ -1129,17 +1350,19 @@ impl SessionService for LiveSessionService {
             .await
             .map_err(|e| format!("TTS convert failed: {e}"))?;
         let convert: TtsConvertPayload = serde_json::from_value(convert_value)
-            .map_err(|_| "invalid TTS convert payload".to_string())?;
+            .map_err(|_| ServiceError::message("invalid TTS convert payload"))?;
         let audio_bytes = general_purpose::STANDARD
             .decode(convert.audio.trim())
-            .map_err(|_| "invalid base64 audio payload returned by TTS provider".to_string())?;
+            .map_err(|_| {
+                ServiceError::message("invalid base64 audio payload returned by TTS provider")
+            })?;
 
         let filename = format!("voice-msg-{target_index}.ogg");
         let audio_path = self
             .store
             .save_media(key, &filename, &audio_bytes)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let target_mut = history
             .get_mut(target_index)
@@ -1153,7 +1376,7 @@ impl SessionService for LiveSessionService {
         self.store
             .replace_history(key, history)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         self.metadata.touch(key, message_count).await;
 
         Ok(serde_json::json!({
@@ -1186,7 +1409,7 @@ impl SessionService for LiveSessionService {
             .get(key)
             .await
             .ok_or_else(|| format!("session '{key}' not found"))?;
-        let history = self.store.read(key).await.map_err(|e| e.to_string())?;
+        let history = self.store.read(key).await.map_err(ServiceError::message)?;
 
         let snapshot = ShareSnapshot {
             session_key: key.to_string(),
@@ -1206,7 +1429,7 @@ impl SessionService for LiveSessionService {
                 shared_messages
             },
         };
-        let snapshot_json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+        let snapshot_json = serde_json::to_string(&snapshot)?;
 
         let created = share_store
             .create_or_replace(
@@ -1216,7 +1439,7 @@ impl SessionService for LiveSessionService {
                 snapshot.cutoff_message_count,
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         // Persist a UI-only notice in the source session so users can see
         // the exact cutoff marker without affecting future LLM context.
@@ -1237,7 +1460,7 @@ impl SessionService for LiveSessionService {
                 "failed to persist share boundary notice; revoking share"
             );
             let _ = share_store.revoke(&created.share.id).await;
-            return Err(format!("failed to persist share boundary notice: {e}"));
+            return Err(format!("failed to persist share boundary notice: {e}").into());
         }
         match self.store.count(key).await {
             Ok(message_count) => {
@@ -1275,7 +1498,7 @@ impl SessionService for LiveSessionService {
         let shares = share_store
             .list_for_session(key)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let items: Vec<Value> = shares
             .into_iter()
@@ -1305,7 +1528,16 @@ impl SessionService for LiveSessionService {
             .as_ref()
             .ok_or_else(|| "session share store not configured".to_string())?;
 
-        let revoked = share_store.revoke(id).await.map_err(|e| e.to_string())?;
+        let revoked = share_store
+            .revoke(id)
+            .await
+            .map_err(ServiceError::message)?;
+
+        // Remove pre-rendered static files.
+        let shares_dir = moltis_config::data_dir().join("shares");
+        let _ = std::fs::remove_file(shares_dir.join(format!("{id}.html")));
+        let _ = std::fs::remove_file(shares_dir.join(format!("{id}-og.svg")));
+
         Ok(serde_json::json!({ "revoked": revoked }))
     }
 
@@ -1315,7 +1547,7 @@ impl SessionService for LiveSessionService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
 
-        self.store.clear(key).await.map_err(|e| e.to_string())?;
+        self.store.clear(key).await.map_err(ServiceError::message)?;
         self.metadata.touch(key, 0).await;
         self.metadata.set_preview(key, None).await;
 
@@ -1329,7 +1561,7 @@ impl SessionService for LiveSessionService {
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
 
         if key == "main" {
-            return Err("cannot delete the main session".to_string());
+            return Err("cannot delete the main session".into());
         }
 
         let force = params
@@ -1354,8 +1586,7 @@ impl SessionService for LiveSessionService {
                     moltis_projects::WorktreeManager::has_uncommitted_changes(&wt_dir).await
             {
                 return Err(
-                    "worktree has uncommitted changes; use force: true to delete anyway"
-                        .to_string(),
+                    "worktree has uncommitted changes; use force: true to delete anyway".into(),
                 );
             }
 
@@ -1374,7 +1605,7 @@ impl SessionService for LiveSessionService {
             }
         }
 
-        self.store.clear(key).await.map_err(|e| e.to_string())?;
+        self.store.clear(key).await.map_err(ServiceError::message)?;
 
         // Clean up sandbox resources for this session.
         if let Some(ref router) = self.sandbox_router
@@ -1402,7 +1633,7 @@ impl SessionService for LiveSessionService {
             }
         }
 
-        Ok(serde_json::json!({}))
+        Ok(serde_json::json!({ "ok": true }))
     }
 
     async fn compact(&self, _params: Value) -> ServiceResult {
@@ -1423,7 +1654,7 @@ impl SessionService for LiveSessionService {
             .store
             .read(parent_key)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         let msg_count = messages.len();
 
         let fork_point = params
@@ -1433,9 +1664,7 @@ impl SessionService for LiveSessionService {
             .unwrap_or(msg_count);
 
         if fork_point > msg_count {
-            return Err(format!(
-                "forkPoint {fork_point} exceeds message count {msg_count}"
-            ));
+            return Err(format!("forkPoint {fork_point} exceeds message count {msg_count}").into());
         }
 
         let new_key = format!("session:{}", uuid::Uuid::new_v4());
@@ -1444,18 +1673,19 @@ impl SessionService for LiveSessionService {
         self.store
             .replace_history(&new_key, forked_messages)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let _entry = self
             .metadata
             .upsert(&new_key, label)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.metadata.touch(&new_key, fork_point as u32).await;
 
-        // Inherit model, project, and mcp_disabled from parent.
+        // Inherit model, project, mcp_disabled, and agent_id from parent.
         if let Some(parent) = self.metadata.get(parent_key).await {
+            let parent_agent = self.resolve_agent_id_for_entry(&parent, false).await;
             if parent.model.is_some() {
                 self.metadata.set_model(&new_key, parent.model).await;
             }
@@ -1469,6 +1699,22 @@ impl SessionService for LiveSessionService {
                     .set_mcp_disabled(&new_key, parent.mcp_disabled)
                     .await;
             }
+            let _ = self
+                .metadata
+                .set_agent_id(&new_key, Some(&parent_agent))
+                .await;
+            if parent.node_id.is_some() {
+                let _ = self
+                    .metadata
+                    .set_node_id(&new_key, parent.node_id.as_deref())
+                    .await;
+            }
+        } else {
+            let default_agent = self.default_agent_id().await;
+            let _ = self
+                .metadata
+                .set_agent_id(&new_key, Some(&default_agent))
+                .await;
         }
 
         // Set parent relationship.
@@ -1492,6 +1738,9 @@ impl SessionService for LiveSessionService {
             "label": final_entry.label,
             "forkPoint": fork_point,
             "messageCount": fork_point,
+            "agent_id": final_entry.agent_id,
+            "agentId": final_entry.agent_id,
+            "node_id": final_entry.node_id,
             "version": final_entry.version,
         }))
     }
@@ -1535,7 +1784,7 @@ impl SessionService for LiveSessionService {
             .store
             .search(query, max)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let enriched: Vec<Value> = {
             let mut out = Vec::with_capacity(results.len());
@@ -1572,6 +1821,7 @@ impl SessionService for LiveSessionService {
             if entry.key == "main"
                 || entry.channel_binding.is_some()
                 || entry.key.starts_with("telegram:")
+                || entry.key.starts_with("msteams:")
                 || entry.key.starts_with("cron:")
             {
                 continue;
@@ -1593,6 +1843,47 @@ impl SessionService for LiveSessionService {
         }
 
         Ok(serde_json::json!({ "deleted": deleted }))
+    }
+
+    async fn run_detail(&self, params: Value) -> ServiceResult {
+        let session_key = params
+            .get("sessionKey")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'sessionKey' parameter".to_string())?;
+        let run_id = params
+            .get("runId")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'runId' parameter".to_string())?;
+
+        let messages = self
+            .store
+            .read_by_run_id(session_key, run_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Build summary counts.
+        let mut user_messages = 0u32;
+        let mut tool_calls = 0u32;
+        let mut assistant_messages = 0u32;
+
+        for msg in &messages {
+            match msg.get("role").and_then(|v| v.as_str()) {
+                Some("user") => user_messages += 1,
+                Some("assistant") => assistant_messages += 1,
+                Some("tool_result") => tool_calls += 1,
+                _ => {},
+            }
+        }
+
+        Ok(serde_json::json!({
+            "runId": run_id,
+            "messages": messages,
+            "summary": {
+                "userMessages": user_messages,
+                "toolCalls": tool_calls,
+                "assistantMessages": assistant_messages,
+            }
+        }))
     }
 }
 
@@ -1665,6 +1956,29 @@ mod tests {
         assert_eq!(filtered[0]["reasoning"], "internal plan");
     }
 
+    #[test]
+    fn trim_ui_history_drops_oldest_messages_when_payload_is_too_large() {
+        let payload = "x".repeat(30_000);
+        let history: Vec<Value> = (0..150)
+            .map(|idx| serde_json::json!({ "id": idx, "role": "assistant", "content": payload }))
+            .collect();
+
+        let (trimmed, dropped) = trim_ui_history(history);
+        assert!(dropped > 0, "expected some messages to be dropped");
+        assert_eq!(trimmed.len() + dropped, 150);
+        assert_eq!(trimmed[0]["id"], serde_json::json!(dropped));
+        assert!(
+            trimmed.len() >= UI_HISTORY_MIN_MESSAGES,
+            "must keep at least the configured recent tail",
+        );
+
+        let trimmed_bytes = serde_json::to_vec(&trimmed).expect("serialize trimmed history");
+        assert!(
+            trimmed_bytes.len() <= UI_HISTORY_MAX_BYTES || trimmed.len() == UI_HISTORY_MIN_MESSAGES,
+            "trimmed payload should stay under budget unless minimum tail is reached",
+        );
+    }
+
     // --- Preview extraction tests ---
 
     #[test]
@@ -1710,13 +2024,6 @@ mod tests {
         assert!(result.ends_with('…'));
         // 200 'a' chars + the '…' char
         assert!(result.len() <= 204); // 200 bytes + up to 3 for '…'
-    }
-
-    #[test]
-    fn extract_preview_from_value_basic() {
-        let msg = serde_json::json!({"role": "user", "content": "tell me a joke"});
-        let result = extract_preview_from_value(&msg);
-        assert_eq!(result, Some("tell me a joke".to_string()));
     }
 
     #[test]
@@ -2156,7 +2463,7 @@ mod tests {
         }
 
         async fn enable(&self, _params: Value) -> ServiceResult {
-            Err("mock".to_string())
+            Err("mock".into())
         }
 
         async fn disable(&self) -> ServiceResult {
@@ -2166,15 +2473,15 @@ mod tests {
         async fn convert(&self, _params: Value) -> ServiceResult {
             self.convert_calls.fetch_add(1, Ordering::SeqCst);
             if let Some(ref error) = self.convert_error {
-                return Err(error.clone());
+                return Err(error.clone().into());
             }
             self.convert_payload
                 .clone()
-                .ok_or_else(|| "mock missing convert payload".to_string())
+                .ok_or_else(|| ServiceError::message("mock missing convert payload"))
         }
 
         async fn set_provider(&self, _params: Value) -> ServiceResult {
-            Err("mock".to_string())
+            Err("mock".into())
         }
     }
 
@@ -2309,7 +2616,7 @@ mod tests {
             .voice_generate(serde_json::json!({ "key": "main", "messageIndex": 0 }))
             .await
             .expect_err("should reject non-assistant target");
-        assert!(error.contains("not an assistant"));
+        assert!(error.to_string().contains("not an assistant"));
     }
 
     #[tokio::test]

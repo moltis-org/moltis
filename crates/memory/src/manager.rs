@@ -11,12 +11,12 @@ use {
 use moltis_agents::memory_writer::{MemoryWriteResult, MemoryWriter};
 
 use crate::{
-    chunker::chunk_markdown,
+    chunker::chunk_content,
     config::MemoryConfig,
     embeddings::EmbeddingProvider,
     schema::{ChunkRow, FileRow},
     search::{self, SearchResult},
-    store::MemoryStore,
+    store::{CacheEntry, MemoryStore},
     writer::validate_memory_path,
 };
 
@@ -241,9 +241,14 @@ impl MemoryManager {
         self.store.upsert_file(&file_row).await?;
         info!(path = %path_str, source, size, "memory: loaded markdown file");
 
-        // Chunk the content
-        let raw_chunks =
-            chunk_markdown(&content, self.config.chunk_size, self.config.chunk_overlap);
+        // Chunk the content (tree-sitter AST splitting when grammar available, else line-based).
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("md");
+        let raw_chunks = chunk_content(
+            &content,
+            self.config.chunk_size,
+            self.config.chunk_overlap,
+            ext,
+        );
 
         // Delete old chunks
         self.store.delete_chunks_for_file(path_str).await?;
@@ -281,24 +286,26 @@ impl MemoryManager {
             let mut all_embeddings: Vec<Vec<f32>> =
                 cached.into_iter().map(|c| c.unwrap_or_default()).collect();
 
-            // Embed cache misses and store them
+            // Embed cache misses and store them in a single transaction.
             if !miss_indices.is_empty() {
                 let miss_texts: Vec<String> =
                     miss_indices.iter().map(|&i| texts[i].clone()).collect();
                 let new_embs = embedder.embed_batch(&miss_texts).await?;
 
-                for (idx, emb) in miss_indices.iter().zip(new_embs) {
-                    self.store
-                        .put_cached_embedding(
-                            provider_key,
-                            model,
-                            provider_key,
-                            &chunk_hashes[*idx],
-                            &emb,
-                        )
-                        .await?;
-                    all_embeddings[*idx] = emb;
+                let mut cache_entries = Vec::with_capacity(new_embs.len());
+                for (idx, emb) in miss_indices.iter().zip(&new_embs) {
+                    all_embeddings[*idx] = emb.clone();
+                    cache_entries.push(CacheEntry {
+                        provider: provider_key,
+                        model,
+                        provider_key,
+                        hash: &chunk_hashes[*idx],
+                        embedding: emb,
+                    });
                 }
+                self.store
+                    .put_cached_embeddings_batch(&cache_entries)
+                    .await?;
             }
 
             (Some(all_embeddings), model.to_string())
@@ -339,6 +346,7 @@ impl MemoryManager {
 
     /// Search memory. Uses hybrid (vector + keyword) when embeddings are available,
     /// falls back to keyword-only search otherwise.
+    #[tracing::instrument(skip(self), fields(query_len = query.len(), limit))]
     pub async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {
         if let Some(ref embedder) = self.embedder {
             search::hybrid_search(
@@ -348,6 +356,7 @@ impl MemoryManager {
                 limit,
                 self.config.vector_weight,
                 self.config.keyword_weight,
+                self.config.merge_strategy,
             )
             .await
         } else {

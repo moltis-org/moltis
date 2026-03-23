@@ -64,17 +64,17 @@ cargo run / cargo run --release
 
 ## Web UI Assets
 
-Assets in `crates/gateway/src/assets/` (JS, CSS, HTML). Dev mode serves from disk (edit and reload);
+Assets in `crates/web/src/assets/` (JS, CSS, HTML). Dev mode serves from disk (edit and reload);
 release mode embeds via `include_dir!` with versioned URLs.
 
-- Run `biome check --write` after editing JS files.
+- **Always** run `biome check --write` when JS files change.
 - Avoid creating HTML from JS — add hidden elements in `index.html`, toggle visibility. Preact/HTM exceptions allowed.
 - **Always use Tailwind classes** instead of inline `style="..."`.
 - Reuse CSS classes from `components.css`: `provider-btn`, `provider-btn-secondary`, `provider-btn-danger`.
 - Match button heights/text sizes when elements sit together.
 - **Rebuild Tailwind** after adding new classes:
   ```bash
-  cd crates/gateway/ui && npx tailwindcss -i input.css -o ../src/assets/style.css --minify
+  cd crates/web/ui && npx tailwindcss -i input.css -o ../src/assets/style.css --minify
   ```
 
 ### Selection Cards
@@ -128,11 +128,11 @@ cargo test -- --nocapture            # With stdout
 
 ### E2E Tests (Web UI)
 
-**Every web UI change needs E2E tests.** Tests in `crates/gateway/ui/e2e/specs/` using Playwright.
+**Every web UI change needs E2E tests.** Tests in `crates/web/ui/e2e/specs/` using Playwright.
 Helpers in `e2e/helpers.js`.
 
 ```bash
-cd crates/gateway/ui
+cd crates/web/ui
 npx playwright test                              # All
 npx playwright test e2e/specs/chat-input.spec.js # Specific
 ```
@@ -207,8 +207,10 @@ New crate: add `run_migrations()` to `lib.rs`, call from `server.rs` in dependen
 
 ## Changelog
 
-Update `[Unreleased]` in `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/))
-for user-facing changes: Added, Changed, Deprecated, Removed, Fixed, Security.
+- Do **not** add manual `CHANGELOG.md` entries in normal PRs.
+- `CHANGELOG.md` entries are generated from commit history via `git-cliff` (`cliff.toml`).
+- Use conventional commits and preview unreleased notes with `just changelog-unreleased`.
+- PR CI enforces this via `scripts/check-changelog-guard.sh`.
 
 ## Git Workflow
 
@@ -217,8 +219,9 @@ Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): descripti
 
 ### Releases
 
-- Never overwrite tags — always create new version. `[workspace.package].version` must match tag.
-- Use `./scripts/prepare-release.sh <version> [date]` for release prep.
+- Date-based versioning: `YYYYMMDD.NN` (e.g., `20260311.01`). Cargo.toml stays at static `0.1.0`; real version injected via `MOLTIS_VERSION` env var at build time.
+- Never overwrite tags — always create new version.
+- Use `./scripts/prepare-release.sh [YYYYMMDD.NN]` for release prep (auto-computes next version if omitted).
 - Deploy template tags updated automatically by CI — don't manually update.
 
 ### Lockfile
@@ -230,10 +233,17 @@ Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): descripti
 
 **Always** run `./scripts/local-validate.sh <PR_NUMBER>` when a PR exists.
 
+For incremental local edits before full validation:
+- JS changed: run `biome check --write`.
+- Rust changed: run `cargo +nightly-2025-11-30 fmt --all -- --check`.
+- JS + Rust changed: run both.
+
 Exact commands (must match `local-validate.sh`):
 - Fmt: `cargo +nightly-2025-11-30 fmt --all -- --check`
 - Clippy: `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`
 - macOS without `nvcc`: clippy without `--all-features`
+- macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate build`
+- iOS app (Darwin hosts): `cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build`
 
 ### PR Descriptions
 
@@ -258,22 +268,137 @@ with exact commands), `## Manual QA`. Include concrete test steps.
 Source in `docs/src/` (mdBook). Auto-deployed to docs.moltis.org on push to main.
 Update `docs/src/SUMMARY.md` when adding pages. Preview: `cd docs && mdbook serve`.
 
+**Keep docs in sync with code.** When adding or changing user-facing features
+(config fields, CLI commands, channel behavior, API endpoints, tools), update
+the relevant `docs/src/` pages and the config template (`crates/config/src/template.rs`)
+in the same PR. Documentation drift causes real user confusion — treat outdated
+docs as a bug.
+
 ## Session Completion
 
 **Work is NOT complete until `git push` succeeds.** Mandatory steps:
 1. File issues for remaining work
 2. Run quality gates
 3. Update issue status
-4. **Push**: `git pull --rebase && bd sync && git push && git status`
+4. **Push**: `git pull --rebase && bd dolt commit && git push && git status`
+   If this repo uses a Dolt remote for beads, also run `bd dolt pull` / `bd dolt push`.
 5. Clean up stashes/branches
 6. Hand off context
-
-## Issue Tracking
-
-Uses **bd (beads)**: `bd ready`, `bd create "Title" --type task --priority 2`,
-`bd close <id>`, `bd sync` (run at session end). Full details: `bd prime`.
 
 ## Plans and Session History
 
 Plans in `prompts/`. After significant work, write summary to
 `prompts/session-YYYY-MM-DD-<topic>.md`.
+
+<!-- BEGIN BEADS INTEGRATION -->
+## Issue Tracking with bd (beads)
+
+**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
+
+### Why bd?
+
+- Dependency-aware: Track blockers and relationships between issues
+- Git-friendly: Dolt-powered version control with native sync
+- Agent-optimized: JSON output, ready work detection, discovered-from links
+- Prevents duplicate tracking systems and confusion
+
+### Quick Start
+
+**Check for ready work:**
+
+```bash
+bd ready --json
+```
+
+**Create new issues:**
+
+```bash
+bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
+bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
+```
+
+**Claim and update:**
+
+```bash
+bd update <id> --claim --json
+bd update bd-42 --priority 1 --json
+```
+
+**Complete work:**
+
+```bash
+bd close bd-42 --reason "Completed" --json
+```
+
+### Issue Types
+
+- `bug` - Something broken
+- `feature` - New functionality
+- `task` - Work item (tests, docs, refactoring)
+- `epic` - Large feature with subtasks
+- `chore` - Maintenance (dependencies, tooling)
+
+### Priorities
+
+- `0` - Critical (security, data loss, broken builds)
+- `1` - High (major features, important bugs)
+- `2` - Medium (default, nice-to-have)
+- `3` - Low (polish, optimization)
+- `4` - Backlog (future ideas)
+
+### Workflow for AI Agents
+
+1. **Check ready work**: `bd ready` shows unblocked issues
+2. **Claim your task atomically**: `bd update <id> --claim`
+3. **Work on it**: Implement, test, document
+4. **Discover new work?** Create linked issue:
+   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
+5. **Complete**: `bd close <id> --reason "Done"`
+
+### Auto-Sync
+
+bd automatically syncs via Dolt:
+
+- Each write auto-commits to Dolt history
+- Use `bd dolt push`/`bd dolt pull` for remote sync
+- No manual export/import needed!
+
+### Important Rules
+
+- ✅ Use bd for ALL task tracking
+- ✅ Always use `--json` flag for programmatic use
+- ✅ Link discovered work with `discovered-from` dependencies
+- ✅ Check `bd ready` before asking "what should I work on?"
+- ❌ Do NOT create markdown TODO lists
+- ❌ Do NOT use external issue trackers
+- ❌ Do NOT duplicate tracking systems
+
+For more details, see README.md and docs/QUICKSTART.md.
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+
+<!-- END BEADS INTEGRATION -->

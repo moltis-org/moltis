@@ -21,12 +21,29 @@ lockfile-check:
 lint: lockfile-check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
+# Build Tailwind CSS for the web UI.
+build-css:
+    cd crates/web/ui && ./build.sh
+
 # Build the project
-build:
+build: build-css
     cargo build
 
 # Build in release mode
 build-release:
+    cargo build --release
+
+# Build embedded WASM guest tools and pre-compile to .cwasm for AOT loading.
+wasm-tools:
+    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+    cargo run -p moltis-wasm-precompile --release
+
+# Build just the release WASM artifacts expected by embedded-wasm builds.
+build-wasm-artifacts: wasm-tools
+    @echo "Built target/wasm32-wasip2/release/{moltis_wasm_calc,moltis_wasm_web_fetch,moltis_wasm_web_search}.{wasm,cwasm}"
+
+# Build release after ensuring embedded WASM artifacts are present.
+build-release-with-wasm: build-wasm-artifacts
     cargo build --release
 
 # Run local dev server with workspace-local config/data dirs.
@@ -34,17 +51,20 @@ dev-server:
     MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
 
 # Build Debian package for the current architecture
-deb: build-release
+deb: build-release build-wasm-artifacts
+    bash ./scripts/stage-wasm-package-assets.sh target/release
     cargo deb -p moltis --no-build
 
 # Build Debian package for amd64
-deb-amd64:
+deb-amd64: build-wasm-artifacts
     cargo build --release --target x86_64-unknown-linux-gnu
+    bash ./scripts/stage-wasm-package-assets.sh target/x86_64-unknown-linux-gnu/release
     cargo deb -p moltis --no-build --target x86_64-unknown-linux-gnu
 
 # Build Debian package for arm64
-deb-arm64:
+deb-arm64: build-wasm-artifacts
     cargo build --release --target aarch64-unknown-linux-gnu
+    bash ./scripts/stage-wasm-package-assets.sh target/aarch64-unknown-linux-gnu/release
     cargo deb -p moltis --no-build --target aarch64-unknown-linux-gnu
 
 # Build Debian packages for all architectures
@@ -54,7 +74,7 @@ deb-all: deb-amd64 deb-arm64
 arch-pkg: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     ARCH=$(uname -m)
     PKG_DIR="target/arch-pkg"
     rm -rf "$PKG_DIR"
@@ -78,7 +98,7 @@ arch-pkg-x86_64:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release --target x86_64-unknown-linux-gnu
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     PKG_DIR="target/arch-pkg-x86_64"
     rm -rf "$PKG_DIR"
     mkdir -p "$PKG_DIR/usr/bin"
@@ -101,7 +121,7 @@ arch-pkg-aarch64:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release --target aarch64-unknown-linux-gnu
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     PKG_DIR="target/arch-pkg-aarch64"
     rm -rf "$PKG_DIR"
     mkdir -p "$PKG_DIR/usr/bin"
@@ -143,7 +163,7 @@ rpm-all: rpm-x86_64 rpm-aarch64
 appimage: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     ARCH=$(uname -m)
     APP_DIR="target/moltis.AppDir"
     rm -rf "$APP_DIR"
@@ -186,35 +206,184 @@ flatpak:
     cd flatpak && flatpak-builder --repo=repo --force-clean builddir org.moltbot.Moltis.yml
 
 # Run all CI checks (format, lint, build, test)
-ci: format-check lint build test
+ci: format-check lint i18n-check build-css build test
+
+# Compile once, then run Rust tests and E2E tests in parallel.
+# Uses the same nightly toolchain as clippy/local-validate so the build cache
+# is shared — no double-compilation.
+build-test: build-css
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "==> Building all workspace targets (bins + tests)..."
+    cargo +{{nightly_toolchain}} build --workspace --all-features --all-targets
+    echo "==> Build complete. Running Rust tests and E2E tests in parallel..."
+
+    RUST_LOG="$(mktemp)"
+    E2E_LOG="$(mktemp)"
+    trap 'rm -f "${RUST_LOG}" "${E2E_LOG}"' EXIT
+
+    cargo +{{nightly_toolchain}} nextest run --all-features > "${RUST_LOG}" 2>&1 &
+    TEST_PID=$!
+
+    (cd crates/web/ui && npm run e2e) > "${E2E_LOG}" 2>&1 &
+    E2E_PID=$!
+
+    TEST_EXIT=0; E2E_EXIT=0
+    wait "${TEST_PID}" || TEST_EXIT=$?
+    wait "${E2E_PID}" || E2E_EXIT=$?
+
+    if [ "${TEST_EXIT}" -ne 0 ]; then
+        echo "==> Rust tests FAILED (exit ${TEST_EXIT}):"
+        cat "${RUST_LOG}"
+    else
+        echo "==> Rust tests PASSED"
+    fi
+
+    if [ "${E2E_EXIT}" -ne 0 ]; then
+        echo "==> E2E tests FAILED (exit ${E2E_EXIT}):"
+        cat "${E2E_LOG}"
+    else
+        echo "==> E2E tests PASSED"
+    fi
+
+    exit $(( TEST_EXIT > 0 ? TEST_EXIT : E2E_EXIT ))
 
 # Run the same Rust preflight gates used before release packaging.
 release-preflight: lockfile-check
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
+# Sync repo-root install.sh into website/install.sh for Cloudflare deployment.
+sync-website-install:
+    ./scripts/sync-website-install.sh
+
+# Ensure repo-root install.sh and website/install.sh are identical.
+check-website-install-sync:
+    ./scripts/check-website-install-sync.sh
+
+# Dispatch release workflow from GitHub Actions (normal mode).
+release-workflow ref='main':
+    gh workflow run release.yml --ref {{ref}} -f dry_run=false
+
+# Dispatch release workflow from GitHub Actions (dry-run mode).
+release-workflow-dry ref='main':
+    gh workflow run release.yml --ref {{ref}} -f dry_run=true
+
+# Dispatch both release workflow modes for the same ref (dry-run then normal).
+release-workflow-both ref='main':
+    gh workflow run release.yml --ref {{ref}} -f dry_run=true
+    gh workflow run release.yml --ref {{ref}} -f dry_run=false
+
+# Regenerate CHANGELOG.md from git history and tags.
+changelog:
+    git-cliff --config cliff.toml --output CHANGELOG.md
+
+# Preview unreleased changelog entries from commits since the last tag.
+changelog-unreleased:
+    git-cliff --config cliff.toml --unreleased
+
+# Generate release entries for unreleased commits under the provided version.
+changelog-release version:
+    git-cliff --config cliff.toml --unreleased --tag "{{version}}" --strip all
+
 # Commit all changes, push branch, create/update PR, and run local validation.
 # All args are optional; defaults are auto-generated from branch + changed files.
 ship commit_message='' pr_title='' pr_body='':
     ./scripts/ship-pr.sh {{ quote(commit_message) }} {{ quote(pr_title) }} {{ quote(pr_body) }}
 
-# Run all tests
+# Run all tests (nightly to share build cache with clippy/lint)
 test:
-    cargo nextest run --all-features
+    cargo +{{nightly_toolchain}} nextest run --all-features
+
+# Run contract test suites (channel, provider, memory, tools)
+contract-tests:
+    cargo test -p moltis-channels contract
+    cargo test -p moltis-providers contract
+    cargo test -p moltis-memory contract
+    cargo test -p moltis-tools contract
+
+# Verify locale key parity across frontend i18n bundles.
+i18n-check:
+    ./scripts/i18n-check.sh
 
 # Install browser tooling for gateway web UI e2e tests.
 ui-e2e-install:
-    cd crates/gateway/ui && npm install && npm run e2e:install
+    cd crates/web/ui && npm install && npm run e2e:install
 
 # Run gateway web UI e2e tests (Playwright).
 ui-e2e:
-    cargo build --bin moltis
-    cd crates/gateway/ui && npm run e2e
+    cargo +{{nightly_toolchain}} build --bin moltis
+    cd crates/web/ui && npm run e2e
 
 # Run gateway web UI e2e tests with headed browser.
 ui-e2e-headed:
-    cargo build --bin moltis
-    cd crates/gateway/ui && npm run e2e:headed
+    cargo +{{nightly_toolchain}} build --bin moltis
+    cd crates/web/ui && npm run e2e:headed
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
 packages-all: deb-all rpm-all arch-pkg-all
+
+# Build Rust static library and generated C header for the macOS app.
+swift-build-rust:
+    ./scripts/build-swift-bridge.sh
+
+# Generate Xcode project from YAML spec in apps/macos.
+swift-generate:
+    ./scripts/generate-swift-project.sh
+
+# Lint macOS app sources with SwiftLint.
+swift-lint:
+    ./scripts/lint-swift.sh
+
+# Build Swift macOS app.
+swift-build: swift-build-rust swift-generate
+    ./scripts/build-swift.sh
+
+# Run Swift app unit tests.
+swift-test: swift-build-rust swift-generate
+    ./scripts/test-swift.sh
+
+# Build and launch the Swift macOS app locally.
+swift-run: swift-build-rust swift-generate
+    ./scripts/run-swift.sh
+
+# Open generated project in Xcode.
+swift-open: swift-build-rust swift-generate
+    open apps/macos/Moltis.xcodeproj
+
+# Generate iOS app Xcode project.
+ios-generate:
+    ./scripts/generate-ios-project.sh
+
+# Generate Apollo GraphQL types for iOS.
+ios-graphql:
+    cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls
+    ./scripts/generate-ios-graphql.sh
+
+# Build iOS app (generic iOS destination, no signing).
+ios-build: ios-graphql ios-generate
+    xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
+
+# Lint iOS app sources with SwiftLint.
+ios-lint:
+    cd apps/ios && swiftlint
+
+# Open iOS project in Xcode (regenerates GraphQL types and project first).
+ios-open: ios-graphql ios-generate
+    open apps/ios/Moltis.xcodeproj
+
+# Build the APNS push relay.
+courier-build:
+    cargo build -p moltis-courier --release
+
+# Cross-compile courier for linux/x86_64.
+courier-cross:
+    cargo build -p moltis-courier --release --target x86_64-unknown-linux-gnu
+
+# Deploy courier to remote server(s) via Ansible.
+courier-deploy:
+    cd apps/courier/deploy && ansible-playbook playbook.yml
+
+# Run the APNS push relay (dev).
+courier-run *ARGS:
+    cargo run -p moltis-courier -- {{ARGS}}

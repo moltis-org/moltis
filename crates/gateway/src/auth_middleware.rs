@@ -1,14 +1,18 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::{ConnectInfo, FromRef, FromRequestParts, State},
+    extract::{ConnectInfo, FromRef, FromRequestParts},
     http::{HeaderMap, StatusCode, request::Parts},
-    middleware::Next,
-    response::{IntoResponse, Json},
 };
 
+#[cfg(any(feature = "web-ui", feature = "vault"))]
+use axum::{
+    extract::State,
+    middleware::Next,
+    response::{IntoResponse, Json, Redirect},
+};
 #[cfg(feature = "web-ui")]
-use axum::response::Redirect;
+use tracing::{debug, warn};
 
 use crate::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
@@ -18,6 +22,8 @@ use crate::{
 
 /// Session cookie name.
 pub const SESSION_COOKIE: &str = "moltis_session";
+const AUTH_SETUP_REQUIRED: &str = "AUTH_SETUP_REQUIRED";
+const AUTH_NOT_AUTHENTICATED: &str = "AUTH_NOT_AUTHENTICATED";
 
 // ── AuthResult — single source of truth for auth decisions ──────────────────
 
@@ -113,29 +119,84 @@ pub async fn auth_gate(
             next.run(request).await
         },
         AuthResult::SetupRequired => {
-            if path == "/onboarding" {
-                // Allow the onboarding page through during setup — it is only
-                // public while setup is incomplete. Once credentials are
-                // configured, normal auth applies and prevents access.
+            if path.starts_with("/api/") || path.starts_with("/ws/") {
+                if path.starts_with("/ws/") {
+                    warn!(
+                        path,
+                        remote = %addr,
+                        is_local,
+                        "auth reject: setup required for websocket connection"
+                    );
+                }
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({
+                        "code": AUTH_SETUP_REQUIRED,
+                        "error": "setup required"
+                    })),
+                )
+                    .into_response()
+            } else if is_local || path == "/onboarding" || path == "/onboarding/" {
+                // Local connections and /onboarding pass through during
+                // setup.  Local: the SPA handles onboarding redirects
+                // itself.  Remote /onboarding: the page's own auth step
+                // (step 0) requires a setup code, so it is safe to
+                // render without full auth (#310, #350).
                 request.extensions_mut().insert(AuthIdentity {
                     method: AuthMethod::Loopback,
                 });
                 next.run(request).await
-            } else if path.starts_with("/api/") || path.starts_with("/ws/") {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "setup required"})),
-                )
-                    .into_response()
             } else {
-                Redirect::to("/onboarding").into_response()
+                // Remote connections to other pages when auth is not
+                // configured yet: redirect to a static "setup required"
+                // page instead of passing through, which would cause a
+                // redirect loop between `/` and `/onboarding` (#350).
+                Redirect::to("/setup-required").into_response()
             }
         },
         AuthResult::Unauthorized => {
+            // During onboarding, local requests may lack a valid session
+            // cookie (e.g. STT test button uses HTTP fetch, not WS).
+            // Allow only the paths the wizard needs — not all of /api/*.
+            if is_local && is_onboarding_bypass_path(path) {
+                let onboarded = state
+                    .gateway
+                    .services
+                    .onboarding
+                    .wizard_status()
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
+                    .unwrap_or(true);
+                if !onboarded {
+                    debug!(path, remote = %addr, "auth bypass: local request during onboarding");
+                    request.extensions_mut().insert(AuthIdentity {
+                        method: AuthMethod::Loopback,
+                    });
+                    return next.run(request).await;
+                }
+            }
+
             if path.starts_with("/api/") || path.starts_with("/ws/") {
+                if path.starts_with("/ws/") {
+                    let has_bearer = bearer_token(request.headers()).is_some();
+                    let has_session_cookie = cookie_header(request.headers())
+                        .is_some_and(|h| parse_cookie(h, SESSION_COOKIE).is_some());
+                    warn!(
+                        path,
+                        remote = %addr,
+                        is_local,
+                        has_bearer,
+                        has_session_cookie,
+                        "auth reject: unauthorized websocket connection"
+                    );
+                }
                 (
                     StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "not authenticated"})),
+                    Json(serde_json::json!({
+                        "code": AUTH_NOT_AUTHENTICATED,
+                        "error": "not authenticated"
+                    })),
                 )
                     .into_response()
             } else {
@@ -150,10 +211,67 @@ pub async fn auth_gate(
 fn is_public_path(path: &str) -> bool {
     matches!(
         path,
-        "/health" | "/auth/callback" | "/manifest.json" | "/sw.js" | "/login"
+        "/health"
+            | "/auth/callback"
+            | "/manifest.json"
+            | "/sw.js"
+            | "/login"
+            | "/setup-required"
+            | "/ws"
     ) || path.starts_with("/api/auth/")
+        || path.starts_with("/api/public/")
+        || path.starts_with("/api/channels/msteams/")
         || path.starts_with("/assets/")
         || path.starts_with("/share/")
+}
+
+/// Paths eligible for the onboarding auth bypass (local + not-yet-onboarded).
+///
+/// Kept narrow so that privileged endpoints like `/api/config` or
+/// `/api/restart` are never reachable without credentials.
+#[cfg(feature = "web-ui")]
+fn is_onboarding_bypass_path(path: &str) -> bool {
+    path.starts_with("/api/sessions/")  // STT upload / media
+        || path.starts_with("/api/bootstrap")
+        || path == "/api/gon"
+        || path.starts_with("/api/tailscale/")
+        || path.starts_with("/ws/") // WS RPCs (voice, provider config)
+}
+
+// ── Vault guard ─────────────────────────────────────────────────────────────
+
+/// Middleware that blocks API requests when the vault is sealed.
+///
+/// Returns 423 Locked for API endpoints (except auth and gon) when the vault
+/// is in `Sealed` state. `Uninitialized` is not blocked — the vault doesn't
+/// exist yet and there's nothing to protect.
+#[cfg(feature = "vault")]
+pub async fn vault_guard(
+    State(state): State<super::server::AppState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> axum::response::Response {
+    let Some(ref vault) = state.gateway.vault else {
+        return next.run(request).await;
+    };
+    let path = request.uri().path();
+    // Allow auth, public, gon, and non-API routes through.
+    if !path.starts_with("/api/")
+        || path.starts_with("/api/auth/")
+        || path.starts_with("/api/public/")
+        || path == "/api/gon"
+    {
+        return next.run(request).await;
+    }
+    // Only block when Sealed (not Uninitialized).
+    if matches!(vault.status().await, Ok(moltis_vault::VaultStatus::Sealed)) {
+        return (
+            StatusCode::LOCKED,
+            Json(serde_json::json!({"error": "vault is sealed", "status": "sealed"})),
+        )
+            .into_response();
+    }
+    next.run(request).await
 }
 
 // ── AuthSession extractor ───────────────────────────────────────────────────
@@ -256,5 +374,17 @@ mod tests {
     #[test]
     fn chat_ws_path_is_not_public() {
         assert!(!is_public_path("/ws/chat"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn graphql_paths_are_not_public() {
+        assert!(!is_public_path("/graphql"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn public_identity_path_is_public() {
+        assert!(is_public_path("/api/public/identity"));
     }
 }

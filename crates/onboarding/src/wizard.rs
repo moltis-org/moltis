@@ -4,10 +4,10 @@ use std::io::{BufRead, Write};
 
 use moltis_config::{MoltisConfig, find_or_default_config_path, save_config};
 
-use crate::state::WizardState;
+use crate::{Context, Result, state::WizardState};
 
 /// Run the interactive onboarding wizard in the terminal.
-pub async fn run_onboarding() -> anyhow::Result<()> {
+pub async fn run_onboarding() -> Result<()> {
     let config_path = find_or_default_config_path();
 
     // Check if already onboarded.
@@ -19,7 +19,7 @@ pub async fn run_onboarding() -> anyhow::Result<()> {
         identity_name = cfg.identity.name;
         user_name = cfg.user.name;
     }
-    if let Some(id) = moltis_config::load_identity()
+    if let Some(id) = moltis_config::load_identity_for_agent("main")
         && id.name.is_some()
     {
         identity_name = id.name;
@@ -61,9 +61,10 @@ pub async fn run_onboarding() -> anyhow::Result<()> {
     config.identity = state.identity;
     config.user = state.user;
 
-    let path = save_config(&config)?;
-    moltis_config::save_identity(&config.identity)?;
-    moltis_config::save_user(&config.user)?;
+    let path = save_config(&config).context("failed to save onboarding config")?;
+    moltis_config::save_identity_for_agent("main", &config.identity)
+        .context("failed to save identity")?;
+    moltis_config::save_user(&config.user).context("failed to save user")?;
     println!("Config saved to {}", path.display());
     println!("Onboarding complete!");
     Ok(())

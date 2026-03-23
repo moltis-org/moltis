@@ -225,8 +225,11 @@ pub fn sanitize_text_for_tts(text: &str) -> Cow<'_, str> {
     // --- Pass 1: remove fenced code blocks ---
     let after_fences = remove_code_fences(text);
 
+    // --- Pass 2: remove markdown tables ---
+    let after_tables = remove_tables(&after_fences);
+
     // --- Process line by line ---
-    for line in after_fences.lines() {
+    for line in after_tables.lines() {
         let mut l: &str = line;
 
         // Strip markdown headers (e.g. "## Title" → "Title")
@@ -280,6 +283,7 @@ fn needs_sanitization(text: &str) -> bool {
         || text.contains('*')
         || text.contains('_')
         || text.contains('`')
+        || text.contains('|')
         || text.contains("\n- ")
         || text.starts_with("- ")
         || has_ordered_list(text)
@@ -327,6 +331,90 @@ fn remove_code_fences(text: &str) -> String {
     }
 
     result
+}
+
+/// Remove markdown table blocks from text. A table block is a run of
+/// consecutive lines containing pipe (`|`) column separators that includes
+/// a separator row (`|---|` or `---+---`). Entire tables are removed because
+/// pipe characters and alignment dashes are meaningless when read aloud.
+fn remove_tables(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut result = String::with_capacity(text.len());
+    let mut i = 0;
+
+    while i < lines.len() {
+        // Look for the start of a potential table (a line with table-like pipes).
+        if is_tts_table_line(lines[i]) {
+            // Gather consecutive table-like lines.
+            let start = i;
+            while i < lines.len() && is_tts_table_line(lines[i]) {
+                i += 1;
+            }
+            let block = &lines[start..i];
+            // Only strip if there's a separator row (confirming it's really a table).
+            if block.len() >= 2 && block.iter().any(|l| is_tts_separator_row(l)) {
+                // Skip the entire table block — don't emit anything for it.
+                continue;
+            }
+            // Not a real table, keep the lines.
+            for line in block {
+                result.push_str(line);
+                result.push('\n');
+            }
+        } else {
+            result.push_str(lines[i]);
+            result.push('\n');
+            i += 1;
+        }
+    }
+
+    if result.ends_with('\n') && !text.ends_with('\n') {
+        result.pop();
+    }
+    result
+}
+
+/// Check if a line looks like a table row (contains `|` as column separator).
+fn is_tts_table_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Standard: starts with |
+    if trimmed.starts_with('|') {
+        return true;
+    }
+    // Non-standard: at least 2 pipe separators
+    if trimmed.chars().filter(|&c| c == '|').count() >= 2 {
+        return true;
+    }
+    // Separator row with + intersections
+    is_tts_separator_row(line)
+}
+
+/// Check if a line is a table separator row (`|---|` or `---+---`).
+fn is_tts_separator_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Pipe-separated: |---|---|
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    if !inner.is_empty()
+        && inner.split('|').all(|cell| {
+            let c = cell.trim();
+            !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
+        })
+    {
+        return true;
+    }
+    // Plus-separated: ---+---+---
+    trimmed.contains('+')
+        && trimmed.split('+').all(|cell| {
+            let c = cell.trim();
+            !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
+        })
 }
 
 /// Strip leading `#` characters (markdown headers) from a line.
@@ -590,6 +678,38 @@ For more details, check the **official documentation** at https://doc.rust-lang.
         let text = "Hello<break time=\"0.5s\"/> world";
         let result = sanitize_text_for_tts(text);
         assert!(!result.contains("<break"));
+    }
+
+    #[test]
+    fn test_sanitize_strips_pipe_table() {
+        let text = "Before\n| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |\nAfter";
+        let result = sanitize_text_for_tts(text);
+        assert!(
+            result.contains("Before"),
+            "text before table kept: {result}"
+        );
+        assert!(result.contains("After"), "text after table kept: {result}");
+        assert!(!result.contains("Alice"), "table content removed: {result}");
+        assert!(!result.contains("|"), "no pipe chars: {result}");
+    }
+
+    #[test]
+    fn test_sanitize_strips_plus_separator_table() {
+        let text = "Here are restaurants:\nName | Rating | Open\n-----+--------+-----\nJay | 4.8 | 11 PM\nBob | 4.5 | 10 PM\nDone!";
+        let result = sanitize_text_for_tts(text);
+        assert!(result.contains("Here are restaurants:"), "{result}");
+        assert!(result.contains("Done!"), "{result}");
+        assert!(!result.contains("Jay"), "table data removed: {result}");
+        assert!(!result.contains("4.8"), "table data removed: {result}");
+    }
+
+    #[test]
+    fn test_sanitize_keeps_single_pipe_in_prose() {
+        let text = "Use the A | B operator for choices.";
+        let result = sanitize_text_for_tts(text);
+        // A single pipe in prose is kept (not a table).
+        assert!(result.contains("A"), "{result}");
+        assert!(result.contains("B"), "{result}");
     }
 
     #[test]

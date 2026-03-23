@@ -29,19 +29,25 @@ You'll see output like:
 
 ## 3. Configure a Provider
 
-You need an LLM provider configured to chat. Current options are:
+You need an LLM provider configured to chat. The fastest options:
 
-### Option A: OpenAI Codex (OAuth)
+### Option A: API Key (Anthropic, OpenAI, Gemini, etc.)
+
+1. Set an API key as an environment variable and restart Moltis:
+   ```bash
+   export ANTHROPIC_API_KEY="sk-ant-..."   # Anthropic
+   export OPENAI_API_KEY="sk-..."          # OpenAI
+   export GEMINI_API_KEY="..."             # Google Gemini
+   ```
+2. Models appear automatically in the model picker.
+
+Or configure via the web UI: **Settings** → **Providers** → enter your API key.
+
+### Option B: OAuth (Codex / Copilot)
 
 1. In Moltis, go to **Settings** → **Providers**
-2. Click **OpenAI Codex** → **Connect**
+2. Click **OpenAI Codex** or **GitHub Copilot** → **Connect**
 3. Complete the OAuth flow
-
-### Option B: GitHub Copilot (OAuth)
-
-1. In Moltis, go to **Settings** → **Providers**
-2. Click **GitHub Copilot** → **Connect**
-3. Complete the GitHub OAuth flow
 
 ### Option C: Local LLM (Offline)
 
@@ -49,7 +55,7 @@ You need an LLM provider configured to chat. Current options are:
 2. Click **Local LLM**
 3. Choose a model and save
 
-*More providers are coming soon.*
+See [Providers](providers.md) for the full list of supported providers.
 
 ## 4. Chat!
 
@@ -89,6 +95,15 @@ Chat with your agent from anywhere:
 2. Copy the bot token
 3. In Moltis: **Settings** → **Telegram** → Enter token → **Save**
 4. Message your bot!
+
+### Connect Discord
+
+1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Enable **Message Content Intent** and copy the bot token
+3. In Moltis: **Settings** → **Channels** → **Connect Discord** → Enter token → **Connect**
+4. Invite the bot to your server and @mention it!
+
+→ [Full Discord setup guide](discord.md)
 
 ### Add MCP Servers
 

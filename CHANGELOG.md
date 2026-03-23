@@ -9,11 +9,543 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Skill Editing & Forking**: Edit personal skills or fork repo skills into personal skills directly from the web UI
+  - "Edit" button on personal/project skills opens an inline editor for name, description, allowed tools, and body
+  - "Fork & Edit" button on repo skills copies the skill to personal skills for customization
+  - Confirmation hint in chat after skill creation/update with link to the skills page
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.10.18] - 2026-03-09
+### Added
+- [gateway] Make provider discovery startup non-blocking
+- [monitoring] Track memory history and improve local-llm memory reporting (#325)
+- [ios] Add local llama cpp memory field to GraphQL schema
+- [providers] Include reasoning fields for kimi models (#323)
+- [chat] Tabs to filter chats between sessions and cron (#338)
+- [oauth] Support pasted callback URL fallback (#365)
+- [providers] Add reasoning effort support for models with extended thinking (#363)
+
+
+### Changed
+- Externalize web/wasm assets and reduce memory footprint (#321)
+- [web] Move chat history hydration to paged HTTP
+- [web] Paginate sessions and auto-load older history
+
+
+### Removed
+- [web] Remove nested onboarding scroll and restore settings nav icons
+- [web] Declutter chat controls and fix dropdown positioning
+
+
+### Fixed
+- [gateway] Speed up startup by deferring tailscale and log scan
+- [gateway] Improve browser warmup integration
+- [scripts] Run local nextest with ci timeout profile
+- [ci] Build macOS app arm64 in fast path
+- [web] Move session history off websocket and cap payload size
+- [web] Use combo select for session header selectors
+- [web] Externalize SVG icons and restore empty-chat centering
+- [web] Align e2e with controls modal and daily model refresh
+- [ci] Stage wasm assets for cargo-deb packaging
+- [packaging] Use cli-relative web assets in cargo-deb
+- Install rustls CryptoProvider before channel startup (#336)
+- [ci,tools] Unblock dependabot and support wasmtime 36
+- [auth] Honor forwarded host for proxy session cookies
+- [config] Include tmux in default sandbox packages
+- [mdns] Use stable host label to avoid mDNSResponder conflict and double-.local suffix (#349)
+- [web] Prevent Enter key from triggering actions during IME composition (#341)
+- [biome] Update schema to 2.4.6 and move noUnusedExpressions to suspicious
+- [ci] Update biome version to 2.4.6 in CI workflows
+- [macos] Extract makeTextView to fix function body length lint violation
+- [providers] Report compatible client_version for Codex model discovery (#359)
+- [prompt] Omit sandbox/node info from runtime prompt when disabled (#362)
+- [web] Allow deleting cron sessions from chat sidebar (#357)
+- [chat] Skip duplicate text fallback when TTS disabled and voice streamed (#373)
+- [web] Break redirect loop when accessing via Tailscale Serve (#356)
+
+
+### Security
+- [nodes] Add multi-node support with device pairing, remote exec, and UI (#291)
+- [security] Add direct nginx websocket proxy example (#364)
+
+## [0.10.17] - 2026-03-05
+### Fixed
+- [config] Include tmux in default sandbox packages
+
+## [0.10.16] - 2026-03-05
+### Fixed
+- [ci,tools] Unblock dependabot and support wasmtime 36
+- [auth] Honor forwarded host for proxy session cookies
+
+## [0.10.15] - 2026-03-05
+### Fixed
+- Install rustls CryptoProvider before channel startup (#336)
+
+## [0.10.14] - 2026-03-05
+### Fixed
+- [packaging] Use cli-relative web assets in cargo-deb
+
+## [0.10.13] - 2026-03-04
+### Fixed
+- [ci] Stage wasm assets for cargo-deb packaging
+
+## [0.10.12] - 2026-03-04
+### Added
+- [ci] Add release dry-run mode
+- [browser] Add container_host for Docker-in-Docker connectivity (#300)
+- [ios] Auto-discover server identity and show emojis (#297)
+- [website] Migrate cloudflare website into monorepo (#302)
+- [local-llm] Allow arbitrary HuggingFace model IDs for MLX models
+- [web,tools] AOT WASM pre-compilation and Shiki CDN loading
+- [cli] Remove wasm from default features to reduce memory
+- [gateway] Make provider discovery startup non-blocking
+- [monitoring] Track memory history and improve local-llm memory reporting (#325)
+- [ios] Add local llama cpp memory field to GraphQL schema
+
+
+### Changed
+- [web] Move settings nav icons from JS to CSS
+- Externalize web/wasm assets and reduce memory footprint (#321)
+- [web] Move chat history hydration to paged HTTP
+- [web] Paginate sessions and auto-load older history
+
+
+### Removed
+- [web] Remove nested onboarding scroll and restore settings nav icons
+- [web] Declutter chat controls and fix dropdown positioning
+
+
+### Fixed
+- [config] Support provider url alias for remote Ollama config (#299)
+- [ci] Make release dry-run job conditions valid
+- [providers] Use Ollama capabilities for tool support detection (#301)
+- [scripts] Roll back heavy local validation parallelism
+- [web] Skip npm install when TAILWINDCSS binary is provided
+- [ci] Update website/releases.json on release
+- [web] Add missing i18n button key for preferredModels
+- [local-llm] Use sampler API for mlx-lm >= 0.20
+- [gateway] Break redirect loop when onboarded but auth not configured (#310)
+- [gateway] Reduce idle CPU from metrics loop and log broadcast feedback
+- [gateway] Speed up startup by deferring tailscale and log scan
+- [gateway] Improve browser warmup integration
+- [scripts] Run local nextest with ci timeout profile
+- [ci] Build macOS app arm64 in fast path
+- [web] Move session history off websocket and cap payload size
+- [web] Use combo select for session header selectors
+- [web] Externalize SVG icons and restore empty-chat centering
+- [web] Align e2e with controls modal and daily model refresh
+
+
+### Security
+- [nodes] Add multi-node support with device pairing, remote exec, and UI (#291)
+
+## [0.10.11] - 2026-03-02
+
+## [0.10.10] - 2026-03-02
+### Fixed
+- [swift-bridge] Stabilize gateway migration and stream tests
+
+## [0.10.9] - 2026-03-02
+### Fixed
+- [ci] Harden tailwindcss cli downloads
+
+## [0.10.8] - 2026-03-02
+### Changed
+- [gateway] Fetch updates from releases manifest instead of GitHub API
+
+
+### Fixed
+- [ci] Add Tailwind CSS build step to release workflow, Dockerfile, and snapcraft
+- [e2e] Wait for session history render before DOM injection in chat-abort
+
+## [0.10.7] - 2026-03-02
+### Added
+- [sandbox] Add GitHub runner parity packages and enable corepack (#284)
+- [providers] Add first-class LM Studio provider (#286)
+- [agents] Enrich spawn_agent presets with identity, policies, memory (#271)
+- [web] Show running version at bottom of identity settings
+- [channels] Channel architecture phase 5, contract suites, and observability baseline (#289)
+
+
+### Changed
+- [channels] Registry-driven dispatch for cheap new channels (#277)
+
+
+### Fixed
+- [e2e] Make sandboxes container tests deterministic
+- [e2e] Replace remaining racy waitForResponse with route interceptors
+- [mcp] Make optional MCP tool params nullable to prevent empty string errors (#283)
+- [provider-setup] Reorder validation probes to prefer fast models (#280)
+- [sandbox] Resolve host gateway IP for Podman < 5.0 (#287)
+- [e2e] Fix flaky "deleting unmodified fork" test
+- [ci] Stale lockfile, missing Tailwind in macOS job, OAuth e2e setup
+- [ci] Use standalone Tailwind binary for macOS app job
+- [e2e] Fix OAuth token-exchange failure test and add error-context capture
+- [web] Auto-install node_modules in Tailwind build script
+- [web] Retry openclaw onboarding scan until ws is ready
+
+
+### Security
+- [macos] Wire settings UI to rust config backend (#267)
+- [channels] Shared channel webhook middleware pipeline (#290)
+
+## [0.10.6] - 2026-03-01
+### Fixed
+- [web] Fix Shiki highlighter init failures in E2E tests
+- [web] Make thinking stop button smaller with left spacing
+- [chat] Surface error when LLM returns empty response with zero tokens
+- [providers] Emit StreamEvent::Error on non-success finish_reason
+
+## [0.10.5] - 2026-03-01
+### Fixed
+- [web] Lazy-load Shiki to prevent blocking page mount
+
+## [0.10.4] - 2026-03-01
+### Added
+- [web] Add Shiki syntax highlighting to code blocks
+
+## [0.10.3] - 2026-03-01
+### Added
+- Add channel-aware heartbeat delivery and send_message agent tool (#270)
+- [memory] Add tree-sitter code splitter and RRF search merge
+
+
+### Changed
+- [ffi] Tighten unsafe_code allowances
+
+
+### Fixed
+- [sandbox] Make apple container keepalive portable (#269)
+- [local-llm] Combine compile-time and runtime Metal detection
+- [auth] Auto-detect new WebAuthn hosts and prompt passkey refresh (#268)
+- [web] Replace rg with grep in changelog guard and deduplicate passkey status refresh
+
+## [0.10.2] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Release packaging now installs cross-compilation targets on the active nightly toolchain in the Homebrew binary job, fixing `error[E0463]: can't find crate for core` during macOS binary builds.
+- Docker release builds now copy `apps/courier` into the image build context so Cargo workspace metadata resolves correctly during WASM component builds.
+### Security
+
+## [0.10.1] - 2026-02-28
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.10.0] - 2026-02-28
+
+
+### Added
+
+- **Gemini first-class provider**: Google Gemini is now registered via the OpenAI-compatible endpoint with native tool calling, vision/multimodal support, streaming, and model discovery. Replaces the previous genai-backed fallback that lacked tool support. Supports both `GEMINI_API_KEY` and `GOOGLE_API_KEY` environment variables
+- **Podman sandbox backend** — Podman as a first-class sandbox backend. Set `backend = "podman"` or let auto-detection prefer it over Docker (Apple Container → Podman → Docker → restricted-host). Uses the `podman` CLI directly (no socket compatibility needed)
+- **Trusted network mode**: sandbox containers now default to `sandbox.network = "trusted"`, routing outbound traffic through an HTTP CONNECT proxy with full audit logging. When `trusted_domains` is empty (the default), all domains are allowed (audit-only mode); when configured, only listed domains pass without approval. Includes real-time network audit log with domain, protocol, and action filtering via Settings > Network Audit. Configurable via `sandbox.trusted_domains` in `moltis.toml`. Proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) are now automatically injected into both Docker and Apple Container sandboxes, and the proxy binds to `0.0.0.0` so it is reachable from container VMs. The proxy rejects connections from non-private IPs (only loopback, RFC 1918, link-local, and CGNAT ranges are accepted)
+- **New `moltis-network-filter` crate**: domain filtering, proxy, and audit buffer logic extracted from `moltis-tools` and `moltis-gateway` into a standalone crate with feature flags (`proxy`, `service`, `metrics`). The macOS app can now depend on it directly for network audit log display via `moltis-swift-bridge`
+- **macOS Network Audit pane**: new Settings > Network Audit section with real-time log display, action filtering (allowed/denied), search, pause/resume, clipboard export, and JSONL download — matching the web UI pattern. New FFI callback `moltis_set_network_audit_callback` bridges Rust audit entries to Swift
+- **Proxy-compliant HTTP tools**: all HTTP tools (`web_fetch`, `web_search`, `location`, `map`) now route through the trusted-network proxy when active, so their traffic appears in the Network Audit log and respects domain filtering. The shared `reqwest` client is initialized with proxy config at gateway startup; `web_fetch` uses a per-tool proxy setting for its custom redirect-following client
+- **Network policy rename**: `sandbox.network = "open"` has been renamed to `"bypass"` to make explicit that traffic bypasses the proxy entirely (no audit logging)
+- **Real WASM sandbox** (`wasm` feature, default on) — Wasmtime + WASI sandbox with filesystem isolation, fuel metering, epoch-based timeouts, and ~20 built-in coreutils (echo, cat, ls, mkdir, rm, cp, mv, etc.). Two execution tiers: built-in commands operate on a sandboxed directory tree; `.wasm` modules run via Wasmtime with preopened dirs and captured I/O. Backend: `"wasm"` in config
+- **Restricted-host sandbox** — new `"restricted-host"` backend (extracted from the old `WasmtimeSandbox`) providing honest naming for what it does: env clearing, restricted PATH, and `ulimit` resource wrappers without containers or WASM. Always compiled (no feature gate)
+- **Docker security hardening** — containers now launch with `--cap-drop ALL`, `--security-opt no-new-privileges`, tmpfs mounts for `/tmp` and `/run`, and `--read-only` root filesystem for prebuilt images
+- **Generic sandbox failover chain** — auto-detection now tries Apple Container → Docker → Restricted Host. Failover uses restricted-host as the final fallback instead of NoSandbox
+- Discord channel integration via new `moltis-discord` crate using serenity Gateway API (persistent WebSocket, no public URL required). Supports DM and group messaging with allowlist/OTP gating, mention mode, guild allowlist, and 2000-char message chunking. Web UI: connect/edit/remove Discord bots in Settings > Channels and onboarding flow
+- Discord reply-to-message support: set `reply_to_message = true` to have the bot send responses as Discord threaded replies to the user's message
+- Discord ack reactions: set `ack_reaction = "👀"` to add an emoji reaction while processing (removed on completion)
+- Discord bot token import from OpenClaw installations during onboarding (both flat and multi-account configs)
+- Discord bot presence/activity: configure `activity`, `activity_type` (playing/listening/watching/competing/custom), and `status` (online/idle/dnd/invisible) in bot config
+- Discord OTP self-approval for DMs: non-allowlisted users receive a 6-digit challenge code (visible in web UI) to self-approve access, matching Telegram's existing OTP flow
+- Discord native slash commands: `/new`, `/clear`, `/compact`, `/context`, `/model`, `/sessions`, `/agent`, `/help` registered as Discord application commands with ephemeral responses
+- OTP module moved from `moltis-telegram` to shared `moltis-channels` crate for cross-platform reuse
+- Real-time session sync between macOS app and web UI via `SessionEventBus` (`tokio::sync::broadcast`). Sessions created, deleted, or patched in one UI instantly appear in the other. New FFI callback `moltis_set_session_event_callback` and WebSocket `"session"` events for create/delete/fork operations.
+- Swift bridge: persistent session storage via FFI — `moltis_list_sessions`, `moltis_switch_session`, `moltis_create_session`, `moltis_session_chat_stream` functions backed by JSONL files and shared SQLite metadata (`moltis.db`) across all UIs (macOS app, web, TUI)
+- **Internationalization (i18n)**: web UI now supports runtime language switching via `i18next` with English and French locales. Error codes use structured constants with locale-aware error messages across API handlers, terminal, chat, and environment routes. Onboarding step labels, navigation buttons, and page strings use translation keys (`t()` calls)
+- **Vault UI**: recovery key display during onboarding password setup, vault status/unlock controls in Settings > Security, encrypted/plaintext badges on environment variables
+- **Encryption-at-rest vault** (`vault` feature, default on) — environment variables are encrypted with XChaCha20-Poly1305 AEAD using Argon2id-derived keys. Vault is initialized on first password setup and auto-unsealed on login. Recovery key provided at initialization for emergency access. API: `/api/auth/vault/status`, `/api/auth/vault/unlock`, `/api/auth/vault/recovery`
+- `send_image` tool for sending local image files (PNG, JPEG, GIF, WebP) to channel targets like Telegram, with optional caption support
+- GraphQL API at `/graphql` (GET serves GraphiQL playground and WebSocket subscriptions, POST handles queries/mutations) exposing all RPC methods as typed operations
+- New `moltis-graphql` crate with queries, mutations, subscriptions, custom `Json` scalar, and `ServiceCaller` trait abstraction
+- New `moltis-providers` crate that owns provider integrations and model registry/catalog logic (OpenAI, Anthropic, OpenAI-compatible, OpenAI Codex, GitHub Copilot, Kimi Code, local GGUF, local LLM)
+- `graphql` feature flag (default on) in gateway and CLI crates for compile-time opt-out
+- Settings > GraphQL page embedding GraphiQL playground at `/settings/graphql`
+- Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
+- Swift embedding POC scaffold with a new `moltis-swift-bridge` static library crate, XcodeGen YAML project (`apps/macos/project.yml`), and SwiftLint wiring for SwiftUI frontend code quality
+- New `moltis-openclaw-import` crate for detecting OpenClaw installations and selectively importing identity, providers, skills, memory files, Telegram channels, sessions, and MCP servers
+- New onboarding RPC methods: `openclaw.detect`, `openclaw.scan`, and `openclaw.import`
+- New `moltis import` CLI commands (`detect`, `all`, `select`) with `--dry-run` and `--json` output options
+- Onboarding now includes a conditional OpenClaw Import step with category selection, import execution, and detailed per-category results/TODO reporting
+- Settings now includes an OpenClaw Import section (shown only when OpenClaw is detected) for scan-and-import workflows after onboarding
+- Microsoft Teams channel integration via new `moltis-msteams` plugin crate with webhook ingress and OAuth client-credentials outbound messaging
+- Teams channel management in the web UI (add/edit/remove accounts, sender review, session/channel badges)
+- Guided Teams bootstrap tooling via `moltis channels teams bootstrap` plus an in-UI endpoint generator in Settings → Channels
+- Multi-agent personas with per-agent workspaces (`data_dir()/agents/<id>/`), `agents.*` RPC methods, and session-level `agent_id` binding/switching across web + Telegram flows
+- `chat.peek` RPC method returning real-time session state (active flag, thinking text, active tool calls) for any session key
+- Active tool call tracking per-session in `LiveChatService` with camelCase-serialized `ActiveToolCall` structs
+- Web UI: inline red "Stop" button inside thinking indicator, `aborted` broadcast handler that cleans up streaming state
+- Channel commands: `/peek` (shows thinking text and active tool calls) and `/stop` (aborts active generation)
+### Changed
+
+- **Crate restructure**: gateway crate reduced from ~42K to ~29K lines by extracting `moltis-chat` (chat engine, agent orchestration), `moltis-auth` (password + passkey auth), `moltis-tls` (TLS/HTTPS termination), `moltis-service-traits` (shared service interfaces), and moving share rendering into `moltis-web`
+- Provider wiring now routes through `moltis-providers` instead of `moltis-agents::providers`, and local LLM feature flags (`local-llm`, `local-llm-cuda`, `local-llm-metal`) now resolve via `moltis-providers`
+- Voice now auto-selects the first configured TTS/STT provider when no explicit
+  provider is set.
+- Default voice template/settings now favor OpenAI TTS and Whisper STT in
+  onboarding-ready configs.
+- Updated the `dcg-guard` example hook docs and handler behavior to gracefully no-op when `dcg` is missing, instead of hard-failing
+- Automatic model/provider selection now prefers subscription-backed providers (OpenAI Codex, GitHub Copilot) ahead of API-key providers, while still honoring explicit model priorities
+- GraphQL gateway now builds its schema once at startup and reuses it for HTTP and WebSocket requests
+- GraphQL resolvers now share common RPC helper macros and use typed response objects for `node.describe`, `voice.config`, `voice.voxtral_requirements`, `skills.security_status`, `skills.security_scan`, and `memory.config`
+- GraphQL `logs.ack` mutation now matches backend behavior and no longer takes an `ids` argument
+- Gateway startup diagnostics now report OpenClaw detection status and pass detection state to web gon data for conditional UI rendering
+- Gateway and CLI now enable the `openclaw-import` feature in default builds
+- Providers now support `stream_transport = "sse" | "websocket" | "auto"` in config. OpenAI can stream via Responses API WebSocket mode, and `auto` falls back to SSE when WebSocket setup is unavailable.
+- Agent Identity emoji picker now includes 🐰 🐹 🦀 🦞 🦝 🦭 🧠 🧭 options
+- Added architecture docs for a native Swift UI app embedding Moltis Rust core through a C FFI bridge (`docs/src/native-swift-embedding.md`)
+- Channel persistence and message-log queries are now channel-type scoped (`channel_type + account_id`) so Telegram and Teams accounts can share the same account IDs safely
+- Chat/system prompt resolution is now agent-aware, loading `IDENTITY.md`, `SOUL.md`, `MEMORY.md`, `AGENTS.md`, and `TOOLS.md` from the active session agent workspace with backward-compatible fallbacks
+- Memory tool operations and compaction memory writes are now agent-scoped, preventing cross-agent memory leakage during search/read/write flows
+- Default sandbox package set now includes `golang-go`, and pre-built sandbox images install the latest `gog` (`steipete/gogcli`) as `gog` and `gogcli`
+- Sandbox config now supports `/home/sandbox` persistence strategies (`off`, `session`, `shared`), with `shared` as the default and a shared host folder mounted from `data_dir()/sandbox/home/shared`
+- Settings → Sandboxes now includes shared-home controls (enabled + folder path), and sandbox config supports `tools.exec.sandbox.shared_home_dir` for custom shared persistence location
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **OpenAI Codex OAuth in Docker**: the web UI no longer overrides the provider's pre-registered `redirect_uri`, which caused OpenAI to reject the authorization request with `unknown_error`. The OAuth callback server now also respects the gateway bind address (`0.0.0.0` in Docker) so the callback port (1455) is reachable from the host. Docker image now exposes port 1455 for OAuth callbacks (#207)
+- **Slow SQLite writes**: `moltis.db` and `memory.db` now use `journal_mode=WAL` and `synchronous=NORMAL` (matching `metrics.db`), eliminating multi-second write contention that caused 3–10 s INSERT times under concurrent access
+- Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
+- Docker image now installs Docker CLI from Docker’s official Debian repository (`docker-ce-cli`), avoiding API mismatches with newer host daemons during sandbox builds/exec
+- Chat UI now shows a first-run sandbox preparation status message before container/image setup begins, so startup delays are visible while sandbox resources are created
+- OpenAI TTS and Whisper STT now correctly reuse OpenAI credentials from
+  voice config, `OPENAI_API_KEY`, or the LLM OpenAI provider config.
+- Voice provider parsing now accepts `openai-tts` and `google-tts` aliases
+  sent by the web UI.
+- Chat welcome card is now hidden as soon as the thinking indicator appears.
+- Onboarding summary loading state now keeps modal sizing stable with a
+  centered spinner.
+- Onboarding voice provider rows now use a dedicated `needs-key` badge class and styling, with E2E coverage to verify the badge pill rendering
+- OpenAI Codex OAuth token handling now preserves account context across refreshes and resolves `ChatGPT-Account-Id` from additional JWT/auth.json shapes to avoid auth failures with Max-style OAuth flows
+- Onboarding/provider setup now surfaces subscription OAuth providers (OpenAI Codex, GitHub Copilot) as configured when local OAuth tokens are present, even if they are omitted from `providers.offered`
+- GraphQL WebSocket upgrade detection now accepts clients that provide `Upgrade`/`Sec-WebSocket-Key` without `Connection: upgrade`
+- GraphQL channel and memory status bridges now return schema-compatible shapes for `channels.status`, `channels.list`, and `memory.status`
+- Provider errors with `insufficient_quota` now surface as explicit quota/billing failures (with the upstream message) instead of generic retrying/rate-limit behavior
+- Linux `aarch64` builds now skip `jemalloc` to prevent startup aborts on 16 KiB page-size kernels (for example Raspberry Pi 5 Debian images)
+- Gateway startup now blocks the common reverse-proxy TLS mismatch (`MOLTIS_BEHIND_PROXY=true` with Moltis TLS enabled) and explains using `--no-tls`; HTTPS-upstream proxy setups can explicitly opt in with `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`
+- WebSocket same-origin checks now accept proxy deployments that rewrite `Host` by using `X-Forwarded-Host` in proxy mode, and treat implicit `:443`/`:80` as equivalent to default ports
+### Security
+
+## [0.9.10] - 2026-02-21
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.9] - 2026-02-21
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.8] - 2026-02-21
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.7] - 2026-02-20
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.6] - 2026-02-20
+
+
+### Added
+
+- Cron jobs can now deliver agent turn output to Telegram channels via the `deliver`, `channel`, and `to` payload fields
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Accessing `http://` on the HTTPS port now returns a 301 redirect to `https://` instead of a garbled TLS handshake page
+- SQLite metrics store now uses WAL journal mode and `synchronous=NORMAL` to fix slow INSERT times (1-3s) on Docker/WSL2
+
+### Security
+
+## [0.9.5] - 2026-02-20
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Skip jemalloc on Windows (platform-specific dependency gate)
+
+### Security
+
+## [0.9.4] - 2026-02-20
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.3] - 2026-02-20
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.2] - 2026-02-20
+
+
+### Added
+
+- Event-driven heartbeat wake system: cron jobs can now trigger immediate
+  heartbeat runs via a `wakeMode` field (`"now"` or `"nextHeartbeat"`).
+- System events queue: in-memory bounded buffer that collects events (exec
+  completions, cron triggers) and drains them into the heartbeat prompt so the
+  agent sees what happened while it was idle.
+- Exec completion callback: command executions automatically enqueue a summary
+  event and wake the heartbeat, giving the agent real-time awareness of
+  background task results.
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.1] - 2026-02-19
+
+
+### Added
+
+- `lightweight` feature profile for memory-constrained devices (Raspberry Pi, etc.)
+  with only essential features: `jemalloc`, `tls`, `web-ui`.
+- jemalloc allocator behind `jemalloc` feature flag for lower memory fragmentation.
+- Configurable `history_points` (metrics) and `log_buffer_size` (server) settings
+  to tune in-memory buffer sizes.
+- Persistent browser profiles: cookies, auth state, and local storage now persist
+  across sessions by default. Disable with `persist_profile = false` in
+  `[tools.browser]`, or set a custom path with `profile_dir`. (#162)
 - Added `examples/docker-compose.coolify.yml` plus Docker/cloud deploy docs for
   self-hosted Coolify (e.g. Hetzner), including reverse-proxy defaults and
   Docker socket mount guidance for sandboxed exec support.
+- Markdown and ANSI table rendering in chat messages.
+- Provider-aware `show_map` links for multi-provider map display.
+- Session history caching with visual switch loader for faster session
+  transitions.
 
 ### Changed
+
+- MetricsHistory default reduced from 60,480 to 360 points (~170x less memory).
+- LogBuffer default reduced from 10,000 to 1,000 entries.
+- Shared `reqwest::Client` singleton in `moltis-agents` and `moltis-tools` replaces
+  per-call client creation, saving connection pools and TLS session caches.
+- WebSocket client channels changed from unbounded to bounded (512), adding
+  backpressure for slow consumers.
+- Release profile: `panic = "abort"` and `codegen-units = 1` for smaller binaries.
 
 ### Deprecated
 
@@ -27,7 +559,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runtime prompt host metadata now prefers user/browser timezone over server
   local fallback and includes an explicit `today=YYYY-MM-DD` field so models
   can reliably reason about the user's current date.
-
 - Skills installation now supports Claude marketplace repos that define skills
   directly via `.claude-plugin/marketplace.json` `plugins[].skills[]` paths
   (for example `anthropics/skills`), including loading `SKILL.md` entries under
@@ -35,6 +566,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web search no longer falls back to DuckDuckGo by default when search API keys
   are missing, avoiding repeated CAPTCHA failures; fallback is now opt-in via
   `tools.web.search.duckduckgo_fallback = true`.
+- Terminal: force tmux window resize on client viewport change to prevent
+  stale dimensions after reconnect.
+- Browser: profile persistence now works correctly on Apple Container
+  (macOS containerized sandbox).
+- Browser: centralized stale CDP connection detection prevents ghost browser
+  sessions from accumulating. (#172)
+- Gateway: deduplicate voice replies on Telegram channels to prevent echo
+  loops. (#173)
+- Cron job editor: fix modal default validation and form reset when switching
+  schedule type. (#181)
+- MCP: strip internal metadata from tool call arguments before forwarding to
+  MCP servers.
+- Web search: load runtime env keys and improve Brave search response
+  parsing robustness.
+- Prompt: clarify sandbox vs `data_dir` path semantics in system prompts.
+- Gateway: align `show_map` listing ratings to the right for consistent
+  layout.
 
 ### Security
 
@@ -664,6 +1212,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests and blocks all package builds (deb, rpm, arch, AppImage, snap,
   Homebrew, Docker) if they fail.
 
+### Added
+
+- **XML tag stripping**: Strip internal XML tags from LLM responses to prevent
+  tag leakage in chat (thinking, reasoning, scratchpad, etc.)
+- **Runtime model metadata**: Fetch model metadata from provider APIs for
+  accurate context window detection during auto-compaction
+- **Run detail UI**: Panel showing tool calls and message flow for agent runs,
+  accessible via expandable button on assistant messages
+
 ### Fixed
 
 - **Docker TLS setup**: All Docker examples now expose port 13132 for CA
@@ -811,6 +1368,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CalDAV integration**: New `moltis-caldav` crate providing calendar CRUD
+  operations (list calendars, list/create/update/delete events) via the CalDAV
+  protocol. Supports Fastmail, iCloud, and generic CalDAV servers with
+  multi-account configuration under `[caldav.accounts.<name>]`. Enabled by
+  default via the `caldav` feature flag.
 - **`BeforeLLMCall` / `AfterLLMCall` hooks**: New modifying hook events that fire
   before sending prompts to the LLM provider and after receiving responses
   (before tool execution). Enables prompt injection filtering, PII redaction,

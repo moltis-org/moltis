@@ -3,16 +3,241 @@
 /// Telegram supports: `<b>`, `<i>`, `<code>`, `<pre>`, `<a href="">`,
 /// `<s>` (strikethrough), `<u>` (underline).
 ///
-/// We handle the most common Markdown constructs:
-/// - `**bold**` / `__bold__` → `<b>`
-/// - `*italic*` / `_italic_` → `<i>`
-/// - `` `code` `` → `<code>`
-/// - ``` ```lang\nblock``` ``` → `<pre><code class="language-lang">`
-/// - `~~strike~~` → `<s>`
-/// - `[text](url)` → `<a href="url">`
-///
-/// HTML special chars in the input are escaped first.
+/// Handles inline formatting (bold, italic, code, links, strikethrough)
+/// and block-level markdown tables (rendered as aligned `<pre>` blocks
+/// since Telegram does not support `<table>` HTML).
 pub fn markdown_to_telegram_html(md: &str) -> String {
+    let segments = split_table_segments(md);
+    // Fast path: single text segment (no tables).
+    if segments.len() == 1
+        && let Segment::Text(text) = &segments[0]
+    {
+        return render_inline_markdown(text);
+    }
+    let mut out = String::with_capacity(md.len());
+    for (i, seg) in segments.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        match seg {
+            Segment::Text(text) => out.push_str(&render_inline_markdown(text)),
+            Segment::Table(lines) => out.push_str(&render_table_pre(lines)),
+        }
+    }
+    out
+}
+
+// ── Table detection & rendering ──────────────────────────────────────────
+
+enum Segment {
+    Text(String),
+    Table(Vec<String>),
+}
+
+/// Split markdown into alternating text and table segments.
+fn split_table_segments(md: &str) -> Vec<Segment> {
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut text_lines: Vec<&str> = Vec::new();
+    let mut table_lines: Vec<&str> = Vec::new();
+
+    for line in md.split('\n') {
+        if is_table_line(line.trim()) {
+            table_lines.push(line);
+        } else {
+            if !table_lines.is_empty() {
+                flush_table_block(&mut segments, &mut text_lines, &mut table_lines);
+            }
+            text_lines.push(line);
+        }
+    }
+
+    if !table_lines.is_empty() {
+        flush_table_block(&mut segments, &mut text_lines, &mut table_lines);
+    }
+    if !text_lines.is_empty() {
+        segments.push(Segment::Text(text_lines.join("\n")));
+    }
+
+    if segments.is_empty() {
+        segments.push(Segment::Text(String::new()));
+    }
+
+    segments
+}
+
+fn flush_table_block<'a>(
+    segments: &mut Vec<Segment>,
+    text_lines: &mut Vec<&'a str>,
+    table_lines: &mut Vec<&'a str>,
+) {
+    if table_lines.len() >= 2 && is_separator_row(table_lines[1]) {
+        if !text_lines.is_empty() {
+            segments.push(Segment::Text(text_lines.join("\n")));
+            text_lines.clear();
+        }
+        segments.push(Segment::Table(
+            table_lines.iter().map(|s| (*s).to_owned()).collect(),
+        ));
+    } else {
+        text_lines.extend(table_lines.iter());
+    }
+    table_lines.clear();
+}
+
+fn is_table_line(trimmed: &str) -> bool {
+    if trimmed.len() <= 1 {
+        return false;
+    }
+    // Standard markdown table line: starts with |
+    if trimmed.starts_with('|') {
+        return true;
+    }
+    // Non-standard table line: at least 2 pipe-separated columns.
+    // Require >= 2 pipes to avoid false positives like "use the | operator".
+    if trimmed.chars().filter(|&c| c == '|').count() >= 2 {
+        return true;
+    }
+    // Separator row with + intersections: ---+---+---
+    is_plus_separator_row(trimmed)
+}
+
+/// Detect separator rows using `+` as intersection character (e.g. `---+---+---`).
+fn is_plus_separator_row(trimmed: &str) -> bool {
+    trimmed.contains('+')
+        && trimmed.split('+').all(|cell| {
+            let c = cell.trim();
+            !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
+        })
+}
+
+fn is_separator_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    // Standard: |---|---|
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    let is_pipe_sep = !inner.is_empty()
+        && inner.split('|').all(|cell| {
+            let c = cell.trim();
+            !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
+        });
+    if is_pipe_sep {
+        return true;
+    }
+    // Plus-separator: ---+---+---
+    is_plus_separator_row(trimmed)
+}
+
+fn parse_table_cells(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    inner
+        .split('|')
+        .map(|cell| cell.trim().to_owned())
+        .collect()
+}
+
+/// Maximum rendered table width (in characters) before switching from a
+/// horizontal `<pre>` layout to a vertical card layout.  Telegram mobile
+/// typically shows ~36 monospace characters per line inside `<pre>` blocks.
+const MAX_TABLE_PRE_WIDTH: usize = 42;
+
+fn render_table_pre(lines: &[String]) -> String {
+    // Parse rows, skipping the separator (index 1).
+    let rows: Vec<Vec<String>> = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 1)
+        .map(|(_, line)| parse_table_cells(line))
+        .collect();
+
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let mut widths = vec![0usize; col_count];
+    for row in &rows {
+        for (i, cell) in row.iter().enumerate() {
+            widths[i] = widths[i].max(cell.chars().count());
+        }
+    }
+
+    // Total width including " | " separators between columns.
+    let total_width: usize = widths.iter().sum::<usize>() + col_count.saturating_sub(1) * 3;
+
+    if total_width > MAX_TABLE_PRE_WIDTH {
+        return render_table_vertical(&rows);
+    }
+
+    // Build plain-text table, then HTML-escape the whole block.
+    let mut plain = String::new();
+    for (row_idx, row) in rows.iter().enumerate() {
+        if row_idx > 0 {
+            plain.push('\n');
+        }
+        for (col_idx, cell) in row.iter().enumerate() {
+            if col_idx > 0 {
+                plain.push_str(" | ");
+            }
+            plain.push_str(cell);
+            let w = widths.get(col_idx).copied().unwrap_or(0);
+            for _ in 0..w.saturating_sub(cell.chars().count()) {
+                plain.push(' ');
+            }
+        }
+        // Separator after header row.
+        if row_idx == 0 && rows.len() > 1 {
+            plain.push('\n');
+            for (col_idx, &w) in widths.iter().enumerate() {
+                if col_idx > 0 {
+                    plain.push_str("-+-");
+                }
+                for _ in 0..w {
+                    plain.push('-');
+                }
+            }
+        }
+    }
+
+    format!("<pre>{}</pre>", escape_html(&plain))
+}
+
+/// Render a wide table in vertical card format for mobile-friendly display.
+///
+/// Each data row becomes a card: the first column value is the bold title,
+/// remaining columns are listed as `Header: value` pairs.
+fn render_table_vertical(rows: &[Vec<String>]) -> String {
+    if rows.len() < 2 {
+        return String::new();
+    }
+    let headers = &rows[0];
+    let mut out = String::new();
+    for (row_idx, row) in rows.iter().skip(1).enumerate() {
+        if row_idx > 0 {
+            out.push('\n');
+        }
+        // First column as bold title.
+        let title = row.first().map(String::as_str).unwrap_or("");
+        out.push_str(&format!("<b>{}</b>\n", escape_html(title)));
+        // Remaining columns as header: value pairs.
+        for (col_idx, cell) in row.iter().enumerate().skip(1) {
+            let header = headers.get(col_idx).map(String::as_str).unwrap_or("?");
+            out.push_str(&format!("{}: {}\n", escape_html(header), escape_html(cell)));
+        }
+    }
+    // Trim trailing newline.
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+// ── Inline markdown rendering ────────────────────────────────────────────
+
+/// Render inline markdown constructs (bold, italic, code, links, etc.)
+/// to Telegram-compatible HTML. HTML special chars are escaped first.
+fn render_inline_markdown(md: &str) -> String {
     let escaped = escape_html(md);
     let mut chars = escaped.chars().peekable();
     let mut out = String::with_capacity(md.len());
@@ -405,6 +630,169 @@ mod tests {
         assert_eq!(
             markdown_to_telegram_html("[click](https://example.com)"),
             "<a href=\"https://example.com\">click</a>"
+        );
+    }
+
+    #[test]
+    fn table_renders_as_pre_block() {
+        let input = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            output.starts_with("<pre>"),
+            "should start with <pre>: {output}"
+        );
+        assert!(
+            output.ends_with("</pre>"),
+            "should end with </pre>: {output}"
+        );
+        assert!(output.contains("Alice"));
+        assert!(output.contains("Bob"));
+        // Original markdown separator row (|---|) should not appear.
+        assert!(
+            !output.contains("|---"),
+            "markdown separator should be removed: {output}"
+        );
+    }
+
+    #[test]
+    fn table_columns_are_aligned() {
+        let input = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |";
+        let output = markdown_to_telegram_html(input);
+        // "Name" (4) padded to width 5 (same as "Alice").
+        assert!(output.contains("Name "), "Name should be padded: {output}");
+    }
+
+    #[test]
+    fn table_between_text_preserves_context() {
+        let input = "Before\n| A | B |\n|---|---|\n| 1 | 2 |\nAfter";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("Before"), "{output}");
+        assert!(output.contains("<pre>"), "{output}");
+        assert!(output.contains("</pre>"), "{output}");
+        assert!(output.contains("After"), "{output}");
+    }
+
+    #[test]
+    fn invalid_table_no_separator_passes_through() {
+        let input = "| not | a table |\n| just | pipes |";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            !output.contains("<pre>"),
+            "no <pre> without separator: {output}"
+        );
+    }
+
+    #[test]
+    fn table_escapes_html_in_cells() {
+        let input = "| A | B |\n|---|---|\n| <b> | 1&2 |";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("&lt;b&gt;"), "should escape <b>: {output}");
+        assert!(output.contains("1&amp;2"), "should escape &: {output}");
+    }
+
+    #[test]
+    fn table_single_column() {
+        let input = "| Item |\n|------|\n| One |\n| Two |";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.starts_with("<pre>"), "{output}");
+        assert!(output.contains("One"));
+        assert!(output.contains("Two"));
+    }
+
+    #[test]
+    fn table_without_leading_pipes() {
+        let input = "Name | Age | City\n-----+-----+------\nAlice | 30 | NYC\nBob | 25 | LA";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            output.contains("<pre>"),
+            "should render as <pre> block: {output}"
+        );
+        assert!(output.contains("Alice"), "{output}");
+        assert!(output.contains("Bob"), "{output}");
+        // Original markdown separator (-----+-----) should be replaced by the
+        // rendered one (------+-...).  Both use '+', so just verify alignment.
+        assert!(output.contains("Name "), "Name should be padded: {output}");
+    }
+
+    #[test]
+    fn table_without_leading_pipes_preserves_context() {
+        let input = "Here are the results:\nName | Score | Grade\n-----+-------+------\nAlice | 95 | A\nBob | 80 | B\nDone!";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("Here are the results:"), "{output}");
+        assert!(output.contains("<pre>"), "{output}");
+        assert!(output.contains("Done!"), "{output}");
+    }
+
+    #[test]
+    fn wide_table_uses_vertical_card_format() {
+        let input = "Restaurant | Cuisine | Rating | Street | Open Until\n\
+                      -----------+---------+--------+--------+-----------\n\
+                      Jay's Grill | Grill | 4.8 | Market St | 11 PM\n\
+                      Jasmin's | Diner | 4.8 | Bush St | 9 PM";
+        let output = markdown_to_telegram_html(input);
+        // Should NOT use <pre> because the table is too wide.
+        assert!(
+            !output.contains("<pre>"),
+            "wide table should use vertical format, not <pre>: {output}"
+        );
+        // Each row becomes a card: first column is bold title.
+        assert!(
+            output.contains("<b>Jay's Grill</b>"),
+            "should have bold restaurant name: {output}"
+        );
+        // Header columns appear as labels.
+        assert!(
+            output.contains("Cuisine:"),
+            "should show Cuisine label: {output}"
+        );
+        assert!(
+            output.contains("Rating:"),
+            "should show Rating label: {output}"
+        );
+        assert!(
+            output.contains("Street:"),
+            "should show Street label: {output}"
+        );
+    }
+
+    #[test]
+    fn wide_table_vertical_preserves_context() {
+        let input = "Here are the results:\n\
+                      Name | Category | Score | Location | Notes\n\
+                      -----+----------+-------+----------+------\n\
+                      Alice | Engineering | 95 | San Francisco | Excellent\n\
+                      Bob | Marketing | 80 | New York | Good\n\
+                      Done!";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("Here are the results:"), "{output}");
+        assert!(output.contains("<b>Alice</b>"), "{output}");
+        assert!(output.contains("Done!"), "{output}");
+        // Should use vertical format (table is too wide for <pre>).
+        assert!(
+            !output.contains("<pre>"),
+            "should use vertical format: {output}"
+        );
+    }
+
+    #[test]
+    fn narrow_table_still_uses_pre() {
+        // 2-column narrow table should still use <pre> format.
+        let input = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            output.contains("<pre>"),
+            "narrow table should use <pre>: {output}"
+        );
+    }
+
+    #[test]
+    fn single_pipe_not_detected_as_table() {
+        // A single pipe in prose should NOT be treated as a table.
+        let input = "Use the | operator for bitwise OR";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            !output.contains("<pre>"),
+            "single pipe should not become a table: {output}"
         );
     }
 

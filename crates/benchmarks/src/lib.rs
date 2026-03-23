@@ -1,1 +1,1 @@
-// Benchmarks crate for CodSpeed integration
+// Benchmark-only crate — no library code.

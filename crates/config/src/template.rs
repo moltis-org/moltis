@@ -25,7 +25,7 @@ bind = "127.0.0.1"                # Address to bind to ("0.0.0.0" for all interf
 port = {port}                           # Port number (auto-generated for this installation)
 http_request_logs = false              # Enable verbose Axum HTTP request/response logs (debugging)
 ws_request_logs = false                # Enable WebSocket RPC request/response logs (debugging)
-update_repository_url = "https://github.com/moltis-org/moltis"    # GitHub repo used for update checks (comment out to disable)
+update_releases_url = "https://www.moltis.org/releases.json"    # Releases manifest URL for update checks (override to use a custom URL)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUTHENTICATION
@@ -34,6 +34,14 @@ update_repository_url = "https://github.com/moltis-org/moltis"    # GitHub repo 
 [auth]
 disabled = false                  # true = disable auth entirely (DANGEROUS if exposed)
                                   # When disabled, anyone with network access can use moltis
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GRAPHQL
+# ══════════════════════════════════════════════════════════════════════════════
+
+[graphql]
+enabled = false                   # Enable GraphQL endpoint (/graphql for HTTP + WebSocket)
+                                  # Can be toggled at runtime in Settings > GraphQL
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TLS / HTTPS
@@ -55,8 +63,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 [identity]
 # name = "moltis"                 # Agent's display name
 # emoji = "🦊"                    # Agent's emoji/avatar
-# creature = "fox"                # Creature type for personality
-# vibe = "helpful"                # Personality vibe/style
+# theme = "wise owl"              # Theme for agent personality (e.g. wise owl, chill fox)
 # soul = ""                       # Freeform personality text injected into system prompt
                                   # Use this for custom instructions, tone, or behavior
 
@@ -81,10 +88,11 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   base_url  - Override API endpoint
 #   models    - Preferred models shown first (optional)
 #   fetch_models - Discover models from provider API when available (default: true)
+#   stream_transport - Streaming transport: "sse", "websocket", or "auto" (default: "sse")
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
-offered = ["local-llm", "github-copilot", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
+offered = ["local-llm", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
@@ -106,14 +114,17 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "openrouter", "
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
 models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 # fetch_models = true
+# stream_transport = "sse"                     # "sse" | "websocket" | "auto"
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
 
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]
 # enabled = true
-# api_key = "..."                             # Or set GOOGLE_API_KEY env var
-# models = ["gemini-2.0-flash"]
+# api_key = "..."                             # Or set GEMINI_API_KEY / GOOGLE_API_KEY env var
+# models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+# fetch_models = true
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 # alias = "gemini"
 
 # ── Groq ──────────────────────────────────────────────────────
@@ -173,6 +184,21 @@ message_queue_mode = "followup"   # Default: process queued messages one-by-one 
 # allowed_models = ["gpt 5.2"]  # Legacy field (currently ignored).
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SPAWN PRESETS (OPTIONAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Configure reusable presets for the `spawn_agent` tool.
+#
+# [agents]
+# default_preset = "research"      # Optional: used when spawn_agent.preset is omitted
+#
+# [agents.presets.research]
+# model = "openai/gpt-5.2"
+# allow_tools = ["web_search", "web_fetch", "sessions_send", "task_list"]
+# deny_tools = ["exec"]
+# delegate_only = false
+# system_prompt_suffix = "Focus on gathering and summarizing evidence."
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -221,6 +247,12 @@ workspace_mount = "ro"            # How to mount workspace in sandbox:
                                   #   "ro"   - Read-only (safe)
                                   #   "rw"   - Read-write (can modify files)
                                   #   "none" - No mount
+# host_data_dir = "/host/path/data"  # Optional override if auto-detection cannot resolve the host-visible data dir
+home_persistence = "shared"       # Persist /home/sandbox across container recreation:
+                                  #   "off"     - Ephemeral home
+                                  #   "session" - Per-session persisted home
+                                  #   "shared"  - One shared persisted home (default)
+# shared_home_dir = "/path/to/shared-home"  # Host dir for shared persistence (default: data_dir()/sandbox/home/shared)
 backend = "auto"                  # Container backend:
                                   #   "auto"            - Auto-detect (prefers Apple Container on macOS)
                                   #   "docker"          - Use Docker
@@ -251,6 +283,7 @@ packages = [
     "npm",
     "ruby",
     "ruby-dev",
+    "golang-go",
     # Build toolchain & native deps
     "build-essential",
     "clang",
@@ -291,6 +324,7 @@ packages = [
     "tzdata",
     "shellcheck",
     "patchelf",
+    "tmux",
     # Text processing & search
     "ripgrep",
     # Browser automation dependencies
@@ -369,6 +403,8 @@ max_instances = 3                 # Maximum concurrent browser instances
 idle_timeout_secs = 300           # Close idle browsers after this many seconds (5 min)
 navigation_timeout_ms = 30000     # Page load timeout in milliseconds (30 sec)
 sandbox = false                   # Run browser in Docker/Apple Container for isolation
+# container_host = "127.0.0.1"   # Host/IP to reach browser container (default: localhost)
+                                  # Set to "host.docker.internal" when Moltis runs inside Docker
 # chrome_path = "/path/to/chrome" # Custom Chrome/Chromium binary path (auto-detected)
 # user_agent = "Custom UA"        # Custom user agent string
 # chrome_args = []                # Extra Chrome command-line arguments
@@ -393,9 +429,10 @@ allowed_domains = []              # Empty = all domains allowed
 [skills]
 enabled = true                    # Enable skills system
 search_paths = []                 # Additional directories to search for skills
-                                  # Default locations: ~/.config/moltis/skills/, ./skills/
+                                  # Default locations include ~/.moltis/skills/
 auto_load = []                    # Skills to always load without explicit activation
                                   # Example: ["code-review", "commit"]
+enable_agent_sidecar_files = false # Allow agents to write supplementary text files inside personal skill dirs
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MCP SERVERS
@@ -413,6 +450,7 @@ auto_load = []                    # Skills to always load without explicit activ
 # enabled = true                  # Whether this server is enabled
 # transport = "stdio"             # Transport: "stdio" (default) or "sse"
 # url = "http://..."              # URL for SSE transport
+# headers = {{ Authorization = "Bearer ${{TOKEN}}" }}  # Optional HTTP headers for SSE transport
 
 # Example: Filesystem access
 # [mcp.servers.filesystem]
@@ -430,7 +468,8 @@ auto_load = []                    # Skills to always load without explicit activ
 # Example: SSE server
 # [mcp.servers.remote]
 # transport = "sse"
-# url = "http://localhost:8080/mcp"
+# url = "http://localhost:8080/mcp?api_key=$REMOTE_MCP_KEY"
+# headers = {{ "x-api-key" = "${{REMOTE_MCP_KEY}}" }}
 # enabled = true
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -455,6 +494,9 @@ every = "30m"                     # Interval between heartbeats (e.g., "30m", "1
 # model = "anthropic/claude-sonnet-4-20250514"  # Override model for heartbeats
 # prompt = "..."                  # Custom heartbeat prompt (default: built-in)
 ack_max_chars = 300               # Max characters for acknowledgment reply
+deliver = false                   # Deliver heartbeat replies to a channel account
+# channel = "my-bot"              # Channel account identifier (required when deliver = true)
+# to = "123456789"                # Chat/recipient ID (required when deliver = true)
 sandbox_enabled = true            # Run heartbeat commands in sandbox
 # sandbox_image = "..."           # Override sandbox image for heartbeats
 
@@ -482,29 +524,24 @@ fallback_models = []              # Ordered list of fallback models
 # `providers` controls what appears in the Settings UI provider list.
 
 [voice.tts]
-enabled = false                   # Enable text-to-speech
-provider = "elevenlabs"           # Active TTS provider
-providers = ["elevenlabs"]        # UI allowlist (empty = show all TTS providers)
+enabled = true                    # Enable text-to-speech
+# provider = "openai"             # Active TTS provider (auto-selects first configured if omitted)
+providers = ["openai", "elevenlabs"] # UI allowlist (empty = show all TTS providers)
 # All available TTS providers:
-#   "elevenlabs", "openai", "google", "piper", "coqui"
+#   "openai", "elevenlabs", "google", "piper", "coqui"
 
 [voice.stt]
-enabled = false                   # Enable speech-to-text
-provider = "mistral"              # Active STT provider
-providers = ["mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
+enabled = true                    # Enable speech-to-text
+# provider = "whisper"            # Active STT provider (auto-selects first configured if omitted)
+providers = ["whisper", "mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
 # All available STT providers:
 #   "whisper", "groq", "deepgram", "google", "mistral",
 #   "voxtral-local", "whisper-cli", "sherpa-onnx", "elevenlabs-stt"
 
-# [voice.tts.elevenlabs]
-# api_key = "${{ELEVENLABS_API_KEY}}" # Or set ELEVENLABS_API_KEY env var
-# voice_id = "21m00Tcm4TlvDq8ikWAM"
-# model = "eleven_flash_v2_5"
-
-# [voice.stt.mistral]
-# api_key = "${{MISTRAL_API_KEY}}"    # Or set MISTRAL_API_KEY env var
-# model = "voxtral-mini-latest"
-# language = "en"
+# No api_key needed for OpenAI TTS/Whisper when OpenAI is configured as an LLM provider.
+# [voice.tts.openai]
+# voice = "alloy"                 # alloy, echo, fable, onyx, nova, shimmer
+# model = "tts-1"                 # tts-1 or tts-1-hd
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAILSCALE
@@ -544,7 +581,54 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # Telegram bots
 # [channels.telegram.my-bot]
 # token = "..."                   # Bot token from @BotFather
-# allowed_users = []              # Telegram user IDs allowed to chat (empty = all)
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Telegram user IDs or usernames (strings)
+# group_allowlist = []            # Telegram group/chat IDs (strings)
+# reply_to_message = false        # Send responses as Telegram replies
+# otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
+# stream_mode = "edit_in_place"   # "edit_in_place" or "off"
+# edit_throttle_ms = 300          # Min ms between streaming edits
+
+# Microsoft Teams bots
+# [channels.msteams.my-bot]
+# app_id = "..."                  # Azure Bot App ID
+# app_password = "..."            # Azure Bot App Password (client secret)
+# webhook_secret = "..."          # Optional query secret for webhook URL (?secret=...)
+# allowlist = []                  # User IDs allowed to DM (empty = all unless dm_policy=allowlist)
+
+# Discord bots
+# [channels.discord.my-bot]
+# token = "..."                   # Bot token from Discord Developer Portal
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Discord user IDs allowed to DM
+# guild_allowlist = []            # Discord guild/server IDs (empty = all)
+# reply_to_message = false        # Send responses as Discord replies
+# ack_reaction = "👀"             # Emoji reaction while processing (omit to disable)
+# activity = "with AI"            # Bot activity status text
+# activity_type = "custom"        # "playing", "listening", "watching", "competing", or "custom"
+# status = "online"               # "online", "idle", "dnd", or "invisible"
+# otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
+
+# Slack bots
+# [channels.slack.my-bot]
+# bot_token = "xoxb-..."          # Bot user OAuth token
+# app_token = "xapp-..."          # App-level token for Socket Mode
+# connection_mode = "socket_mode" # "socket_mode" or "events_api"
+# signing_secret = "..."          # Required for events_api mode
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# allowlist = []                  # Slack user IDs (strings)
+# channel_allowlist = []          # Slack channel IDs (strings)
+# stream_mode = "edit_in_place"   # "edit_in_place", "native", or "off"
+# edit_throttle_ms = 500          # Min ms between streaming edits
+# thread_replies = true           # Reply in threads
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS

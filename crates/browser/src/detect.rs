@@ -428,7 +428,24 @@ fn windows_package_ids(target: BrowserKind) -> Vec<&'static str> {
     }
 }
 
-async fn run_command(command: &InstallCommand) -> Result<(), String> {
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+struct InstallError {
+    message: String,
+}
+
+impl InstallError {
+    #[must_use]
+    fn message(message: impl std::fmt::Display) -> Self {
+        Self {
+            message: message.to_string(),
+        }
+    }
+}
+
+type InstallResult<T> = Result<T, InstallError>;
+
+async fn run_command(command: &InstallCommand) -> InstallResult<()> {
     let result = tokio::time::timeout(
         Duration::from_secs(180),
         tokio::process::Command::new(command.program)
@@ -440,13 +457,16 @@ async fn run_command(command: &InstallCommand) -> Result<(), String> {
     let output = match result {
         Ok(Ok(output)) => output,
         Ok(Err(error)) => {
-            return Err(format!(
+            return Err(InstallError::message(format!(
                 "failed to execute '{}': {error}",
                 command.display()
-            ));
+            )));
         },
         Err(_) => {
-            return Err(format!("timed out after 180s: {}", command.display()));
+            return Err(InstallError::message(format!(
+                "timed out after 180s: {}",
+                command.display()
+            )));
         },
     };
 
@@ -461,11 +481,15 @@ async fn run_command(command: &InstallCommand) -> Result<(), String> {
     } else {
         stdout
     };
-    Err(format!("{} failed: {}", command.display(), details))
+    Err(InstallError::message(format!(
+        "{} failed: {}",
+        command.display(),
+        details
+    )))
 }
 
 #[cfg(target_os = "linux")]
-async fn run_with_optional_sudo(command: InstallCommand) -> Result<(), String> {
+async fn run_with_optional_sudo(command: InstallCommand) -> InstallResult<()> {
     let first_error = match run_command(&command).await {
         Ok(()) => return Ok(()),
         Err(error) => error,
@@ -483,7 +507,7 @@ async fn run_with_optional_sudo(command: InstallCommand) -> Result<(), String> {
     let sudo_cmd = InstallCommand::new("sudo", &sudo_args);
     run_command(&sudo_cmd)
         .await
-        .map_err(|sudo_error| format!("{first_error} | {sudo_error}"))
+        .map_err(|sudo_error| InstallError::message(format!("{first_error} | {sudo_error}")))
 }
 
 #[cfg(target_os = "macos")]
@@ -507,7 +531,7 @@ async fn auto_install_for_targets(targets: &[BrowserKind]) -> AutoInstallResult 
                         details: format!("installed browser via '{}'", command.display()),
                     };
                 },
-                Err(error) => errors.push(error),
+                Err(error) => errors.push(error.to_string()),
             }
         }
     }
@@ -584,7 +608,7 @@ async fn auto_install_for_targets(targets: &[BrowserKind]) -> AutoInstallResult 
                             details: format!("installed browser package '{pkg}'"),
                         };
                     },
-                    Err(error) => errors.push(error),
+                    Err(error) => errors.push(error.to_string()),
                 }
             }
         }
@@ -626,7 +650,7 @@ async fn auto_install_for_targets(targets: &[BrowserKind]) -> AutoInstallResult 
                         details: format!("installed browser package '{}'", id),
                     };
                 },
-                Err(error) => errors.push(error),
+                Err(error) => errors.push(error.to_string()),
             }
         }
     }

@@ -1,0 +1,29 @@
+[package]
+edition.workspace = true
+name              = "moltis-msteams"
+version.workspace = true
+
+[dependencies]
+anyhow          = { workspace = true }
+async-trait     = { workspace = true }
+base64          = { workspace = true }
+bytes           = { workspace = true }
+http            = { workspace = true }
+moltis-channels = { workspace = true }
+moltis-common   = { workspace = true }
+moltis-metrics  = { optional = true, workspace = true }
+reqwest         = { workspace = true }
+secrecy         = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+subtle          = { workspace = true }
+tokio           = { workspace = true }
+tracing         = { workspace = true }
+url             = { workspace = true }
+urlencoding     = { workspace = true }
+
+[features]
+metrics = ["dep:moltis-metrics"]
+
+[lints]
+workspace = true

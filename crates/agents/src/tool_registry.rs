@@ -10,6 +10,10 @@ pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> serde_json::Value;
+    /// Opportunistic post-start initialization hook.
+    async fn warmup(&self) -> Result<()> {
+        Ok(())
+    }
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value>;
 }
 
@@ -20,6 +24,8 @@ pub enum ToolSource {
     Builtin,
     /// Tool provided by an MCP server.
     Mcp { server: String },
+    /// Tool provided by a precompiled WASM component.
+    Wasm { component_hash: [u8; 32] },
 }
 
 /// Internal entry pairing a tool with its source metadata.
@@ -67,6 +73,33 @@ impl ToolRegistry {
         });
     }
 
+    /// Register a tool from a WASM component.
+    pub fn register_wasm(&mut self, tool: Box<dyn AgentTool>, component_hash: [u8; 32]) {
+        let name = tool.name().to_string();
+        self.tools.insert(name, ToolEntry {
+            tool: Arc::from(tool),
+            source: ToolSource::Wasm { component_hash },
+        });
+    }
+
+    /// Replace an existing tool by name, preserving its source metadata.
+    ///
+    /// Returns `true` if an existing tool was replaced, `false` if this was a new entry.
+    pub fn replace(&mut self, tool: Box<dyn AgentTool>) -> bool {
+        let name = tool.name().to_string();
+        let source = self
+            .tools
+            .get(&name)
+            .map(|entry| entry.source.clone())
+            .unwrap_or(ToolSource::Builtin);
+        self.tools
+            .insert(name, ToolEntry {
+                tool: Arc::from(tool),
+                source,
+            })
+            .is_some()
+    }
+
     pub fn unregister(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
     }
@@ -104,6 +137,11 @@ impl ToolRegistry {
                     ToolSource::Mcp { server } => {
                         schema["source"] = serde_json::json!("mcp");
                         schema["mcpServer"] = serde_json::json!(server);
+                    },
+                    ToolSource::Wasm { component_hash } => {
+                        schema["source"] = serde_json::json!("wasm");
+                        schema["componentHash"] =
+                            serde_json::json!(hex_component_hash(*component_hash));
                     },
                 }
                 schema
@@ -182,6 +220,15 @@ impl ToolRegistry {
             .collect();
         ToolRegistry { tools }
     }
+}
+
+fn hex_component_hash(component_hash: [u8; 32]) -> String {
+    let mut output = String::with_capacity(component_hash.len() * 2);
+    for byte in component_hash {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -313,6 +360,12 @@ mod tests {
             }),
             "github".to_string(),
         );
+        registry.register_wasm(
+            Box::new(DummyTool {
+                name: "calc_wasm".to_string(),
+            }),
+            [0xAB; 32],
+        );
 
         let schemas = registry.list_schemas();
         let builtin = schemas
@@ -328,6 +381,16 @@ mod tests {
             .expect("mcp tool should exist");
         assert_eq!(mcp["source"], "mcp");
         assert_eq!(mcp["mcpServer"], "github");
+
+        let wasm = schemas
+            .iter()
+            .find(|s| s["name"] == "calc_wasm")
+            .expect("wasm tool should exist");
+        assert_eq!(wasm["source"], "wasm");
+        assert_eq!(
+            wasm["componentHash"],
+            "abababababababababababababababababababababababababababababababab"
+        );
     }
 
     #[test]

@@ -1,0 +1,85 @@
+# Moltis
+
+> Canonical machine-readable instructions for agents integrating with moltis.org.
+
+## Install Discovery
+
+- Root install manifest: `https://moltis.org/.well-known/moltis-install.json`
+- Stable channel pointer: `https://moltis.org/.well-known/moltis-install/channels/stable.json`
+- Per-release manifest: `https://moltis.org/.well-known/moltis-install/releases/{version}.json`
+
+## Install Command
+
+- Script: `curl -fsSL https://www.moltis.org/install.sh | sh`
+
+## OpenClaw Import
+
+Moltis can automatically detect and import data from an existing OpenClaw installation.
+The import is strictly read-only — OpenClaw files are never modified, moved, or deleted.
+Users can keep using OpenClaw alongside Moltis and re-import at any time.
+
+After install, if OpenClaw data is present:
+
+- Detect: `moltis import detect --json`
+- Import all: `moltis import all --json`
+- Import selected: `moltis import select -c providers,skills,memory --json`
+- Dry run: `moltis import all --dry-run --json`
+
+### What gets imported
+
+- **Identity**: agent name, theme, timezone → `moltis.toml`
+- **Providers**: API keys from auth-profiles → `provider_keys.json` (maps `google` → `gemini`)
+- **Skills**: `skills/` directories with `SKILL.md` (skips duplicates)
+- **Memory**: `MEMORY.md` + all `memory/*.md` files (daily logs, project notes)
+- **Channels**: Telegram and Discord bot configuration
+- **Sessions**: JSONL conversations → SQLite + markdown transcripts (prefixed `oc:`)
+- **MCP Servers**: `mcp-servers.json` (merged, skips duplicates)
+- **Workspace Files**: `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, `AGENTS.md`, `HEARTBEAT.md`, `BOOT.md`
+
+### Multi-agent
+
+All OpenClaw agents are imported. Default agent maps to `main`; non-default agents get
+their own persona and per-agent workspace files under `~/.moltis/agents/<id>/`.
+
+### Idempotency
+
+Safe to run multiple times. Memory uses markers, sessions use `oc:` prefixes,
+skills/MCP skip duplicates, workspace files skip user-customized content.
+
+### Documentation
+
+Full details: <https://docs.moltis.org/openclaw-import.html>
+
+## Start and Handoff
+
+- Start gateway: `moltis gateway --bind 0.0.0.0 --port 13131`
+- Healthcheck: `http://127.0.0.1:13131/api/gon`
+- User handoff text: `Moltis is ready. Please visit http://<host>:13131 to complete setup.`
+
+## Release Maintenance (for maintainers)
+
+Generate and rotate channel/release manifests on each release:
+
+```bash
+node scripts/generate-install-release-manifest.mjs \
+  --version 0.9.11 \
+  --checksums-file /path/to/release-checksums.txt
+```
+
+This writes:
+
+- `/.well-known/moltis-install/releases/<version>.json`
+- `/.well-known/moltis-install/channels/stable.json`
+
+## Discovery
+
+- Agent card: `https://moltis.org/.well-known/agent-card.json`
+- API catalog: `https://moltis.org/.well-known/api-catalog`
+- Docs: `https://docs.moltis.org`
+- Source: `https://github.com/moltis-org/moltis`
+
+## Safety Expectations for Agents
+
+- Ask for user approval before running networked install commands.
+- Ask for user approval before any command requiring privilege escalation.
+- Prefer `--json` command modes when available and surface failures verbatim.

@@ -1,11 +1,11 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Seek, SeekFrom, Write},
     path::PathBuf,
 };
 
 use {
-    anyhow::Result,
+    crate::{Error, Result},
     fd_lock::RwLock,
     serde::{Deserialize, Serialize},
 };
@@ -91,11 +91,16 @@ impl SessionStore {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let file = OpenOptions::new().create(true).append(true).open(&path)?;
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(&path)?;
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
+            (*guard).seek(SeekFrom::End(0))?;
             writeln!(*guard, "{line}")?;
             Ok(())
         })
@@ -131,6 +136,16 @@ impl SessionStore {
             Ok(messages)
         })
         .await?
+    }
+
+    /// Read all messages from a session that match a given `run_id`.
+    pub async fn read_by_run_id(&self, key: &str, run_id: &str) -> Result<Vec<serde_json::Value>> {
+        let all = self.read(key).await?;
+        let run_id = run_id.to_string();
+        Ok(all
+            .into_iter()
+            .filter(|msg| msg.get("run_id").and_then(|v| v.as_str()) == Some(&run_id))
+            .collect())
     }
 
     /// Read the last N messages from a session file.
@@ -279,7 +294,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             for msg in &messages {
                 let line = serde_json::to_string(msg)?;
                 writeln!(*guard, "{line}")?;
@@ -375,7 +390,7 @@ impl SessionStore {
             let mut lock = RwLock::new(file);
             let mut guard = lock
                 .write()
-                .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
+                .map_err(|e| Error::lock_failed(e.to_string()))?;
             for msg in &values {
                 let line = serde_json::to_string(msg)?;
                 writeln!(*guard, "{line}")?;
@@ -408,7 +423,7 @@ impl SessionStore {
             let reader = BufReader::new(file);
             let count = reader
                 .lines()
-                .map_while(Result::ok)
+                .map_while(std::result::Result::ok)
                 .filter(|l| !l.trim().is_empty())
                 .count();
             Ok(count as u32)

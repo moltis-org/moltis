@@ -1,17 +1,27 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Integration tests for the auth middleware protecting API endpoints.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use secrecy::ExposeSecret;
 
 use tokio::net::TcpListener;
+#[cfg(all(feature = "graphql", feature = "web-ui"))]
+use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
+
+use async_trait::async_trait;
 
 use moltis_gateway::{
     auth::{self, CredentialStore},
     methods::MethodRegistry,
-    server::build_gateway_app,
-    services::GatewayServices,
+    server::{build_gateway_base, finalize_gateway_app},
+    services::{GatewayServices, OnboardingService, ServiceResult},
     state::GatewayState,
 };
 
@@ -64,6 +74,7 @@ async fn start_auth_server_impl(
         services,
         None,
         Some(Arc::clone(&cred_store)),
+        None, // pairing_store
         localhost_only,
         behind_proxy,
         false,
@@ -72,17 +83,23 @@ async fn start_auth_server_impl(
         18789,
         false,
         None,
+        None, // session_event_bus
         #[cfg(feature = "metrics")]
         None,
         #[cfg(feature = "metrics")]
+        None,
+        #[cfg(feature = "vault")]
         None,
     );
     let state_clone = Arc::clone(&state);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None, false, None);
+    let (router, app_state) = build_gateway_base(state, methods, None, None);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods, false, None);
+    let (router, app_state) = build_gateway_base(state, methods, None);
+
+    let router = router.merge(moltis_web::web_routes());
+    let app = finalize_gateway_app(router, app_state, false);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -97,6 +114,76 @@ async fn start_auth_server_impl(
     (addr, cred_store, state_clone)
 }
 
+/// Start a localhost test server with a vault attached.
+#[cfg(feature = "vault")]
+async fn start_localhost_server_with_vault() -> (
+    SocketAddr,
+    Arc<CredentialStore>,
+    Arc<GatewayState>,
+    Arc<moltis_vault::Vault>,
+) {
+    let tmp = tempfile::tempdir().unwrap();
+    moltis_config::set_config_dir(tmp.path().to_path_buf());
+    moltis_config::set_data_dir(tmp.path().to_path_buf());
+    std::mem::forget(tmp);
+
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    moltis_vault::run_migrations(&pool).await.unwrap();
+    let auth_config = moltis_config::AuthConfig::default();
+    let vault = Arc::new(moltis_vault::Vault::new(pool.clone()).await.unwrap());
+    let cred_store = Arc::new(
+        CredentialStore::with_vault(pool, &auth_config, Some(Arc::clone(&vault)))
+            .await
+            .unwrap(),
+    );
+
+    let resolved_auth = auth::resolve_auth(None, None);
+    let services = GatewayServices::noop();
+    let state = GatewayState::with_options(
+        resolved_auth,
+        services,
+        None,
+        Some(Arc::clone(&cred_store)),
+        None, // pairing_store
+        true,
+        false,
+        false,
+        None,
+        None,
+        18789,
+        false,
+        None,
+        None, // session_event_bus
+        #[cfg(feature = "metrics")]
+        None,
+        #[cfg(feature = "metrics")]
+        None,
+        #[cfg(feature = "vault")]
+        Some(Arc::clone(&vault)),
+    );
+    let state_clone = Arc::clone(&state);
+    let methods = Arc::new(MethodRegistry::new());
+    #[cfg(feature = "push-notifications")]
+    let (router, app_state) = build_gateway_base(state, methods, None, None);
+    #[cfg(not(feature = "push-notifications"))]
+    let (router, app_state) = build_gateway_base(state, methods, None);
+
+    let router = router.merge(moltis_web::web_routes());
+    let app = finalize_gateway_app(router, app_state, false);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    (addr, cred_store, state_clone, vault)
+}
+
 /// Start a test server without a credential store (no auth).
 async fn start_noauth_server() -> SocketAddr {
     let tmp = tempfile::tempdir().unwrap();
@@ -109,9 +196,12 @@ async fn start_noauth_server() -> SocketAddr {
     let state = GatewayState::new(resolved_auth, services);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None, false, None);
+    let (router, app_state) = build_gateway_base(state, methods, None, None);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods, false, None);
+    let (router, app_state) = build_gateway_base(state, methods, None);
+
+    let router = router.merge(moltis_web::web_routes());
+    let app = finalize_gateway_app(router, app_state, false);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -232,9 +322,170 @@ async fn public_routes_accessible_without_auth() {
         .unwrap();
     assert_eq!(resp.status(), 200);
 
+    // /ws (node WebSocket endpoint) is public so device-token auth
+    // happens at the WebSocket protocol layer, not HTTP middleware.
+    // A plain GET returns 400 (not a WebSocket upgrade), but crucially
+    // it must NOT return a 303 redirect to /login.
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{addr}/ws"))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        resp.status(),
+        303,
+        "/ws should not redirect to login — it must bypass auth middleware"
+    );
+    assert_eq!(
+        resp.status(),
+        400,
+        "/ws should return 400 for a plain GET (not a WebSocket upgrade), confirming the handler was reached"
+    );
+
     // SPA fallback (root page) is public.
     let resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+/// GraphQL route is not public and requires authentication.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_requires_auth_when_enabled() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(resp.status().is_redirection());
+    assert_eq!(
+        resp.headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("/login")
+    );
+}
+
+/// Runtime GraphQL toggle takes effect immediately without restart.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_runtime_toggle_applies_immediately() {
+    let (addr, store, state) = start_auth_server_with_state().await;
+    store.set_initial_password("testpass123").await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let auth_header = format!("moltis_session={token}");
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    state.set_graphql_enabled(false);
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "graphql server is disabled");
+
+    state.set_graphql_enabled(true);
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+/// GraphQL status query always returns an `uptimeMs` value.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_status_includes_uptime_ms() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/graphql"))
+        .header("Cookie", format!("moltis_session={token}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({ "query": "{ status { uptimeMs } }" }).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let uptime_ms = body["data"]["status"]["uptimeMs"]
+        .as_u64()
+        .expect("uptimeMs should be present");
+    assert!(uptime_ms < 60_000);
+}
+
+/// GraphQL subscriptions upgrade on `/graphql` with GraphQL WS subprotocols.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_websocket_upgrade_supported_on_graphql_path() {
+    let addr = start_noauth_server().await;
+
+    let mut request = format!("ws://{addr}/graphql")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "graphql-transport-ws".parse().unwrap(),
+    );
+
+    let (_socket, response) = connect_async(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 101);
+    assert_eq!(
+        response
+            .headers()
+            .get("Sec-WebSocket-Protocol")
+            .and_then(|value| value.to_str().ok()),
+        Some("graphql-transport-ws")
+    );
+}
+
+/// Legacy `/graphql/ws` endpoint is not supported, subscriptions must use `/graphql`.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_websocket_upgrade_not_supported_on_legacy_path() {
+    let addr = start_noauth_server().await;
+
+    let mut request = format!("ws://{addr}/graphql/ws")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "graphql-transport-ws".parse().unwrap(),
+    );
+
+    let result = connect_async(request).await;
+    assert!(result.is_err());
 }
 
 /// Invalid session cookie returns 401.
@@ -693,6 +944,33 @@ async fn localhost_with_passkey_requires_login() {
     assert_eq!(protected.status(), 401);
 }
 
+/// When a new passkey host is detected after passkeys already exist, status
+/// should expose a host-update warning for the UI banner.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn status_reports_passkey_host_update_warning() {
+    let (addr, store, state) = start_localhost_server().await;
+    store
+        .store_passkey(b"cred-1", "MacBook Touch ID", b"serialized-passkey")
+        .await
+        .unwrap();
+
+    state
+        .add_passkey_host_update_pending("mybox.tail12345.ts.net")
+        .await;
+
+    let status = reqwest::get(format!("http://{addr}/api/auth/status"))
+        .await
+        .unwrap();
+    assert_eq!(status.status(), 200);
+    let body: serde_json::Value = status.json().await.unwrap();
+    assert_eq!(body["passkey_host_update_required"], true);
+    assert_eq!(
+        body["passkey_host_update_hosts"],
+        serde_json::json!(["mybox.tail12345.ts.net"])
+    );
+}
+
 // ── Three-tier model tests ──────────────────────────────────────────────────
 
 /// Tier 3: proxied server + no password → protected API returns 401.
@@ -941,12 +1219,42 @@ async fn api_endpoint_rate_limited_after_high_request_volume() {
 
 // ── Onboarding auth protection tests ─────────────────────────────────────────
 
-/// During setup (no password), a remote connection to /onboarding is allowed
-/// through — the auth gate must not redirect back to /onboarding (which would
-/// cause an infinite 303 loop).
+/// During setup (no password), a local connection to /onboarding passes
+/// through without redirect — the SPA handles onboarding routing itself.
 #[cfg(feature = "web-ui")]
 #[tokio::test]
-async fn onboarding_accessible_during_setup_for_remote() {
+async fn onboarding_passes_through_for_local_during_setup() {
+    let (addr, _store, _state) = start_localhost_server().await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://{addr}/onboarding"))
+        .send()
+        .await
+        .unwrap();
+
+    // Local connections must NOT be redirected to /setup-required.
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_ne!(
+        location, "/setup-required",
+        "local /onboarding during setup must not redirect to /setup-required"
+    );
+}
+
+/// During setup (no password), a remote connection to /onboarding also
+/// passes through — the onboarding page handles its own auth via setup
+/// codes (step 0).
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn onboarding_passes_through_for_remote_during_setup() {
     let (addr, _store, _state) = start_proxied_server().await;
 
     let client = reqwest::Client::builder()
@@ -960,15 +1268,111 @@ async fn onboarding_accessible_during_setup_for_remote() {
         .await
         .unwrap();
 
-    // Must NOT be a redirect (especially not 303 to /onboarding).
+    // Remote /onboarding must NOT redirect to /setup-required; it has its
+    // own setup-code auth flow.
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     assert_ne!(
-        resp.status(),
-        303,
-        "/onboarding must not redirect to itself during setup"
+        location, "/setup-required",
+        "remote /onboarding during setup must not redirect to /setup-required"
     );
+}
+
+/// During setup (no password), a remote connection to / is redirected to
+/// /setup-required (same as /onboarding).
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn root_redirects_to_setup_required_for_remote() {
+    let (addr, _store, _state) = start_proxied_server().await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client.get(format!("http://{addr}/")).send().await.unwrap();
+
     assert!(
-        !resp.status().is_redirection(),
-        "/onboarding should serve the page during setup, not redirect"
+        resp.status().is_redirection(),
+        "remote / during setup should redirect"
+    );
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(
+        location, "/setup-required",
+        "remote / during setup must redirect to /setup-required"
+    );
+}
+
+/// /setup-required is a public path and serves content even for remote
+/// connections during setup (no redirect loop).
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn setup_required_page_accessible_for_remote() {
+    let (addr, _store, _state) = start_proxied_server().await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://{addr}/setup-required"))
+        .send()
+        .await
+        .unwrap();
+
+    // /setup-required is a public path — must not redirect.
+    assert!(
+        resp.status().is_success(),
+        "/setup-required should serve content, got {}",
+        resp.status()
+    );
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Authentication Not Configured"),
+        "/setup-required should contain the setup heading"
+    );
+}
+
+/// After setup is complete, /setup-required redirects to /login so stale
+/// bookmarks don't show a misleading "Authentication Not Configured" page.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn setup_required_redirects_to_login_after_setup() {
+    let (addr, store, _state) = start_proxied_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://{addr}/setup-required"))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(
+        resp.status().is_redirection(),
+        "/setup-required should redirect after setup, got {}",
+        resp.status()
+    );
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(
+        location, "/login",
+        "/setup-required should redirect to /login after setup"
     );
 }
 
@@ -1042,6 +1446,39 @@ async fn onboarding_accessible_with_session_after_setup() {
     );
 }
 
+/// After auth is reset, `/onboarding` must stay reachable even if the
+/// onboarding service still reports the instance as previously onboarded.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn onboarding_remains_accessible_after_auth_reset_when_onboarded() {
+    let (addr, store, _state) = start_server_with_onboarding(true, true).await;
+    store.set_initial_password("testpass123").await.unwrap();
+    store.reset_all().await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://{addr}/onboarding"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "auth-reset instances must render /onboarding instead of redirecting away"
+    );
+
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("id=\"onboardingRoot\""),
+        "/onboarding should render the onboarding shell after auth reset"
+    );
+}
+
 /// POST /api/auth/setup is rejected with 403 after setup is already complete.
 /// This prevents an attacker from resetting the password via the setup endpoint.
 #[cfg(feature = "web-ui")]
@@ -1092,4 +1529,284 @@ async fn authenticated_api_endpoint_not_rate_limited() {
             "authenticated requests should bypass throttling"
         );
     }
+}
+
+/// Setting a password via /api/auth/password/change on a localhost server with a
+/// vault should initialize the vault and return a recovery key.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+async fn password_change_initializes_vault() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+
+    // Vault starts uninitialized.
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Uninitialized
+    );
+
+    // Set password via the change endpoint (no current password — first time).
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/password/change"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"new_password":"newpass123"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+
+    // Should have received a recovery key.
+    assert!(
+        body["recovery_key"].is_string(),
+        "response should include a recovery_key after vault initialization"
+    );
+    let rk = body["recovery_key"].as_str().unwrap();
+    assert!(!rk.is_empty());
+
+    // Vault should now be unsealed.
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Unsealed
+    );
+
+    // Password should be set.
+    assert!(store.has_password().await.unwrap());
+    assert!(store.verify_password("newpass123").await.unwrap());
+}
+
+/// Setting a password via /api/auth/password/change when the vault is already
+/// initialized should not return a recovery key (no double-init).
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+async fn password_change_on_initialized_vault_no_recovery_key() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+
+    // Pre-initialize the vault to simulate a previous setup.
+    let _rk = vault.initialize("oldpass123").await.unwrap();
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Unsealed
+    );
+
+    // Set a password (first credential store password, but vault already initialized).
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/password/change"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"new_password":"newpass123"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+
+    // No recovery key should be returned since vault was already initialized.
+    assert!(
+        body.get("recovery_key").is_none() || body["recovery_key"].is_null(),
+        "should not return recovery_key for an already-initialized vault"
+    );
+
+    assert!(store.has_password().await.unwrap());
+}
+
+// ── Onboarding auth bypass tests ────────────────────────────────────────────
+
+/// Mock onboarding service with controllable `onboarded` flag.
+struct MockOnboardingService {
+    onboarded: AtomicBool,
+}
+
+#[async_trait]
+impl OnboardingService for MockOnboardingService {
+    async fn wizard_start(&self, _p: serde_json::Value) -> ServiceResult {
+        Ok(serde_json::json!({ "step": 0 }))
+    }
+
+    async fn wizard_next(&self, _p: serde_json::Value) -> ServiceResult {
+        Ok(serde_json::json!({ "step": 0, "done": true }))
+    }
+
+    async fn wizard_cancel(&self) -> ServiceResult {
+        Ok(serde_json::json!({}))
+    }
+
+    async fn wizard_status(&self) -> ServiceResult {
+        let onboarded = self.onboarded.load(Ordering::Relaxed);
+        Ok(serde_json::json!({ "active": !onboarded, "onboarded": onboarded }))
+    }
+
+    async fn identity_get(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "name": "moltis", "avatar": null }))
+    }
+
+    async fn identity_update(&self, _params: serde_json::Value) -> ServiceResult {
+        Err("not configured".into())
+    }
+
+    async fn identity_update_soul(&self, _soul: Option<String>) -> ServiceResult {
+        Err("not configured".into())
+    }
+
+    async fn openclaw_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "found": false }))
+    }
+
+    async fn openclaw_scan(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "conversations": [] }))
+    }
+
+    async fn openclaw_import(&self, _params: serde_json::Value) -> ServiceResult {
+        Err("not configured".into())
+    }
+}
+
+/// Start a test server with a mock onboarding service.
+///
+/// When `behind_proxy` is true, connections are treated as remote.
+#[cfg(feature = "web-ui")]
+async fn start_server_with_onboarding(
+    onboarded: bool,
+    behind_proxy: bool,
+) -> (SocketAddr, Arc<CredentialStore>, Arc<GatewayState>) {
+    let tmp = tempfile::tempdir().unwrap();
+    moltis_config::set_config_dir(tmp.path().to_path_buf());
+    moltis_config::set_data_dir(tmp.path().to_path_buf());
+    std::mem::forget(tmp);
+
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let auth_config = moltis_config::AuthConfig::default();
+    let cred_store = Arc::new(
+        CredentialStore::with_config(pool, &auth_config)
+            .await
+            .unwrap(),
+    );
+
+    let mock_onboarding: Arc<dyn OnboardingService> = Arc::new(MockOnboardingService {
+        onboarded: AtomicBool::new(onboarded),
+    });
+
+    let resolved_auth = auth::resolve_auth(None, None);
+    let services = GatewayServices::noop().with_onboarding(mock_onboarding);
+    let state = GatewayState::with_options(
+        resolved_auth,
+        services,
+        None,
+        Some(Arc::clone(&cred_store)),
+        None, // pairing_store
+        false,
+        behind_proxy,
+        false,
+        None,
+        None,
+        18789,
+        false,
+        None,
+        None, // session_event_bus
+        #[cfg(feature = "metrics")]
+        None,
+        #[cfg(feature = "metrics")]
+        None,
+        #[cfg(feature = "vault")]
+        None,
+    );
+    let state_clone = Arc::clone(&state);
+    let methods = Arc::new(MethodRegistry::new());
+    #[cfg(feature = "push-notifications")]
+    let (router, app_state) = build_gateway_base(state, methods, None, None);
+    #[cfg(not(feature = "push-notifications"))]
+    let (router, app_state) = build_gateway_base(state, methods, None);
+
+    let router = router.merge(moltis_web::web_routes());
+    let app = finalize_gateway_app(router, app_state, false);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    (addr, cred_store, state_clone)
+}
+
+/// During onboarding (password set but onboarded=false), a local API request
+/// bypasses auth and succeeds. This is the STT test button scenario.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn local_api_during_onboarding_bypasses_auth() {
+    let (addr, store, _state) = start_server_with_onboarding(false, false).await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "local API request during onboarding should bypass auth"
+    );
+}
+
+/// After onboarding completes (onboarded=true), a local API request without
+/// credentials must return 401 — the bypass is no longer active.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn local_api_after_onboarding_requires_auth() {
+    let (addr, store, _state) = start_server_with_onboarding(true, false).await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "local API request after onboarding must require auth"
+    );
+}
+
+/// Remote API requests during onboarding must still require auth — the
+/// bypass only applies to local connections.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn remote_api_during_onboarding_requires_auth() {
+    let (addr, store, _state) = start_server_with_onboarding(false, true).await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "remote API request during onboarding must still require auth"
+    );
+}
+
+/// Privileged endpoints are NOT covered by the onboarding bypass, even for
+/// local connections during onboarding. Only the narrow set of paths needed
+/// by the wizard is allowed through.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn local_privileged_api_during_onboarding_requires_auth() {
+    let (addr, store, _state) = start_server_with_onboarding(false, false).await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    // /api/config is not in the onboarding bypass allowlist.
+    let resp = reqwest::get(format!("http://{addr}/api/config"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "privileged API must require auth even during onboarding"
+    );
 }

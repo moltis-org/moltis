@@ -54,4 +54,50 @@ pub struct ReplyPayload {
 pub struct MediaAttachment {
     pub url: String,
     pub mime_type: String,
+    /// Optional original filename (e.g. "report.pdf"). Channel outbounds use
+    /// this instead of a generic placeholder when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn media_attachment_round_trip_with_filename() {
+        let original = MediaAttachment {
+            url: "data:application/pdf;base64,abc".to_string(),
+            mime_type: "application/pdf".to_string(),
+            filename: Some("report.pdf".to_string()),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        assert!(json.contains("\"filename\":\"report.pdf\""));
+        let decoded: MediaAttachment = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.filename.as_deref(), Some("report.pdf"));
+    }
+
+    #[test]
+    fn media_attachment_round_trip_without_filename() {
+        let original = MediaAttachment {
+            url: "data:image/png;base64,xyz".to_string(),
+            mime_type: "image/png".to_string(),
+            filename: None,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        // filename should be omitted entirely
+        assert!(!json.contains("filename"));
+        let decoded: MediaAttachment = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.filename, None);
+    }
+
+    #[test]
+    fn media_attachment_deserialize_without_filename_field() {
+        // Backward compatibility: old JSON without filename field
+        let json = r#"{"url":"data:image/png;base64,xyz","mime_type":"image/png"}"#;
+        let decoded: MediaAttachment = serde_json::from_str(json).unwrap();
+        assert_eq!(decoded.filename, None);
+        assert_eq!(decoded.mime_type, "image/png");
+    }
 }

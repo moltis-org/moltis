@@ -387,6 +387,36 @@ Logs all `Command` events to a JSONL file for auditing.
 
 ## Example Hooks
 
+### Recommended: Destructive Command Guard (dcg)
+
+[dcg](https://github.com/Dicklesworthstone/destructive_command_guard) is an
+external tool that scans shell commands against 49+ destructive pattern
+categories, including heredoc/inline-script scanning, database, cloud, and
+infrastructure patterns.
+
+**Install:**
+
+```bash
+cargo install dcg
+```
+
+**Hook setup:**
+
+Copy the bundled hook example to your hooks directory:
+
+```bash
+cp -r examples/hooks/dcg-guard ~/.moltis/hooks/dcg-guard
+chmod +x ~/.moltis/hooks/dcg-guard/handler.sh
+```
+
+The hook subscribes to `BeforeToolCall`, extracts exec commands, pipes them
+through dcg, and blocks any command that dcg flags as destructive. See
+`examples/hooks/dcg-guard/HOOK.md` for details.
+
+> **Note:** dcg complements but does not replace the built-in dangerous command
+> blocklist, sandbox isolation, or the approval system. Use it as an additional
+> defense layer with broader pattern coverage.
+
 ### Slack Notification on Session End
 
 ```bash

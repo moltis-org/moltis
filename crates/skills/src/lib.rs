@@ -5,6 +5,7 @@
 
 pub mod discover;
 pub mod formats;
+#[cfg(feature = "install")]
 pub mod install;
 pub mod manifest;
 pub mod migration;

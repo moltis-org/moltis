@@ -150,6 +150,7 @@ are configured:
 | `/auth/callback` | OAuth callback |
 | `/manifest.json` | PWA manifest |
 | `/sw.js` | Service worker |
+| `/ws` | Node WebSocket endpoint (device token auth at protocol level) |
 
 ## Request Throttling
 
@@ -170,6 +171,7 @@ Default limits:
 | Other `/api/auth/*` | 120 requests per 60 seconds |
 | Other `/api/*` | 180 requests per 60 seconds |
 | `/ws/chat` upgrade | 30 requests per 60 seconds |
+| `/ws` upgrade | 30 requests per 60 seconds |
 
 When a limit is exceeded:
 
@@ -251,12 +253,15 @@ local-connection detection:
 - **Bare proxies** (no forwarding headers) can appear local — set
   `MOLTIS_BEHIND_PROXY=true` to force all connections to be treated as
   remote
-- The proxy must forward `Origin` and `Host` headers for WebSocket
-  CSWSH protection
+- The proxy must preserve the browser origin host for WebSocket CSWSH
+  protection (forward `Host`, or `X-Forwarded-Host` when rewriting `Host`)
 - TLS termination typically happens at the proxy
+- Passkeys are tied to the RP ID/host identity; host/domain changes usually
+  require registering new passkeys on the new host
 
 See [Security Architecture](security.md#reverse-proxy-deployments) for
-detailed proxy deployment guidance.
+detailed proxy deployment guidance, including a Nginx Proxy Manager
+header snippet and passkey migration guidance.
 
 ## Session Management
 
@@ -274,3 +279,12 @@ detailed proxy deployment guidance.
 | Register passkey | `POST /api/auth/passkey/register/*` | Session |
 | Remove passkey | `DELETE /api/auth/passkeys/{id}` | Session |
 | Remove all auth | `POST /api/auth/reset` | Session |
+| Vault status | `GET /api/auth/vault/status` | No |
+| Vault unlock | `POST /api/auth/vault/unlock` | No |
+| Vault recovery | `POST /api/auth/vault/recovery` | No |
+
+## Encryption at Rest
+
+Environment variables and other sensitive data are encrypted at rest using
+the vault. The vault initializes automatically during password setup and
+unseals on login. See [Encryption at Rest (Vault)](vault.md) for details.

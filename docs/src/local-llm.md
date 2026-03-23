@@ -92,7 +92,7 @@ Settings UI).
 
 ## Model Storage
 
-Downloaded models are cached in `~/.cache/moltis/models/` by default. This
+Downloaded models are cached in `~/.moltis/models/` by default. This
 directory can grow large (several GB per model).
 
 ## HuggingFace Integration
@@ -103,7 +103,7 @@ You can search and download models directly from HuggingFace:
 2. Enter a search term (e.g., "qwen coder")
 3. Select GGUF or MLX backend
 4. Choose a model from the results
-5. The model will be downloaded on first use
+5. The model will download immediately after you configure it
 
 ### Finding GGUF Models
 

@@ -1,0 +1,250 @@
+import Foundation
+import os
+
+// MARK: - Connection state
+
+enum ConnectionState: Equatable {
+    case disconnected
+    case connecting
+    case reconnecting(attempt: Int, nextRetryIn: TimeInterval)
+    case connected
+    case error(String)
+
+    var isConnected: Bool {
+        if case .connected = self { return true }
+        return false
+    }
+
+    var isDisconnected: Bool {
+        if case .disconnected = self { return true }
+        return false
+    }
+
+    var statusText: String {
+        switch self {
+        case .disconnected: return "Disconnected"
+        case .connecting: return "Connecting..."
+        case .reconnecting(let attempt, let nextRetryIn):
+            let seconds = max(1, Int(nextRetryIn.rounded(.up)))
+            return "Server unavailable. Retrying in \(seconds)s (attempt \(attempt))..."
+        case .connected: return "Connected"
+        case .error(let msg): return "Error: \(msg)"
+        }
+    }
+}
+
+// MARK: - Connection store
+
+@MainActor
+final class ConnectionStore: ObservableObject {
+    @Published var state: ConnectionState = .disconnected
+    @Published var serverVersion: String?
+    @Published var serverHost: String?
+    @Published var agentName: String?
+    @Published var agentEmoji: String?
+
+    let wsClient = MoltisWSClient()
+    let graphqlClient = MoltisGraphQLClient()
+
+    private let logger = Logger(subsystem: "org.moltis.ios", category: "connection")
+
+    lazy var chatStore: ChatStore = ChatStore(connectionStore: self)
+    lazy var sessionStore: SessionStore = SessionStore(connectionStore: self)
+    lazy var modelStore: ModelStore = ModelStore(connectionStore: self)
+
+    init() {
+        Task { [weak self] in
+            await self?.wsClient.onStateChange { [weak self] wsState in
+                Task { @MainActor in
+                    self?.applyWSState(wsState)
+                }
+            }
+        }
+    }
+
+    // MARK: - Connect
+
+    func connect(to server: ServerConnection, authManager: AuthManager) async {
+        state = .connecting
+        await graphqlClient.configure(server: server)
+
+        do {
+            let hello = try await wsClient.connect(to: server)
+            serverVersion = hello.server?.version
+            serverHost = hello.server?.host
+            state = .connected
+
+            // Register event handlers
+            await wsClient.clearEventHandlers()
+            await wsClient.onEvent { [weak self] event, payload in
+                Task { @MainActor in
+                    self?.handleEvent(event: event, payload: payload)
+                }
+            }
+
+            // Fetch identity
+            await fetchIdentity()
+            authManager.updateServerEmoji(agentEmoji, for: server.id)
+
+            // Load initial data
+            await sessionStore.loadSessions()
+            await modelStore.loadModels()
+
+        } catch {
+            let userMessage = await connectionFailureMessage(
+                error: error,
+                server: server
+            )
+            logger.error("Connection failed: \(userMessage, privacy: .public)")
+            state = .error(userMessage)
+        }
+    }
+
+    func disconnect() async {
+        await wsClient.disconnect()
+        state = .disconnected
+        serverVersion = nil
+        serverHost = nil
+        agentName = nil
+        agentEmoji = nil
+    }
+
+    private func applyWSState(_ wsState: MoltisWSClient.State) {
+        let wasConnected = state.isConnected
+        switch wsState {
+        case .disconnected:
+            state = .disconnected
+        case .connecting:
+            state = .connecting
+        case .reconnecting(let attempt, let nextRetryIn):
+            state = .reconnecting(attempt: attempt, nextRetryIn: nextRetryIn)
+        case .connected:
+            state = .connected
+            if !wasConnected {
+                onReconnected()
+            }
+        case .error(let message):
+            state = .error(message)
+        }
+    }
+
+    /// Reload data after a successful reconnection.
+    private func onReconnected() {
+        Task {
+            await fetchIdentity()
+            await sessionStore.loadSessions()
+            await modelStore.loadModels()
+            // Location sharing reconnection is handled by MoltisApp via
+            // .onChange(of: connectionStore.state).
+        }
+    }
+
+    // MARK: - Event dispatch
+
+    private func handleEvent(event: String, payload: ChatEventPayload) {
+        switch event {
+        case "chat":
+            chatStore.handleChatEvent(payload)
+        case "models.updated":
+            Task { await modelStore.loadModels() }
+        default:
+            break
+        }
+    }
+
+    // MARK: - Identity
+
+    private func fetchIdentity() async {
+        do {
+            let response = try await wsClient.send(method: "agent.identity.get")
+            if let payload = response.payload,
+               let dict = payload.value as? [String: Any] {
+                agentName = dict["name"] as? String
+                agentEmoji = dict["emoji"] as? String
+            }
+        } catch {
+            logger.debug("Could not fetch identity: \(error.localizedDescription)")
+        }
+    }
+
+    private func connectionFailureMessage(error: Error, server: ServerConnection) async -> String {
+        let nsError = error as NSError
+        let domain = nsError.domain
+        let code = nsError.code
+        logger.error(
+            "Connection failure detail domain=\(domain, privacy: .public) code=\(code) description=\(error.localizedDescription, privacy: .public)"
+        )
+
+        if let authError = error as? AuthError {
+            switch authError {
+            case .noApiKey:
+                return "No API key was found for this server. Re-run Check Connection and sign in again."
+            case .invalidCredentials:
+                return "Saved credentials were rejected. Re-run Check Connection and sign in again."
+            default:
+                break
+            }
+        }
+
+        if error.localizedDescription.lowercased().contains("protocol mismatch") {
+            return "Client/server protocol mismatch. Update the iOS app and restart the Moltis gateway."
+        }
+
+        if isCertificateTrustError(nsError) {
+            return "TLS certificate is not trusted yet. Download and trust the Moltis Local CA for this server."
+        }
+
+        if isSocketNotConnectedError(nsError) {
+            if let diagnostic = await websocketPreflightDiagnostic(server: server) {
+                return diagnostic
+            }
+            return "WebSocket disconnected before handshake. Verify this iPhone can reach \(server.url.host ?? "the server") on the same network."
+        }
+
+        return error.localizedDescription
+    }
+
+    private func isSocketNotConnectedError(_ error: NSError) -> Bool {
+        error.domain == NSPOSIXErrorDomain && error.code == 57
+    }
+
+    private func isCertificateTrustError(_ error: NSError) -> Bool {
+        guard error.domain == NSURLErrorDomain else { return false }
+        return [
+            NSURLErrorServerCertificateHasBadDate,
+            NSURLErrorServerCertificateUntrusted,
+            NSURLErrorServerCertificateHasUnknownRoot,
+            NSURLErrorServerCertificateNotYetValid,
+            NSURLErrorSecureConnectionFailed,
+        ].contains(error.code)
+    }
+
+    private func websocketPreflightDiagnostic(server: ServerConnection) async -> String? {
+        guard let apiKey = server.apiKey else {
+            return "No API key available for WebSocket authentication."
+        }
+
+        var request = URLRequest(url: server.baseURL.appendingPathComponent("api/gon"))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return "Server did not return a valid HTTP response while validating WebSocket credentials."
+            }
+            switch http.statusCode {
+            case 200:
+                return "HTTP auth succeeded, but WebSocket handshake failed. Check local DNS/network path for \(server.url.host ?? "this host")."
+            case 401, 403:
+                return "Server rejected the saved credentials. Re-run Check Connection and sign in again."
+            default:
+                return "Server validation failed with HTTP \(http.statusCode)."
+            }
+        } catch {
+            let message = (error as NSError).localizedDescription
+            return "Could not validate server reachability before WebSocket connect (\(message))."
+        }
+    }
+}

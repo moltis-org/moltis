@@ -22,7 +22,7 @@ pub enum HookSource {
 #[async_trait]
 pub trait HookDiscoverer: Send + Sync {
     /// Scan configured paths and return all discovered hooks.
-    async fn discover(&self) -> anyhow::Result<Vec<(ParsedHook, HookSource)>>;
+    async fn discover(&self) -> crate::Result<Vec<(ParsedHook, HookSource)>>;
 }
 
 /// Filesystem-based hook discoverer. Scans directories in priority order.
@@ -49,7 +49,7 @@ impl FsHookDiscoverer {
 
 #[async_trait]
 impl HookDiscoverer for FsHookDiscoverer {
-    async fn discover(&self) -> anyhow::Result<Vec<(ParsedHook, HookSource)>> {
+    async fn discover(&self) -> crate::Result<Vec<(ParsedHook, HookSource)>> {
         let mut hooks = Vec::new();
 
         for (base_path, source) in &self.search_paths {

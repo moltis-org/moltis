@@ -1,0 +1,792 @@
+// ── Monitoring page ────────────────────────────────────────────────
+// Displays metrics in a dashboard format with time-series charts
+// showing historical usage patterns. Uses WebSocket for live updates.
+
+import { signal } from "@preact/signals";
+import { html } from "htm/preact";
+import { render } from "preact";
+import { useEffect, useRef, useState } from "preact/hooks";
+import uPlot from "uplot";
+import { onEvent } from "./events.js";
+import { t } from "./i18n.js";
+import { registerPrefix } from "./router.js";
+import { routes } from "./routes.js";
+import prettyBytes from "./vendor/pretty-bytes.mjs";
+
+var metricsData = signal(null);
+var historyPoints = signal([]);
+var loading = signal(true);
+var error = signal(null);
+var isLive = signal(false);
+var unsubscribe = null;
+var _monitoringContainer = null;
+var monitoringPathBase = routes.monitoring;
+var monitoringSyncPath = true;
+
+// Time range options (in seconds)
+var TIME_RANGES = {
+	"5m": { label: () => t("metrics:timeRange.fiveMin"), seconds: 5 * 60, maxPoints: 30 },
+	"1h": { label: () => t("metrics:timeRange.oneHour"), seconds: 60 * 60, maxPoints: 360 },
+	"24h": { label: () => t("metrics:timeRange.twentyFourHours"), seconds: 24 * 60 * 60, maxPoints: 1440 },
+	"7d": { label: () => t("metrics:timeRange.sevenDays"), seconds: 7 * 24 * 60 * 60, maxPoints: 2016 },
+};
+
+async function fetchMetrics() {
+	try {
+		var resp = await fetch("/api/metrics");
+		if (!resp.ok) {
+			if (resp.status === 503) {
+				error.value = t("metrics:metricsDisabled");
+				loading.value = false;
+			}
+			// For transient errors (401, 5xx, etc.) stay in loading state —
+			// the WebSocket subscription will deliver data once connected.
+			return;
+		}
+		var data = await resp.json();
+		metricsData.value = data;
+		error.value = null;
+		loading.value = false;
+	} catch (_e) {
+		// Network or parse errors are transient — stay in loading state
+		// and let the WebSocket subscription deliver data.
+	}
+}
+
+async function fetchHistory() {
+	try {
+		var resp = await fetch("/api/metrics/history");
+		if (resp.ok) {
+			var data = await resp.json();
+			if (data.points) {
+				historyPoints.value = data.points;
+			}
+		}
+	} catch (e) {
+		console.warn("Failed to fetch metrics history:", e);
+	}
+}
+
+function subscribeToMetrics() {
+	// Subscribe to live metrics updates via WebSocket
+	unsubscribe = onEvent("metrics.update", (payload) => {
+		isLive.value = true;
+		if (payload.snapshot) {
+			metricsData.value = payload.snapshot;
+		}
+		if (payload.point) {
+			// Add new point to history, keeping max points based on longest time range
+			var maxPoints = TIME_RANGES["7d"].maxPoints;
+			var points = [...historyPoints.value, payload.point];
+			if (points.length > maxPoints) {
+				points = points.slice(points.length - maxPoints);
+			}
+			historyPoints.value = points;
+		}
+		loading.value = false;
+		error.value = null;
+	});
+}
+
+function formatNumber(n) {
+	if (n === undefined || n === null) return "\u2014";
+	if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+	if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+	return n.toString();
+}
+
+function formatMemoryBytes(bytes) {
+	if (bytes === undefined || bytes === null || bytes <= 0) return "\u2014";
+	return prettyBytes(bytes, { maximumFractionDigits: 0, space: false });
+}
+
+function formatUptime(seconds) {
+	if (!seconds) return "\u2014";
+	var days = Math.floor(seconds / 86400);
+	var hours = Math.floor((seconds % 86400) / 3600);
+	var mins = Math.floor((seconds % 3600) / 60);
+	if (days > 0) return `${days}d ${hours}h`;
+	if (hours > 0) return `${hours}h ${mins}m`;
+	return `${mins}m`;
+}
+
+// Empty state component with icon
+function EmptyState({ icon, title, description }) {
+	return html`
+		<div class="flex flex-col items-center justify-center py-20 px-8 bg-[var(--surface)] border border-[var(--border)] rounded-lg">
+			<div class="w-20 h-20 mb-6 text-[var(--muted)] opacity-40">
+				${icon}
+			</div>
+			<h3 class="text-lg font-medium text-[var(--text)] mb-3">${title}</h3>
+			<p class="text-sm text-[var(--muted)] text-center max-w-md">${description}</p>
+		</div>
+	`;
+}
+
+// Chart icon for empty state
+var chartIcon = html`<span class="icon icon-chart-bar w-full h-full"></span>`;
+
+// Activity icon for empty metrics
+var activityIcon = html`<span class="icon icon-activity w-full h-full"></span>`;
+
+// Live indicator with green dot
+function LiveIndicator({ live }) {
+	if (!live) {
+		return html`
+			<div class="flex items-center gap-2 text-xs text-[var(--muted)]">
+				<span class="inline-flex rounded-full h-2.5 w-2.5 bg-gray-500"></span>
+				${t("common:status.connecting")}
+			</div>
+		`;
+	}
+	return html`
+		<div class="flex items-center gap-2 text-xs text-green-500">
+			<span class="relative flex h-2.5 w-2.5">
+				<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+				<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+			</span>
+			${t("metrics:live")}
+		</div>
+	`;
+}
+
+function MetricCard({ title, value, subtitle, trend }) {
+	return html`
+		<div class="bg-[var(--surface)] border border-[var(--border)] rounded-lg p-6">
+			<div class="text-xs text-[var(--muted)] uppercase tracking-wide mb-2">${title}</div>
+			<div class="flex items-baseline gap-2">
+				<div class="text-2xl font-semibold">${value}</div>
+				${
+					trend !== undefined &&
+					html`
+					<span class="text-xs ${trend >= 0 ? "text-green-500" : "text-red-500"}">
+						${trend >= 0 ? "+" : ""}${trend}%
+					</span>
+				`
+				}
+			</div>
+			${subtitle && html`<div class="text-xs text-[var(--muted)] mt-2">${subtitle}</div>`}
+		</div>
+	`;
+}
+
+// Chart color palette (CSS variables with fallbacks)
+var chartColors = {
+	primary: "#22c55e", // green
+	secondary: "#3b82f6", // blue
+	tertiary: "#f59e0b", // amber
+	error: "#ef4444", // red
+	muted: "#6b7280", // gray
+};
+
+// Get CSS variable or fallback
+function getCssVar(name, fallback) {
+	if (typeof document === "undefined") return fallback;
+	var style = getComputedStyle(document.documentElement);
+	return style.getPropertyValue(name).trim() || fallback;
+}
+
+function TimeSeriesChart({ title, data, series, height = 220 }) {
+	var containerRef = useRef(null);
+	var chartRef = useRef(null);
+
+	useEffect(() => {
+		if (!(containerRef.current && data) || data.length === 0 || !data[0] || data[0].length === 0) return;
+
+		// uPlot options
+		var opts = {
+			width: containerRef.current.offsetWidth,
+			height: height,
+			padding: [12, 12, 0, 0],
+			cursor: {
+				show: true,
+				drag: { x: false, y: false },
+			},
+			legend: {
+				show: true,
+				live: true,
+			},
+			scales: {
+				x: { time: true },
+			},
+			axes: [
+				{
+					stroke: getCssVar("--muted", "#6b7280"),
+					grid: { stroke: getCssVar("--border", "#333"), width: 1 },
+					ticks: { stroke: getCssVar("--border", "#333"), width: 1 },
+					font: "11px system-ui",
+				},
+				{
+					stroke: getCssVar("--muted", "#6b7280"),
+					grid: { stroke: getCssVar("--border", "#333"), width: 1 },
+					ticks: { stroke: getCssVar("--border", "#333"), width: 1 },
+					font: "11px system-ui",
+					size: 50,
+				},
+			],
+			series: [
+				{ label: t("metrics:series.time") },
+				...series.map((s, i) => ({
+					label: s.label,
+					stroke: s.color || Object.values(chartColors)[i % Object.values(chartColors).length],
+					width: 2,
+					fill: s.fill ? `${s.color}20` : undefined,
+				})),
+			],
+		};
+
+		// Destroy previous chart
+		if (chartRef.current) {
+			chartRef.current.destroy();
+		}
+
+		// Create new chart
+		chartRef.current = new uPlot(opts, data, containerRef.current);
+
+		// Handle resize
+		var resizeObserver = new ResizeObserver(() => {
+			if (chartRef.current && containerRef.current) {
+				chartRef.current.setSize({
+					width: containerRef.current.offsetWidth,
+					height: height,
+				});
+			}
+		});
+		resizeObserver.observe(containerRef.current);
+
+		return () => {
+			resizeObserver.disconnect();
+			if (chartRef.current) {
+				chartRef.current.destroy();
+				chartRef.current = null;
+			}
+		};
+	}, [data, series, height]);
+
+	// Update data without destroying chart
+	useEffect(() => {
+		if (chartRef.current && data && data.length > 0 && data[0] && data[0].length > 0) {
+			chartRef.current.setData(data);
+		}
+	}, [data]);
+
+	return html`
+		<div class="bg-[var(--surface)] border border-[var(--border)] rounded-lg p-6">
+			<h3 class="text-sm font-medium mb-4">${title}</h3>
+			<div ref=${containerRef} class="w-full"></div>
+		</div>
+	`;
+}
+
+function filterPointsByTimeRange(points, rangeKey) {
+	if (!points || points.length === 0) return [];
+
+	var range = TIME_RANGES[rangeKey];
+	var now = Date.now();
+	var cutoff = now - range.seconds * 1000;
+
+	return points.filter((p) => p.timestamp >= cutoff);
+}
+
+function prepareChartData(points, fields) {
+	if (!points || points.length === 0) {
+		return null;
+	}
+
+	// uPlot expects data as array of arrays: [[timestamps], [series1], [series2], ...]
+	var timestamps = points.map((p) => p.timestamp / 1000); // Convert to seconds
+	var seriesData = fields.map((field) => points.map((p) => p[field] ?? 0));
+
+	return [timestamps, ...seriesData];
+}
+
+function prepareMemoryChart(points) {
+	if (!points || points.length === 0) {
+		return null;
+	}
+
+	var mib = 1024 * 1024;
+	var timestamps = points.map((p) => p.timestamp / 1000);
+	var processMemory = points.map((p) => (p.process_memory_bytes || 0) / mib);
+	var hasLocalLlama = points.some((p) => (p.local_llama_cpp_bytes || 0) > 0);
+
+	var data = [timestamps, processMemory];
+	var series = [{ label: t("metrics:series.processMemory"), color: chartColors.error }];
+
+	if (hasLocalLlama) {
+		data.push(points.map((p) => (p.local_llama_cpp_bytes || 0) / mib));
+		series.push({ label: t("metrics:series.localLlamaCpp"), color: chartColors.primary });
+	}
+
+	return { data, series };
+}
+
+// Get unique provider names from history points
+function getProviders(points) {
+	var providers = new Set();
+	for (var p of points) {
+		if (p.by_provider) {
+			for (var name of Object.keys(p.by_provider)) {
+				providers.add(name);
+			}
+		}
+	}
+	return Array.from(providers).sort();
+}
+
+// Prepare per-provider chart data for a specific metric (input_tokens, output_tokens, etc.)
+function prepareProviderChartData(points, providers, metric) {
+	if (!points || points.length === 0 || providers.length === 0) {
+		return null;
+	}
+
+	var timestamps = points.map((p) => p.timestamp / 1000);
+	var seriesData = providers.map((provider) =>
+		points.map((p) => {
+			var providerData = p.by_provider?.[provider];
+			return providerData?.[metric] ?? 0;
+		}),
+	);
+
+	return [timestamps, ...seriesData];
+}
+
+// Provider color palette (distinct colors for different providers)
+var providerColors = [
+	"#10b981", // emerald (primary)
+	"#8b5cf6", // violet
+	"#f59e0b", // amber
+	"#ef4444", // red
+	"#3b82f6", // blue
+	"#ec4899", // pink
+	"#14b8a6", // teal
+	"#f97316", // orange
+];
+
+function MetricsGrid({ categories, latestPoint }) {
+	if (!categories) return null;
+
+	var { llm, http, tools, mcp, system } = categories;
+	var processMemory = latestPoint?.process_memory_bytes || 0;
+
+	// Check if there's any meaningful data
+	var hasData =
+		system?.uptime_seconds > 0 ||
+		http?.total > 0 ||
+		llm?.completions_total > 0 ||
+		tools?.total > 0 ||
+		processMemory > 0;
+
+	if (!hasData) {
+		return html`
+			<${EmptyState}
+				icon=${activityIcon}
+				title=${t("metrics:noActivityTitle")}
+				description=${t("metrics:noActivityDescription")}
+			/>
+		`;
+	}
+
+	return html`
+		<div class="space-y-10">
+			<!-- System Overview -->
+			<section>
+				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.system")}</h3>
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+					<${MetricCard} title=${t("metrics:cards.uptime")} value=${formatUptime(system?.uptime_seconds)} />
+					<${MetricCard} title=${t("metrics:cards.connectedClients")} value=${formatNumber(system?.connected_clients)} />
+					<${MetricCard} title=${t("metrics:cards.activeSessions")} value=${formatNumber(system?.active_sessions)} />
+					<${MetricCard} title=${t("metrics:cards.httpRequests")} value=${formatNumber(http?.total)} />
+					<${MetricCard} title=${t("metrics:cards.processMemory")} value=${formatMemoryBytes(processMemory)} />
+				</div>
+			</section>
+
+			<!-- LLM Metrics -->
+			<section>
+				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.llmUsage")}</h3>
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+					<${MetricCard}
+						title=${t("metrics:cards.completions")}
+						value=${formatNumber(llm?.completions_total)}
+						subtitle=${llm?.errors > 0 ? t("metrics:errorsCount", { count: llm.errors }) : undefined}
+					/>
+					<${MetricCard} title=${t("metrics:cards.inputTokens")} value=${formatNumber(llm?.input_tokens)} />
+					<${MetricCard} title=${t("metrics:cards.outputTokens")} value=${formatNumber(llm?.output_tokens)} />
+					<${MetricCard}
+						title=${t("metrics:cards.cacheTokens")}
+						value=${formatNumber((llm?.cache_read_tokens || 0) + (llm?.cache_write_tokens || 0))}
+						subtitle=${llm?.cache_read_tokens ? t("metrics:cacheRead", { value: formatNumber(llm.cache_read_tokens) }) : undefined}
+					/>
+				</div>
+			</section>
+
+			<!-- Tools & MCP -->
+			<section>
+				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.toolsMcp")}</h3>
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+					<${MetricCard}
+						title=${t("metrics:cards.toolExecutions")}
+						value=${formatNumber(tools?.total)}
+						subtitle=${tools?.errors > 0 ? t("metrics:errorsCount", { count: tools.errors }) : undefined}
+					/>
+					<${MetricCard} title=${t("metrics:cards.toolsActive")} value=${formatNumber(tools?.active)} />
+					<${MetricCard}
+						title=${t("metrics:cards.mcpToolCalls")}
+						value=${formatNumber(mcp?.total)}
+						subtitle=${mcp?.errors > 0 ? t("metrics:errorsCount", { count: mcp.errors }) : undefined}
+					/>
+					<${MetricCard} title=${t("metrics:cards.mcpServers")} value=${formatNumber(mcp?.active)} />
+				</div>
+			</section>
+		</div>
+	`;
+}
+
+function ChartsSection({ points, timeRange, onTimeRangeChange }) {
+	var filteredPoints = filterPointsByTimeRange(points, timeRange);
+
+	if (!filteredPoints || filteredPoints.length < 2) {
+		return html`
+			<div class="space-y-8">
+				<${TimeRangeSelector} value=${timeRange} onChange=${onTimeRangeChange} />
+				<${EmptyState}
+					icon=${chartIcon}
+					title=${t("metrics:collectingTitle")}
+					description=${t("metrics:collectingDescription")}
+				/>
+			</div>
+		`;
+	}
+
+	// Prepare chart data
+	var tokenData = prepareChartData(filteredPoints, ["llm_input_tokens", "llm_output_tokens"]);
+	var requestData = prepareChartData(filteredPoints, ["http_requests", "llm_completions"]);
+	var connectionsData = prepareChartData(filteredPoints, ["ws_active", "active_sessions"]);
+	var toolsData = prepareChartData(filteredPoints, ["tool_executions", "mcp_calls"]);
+	var memoryChart = prepareMemoryChart(filteredPoints);
+
+	// Prepare per-provider charts
+	var providers = getProviders(filteredPoints);
+	var providerInputData = prepareProviderChartData(filteredPoints, providers, "input_tokens");
+	var providerOutputData = prepareProviderChartData(filteredPoints, providers, "output_tokens");
+	var providerSeries = providers.map((name, i) => ({
+		label: name,
+		color: providerColors[i % providerColors.length],
+	}));
+
+	return html`
+		<div class="space-y-8">
+			<${TimeRangeSelector} value=${timeRange} onChange=${onTimeRangeChange} />
+			<div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
+				${
+					tokenData &&
+					html`
+					<${TimeSeriesChart}
+						title=${t("metrics:charts.tokenUsageTotal")}
+						data=${tokenData}
+						series=${[
+							{ label: t("metrics:series.inputTokens"), color: chartColors.primary },
+							{ label: t("metrics:series.outputTokens"), color: chartColors.secondary },
+						]}
+					/>
+				`
+				}
+				${
+					providerInputData &&
+					providers.length > 0 &&
+					html`
+					<${TimeSeriesChart}
+						title=${t("metrics:charts.inputTokensByProvider")}
+						data=${providerInputData}
+						series=${providerSeries}
+					/>
+				`
+				}
+				${
+					providerOutputData &&
+					providers.length > 0 &&
+					html`
+					<${TimeSeriesChart}
+						title=${t("metrics:charts.outputTokensByProvider")}
+						data=${providerOutputData}
+						series=${providerSeries}
+					/>
+				`
+				}
+				${
+					requestData &&
+					html`
+					<${TimeSeriesChart}
+						title=${t("metrics:charts.requests")}
+						data=${requestData}
+						series=${[
+							{ label: t("metrics:series.httpRequests"), color: chartColors.tertiary },
+							{ label: t("metrics:series.llmCompletions"), color: chartColors.primary },
+						]}
+					/>
+				`
+				}
+				${
+					connectionsData &&
+					html`
+					<${TimeSeriesChart}
+						title=${t("metrics:charts.connections")}
+						data=${connectionsData}
+						series=${[
+							{ label: t("metrics:series.wsActive"), color: chartColors.secondary },
+							{ label: t("metrics:series.activeSessions"), color: chartColors.tertiary },
+						]}
+					/>
+				`
+				}
+				${
+					memoryChart &&
+					html`
+					<${TimeSeriesChart}
+						title=${t("metrics:charts.memoryUsage")}
+						data=${memoryChart.data}
+						series=${memoryChart.series}
+					/>
+				`
+				}
+				${
+					toolsData &&
+					html`
+					<${TimeSeriesChart}
+						title=${t("metrics:charts.toolActivity")}
+						data=${toolsData}
+						series=${[
+							{ label: t("metrics:series.toolExecutions"), color: chartColors.primary },
+							{ label: t("metrics:series.mcpCalls"), color: chartColors.secondary },
+						]}
+					/>
+				`
+				}
+			</div>
+		</div>
+	`;
+}
+
+function TimeRangeSelector({ value, onChange }) {
+	return html`
+		<div class="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-md p-1">
+			${Object.entries(TIME_RANGES).map(
+				([key, range]) => html`
+				<button
+					key=${key}
+					class="px-3 py-1.5 text-xs rounded transition-colors ${value === key ? "bg-[var(--surface2)] text-[var(--text)] font-medium" : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface2)]"}"
+					onClick=${() => onChange(key)}
+				>
+					${range.label()}
+				</button>
+			`,
+			)}
+		</div>
+	`;
+}
+
+function ProviderTable({ byProvider }) {
+	if (!byProvider || Object.keys(byProvider).length === 0) return null;
+
+	return html`
+		<section>
+			<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.byProvider")}</h3>
+			<div class="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
+				<table class="w-full text-sm">
+					<thead>
+						<tr class="border-b border-[var(--border)] bg-[var(--surface2)]">
+							<th class="text-left px-6 py-4 font-medium">${t("metrics:table.provider")}</th>
+							<th class="text-right px-6 py-4 font-medium">${t("metrics:table.completions")}</th>
+							<th class="text-right px-6 py-4 font-medium">${t("metrics:table.inputTokens")}</th>
+							<th class="text-right px-6 py-4 font-medium">${t("metrics:table.outputTokens")}</th>
+							<th class="text-right px-6 py-4 font-medium">${t("metrics:table.errors")}</th>
+						</tr>
+					</thead>
+					<tbody>
+						${Object.entries(byProvider).map(
+							([name, stats]) => html`
+							<tr class="border-b border-[var(--border)] last:border-0">
+								<td class="px-6 py-4">${name}</td>
+								<td class="text-right px-6 py-4">${formatNumber(stats.completions)}</td>
+								<td class="text-right px-6 py-4">${formatNumber(stats.input_tokens)}</td>
+								<td class="text-right px-6 py-4">${formatNumber(stats.output_tokens)}</td>
+								<td class="text-right px-6 py-4 ${stats.errors > 0 ? "text-[var(--error)]" : ""}">${formatNumber(stats.errors)}</td>
+							</tr>
+						`,
+						)}
+					</tbody>
+				</table>
+			</div>
+		</section>
+	`;
+}
+
+function PrometheusEndpoint() {
+	var [copied, setCopied] = useState(false);
+	var endpoint = `${window.location.origin}/metrics`;
+
+	function copyEndpoint() {
+		navigator.clipboard.writeText(endpoint).then(() => {
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2000);
+		});
+	}
+
+	return html`
+		<section>
+			<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.prometheus")}</h3>
+			<div class="p-6 bg-[var(--surface)] border border-[var(--border)] rounded-lg">
+				<p class="text-sm text-[var(--muted)] mb-5">
+					${t("metrics:prometheusDescription")}
+				</p>
+				<div class="flex items-center gap-4">
+					<code class="flex-1 px-4 py-3 bg-[var(--surface2)] rounded-md text-sm font-mono overflow-x-auto">${endpoint}</code>
+					<button
+						class="provider-btn provider-btn-secondary text-sm shrink-0"
+						onClick=${copyEndpoint}
+					>
+						${copied ? t("common:actions.copied") : t("common:actions.copy")}
+					</button>
+				</div>
+			</div>
+		</section>
+	`;
+}
+
+function MonitoringPage({ initialTab }) {
+	var [activeTab, setActiveTab] = useState(initialTab || "overview");
+	var [timeRange, setTimeRange] = useState("1h");
+
+	// Update URL when tab changes
+	function handleTabChange(tab) {
+		setActiveTab(tab);
+		if (monitoringSyncPath) {
+			var newPath = tab === "charts" ? `${monitoringPathBase}/charts` : monitoringPathBase;
+			if (window.location.pathname !== newPath) {
+				history.pushState(null, "", newPath);
+			}
+		}
+	}
+
+	useEffect(() => {
+		// Fetch initial data
+		fetchMetrics();
+		fetchHistory();
+
+		// Subscribe to live updates
+		subscribeToMetrics();
+
+		return () => {
+			if (unsubscribe) {
+				unsubscribe();
+				unsubscribe = null;
+			}
+		};
+	}, []);
+
+	if (loading.value) {
+		return html`
+			<div class="flex items-center justify-center h-64 text-[var(--muted)]">
+				<div class="text-center">
+					<div class="inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin mb-4"></div>
+					<p>${t("metrics:loadingMetrics")}</p>
+				</div>
+			</div>
+		`;
+	}
+
+	if (error.value) {
+		return html`
+			<div class="p-10">
+				<div class="max-w-3xl mx-auto space-y-10">
+					<div class="p-6 bg-[var(--error-bg)] border border-[var(--error)] rounded-lg text-[var(--error)]">
+						${error.value}
+					</div>
+					<${PrometheusEndpoint} />
+				</div>
+			</div>
+		`;
+	}
+
+	return html`
+		<div class="p-10 overflow-y-auto">
+			<div class="max-w-7xl mx-auto">
+				<div class="flex items-center justify-between mb-10">
+					<div class="flex items-center gap-4">
+						<h2 class="text-xl font-semibold">${t("metrics:title")}</h2>
+						<${LiveIndicator} live=${isLive.value} />
+					</div>
+					<div class="flex items-center gap-4">
+						<div class="flex border border-[var(--border)] rounded-md overflow-hidden">
+							<button
+								class="px-5 py-2.5 text-sm transition-colors ${activeTab === "overview" ? "bg-[var(--surface2)] text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"}"
+								onClick=${() => handleTabChange("overview")}
+							>
+								${t("metrics:tabs.overview")}
+							</button>
+							<button
+								class="px-5 py-2.5 text-sm transition-colors ${activeTab === "charts" ? "bg-[var(--surface2)] text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"}"
+								onClick=${() => handleTabChange("charts")}
+							>
+								${t("metrics:tabs.charts")}
+							</button>
+						</div>
+					</div>
+				</div>
+
+				${
+					activeTab === "overview" &&
+					html`
+					<div class="space-y-10">
+						<${MetricsGrid}
+							categories=${metricsData.value?.categories}
+							latestPoint=${historyPoints.value[historyPoints.value.length - 1]}
+						/>
+						<${ProviderTable} byProvider=${metricsData.value?.categories?.llm?.by_provider} />
+						<${PrometheusEndpoint} />
+					</div>
+				`
+				}
+
+				${
+					activeTab === "charts" &&
+					html`
+					<${ChartsSection}
+						points=${historyPoints.value}
+						timeRange=${timeRange}
+						onTimeRangeChange=${setTimeRange}
+					/>
+				`
+				}
+			</div>
+		</div>
+	`;
+}
+
+export function initMonitoring(container, param, options) {
+	// param is "charts" for /monitoring/charts, null for /monitoring
+	_monitoringContainer = container;
+	monitoringPathBase = options?.pathBase || routes.monitoring;
+	monitoringSyncPath = options?.syncPath !== false;
+	var initialTab = param === "charts" ? "charts" : "overview";
+	render(html`<${MonitoringPage} initialTab=${initialTab} />`, container);
+}
+
+export function teardownMonitoring() {
+	if (unsubscribe) {
+		unsubscribe();
+		unsubscribe = null;
+	}
+	metricsData.value = null;
+	historyPoints.value = [];
+	loading.value = true;
+	error.value = null;
+	isLive.value = false;
+	monitoringPathBase = routes.monitoring;
+	monitoringSyncPath = true;
+	if (_monitoringContainer) render(null, _monitoringContainer);
+	_monitoringContainer = null;
+}
+
+// Register as prefix route: /monitoring and /monitoring/charts
+registerPrefix(routes.monitoring, initMonitoring, teardownMonitoring);

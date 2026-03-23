@@ -1,0 +1,1591 @@
+//! GitHub Copilot provider.
+//!
+//! Authentication uses the GitHub device-flow OAuth to obtain a GitHub token,
+//! then exchanges it for a short-lived Copilot API token via
+//! `https://api.github.com/copilot_internal/v2/token`.
+//!
+//! The Copilot API itself is OpenAI-compatible (`/chat/completions`).
+
+use std::{collections::HashSet, pin::Pin, sync::mpsc, time::Duration};
+
+use {
+    async_trait::async_trait,
+    futures::StreamExt,
+    moltis_oauth::{OAuthTokens, TokenStore},
+    secrecy::{ExposeSecret, Secret},
+    tokio_stream::Stream,
+    tracing::{debug, trace, warn},
+};
+
+use {
+    super::openai_compat::{
+        ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
+        finalize_stream, parse_openai_compat_usage_from_payload, parse_responses_completion,
+        parse_tool_calls, process_openai_sse_line, process_responses_sse_line,
+        split_responses_instructions_and_input, to_openai_tools, to_responses_api_tools,
+    },
+    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
+};
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/// GitHub OAuth app client ID for Copilot (VS Code's public client ID).
+const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
+
+const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
+const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
+const COPILOT_API_BASE: &str = "https://api.individual.githubcopilot.com";
+const COPILOT_MODELS_ENDPOINT: &str = "https://api.individual.githubcopilot.com/models";
+
+const PROVIDER_NAME: &str = "github-copilot";
+
+/// Required headers for the Copilot chat completions API.
+/// The API rejects requests without `Editor-Version`.
+const EDITOR_VERSION: &str = "vscode/1.96.2";
+const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
+
+// ── Device flow types ────────────────────────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct DeviceCodeResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub interval: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GithubTokenResponse {
+    access_token: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CopilotTokenResponse {
+    token: String,
+    expires_at: u64,
+}
+
+// ── Provider ─────────────────────────────────────────────────────────────────
+
+pub struct GitHubCopilotProvider {
+    model: String,
+    client: &'static reqwest::Client,
+    token_store: TokenStore,
+}
+
+impl GitHubCopilotProvider {
+    pub fn new(model: String) -> Self {
+        Self {
+            model,
+            client: crate::shared_http_client(),
+            token_store: TokenStore::new(),
+        }
+    }
+
+    /// Start the GitHub device-flow: request a device code from GitHub.
+    pub async fn request_device_code(
+        client: &reqwest::Client,
+    ) -> anyhow::Result<DeviceCodeResponse> {
+        let resp = client
+            .post(GITHUB_DEVICE_CODE_URL)
+            .header("Accept", "application/json")
+            .form(&[("client_id", GITHUB_CLIENT_ID), ("scope", "")])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("GitHub device code request failed: {body}");
+        }
+
+        Ok(resp.json().await?)
+    }
+
+    /// Poll GitHub for the access token after the user has entered the code.
+    pub async fn poll_for_token(
+        client: &reqwest::Client,
+        device_code: &str,
+        interval: u64,
+    ) -> anyhow::Result<String> {
+        loop {
+            tokio::time::sleep(Duration::from_secs(interval)).await;
+
+            let resp = client
+                .post(GITHUB_TOKEN_URL)
+                .header("Accept", "application/json")
+                .form(&[
+                    ("client_id", GITHUB_CLIENT_ID),
+                    ("device_code", device_code),
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ])
+                .send()
+                .await?;
+
+            let body: GithubTokenResponse = resp.json().await?;
+
+            if let Some(token) = body.access_token {
+                return Ok(token);
+            }
+
+            match body.error.as_deref() {
+                Some("authorization_pending") => continue,
+                Some("slow_down") => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                },
+                Some(err) => anyhow::bail!("GitHub device flow error: {err}"),
+                None => anyhow::bail!("unexpected response from GitHub token endpoint"),
+            }
+        }
+    }
+
+    /// Get a valid Copilot API token, exchanging the GitHub token if needed.
+    async fn get_valid_copilot_token(&self) -> anyhow::Result<String> {
+        fetch_valid_copilot_token_with_fallback(self.client, &self.token_store).await
+    }
+}
+
+fn home_token_store_if_different() -> Option<TokenStore> {
+    let home = moltis_config::user_global_config_dir_if_different()?;
+    Some(TokenStore::with_path(home.join("oauth_tokens.json")))
+}
+
+fn token_store_with_provider_tokens(primary: &TokenStore) -> Option<TokenStore> {
+    debug!("checking primary token store for {PROVIDER_NAME}");
+    if primary.load(PROVIDER_NAME).is_some() {
+        debug!("found {PROVIDER_NAME} tokens in primary store");
+        return Some(primary.clone());
+    }
+    if let Some(home_store) = home_token_store_if_different() {
+        debug!("checking home token store for {PROVIDER_NAME}");
+        if home_store.load(PROVIDER_NAME).is_some() {
+            debug!("found {PROVIDER_NAME} tokens in home store");
+            return Some(home_store);
+        }
+    }
+    debug!("{PROVIDER_NAME} tokens not found in any store");
+    None
+}
+
+/// Check if we have stored GitHub tokens for Copilot.
+pub fn has_stored_tokens() -> bool {
+    let found = token_store_with_provider_tokens(&TokenStore::new()).is_some();
+    if found {
+        debug!("{PROVIDER_NAME} stored tokens found");
+    } else {
+        debug!("{PROVIDER_NAME} stored tokens not found");
+    }
+    found
+}
+
+/// Known Copilot models.
+/// The list is intentionally broad; if a model isn't available for the user's
+/// plan Copilot will return an error.
+pub const COPILOT_MODELS: &[(&str, &str)] = &[
+    ("gpt-4o", "GPT-4o (Copilot)"),
+    ("gpt-4.1", "GPT-4.1 (Copilot)"),
+    ("gpt-4.1-mini", "GPT-4.1 Mini (Copilot)"),
+    ("gpt-4.1-nano", "GPT-4.1 Nano (Copilot)"),
+    ("gpt-5.4", "GPT-5.4 (Copilot)"),
+    ("gpt-5.4-pro", "GPT-5.4 Pro (Copilot)"),
+    ("gpt-5.2-pro", "GPT-5.2 Pro (Copilot)"),
+    ("o1", "o1 (Copilot)"),
+    ("o1-mini", "o1-mini (Copilot)"),
+    ("o3-mini", "o3-mini (Copilot)"),
+    ("claude-sonnet-4", "Claude Sonnet 4 (Copilot)"),
+    ("gemini-2.0-flash", "Gemini 2.0 Flash (Copilot)"),
+];
+
+async fn fetch_valid_copilot_token(
+    client: &reqwest::Client,
+    token_store: &TokenStore,
+) -> anyhow::Result<String> {
+    let tokens = token_store.load(PROVIDER_NAME).ok_or_else(|| {
+        anyhow::anyhow!("not logged in to github-copilot — run OAuth device flow first")
+    })?;
+
+    // The `access_token` stored is the GitHub user token.
+    // We exchange it for a short-lived Copilot API token and cache it.
+    if let Some(copilot_tokens) = token_store.load("github-copilot-api")
+        && let Some(expires_at) = copilot_tokens.expires_at
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now + 60 < expires_at {
+            return Ok(copilot_tokens.access_token.expose_secret().clone());
+        }
+    }
+
+    let resp = client
+        .get(COPILOT_TOKEN_URL)
+        .header(
+            "Authorization",
+            format!("token {}", tokens.access_token.expose_secret()),
+        )
+        .header("Accept", "application/json")
+        .header(
+            "User-Agent",
+            "moltis/0.1.0 (GitHub Copilot compatible client)",
+        )
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Copilot token exchange failed: {body}");
+    }
+
+    let copilot_resp: CopilotTokenResponse = resp.json().await?;
+    let _ = token_store.save("github-copilot-api", &OAuthTokens {
+        access_token: Secret::new(copilot_resp.token.clone()),
+        refresh_token: None,
+        id_token: None,
+        account_id: None,
+        expires_at: Some(copilot_resp.expires_at),
+    });
+
+    Ok(copilot_resp.token)
+}
+
+async fn fetch_valid_copilot_token_with_fallback(
+    client: &reqwest::Client,
+    primary_store: &TokenStore,
+) -> anyhow::Result<String> {
+    let Some(token_store) = token_store_with_provider_tokens(primary_store) else {
+        anyhow::bail!("not logged in to github-copilot — run OAuth device flow first");
+    };
+    fetch_valid_copilot_token(client, &token_store).await
+}
+
+pub fn default_model_catalog() -> Vec<super::DiscoveredModel> {
+    COPILOT_MODELS
+        .iter()
+        .map(|(id, name)| super::DiscoveredModel::new(*id, *name))
+        .collect()
+}
+
+fn normalize_display_name(model_id: &str, display_name: Option<&str>) -> String {
+    let normalized = display_name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(model_id);
+    if normalized == model_id {
+        model_id.to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn is_likely_model_id(model_id: &str) -> bool {
+    if model_id.is_empty() || model_id.len() > 120 {
+        return false;
+    }
+    if model_id.chars().any(char::is_whitespace) {
+        return false;
+    }
+    model_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+}
+
+fn parse_model_entry(entry: &serde_json::Value) -> Option<super::DiscoveredModel> {
+    let obj = entry.as_object()?;
+    let model_id = obj
+        .get("id")
+        .or_else(|| obj.get("slug"))
+        .or_else(|| obj.get("model"))
+        .and_then(serde_json::Value::as_str)?;
+
+    if !is_likely_model_id(model_id) {
+        return None;
+    }
+
+    let display_name = obj
+        .get("display_name")
+        .or_else(|| obj.get("displayName"))
+        .or_else(|| obj.get("name"))
+        .or_else(|| obj.get("title"))
+        .and_then(serde_json::Value::as_str);
+
+    let created_at = obj.get("created").and_then(serde_json::Value::as_i64);
+
+    Some(
+        super::DiscoveredModel::new(model_id, normalize_display_name(model_id, display_name))
+            .with_created_at(created_at),
+    )
+}
+
+fn collect_candidate_arrays<'a>(
+    value: &'a serde_json::Value,
+    out: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(items) => out.extend(items),
+        serde_json::Value::Object(map) => {
+            for key in ["models", "data", "items", "results", "available"] {
+                if let Some(nested) = map.get(key) {
+                    collect_candidate_arrays(nested, out);
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+fn parse_models_payload(value: &serde_json::Value) -> Vec<super::DiscoveredModel> {
+    let mut candidates = Vec::new();
+    collect_candidate_arrays(value, &mut candidates);
+
+    let mut models = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in candidates {
+        if let Some(model) = parse_model_entry(entry)
+            && seen.insert(model.id.clone())
+        {
+            models.push(model);
+        }
+    }
+
+    // Sort by created_at descending (newest first). Models without a
+    // timestamp are placed after those with one, preserving relative order.
+    models.sort_by(|a, b| match (a.created_at, b.created_at) {
+        (Some(a_ts), Some(b_ts)) => b_ts.cmp(&a_ts), // newest first
+        (Some(_), None) => std::cmp::Ordering::Less, // timestamp before no-timestamp
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
+    models
+}
+
+async fn fetch_models_from_api(
+    client: &reqwest::Client,
+    access_token: String,
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
+    let response = client
+        .get(COPILOT_MODELS_ENDPOINT)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Accept", "application/json")
+        .header("Editor-Version", EDITOR_VERSION)
+        .header("User-Agent", COPILOT_USER_AGENT)
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("copilot models API error HTTP {status}");
+    }
+    let payload: serde_json::Value = serde_json::from_str(&body)?;
+    let models = parse_models_payload(&payload);
+    if models.is_empty() {
+        anyhow::bail!("copilot models API returned no models");
+    }
+    Ok(models)
+}
+
+/// Spawn model discovery in a background thread and return the receiver
+/// immediately, without blocking.
+pub fn start_model_discovery() -> mpsc::Receiver<anyhow::Result<Vec<super::DiscoveredModel>>> {
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(anyhow::Error::from)
+            .and_then(|rt| {
+                rt.block_on(async {
+                    let client = reqwest::Client::builder()
+                        .timeout(Duration::from_secs(8))
+                        .build()?;
+                    let token_store = TokenStore::new();
+                    let access_token =
+                        fetch_valid_copilot_token_with_fallback(&client, &token_store).await?;
+                    fetch_models_from_api(&client, access_token).await
+                })
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+fn fetch_models_blocking() -> anyhow::Result<Vec<super::DiscoveredModel>> {
+    start_model_discovery()
+        .recv()
+        .map_err(|err| anyhow::anyhow!("copilot model discovery worker failed: {err}"))?
+}
+
+pub fn live_models() -> anyhow::Result<Vec<super::DiscoveredModel>> {
+    let models = fetch_models_blocking()?;
+    debug!(
+        model_count = models.len(),
+        "loaded github-copilot live models"
+    );
+    Ok(models)
+}
+
+pub fn available_models() -> Vec<super::DiscoveredModel> {
+    let fallback = default_model_catalog();
+    let discovered = match live_models() {
+        Ok(models) => models,
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("not logged in") || msg.contains("tokens not found") {
+                debug!(error = %err, "github-copilot not configured, using fallback catalog");
+            } else {
+                warn!(error = %err, "failed to fetch github-copilot models, using fallback catalog");
+            }
+            return fallback;
+        },
+    };
+
+    super::merge_discovered_with_fallback_catalog(discovered, fallback)
+}
+
+// ── Responses API helpers ────────────────────────────────────────────────────
+
+/// Returns `true` if the given model is known to require the Responses API
+/// (`/responses`) instead of Chat Completions (`/chat/completions`).
+fn needs_responses_api(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("gpt-5.4") || m == "gpt-5.2-pro" || m.starts_with("codex-")
+}
+
+/// Returns `true` if an error body from the Chat Completions API indicates
+/// that the model only supports the Responses API.
+fn is_responses_api_required_error(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("unsupported_api_for_model")
+        || lower.contains("not accessible via the /chat/completions")
+}
+
+// ── LlmProvider impl ────────────────────────────────────────────────────────
+
+#[async_trait]
+impl LlmProvider for GitHubCopilotProvider {
+    fn name(&self) -> &str {
+        PROVIDER_NAME
+    }
+
+    fn id(&self) -> &str {
+        &self.model
+    }
+
+    fn supports_tools(&self) -> bool {
+        super::supports_tools_for_model(&self.model)
+    }
+
+    async fn complete(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+    ) -> anyhow::Result<CompletionResponse> {
+        if needs_responses_api(&self.model) {
+            return self.complete_responses(messages, tools).await;
+        }
+
+        let token = self.get_valid_copilot_token().await?;
+
+        let openai_messages: Vec<serde_json::Value> =
+            messages.iter().map(ChatMessage::to_openai_value).collect();
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "messages": openai_messages,
+        });
+
+        if !tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
+        }
+
+        debug!(
+            model = %self.model,
+            messages_count = messages.len(),
+            tools_count = tools.len(),
+            "github-copilot complete request"
+        );
+        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot request body");
+
+        let http_resp = self
+            .client
+            .post(format!("{COPILOT_API_BASE}/chat/completions"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .header("Editor-Version", EDITOR_VERSION)
+            .header("User-Agent", COPILOT_USER_AGENT)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = http_resp.status();
+        if !status.is_success() {
+            let retry_after_ms = super::retry_after_ms_from_headers(http_resp.headers());
+            let body_text = http_resp.text().await.unwrap_or_default();
+
+            // Fallback: if the model requires Responses API, retry with it.
+            if status == reqwest::StatusCode::BAD_REQUEST
+                && is_responses_api_required_error(&body_text)
+            {
+                debug!(
+                    model = %self.model,
+                    "chat completions returned unsupported_api_for_model, retrying with responses API"
+                );
+                return self.complete_responses(messages, tools).await;
+            }
+
+            warn!(status = %status, body = %body_text, "github-copilot API error");
+            anyhow::bail!(
+                "{}",
+                super::with_retry_after_marker(
+                    format!("GitHub Copilot API error HTTP {status}: {body_text}"),
+                    retry_after_ms,
+                )
+            );
+        }
+
+        let resp = http_resp.json::<serde_json::Value>().await?;
+        trace!(response = %resp, "github-copilot raw response");
+
+        let message = &resp["choices"][0]["message"];
+
+        let text = message["content"].as_str().map(|s| s.to_string());
+        let tool_calls = parse_tool_calls(message);
+
+        let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
+
+        Ok(CompletionResponse {
+            text,
+            tool_calls,
+            usage,
+        })
+    }
+
+    #[allow(clippy::collapsible_if)]
+    fn stream(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.stream_with_tools(messages, vec![])
+    }
+
+    #[allow(clippy::collapsible_if)]
+    fn stream_with_tools(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        if needs_responses_api(&self.model) {
+            return self.stream_responses_api(messages, tools);
+        }
+        self.stream_chat_completions(messages, tools)
+    }
+}
+
+impl GitHubCopilotProvider {
+    /// Non-streaming completion via the Responses API (`/responses`).
+    async fn complete_responses(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+    ) -> anyhow::Result<CompletionResponse> {
+        let token = self.get_valid_copilot_token().await?;
+
+        let (instructions, input) = split_responses_instructions_and_input(messages.to_vec());
+
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "input": input,
+        });
+        if let Some(instructions) = instructions {
+            body["instructions"] = serde_json::Value::String(instructions);
+        }
+        if !tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
+            body["tool_choice"] = serde_json::json!("auto");
+        }
+
+        debug!(
+            model = %self.model,
+            messages_count = messages.len(),
+            tools_count = tools.len(),
+            "github-copilot complete_responses request"
+        );
+        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot responses request body");
+
+        let http_resp = self
+            .client
+            .post(format!("{COPILOT_API_BASE}/responses"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .header("Editor-Version", EDITOR_VERSION)
+            .header("User-Agent", COPILOT_USER_AGENT)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = http_resp.status();
+        if !status.is_success() {
+            let retry_after_ms = super::retry_after_ms_from_headers(http_resp.headers());
+            let body_text = http_resp.text().await.unwrap_or_default();
+            warn!(status = %status, body = %body_text, "github-copilot responses API error");
+            anyhow::bail!(
+                "{}",
+                super::with_retry_after_marker(
+                    format!("GitHub Copilot Responses API error HTTP {status}: {body_text}"),
+                    retry_after_ms,
+                )
+            );
+        }
+
+        let resp = http_resp.json::<serde_json::Value>().await?;
+        trace!(response = %resp, "github-copilot responses raw response");
+
+        Ok(parse_responses_completion(&resp))
+    }
+
+    /// Streaming via the Responses API (`/responses`) with SSE.
+    fn stream_responses_api(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(async_stream::stream! {
+            let token = match self.get_valid_copilot_token().await {
+                Ok(t) => t,
+                Err(e) => {
+                    yield StreamEvent::Error(e.to_string());
+                    return;
+                }
+            };
+
+            let (instructions, input) =
+                split_responses_instructions_and_input(messages);
+
+            let mut body = serde_json::json!({
+                "model": self.model,
+                "stream": true,
+                "input": input,
+            });
+            if let Some(instructions) = instructions {
+                body["instructions"] = serde_json::Value::String(instructions);
+            }
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+
+            debug!(
+                model = %self.model,
+                tools_count = tools.len(),
+                "github-copilot stream_responses_api request"
+            );
+            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot responses stream request body");
+
+            let resp = match self
+                .client
+                .post(format!("{COPILOT_API_BASE}/responses"))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("Editor-Version", EDITOR_VERSION)
+                .header("User-Agent", COPILOT_USER_AGENT)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => {
+                    if let Err(e) = r.error_for_status_ref() {
+                        let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                        let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
+                        let body_text = r.text().await.unwrap_or_default();
+                        yield StreamEvent::Error(super::with_retry_after_marker(
+                            format!("HTTP {status}: {body_text}"),
+                            retry_after_ms,
+                        ));
+                        return;
+                    }
+                    r
+                }
+                Err(e) => {
+                    yield StreamEvent::Error(e.to_string());
+                    return;
+                }
+            };
+
+            let mut byte_stream = resp.bytes_stream();
+            let mut buf = String::new();
+            let mut state = ResponsesStreamState::default();
+
+            while let Some(chunk) = byte_stream.next().await {
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(e) => {
+                        yield StreamEvent::Error(e.to_string());
+                        return;
+                    }
+                };
+                buf.push_str(&String::from_utf8_lossy(&chunk));
+
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim().to_string();
+                    buf = buf[pos + 1..].to_string();
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    let Some(data) = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                    else {
+                        continue;
+                    };
+
+                    match process_responses_sse_line(data, &mut state) {
+                        SseLineResult::Done => {
+                            for event in finalize_responses_stream(&mut state) {
+                                yield event;
+                            }
+                            return;
+                        }
+                        SseLineResult::Events(events) => {
+                            for event in events {
+                                yield event;
+                            }
+                        }
+                        SseLineResult::Skip => {}
+                    }
+                }
+            }
+
+            // Process any remaining data in the buffer.
+            let line = buf.trim().to_string();
+            if !line.is_empty()
+                && let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+            {
+                match process_responses_sse_line(data, &mut state) {
+                    SseLineResult::Done => {
+                        for event in finalize_responses_stream(&mut state) {
+                            yield event;
+                        }
+                        return;
+                    }
+                    SseLineResult::Events(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                    }
+                    SseLineResult::Skip => {}
+                }
+            }
+
+            for event in finalize_responses_stream(&mut state) {
+                yield event;
+            }
+        })
+    }
+
+    /// Streaming via the Chat Completions API (`/chat/completions`) with SSE.
+    #[allow(clippy::collapsible_if)]
+    fn stream_chat_completions(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(async_stream::stream! {
+            let token = match self.get_valid_copilot_token().await {
+                Ok(t) => t,
+                Err(e) => {
+                    yield StreamEvent::Error(e.to_string());
+                    return;
+                }
+            };
+
+            let openai_messages: Vec<serde_json::Value> =
+                messages.iter().map(ChatMessage::to_openai_value).collect();
+            let mut body = serde_json::json!({
+                "model": self.model,
+                "messages": openai_messages,
+                "stream": true,
+                "stream_options": { "include_usage": true },
+            });
+
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
+            }
+
+            debug!(
+                model = %self.model,
+                messages_count = openai_messages.len(),
+                tools_count = tools.len(),
+                "github-copilot stream_with_tools request"
+            );
+            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot stream request body");
+
+            let resp = match self
+                .client
+                .post(format!("{COPILOT_API_BASE}/chat/completions"))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("Editor-Version", EDITOR_VERSION)
+                .header("User-Agent", COPILOT_USER_AGENT)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => {
+                    if let Err(e) = r.error_for_status_ref() {
+                        let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                        let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
+                        let body_text = r.text().await.unwrap_or_default();
+
+                        // Fallback: if this is an unsupported API error,
+                        // switch to Responses API streaming.
+                        if status == 400
+                            && is_responses_api_required_error(&body_text)
+                        {
+                            debug!(
+                                model = %self.model,
+                                "chat completions returned unsupported_api_for_model, \
+                                 falling back to responses API streaming"
+                            );
+                            let mut responses_stream =
+                                self.stream_responses_api(messages, tools);
+                            while let Some(event) = responses_stream.next().await {
+                                yield event;
+                            }
+                            return;
+                        }
+
+                        yield StreamEvent::Error(super::with_retry_after_marker(
+                            format!("HTTP {status}: {body_text}"),
+                            retry_after_ms,
+                        ));
+                        return;
+                    }
+                    r
+                }
+                Err(e) => {
+                    yield StreamEvent::Error(e.to_string());
+                    return;
+                }
+            };
+
+            let mut byte_stream = resp.bytes_stream();
+            let mut buf = String::new();
+            let mut state = StreamingToolState::default();
+
+            while let Some(chunk) = byte_stream.next().await {
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(e) => {
+                        yield StreamEvent::Error(e.to_string());
+                        return;
+                    }
+                };
+                buf.push_str(&String::from_utf8_lossy(&chunk));
+
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim().to_string();
+                    buf = buf[pos + 1..].to_string();
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    let Some(data) = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                    else {
+                        continue;
+                    };
+
+                    match process_openai_sse_line(data, &mut state) {
+                        SseLineResult::Done => {
+                            for event in finalize_stream(&mut state) {
+                                yield event;
+                            }
+                            return;
+                        }
+                        SseLineResult::Events(events) => {
+                            for event in events {
+                                yield event;
+                            }
+                        }
+                        SseLineResult::Skip => {}
+                    }
+                }
+            }
+
+            let line = buf.trim().to_string();
+            if !line.is_empty()
+                && let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+            {
+                match process_openai_sse_line(data, &mut state) {
+                    SseLineResult::Done => {
+                        for event in finalize_stream(&mut state) {
+                            yield event;
+                        }
+                        return;
+                    }
+                    SseLineResult::Events(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                    }
+                    SseLineResult::Skip => {}
+                }
+            }
+
+            for event in finalize_stream(&mut state) {
+                yield event;
+            }
+        })
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::{Arc, Mutex};
+
+    use axum::{Router, extract::Request, routing::post};
+
+    /// Captured request data for assertions.
+    #[derive(Default, Clone)]
+    struct CapturedRequest {
+        headers: Vec<(String, String)>,
+        body: Option<serde_json::Value>,
+    }
+
+    /// Capture a request and return a JSON response.
+    async fn capture_and_respond(
+        req: Request,
+        captured: Arc<Mutex<Vec<CapturedRequest>>>,
+        resp_body: serde_json::Value,
+    ) -> axum::Json<serde_json::Value> {
+        let headers: Vec<(String, String)> = req
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+
+        let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
+            .await
+            .unwrap_or_default();
+        let body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
+
+        captured
+            .lock()
+            .unwrap()
+            .push(CapturedRequest { headers, body });
+
+        axum::Json(resp_body)
+    }
+
+    /// Start a mock HTTP server with `/chat/completions`, returning (base_url, captured_requests).
+    async fn start_mock_with_capture(
+        response_body: serde_json::Value,
+    ) -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
+        let captured: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+        let resp_body = response_body.clone();
+
+        let app = Router::new().route(
+            "/chat/completions",
+            post(move |req: Request| {
+                capture_and_respond(req, captured_clone.clone(), resp_body.clone())
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (format!("http://{addr}"), captured)
+    }
+
+    /// Start a mock HTTP server with both `/chat/completions` and `/responses`
+    /// endpoints.
+    async fn start_mock_with_both_endpoints(
+        chat_response: serde_json::Value,
+        responses_response: serde_json::Value,
+    ) -> (
+        String,
+        Arc<Mutex<Vec<CapturedRequest>>>,
+        Arc<Mutex<Vec<CapturedRequest>>>,
+    ) {
+        let chat_captured: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
+        let responses_captured: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let chat_cap = chat_captured.clone();
+        let resp_cap = responses_captured.clone();
+        let chat_resp = chat_response.clone();
+        let resp_resp = responses_response.clone();
+
+        let app = Router::new()
+            .route(
+                "/chat/completions",
+                post(move |req: Request| {
+                    capture_and_respond(req, chat_cap.clone(), chat_resp.clone())
+                }),
+            )
+            .route(
+                "/responses",
+                post(move |req: Request| {
+                    capture_and_respond(req, resp_cap.clone(), resp_resp.clone())
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (format!("http://{addr}"), chat_captured, responses_captured)
+    }
+
+    fn mock_completion_response() -> serde_json::Value {
+        serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "Hello from Copilot!",
+                    "role": "assistant"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5
+            }
+        })
+    }
+
+    /// Create a provider that talks to a local mock server instead of the real
+    /// Copilot API, and doesn't need stored OAuth tokens.
+    fn mock_provider(base_url: &str, model: &str) -> MockCopilotProvider {
+        MockCopilotProvider {
+            model: model.to_string(),
+            client: reqwest::Client::new(),
+            base_url: base_url.to_string(),
+        }
+    }
+
+    /// A test-only variant that uses a configurable base URL and a supplied
+    /// token instead of the token store.
+    struct MockCopilotProvider {
+        model: String,
+        client: reqwest::Client,
+        base_url: String,
+    }
+
+    impl MockCopilotProvider {
+        async fn complete(
+            &self,
+            messages: &[serde_json::Value],
+            tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            let token = "mock-copilot-token";
+
+            let mut body = serde_json::json!({
+                "model": self.model,
+                "messages": messages,
+            });
+
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
+            }
+
+            let http_resp = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("Editor-Version", EDITOR_VERSION)
+                .header("User-Agent", COPILOT_USER_AGENT)
+                .json(&body)
+                .send()
+                .await?;
+
+            let status = http_resp.status();
+            if !status.is_success() {
+                let body_text = http_resp.text().await.unwrap_or_default();
+                anyhow::bail!("Copilot API error HTTP {status}: {body_text}");
+            }
+
+            let resp = http_resp.json::<serde_json::Value>().await?;
+            let message = &resp["choices"][0]["message"];
+            let text = message["content"].as_str().map(|s| s.to_string());
+            let tool_calls = parse_tool_calls(message);
+            let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
+
+            Ok(CompletionResponse {
+                text,
+                tool_calls,
+                usage,
+            })
+        }
+
+        async fn complete_responses(
+            &self,
+            messages: &[ChatMessage],
+            tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            let token = "mock-copilot-token";
+
+            let (instructions, input) = split_responses_instructions_and_input(messages.to_vec());
+
+            let mut body = serde_json::json!({
+                "model": self.model,
+                "input": input,
+            });
+            if let Some(instructions) = instructions {
+                body["instructions"] = serde_json::Value::String(instructions);
+            }
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+
+            let http_resp = self
+                .client
+                .post(format!("{}/responses", self.base_url))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("Editor-Version", EDITOR_VERSION)
+                .header("User-Agent", COPILOT_USER_AGENT)
+                .json(&body)
+                .send()
+                .await?;
+
+            let status = http_resp.status();
+            if !status.is_success() {
+                let body_text = http_resp.text().await.unwrap_or_default();
+                anyhow::bail!("Copilot Responses API error HTTP {status}: {body_text}");
+            }
+
+            let resp = http_resp.json::<serde_json::Value>().await?;
+            Ok(parse_responses_completion(&resp))
+        }
+    }
+
+    // ── Unit tests ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn has_stored_tokens_returns_false_without_tokens() {
+        let _ = has_stored_tokens();
+    }
+
+    #[test]
+    fn copilot_models_not_empty() {
+        assert!(!COPILOT_MODELS.is_empty());
+    }
+
+    #[test]
+    fn copilot_models_have_unique_ids() {
+        let mut ids: Vec<&str> = COPILOT_MODELS.iter().map(|(id, _)| *id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), COPILOT_MODELS.len());
+    }
+
+    // Tests for to_openai_tools and parse_tool_calls are in openai_compat.rs
+
+    #[test]
+    fn provider_name_and_id() {
+        let provider = GitHubCopilotProvider::new("gpt-4o".into());
+        assert_eq!(provider.name(), "github-copilot");
+        assert_eq!(provider.id(), "gpt-4o");
+        assert!(provider.supports_tools());
+    }
+
+    #[test]
+    fn constants_are_correct() {
+        assert_eq!(COPILOT_API_BASE, "https://api.individual.githubcopilot.com");
+        assert_eq!(EDITOR_VERSION, "vscode/1.96.2");
+        assert!(!COPILOT_USER_AGENT.is_empty());
+        assert_eq!(PROVIDER_NAME, "github-copilot");
+    }
+
+    // ── Integration tests with mock server ───────────────────────────────────
+
+    #[tokio::test]
+    async fn complete_sends_required_headers() {
+        let (base_url, captured) = start_mock_with_capture(mock_completion_response()).await;
+        let provider = mock_provider(&base_url, "gpt-4o");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let result = provider.complete(&messages, &[]).await;
+        assert!(result.is_ok());
+
+        let reqs = captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+
+        let req = &reqs[0];
+
+        // Verify required headers
+        let has_editor_version = req
+            .headers
+            .iter()
+            .any(|(k, v)| k == "editor-version" && v == EDITOR_VERSION);
+        assert!(
+            has_editor_version,
+            "missing Editor-Version header; got: {:?}",
+            req.headers
+        );
+
+        let has_user_agent = req
+            .headers
+            .iter()
+            .any(|(k, v)| k == "user-agent" && v == COPILOT_USER_AGENT);
+        assert!(
+            has_user_agent,
+            "missing User-Agent header; got: {:?}",
+            req.headers
+        );
+
+        let has_auth = req
+            .headers
+            .iter()
+            .any(|(k, v)| k == "authorization" && v == "Bearer mock-copilot-token");
+        assert!(has_auth, "missing Authorization header");
+
+        let has_content_type = req
+            .headers
+            .iter()
+            .any(|(k, v)| k == "content-type" && v == "application/json");
+        assert!(has_content_type, "missing content-type header");
+    }
+
+    #[tokio::test]
+    async fn complete_sends_model_in_body() {
+        let (base_url, captured) = start_mock_with_capture(mock_completion_response()).await;
+        let provider = mock_provider(&base_url, "gpt-4.1");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "test"})];
+        provider.complete(&messages, &[]).await.unwrap();
+
+        let reqs = captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        assert_eq!(body["model"], "gpt-4.1");
+        assert_eq!(body["messages"][0]["content"], "test");
+    }
+
+    #[tokio::test]
+    async fn complete_sends_tools_when_provided() {
+        let (base_url, captured) = start_mock_with_capture(mock_completion_response()).await;
+        let provider = mock_provider(&base_url, "gpt-4o");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "test"})];
+        let tools = vec![serde_json::json!({
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+        })];
+        provider.complete(&messages, &tools).await.unwrap();
+
+        let reqs = captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        let tools_arr = body["tools"].as_array().unwrap();
+        assert_eq!(tools_arr.len(), 1);
+        assert_eq!(tools_arr[0]["type"], "function");
+        assert_eq!(tools_arr[0]["function"]["name"], "read_file");
+    }
+
+    #[tokio::test]
+    async fn complete_omits_tools_when_empty() {
+        let (base_url, captured) = start_mock_with_capture(mock_completion_response()).await;
+        let provider = mock_provider(&base_url, "gpt-4o");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "test"})];
+        provider.complete(&messages, &[]).await.unwrap();
+
+        let reqs = captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        assert!(body.get("tools").is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_parses_text_response() {
+        let (base_url, _) = start_mock_with_capture(mock_completion_response()).await;
+        let provider = mock_provider(&base_url, "gpt-4o");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let resp = provider.complete(&messages, &[]).await.unwrap();
+        assert_eq!(resp.text.as_deref(), Some("Hello from Copilot!"));
+        assert!(resp.tool_calls.is_empty());
+        assert_eq!(resp.usage.input_tokens, 10);
+        assert_eq!(resp.usage.output_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn complete_parses_input_output_usage_fields() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello from Copilot!"
+                }
+            }],
+            "usage": {
+                "input_tokens": 21,
+                "output_tokens": 8,
+                "cache_read_input_tokens": 3
+            }
+        });
+
+        let (base_url, _) = start_mock_with_capture(response).await;
+        let provider = mock_provider(&base_url, "gpt-4o");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let resp = provider.complete(&messages, &[]).await.unwrap();
+        assert_eq!(resp.usage.input_tokens, 21);
+        assert_eq!(resp.usage.output_tokens, 8);
+        assert_eq!(resp.usage.cache_read_tokens, 3);
+    }
+
+    #[tokio::test]
+    async fn complete_parses_tool_call_response() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_abc",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"/tmp/test.txt\"}"
+                        }
+                    }]
+                }
+            }],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 10}
+        });
+
+        let (base_url, _) = start_mock_with_capture(response).await;
+        let provider = mock_provider(&base_url, "gpt-4o");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "read file"})];
+        let resp = provider.complete(&messages, &[]).await.unwrap();
+
+        assert!(resp.text.is_none());
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].id, "call_abc");
+        assert_eq!(resp.tool_calls[0].name, "read_file");
+        assert_eq!(resp.tool_calls[0].arguments["path"], "/tmp/test.txt");
+    }
+
+    #[tokio::test]
+    async fn complete_handles_server_error() {
+        let app = Router::new().route(
+            "/chat/completions",
+            post(|| async {
+                (
+                    http::StatusCode::BAD_REQUEST,
+                    "bad request: missing something",
+                )
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let provider = mock_provider(&format!("http://{addr}"), "gpt-4o");
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let err = provider.complete(&messages, &[]).await.unwrap_err();
+        assert!(
+            err.to_string().contains("400"),
+            "expected 400 in error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_does_not_send_copilot_integration_id() {
+        // Regression: the API rejects requests with an unknown
+        // Copilot-Integration-Id header.
+        let (base_url, captured) = start_mock_with_capture(mock_completion_response()).await;
+        let provider = mock_provider(&base_url, "gpt-4o");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        provider.complete(&messages, &[]).await.unwrap();
+
+        let reqs = captured.lock().unwrap();
+        let has_integration_id = reqs[0]
+            .headers
+            .iter()
+            .any(|(k, _)| k == "copilot-integration-id");
+        assert!(
+            !has_integration_id,
+            "copilot-integration-id header should NOT be sent"
+        );
+    }
+
+    // ── Responses API tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn needs_responses_api_gpt54() {
+        assert!(needs_responses_api("gpt-5.4"));
+        assert!(needs_responses_api("gpt-5.4-pro"));
+        assert!(needs_responses_api("GPT-5.4")); // case-insensitive
+        assert!(needs_responses_api("gpt-5.2-pro"));
+        assert!(needs_responses_api("codex-mini"));
+    }
+
+    #[test]
+    fn needs_responses_api_false_for_older_models() {
+        assert!(!needs_responses_api("gpt-4o"));
+        assert!(!needs_responses_api("gpt-4.1"));
+        assert!(!needs_responses_api("gpt-4.1-mini"));
+        assert!(!needs_responses_api("o3-mini"));
+        assert!(!needs_responses_api("claude-sonnet-4"));
+    }
+
+    #[test]
+    fn is_responses_api_required_error_matches() {
+        assert!(is_responses_api_required_error(
+            r#"{"error": {"code": "unsupported_api_for_model"}}"#
+        ));
+        assert!(is_responses_api_required_error(
+            "This model is not accessible via the /chat/completions endpoint"
+        ));
+        // Case-insensitive: should still match with mixed casing
+        assert!(is_responses_api_required_error(
+            "Not Accessible Via The /chat/completions"
+        ));
+    }
+
+    #[test]
+    fn is_responses_api_required_error_no_match() {
+        assert!(!is_responses_api_required_error("rate limit exceeded"));
+        assert!(!is_responses_api_required_error("model not found"));
+    }
+
+    fn mock_responses_api_response() -> serde_json::Value {
+        serde_json::json!({
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello from Responses API!"}]
+            }],
+            "usage": {"input_tokens": 12, "output_tokens": 4}
+        })
+    }
+
+    #[tokio::test]
+    async fn complete_responses_parses_text() {
+        let (base_url, _, responses_captured) = start_mock_with_both_endpoints(
+            mock_completion_response(),
+            mock_responses_api_response(),
+        )
+        .await;
+        let provider = mock_provider(&base_url, "gpt-5.4");
+
+        let messages = vec![ChatMessage::User {
+            content: moltis_agents::model::UserContent::Text("hello".into()),
+        }];
+        let resp = provider.complete_responses(&messages, &[]).await.unwrap();
+
+        assert_eq!(resp.text.as_deref(), Some("Hello from Responses API!"));
+        assert!(resp.tool_calls.is_empty());
+        assert_eq!(resp.usage.input_tokens, 12);
+        assert_eq!(resp.usage.output_tokens, 4);
+
+        // Verify request was sent to /responses
+        let reqs = responses_captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        let body = reqs[0].body.as_ref().unwrap();
+        assert_eq!(body["model"], "gpt-5.4");
+        assert!(body.get("input").is_some());
+    }
+
+    #[tokio::test]
+    async fn complete_responses_with_tools() {
+        let responses_body = serde_json::json!({
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_resp_1",
+                "name": "read_file",
+                "arguments": "{\"path\":\"/tmp/test.txt\"}"
+            }],
+            "usage": {"input_tokens": 30, "output_tokens": 15}
+        });
+
+        let (base_url, _, responses_captured) =
+            start_mock_with_both_endpoints(mock_completion_response(), responses_body).await;
+        let provider = mock_provider(&base_url, "gpt-5.4");
+
+        let messages = vec![ChatMessage::User {
+            content: moltis_agents::model::UserContent::Text("read file".into()),
+        }];
+        let tools = vec![serde_json::json!({
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+        })];
+        let resp = provider
+            .complete_responses(&messages, &tools)
+            .await
+            .unwrap();
+
+        assert!(resp.text.is_none());
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].id, "call_resp_1");
+        assert_eq!(resp.tool_calls[0].name, "read_file");
+
+        // Verify tools sent in Responses API format (flat, not nested)
+        let reqs = responses_captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        let sent_tools = body["tools"].as_array().unwrap();
+        assert_eq!(sent_tools.len(), 1);
+        assert_eq!(sent_tools[0]["name"], "read_file");
+        assert!(
+            sent_tools[0].get("function").is_none(),
+            "should use flat format"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_responses_sends_instructions() {
+        let (base_url, _, responses_captured) = start_mock_with_both_endpoints(
+            mock_completion_response(),
+            mock_responses_api_response(),
+        )
+        .await;
+        let provider = mock_provider(&base_url, "gpt-5.4");
+
+        let messages = vec![
+            ChatMessage::System {
+                content: "You are helpful.".into(),
+            },
+            ChatMessage::User {
+                content: moltis_agents::model::UserContent::Text("hello".into()),
+            },
+        ];
+        provider.complete_responses(&messages, &[]).await.unwrap();
+
+        let reqs = responses_captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        assert_eq!(body["instructions"], "You are helpful.");
+    }
+
+    #[test]
+    fn copilot_models_include_gpt54() {
+        let ids: Vec<&str> = COPILOT_MODELS.iter().map(|(id, _)| *id).collect();
+        assert!(ids.contains(&"gpt-5.4"), "missing gpt-5.4");
+        assert!(ids.contains(&"gpt-5.4-pro"), "missing gpt-5.4-pro");
+        assert!(ids.contains(&"gpt-5.2-pro"), "missing gpt-5.2-pro");
+    }
+}
