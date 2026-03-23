@@ -1006,9 +1006,10 @@ mod tests {
 
     #[tokio::test]
     async fn disconnect_all_clients_resets_node_count() {
-        use crate::nodes::NodeSession;
-        use std::collections::HashMap;
-        use std::time::Instant;
+        use {
+            crate::nodes::NodeSession,
+            std::{collections::HashMap, time::Instant},
+        };
 
         let state = test_state();
 
