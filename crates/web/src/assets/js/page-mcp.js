@@ -534,7 +534,9 @@ function InstallBox() {
 					cmdLine.value = e.target.value;
 				}}
         onKeyDown=${onKey} />
-      ${detectedName && html`<div class="project-edit-group mt-2">
+      ${
+				detectedName &&
+				html`<div class="project-edit-group mt-2">
         <div class="text-xs text-[var(--muted)] mb-1">Display name (optional)</div>
         <input type="text" class="provider-key-input w-full" placeholder="${detectedName}"
           value=${displayNameVal.value}
@@ -542,7 +544,8 @@ function InstallBox() {
 						displayNameVal.value = e.target.value;
 					}} />
         <div class="text-xs text-[var(--muted)] mt-1">Technical ID: <span class="font-mono">${detectedName}</span></div>
-      </div>`}
+      </div>`
+			}
     </div>`
 		}
     ${
@@ -555,7 +558,9 @@ function InstallBox() {
 						sseUrl.value = e.target.value;
 					}}
 	        onKeyDown=${onKey} />
-	      ${detectedName && html`<div class="project-edit-group mt-2">
+	      ${
+					detectedName &&
+					html`<div class="project-edit-group mt-2">
 	        <div class="text-xs text-[var(--muted)] mb-1">Display name (optional)</div>
 	        <input type="text" class="provider-key-input w-full" placeholder="${detectedName}"
 	          value=${displayNameVal.value}
@@ -563,7 +568,8 @@ function InstallBox() {
 							displayNameVal.value = e.target.value;
 						}} />
 	        <div class="text-xs text-[var(--muted)] mt-1">Technical ID: <span class="font-mono">${detectedName}</span></div>
-	      </div>`}
+	      </div>`
+				}
 	      <div class="text-xs text-[var(--muted)] mt-1">If the server requires OAuth, your browser opens for sign-in when you enable or restart it. URL query values may use <code>$NAME</code> or <code>${"{NAME}"}</code> placeholders from Settings → Environment Variables.</div>
 	    </div>
 	    <div class="project-edit-group mb-2">
@@ -808,11 +814,12 @@ function ServerCard({ server }) {
 		  <input type="text" class="provider-key-input w-full" value=${editDisplayName.value}
 		    placeholder=${server.display_name || server.name}
 		    onInput=${(e) => {
-						editDisplayName.value = e.target.value;
-					}} />
+					editDisplayName.value = e.target.value;
+				}} />
 		  <div class="text-xs text-[var(--muted)] mt-1">Technical ID: <span class="font-mono">${server.name}</span></div>
 		</div>`}
-	        ${editTransport.value === "sse" &&
+	        ${
+						editTransport.value === "sse" &&
 						html`<div class="project-edit-group mb-2">
 	          <div class="text-xs text-[var(--muted)] mb-1">Current URL</div>
 	          <div class="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]">${currentSafeUrl || "(stored URL hidden until the API returns sanitized text)"}</div>
