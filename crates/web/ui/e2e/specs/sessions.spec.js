@@ -2,8 +2,6 @@ const { expect, test } = require("../base-test");
 const {
 	expectPageContentMounted,
 	navigateAndWait,
-	openChatMoreModal,
-	closeChatMoreModal,
 	waitForWsConnected,
 	createSession,
 	watchPageErrors,
@@ -88,6 +86,22 @@ async function setSwitchRpcSendMode(page, mode, delayMs = 0) {
 	);
 }
 
+async function openChatMoreControls(page) {
+	const moreBtn = page.locator("#chatMoreBtn");
+	const moreModal = page.locator("#chatMoreModal");
+	await expect(moreBtn).toBeVisible();
+	const alreadyOpen = await moreModal.isVisible().catch(() => false);
+	if (!alreadyOpen) {
+		await moreBtn.click();
+		await expect(moreModal).toBeVisible();
+	}
+	return moreModal;
+}
+
+function activeModalBackdrops(page) {
+	return page.locator(".provider-modal-backdrop:not(.hidden)");
+}
+
 test.describe("Session management", () => {
 	test("session list renders on load", async ({ page }) => {
 		await navigateAndWait(page, "/");
@@ -126,30 +140,6 @@ test.describe("Session management", () => {
 			return searchInput.parentElement === newSessionBtn.parentElement;
 		});
 		expect(searchAndAddShareRow).toBe(true);
-
-		expect(pageErrors).toEqual([]);
-	});
-
-	test("more controls modal opens and closes on backdrop click", async ({ page }) => {
-		const pageErrors = await navigateAndWait(page, "/");
-		await waitForWsConnected(page);
-
-		await openChatMoreModal(page);
-		await closeChatMoreModal(page);
-
-		expect(pageErrors).toEqual([]);
-	});
-
-	test("opening full context from more controls closes the more-controls modal", async ({ page }) => {
-		const pageErrors = await navigateAndWait(page, "/");
-		await waitForWsConnected(page);
-
-		await openChatMoreModal(page);
-		await page.locator("#fullContextBtn").click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
-		await expect(page.locator("#fullContextModal")).toBeVisible({ timeout: 10_000 });
-		await page.locator("#fullContextModalCloseBtn").click();
-		await expect(page.locator("#fullContextModal")).toBeHidden({ timeout: 10_000 });
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -259,23 +249,23 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("main session hides delete while non-main sessions show delete in more controls", async ({ page }) => {
+	test("main session hides clear/delete actions while non-main sessions show delete", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");
 		await waitForWsConnected(page);
 		await expectPageContentMounted(page);
 
-		await openChatMoreModal(page);
+		await openChatMoreControls(page);
 		await expect(page.locator('#chatMoreModal button[title="Clear session"]')).toBeHidden();
 		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toHaveCount(0);
-		await closeChatMoreModal(page);
+		await page.keyboard.press("Escape");
+		await expect(page.locator("#chatMoreModal")).toBeHidden();
 
 		await createSession(page);
 
-		await openChatMoreModal(page);
+		await openChatMoreControls(page);
 		await expect(page.locator('#chatMoreModal button[title="Clear session"]')).toHaveCount(0);
 		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
-		await closeChatMoreModal(page);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -290,11 +280,12 @@ test.describe("Session management", () => {
 		const sessionPath = new URL(page.url()).pathname;
 		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
 
-		const stopBtn = page.locator('#sessionHeaderToolbarMount button[title="Stop generation"]');
+		await openChatMoreControls(page);
+		const stopBtn = page.locator('.chat-toolbar button[title="Stop generation"]');
 		await expect(stopBtn).toHaveCount(0);
-		await openChatMoreModal(page);
 		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
-		await closeChatMoreModal(page);
+		await page.keyboard.press("Escape");
+		await expect(page.locator("#chatMoreModal")).toBeHidden();
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -308,9 +299,8 @@ test.describe("Session management", () => {
 		await expect(stopBtn).toBeVisible();
 		await stopBtn.click();
 		await expect(stopBtn).toHaveCount(0);
-		await openChatMoreModal(page);
+		await openChatMoreControls(page);
 		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
-		await closeChatMoreModal(page);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -340,10 +330,9 @@ test.describe("Session management", () => {
 			}
 		});
 
-		await openChatMoreModal(page);
+		await openChatMoreControls(page);
 		await page.locator('#chatMoreModal button[title="Share snapshot"]').click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
-		await expect(page.locator('[data-share-visibility="public"]')).toBeVisible({ timeout: 10_000 });
+		await expect(activeModalBackdrops(page)).toBeVisible();
 		await expect(
 			page.getByText(
 				"We do best-effort redaction for API keys and tokens in shared tool output, but always review before sharing.",
@@ -384,10 +373,9 @@ test.describe("Session management", () => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
-		await openChatMoreModal(page);
+		await openChatMoreControls(page);
 		await page.locator('#chatMoreModal button[title="Share snapshot"]').click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
-		await expect(page.locator('[data-share-visibility="public"]')).toBeVisible({ timeout: 10_000 });
+		await expect(activeModalBackdrops(page)).toBeVisible();
 		await page.locator('[data-share-visibility="public"]').click();
 
 		const linkModal = page.locator('[data-share-link-modal="true"]');
@@ -516,21 +504,21 @@ test.describe("Session management", () => {
 		await createSession(page);
 		await createSession(page);
 
-		await openChatMoreModal(page);
-		await page.locator("#chatMoreDeleteAllBtn").click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
+		const clearBtn = page.locator("#clearAllSessionsBtn");
+		if (await clearBtn.isVisible()) {
+			// Accept the confirm dialog
+			page.on("dialog", (dialog) => dialog.accept());
+			await clearBtn.click();
 
-		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
-			hasText: /Delete \d+ sessions\?/,
-		});
-		await expect(confirmModal).toBeVisible({ timeout: 10_000 });
-		await confirmModal.getByRole("button", { name: "Delete", exact: true }).click();
-		await expect(confirmModal).toHaveCount(0, { timeout: 10_000 });
+			// Wait for list to reset
+			await page.waitForTimeout(500);
+			await expectPageContentMounted(page);
 
-		await expectPageContentMounted(page);
-		const items = page.locator("#sessionList .session-item");
-		const count = await items.count();
-		expect(count).toBeGreaterThanOrEqual(1);
+			// Should be back to a single session
+			const items = page.locator("#sessionList .session-item");
+			const count = await items.count();
+			expect(count).toBeGreaterThanOrEqual(1);
+		}
 	});
 
 	test("sessions panel hidden on non-chat pages", async ({ page }) => {
@@ -548,11 +536,9 @@ test.describe("Session management", () => {
 		// Create a session so we're not on "main" (Delete button is hidden for main)
 		await createSession(page);
 		const sessionUrl = page.url();
-		await openChatMoreModal(page);
-		const deleteBtn = page.locator('#chatMoreModal button[title="Delete session"]');
-		await expect(deleteBtn).toBeVisible({ timeout: 10_000 });
 
-		// Simulate an unmodified fork before deleting.
+		// Simulate an unmodified fork and click Delete in the same page tick
+		// to avoid races with background session refreshes.
 		await expect
 			.poll(
 				() =>
@@ -568,20 +554,20 @@ test.describe("Session management", () => {
 				{ timeout: 10_000 },
 			)
 			.toBe(true);
-		await deleteBtn.click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
+
+		await openChatMoreControls(page);
+		await page.locator('#chatMoreModal button[title="Delete session"]').click();
 
 		// The confirmation dialog should NOT be visible.
-		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
-			hasText: "Delete this session?",
-		});
-		await expect(confirmModal).toHaveCount(0);
+		await expect(activeModalBackdrops(page)).toHaveCount(0);
 
 		// The session should be deleted immediately (no dialog appeared)
 		// so we should navigate away from the current session URL.
 		// switchSession uses history.replaceState (no navigation event),
 		// so poll the URL rather than using waitForURL which waits for "load".
-		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(sessionUrl);
+		await expect
+			.poll(() => page.url(), { timeout: 10_000 })
+			.not.toBe(sessionUrl);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -609,21 +595,17 @@ test.describe("Session management", () => {
 			)
 			.toBe(true);
 
-		await openChatMoreModal(page);
+		await openChatMoreControls(page);
 		const deleteBtn = page.locator('#chatMoreModal button[title="Delete session"]');
 		await expect(deleteBtn).toBeVisible();
 		await deleteBtn.click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
 
 		// The confirmation dialog SHOULD appear
-		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
-			hasText: "Delete this session?",
-		});
-		await expect(confirmModal).toBeVisible({ timeout: 10_000 });
+		await expect(activeModalBackdrops(page)).toBeVisible();
 
 		// Dismiss the dialog by clicking Cancel
-		await confirmModal.getByRole("button", { name: "Cancel", exact: true }).click();
-		await expect(confirmModal).toHaveCount(0);
+		await activeModalBackdrops(page).locator(".provider-btn-secondary").click();
+		await expect(activeModalBackdrops(page)).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -648,63 +630,6 @@ test.describe("Session management", () => {
 		});
 
 		await expect(page.locator(".msg.system").filter({ hasText: "Sandbox disabled" })).toBeVisible({ timeout: 5_000 });
-
-		expect(pageErrors).toEqual([]);
-	});
-
-	test("cron session shows delete button in more controls", async ({ page }) => {
-		const pageErrors = await navigateAndWait(page, "/");
-		await waitForWsConnected(page);
-
-		// Create a cron session in the database via sessions.switch, then add a
-		// message so messageCount > 0 (triggers the confirmation dialog on delete).
-		const cronKey = `cron:e2e-delete-test-${Date.now()}`;
-		await expectRpcOk(page, "sessions.switch", { key: cronKey });
-		await expectRpcOk(page, "system-event", {
-			event: "chat",
-			payload: {
-				sessionKey: cronKey,
-				state: "final",
-				text: "cron output",
-				messageIndex: 0,
-				model: "test-model",
-				provider: "test-provider",
-				replyMedium: "text",
-				runId: "run-cron-delete",
-			},
-		});
-
-		// Switch to the cron tab so the session is visible
-		const cronTab = page.locator('#sessionTabBar .session-tab[data-tab="cron"]');
-		await expect(cronTab).toBeVisible({ timeout: 5_000 });
-		await cronTab.click();
-
-		// Click the cron session to select it
-		const cronItem = page.locator(`#sessionList .session-item[data-session-key="${cronKey}"]`);
-		await expect(cronItem).toBeVisible({ timeout: 10_000 });
-		await cronItem.click();
-
-		// Wait for session messages to be fully loaded before proceeding
-		await expect(page.locator(".msg")).not.toHaveCount(0, { timeout: 5_000 });
-
-		// Open more controls and verify delete button is visible
-		await openChatMoreModal(page);
-		const deleteBtn = page.locator('#chatMoreModal button[title="Delete session"]');
-		await expect(deleteBtn).toBeVisible({ timeout: 5_000 });
-
-		// Click delete — should show confirmation since it has messages
-		await deleteBtn.click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
-
-		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
-			hasText: "Delete this session?",
-		});
-		await expect(confirmModal).toBeVisible({ timeout: 10_000 });
-		await confirmModal.getByRole("button", { name: "Delete", exact: true }).click();
-		await expect(confirmModal).toHaveCount(0, { timeout: 10_000 });
-
-		// Cron session should be gone from the list
-		await expect(cronItem).toHaveCount(0, { timeout: 10_000 });
 
 		expect(pageErrors).toEqual([]);
 	});

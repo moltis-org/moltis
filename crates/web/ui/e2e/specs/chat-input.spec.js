@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, openChatMoreModal, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {
 	if (typeof message !== "string") return false;
@@ -64,10 +64,31 @@ async function getChatSeq(page) {
 	});
 }
 
-async function openFullContextWithRetry(page) {
-	const chatMoreModal = page.locator("#chatMoreModal");
+async function openChatMoreControls(page) {
+	const moreBtn = page.locator("#chatMoreBtn");
+	const moreModal = page.locator("#chatMoreModal");
+	await expect(moreBtn).toBeVisible();
+	const alreadyOpen = await moreModal.isVisible().catch(() => false);
+	if (!alreadyOpen) {
+		await moreBtn.click();
+		await expect(moreModal).toBeVisible();
+	}
+	return moreModal;
+}
+
+async function ensureFullContextModalOpen(page) {
 	const fullContextModal = page.locator("#fullContextModal");
-	const toggleBtn = page.locator("#fullContextBtn");
+	const alreadyOpen = await fullContextModal.isVisible().catch(() => false);
+	if (alreadyOpen) return fullContextModal;
+	await openChatMoreControls(page);
+	await expect(page.locator("#fullContextBtn")).toBeVisible();
+	await page.locator("#fullContextBtn").click();
+	await expect(fullContextModal).toBeVisible();
+	return fullContextModal;
+}
+
+async function openFullContextWithRetry(page) {
+	const fullContextModal = page.locator("#fullContextModal");
 	const panel = page.locator("#fullContextPanel");
 	const copyBtn = panel.getByRole("button", { name: "Copy", exact: true });
 	const failedMsg = panel.getByText("Failed to build context", { exact: true });
@@ -80,16 +101,13 @@ async function openFullContextWithRetry(page) {
 			fullContextRpc?.error?.message?.includes("no LLM providers configured") ||
 			fullContextRpc?.error?.message?.includes("chat not configured");
 
-		if (await fullContextModal.isVisible().catch(() => false)) {
+		const panelVisible = await panel.isVisible().catch(() => false);
+		if (panelVisible) {
 			await page.locator("#fullContextModalCloseBtn").click();
-			await expect(fullContextModal).toBeHidden({ timeout: 8_000 });
+			await expect(fullContextModal).toBeHidden();
 		}
 
-		await openChatMoreModal(page);
-		await expect(toggleBtn).toBeVisible({ timeout: 8_000 });
-		await toggleBtn.click();
-		await expect(chatMoreModal).toBeHidden({ timeout: 8_000 });
-		await expect(fullContextModal).toBeVisible({ timeout: 8_000 });
+		await ensureFullContextModalOpen(page);
 		await expect(panel).toBeVisible();
 
 		const result = await expect
