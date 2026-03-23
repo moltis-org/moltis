@@ -57,6 +57,7 @@ fn sanitize_tool_name(name: &str) -> Cow<'_, str> {
     let without_prefix = unquoted.strip_prefix("functions_").unwrap_or(unquoted);
 
     // Strip trailing `_\d+` suffix (parallel-call indexing from some models).
+    // INVARIANT: no registered tool name ends with `_\d+` (a purely numeric segment after the last underscore).
     let cleaned = without_prefix
         .rfind('_')
         .and_then(|pos| {
@@ -6219,5 +6220,12 @@ mod tests {
             sanitize_tool_name("mcp-server_tool-name"),
             "mcp-server_tool-name"
         );
+    }
+
+    #[test]
+    fn sanitize_tool_name_functions_prefix_alone_yields_empty() {
+        // "functions_" with no trailing name should produce an empty string,
+        // which is handled by find_empty_tool_name_call / EMPTY_TOOL_NAME_RETRY_PROMPT.
+        assert_eq!(sanitize_tool_name("functions_"), "");
     }
 }
