@@ -70,6 +70,10 @@ pub trait NodeExecProvider: Send + Sync {
 
     /// Resolve a node reference (id or display name) to a node_id.
     async fn resolve_node_id(&self, node_ref: &str) -> Option<String>;
+
+    /// Whether any nodes are currently connected.  This is called from the
+    /// sync `parameters_schema()` path so it must not block.
+    fn has_connected_nodes(&self) -> bool;
 }
 
 /// Result of a shell command execution.
@@ -268,6 +272,13 @@ impl ExecTool {
         self
     }
 
+    /// Check whether any remote nodes are currently connected.
+    fn has_connected_nodes(&self) -> bool {
+        self.node_provider
+            .as_ref()
+            .is_some_and(|p| p.has_connected_nodes())
+    }
+
     /// Clean up sandbox resources. Call on session end.
     pub async fn cleanup(&self) -> Result<()> {
         if let Some(ref id) = self.sandbox_id {
@@ -284,7 +295,7 @@ impl AgentTool for ExecTool {
     }
 
     fn description(&self) -> &str {
-        if self.node_provider.is_some() {
+        if self.has_connected_nodes() {
             "Execute a shell command on the server or a remote node. Returns stdout, stderr, and exit code."
         } else {
             "Execute a shell command on the server. Returns stdout, stderr, and exit code."
@@ -307,7 +318,7 @@ impl AgentTool for ExecTool {
             }
         });
 
-        if self.node_provider.is_some()
+        if self.has_connected_nodes()
             && let Some(obj) = properties.as_object_mut()
         {
             obj.insert(

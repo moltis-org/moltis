@@ -3582,10 +3582,13 @@ pub async fn prepare_gateway(
         // Always attach the node exec provider so the LLM can target nodes
         // via the `node` parameter. When tools.exec.host = "node", also set
         // the default node so commands route there without an explicit param.
+        // The `node` parameter only appears in the tool schema when at least
+        // one node is connected (tracked via the shared `node_count` atomic).
         {
-            let provider = Arc::new(crate::node_exec::GatewayNodeExecProvider::new(Arc::clone(
-                &state,
-            )));
+            let provider = Arc::new(crate::node_exec::GatewayNodeExecProvider::new(
+                Arc::clone(&state),
+                Arc::clone(&state.node_count),
+            ));
             let default_node = if config.tools.exec.host == "node" {
                 config.tools.exec.node.clone()
             } else {

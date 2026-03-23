@@ -442,6 +442,9 @@ pub async fn handle_connection(
             providers: Vec::new(),
         };
         state.inner.write().await.nodes.register(node);
+        state
+            .node_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         info!(conn_id = %conn_id, node_id = %params.client.id, "node registered");
 
         // Broadcast presence change.
@@ -596,6 +599,9 @@ pub async fn handle_connection(
     // Unregister node if applicable.
     let removed_node = state.inner.write().await.nodes.unregister_by_conn(&conn_id);
     if let Some(node) = &removed_node {
+        state
+            .node_count
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         info!(conn_id = %conn_id, node_id = %node.node_id, "node unregistered");
         broadcast(
             &state,
