@@ -5,7 +5,7 @@ use {
     tracing::{debug, info, trace, warn},
 };
 
-/// Record a zkperf witness for every tool execution (best-effort, never blocks).
+/// Record a zkperf witness via zkperf-service (best-effort, never blocks).
 fn record_tool_witness(
     tool_name: &str,
     params: &serde_json::Value,
@@ -14,25 +14,42 @@ fn record_tool_witness(
     error: Option<&str>,
 ) {
     let _ = (|| -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let dir = moltis_config::data_dir().join("witness");
-        std::fs::create_dir_all(&dir)?;
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-        let slug: String = tool_name.chars().take(30).collect();
-        let witness = serde_json::json!({
+        let sig = format!("moltis:{}:{}", tool_name, std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?.as_millis());
+        let pid = std::process::id();
+        // Notify zkperf-service of completed boundary
+        let body = serde_json::json!({
+            "pid": pid,
+            "sig": sig,
             "tool": tool_name,
             "params": params,
             "elapsed_ms": elapsed.as_millis() as u64,
             "success": error.is_none(),
             "error": error,
             "result": result,
-            "timestamp": ts,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?.as_secs(),
             "platform": std::env::consts::OS,
         });
+        // Fire-and-forget POST to zkperf-service
+        if let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+            &"127.0.0.1:9718".parse()?, std::time::Duration::from_millis(50),
+        ) {
+            use std::io::Write;
+            let payload = body.to_string();
+            let _ = write!(stream,
+                "POST /boundary HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{}",
+                payload.len(), payload);
+        }
+        // Also write locally for offline operation
+        let dir = moltis_config::data_dir().join("witness");
+        std::fs::create_dir_all(&dir)?;
+        let slug: String = tool_name.chars().take(30).collect();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?.as_secs();
         std::fs::write(
             dir.join(format!("{ts}_{slug}.witness.json")),
-            serde_json::to_string(&witness)?,
+            serde_json::to_string(&body)?,
         )?;
         Ok(())
     })();
