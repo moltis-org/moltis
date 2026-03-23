@@ -827,14 +827,9 @@ impl GatewayState {
     /// Close a client: remove from registry and unregister from nodes.
     pub async fn close_client(&self, conn_id: &str) -> Option<ConnectedClient> {
         let mut inner = self.inner.write().await;
-        let was_node = inner.nodes.unregister_by_conn(conn_id).is_some();
+        inner.nodes.unregister_by_conn(conn_id);
         let (removed, count) = inner.remove_client(conn_id);
         drop(inner);
-
-        if was_node {
-            self.node_count
-                .fetch_sub(1, Ordering::Relaxed);
-        }
 
         #[cfg(feature = "metrics")]
         moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(count as f64);
