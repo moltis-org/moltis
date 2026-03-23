@@ -252,7 +252,7 @@ fn html_to_text(html: &str) -> String {
     {
         Ok(text) => clean(text),
         Err(e) => {
-            tracing::warn!("html2text parse failed, returning raw body: {e}");
+            tracing::warn!("html2text parse failed, returning raw HTML body: {e}");
             clean(html.to_string())
         },
     }
@@ -505,6 +505,10 @@ mod tests {
         let text = html_to_text(html);
         assert!(text.contains("Hello"));
         assert!(text.contains("world"));
+        assert!(
+            text.contains('\u{FFFD}'),
+            "replacement chars should pass through"
+        );
     }
 
     #[test]
