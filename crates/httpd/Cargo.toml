@@ -18,6 +18,7 @@ chrono-tz             = { workspace = true }
 dashmap               = { workspace = true }
 futures               = { workspace = true }
 hostname              = { workspace = true }
+moltis-agents         = { workspace = true }
 moltis-auth           = { workspace = true }
 moltis-browser        = { workspace = true }
 moltis-channels       = { workspace = true }

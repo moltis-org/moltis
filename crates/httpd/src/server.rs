@@ -466,6 +466,7 @@ pub struct BannerMeta {
     pub setup_code_display: Option<String>,
     pub webauthn_registry: Option<SharedWebAuthnRegistry>,
     pub browser_for_lifecycle: Arc<dyn moltis_gateway::services::BrowserService>,
+    pub browser_tool_for_warmup: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
     pub config: moltis_config::schema::MoltisConfig,
     #[cfg(feature = "tailscale")]
     pub tailscale_mode: TailscaleMode,
@@ -493,6 +494,14 @@ pub async fn prepare_gateway(
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
 ) -> anyhow::Result<PreparedGateway> {
+    // Install a process-level rustls CryptoProvider early, before any channel
+    // plugin (Slack, Discord, etc.) creates outbound TLS connections via
+    // hyper-rustls.  Without this, `--no-tls` deployments skip the TLS cert
+    // setup path where `install_default()` previously lived, causing a panic
+    // the first time an outbound HTTPS request is made (see #329).
+    #[cfg(feature = "tls")]
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     #[cfg(feature = "tailscale")]
     let tailscale_mode_override = tailscale_opts.as_ref().map(|opts| opts.mode.clone());
     #[cfg(feature = "tailscale")]
@@ -528,6 +537,7 @@ pub async fn prepare_gateway(
             audit_buffer: audit_buffer_for_broadcast,
         sandbox_router,
         browser_for_lifecycle,
+        browser_tool_for_warmup,
         cron_service,
         log_buffer,
         config,
@@ -1486,6 +1496,7 @@ pub async fn prepare_gateway(
             setup_code_display,
             webauthn_registry,
             browser_for_lifecycle,
+            browser_tool_for_warmup,
             config,
             #[cfg(feature = "tailscale")]
             tailscale_mode,
@@ -1553,14 +1564,6 @@ pub async fn start_gateway(
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
 ) -> anyhow::Result<()> {
-    // Install a process-level rustls CryptoProvider early, before any channel
-    // plugin (Slack, Discord, etc.) creates outbound TLS connections via
-    // hyper-rustls.  Without this, `--no-tls` deployments skip the TLS cert
-    // setup path where `install_default()` previously lived, causing a panic
-    // the first time an outbound HTTPS request is made (see #329).
-    #[cfg(feature = "tls")]
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
     let prepared = prepare_gateway(
         bind,
         port,
@@ -1622,6 +1625,7 @@ pub async fn start_gateway(
 
     let app = prepared.app;
     let browser_for_warmup = Arc::clone(&banner.browser_for_lifecycle);
+    let browser_tool_for_warmup = banner.browser_tool_for_warmup.clone();
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -1893,9 +1897,10 @@ pub async fn start_gateway(
         let tls_cfg = rustls_config.expect("rustls config must be set when TLS is active");
         let tcp_listener = tokio::net::TcpListener::bind(addr).await?;
         moltis_gateway::server::start_openclaw_background_tasks(banner.data_dir.clone());
-        moltis_gateway::server::start_browser_warmup_after_listener(Arc::clone(
-            &browser_for_warmup,
-        ));
+        moltis_gateway::server::start_browser_warmup_after_listener(
+            Arc::clone(&browser_for_warmup),
+            browser_tool_for_warmup.clone(),
+        );
         moltis_tls::serve_tls_with_http_redirect(tcp_listener, Arc::new(tls_cfg), app, port, bind)
             .await?;
         return Ok(());
@@ -1904,7 +1909,10 @@ pub async fn start_gateway(
     // Plain HTTP server (existing behavior, or TLS feature disabled).
     let listener = tokio::net::TcpListener::bind(addr).await?;
     moltis_gateway::server::start_openclaw_background_tasks(banner.data_dir.clone());
-    moltis_gateway::server::start_browser_warmup_after_listener(Arc::clone(&browser_for_warmup));
+    moltis_gateway::server::start_browser_warmup_after_listener(
+        Arc::clone(&browser_for_warmup),
+        browser_tool_for_warmup,
+    );
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

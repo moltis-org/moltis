@@ -816,8 +816,9 @@ fn spawn_post_listener_warmups(
 /// Start browser warmup after the transport listener is ready.
 pub fn start_browser_warmup_after_listener(
     browser_service: Arc<dyn crate::services::BrowserService>,
+    browser_tool: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
 ) {
-    spawn_post_listener_warmups(browser_service, None);
+    spawn_post_listener_warmups(browser_service, browser_tool);
 }
 
 #[cfg(feature = "tailscale")]

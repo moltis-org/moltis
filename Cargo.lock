@@ -6206,6 +6206,7 @@ dependencies = [
  "dashmap 6.1.0",
  "futures",
  "hostname",
+ "moltis-agents",
  "moltis-auth",
  "moltis-browser",
  "moltis-channels",
