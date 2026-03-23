@@ -235,16 +235,14 @@ fn extract_content(
 }
 
 /// Convert HTML to plain text using the `html2text` crate.
-/// Strips tags, decodes entities, collapses whitespace.
-/// Uses `TrivialDecorator` so link URLs and markup annotations are dropped.
+/// Strips tags, decodes all HTML entities, and collapses consecutive
+/// blank lines. Uses `TrivialDecorator` so link URLs and markup
+/// annotations are dropped.
 fn html_to_text(html: &str) -> String {
     let clean = |text: String| -> String {
-        text.lines()
-            .map(str::trim_end)
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string()
+        let mut lines: Vec<&str> = text.lines().map(str::trim_end).collect();
+        lines.dedup_by(|a, b| a.is_empty() && b.is_empty());
+        lines.join("\n").trim().to_string()
     };
 
     match html2text::config::with_decorator(html2text::render::TrivialDecorator::new())
