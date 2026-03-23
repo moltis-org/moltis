@@ -133,14 +133,13 @@ function remoteHeaderSummary(server) {
 	return `${names.join(", ")} (${label})`;
 }
 
-function buildSseEditPayload(server, editUrlText, editHeadersText, clearHeaders, editDisplayName) {
+function buildSseEditPayload(server, editUrlText, editHeadersText, clearHeaders) {
 	var isExistingSse = (server.transport || "stdio") === "sse";
 	var replacementUrl = editUrlText.trim();
 	if (!(replacementUrl || isExistingSse)) {
 		return { error: "Remote MCP servers require a URL" };
 	}
 	var payload = {
-			display_name: editDisplayName.value.trim() || null,
 		command: "",
 		args: [],
 	};
@@ -486,7 +485,7 @@ function InstallBox() {
 				adding.value = false;
 				sseUrl.value = "";
 				sseHeaders.value = "";
-			displayNameVal.value = "";
+				displayNameVal.value = "";
 			});
 			return;
 		}
@@ -497,7 +496,7 @@ function InstallBox() {
 		var env = parseEnvLines(envVal.value);
 		addServer({
 			name,
-		display_name: displayNameVal.value.trim() || name,
+			display_name: displayNameVal.value.trim() || name,
 			command,
 			args: argsList,
 			env,
@@ -718,7 +717,7 @@ function ServerCard({ server }) {
 		var transport = editTransport.value === "sse" ? "sse" : "stdio";
 		var editResult =
 			transport === "sse"
-				? buildSseEditPayload(server, editUrl.value, editHeaders.value, clearHeaders.value, editDisplayName.value)
+				? buildSseEditPayload(server, editUrl.value, editHeaders.value, clearHeaders.value)
 				: buildStdioEditPayload(editCmd.value, editArgs.value, editEnv.value);
 		if (editResult.error) {
 			showToast(editResult.error, "error");
@@ -726,10 +725,10 @@ function ServerCard({ server }) {
 			return;
 		}
 		var payload = {
-			display_name: editDisplayName.value.trim() || null,
 			name: server.name,
 			transport,
 			...editResult.payload,
+			display_name: editDisplayName.value.trim() || null,
 		};
 		var res = await sendRpc("mcp.update", payload);
 		if (res?.ok) {
@@ -804,18 +803,16 @@ function ServerCard({ server }) {
 	              class="provider-btn provider-btn-sm ${editTransport.value === "sse" ? "" : "provider-btn-secondary"}">SSE (remote)</button>
 	          </div>
 	        </div>
-        ${
-		html`<div class="project-edit-group mb-2">
+        ${html`<div class="project-edit-group mb-2">
 		  <div class="text-xs text-[var(--muted)] mb-1">Display name (optional)</div>
 		  <input type="text" class="provider-key-input w-full" value=${editDisplayName.value}
-		    placeholder="${server.display_name || server.name}"
+		    placeholder=${server.display_name || server.name}
 		    onInput=${(e) => {
 						editDisplayName.value = e.target.value;
 					}} />
 		  <div class="text-xs text-[var(--muted)] mt-1">Technical ID: <span class="font-mono">${server.name}</span></div>
-		</div>`
-		}
-						editTransport.value === "sse" &&
+		</div>`}
+	        ${editTransport.value === "sse" &&
 						html`<div class="project-edit-group mb-2">
 	          <div class="text-xs text-[var(--muted)] mb-1">Current URL</div>
 	          <div class="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]">${currentSafeUrl || "(stored URL hidden until the API returns sanitized text)"}</div>
