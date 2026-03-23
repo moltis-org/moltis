@@ -1661,7 +1661,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         != moltis_cron::heartbeat::HeartbeatPromptSource::Default;
                     let effective_enabled = patch.enabled && has_prompt;
 
-                    if let Some(hb_job) = jobs.iter().find(|j| j.name == "__heartbeat__") {
+                    if let Some(hb_job) = jobs.iter().find(|j| j.id == "__heartbeat__") {
                         let job_patch = moltis_cron::types::CronJobPatch {
                             schedule: Some(moltis_cron::types::CronSchedule::Every {
                                 every_ms: interval_ms,
@@ -1691,8 +1691,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             }))
                             .await
                             .map_err(ErrorShape::from)?;
-                    } else if has_prompt {
-                        // Create the heartbeat job if it doesn't exist but should.
+                    } else if effective_enabled {
+                        // Create the heartbeat job only when enabled with a valid prompt.
                         let create = moltis_cron::types::CronJobCreate {
                             id: Some("__heartbeat__".into()),
                             name: "__heartbeat__".into(),

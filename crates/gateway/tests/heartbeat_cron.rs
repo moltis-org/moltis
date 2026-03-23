@@ -498,3 +498,80 @@ async fn heartbeat_update_updates_existing_job() {
 
     ws.close(None).await.ok();
 }
+
+#[tokio::test]
+async fn heartbeat_update_disabled_with_prompt_does_not_create_job() {
+    let (addr, mock_cron) = start_test_server_with_mock_cron().await;
+
+    assert!(mock_cron.get_job("__heartbeat__").is_none());
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/chat"))
+        .await
+        .expect("ws connect failed");
+
+    let connect_frame = serde_json::json!({
+        "type": "req",
+        "id": "test-connect",
+        "method": "connect",
+        "params": {
+            "minProtocol": 3,
+            "maxProtocol": 4,
+            "client": {
+                "id": "test-client",
+                "version": "0.0.1",
+                "platform": "test",
+                "mode": "operator"
+            }
+        }
+    });
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        connect_frame.to_string().into(),
+    ))
+    .await
+    .unwrap();
+
+    let _ = ws.next().await.unwrap().unwrap();
+
+    // Send heartbeat.update with enabled=false but a valid prompt
+    let heartbeat_update = serde_json::json!({
+        "type": "req",
+        "id": "hb-update-1",
+        "method": "heartbeat.update",
+        "params": {
+            "enabled": false,
+            "every": "30m",
+            "prompt": "Test heartbeat prompt",
+            "model": null,
+            "ackMaxChars": 500,
+            "activeHours": {
+                "start": "00:00",
+                "end": "23:59"
+            },
+            "deliver": false,
+            "channel": null,
+            "to": null,
+            "sandboxEnabled": false,
+            "sandboxImage": null
+        }
+    });
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        heartbeat_update.to_string().into(),
+    ))
+    .await
+    .unwrap();
+
+    let msg = ws.next().await.unwrap().unwrap();
+    let frame: Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
+
+    assert_eq!(frame["type"], "res");
+    assert_eq!(frame["id"], "hb-update-1");
+    assert_eq!(frame["ok"], true);
+
+    // No job should be created when disabled, even with a prompt
+    assert!(
+        mock_cron.get_job("__heartbeat__").is_none(),
+        "heartbeat cron job should NOT be created when disabled"
+    );
+
+    ws.close(None).await.ok();
+}
