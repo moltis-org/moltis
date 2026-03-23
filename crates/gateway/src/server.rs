@@ -1749,6 +1749,7 @@ pub async fn prepare_gateway(
                             .map(|(key, value)| (key.clone(), Secret::new(value.clone())))
                             .collect(),
                         oauth,
+                        display_name: entry.display_name.clone(),
                     });
             }
         }
