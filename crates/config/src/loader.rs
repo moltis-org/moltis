@@ -1885,7 +1885,6 @@ name = "Rex"
         clear_data_dir();
     }
 
-
     #[test]
     fn save_soul_for_agent_writes_to_agent_dir() {
         let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
