@@ -236,17 +236,25 @@ fn extract_content(
 
 /// Convert HTML to plain text using the `html2text` crate.
 /// Strips tags, decodes entities, collapses whitespace.
-/// Uses a proper HTML parser — safe for any encoding/multibyte content.
+/// Uses `TrivialDecorator` so link URLs and markup annotations are dropped.
 fn html_to_text(html: &str) -> String {
-    match html2text::from_read(html.as_bytes(), usize::MAX) {
-        Ok(text) => text
-            .lines()
+    let clean = |text: String| -> String {
+        text.lines()
             .map(str::trim_end)
             .collect::<Vec<_>>()
             .join("\n")
             .trim()
-            .to_string(),
-        Err(_) => String::new(),
+            .to_string()
+    };
+
+    match html2text::config::with_decorator(html2text::render::TrivialDecorator::new())
+        .string_from_read(html.as_bytes(), 1_000_000)
+    {
+        Ok(text) => clean(text),
+        Err(e) => {
+            tracing::warn!("html2text parse failed, returning raw body: {e}");
+            clean(html.to_string())
+        },
     }
 }
 
@@ -523,6 +531,21 @@ mod tests {
         let html = "<p>東京&amp;大阪</p>";
         let text = html_to_text(html);
         assert!(text.contains("東京&大阪"));
+    }
+
+    #[test]
+    fn test_html_to_text_drops_link_urls() {
+        let html = r#"<p>Visit <a href="https://example.com/secret">our site</a> today.</p>"#;
+        let text = html_to_text(html);
+        assert!(text.contains("our site"), "link text should be kept");
+        assert!(
+            !text.contains("https://example.com"),
+            "link href must not appear in plain-text output"
+        );
+        assert!(
+            !text.contains("[1]"),
+            "link footnote references must not appear"
+        );
     }
 
     // --- Cache tests ---
