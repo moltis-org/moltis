@@ -246,7 +246,7 @@ function authStateLabel(state) {
 }
 
 /** Render server name with optional technical ID badge */
-function renderServerName(server) {
+function renderServerName({ server }) {
 	var displayName = server.display_name || server.name;
 	var showTechnical = server.display_name && server.display_name !== server.name;
 	if (showTechnical) {
@@ -475,7 +475,7 @@ function InstallBox() {
 			var headers = parseEnvLines(sseHeaders.value);
 			addServer({
 				name: sseName,
-				display_name: displayNameVal.value.trim() || sseName,
+				display_name: displayNameVal.value.trim() || null,
 				command: "",
 				args: [],
 				headers,
@@ -496,7 +496,7 @@ function InstallBox() {
 		var env = parseEnvLines(envVal.value);
 		addServer({
 			name,
-			display_name: displayNameVal.value.trim() || name,
+			display_name: displayNameVal.value.trim() || null,
 			command,
 			args: argsList,
 			env,
