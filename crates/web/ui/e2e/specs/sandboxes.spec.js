@@ -111,6 +111,20 @@ test.describe("Sandboxes page – Shared home settings", () => {
 test.describe("Sandboxes page – Running Containers", () => {
 	test("running containers section renders with heading and refresh button", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+
+		// Mock container list so the button text resolves to "Refresh" quickly
+		// (the real endpoint can be slow with Apple Container).
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
+			}
+			return route.continue();
+		});
+
 		await navigateAndWait(page, "/settings/sandboxes");
 
 		await expect(page.getByRole("heading", { name: "Sandboxes", exact: true })).toBeVisible();
@@ -122,10 +136,28 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 	test("refresh button triggers container list fetch", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+
+		// Mock container list for fast initial load, then let the refresh hit the real endpoint.
+		let callCount = 0;
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				callCount++;
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
+			}
+			return route.continue();
+		});
+
 		await navigateAndWait(page, "/settings/sandboxes");
 
+		const refreshBtn = page.getByRole("button", { name: "Refresh", exact: true });
+		await expect(refreshBtn).toBeVisible();
+
 		const fetchPromise = page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.status() === 200);
-		await page.getByRole("button", { name: "Refresh", exact: true }).click();
+		await refreshBtn.click();
 		const response = await fetchPromise;
 		const data = await response.json();
 		expect(data).toHaveProperty("containers");
@@ -194,6 +226,18 @@ test.describe("Sandboxes page – Running Containers", () => {
 		const pageErrors = watchPageErrors(page);
 		var diskFetchCount = 0;
 
+		// Mock container list so the button resolves to "Refresh" quickly.
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
+			}
+			return route.continue();
+		});
+
 		// Track disk-usage fetches so we can assert the refresh triggered one.
 		await page.route("**/api/sandbox/disk-usage", (route) => {
 			diskFetchCount++;
@@ -217,6 +261,32 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 	test("clean all endpoint responds correctly", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+
+		// Mock container list so the page loads quickly.
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
+			}
+			return route.continue();
+		});
+
+		// Mock the clean endpoint — the real operation can be slow with
+		// Apple Container. We only verify the response shape here.
+		await page.route("**/api/sandbox/containers/clean", (route, request) => {
+			if (request.method() === "POST") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ ok: true, removed: [] }),
+				});
+			}
+			return route.continue();
+		});
+
 		await navigateAndWait(page, "/settings/sandboxes");
 
 		// Call the clean all API directly to verify the endpoint works

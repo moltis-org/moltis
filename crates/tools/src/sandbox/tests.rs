@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 use super::apple::*;
 use {
     super::{containers::*, docker::*, host::*, paths::*, platform::*, router::*, types::*, *},
@@ -1123,6 +1123,7 @@ fn test_is_apple_container_exists_error() {
     assert!(!is_apple_container_exists_error("Error: no such container"));
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn test_is_apple_container_unavailable_error() {
     assert!(is_apple_container_unavailable_error(
@@ -1144,6 +1145,7 @@ fn test_is_apple_container_unavailable_error() {
     assert!(!is_apple_container_unavailable_error("permission denied"));
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn test_should_restart_after_readiness_error() {
     assert!(should_restart_after_readiness_error(
@@ -1306,6 +1308,7 @@ fn test_is_apple_container_daemon_stale_error() {
     assert!(!is_apple_container_daemon_stale_error("permission denied"));
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn test_is_apple_container_boot_failure() {
     // No logs at all — VM never booted

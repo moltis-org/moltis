@@ -9,14 +9,14 @@ body:
       value: |
         We'd love to hear your ideas! Please describe what you need and why.
 
-        Before submitting, check if this has already been [requested](https://github.com/moltisorg/moltis/issues?q=is%3Aissue+label%3Aenhancement).
+        Before submitting, check if this has already been [requested](https://github.com/moltis-org/moltis/issues?q=is%3Aissue+label%3Aenhancement).
 
   - type: checkboxes
     id: preflight
     attributes:
       label: Preflight Checklist
       options:
-        - label: I have searched [existing requests](https://github.com/moltisorg/moltis/issues?q=is%3Aissue+label%3Aenhancement) and this hasn't been proposed yet
+        - label: I have searched [existing requests](https://github.com/moltis-org/moltis/issues?q=is%3Aissue+label%3Aenhancement) and this hasn't been proposed yet
           required: true
         - label: If this request came from a chat session issue, I included relevant session context and redacted secrets
 

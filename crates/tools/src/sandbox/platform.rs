@@ -24,7 +24,7 @@ impl CgroupSandbox {
         Self { config }
     }
 
-    fn scope_name(&self, id: &SandboxId) -> String {
+    pub(crate) fn scope_name(&self, id: &SandboxId) -> String {
         let prefix = self
             .config
             .container_prefix
@@ -33,7 +33,7 @@ impl CgroupSandbox {
         format!("{}-{}", prefix, id.key)
     }
 
-    fn property_args(&self) -> Vec<String> {
+    pub(crate) fn property_args(&self) -> Vec<String> {
         let mut args = Vec::new();
         let limits = &self.config.resource_limits;
         if let Some(ref mem) = limits.memory_limit {
