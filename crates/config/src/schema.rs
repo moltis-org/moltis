@@ -1237,6 +1237,9 @@ pub struct SkillsConfig {
     /// Skills to always load (by name) without explicit activation.
     #[serde(default)]
     pub auto_load: Vec<String>,
+    /// Whether agents may write supplementary files inside personal skill directories.
+    #[serde(default)]
+    pub enable_agent_sidecar_files: bool,
 }
 
 fn default_true() -> bool {
@@ -2383,6 +2386,16 @@ mod tests {
         let loc = GeoLocation::now(37.0, -122.0, Some("San Francisco".to_string()));
         assert_eq!(loc.place.as_deref(), Some("San Francisco"));
         assert!(loc.updated_at.is_some());
+    }
+
+    #[test]
+    fn skills_config_sidecar_files_default_disabled() {
+        let toml = r#"
+[skills]
+enabled = true
+"#;
+        let parsed: MoltisConfig = toml::from_str(toml).unwrap();
+        assert!(!parsed.skills.enable_agent_sidecar_files);
     }
 
     #[test]

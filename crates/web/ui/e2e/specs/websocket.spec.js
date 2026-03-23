@@ -196,6 +196,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
 
 		await expectRpcOk(page, "chat.clear", {});
 

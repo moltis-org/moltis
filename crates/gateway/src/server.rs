@@ -3862,6 +3862,11 @@ pub async fn prepare_gateway(
             tool_registry.register(Box::new(moltis_tools::skill_tools::DeleteSkillTool::new(
                 data_dir.clone(),
             )));
+            if config.skills.enable_agent_sidecar_files {
+                tool_registry.register(Box::new(
+                    moltis_tools::skill_tools::WriteSkillFilesTool::new(data_dir.clone()),
+                ));
+            }
         }
 
         // Register branch session tool for session forking.
