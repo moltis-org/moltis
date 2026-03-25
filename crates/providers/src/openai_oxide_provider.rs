@@ -331,7 +331,85 @@ fn stream_chat<'a>(
     })
 }
 
-// ── Responses API streaming ──
+// ── Responses API event mapping (single source of truth) ──
+
+/// Result of processing a single `ResponseStreamEvent`.
+enum ResponseEventAction {
+    /// Yield this `StreamEvent` and continue processing.
+    Yield(StreamEvent),
+    /// Yield this `StreamEvent` and stop the stream (terminal event).
+    YieldAndStop(StreamEvent),
+    /// Skip this event — no output.
+    Skip,
+}
+
+/// Map one `ResponseStreamEvent` to a `StreamEvent`.
+/// `tool_index` is mutated to track the current tool call ordinal.
+fn process_response_event(
+    event: ResponseStreamEvent,
+    tool_index: &mut usize,
+) -> ResponseEventAction {
+    match event {
+        ResponseStreamEvent::ResponseOutputTextDelta(evt) => {
+            if evt.delta.is_empty() {
+                ResponseEventAction::Skip
+            } else {
+                ResponseEventAction::Yield(StreamEvent::Delta(evt.delta))
+            }
+        }
+        ResponseStreamEvent::ResponseOutputItemAdded(evt) => {
+            if let OutputItem::FunctionCall(fc) = &evt.item {
+                ResponseEventAction::Yield(StreamEvent::ToolCallStart {
+                    id: fc.call_id.clone(),
+                    name: fc.name.clone(),
+                    index: *tool_index,
+                })
+            } else {
+                ResponseEventAction::Skip
+            }
+        }
+        ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(evt) => {
+            if evt.delta.is_empty() {
+                ResponseEventAction::Skip
+            } else {
+                ResponseEventAction::Yield(StreamEvent::ToolCallArgumentsDelta {
+                    index: *tool_index,
+                    delta: evt.delta,
+                })
+            }
+        }
+        ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_) => {
+            let idx = *tool_index;
+            *tool_index += 1;
+            ResponseEventAction::Yield(StreamEvent::ToolCallComplete { index: idx })
+        }
+        ResponseStreamEvent::ResponseCompleted(evt) => {
+            let usage = evt
+                .response
+                .usage
+                .as_ref()
+                .map(|u| Usage {
+                    input_tokens: u.input_tokens.unwrap_or(0) as u32,
+                    output_tokens: u.output_tokens.unwrap_or(0) as u32,
+                    ..Default::default()
+                })
+                .unwrap_or_default();
+            ResponseEventAction::YieldAndStop(StreamEvent::Done(usage))
+        }
+        ResponseStreamEvent::ResponseFailed(evt) => {
+            let msg = evt
+                .response
+                .error
+                .as_ref()
+                .map(|e| e.message.clone())
+                .unwrap_or_else(|| "response.failed".into());
+            ResponseEventAction::YieldAndStop(StreamEvent::Error(msg))
+        }
+        _ => ResponseEventAction::Skip,
+    }
+}
+
+// ── Responses API streaming (SSE) ──
 
 fn stream_responses<'a>(
     client: &'a OpenAI,
@@ -347,54 +425,12 @@ fn stream_responses<'a>(
         };
 
         let mut tool_index: usize = 0;
-
         while let Some(result) = stream.next().await {
             match result {
-                Ok(event) => match event {
-                    ResponseStreamEvent::ResponseOutputTextDelta(evt) => {
-                        if !evt.delta.is_empty() {
-                            yield StreamEvent::Delta(evt.delta);
-                        }
-                    }
-                    ResponseStreamEvent::ResponseOutputItemAdded(evt) => {
-                        if let OutputItem::FunctionCall(fc) = &evt.item {
-                            yield StreamEvent::ToolCallStart {
-                                id: fc.call_id.clone(),
-                                name: fc.name.clone(),
-                                index: tool_index,
-                            };
-                        }
-                    }
-                    ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(evt) => {
-                        if !evt.delta.is_empty() {
-                            yield StreamEvent::ToolCallArgumentsDelta {
-                                index: tool_index,
-                                delta: evt.delta,
-                            };
-                        }
-                    }
-                    ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_) => {
-                        yield StreamEvent::ToolCallComplete { index: tool_index };
-                        tool_index += 1;
-                    }
-                    ResponseStreamEvent::ResponseCompleted(evt) => {
-                        let usage = evt.response.usage.as_ref().map(|u| Usage {
-                            input_tokens: u.input_tokens.unwrap_or(0) as u32,
-                            output_tokens: u.output_tokens.unwrap_or(0) as u32,
-                            ..Default::default()
-                        }).unwrap_or_default();
-                        yield StreamEvent::Done(usage);
-                        return;
-                    }
-                    ResponseStreamEvent::ResponseFailed(evt) => {
-                        let msg = evt.response.error
-                            .as_ref()
-                            .map(|e| e.message.clone())
-                            .unwrap_or_else(|| "response.failed".into());
-                        yield StreamEvent::Error(msg);
-                        return;
-                    }
-                    _ => {}
+                Ok(event) => match process_response_event(event, &mut tool_index) {
+                    ResponseEventAction::Yield(se) => yield se,
+                    ResponseEventAction::YieldAndStop(se) => { yield se; return; }
+                    ResponseEventAction::Skip => {}
                 },
                 Err(e) => {
                     yield StreamEvent::Error(format!("{e}"));
@@ -406,7 +442,7 @@ fn stream_responses<'a>(
     })
 }
 
-// ── Responses API streaming via WebSocket ──
+// ── Responses API streaming (WebSocket) ──
 
 /// Stream Responses API events over persistent WebSocket connection.
 /// Lower latency than SSE — no TLS handshake per request.
@@ -432,54 +468,12 @@ fn stream_responses_ws<'a>(
         };
 
         let mut tool_index: usize = 0;
-
         while let Some(result) = ws_stream.next().await {
             match result {
-                Ok(event) => match event {
-                    ResponseStreamEvent::ResponseOutputTextDelta(evt) => {
-                        if !evt.delta.is_empty() {
-                            yield StreamEvent::Delta(evt.delta);
-                        }
-                    }
-                    ResponseStreamEvent::ResponseOutputItemAdded(evt) => {
-                        if let OutputItem::FunctionCall(fc) = &evt.item {
-                            yield StreamEvent::ToolCallStart {
-                                id: fc.call_id.clone(),
-                                name: fc.name.clone(),
-                                index: tool_index,
-                            };
-                        }
-                    }
-                    ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(evt) => {
-                        if !evt.delta.is_empty() {
-                            yield StreamEvent::ToolCallArgumentsDelta {
-                                index: tool_index,
-                                delta: evt.delta,
-                            };
-                        }
-                    }
-                    ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_) => {
-                        yield StreamEvent::ToolCallComplete { index: tool_index };
-                        tool_index += 1;
-                    }
-                    ResponseStreamEvent::ResponseCompleted(evt) => {
-                        let usage = evt.response.usage.as_ref().map(|u| Usage {
-                            input_tokens: u.input_tokens.unwrap_or(0) as u32,
-                            output_tokens: u.output_tokens.unwrap_or(0) as u32,
-                            ..Default::default()
-                        }).unwrap_or_default();
-                        yield StreamEvent::Done(usage);
-                        return;
-                    }
-                    ResponseStreamEvent::ResponseFailed(evt) => {
-                        let msg = evt.response.error
-                            .as_ref()
-                            .map(|e| e.message.clone())
-                            .unwrap_or_else(|| "response.failed".into());
-                        yield StreamEvent::Error(msg);
-                        return;
-                    }
-                    _ => {}
+                Ok(event) => match process_response_event(event, &mut tool_index) {
+                    ResponseEventAction::Yield(se) => yield se,
+                    ResponseEventAction::YieldAndStop(se) => { yield se; return; }
+                    ResponseEventAction::Skip => {}
                 },
                 Err(e) => {
                     yield StreamEvent::Error(format!("ws: {e}"));
@@ -492,7 +486,7 @@ fn stream_responses_ws<'a>(
 }
 
 /// Auto mode: try WebSocket, fallback to SSE on connection failure.
-fn stream_responses_ws_with_fallback<'a>(
+fn stream_responses_auto<'a>(
     client: &'a OpenAI,
     request: ResponseCreateRequest,
 ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>> {
@@ -501,12 +495,23 @@ fn stream_responses_ws_with_fallback<'a>(
         match client.ws_session().await {
             Ok(mut session) => {
                 match session.send_stream(request).await {
-                    Ok(ws_stream) => {
-                        // WS succeeded — forward all events
-                        let mut inner = stream_responses_ws_inner(ws_stream);
-                        while let Some(event) = inner.next().await {
-                            yield event;
+                    Ok(mut ws_stream) => {
+                        // WS succeeded — process events directly
+                        let mut tool_index: usize = 0;
+                        while let Some(result) = ws_stream.next().await {
+                            match result {
+                                Ok(event) => match process_response_event(event, &mut tool_index) {
+                                    ResponseEventAction::Yield(se) => yield se,
+                                    ResponseEventAction::YieldAndStop(se) => { yield se; return; }
+                                    ResponseEventAction::Skip => {}
+                                },
+                                Err(e) => {
+                                    yield StreamEvent::Error(format!("ws: {e}"));
+                                    return;
+                                }
+                            }
                         }
+                        yield StreamEvent::Done(Usage::default());
                         return;
                     }
                     Err(e) => {
@@ -524,59 +529,6 @@ fn stream_responses_ws_with_fallback<'a>(
         while let Some(event) = sse.next().await {
             yield event;
         }
-    })
-}
-
-/// Process WS event stream into StreamEvent — shared between ws and ws_with_fallback.
-fn stream_responses_ws_inner(
-    mut ws_stream: openai_oxide::websocket::WsEventStream<'_>,
-) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-    Box::pin(async_stream::stream! {
-        let mut tool_index: usize = 0;
-        while let Some(result) = ws_stream.next().await {
-            match result {
-                Ok(event) => match event {
-                    ResponseStreamEvent::ResponseOutputTextDelta(evt) => {
-                        if !evt.delta.is_empty() { yield StreamEvent::Delta(evt.delta); }
-                    }
-                    ResponseStreamEvent::ResponseOutputItemAdded(evt) => {
-                        if let OutputItem::FunctionCall(fc) = &evt.item {
-                            yield StreamEvent::ToolCallStart {
-                                id: fc.call_id.clone(), name: fc.name.clone(), index: tool_index,
-                            };
-                        }
-                    }
-                    ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(evt) => {
-                        if !evt.delta.is_empty() {
-                            yield StreamEvent::ToolCallArgumentsDelta { index: tool_index, delta: evt.delta };
-                        }
-                    }
-                    ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_) => {
-                        yield StreamEvent::ToolCallComplete { index: tool_index };
-                        tool_index += 1;
-                    }
-                    ResponseStreamEvent::ResponseCompleted(evt) => {
-                        let usage = evt.response.usage.as_ref().map(|u| Usage {
-                            input_tokens: u.input_tokens.unwrap_or(0) as u32,
-                            output_tokens: u.output_tokens.unwrap_or(0) as u32,
-                            ..Default::default()
-                        }).unwrap_or_default();
-                        yield StreamEvent::Done(usage);
-                        return;
-                    }
-                    ResponseStreamEvent::ResponseFailed(evt) => {
-                        let msg = evt.response.error.as_ref()
-                            .map(|e| e.message.clone())
-                            .unwrap_or_else(|| "response.failed".into());
-                        yield StreamEvent::Error(msg);
-                        return;
-                    }
-                    _ => {}
-                },
-                Err(e) => { yield StreamEvent::Error(format!("ws: {e}")); return; }
-            }
-        }
-        yield StreamEvent::Done(Usage::default());
     })
 }
 
@@ -671,7 +623,7 @@ impl LlmProvider for OpenAiOxideProvider {
                     }
                     ProviderStreamTransport::Auto => {
                         // Auto: try WS, fallback to SSE
-                        stream_responses_ws_with_fallback(&self.client, request)
+                        stream_responses_auto(&self.client, request)
                     }
                     ProviderStreamTransport::Sse => {
                         stream_responses(&self.client, request)

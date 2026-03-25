@@ -7334,7 +7334,9 @@ dependencies = [
 
 [[package]]
 name = "openai-oxide"
-version = "0.9.8"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a69335dcc437ae0345249da64842c9e0f7bd922264105c4e1ca400da1883d91"
 dependencies = [
  "async-trait",
  "bytes",
@@ -7342,12 +7344,14 @@ dependencies = [
  "futures-util",
  "gloo-timers",
  "pin-project-lite",
+ "reqwest 0.12.28",
  "reqwest 0.13.2",
  "rustls 0.23.36",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-tungstenite 0.26.2",
  "tracing",
  "wasm-bindgen-futures",
 ]
@@ -10524,7 +10528,11 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
+ "rustls 0.23.36",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls 0.26.4",
  "tungstenite 0.26.2",
 ]
 
@@ -11008,6 +11016,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.2",
+ "rustls 0.23.36",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
  "utf-8",
