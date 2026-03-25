@@ -573,3 +573,172 @@ fn to_oxide_effort(effort: ReasoningEffort) -> openai_oxide::types::common::Reas
         ReasoningEffort::High => openai_oxide::types::common::ReasoningEffort::High,
     }
 }
+
+// ── Model discovery ──
+
+/// Fetch available models from the OpenAI-compatible API.
+pub async fn discover_models(
+    client: &OpenAI,
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
+    let models = client.models().list().await?;
+    Ok(models
+        .data
+        .into_iter()
+        .map(|m| super::DiscoveredModel {
+            id: m.id.clone(),
+            display_name: m.id,
+            created_at: m.created,
+        })
+        .collect())
+}
+
+// ── Tests ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moltis_agents::model::{ChatMessage, StreamEvent, UserContent};
+    use secrecy::Secret;
+    use tokio_stream::StreamExt;
+
+    fn test_provider(base_url: &str) -> OpenAiOxideProvider {
+        OpenAiOxideProvider::new(
+            Secret::new("test-key".to_string()),
+            "gpt-4o".to_string(),
+            base_url.to_string(),
+        )
+    }
+
+    #[test]
+    fn test_build_chat_messages_system() {
+        let messages = vec![ChatMessage::System {
+            content: "You are helpful.".into(),
+        }];
+        let result = build_chat_messages(&messages);
+        assert_eq!(result.len(), 1);
+        assert!(matches!(result[0], ChatCompletionMessageParam::System { .. }));
+    }
+
+    #[test]
+    fn test_build_chat_messages_tool_preserves_call_id() {
+        let messages = vec![ChatMessage::Tool {
+            tool_call_id: "call_123".into(),
+            content: "{\"temp\": 72}".into(),
+        }];
+        let result = build_chat_messages(&messages);
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            ChatCompletionMessageParam::Tool {
+                tool_call_id,
+                content,
+            } => {
+                assert_eq!(tool_call_id, "call_123");
+                assert_eq!(content, "{\"temp\": 72}");
+            }
+            _ => panic!("expected Tool message"),
+        }
+    }
+
+    #[test]
+    fn test_build_chat_messages_assistant_with_tool_calls() {
+        let messages = vec![ChatMessage::Assistant {
+            content: None,
+            tool_calls: vec![ToolCall {
+                id: "call_abc".into(),
+                name: "get_weather".into(),
+                arguments: serde_json::json!({"city": "NYC"}),
+            }],
+        }];
+        let result = build_chat_messages(&messages);
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            ChatCompletionMessageParam::Assistant { tool_calls, .. } => {
+                let tcs = tool_calls.as_ref().unwrap();
+                assert_eq!(tcs.len(), 1);
+                assert_eq!(tcs[0].id, "call_abc");
+                assert_eq!(tcs[0].function.name, "get_weather");
+            }
+            _ => panic!("expected Assistant message"),
+        }
+    }
+
+    #[test]
+    fn test_split_for_responses() {
+        let messages = vec![
+            ChatMessage::System {
+                content: "Be concise.".into(),
+            },
+            ChatMessage::User {
+                content: UserContent::Text("Hello".into()),
+            },
+        ];
+        let (instructions, input) = split_for_responses(&messages);
+        assert_eq!(instructions, Some("Be concise.".into()));
+        assert_eq!(input.len(), 1);
+    }
+
+    #[test]
+    fn test_tools_to_response_tools() {
+        let tools = vec![serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {"type": "object"}
+            }
+        })];
+        let result = tools_to_response_tools(&tools);
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            ResponseTool::Function { name, .. } => assert_eq!(name, "get_weather"),
+            _ => panic!("expected Function tool"),
+        }
+    }
+
+    #[test]
+    fn test_extract_chat_tool_calls() {
+        let tcs = Some(vec![openai_oxide::types::chat::ToolCall {
+            id: "call_1".into(),
+            type_: "function".into(),
+            function: openai_oxide::types::chat::FunctionCall {
+                name: "search".into(),
+                arguments: r#"{"q":"rust"}"#.into(),
+            },
+        }]);
+        let result = extract_chat_tool_calls(&tcs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "search");
+        assert_eq!(result[0].arguments["q"], "rust");
+    }
+
+    #[test]
+    fn test_supports_tools_and_vision() {
+        let p = test_provider("http://localhost");
+        assert!(p.supports_tools());
+        assert!(p.supports_vision());
+    }
+
+    #[test]
+    fn test_with_wire_api() {
+        let p = test_provider("http://localhost").with_wire_api(WireApi::Responses);
+        assert_eq!(p.wire_api, WireApi::Responses);
+    }
+
+    #[test]
+    fn test_with_reasoning_effort() {
+        let p = Arc::new(test_provider("http://localhost"));
+        let p2 = p.with_reasoning_effort(ReasoningEffort::High).unwrap();
+        assert_eq!(p2.reasoning_effort(), Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn test_new_delegates_to_with_alias() {
+        let p = OpenAiOxideProvider::new(
+            Secret::new("key".into()),
+            "gpt-4o".into(),
+            "http://localhost".into(),
+        );
+        assert_eq!(p.name(), "openai-oxide");
+        assert!(p.alias.is_none());
+    }
+}
