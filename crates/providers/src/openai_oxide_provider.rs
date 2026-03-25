@@ -7,9 +7,15 @@ use {
     futures::StreamExt,
     openai_oxide::{
         config::ClientConfig,
-        types::chat::{
-            ChatCompletionMessageParam, ChatCompletionRequest, ContentPart, ImageUrl,
-            StreamOptions,
+        types::{
+            chat::{
+                ChatCompletionMessageParam, ChatCompletionRequest, ContentPart, ImageUrl,
+                StreamOptions,
+            },
+            responses::{
+                OutputItem, ReasoningSummary, Response, ResponseCreateRequest, ResponseInput,
+                ResponseInputItem, ResponseStreamEvent, ResponseTool,
+            },
         },
         OpenAI,
     },
@@ -20,21 +26,13 @@ use moltis_agents::model::{
     ChatMessage, CompletionResponse, LlmProvider, ModelMetadata, StreamEvent, ToolCall, Usage,
     UserContent,
 };
-use moltis_config::ReasoningEffort;
+use moltis_config::{ReasoningEffort, schema::WireApi};
 
 /// Provider backed by the `openai-oxide` crate.
-/// Works with OpenAI and any OpenAI-compatible API (Ollama, vLLM, etc.)
-/// via custom base URL.
 ///
-/// Advantages over `async_openai_provider`:
-/// - Full streaming tool call support (Start/ArgumentsDelta/Complete events)
-/// - Tool call extraction from non-streaming responses
-/// - Streaming usage tokens (include_usage = true)
-/// - Proper tool message mapping with tool_call_id
-/// - Assistant tool_calls replay in conversation history
-/// - Vision support (multimodal content)
-/// - Reasoning effort configuration
-/// - reqwest 0.12 + 0.13 compatibility
+/// Supports both Chat Completions and Responses API via `WireApi` config.
+/// Full tool calling, vision, reasoning, streaming — replaces 5000+ lines
+/// of manual HTTP/SSE code with openai-oxide's typed client.
 ///
 /// Note: `provider-openai-oxide` and `provider-async-openai` both register
 /// against the `"openai"` config key. If both features are enabled,
@@ -44,6 +42,7 @@ pub struct OpenAiOxideProvider {
     client: OpenAI,
     alias: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
+    wire_api: WireApi,
 }
 
 impl OpenAiOxideProvider {
@@ -65,11 +64,19 @@ impl OpenAiOxideProvider {
             client,
             alias,
             reasoning_effort: None,
+            wire_api: WireApi::default(),
         }
+    }
+
+    pub fn with_wire_api(mut self, wire_api: WireApi) -> Self {
+        self.wire_api = wire_api;
+        self
     }
 }
 
-fn build_messages(messages: &[ChatMessage]) -> Vec<ChatCompletionMessageParam> {
+// ── Chat Completions helpers ──
+
+fn build_chat_messages(messages: &[ChatMessage]) -> Vec<ChatCompletionMessageParam> {
     let mut out = Vec::new();
     for msg in messages {
         match msg {
@@ -155,7 +162,7 @@ fn build_messages(messages: &[ChatMessage]) -> Vec<ChatCompletionMessageParam> {
     out
 }
 
-fn extract_tool_calls(
+fn extract_chat_tool_calls(
     tool_calls: &Option<Vec<openai_oxide::types::chat::ToolCall>>,
 ) -> Vec<ToolCall> {
     tool_calls
@@ -173,52 +180,76 @@ fn extract_tool_calls(
         .unwrap_or_default()
 }
 
-/// Build a request with optional tools and reasoning effort.
-fn build_request(
-    model: &str,
-    messages: Vec<ChatCompletionMessageParam>,
-    tools: &[serde_json::Value],
-    reasoning_effort: Option<ReasoningEffort>,
-) -> ChatCompletionRequest {
-    let mut request = ChatCompletionRequest::new(model, messages);
+// ── Responses API helpers ──
 
-    if !tools.is_empty() {
-        request.tools = Some(
-            tools
-                .iter()
-                .filter_map(|t| serde_json::from_value(t.clone()).ok())
-                .collect(),
-        );
+/// Split ChatMessages into (instructions, input) for Responses API.
+/// System messages become instructions, everything else becomes input items.
+fn split_for_responses(messages: &[ChatMessage]) -> (Option<String>, Vec<ResponseInputItem>) {
+    let mut instructions: Vec<String> = Vec::new();
+    let mut input: Vec<ResponseInputItem> = Vec::new();
+
+    for msg in messages {
+        match msg {
+            ChatMessage::System { content } => {
+                if !content.trim().is_empty() {
+                    instructions.push(content.clone());
+                }
+            }
+            ChatMessage::User {
+                content: UserContent::Text(text),
+            } => {
+                input.push(ResponseInputItem {
+                    role: openai_oxide::types::responses::Role::User,
+                    content: serde_json::json!(text),
+                });
+            }
+            ChatMessage::Assistant { content, .. } => {
+                if let Some(text) = content {
+                    input.push(ResponseInputItem {
+                        role: openai_oxide::types::responses::Role::Assistant,
+                        content: serde_json::json!(text),
+                    });
+                }
+            }
+            _ => {}
+        }
     }
 
-    if let Some(effort) = reasoning_effort {
-        let oxide_effort = match effort {
-            ReasoningEffort::Low => openai_oxide::types::common::ReasoningEffort::Low,
-            ReasoningEffort::Medium => openai_oxide::types::common::ReasoningEffort::Medium,
-            ReasoningEffort::High => openai_oxide::types::common::ReasoningEffort::High,
-        };
-        request.reasoning_effort = Some(oxide_effort);
-    }
+    let instr = if instructions.is_empty() {
+        None
+    } else {
+        Some(instructions.join("\n\n"))
+    };
 
-    request
+    (instr, input)
 }
 
-/// Create a streaming request with tools and stream_options.
-fn build_stream_request(
-    model: &str,
-    messages: Vec<ChatCompletionMessageParam>,
-    tools: &[serde_json::Value],
-    reasoning_effort: Option<ReasoningEffort>,
-) -> ChatCompletionRequest {
-    let mut request = build_request(model, messages, tools, reasoning_effort);
-    request.stream_options = Some(StreamOptions {
-        include_usage: Some(true),
-    });
-    request
+fn tools_to_response_tools(tools: &[serde_json::Value]) -> Vec<ResponseTool> {
+    tools
+        .iter()
+        .filter_map(|t| {
+            let func = t.get("function")?;
+            Some(ResponseTool::Function {
+                name: func.get("name")?.as_str()?.to_string(),
+                description: func.get("description").and_then(|d| d.as_str()).map(String::from),
+                parameters: func.get("parameters").cloned(),
+                strict: func.get("strict").and_then(|s| s.as_bool()),
+            })
+        })
+        .collect()
 }
 
-/// Process streaming chunks — shared between stream() and stream_with_tools().
-fn make_stream<'a>(
+fn extract_responses_tool_calls(response: &Response) -> Vec<ToolCall> {
+    response.function_calls().iter().map(|fc| ToolCall {
+        id: fc.call_id.clone(),
+        name: fc.name.clone(),
+        arguments: fc.arguments.clone(),
+    }).collect()
+}
+
+// ── Chat Completions streaming ──
+
+fn stream_chat<'a>(
     client: &'a OpenAI,
     request: ChatCompletionRequest,
 ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>> {
@@ -237,48 +268,36 @@ fn make_stream<'a>(
             match result {
                 Ok(response) => {
                     for choice in &response.choices {
-                        // Text deltas
                         if let Some(ref content) = choice.delta.content {
                             if !content.is_empty() {
                                 yield StreamEvent::Delta(content.clone());
                             }
                         }
 
-                        // Tool call streaming
                         if let Some(ref tcs) = choice.delta.tool_calls {
                             for tc in tcs {
                                 let idx = tc.index as usize;
-
                                 if !seen_starts.contains_key(&tc.index) {
                                     seen_starts.insert(tc.index, true);
-                                    let name = tc
-                                        .function
-                                        .as_ref()
-                                        .and_then(|f| f.name.clone())
-                                        .unwrap_or_default();
-                                    let id = tc.id.clone().unwrap_or_default();
-                                    yield StreamEvent::ToolCallStart { id, name, index: idx };
+                                    yield StreamEvent::ToolCallStart {
+                                        id: tc.id.clone().unwrap_or_default(),
+                                        name: tc.function.as_ref().and_then(|f| f.name.clone()).unwrap_or_default(),
+                                        index: idx,
+                                    };
                                 }
-
                                 if let Some(ref f) = tc.function {
                                     if let Some(ref args) = f.arguments {
                                         if !args.is_empty() {
-                                            yield StreamEvent::ToolCallArgumentsDelta {
-                                                index: idx,
-                                                delta: args.clone(),
-                                            };
+                                            yield StreamEvent::ToolCallArgumentsDelta { index: idx, delta: args.clone() };
                                         }
                                     }
                                 }
                             }
                         }
 
-                        // Tool calls complete
                         if choice.finish_reason.as_deref() == Some("tool_calls") {
                             for &idx in seen_starts.keys() {
-                                yield StreamEvent::ToolCallComplete {
-                                    index: idx as usize,
-                                };
+                                yield StreamEvent::ToolCallComplete { index: idx as usize };
                             }
                         }
                     }
@@ -298,10 +317,86 @@ fn make_stream<'a>(
                 }
             }
         }
-
         yield StreamEvent::Done(Usage::default());
     })
 }
+
+// ── Responses API streaming ──
+
+fn stream_responses<'a>(
+    client: &'a OpenAI,
+    request: ResponseCreateRequest,
+) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>> {
+    Box::pin(async_stream::stream! {
+        let mut stream = match client.responses().create_stream(request).await {
+            Ok(s) => s,
+            Err(e) => {
+                yield StreamEvent::Error(format!("{e}"));
+                return;
+            }
+        };
+
+        let mut tool_index: usize = 0;
+
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(event) => match event {
+                    ResponseStreamEvent::ResponseOutputTextDelta(evt) => {
+                        if !evt.delta.is_empty() {
+                            yield StreamEvent::Delta(evt.delta);
+                        }
+                    }
+                    ResponseStreamEvent::ResponseOutputItemAdded(evt) => {
+                        if let OutputItem::FunctionCall(fc) = &evt.item {
+                            yield StreamEvent::ToolCallStart {
+                                id: fc.call_id.clone(),
+                                name: fc.name.clone(),
+                                index: tool_index,
+                            };
+                        }
+                    }
+                    ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(evt) => {
+                        if !evt.delta.is_empty() {
+                            yield StreamEvent::ToolCallArgumentsDelta {
+                                index: tool_index,
+                                delta: evt.delta,
+                            };
+                        }
+                    }
+                    ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_) => {
+                        yield StreamEvent::ToolCallComplete { index: tool_index };
+                        tool_index += 1;
+                    }
+                    ResponseStreamEvent::ResponseCompleted(evt) => {
+                        let usage = evt.response.usage.as_ref().map(|u| Usage {
+                            input_tokens: u.input_tokens.unwrap_or(0) as u32,
+                            output_tokens: u.output_tokens.unwrap_or(0) as u32,
+                            ..Default::default()
+                        }).unwrap_or_default();
+                        yield StreamEvent::Done(usage);
+                        return;
+                    }
+                    ResponseStreamEvent::ResponseFailed(evt) => {
+                        let msg = evt.response.error
+                            .as_ref()
+                            .map(|e| e.message.clone())
+                            .unwrap_or_else(|| "response.failed".into());
+                        yield StreamEvent::Error(msg);
+                        return;
+                    }
+                    _ => {}
+                },
+                Err(e) => {
+                    yield StreamEvent::Error(format!("{e}"));
+                    return;
+                }
+            }
+        }
+        yield StreamEvent::Done(Usage::default());
+    })
+}
+
+// ── LlmProvider implementation ──
 
 #[async_trait]
 impl LlmProvider for OpenAiOxideProvider {
@@ -334,55 +429,31 @@ impl LlmProvider for OpenAiOxideProvider {
             client: self.client.clone(),
             alias: self.alias.clone(),
             reasoning_effort: Some(effort),
+            wire_api: self.wire_api,
         }))
     }
 
     fn context_window(&self) -> u32 {
-        // GPT-4o default; overridden by model_metadata() at runtime.
         128_000
     }
 
-    #[tracing::instrument(skip(self, messages, tools), fields(model = %self.model))]
+    #[tracing::instrument(skip(self, messages, tools), fields(model = %self.model, api = ?self.wire_api))]
     async fn complete(
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        let oai_messages = build_messages(messages);
-        let request = build_request(&self.model, oai_messages, tools, self.reasoning_effort);
-        let response = self.client.chat().completions().create(request).await?;
-
-        let choice = response.choices.first();
-        let text = choice.and_then(|c| c.message.content.clone());
-        let tool_calls = choice
-            .map(|c| extract_tool_calls(&c.message.tool_calls))
-            .unwrap_or_default();
-
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|u| Usage {
-                input_tokens: u.prompt_tokens.unwrap_or(0) as u32,
-                output_tokens: u.completion_tokens.unwrap_or(0) as u32,
-                ..Default::default()
-            })
-            .unwrap_or_default();
-
-        Ok(CompletionResponse {
-            text,
-            tool_calls,
-            usage,
-        })
+        match self.wire_api {
+            WireApi::ChatCompletions => self.complete_chat(messages, tools).await,
+            WireApi::Responses => self.complete_responses(messages, tools).await,
+        }
     }
 
     fn stream(
         &self,
         messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        let oai_messages = build_messages(&messages);
-        let request =
-            build_stream_request(&self.model, oai_messages, &[], self.reasoning_effort);
-        make_stream(&self.client, request)
+        self.stream_with_tools(messages, vec![])
     }
 
     fn stream_with_tools(
@@ -390,9 +461,115 @@ impl LlmProvider for OpenAiOxideProvider {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        let oai_messages = build_messages(&messages);
-        let request =
-            build_stream_request(&self.model, oai_messages, &tools, self.reasoning_effort);
-        make_stream(&self.client, request)
+        match self.wire_api {
+            WireApi::ChatCompletions => {
+                let oai_messages = build_chat_messages(&messages);
+                let mut request = ChatCompletionRequest::new(&self.model, oai_messages);
+                if !tools.is_empty() {
+                    request.tools = Some(
+                        tools.iter().filter_map(|t| serde_json::from_value(t.clone()).ok()).collect(),
+                    );
+                }
+                if let Some(effort) = self.reasoning_effort {
+                    request.reasoning_effort = Some(to_oxide_effort(effort));
+                }
+                request.stream_options = Some(StreamOptions { include_usage: Some(true) });
+                stream_chat(&self.client, request)
+            }
+            WireApi::Responses => {
+                let (instructions, input) = split_for_responses(&messages);
+                let mut request = ResponseCreateRequest::new(&self.model)
+                    .input(ResponseInput::Messages(input));
+                if let Some(instr) = instructions {
+                    request = request.instructions(instr);
+                }
+                if !tools.is_empty() {
+                    request.tools = Some(tools_to_response_tools(&tools));
+                }
+                if let Some(effort) = self.reasoning_effort {
+                    request.reasoning = Some(openai_oxide::types::responses::Reasoning {
+                        effort: Some(to_oxide_effort(effort)),
+                        summary: Some(ReasoningSummary::Auto),
+                    });
+                }
+                stream_responses(&self.client, request)
+            }
+        }
+    }
+}
+
+impl OpenAiOxideProvider {
+    async fn complete_chat(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+    ) -> anyhow::Result<CompletionResponse> {
+        let oai_messages = build_chat_messages(messages);
+        let mut request = ChatCompletionRequest::new(&self.model, oai_messages);
+        if !tools.is_empty() {
+            request.tools = Some(
+                tools.iter().filter_map(|t| serde_json::from_value(t.clone()).ok()).collect(),
+            );
+        }
+        if let Some(effort) = self.reasoning_effort {
+            request.reasoning_effort = Some(to_oxide_effort(effort));
+        }
+
+        let response = self.client.chat().completions().create(request).await?;
+        let choice = response.choices.first();
+
+        Ok(CompletionResponse {
+            text: choice.and_then(|c| c.message.content.clone()),
+            tool_calls: choice.map(|c| extract_chat_tool_calls(&c.message.tool_calls)).unwrap_or_default(),
+            usage: response.usage.as_ref().map(|u| Usage {
+                input_tokens: u.prompt_tokens.unwrap_or(0) as u32,
+                output_tokens: u.completion_tokens.unwrap_or(0) as u32,
+                ..Default::default()
+            }).unwrap_or_default(),
+        })
+    }
+
+    async fn complete_responses(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+    ) -> anyhow::Result<CompletionResponse> {
+        let (instructions, input) = split_for_responses(messages);
+        let mut request = ResponseCreateRequest::new(&self.model)
+            .input(ResponseInput::Messages(input));
+        if let Some(instr) = instructions {
+            request = request.instructions(instr);
+        }
+        if !tools.is_empty() {
+            request.tools = Some(tools_to_response_tools(tools));
+        }
+        if let Some(effort) = self.reasoning_effort {
+            request.reasoning = Some(openai_oxide::types::responses::Reasoning {
+                effort: Some(to_oxide_effort(effort)),
+                summary: Some(ReasoningSummary::Auto),
+            });
+        }
+
+        let response = self.client.responses().create(request).await?;
+        let text = response.output_text();
+        let tool_calls = extract_responses_tool_calls(&response);
+
+        Ok(CompletionResponse {
+            text: if text.is_empty() { None } else { Some(text) },
+            tool_calls,
+            usage: response.usage.as_ref().map(|u| Usage {
+                input_tokens: u.input_tokens.unwrap_or(0) as u32,
+                output_tokens: u.output_tokens.unwrap_or(0) as u32,
+                ..Default::default()
+            }).unwrap_or_default(),
+        })
+    }
+}
+
+fn to_oxide_effort(effort: ReasoningEffort) -> openai_oxide::types::common::ReasoningEffort {
+    match effort {
+        ReasoningEffort::Low => openai_oxide::types::common::ReasoningEffort::Low,
+        ReasoningEffort::Medium => openai_oxide::types::common::ReasoningEffort::Medium,
+        ReasoningEffort::High => openai_oxide::types::common::ReasoningEffort::High,
     }
 }
