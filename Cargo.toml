@@ -173,7 +173,7 @@ toml              = "0.8"
 toml_edit         = "0.22"
 # LLM provider crates (optional, behind feature flags)
 async-openai = { features = ["chat-completion"], version = "0.32" }
-openai-oxide = { version = "0.10", default-features = false, features = ["reqwest-012", "chat", "responses", "models"] }
+openai-oxide = { version = "0.10.1", default-features = false, features = ["reqwest-012", "chat", "responses", "models", "websocket"] }
 base64       = "0.22"
 bytemuck     = { features = ["derive"], version = "1" }
 bytes        = "1"

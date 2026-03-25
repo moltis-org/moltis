@@ -43,6 +43,7 @@ pub struct OpenAiOxideProvider {
     alias: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
     wire_api: WireApi,
+    stream_transport: moltis_config::schema::ProviderStreamTransport,
 }
 
 impl OpenAiOxideProvider {
@@ -65,11 +66,20 @@ impl OpenAiOxideProvider {
             alias,
             reasoning_effort: None,
             wire_api: WireApi::default(),
+            stream_transport: moltis_config::schema::ProviderStreamTransport::default(),
         }
     }
 
     pub fn with_wire_api(mut self, wire_api: WireApi) -> Self {
         self.wire_api = wire_api;
+        self
+    }
+
+    pub fn with_stream_transport(
+        mut self,
+        transport: moltis_config::schema::ProviderStreamTransport,
+    ) -> Self {
+        self.stream_transport = transport;
         self
     }
 }
@@ -396,6 +406,180 @@ fn stream_responses<'a>(
     })
 }
 
+// ── Responses API streaming via WebSocket ──
+
+/// Stream Responses API events over persistent WebSocket connection.
+/// Lower latency than SSE — no TLS handshake per request.
+fn stream_responses_ws<'a>(
+    client: &'a OpenAI,
+    request: ResponseCreateRequest,
+) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>> {
+    Box::pin(async_stream::stream! {
+        let mut session = match client.ws_session().await {
+            Ok(s) => s,
+            Err(e) => {
+                yield StreamEvent::Error(format!("ws connect: {e}"));
+                return;
+            }
+        };
+
+        let mut ws_stream = match session.send_stream(request).await {
+            Ok(s) => s,
+            Err(e) => {
+                yield StreamEvent::Error(format!("ws send: {e}"));
+                return;
+            }
+        };
+
+        let mut tool_index: usize = 0;
+
+        while let Some(result) = ws_stream.next().await {
+            match result {
+                Ok(event) => match event {
+                    ResponseStreamEvent::ResponseOutputTextDelta(evt) => {
+                        if !evt.delta.is_empty() {
+                            yield StreamEvent::Delta(evt.delta);
+                        }
+                    }
+                    ResponseStreamEvent::ResponseOutputItemAdded(evt) => {
+                        if let OutputItem::FunctionCall(fc) = &evt.item {
+                            yield StreamEvent::ToolCallStart {
+                                id: fc.call_id.clone(),
+                                name: fc.name.clone(),
+                                index: tool_index,
+                            };
+                        }
+                    }
+                    ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(evt) => {
+                        if !evt.delta.is_empty() {
+                            yield StreamEvent::ToolCallArgumentsDelta {
+                                index: tool_index,
+                                delta: evt.delta,
+                            };
+                        }
+                    }
+                    ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_) => {
+                        yield StreamEvent::ToolCallComplete { index: tool_index };
+                        tool_index += 1;
+                    }
+                    ResponseStreamEvent::ResponseCompleted(evt) => {
+                        let usage = evt.response.usage.as_ref().map(|u| Usage {
+                            input_tokens: u.input_tokens.unwrap_or(0) as u32,
+                            output_tokens: u.output_tokens.unwrap_or(0) as u32,
+                            ..Default::default()
+                        }).unwrap_or_default();
+                        yield StreamEvent::Done(usage);
+                        return;
+                    }
+                    ResponseStreamEvent::ResponseFailed(evt) => {
+                        let msg = evt.response.error
+                            .as_ref()
+                            .map(|e| e.message.clone())
+                            .unwrap_or_else(|| "response.failed".into());
+                        yield StreamEvent::Error(msg);
+                        return;
+                    }
+                    _ => {}
+                },
+                Err(e) => {
+                    yield StreamEvent::Error(format!("ws: {e}"));
+                    return;
+                }
+            }
+        }
+        yield StreamEvent::Done(Usage::default());
+    })
+}
+
+/// Auto mode: try WebSocket, fallback to SSE on connection failure.
+fn stream_responses_ws_with_fallback<'a>(
+    client: &'a OpenAI,
+    request: ResponseCreateRequest,
+) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>> {
+    let sse_fallback = request.clone();
+    Box::pin(async_stream::stream! {
+        match client.ws_session().await {
+            Ok(mut session) => {
+                match session.send_stream(request).await {
+                    Ok(ws_stream) => {
+                        // WS succeeded — forward all events
+                        let mut inner = stream_responses_ws_inner(ws_stream);
+                        while let Some(event) = inner.next().await {
+                            yield event;
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::debug!(error = %e, "ws send failed, falling back to SSE");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "ws connect failed, falling back to SSE");
+            }
+        }
+
+        // Fallback to SSE
+        let mut sse = stream_responses(client, sse_fallback);
+        while let Some(event) = sse.next().await {
+            yield event;
+        }
+    })
+}
+
+/// Process WS event stream into StreamEvent — shared between ws and ws_with_fallback.
+fn stream_responses_ws_inner(
+    mut ws_stream: openai_oxide::websocket::WsEventStream<'_>,
+) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+    Box::pin(async_stream::stream! {
+        let mut tool_index: usize = 0;
+        while let Some(result) = ws_stream.next().await {
+            match result {
+                Ok(event) => match event {
+                    ResponseStreamEvent::ResponseOutputTextDelta(evt) => {
+                        if !evt.delta.is_empty() { yield StreamEvent::Delta(evt.delta); }
+                    }
+                    ResponseStreamEvent::ResponseOutputItemAdded(evt) => {
+                        if let OutputItem::FunctionCall(fc) = &evt.item {
+                            yield StreamEvent::ToolCallStart {
+                                id: fc.call_id.clone(), name: fc.name.clone(), index: tool_index,
+                            };
+                        }
+                    }
+                    ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(evt) => {
+                        if !evt.delta.is_empty() {
+                            yield StreamEvent::ToolCallArgumentsDelta { index: tool_index, delta: evt.delta };
+                        }
+                    }
+                    ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_) => {
+                        yield StreamEvent::ToolCallComplete { index: tool_index };
+                        tool_index += 1;
+                    }
+                    ResponseStreamEvent::ResponseCompleted(evt) => {
+                        let usage = evt.response.usage.as_ref().map(|u| Usage {
+                            input_tokens: u.input_tokens.unwrap_or(0) as u32,
+                            output_tokens: u.output_tokens.unwrap_or(0) as u32,
+                            ..Default::default()
+                        }).unwrap_or_default();
+                        yield StreamEvent::Done(usage);
+                        return;
+                    }
+                    ResponseStreamEvent::ResponseFailed(evt) => {
+                        let msg = evt.response.error.as_ref()
+                            .map(|e| e.message.clone())
+                            .unwrap_or_else(|| "response.failed".into());
+                        yield StreamEvent::Error(msg);
+                        return;
+                    }
+                    _ => {}
+                },
+                Err(e) => { yield StreamEvent::Error(format!("ws: {e}")); return; }
+            }
+        }
+        yield StreamEvent::Done(Usage::default());
+    })
+}
+
 // ── LlmProvider implementation ──
 
 #[async_trait]
@@ -430,6 +614,7 @@ impl LlmProvider for OpenAiOxideProvider {
             alias: self.alias.clone(),
             reasoning_effort: Some(effort),
             wire_api: self.wire_api,
+            stream_transport: self.stream_transport,
         }))
     }
 
@@ -461,6 +646,8 @@ impl LlmProvider for OpenAiOxideProvider {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        use moltis_config::schema::ProviderStreamTransport;
+
         match self.wire_api {
             WireApi::ChatCompletions => {
                 let oai_messages = build_chat_messages(&messages);
@@ -477,28 +664,48 @@ impl LlmProvider for OpenAiOxideProvider {
                 stream_chat(&self.client, request)
             }
             WireApi::Responses => {
-                let (instructions, input) = split_for_responses(&messages);
-                let mut request = ResponseCreateRequest::new(&self.model)
-                    .input(ResponseInput::Messages(input));
-                if let Some(instr) = instructions {
-                    request = request.instructions(instr);
+                let request = self.build_responses_request(&messages, &tools);
+                match self.stream_transport {
+                    ProviderStreamTransport::Websocket => {
+                        stream_responses_ws(&self.client, request)
+                    }
+                    ProviderStreamTransport::Auto => {
+                        // Auto: try WS, fallback to SSE
+                        stream_responses_ws_with_fallback(&self.client, request)
+                    }
+                    ProviderStreamTransport::Sse => {
+                        stream_responses(&self.client, request)
+                    }
                 }
-                if !tools.is_empty() {
-                    request.tools = Some(tools_to_response_tools(&tools));
-                }
-                if let Some(effort) = self.reasoning_effort {
-                    request.reasoning = Some(openai_oxide::types::responses::Reasoning {
-                        effort: Some(to_oxide_effort(effort)),
-                        summary: Some(ReasoningSummary::Auto),
-                    });
-                }
-                stream_responses(&self.client, request)
             }
         }
     }
 }
 
 impl OpenAiOxideProvider {
+    fn build_responses_request(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+    ) -> ResponseCreateRequest {
+        let (instructions, input) = split_for_responses(messages);
+        let mut request = ResponseCreateRequest::new(&self.model)
+            .input(ResponseInput::Messages(input));
+        if let Some(instr) = instructions {
+            request = request.instructions(instr);
+        }
+        if !tools.is_empty() {
+            request.tools = Some(tools_to_response_tools(tools));
+        }
+        if let Some(effort) = self.reasoning_effort {
+            request.reasoning = Some(openai_oxide::types::responses::Reasoning {
+                effort: Some(to_oxide_effort(effort)),
+                summary: Some(ReasoningSummary::Auto),
+            });
+        }
+        request
+    }
+
     async fn complete_chat(
         &self,
         messages: &[ChatMessage],
@@ -534,22 +741,7 @@ impl OpenAiOxideProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        let (instructions, input) = split_for_responses(messages);
-        let mut request = ResponseCreateRequest::new(&self.model)
-            .input(ResponseInput::Messages(input));
-        if let Some(instr) = instructions {
-            request = request.instructions(instr);
-        }
-        if !tools.is_empty() {
-            request.tools = Some(tools_to_response_tools(tools));
-        }
-        if let Some(effort) = self.reasoning_effort {
-            request.reasoning = Some(openai_oxide::types::responses::Reasoning {
-                effort: Some(to_oxide_effort(effort)),
-                summary: Some(ReasoningSummary::Auto),
-            });
-        }
-
+        let request = self.build_responses_request(messages, tools);
         let response = self.client.responses().create(request).await?;
         let text = response.output_text();
         let tool_calls = extract_responses_tool_calls(&response);
