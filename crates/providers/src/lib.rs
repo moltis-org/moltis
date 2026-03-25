@@ -11,6 +11,9 @@ pub mod ws_pool;
 #[cfg(feature = "provider-genai")]
 pub mod genai_provider;
 
+#[cfg(feature = "provider-openai-oxide")]
+pub mod openai_oxide_provider;
+
 #[cfg(feature = "provider-async-openai")]
 pub mod async_openai_provider;
 
@@ -1388,6 +1391,7 @@ impl ProviderRegistry {
         reg.register_openai_compatible_providers(config, env_overrides, prefetched);
         reg.register_custom_providers(config, prefetched);
 
+
         #[cfg(feature = "provider-async-openai")]
         {
             reg.register_async_openai_providers(config, env_overrides);
@@ -1668,6 +1672,7 @@ impl ProviderRegistry {
             );
         }
     }
+
 
     #[cfg(feature = "provider-async-openai")]
     fn register_async_openai_providers(
