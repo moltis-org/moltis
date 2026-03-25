@@ -27,14 +27,7 @@ pub struct OpenAiOxideProvider {
 
 impl OpenAiOxideProvider {
     pub fn new(api_key: secrecy::Secret<String>, model: String, base_url: String) -> Self {
-        use secrecy::ExposeSecret;
-        let config = ClientConfig::new(api_key.expose_secret()).base_url(&base_url);
-        let client = OpenAI::with_config(config);
-        Self {
-            model,
-            client,
-            alias: None,
-        }
+        Self::with_alias(api_key, model, base_url, None)
     }
 
     pub fn with_alias(
@@ -126,6 +119,7 @@ impl LlmProvider for OpenAiOxideProvider {
         &self.model
     }
 
+    #[tracing::instrument(skip(self, messages, _tools), fields(model = %self.model))]
     async fn complete(
         &self,
         messages: &[ChatMessage],
@@ -157,7 +151,6 @@ impl LlmProvider for OpenAiOxideProvider {
         })
     }
 
-    #[allow(clippy::collapsible_if)]
     fn stream(
         &self,
         messages: Vec<ChatMessage>,

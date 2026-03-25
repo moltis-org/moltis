@@ -1397,6 +1397,11 @@ impl ProviderRegistry {
             reg.register_async_openai_providers(config, env_overrides);
         }
 
+        #[cfg(feature = "provider-openai-oxide")]
+        {
+            reg.register_openai_oxide_providers(config, env_overrides);
+        }
+
         // GenAI providers last: they don't support tool calling,
         // so they only fill in models not already covered above.
         #[cfg(feature = "provider-genai")]
@@ -1717,6 +1722,54 @@ impl ProviderRegistry {
                 id: model_id,
                 provider: provider_label,
                 display_name: "GPT-4o (async-openai)".into(),
+                created_at: None,
+            },
+            provider,
+        );
+    }
+
+    #[cfg(feature = "provider-openai-oxide")]
+    fn register_openai_oxide_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) {
+        if !config.is_enabled("openai") {
+            return;
+        }
+
+        let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides) else {
+            return;
+        };
+
+        let base_url = config
+            .get("openai")
+            .and_then(|e| e.base_url.clone())
+            .or_else(|| env_value(env_overrides, "OPENAI_BASE_URL"))
+            .unwrap_or_else(|| "https://api.openai.com/v1".into());
+
+        let model_id = configured_models_for_provider(config, "openai")
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "gpt-4o".to_string());
+
+        let alias = config.get("openai").and_then(|e| e.alias.clone());
+        let provider_label = alias.clone().unwrap_or_else(|| "openai-oxide".into());
+        if self.has_model_any_provider(&model_id) {
+            return;
+        }
+
+        let provider = Arc::new(openai_oxide_provider::OpenAiOxideProvider::with_alias(
+            key,
+            model_id.clone(),
+            base_url,
+            alias,
+        ));
+        self.register(
+            ModelInfo {
+                id: model_id,
+                provider: provider_label,
+                display_name: "GPT-4o (openai-oxide)".into(),
                 created_at: None,
             },
             provider,
