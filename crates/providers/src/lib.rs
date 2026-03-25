@@ -1399,6 +1399,8 @@ impl ProviderRegistry {
 
         #[cfg(feature = "provider-openai-oxide")]
         {
+            #[cfg(feature = "provider-async-openai")]
+            tracing::debug!("provider-async-openai already registered; provider-openai-oxide may be skipped if model already claimed");
             reg.register_openai_oxide_providers(config, env_overrides);
         }
 

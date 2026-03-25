@@ -5,7 +5,10 @@ use {
     futures::StreamExt,
     openai_oxide::{
         config::ClientConfig,
-        types::chat::{ChatCompletionMessageParam, ChatCompletionRequest, ContentPart, ImageUrl},
+        types::chat::{
+            ChatCompletionMessageParam, ChatCompletionRequest, ContentPart, ImageUrl,
+            StreamOptions,
+        },
         OpenAI,
     },
     tokio_stream::Stream,
@@ -18,6 +21,10 @@ use moltis_agents::model::{
 /// Provider backed by the `openai-oxide` crate.
 /// Works with OpenAI and any OpenAI-compatible API (Ollama, vLLM, etc.)
 /// via custom base URL.
+///
+/// Note: `provider-openai-oxide` and `provider-async-openai` both register
+/// against the `"openai"` config key. If both features are enabled,
+/// whichever registers first wins. Disable one to use the other.
 pub struct OpenAiOxideProvider {
     model: String,
     client: OpenAI,
@@ -98,10 +105,14 @@ fn build_messages(messages: &[ChatMessage]) -> Vec<ChatCompletionMessageParam> {
                     name: None,
                 });
             }
-            ChatMessage::Tool { content, .. } => {
-                out.push(ChatCompletionMessageParam::User {
-                    content: openai_oxide::types::chat::UserContent::Text(content.clone()),
-                    name: None,
+            ChatMessage::Tool {
+                content,
+                tool_call_id,
+                ..
+            } => {
+                out.push(ChatCompletionMessageParam::Tool {
+                    content: content.clone(),
+                    tool_call_id: tool_call_id.clone(),
                 });
             }
         }
@@ -119,14 +130,24 @@ impl LlmProvider for OpenAiOxideProvider {
         &self.model
     }
 
-    #[tracing::instrument(skip(self, messages, _tools), fields(model = %self.model))]
+    #[tracing::instrument(skip(self, messages, tools), fields(model = %self.model))]
     async fn complete(
         &self,
         messages: &[ChatMessage],
-        _tools: &[serde_json::Value],
+        tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
         let oai_messages = build_messages(messages);
-        let request = ChatCompletionRequest::new(&self.model, oai_messages);
+        let mut request = ChatCompletionRequest::new(&self.model, oai_messages);
+
+        if !tools.is_empty() {
+            request.tools = Some(
+                tools
+                    .iter()
+                    .filter_map(|t| serde_json::from_value(t.clone()).ok())
+                    .collect(),
+            );
+        }
+
         let response = self.client.chat().completions().create(request).await?;
 
         let text = response
@@ -157,7 +178,10 @@ impl LlmProvider for OpenAiOxideProvider {
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             let oai_messages = build_messages(&messages);
-            let request = ChatCompletionRequest::new(&self.model, oai_messages);
+            let mut request = ChatCompletionRequest::new(&self.model, oai_messages);
+            request.stream_options = Some(StreamOptions {
+                include_usage: Some(true),
+            });
 
             let mut stream = match self.client.chat().completions().create_stream(request).await {
                 Ok(s) => s,
