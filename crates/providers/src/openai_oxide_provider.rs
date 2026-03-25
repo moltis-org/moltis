@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::pin::Pin;
 
 use {
@@ -15,7 +16,7 @@ use {
 };
 
 use moltis_agents::model::{
-    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage, UserContent,
+    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
 };
 
 /// Provider backed by the `openai-oxide` crate.
@@ -64,11 +65,31 @@ fn build_messages(messages: &[ChatMessage]) -> Vec<ChatCompletionMessageParam> {
                     name: None,
                 });
             }
-            ChatMessage::Assistant { content, .. } => {
+            ChatMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                let tc = if tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(
+                        tool_calls
+                            .iter()
+                            .map(|tc| openai_oxide::types::chat::ToolCall {
+                                id: tc.id.clone(),
+                                type_: "function".into(),
+                                function: openai_oxide::types::chat::FunctionCall {
+                                    name: tc.name.clone(),
+                                    arguments: tc.arguments.to_string(),
+                                },
+                            })
+                            .collect(),
+                    )
+                };
                 out.push(ChatCompletionMessageParam::Assistant {
                     content: content.clone(),
                     name: None,
-                    tool_calls: None,
+                    tool_calls: tc,
                     refusal: None,
                 });
             }
@@ -120,6 +141,25 @@ fn build_messages(messages: &[ChatMessage]) -> Vec<ChatCompletionMessageParam> {
     out
 }
 
+/// Extract ToolCall from openai-oxide response.
+fn extract_tool_calls(
+    tool_calls: &Option<Vec<openai_oxide::types::chat::ToolCall>>,
+) -> Vec<ToolCall> {
+    tool_calls
+        .as_ref()
+        .map(|tcs| {
+            tcs.iter()
+                .map(|tc| ToolCall {
+                    id: tc.id.clone(),
+                    name: tc.function.name.clone(),
+                    arguments: serde_json::from_str(&tc.function.arguments)
+                        .unwrap_or(serde_json::Value::Object(Default::default())),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiOxideProvider {
     fn name(&self) -> &str {
@@ -150,10 +190,11 @@ impl LlmProvider for OpenAiOxideProvider {
 
         let response = self.client.chat().completions().create(request).await?;
 
-        let text = response
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone());
+        let choice = response.choices.first();
+        let text = choice.and_then(|c| c.message.content.clone());
+        let tool_calls = choice
+            .map(|c| extract_tool_calls(&c.message.tool_calls))
+            .unwrap_or_default();
 
         let usage = response
             .usage
@@ -167,7 +208,7 @@ impl LlmProvider for OpenAiOxideProvider {
 
         Ok(CompletionResponse {
             text,
-            tool_calls: vec![],
+            tool_calls,
             usage,
         })
     }
@@ -191,16 +232,65 @@ impl LlmProvider for OpenAiOxideProvider {
                 }
             };
 
+            // Track which tool call indices we've seen start for.
+            let mut seen_starts: HashMap<i32, bool> = HashMap::new();
+
             while let Some(result) = stream.next().await {
                 match result {
                     Ok(response) => {
                         for choice in &response.choices {
+                            // Text deltas
                             if let Some(ref content) = choice.delta.content {
                                 if !content.is_empty() {
                                     yield StreamEvent::Delta(content.clone());
                                 }
                             }
+
+                            // Streaming tool calls
+                            if let Some(ref tcs) = choice.delta.tool_calls {
+                                for tc in tcs {
+                                    let idx = tc.index as usize;
+
+                                    // Emit ToolCallStart on first delta for this index
+                                    if !seen_starts.contains_key(&tc.index) {
+                                        seen_starts.insert(tc.index, true);
+                                        let name = tc
+                                            .function
+                                            .as_ref()
+                                            .and_then(|f| f.name.clone())
+                                            .unwrap_or_default();
+                                        let id = tc.id.clone().unwrap_or_default();
+                                        yield StreamEvent::ToolCallStart {
+                                            id,
+                                            name,
+                                            index: idx,
+                                        };
+                                    }
+
+                                    // Emit argument deltas
+                                    if let Some(ref f) = tc.function {
+                                        if let Some(ref args) = f.arguments {
+                                            if !args.is_empty() {
+                                                yield StreamEvent::ToolCallArgumentsDelta {
+                                                    index: idx,
+                                                    delta: args.clone(),
+                                                };
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Check finish_reason for tool_calls completion
+                            if choice.finish_reason.as_deref() == Some("tool_calls") {
+                                for &idx in seen_starts.keys() {
+                                    yield StreamEvent::ToolCallComplete {
+                                        index: idx as usize,
+                                    };
+                                }
+                            }
                         }
+
                         if let Some(ref u) = response.usage {
                             yield StreamEvent::Done(Usage {
                                 input_tokens: u.prompt_tokens.unwrap_or(0) as u32,
