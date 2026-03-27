@@ -96,7 +96,7 @@ offered = ["local-llm", "github-copilot", "openai-codex", "openai", "anthropic",
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
-#   "zai", "venice", "ollama", "local-llm", "openai-codex",
+#   "novita", "zai", "venice", "ollama", "local-llm", "openai-codex",
 #   "github-copilot", "kimi-code"
 
 # ── Anthropic (Claude) ────────────────────────────────────────
@@ -163,6 +163,14 @@ models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 models = ["kimi-k2.5"]                        # Preferred models shown first
 # base_url = "https://api.moonshot.ai/v1"
 # alias = "moonshot"
+
+# ── Novita AI ─────────────────────────────────────────────────
+# [providers.novita]
+# enabled = true
+# api_key = "..."                             # Or set NOVITA_API_KEY env var
+# models = ["moonshotai/kimi-k2.5", "deepseek/deepseek-v3.2", "zai-org/glm-5"]
+# base_url = "https://api.novita.ai/openai"
+# alias = "novita"
 
 [providers.ollama]
 # base_url = "http://localhost:11434"
