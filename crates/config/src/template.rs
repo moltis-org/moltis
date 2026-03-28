@@ -367,7 +367,7 @@ deny = []                         # Tools to always deny (e.g., ["browser"])
 
 [tools.web.search]
 enabled = true                    # Enable web search tool
-provider = "brave"                # Search provider: "brave" or "perplexity"
+provider = "brave"                # Search provider: "brave", "perplexity", or "jina"
 max_results = 5                   # Number of results to return (1-10)
 timeout_seconds = 30              # HTTP request timeout
 cache_ttl_minutes = 15            # Cache results for this many minutes (0 = no cache)

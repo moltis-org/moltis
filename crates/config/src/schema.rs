@@ -1577,6 +1577,7 @@ pub enum SearchProvider {
     #[default]
     Brave,
     Perplexity,
+    Jina,
 }
 
 /// Web search tool configuration.
