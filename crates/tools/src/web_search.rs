@@ -1423,4 +1423,142 @@ mod tests {
             false,
         )
     }
+
+    #[test]
+    fn test_jina_api_key_candidates() {
+        let tool = jina_tool();
+        assert_eq!(tool.api_key_candidates(), &["JINA_API_KEY"]);
+    }
+
+    #[test]
+    fn test_jina_parse_malformed_json() {
+        let json = serde_json::json!({"not_data": "unexpected structure"});
+        let results = parse_jina_results(&json);
+        assert!(results.is_empty(), "malformed JSON should produce empty results");
+    }
+
+    #[test]
+    fn test_jina_parse_missing_data_key() {
+        let json = serde_json::json!({});
+        let results = parse_jina_results(&json);
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_jina_search_http_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(429)
+            .with_body("rate limited")
+            .create_async()
+            .await;
+
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new("jina-test-key".into()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        );
+
+        let result = tool
+            .search_jina_with_base_url("test", 5, "jina-test-key", &server.url())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("429"), "error should mention status code: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_jina_search_malformed_body() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("not valid json {{{")
+            .create_async()
+            .await;
+
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new("jina-test-key".into()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        );
+
+        let result = tool
+            .search_jina_with_base_url("test", 5, "jina-test-key", &server.url())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("failed to parse Jina JSON"),
+            "error should mention parse failure: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jina_search_empty_results() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("{\"data\":[]}")
+            .create_async()
+            .await;
+
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new("jina-test-key".into()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        );
+
+        let result = tool
+            .search_jina_with_base_url("test", 5, "jina-test-key", &server.url())
+            .await
+            .unwrap();
+        assert_eq!(result["provider"], "jina");
+        assert!(result["results"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_jina_env_var_resolution() {
+        let key = format!("JINA_API_KEY_TEST_{}", std::process::id());
+        let provider = Arc::new(MockEnvProvider {
+            vars: vec![(key.clone(), "runtime-jina-key".to_string())],
+        });
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new(String::new()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        )
+        .with_env_provider(provider);
+
+        assert_eq!(
+            tool.env_value_with_provider(&key).await,
+            Some("runtime-jina-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_jina_cache_key_includes_provider() {
+        // Verify that Jina provider produces distinct cache keys from Brave.
+        let jina = jina_tool();
+        let brave = brave_tool();
+        let jina_key = format!("{:?}:no-key:test:5", jina.provider);
+        let brave_key = format!("{:?}:no-key:test:5", brave.provider);
+        assert_ne!(jina_key, brave_key, "cache keys must differ between providers");
+    }
 }
