@@ -666,8 +666,18 @@ fn parse_jina_results(body: &serde_json::Value, max_results: u8) -> Vec<serde_js
         .into_iter()
         .take(max_results as usize)
         .filter_map(|result| {
-            let title = result.title.as_deref().map(str::trim).unwrap_or("").to_string();
-            let url = result.url.as_deref().map(str::trim).unwrap_or("").to_string();
+            let title = result
+                .title
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .to_string();
+            let url = result
+                .url
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .to_string();
             if title.is_empty() || url.is_empty() {
                 return None;
             }
@@ -909,9 +919,7 @@ impl AgentTool for WebSearchTool {
                     self.search_perplexity(query, &api_key, &base_url, model)
                         .await?
                 },
-                SearchProvider::Jina => {
-                    self.search_jina(query, count, &params, &api_key).await?
-                },
+                SearchProvider::Jina => self.search_jina(query, count, &params, &api_key).await?,
             }
         };
 
@@ -1180,7 +1188,8 @@ mod tests {
             duckduckgo_fallback: true,
             ..Default::default()
         };
-        let tool = WebSearchTool::from_config(&cfg).expect("Jina should be enabled with DDG fallback");
+        let tool =
+            WebSearchTool::from_config(&cfg).expect("Jina should be enabled with DDG fallback");
         assert!(tool.fallback_enabled);
     }
 
@@ -1205,15 +1214,18 @@ mod tests {
             .match_header("Accept", "application/json")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::json!({
-                "data": [
-                    {
-                        "title": "Mock Result",
-                        "url": "https://example.com",
-                        "content": "Mock content"
-                    }
-                ]
-            }).to_string())
+            .with_body(
+                serde_json::json!({
+                    "data": [
+                        {
+                            "title": "Mock Result",
+                            "url": "https://example.com",
+                            "content": "Mock content"
+                        }
+                    ]
+                })
+                .to_string(),
+            )
             .create_async()
             .await;
 
@@ -1228,12 +1240,20 @@ mod tests {
 
         // Test via search_jina_with_base_url to target the mock server.
         let result = tool
-            .search_jina_with_base_url("test query", 5, &serde_json::Value::Null, "jina-test-key", &server.url())
+            .search_jina_with_base_url(
+                "test query",
+                5,
+                &serde_json::Value::Null,
+                "jina-test-key",
+                &server.url(),
+            )
             .await
             .unwrap();
         assert_eq!(result["provider"], "jina");
         assert_eq!(result["query"], "test query");
-        let results = result["results"].as_array().expect("results should be array");
+        let results = result["results"]
+            .as_array()
+            .expect("results should be array");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0]["title"], "Mock Result");
 
@@ -1479,7 +1499,10 @@ mod tests {
     fn test_jina_parse_malformed_json() {
         let json = serde_json::json!({"not_data": "unexpected structure"});
         let results = parse_jina_results(&json, 10);
-        assert!(results.is_empty(), "malformed JSON should produce empty results");
+        assert!(
+            results.is_empty(),
+            "malformed JSON should produce empty results"
+        );
     }
 
     #[test]
@@ -1509,11 +1532,20 @@ mod tests {
         );
 
         let result = tool
-            .search_jina_with_base_url("test", 5, &serde_json::Value::Null, "jina-test-key", &server.url())
+            .search_jina_with_base_url(
+                "test",
+                5,
+                &serde_json::Value::Null,
+                "jina-test-key",
+                &server.url(),
+            )
             .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("429"), "error should mention status code: {err}");
+        assert!(
+            err.contains("429"),
+            "error should mention status code: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1537,7 +1569,13 @@ mod tests {
         );
 
         let result = tool
-            .search_jina_with_base_url("test", 5, &serde_json::Value::Null, "jina-test-key", &server.url())
+            .search_jina_with_base_url(
+                "test",
+                5,
+                &serde_json::Value::Null,
+                "jina-test-key",
+                &server.url(),
+            )
             .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -1568,7 +1606,13 @@ mod tests {
         );
 
         let result = tool
-            .search_jina_with_base_url("test", 5, &serde_json::Value::Null, "jina-test-key", &server.url())
+            .search_jina_with_base_url(
+                "test",
+                5,
+                &serde_json::Value::Null,
+                "jina-test-key",
+                &server.url(),
+            )
             .await
             .unwrap();
         assert_eq!(result["provider"], "jina");
@@ -1604,7 +1648,10 @@ mod tests {
         let brave = brave_tool();
         let jina_key = format!("{:?}:no-key:test:5", jina.provider);
         let brave_key = format!("{:?}:no-key:test:5", brave.provider);
-        assert_ne!(jina_key, brave_key, "cache keys must differ between providers");
+        assert_ne!(
+            jina_key, brave_key,
+            "cache keys must differ between providers"
+        );
     }
 
     #[tokio::test]
