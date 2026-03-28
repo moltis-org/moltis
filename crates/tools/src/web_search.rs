@@ -519,7 +519,7 @@ impl WebSearchTool {
                 "failed to parse Jina JSON body: {error}; body starts with: {snippet}"
             ))
         })?;
-        let results = parse_jina_results(&body);
+        let results = parse_jina_results(&body, count);
 
         Ok(serde_json::json!({
             "provider": "jina",
@@ -650,13 +650,21 @@ fn parse_brave_results(body: &serde_json::Value) -> Vec<BraveResult> {
 }
 
 /// Parse Jina Search JSON response into normalized result rows.
-fn parse_jina_results(body: &serde_json::Value) -> Vec<serde_json::Value> {
+///
+/// `max_results` enforces a client-side cap because the Jina SERP API does not
+/// document a `count` query parameter — the API may return more items than
+/// requested.
+fn parse_jina_results(body: &serde_json::Value, max_results: u8) -> Vec<serde_json::Value> {
     let resp: JinaSearchResponse = match serde_json::from_value(body.clone()) {
         Ok(r) => r,
-        Err(_) => return Vec::new(),
+        Err(err) => {
+            warn!("failed to deserialize Jina response: {err}");
+            return Vec::new();
+        },
     };
     resp.data
         .into_iter()
+        .take(max_results as usize)
         .filter_map(|result| {
             let title = result.title.as_deref().map(str::trim).unwrap_or("").to_string();
             let url = result.url.as_deref().map(str::trim).unwrap_or("").to_string();
@@ -1391,7 +1399,7 @@ mod tests {
                 }
             ]
         });
-        let results = parse_jina_results(&json);
+        let results = parse_jina_results(&json, 10);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["title"], "Rust Programming");
         assert_eq!(results[0]["url"], "https://rust-lang.org");
@@ -1400,9 +1408,25 @@ mod tests {
     }
 
     #[test]
+    fn test_jina_parse_client_side_truncation() {
+        let json = serde_json::json!({
+            "data": [
+                {"title": "A", "url": "https://a.com", "content": "a"},
+                {"title": "B", "url": "https://b.com", "content": "b"},
+                {"title": "C", "url": "https://c.com", "content": "c"},
+                {"title": "D", "url": "https://d.com", "content": "d"},
+                {"title": "E", "url": "https://e.com", "content": "e"},
+            ]
+        });
+        let results = parse_jina_results(&json, 3);
+        assert_eq!(results.len(), 3, "should truncate to max_results");
+        assert_eq!(results[2]["title"], "C");
+    }
+
+    #[test]
     fn test_jina_response_parsing_empty() {
         let json = serde_json::json!({"data": []});
-        let results = parse_jina_results(&json);
+        let results = parse_jina_results(&json, 10);
         assert!(results.is_empty());
     }
 
@@ -1416,7 +1440,7 @@ mod tests {
                 {"title": "No content", "url": "https://example.org"}
             ]
         });
-        let results = parse_jina_results(&json);
+        let results = parse_jina_results(&json, 10);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["title"], "Valid");
         assert_eq!(results[1]["title"], "No content");
@@ -1454,14 +1478,14 @@ mod tests {
     #[test]
     fn test_jina_parse_malformed_json() {
         let json = serde_json::json!({"not_data": "unexpected structure"});
-        let results = parse_jina_results(&json);
+        let results = parse_jina_results(&json, 10);
         assert!(results.is_empty(), "malformed JSON should produce empty results");
     }
 
     #[test]
     fn test_jina_parse_missing_data_key() {
         let json = serde_json::json!({});
-        let results = parse_jina_results(&json);
+        let results = parse_jina_results(&json, 10);
         assert!(results.is_empty());
     }
 
