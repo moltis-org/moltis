@@ -16,6 +16,7 @@ provider-genai          = ["dep:genai"]
 provider-github-copilot = ["dep:moltis-oauth"]
 provider-kimi-code      = ["dep:moltis-oauth"]
 provider-openai-codex   = ["dep:base64", "dep:moltis-oauth"]
+provider-openai-oxide   = ["dep:openai-oxide"]
 
 [dependencies]
 anyhow            = { workspace = true }
@@ -45,6 +46,7 @@ genai          = { optional = true, workspace = true }
 llama-cpp-2    = { optional = true, workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 moltis-oauth   = { optional = true, workspace = true }
+openai-oxide   = { optional = true, workspace = true }
 sysinfo        = { optional = true, workspace = true }
 
 [dev-dependencies]
