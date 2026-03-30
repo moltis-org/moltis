@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -213,6 +212,25 @@ fn split_for_responses(messages: &[ChatMessage]) -> (Option<String>, Vec<Respons
                     content: serde_json::json!(text),
                 });
             }
+            ChatMessage::User {
+                content: UserContent::Multimodal(parts),
+            } => {
+                // Flatten multimodal to text for Responses API.
+                let text: String = parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        moltis_agents::model::ContentPart::Text(t) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.is_empty() {
+                    input.push(ResponseInputItem {
+                        role: openai_oxide::types::responses::Role::User,
+                        content: serde_json::json!(text),
+                    });
+                }
+            }
             ChatMessage::Assistant { content, .. } => {
                 if let Some(text) = content {
                     input.push(ResponseInputItem {
@@ -221,7 +239,21 @@ fn split_for_responses(messages: &[ChatMessage]) -> (Option<String>, Vec<Respons
                     });
                 }
             }
-            _ => {}
+            ChatMessage::Tool {
+                content,
+                tool_call_id,
+                ..
+            } => {
+                // Map tool results as function_call_output items.
+                input.push(ResponseInputItem {
+                    role: openai_oxide::types::responses::Role::User,
+                    content: serde_json::json!({
+                        "type": "function_call_output",
+                        "call_id": tool_call_id,
+                        "output": content
+                    }),
+                });
+            }
         }
     }
 
@@ -272,7 +304,7 @@ fn stream_chat<'a>(
             }
         };
 
-        let mut seen_starts: HashMap<i32, bool> = HashMap::new();
+        let mut seen_starts: std::collections::BTreeMap<i32, bool> = std::collections::BTreeMap::new();
 
         while let Some(result) = stream.next().await {
             match result {
