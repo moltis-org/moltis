@@ -5,7 +5,7 @@ repository.workspace = true
 version.workspace    = true
 
 [features]
-default                 = ["metrics", "provider-async-openai", "provider-genai"]
+default                 = ["metrics", "provider-async-openai", "provider-openai-oxide", "provider-genai"]
 local-llm               = ["dep:directories", "dep:encoding_rs", "dep:llama-cpp-2", "dep:sysinfo"]
 local-llm-cuda          = ["llama-cpp-2/cuda", "local-llm"]
 local-llm-metal         = ["llama-cpp-2/metal", "local-llm"]

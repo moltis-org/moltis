@@ -1447,9 +1447,7 @@ impl ProviderRegistry {
 
         #[cfg(feature = "provider-openai-oxide")]
         {
-            #[cfg(feature = "provider-async-openai")]
-            tracing::debug!("provider-async-openai already registered; provider-openai-oxide may be skipped if model already claimed");
-            reg.register_openai_oxide_providers(config, env_overrides);
+            reg.register_openai_oxide_providers(config, env_overrides, prefetched);
         }
 
         // GenAI providers last: they don't support tool calling,
@@ -1778,52 +1776,83 @@ impl ProviderRegistry {
         );
     }
 
+    /// Register openai-oxide providers from `[providers.openai-oxide]` config.
+    ///
+    /// Uses the same `OPENAI_API_KEY` env var as the built-in OpenAI provider.
+    /// Falls back to the built-in OpenAI model catalog for discovery.
     #[cfg(feature = "provider-openai-oxide")]
     fn register_openai_oxide_providers(
         &mut self,
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
     ) {
-        if !config.is_enabled("openai") {
+        const CONFIG_KEY: &str = "openai-oxide";
+
+        if !config.is_enabled(CONFIG_KEY) {
             return;
         }
 
-        let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides) else {
+        // Accept key from [providers.openai-oxide] or fall back to OPENAI_API_KEY.
+        let Some(key) = resolve_api_key(config, CONFIG_KEY, "OPENAI_API_KEY", env_overrides)
+        else {
             return;
         };
 
-        let base_url = config
-            .get("openai")
+        let entry = config.get(CONFIG_KEY);
+        let base_url = entry
             .and_then(|e| e.base_url.clone())
             .or_else(|| env_value(env_overrides, "OPENAI_BASE_URL"))
             .unwrap_or_else(|| "https://api.openai.com/v1".into());
 
-        let model_id = configured_models_for_provider(config, "openai")
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "gpt-4o".to_string());
+        let alias = entry.and_then(|e| e.alias.clone());
+        let provider_label = alias.clone().unwrap_or_else(|| CONFIG_KEY.into());
+        let wire_api = entry.map(|e| e.wire_api).unwrap_or_default();
+        let stream_transport = entry.map(|e| e.stream_transport).unwrap_or_default();
 
-        let alias = config.get("openai").and_then(|e| e.alias.clone());
-        let provider_label = alias.clone().unwrap_or_else(|| "openai-oxide".into());
-        if self.has_model_any_provider(&model_id) {
-            return;
+        // Build model catalog: preferred + discovered (reuse OpenAI catalog).
+        let preferred = configured_models_for_provider(config, CONFIG_KEY);
+        let discovered = if should_fetch_models(config, CONFIG_KEY) {
+            let fallback = openai::default_model_catalog();
+            // Use "openai" prefetched models (same API endpoint).
+            match prefetched.get("openai") {
+                Some(live) => merge_discovered_with_fallback_catalog(live.clone(), fallback),
+                None => fallback,
+            }
+        } else {
+            Vec::new()
+        };
+        let models = merge_preferred_and_discovered_models(preferred, discovered);
+
+        let mut registered = 0usize;
+        for model in models {
+            let (model_id, display_name, created_at) =
+                (model.id, model.display_name, model.created_at);
+            if self.has_provider_model(&provider_label, &model_id) {
+                continue;
+            }
+            let provider = Arc::new(
+                openai_oxide_provider::OpenAiOxideProvider::with_alias(
+                    key.clone(),
+                    model_id.clone(),
+                    base_url.clone(),
+                    alias.clone(),
+                )
+                .with_wire_api(wire_api)
+                .with_stream_transport(stream_transport),
+            );
+            self.register(
+                ModelInfo {
+                    id: model_id,
+                    provider: provider_label.clone(),
+                    display_name,
+                    created_at,
+                },
+                provider,
+            );
+            registered += 1;
         }
-
-        let provider = Arc::new(openai_oxide_provider::OpenAiOxideProvider::with_alias(
-            key,
-            model_id.clone(),
-            base_url,
-            alias,
-        ));
-        self.register(
-            ModelInfo {
-                id: model_id,
-                provider: provider_label,
-                display_name: "GPT-4o (openai-oxide)".into(),
-                created_at: None,
-            },
-            provider,
-        );
+        tracing::info!(registered, label = %provider_label, "openai-oxide: registered models");
     }
 
     #[cfg(feature = "provider-openai-codex")]
