@@ -1327,7 +1327,9 @@ pub struct McpOAuthOverrideEntry {
 ///
 /// Kept in `moltis-config` (not `moltis-channels`) so the config crate stays
 /// independent of the channels crate while still validating channel names.
-pub const KNOWN_CHANNEL_TYPES: &[&str] = &["telegram", "whatsapp", "msteams", "discord", "slack"];
+pub const KNOWN_CHANNEL_TYPES: &[&str] = &[
+    "telegram", "whatsapp", "msteams", "discord", "slack", "matrix",
+];
 
 /// Channel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1355,6 +1357,8 @@ pub struct ChannelsConfig {
     /// Slack bot accounts, keyed by account ID.
     #[serde(default)]
     pub slack: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub matrix: HashMap<String, serde_json::Value>,
     /// Additional channel types not covered by the named fields above.
     ///
     /// This allows new channel plugins to be configured without changing
@@ -1368,13 +1372,14 @@ impl ChannelsConfig {
     ///
     /// This is the single source of truth for the set of named channel types.
     /// Keep in sync with the struct fields.
-    fn named_fields(&self) -> [(&str, &HashMap<String, serde_json::Value>); 5] {
+    fn named_fields(&self) -> [(&str, &HashMap<String, serde_json::Value>); 6] {
         [
             ("telegram", &self.telegram),
             ("whatsapp", &self.whatsapp),
             ("msteams", &self.msteams),
             ("discord", &self.discord),
             ("slack", &self.slack),
+            ("matrix", &self.matrix),
         ]
     }
 
@@ -1402,6 +1407,7 @@ impl Default for ChannelsConfig {
             msteams: HashMap::new(),
             discord: HashMap::new(),
             slack: HashMap::new(),
+            matrix: HashMap::new(),
             extra: HashMap::new(),
         }
     }

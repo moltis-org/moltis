@@ -62,6 +62,7 @@ default = [
   "metrics",
   "prometheus",
   "push-notifications",
+  "matrix",
   "slack",
   "tailscale",
   "tls",
@@ -79,6 +80,7 @@ mdns = ["moltis-gateway/mdns"]
 metrics = ["dep:moltis-metrics", "moltis-gateway/metrics"]
 prometheus = ["metrics", "moltis-gateway/prometheus"]
 push-notifications = ["dep:chrono", "moltis-gateway/push-notifications"]
+matrix = ["moltis-gateway/matrix"]
 slack = ["dep:moltis-slack", "moltis-gateway/slack"]
 tailscale = ["moltis-gateway/tailscale"]
 tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]

@@ -50,6 +50,7 @@ default-members = [
   "crates/wasm-tools/calc",
   "crates/wasm-tools/web-fetch",
   "crates/wasm-tools/web-search",
+  "crates/matrix",
   "crates/web",
   "crates/whatsapp",
 ]
@@ -72,6 +73,7 @@ members = [
   "crates/graphql",
   "crates/httpd",
   "crates/mcp",
+  "crates/matrix",
   "crates/media",
   "crates/memory",
   "crates/metrics",
@@ -185,6 +187,7 @@ async-graphql-axum = "7"
 gix                = "0.78"
 hmac               = "0.12"
 llama-cpp-2        = "0.1"
+matrix-sdk         = { default-features = false, features = ["markdown", "rustls-tls"], version = "0.16" }
 mockito            = "1.7"
 open               = "5.3"
 rand               = "0.9"
@@ -307,6 +310,7 @@ moltis-discord         = { path = "crates/discord" }
 moltis-gateway         = { default-features = false, path = "crates/gateway" }
 moltis-graphql         = { path = "crates/graphql" }
 moltis-httpd           = { default-features = false, path = "crates/httpd" }
+moltis-matrix          = { path = "crates/matrix" }
 moltis-mcp             = { path = "crates/mcp" }
 moltis-media           = { path = "crates/media" }
 moltis-memory          = { path = "crates/memory" }
@@ -347,3 +351,4 @@ strip         = true
 
 [profile.dev]
 debug = "line-tables-only"
+

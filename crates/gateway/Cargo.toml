@@ -29,6 +29,7 @@ moltis-common          = { workspace = true }
 moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
 moltis-discord         = { workspace = true }
+moltis-matrix          = { optional = true, workspace = true }
 moltis-mcp             = { workspace = true }
 moltis-media           = { workspace = true }
 moltis-memory          = { workspace = true }
@@ -107,6 +108,7 @@ default = [
   "voice",
   "wasm",
   "web-ui",
+  "matrix",
   "whatsapp",
 ]
 file-watcher = [
@@ -136,6 +138,7 @@ openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
 qmd = ["dep:moltis-qmd"]
+matrix = ["dep:moltis-matrix", "moltis-matrix/metrics"]
 slack = ["dep:moltis-slack", "moltis-slack/metrics"]
 tailscale = ["dep:moltis-tailscale"]
 tls = []

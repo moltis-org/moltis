@@ -113,6 +113,7 @@ default = [
   "local-llm",
   "local-llm-metal",
   "mdns",
+  "matrix",
   "metrics",
   "openclaw-import",
   "prometheus",
@@ -167,6 +168,7 @@ vault              = ["moltis-httpd/vault", "moltis-web?/vault"]
 voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
 wasm               = ["moltis-tools/wasm"]
 web-ui             = ["dep:moltis-web", "moltis-httpd/web-ui"]
+matrix             = ["moltis-httpd/matrix"]
 whatsapp           = ["moltis-gateway/whatsapp"]
 
 [lints]

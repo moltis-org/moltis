@@ -17,6 +17,7 @@ pub enum ChannelType {
     MsTeams,
     Discord,
     Slack,
+    Matrix,
 }
 
 impl ChannelType {
@@ -28,6 +29,7 @@ impl ChannelType {
             Self::MsTeams => "msteams",
             Self::Discord => "discord",
             Self::Slack => "slack",
+            Self::Matrix => "matrix",
         }
     }
 
@@ -39,6 +41,7 @@ impl ChannelType {
             Self::MsTeams => "Microsoft Teams",
             Self::Discord => "Discord",
             Self::Slack => "Slack",
+            Self::Matrix => "Matrix",
         }
     }
 }
@@ -59,6 +62,7 @@ impl std::str::FromStr for ChannelType {
             "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
             "discord" => Ok(Self::Discord),
             "slack" => Ok(Self::Slack),
+            "matrix" => Ok(Self::Matrix),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -74,6 +78,7 @@ impl ChannelType {
         Self::MsTeams,
         Self::Discord,
         Self::Slack,
+        Self::Matrix,
     ];
 
     /// Returns the static descriptor for this channel type.
@@ -158,6 +163,22 @@ impl ChannelType {
                     supports_otp: false,
                     supports_reactions: true,
                     supports_location: false,
+                },
+            },
+            Self::Matrix => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Matrix",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: false,
+                    supports_threads: true,
+                    supports_voice_ingest: true,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: true,
+                    supports_location: true,
                 },
             },
         }
@@ -892,6 +913,7 @@ mod tests {
             ChannelType::MsTeams,
             ChannelType::Discord,
             ChannelType::Slack,
+            ChannelType::Matrix,
         ] {
             let json = serde_json::to_string(&ct).unwrap();
             let parsed: ChannelType = serde_json::from_str(&json).unwrap();
@@ -1022,6 +1044,7 @@ mod tests {
             ("msteams", ChannelType::MsTeams),
             ("discord", ChannelType::Discord),
             ("slack", ChannelType::Slack),
+            ("matrix", ChannelType::Matrix),
         ] {
             let parsed: ChannelType = s.parse().unwrap_or_else(|e| panic!("parse {s}: {e}"));
             assert_eq!(parsed, expected);
@@ -1043,6 +1066,7 @@ mod tests {
             ChannelType::MsTeams,
             ChannelType::Discord,
             ChannelType::Slack,
+            ChannelType::Matrix,
         ] {
             let json = serde_json::to_string(&ct).unwrap_or_else(|e| panic!("serialize: {e}"));
             let back: ChannelType =
@@ -1054,7 +1078,7 @@ mod tests {
     #[test]
     fn all_covers_every_variant() {
         // If a new variant is added to ChannelType, this test forces updating ALL.
-        assert_eq!(ChannelType::ALL.len(), 5);
+        assert_eq!(ChannelType::ALL.len(), 6);
         for ct in ChannelType::ALL {
             // descriptor() must not panic
             let desc = ct.descriptor();
@@ -1072,6 +1096,7 @@ mod tests {
         );
         assert_eq!(ChannelType::Discord.descriptor().display_name, "Discord");
         assert_eq!(ChannelType::Slack.descriptor().display_name, "Slack");
+        assert_eq!(ChannelType::Matrix.descriptor().display_name, "Matrix");
     }
 
     #[test]
