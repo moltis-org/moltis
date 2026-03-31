@@ -2479,6 +2479,22 @@ pub async fn prepare_gateway_core(
                 .await;
         }
 
+        #[cfg(feature = "matrix")]
+        {
+            let matrix_data_dir = data_dir.join("matrix");
+            if let Err(e) = std::fs::create_dir_all(&matrix_data_dir) {
+                tracing::warn!("failed to create matrix data dir: {e}");
+            }
+            let matrix_plugin = Arc::new(tokio::sync::RwLock::new(
+                moltis_matrix::MatrixPlugin::new(matrix_data_dir)
+                    .with_message_log(Arc::clone(&message_log))
+                    .with_event_sink(Arc::clone(&channel_sink)),
+            ));
+            registry
+                .register(matrix_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
+                .await;
+        }
+
         // Collect all channel accounts to start (config + stored), then
         // spawn them concurrently so slow network calls (e.g. Telegram)
         // don't block startup sequentially.
