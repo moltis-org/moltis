@@ -39,6 +39,7 @@ var showAddTeams = signal(false);
 var showAddDiscord = signal(false);
 var showAddWhatsApp = signal(false);
 var showAddSlack = signal(false);
+var showAddMatrix = signal(false);
 var editingChannel = signal(null);
 var sendersAccount = signal("");
 
@@ -58,6 +59,7 @@ function channelLabel(type) {
 	if (t === "discord") return "Discord";
 	if (t === "whatsapp") return "WhatsApp";
 	if (t === "slack") return "Slack";
+	if (t === "matrix") return "Matrix";
 	return "Telegram";
 }
 
@@ -134,6 +136,7 @@ function ChannelIcon({ type }) {
 	if (t === "msteams") return html`<span class="icon icon-msteams"></span>`;
 	if (t === "discord") return html`<span class="icon icon-discord"></span>`;
 	if (t === "whatsapp") return html`<span class="icon icon-whatsapp"></span>`;
+	if (t === "matrix") return html`<span class="icon icon-matrix"></span>`;
 	return html`<span class="icon icon-telegram"></span>`;
 }
 
@@ -234,6 +237,12 @@ function ConnectButtons() {
 				if (connected.value) showAddWhatsApp.value = true;
 			}}>
 			<span class="icon icon-whatsapp"></span> Connect WhatsApp
+		</button>`
+		}
+		${
+			offered.has("matrix") &&
+			html`<button id="connectMatrixBtn" class="provider-btn provider-btn-secondary inline-flex items-center gap-1.5">
+			<span class="icon icon-matrix"></span> Connect Matrix
 		</button>`
 		}
 	</div>`;
@@ -1081,6 +1090,238 @@ function AddWhatsAppModal() {
   </${Modal}>`;
 }
 
+function openMatrixModal() {
+	var root = document.createElement("div");
+	document.body.appendChild(root);
+	function close() {
+		render(null, root);
+		root.remove();
+		loadChannels();
+	}
+	render(html`<${MatrixModalPortal} onClose=${close} />`, root);
+}
+
+document.addEventListener("click", (e) => {
+	if (e.target.closest("#connectMatrixBtn")) openMatrixModal();
+});
+
+function MatrixModalPortal({ onClose }) {
+	var error = useSignal("");
+	var saving = useSignal(false);
+	var addModel = useSignal("");
+	var allowlistItems = useSignal([]);
+	var accountDraft = useSignal("");
+	var homeserverDraft = useSignal("");
+	var userIdDraft = useSignal("");
+	var accessTokenDraft = useSignal("");
+
+	function onSubmit() {
+		var form = document.querySelector("#matrixPortalForm");
+		var accountId = accountDraft.value.trim();
+		var homeserver = homeserverDraft.value.trim();
+		var userId = userIdDraft.value.trim();
+		var accessToken = accessTokenDraft.value.trim();
+		if (!accountId) {
+			error.value = "Account ID is required.";
+			return;
+		}
+		if (!homeserver) {
+			error.value = "Homeserver URL is required.";
+			return;
+		}
+		if (!userId) {
+			error.value = "User ID is required.";
+			return;
+		}
+		if (!accessToken) {
+			error.value = "Access token is required.";
+			return;
+		}
+		error.value = "";
+		saving.value = true;
+		var addConfig = {
+			homeserver_url: homeserver,
+			user_id: userId,
+			access_token: accessToken,
+			dm_policy: form.querySelector("[data-field=dmPolicy]").value,
+			mention_mode: form.querySelector("[data-field=mentionMode]").value,
+			allowlist: allowlistItems.value,
+		};
+		if (addModel.value) {
+			addConfig.model = addModel.value;
+			var found = modelsSig.value.find((x) => x.id === addModel.value);
+			if (found?.provider) addConfig.model_provider = found.provider;
+		}
+		addChannel("matrix", accountId, addConfig).then((res) => {
+			saving.value = false;
+			if (res?.ok) {
+				onClose();
+			} else {
+				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect Matrix.";
+			}
+		});
+	}
+
+	return html`<${Modal} show=${true} onClose=${onClose} title="Connect Matrix">
+	    <div class="channel-form" id="matrixPortalForm">
+	      <div class="channel-card">
+	        <div>
+	          <span class="text-xs font-medium text-[var(--text-strong)]">How to set up a Matrix bot</span>
+	          <div class="text-xs text-[var(--muted)] channel-help">1. Create a bot account on your Matrix homeserver</div>
+	          <div class="text-xs text-[var(--muted)]">2. Get an access token (Settings > Help & About in Element)</div>
+	          <div class="text-xs text-[var(--muted)]">3. Invite the bot to your rooms</div>
+	        </div>
+	      </div>
+	      <label class="text-xs text-[var(--muted)]">Account ID</label>
+	      <input type="text" class="channel-input" placeholder="e.g. my-bot"
+	        value=${accountDraft.value} onInput=${(e) => {
+						accountDraft.value = e.target.value;
+					}} />
+	      <label class="text-xs text-[var(--muted)]">Homeserver URL</label>
+	      <input type="url" class="channel-input" placeholder="https://matrix.org"
+	        value=${homeserverDraft.value} onInput=${(e) => {
+						homeserverDraft.value = e.target.value;
+					}} />
+	      <label class="text-xs text-[var(--muted)]">User ID</label>
+	      <input type="text" class="channel-input" placeholder="@bot:matrix.org"
+	        value=${userIdDraft.value} onInput=${(e) => {
+						userIdDraft.value = e.target.value;
+					}} />
+	      <label class="text-xs text-[var(--muted)]">Access Token</label>
+	      <input type="password" class="channel-input" placeholder="syt_..."
+	        autocomplete="new-password"
+	        value=${accessTokenDraft.value} onInput=${(e) => {
+						accessTokenDraft.value = e.target.value;
+					}} />
+	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
+	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
+	        ${saving.value ? "Connecting\u2026" : "Connect Matrix"}
+	      </button>
+	    </div>
+	  </${Modal}>`;
+}
+
+function AddMatrixModal() {
+	var error = useSignal("");
+	var saving = useSignal(false);
+	var addModel = useSignal("");
+	var allowlistItems = useSignal([]);
+	var roomAllowlistItems = useSignal([]);
+	var accountDraft = useSignal("");
+	var homeserverDraft = useSignal("");
+	var userIdDraft = useSignal("");
+	var accessTokenDraft = useSignal("");
+
+	function onSubmit(e) {
+		e.preventDefault();
+		var form = e.target.closest(".channel-form");
+		var accountId = accountDraft.value.trim();
+		var homeserver = homeserverDraft.value.trim();
+		var userId = userIdDraft.value.trim();
+		var accessToken = accessTokenDraft.value.trim();
+		if (!accountId) {
+			error.value = "Account ID is required.";
+			return;
+		}
+		if (!homeserver) {
+			error.value = "Homeserver URL is required.";
+			return;
+		}
+		if (!userId) {
+			error.value = "User ID is required.";
+			return;
+		}
+		if (!accessToken) {
+			error.value = "Access token is required.";
+			return;
+		}
+		error.value = "";
+		saving.value = true;
+		var addConfig = {
+			homeserver_url: homeserver,
+			user_id: userId,
+			access_token: accessToken,
+			dm_policy: form.querySelector("[data-field=dmPolicy]").value,
+			group_policy: form.querySelector("[data-field=groupPolicy]")?.value || "open",
+			mention_mode: form.querySelector("[data-field=mentionMode]").value,
+			allowlist: allowlistItems.value,
+			room_allowlist: roomAllowlistItems.value,
+		};
+		if (addModel.value) {
+			addConfig.model = addModel.value;
+			var found = modelsSig.value.find((x) => x.id === addModel.value);
+			if (found?.provider) addConfig.model_provider = found.provider;
+		}
+		addChannel("matrix", accountId, addConfig).then((res) => {
+			saving.value = false;
+			if (res?.ok) {
+				showAddMatrix.value = false;
+				addModel.value = "";
+				allowlistItems.value = [];
+				roomAllowlistItems.value = [];
+				accountDraft.value = "";
+				homeserverDraft.value = "";
+				userIdDraft.value = "";
+				accessTokenDraft.value = "";
+				loadChannels();
+			} else {
+				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect Matrix.";
+			}
+		});
+	}
+
+	return html`<${Modal} show=${showAddMatrix.value} onClose=${() => {
+		showAddMatrix.value = false;
+	}}
+	    title="Connect Matrix">
+	    <div class="channel-form">
+	      <div class="channel-card">
+	        <div>
+	          <span class="text-xs font-medium text-[var(--text-strong)]">How to set up a Matrix bot</span>
+	          <ol class="text-xs text-[var(--muted)] mt-1 ml-3 space-y-0.5 list-decimal">
+	            <li>Create a bot account on your Matrix homeserver</li>
+	            <li>Get an access token (Settings > Help & About > Access Token in Element)</li>
+	            <li>Invite the bot to your rooms</li>
+	          </ol>
+	        </div>
+	      </div>
+	      <${FormField} label="Account ID" sublabel="A name for this account (e.g. my-bot)">
+	        <input type="text" class="input" placeholder="my-bot" value=${accountDraft.value} onInput=${(e) => {
+						accountDraft.value = e.target.value;
+					}} />
+	      <//>
+	      <${FormField} label="Homeserver URL" sublabel="Your Matrix homeserver (e.g. https://matrix.org)">
+	        <input type="url" class="input" placeholder="https://matrix.org" value=${homeserverDraft.value} onInput=${(
+						e,
+					) => {
+						homeserverDraft.value = e.target.value;
+					}} />
+	      <//>
+	      <${FormField} label="User ID" sublabel="Bot's full Matrix user ID (e.g. @bot:matrix.org)">
+	        <input type="text" class="input" placeholder="@bot:matrix.org" value=${userIdDraft.value} onInput=${(e) => {
+						userIdDraft.value = e.target.value;
+					}} />
+	      <//>
+	      <${FormField} label="Access Token" sublabel="Bot's access token from homeserver">
+	        <input type="password" class="input" placeholder="syt_..." value=${accessTokenDraft.value} onInput=${(e) => {
+						accessTokenDraft.value = e.target.value;
+					}} />
+	      <//>
+	      <${ChannelFormShared}
+	        error=${error}
+	        saving=${saving}
+	        model=${addModel}
+	        allowlistItems=${allowlistItems}
+	        channelAllowlistItems=${roomAllowlistItems}
+	        channelAllowlistLabel="Room allowlist"
+	        channelAllowlistPlaceholder="!room:matrix.org"
+	        onSubmit=${onSubmit}
+	      />
+	    </div>
+	  </${Modal}>`;
+}
+
 // ── Edit channel modal ───────────────────────────────────────
 function EditChannelModal() {
 	var ch = editingChannel.value;
@@ -1310,6 +1551,7 @@ function ChannelsPage() {
     <${AddDiscordModal} />
     <${AddSlackModal} />
     <${AddWhatsAppModal} />
+    <${AddMatrixModal} />
     <${EditChannelModal} />
     <${ConfirmDialog} />
   `;
