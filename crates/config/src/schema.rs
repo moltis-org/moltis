@@ -1199,6 +1199,122 @@ impl Default for GraphqlConfig {
     }
 }
 
+/// How much content Moltis should attach to Langfuse traces.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TraceContentMode {
+    /// Only structural metadata, never prompt/output bodies.
+    Off,
+    /// Prompt/output bodies are truncated and redacted before export.
+    #[default]
+    Sanitized,
+    /// Prompt/output bodies are truncated but otherwise sent as-is.
+    Full,
+}
+
+const fn is_default_trace_content_mode(value: &TraceContentMode) -> bool {
+    matches!(value, TraceContentMode::Sanitized)
+}
+
+const fn default_langfuse_sample_rate() -> f64 {
+    1.0
+}
+
+const fn is_default_langfuse_sample_rate(value: &f64) -> bool {
+    *value == 1.0
+}
+
+const fn default_langfuse_max_content_bytes() -> usize {
+    8_192
+}
+
+const fn is_default_langfuse_max_content_bytes(value: &usize) -> bool {
+    *value == default_langfuse_max_content_bytes()
+}
+
+/// Langfuse tracing export configuration.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LangfuseConfig {
+    /// Enable OTLP trace export to Langfuse.
+    pub enabled: bool,
+    /// Base URL of the Langfuse instance.
+    pub host: Option<String>,
+    /// Langfuse public key.
+    #[serde(
+        default,
+        serialize_with = "serialize_option_secret",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub public_key: Option<Secret<String>>,
+    /// Langfuse secret key.
+    #[serde(
+        default,
+        serialize_with = "serialize_option_secret",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_key: Option<Secret<String>>,
+    /// Deployment environment label shown in Langfuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+    /// Additional immutable trace tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Trace sampling ratio in the range `0.0..=1.0`.
+    #[serde(
+        default = "default_langfuse_sample_rate",
+        skip_serializing_if = "is_default_langfuse_sample_rate"
+    )]
+    pub sample_rate: f64,
+    /// How much prompt/output content to attach to traces.
+    #[serde(default, skip_serializing_if = "is_default_trace_content_mode")]
+    pub trace_content: TraceContentMode,
+    /// Maximum bytes to keep for any prompt/output/tool attribute.
+    #[serde(
+        default = "default_langfuse_max_content_bytes",
+        skip_serializing_if = "is_default_langfuse_max_content_bytes"
+    )]
+    pub max_content_bytes: usize,
+}
+
+impl std::fmt::Debug for LangfuseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LangfuseConfig")
+            .field("enabled", &self.enabled)
+            .field("host", &self.host)
+            .field(
+                "public_key",
+                &self.public_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "secret_key",
+                &self.secret_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("environment", &self.environment)
+            .field("tags", &self.tags)
+            .field("sample_rate", &self.sample_rate)
+            .field("trace_content", &self.trace_content)
+            .field("max_content_bytes", &self.max_content_bytes)
+            .finish()
+    }
+}
+
+impl Default for LangfuseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: None,
+            public_key: None,
+            secret_key: None,
+            environment: None,
+            tags: Vec::new(),
+            sample_rate: default_langfuse_sample_rate(),
+            trace_content: TraceContentMode::Sanitized,
+            max_content_bytes: default_langfuse_max_content_bytes(),
+        }
+    }
+}
+
 /// Metrics and observability configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1217,6 +1333,9 @@ pub struct MetricsConfig {
     /// Additional labels to add to all metrics.
     #[serde(default)]
     pub labels: HashMap<String, String>,
+    /// Optional Langfuse export configuration for traces.
+    #[serde(default)]
+    pub langfuse: LangfuseConfig,
 }
 
 fn default_metrics_history_points() -> usize {
@@ -1230,6 +1349,7 @@ impl Default for MetricsConfig {
             prometheus_endpoint: true,
             history_points: default_metrics_history_points(),
             labels: HashMap::new(),
+            langfuse: LangfuseConfig::default(),
         }
     }
 }

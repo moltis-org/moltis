@@ -84,6 +84,9 @@ pub enum PersistedMessage {
         /// Agent run ID linking this response to its parent user message.
         #[serde(skip_serializing_if = "Option::is_none")]
         run_id: Option<String>,
+        /// OpenTelemetry trace ID for cross-system debugging.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        trace_id: Option<String>,
     },
     Tool {
         tool_call_id: String,
@@ -232,6 +235,7 @@ impl PersistedMessage {
             audio,
             seq: None,
             run_id: None,
+            trace_id: None,
         }
     }
 
@@ -429,6 +433,7 @@ mod tests {
             audio: None,
             seq: None,
             run_id: None,
+            trace_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "assistant");
@@ -599,6 +604,40 @@ mod tests {
         match parsed {
             PersistedMessage::Assistant { audio, .. } => {
                 assert_eq!(audio.as_deref(), Some("media/main/run_abc.ogg"));
+            },
+            _ => panic!("expected Assistant message"),
+        }
+    }
+
+    #[test]
+    fn assistant_with_trace_id_roundtrips() {
+        let original = PersistedMessage::Assistant {
+            content: "response".to_string(),
+            created_at: Some(12345),
+            model: Some("gpt-4o".to_string()),
+            provider: Some("openai".to_string()),
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            duration_ms: Some(2_000),
+            request_input_tokens: Some(100),
+            request_output_tokens: Some(50),
+            tool_calls: None,
+            reasoning: None,
+            llm_api_response: None,
+            audio: None,
+            seq: None,
+            run_id: Some("run-123".to_string()),
+            trace_id: Some("trace-abc".to_string()),
+        };
+        let json = original.to_value();
+        assert_eq!(json["trace_id"], "trace-abc");
+        let parsed: PersistedMessage = serde_json::from_value(json).unwrap();
+        match parsed {
+            PersistedMessage::Assistant {
+                trace_id, run_id, ..
+            } => {
+                assert_eq!(run_id.as_deref(), Some("run-123"));
+                assert_eq!(trace_id.as_deref(), Some("trace-abc"));
             },
             _ => panic!("expected Assistant message"),
         }

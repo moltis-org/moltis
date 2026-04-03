@@ -134,7 +134,7 @@ export function appendReasoningDisclosure(messageEl, reasoningText) {
 }
 
 export function chatAddErrorCard(err) {
-	if (!S.chatMsgBox) return;
+	if (!S.chatMsgBox) return null;
 	clearChatEmptyState();
 	var el = document.createElement("div");
 	el.className = "msg error-card";
@@ -183,10 +183,11 @@ export function chatAddErrorCard(err) {
 
 	S.chatMsgBox.appendChild(el);
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	return el;
 }
 
 export function chatAddErrorMsg(message) {
-	chatAddErrorCard(parseErrorMessage(message));
+	return chatAddErrorCard(parseErrorMessage(message));
 }
 
 export function renderApprovalCard(requestId, command) {

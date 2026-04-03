@@ -436,6 +436,48 @@ Environment variables:
 
 - `RUST_LOG=moltis_metrics=debug` — Enable debug logging for metrics initialization
 
+## Langfuse Tracing
+
+Moltis can export chat, agent, LLM, and tool traces to Langfuse over OTLP/HTTP.
+This is separate from Prometheus metrics: metrics stay numeric and aggregated,
+while Langfuse receives per-run traces for debugging.
+
+```toml
+[metrics.langfuse]
+enabled = true
+host = "https://cloud.langfuse.com"
+public_key = "pk-lf-..."
+secret_key = "sk-lf-..."
+environment = "prod"
+tags = ["moltis", "gateway"]
+sample_rate = 1.0
+trace_content = "sanitized" # off | sanitized | full
+max_content_bytes = 8192
+```
+
+Notes:
+
+- Langfuse ingestion uses OTLP/HTTP, not the gRPC exporter path.
+- `trace_content = "sanitized"` records prompts, tool args, outputs, and errors
+  after redaction and truncation.
+- `trace_content = "full"` disables redaction but still enforces the
+  `max_content_bytes` cap.
+- `trace_content = "off"` still exports trace structure, metadata, timings, and
+  token counts without prompt or tool payload bodies.
+- Hidden per-run telemetry keys are injected into Moltis tool context only for
+  observability, and are not forwarded to tool implementations.
+
+When enabled, Moltis emits:
+
+- Root `agent` spans for chat runs
+- Child `generation` spans for each LLM request/retry
+- Child `tool` spans for each tool call, including arguments, results, and errors
+- Trace/session metadata such as run id, agent id, provider, model, reply mode,
+  tool mode, and session key
+- `traceId` on chat `final` and `error` websocket payloads, plus persisted
+  `trace_id` fields on assistant session history entries for post-mortem debugging
+- Trace IDs on aborted partial assistant messages and in the chat run detail panel
+
 ## Best Practices
 
 1. **Use consistent naming**: Follow the pattern `moltis_<subsystem>_<metric>_<unit>`

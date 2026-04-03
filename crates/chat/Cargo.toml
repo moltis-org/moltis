@@ -26,12 +26,14 @@ moltis-skills         = { workspace = true }
 moltis-telegram       = { workspace = true }
 moltis-tools          = { workspace = true }
 moltis-voice          = { workspace = true }
+opentelemetry         = { workspace = true }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
 thiserror             = { workspace = true }
 tokio                 = { workspace = true }
 tokio-stream          = { workspace = true }
 tracing               = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 uuid                  = { workspace = true }
 
 [features]

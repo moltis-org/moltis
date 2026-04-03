@@ -702,6 +702,12 @@ function createModelFooter(msg) {
 		speed.textContent = ` \u00b7 ${speedLabel}`;
 		ft.appendChild(speed);
 	}
+	if (msg.trace_id) {
+		var trace = document.createElement("span");
+		trace.className = "msg-token-speed";
+		trace.textContent = ` \u00b7 trace ${msg.trace_id}`;
+		ft.appendChild(trace);
+	}
 	return ft;
 }
 

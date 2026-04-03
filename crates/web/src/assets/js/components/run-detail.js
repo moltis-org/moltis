@@ -30,15 +30,22 @@ function OverviewTab({ data }) {
 	var provider = null;
 	var totalInput = 0;
 	var totalOutput = 0;
+	var traceIds = new Set();
 	for (var m of messages) {
 		if (m.role === "assistant") {
 			if (m.model) model = m.model;
 			if (m.provider) provider = m.provider;
 			totalInput += m.inputTokens || 0;
 			totalOutput += m.outputTokens || 0;
+			if (m.trace_id) traceIds.add(m.trace_id);
 		}
 	}
+	var traceList = Array.from(traceIds);
 	return html`<div class="flex flex-col gap-1 text-xs">
+		<div class="flex gap-4">
+			<span class="text-[var(--muted)]">Run:</span>
+			<span class="font-mono break-all">${data.runId || "unknown"}</span>
+		</div>
 		<div class="flex gap-4">
 			<span class="text-[var(--muted)]">User messages:</span>
 			<span class="font-medium">${summary.userMessages || 0}</span>
@@ -64,6 +71,14 @@ function OverviewTab({ data }) {
 				? html`<div class="flex gap-4">
 					<span class="text-[var(--muted)]">Tokens:</span>
 					<span class="font-medium">${totalInput} in / ${totalOutput} out</span>
+				</div>`
+				: null
+		}
+		${
+			traceList.length > 0
+				? html`<div class="flex gap-4">
+					<span class="text-[var(--muted)]">Trace:</span>
+					<span class="font-mono break-all">${traceList.join(", ")}</span>
 				</div>`
 				: null
 		}
@@ -115,6 +130,13 @@ function MessagesTab({ data }) {
 						>${m.role}</span
 					>
 					<span class="text-[var(--muted)] ml-1">#${i}</span>
+					${
+						m.trace_id
+							? html`<span class="text-[var(--muted)] ml-2 font-mono break-all"
+								>trace ${m.trace_id}</span
+							>`
+							: null
+					}
 					${
 						typeof m.content === "string" && m.content
 							? html`<div

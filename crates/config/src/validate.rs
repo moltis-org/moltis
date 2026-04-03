@@ -263,6 +263,20 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let langfuse = || {
+        Struct(HashMap::from([
+            ("enabled", Leaf),
+            ("host", Leaf),
+            ("public_key", Leaf),
+            ("secret_key", Leaf),
+            ("environment", Leaf),
+            ("tags", Leaf),
+            ("sample_rate", Leaf),
+            ("trace_content", Leaf),
+            ("max_content_bytes", Leaf),
+        ]))
+    };
+
     let mcp_oauth_override = || {
         Struct(HashMap::from([
             ("client_id", Leaf),
@@ -436,6 +450,7 @@ fn build_schema_map() -> KnownKeys {
                 ("prometheus_endpoint", Leaf),
                 ("history_points", Leaf),
                 ("labels", Map(Box::new(Leaf))),
+                ("langfuse", langfuse()),
             ])),
         ),
         (

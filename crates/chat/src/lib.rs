@@ -10,6 +10,7 @@ use std::{
 
 use {
     async_trait::async_trait,
+    opentelemetry::{Array as OtelArray, Value as OtelValue, trace::TraceContextExt},
     serde::{Deserialize, Serialize},
     serde_json::Value,
     tokio::{
@@ -17,10 +18,14 @@ use {
         task::AbortHandle,
     },
     tokio_stream::StreamExt,
-    tracing::{debug, info, warn},
+    tracing::{Instrument, Span, debug, info, warn},
+    tracing_opentelemetry::OpenTelemetrySpanExt,
 };
 
-use moltis_config::{MessageQueueMode, ToolMode};
+use {
+    moltis_common::observability::sanitize_json_for_observability,
+    moltis_config::{MessageQueueMode, ToolMode, schema::TraceContentMode},
+};
 
 use {
     moltis_agents::{
@@ -215,6 +220,8 @@ struct ChatFinalBroadcast {
     run_id: String,
     session_key: String,
     state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<String>,
     text: String,
     model: String,
     provider: String,
@@ -248,6 +255,8 @@ struct ChatErrorBroadcast {
     run_id: String,
     session_key: String,
     state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<String>,
     error: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     seq: Option<u64>,
@@ -263,6 +272,161 @@ struct AssistantTurnOutput {
     audio_path: Option<String>,
     reasoning: Option<String>,
     llm_api_response: Option<Value>,
+    trace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LangfuseContentSettings {
+    trace_content: TraceContentMode,
+    max_content_bytes: usize,
+}
+
+fn langfuse_content_settings(
+    config: &moltis_config::MoltisConfig,
+) -> Option<LangfuseContentSettings> {
+    let langfuse = &config.metrics.langfuse;
+    if !langfuse.enabled {
+        return None;
+    }
+    Some(LangfuseContentSettings {
+        trace_content: langfuse.trace_content,
+        max_content_bytes: langfuse.max_content_bytes.max(1),
+    })
+}
+
+fn set_langfuse_json_attribute(
+    span: &Span,
+    key: &'static str,
+    value: &Value,
+    settings: Option<LangfuseContentSettings>,
+) {
+    let Some(settings) = settings else {
+        return;
+    };
+    let serialized = match settings.trace_content {
+        TraceContentMode::Off => None,
+        TraceContentMode::Sanitized => serde_json::to_string(&sanitize_json_for_observability(
+            value,
+            settings.max_content_bytes,
+            true,
+        ))
+        .ok(),
+        TraceContentMode::Full => serde_json::to_string(&sanitize_json_for_observability(
+            value,
+            settings.max_content_bytes,
+            false,
+        ))
+        .ok(),
+    };
+    if let Some(serialized) = serialized {
+        span.set_attribute(key, serialized);
+    }
+}
+
+fn set_langfuse_trace_tags(span: &Span, tags: &[String]) {
+    if tags.is_empty() {
+        return;
+    }
+    span.set_attribute(
+        "langfuse.trace.tags",
+        OtelValue::Array(OtelArray::String(
+            tags.iter().cloned().map(Into::into).collect(),
+        )),
+    );
+}
+
+fn trace_id_for_span(span: &Span) -> Option<String> {
+    let context = span.context();
+    let trace_span = context.span();
+    let span_context = trace_span.span_context();
+    span_context
+        .is_valid()
+        .then(|| span_context.trace_id().to_string())
+}
+
+fn user_content_observability_value(content: &UserContent) -> Value {
+    match content {
+        UserContent::Text(text) => serde_json::json!({
+            "type": "text",
+            "text": text,
+        }),
+        UserContent::Multimodal(parts) => serde_json::json!({
+            "type": "multimodal",
+            "parts": parts
+                .iter()
+                .map(|part| match part {
+                    ContentPart::Text(text) => serde_json::json!({
+                        "type": "text",
+                        "text": text,
+                    }),
+                    ContentPart::Image { media_type, data } => serde_json::json!({
+                        "type": "image",
+                        "media_type": media_type,
+                        "bytes": data.len(),
+                    }),
+                })
+                .collect::<Vec<_>>(),
+        }),
+    }
+}
+
+fn usage_observability_value(usage: &moltis_agents::model::Usage) -> Value {
+    serde_json::json!({
+        "input": usage.input_tokens,
+        "output": usage.output_tokens,
+        "cache_read": usage.cache_read_tokens,
+        "cache_write": usage.cache_write_tokens,
+    })
+}
+
+fn configure_chat_run_span(
+    span: &Span,
+    config: &moltis_config::MoltisConfig,
+    settings: Option<LangfuseContentSettings>,
+    run_id: &str,
+    session_key: &str,
+    agent_id: &str,
+    provider_name: &str,
+    model_id: &str,
+    desired_reply_medium: ReplyMedium,
+    user_message_index: usize,
+    tool_mode: ToolMode,
+    mcp_disabled: bool,
+    session_is_sandboxed: bool,
+    conn_id: Option<&str>,
+    user_content: &UserContent,
+) {
+    let trace_name = format!("chat:{agent_id}");
+    span.set_attribute("langfuse.trace.name", trace_name);
+    span.set_attribute("langfuse.observation.type", "agent");
+    span.set_attribute("session.id", session_key.to_string());
+    set_langfuse_trace_tags(span, &config.metrics.langfuse.tags);
+
+    let metadata = serde_json::json!({
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "provider": provider_name,
+        "model": model_id,
+        "reply_medium": desired_reply_medium,
+        "user_message_index": user_message_index,
+        "tool_mode": match tool_mode {
+            ToolMode::Native => "native",
+            ToolMode::Text => "text",
+            ToolMode::Off => "off",
+            ToolMode::Auto => "auto",
+        },
+        "mcp_disabled": mcp_disabled,
+        "session_is_sandboxed": session_is_sandboxed,
+        "conn_id": conn_id,
+    });
+    if let Ok(metadata_str) = serde_json::to_string(&metadata) {
+        span.set_attribute("langfuse.trace.metadata", metadata_str.clone());
+        span.set_attribute("langfuse.observation.metadata", metadata_str);
+    }
+
+    let input = user_content_observability_value(user_content);
+    set_langfuse_json_attribute(span, "langfuse.trace.input", &input, settings);
+    set_langfuse_json_attribute(span, "langfuse.observation.input", &input, settings);
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -2317,6 +2481,7 @@ struct ActiveAssistantDraft {
     provider: String,
     seq: Option<u64>,
     run_id: String,
+    trace_id: Option<String>,
 }
 
 impl ActiveAssistantDraft {
@@ -2328,6 +2493,7 @@ impl ActiveAssistantDraft {
             provider: provider.to_string(),
             seq,
             run_id: run_id.to_string(),
+            trace_id: None,
         }
     }
 
@@ -2340,6 +2506,10 @@ impl ActiveAssistantDraft {
     fn set_reasoning(&mut self, reasoning: &str) {
         self.reasoning.clear();
         self.reasoning.push_str(reasoning);
+    }
+
+    fn set_trace_id(&mut self, trace_id: Option<String>) {
+        self.trace_id = trace_id;
     }
 
     fn has_visible_content(&self) -> bool {
@@ -2364,6 +2534,7 @@ impl ActiveAssistantDraft {
             audio: None,
             seq: self.seq,
             run_id: Some(self.run_id.clone()),
+            trace_id: self.trace_id.clone(),
         }
     }
 }
@@ -2412,6 +2583,7 @@ fn build_tool_call_assistant_message(
         audio: None,
         seq,
         run_id: run_id.map(str::to_string),
+        trace_id: None,
     }
 }
 
@@ -3127,6 +3299,7 @@ impl ChatService for LiveChatService {
                     audio: assistant_output.audio_path,
                     seq: client_seq,
                     run_id: Some(run_id_clone.clone()),
+                    trace_id: assistant_output.trace_id,
                 };
                 if let Err(e) = session_store
                     .append(&session_key_clone, &assistant_msg.to_value())
@@ -3784,6 +3957,7 @@ impl ChatService for LiveChatService {
                     audio: assistant_output.audio_path,
                     seq: client_seq,
                     run_id: Some(run_id_clone.clone()),
+                    trace_id: assistant_output.trace_id,
                 };
                 if let Err(e) = session_store
                     .append(&session_key_clone, &assistant_msg.to_value())
@@ -4084,6 +4258,7 @@ impl ChatService for LiveChatService {
                 audio: assistant_output.audio_path.clone(),
                 seq: None,
                 run_id: Some(run_id.clone()),
+                trace_id: assistant_output.trace_id.clone(),
             };
             if let Err(e) = self
                 .session_store
@@ -5499,6 +5674,7 @@ async fn run_explicit_shell_command(
         run_id: run_id.to_string(),
         session_key: session_key.to_string(),
         state: "final",
+        trace_id: None,
         text: final_text.clone(),
         model: String::new(),
         provider: String::new(),
@@ -5531,6 +5707,7 @@ async fn run_explicit_shell_command(
         audio_path: None,
         reasoning: None,
         llm_api_response: None,
+        trace_id: None,
     }
 }
 
@@ -6030,6 +6207,39 @@ async fn run_with_tools(
     } else {
         false
     };
+    let langfuse_settings = langfuse_content_settings(&persona.config);
+    let run_span = tracing::info_span!(
+        "chat.run",
+        run_id = %run_id,
+        session_key = %session_key,
+        agent_id = %agent_id,
+        provider = %provider_name,
+        model = %model_id,
+        tools_enabled,
+    );
+    configure_chat_run_span(
+        &run_span,
+        &persona.config,
+        langfuse_settings,
+        run_id,
+        session_key,
+        agent_id,
+        provider_name,
+        model_id,
+        desired_reply_medium,
+        user_message_index,
+        tool_mode,
+        mcp_disabled,
+        session_is_sandboxed,
+        conn_id.as_deref(),
+        user_content,
+    );
+    let trace_id = trace_id_for_span(&run_span);
+    if let Some(ref map) = active_partial_assistant
+        && let Some(draft) = map.write().await.get_mut(session_key)
+    {
+        draft.set_trace_id(trace_id.clone());
+    }
 
     // Broadcast tool events to the UI in the order emitted by the runner.
     let state_for_events = Arc::clone(state);
@@ -6043,363 +6253,208 @@ async fn run_with_tools(
         .await
         .map(|dispatcher| Arc::new(Mutex::new(dispatcher)));
     let channel_stream_for_events = channel_stream_dispatcher.as_ref().map(Arc::clone);
-    let event_forwarder = tokio::spawn(async move {
-        // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
-        let mut tool_args_map: HashMap<String, Value> = HashMap::new();
-        // Track reasoning text that should be persisted with the first tool call after thinking.
-        let mut tool_reasoning_map: HashMap<String, String> = HashMap::new();
-        let mut latest_reasoning = String::new();
-        while let Some(event) = event_rx.recv().await {
-            let state = Arc::clone(&state_for_events);
-            let run_id = run_id_for_events.clone();
-            let sk = session_key_for_events.clone();
-            let store = session_store_for_events.clone();
-            let seq = client_seq;
-            let payload = match event {
-                RunnerEvent::Thinking => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "thinking",
-                    "seq": seq,
-                }),
-                RunnerEvent::ThinkingDone => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "thinking_done",
-                    "seq": seq,
-                }),
-                RunnerEvent::ToolCallStart {
-                    id,
-                    name,
-                    arguments,
-                } => {
-                    tool_args_map.insert(id.clone(), arguments.clone());
-
-                    // Track active tool call for chat.peek.
-                    if let Some(ref map) = active_tool_calls {
-                        map.write()
-                            .await
-                            .entry(sk.clone())
-                            .or_default()
-                            .push(ActiveToolCall {
-                                id: id.clone(),
-                                name: name.clone(),
-                                arguments: arguments.clone(),
-                                started_at: now_ms(),
-                            });
-                    }
-
-                    // Attach reasoning to the first tool call after thinking.
-                    if !latest_reasoning.is_empty() {
-                        tool_reasoning_map
-                            .insert(id.clone(), std::mem::take(&mut latest_reasoning));
-                    }
-
-                    // Send tool status to channels (Telegram, etc.)
-                    let state_clone = Arc::clone(&state);
-                    let sk_clone = sk.clone();
-                    let name_clone = name.clone();
-                    let args_clone = arguments.clone();
-                    tokio::spawn(async move {
-                        send_tool_status_to_channels(
-                            &state_clone,
-                            &sk_clone,
-                            &name_clone,
-                            &args_clone,
-                        )
-                        .await;
-                    });
-
-                    let is_browser = name == "browser";
-                    let mut payload = serde_json::json!({
+    let event_forwarder = tokio::spawn(
+        async move {
+            // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
+            let mut tool_args_map: HashMap<String, Value> = HashMap::new();
+            // Track reasoning text that should be persisted with the first tool call after thinking.
+            let mut tool_reasoning_map: HashMap<String, String> = HashMap::new();
+            let mut latest_reasoning = String::new();
+            while let Some(event) = event_rx.recv().await {
+                let state = Arc::clone(&state_for_events);
+                let run_id = run_id_for_events.clone();
+                let sk = session_key_for_events.clone();
+                let store = session_store_for_events.clone();
+                let seq = client_seq;
+                let payload = match event {
+                    RunnerEvent::Thinking => serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
-                        "state": "tool_call_start",
-                        "toolCallId": id,
-                        "toolName": name,
-                        "arguments": arguments,
+                        "state": "thinking",
                         "seq": seq,
-                    });
-                    if is_browser {
-                        payload["executionMode"] = serde_json::json!(if session_is_sandboxed {
-                            "sandbox"
-                        } else {
-                            "host"
+                    }),
+                    RunnerEvent::ThinkingDone => serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": sk,
+                        "state": "thinking_done",
+                        "seq": seq,
+                    }),
+                    RunnerEvent::ToolCallStart {
+                        id,
+                        name,
+                        arguments,
+                    } => {
+                        tool_args_map.insert(id.clone(), arguments.clone());
+
+                        // Track active tool call for chat.peek.
+                        if let Some(ref map) = active_tool_calls {
+                            map.write()
+                                .await
+                                .entry(sk.clone())
+                                .or_default()
+                                .push(ActiveToolCall {
+                                    id: id.clone(),
+                                    name: name.clone(),
+                                    arguments: arguments.clone(),
+                                    started_at: now_ms(),
+                                });
+                        }
+
+                        // Attach reasoning to the first tool call after thinking.
+                        if !latest_reasoning.is_empty() {
+                            tool_reasoning_map
+                                .insert(id.clone(), std::mem::take(&mut latest_reasoning));
+                        }
+
+                        // Send tool status to channels (Telegram, etc.)
+                        let state_clone = Arc::clone(&state);
+                        let sk_clone = sk.clone();
+                        let name_clone = name.clone();
+                        let args_clone = arguments.clone();
+                        tokio::spawn(async move {
+                            send_tool_status_to_channels(
+                                &state_clone,
+                                &sk_clone,
+                                &name_clone,
+                                &args_clone,
+                            )
+                            .await;
                         });
-                    }
-                    payload
-                },
-                RunnerEvent::ToolCallEnd {
-                    id,
-                    name,
-                    success,
-                    error,
-                    result,
-                } => {
-                    // Remove from active tool calls tracking.
-                    if let Some(ref map) = active_tool_calls {
-                        let mut guard = map.write().await;
-                        if let Some(calls) = guard.get_mut(&sk) {
-                            calls.retain(|tc| tc.id != id);
-                            if calls.is_empty() {
-                                guard.remove(&sk);
+
+                        let is_browser = name == "browser";
+                        let mut payload = serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": sk,
+                            "state": "tool_call_start",
+                            "toolCallId": id,
+                            "toolName": name,
+                            "arguments": arguments,
+                            "seq": seq,
+                        });
+                        if is_browser {
+                            payload["executionMode"] = serde_json::json!(if session_is_sandboxed {
+                                "sandbox"
+                            } else {
+                                "host"
+                            });
+                        }
+                        payload
+                    },
+                    RunnerEvent::ToolCallEnd {
+                        id,
+                        name,
+                        success,
+                        error,
+                        result,
+                    } => {
+                        // Remove from active tool calls tracking.
+                        if let Some(ref map) = active_tool_calls {
+                            let mut guard = map.write().await;
+                            if let Some(calls) = guard.get_mut(&sk) {
+                                calls.retain(|tc| tc.id != id);
+                                if calls.is_empty() {
+                                    guard.remove(&sk);
+                                }
                             }
                         }
-                    }
 
-                    let mut payload = serde_json::json!({
-                        "runId": run_id,
-                        "sessionKey": sk,
-                        "state": "tool_call_end",
-                        "toolCallId": id,
-                        "toolName": name,
-                        "success": success,
-                        "seq": seq,
-                    });
-                    if let Some(ref err) = error {
-                        payload["error"] = serde_json::json!(parse_chat_error(err, None));
-                    }
-                    // Check for screenshot/image to send to channel (Telegram, etc.)
-                    let screenshot_to_send = result
-                        .as_ref()
-                        .and_then(|r| r.get("screenshot"))
-                        .and_then(|s| s.as_str())
-                        .filter(|s| s.starts_with("data:image/"))
-                        .map(String::from);
-
-                    let image_caption = result
-                        .as_ref()
-                        .and_then(|r| r.get("caption"))
-                        .and_then(|c| c.as_str())
-                        .map(String::from);
-
-                    // Check for document file to send to channel.
-                    // New path: `document_ref` (lightweight media-dir reference).
-                    // Legacy path: `document` with `data:` URI.
-                    let document_ref_to_send = result
-                        .as_ref()
-                        .and_then(|r| r.get("document_ref"))
-                        .and_then(|d| d.as_str())
-                        .map(String::from);
-
-                    let document_ref_mime = if document_ref_to_send.is_some() {
-                        result
+                        let mut payload = serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": sk,
+                            "state": "tool_call_end",
+                            "toolCallId": id,
+                            "toolName": name,
+                            "success": success,
+                            "seq": seq,
+                        });
+                        if let Some(ref err) = error {
+                            payload["error"] = serde_json::json!(parse_chat_error(err, None));
+                        }
+                        // Check for screenshot/image to send to channel (Telegram, etc.)
+                        let screenshot_to_send = result
                             .as_ref()
-                            .and_then(|r| r.get("mime_type"))
-                            .and_then(|m| m.as_str())
-                            .map(String::from)
-                    } else {
-                        None
-                    };
+                            .and_then(|r| r.get("screenshot"))
+                            .and_then(|s| s.as_str())
+                            .filter(|s| s.starts_with("data:image/"))
+                            .map(String::from);
 
-                    let document_to_send = if document_ref_to_send.is_none() {
-                        result
-                            .as_ref()
-                            .and_then(|r| r.get("document"))
-                            .and_then(|d| d.as_str())
-                            .filter(|d| d.starts_with("data:"))
-                            .map(String::from)
-                    } else {
-                        None
-                    };
-
-                    let has_document = document_ref_to_send.is_some() || document_to_send.is_some();
-
-                    let document_filename = if has_document {
-                        result
-                            .as_ref()
-                            .and_then(|r| r.get("filename"))
-                            .and_then(|f| f.as_str())
-                            .map(String::from)
-                    } else {
-                        None
-                    };
-
-                    let document_caption = if has_document {
-                        result
+                        let image_caption = result
                             .as_ref()
                             .and_then(|r| r.get("caption"))
                             .and_then(|c| c.as_str())
-                            .map(String::from)
-                    } else {
-                        None
-                    };
+                            .map(String::from);
 
-                    // Extract location from show_map results for native pin
-                    let location_to_send = if name == "show_map" {
-                        result.as_ref().and_then(|r| {
-                            let lat = r.get("latitude")?.as_f64()?;
-                            let lon = r.get("longitude")?.as_f64()?;
-                            let label = r.get("label").and_then(|l| l.as_str()).map(String::from);
-                            Some((lat, lon, label))
-                        })
-                    } else {
-                        None
-                    };
+                        // Check for document file to send to channel.
+                        // New path: `document_ref` (lightweight media-dir reference).
+                        // Legacy path: `document` with `data:` URI.
+                        let document_ref_to_send = result
+                            .as_ref()
+                            .and_then(|r| r.get("document_ref"))
+                            .and_then(|d| d.as_str())
+                            .map(String::from);
 
-                    if let Some(ref res) = result {
-                        // Cap output sent to the UI to avoid huge WS frames.
-                        let mut capped = res.clone();
-                        for field in &["stdout", "stderr"] {
-                            if let Some(s) = capped.get(*field).and_then(|v| v.as_str())
-                                && s.len() > 10_000
-                            {
-                                let truncated = format!(
-                                    "{}\n\n... [truncated — {} bytes total]",
-                                    truncate_at_char_boundary(s, 10_000),
-                                    s.len()
-                                );
-                                capped[*field] = Value::String(truncated);
-                            }
-                        }
-                        // Cap legacy document data URIs — the LLM never sees
-                        // these and the UI doesn't render them.
-                        if let Some(doc) = capped.get("document").and_then(|v| v.as_str())
-                            && doc.starts_with("data:")
-                            && doc.len() > 200
-                        {
-                            capped["document"] =
-                                Value::String("[document data omitted]".to_string());
-                        }
-                        payload["result"] = capped;
-                    }
+                        let document_ref_mime = if document_ref_to_send.is_some() {
+                            result
+                                .as_ref()
+                                .and_then(|r| r.get("mime_type"))
+                                .and_then(|m| m.as_str())
+                                .map(String::from)
+                        } else {
+                            None
+                        };
 
-                    // Send native location pin to channels before the screenshot.
-                    if let Some((lat, lon, label)) = location_to_send {
-                        let state_clone = Arc::clone(&state);
-                        let sk_clone = sk.clone();
-                        tokio::spawn(async move {
-                            send_location_to_channels(
-                                &state_clone,
-                                &sk_clone,
-                                lat,
-                                lon,
-                                label.as_deref(),
-                            )
-                            .await;
-                        });
-                    }
+                        let document_to_send = if document_ref_to_send.is_none() {
+                            result
+                                .as_ref()
+                                .and_then(|r| r.get("document"))
+                                .and_then(|d| d.as_str())
+                                .filter(|d| d.starts_with("data:"))
+                                .map(String::from)
+                        } else {
+                            None
+                        };
 
-                    // Send screenshot/image to channel targets (Telegram) if present.
-                    if let Some(screenshot_data) = screenshot_to_send {
-                        let state_clone = Arc::clone(&state);
-                        let sk_clone = sk.clone();
-                        tokio::spawn(async move {
-                            send_screenshot_to_channels(
-                                &state_clone,
-                                &sk_clone,
-                                &screenshot_data,
-                                image_caption.as_deref(),
-                            )
-                            .await;
-                        });
-                    }
+                        let has_document =
+                            document_ref_to_send.is_some() || document_to_send.is_some();
 
-                    // Send document to channel targets if present.
-                    if let Some(media_ref) = document_ref_to_send {
-                        // New path: read from media dir at upload time.
-                        let state_clone = Arc::clone(&state);
-                        let sk_clone = sk.clone();
-                        let store_clone = store.clone();
-                        let mime = document_ref_mime
-                            .unwrap_or_else(|| "application/octet-stream".to_string());
-                        tokio::spawn(async move {
-                            if let Some(payload) = document_payload_from_ref(
-                                store_clone.as_ref(),
-                                &sk_clone,
-                                &media_ref,
-                                &mime,
-                                document_filename.as_deref(),
-                                document_caption.as_deref(),
-                            )
-                            .await
-                            {
-                                dispatch_document_to_channels(&state_clone, &sk_clone, payload)
-                                    .await;
-                            }
-                        });
-                    } else if let Some(document_data) = document_to_send {
-                        // Legacy fallback: data URI.
-                        let state_clone = Arc::clone(&state);
-                        let sk_clone = sk.clone();
-                        let payload = document_payload_from_data_uri(
-                            &document_data,
-                            document_filename.as_deref(),
-                            document_caption.as_deref(),
-                        );
-                        tokio::spawn(async move {
-                            dispatch_document_to_channels(&state_clone, &sk_clone, payload).await;
-                        });
-                    }
+                        let document_filename = if has_document {
+                            result
+                                .as_ref()
+                                .and_then(|r| r.get("filename"))
+                                .and_then(|f| f.as_str())
+                                .map(String::from)
+                        } else {
+                            None
+                        };
 
-                    // Buffer tool error result for the channel logbook.
-                    if !success {
-                        send_tool_result_to_channels(&state, &sk, &name, success, &error, &result)
-                            .await;
-                    }
+                        let document_caption = if has_document {
+                            result
+                                .as_ref()
+                                .and_then(|r| r.get("caption"))
+                                .and_then(|c| c.as_str())
+                                .map(String::from)
+                        } else {
+                            None
+                        };
 
-                    // Persist tool result to the session JSONL file.
-                    if let Some(ref store) = store {
-                        let tracked_args = tool_args_map.remove(&id);
-                        // Save screenshot to media dir (if present) and replace
-                        // with a lightweight path reference. Strip screenshot_scale
-                        // (only needed for live rendering). Cap stdout/stderr at
-                        // 10 KB, matching the WS broadcast cap.
-                        let store_media = Arc::clone(store);
-                        let sk_media = sk.clone();
-                        let tool_call_id = id.clone();
-                        let persisted_result = result.as_ref().map(|res| {
-                            let mut r = res.clone();
-                            // Try to decode and persist the screenshot to the media
-                            // directory. Extract base64 into an owned Vec first to
-                            // release the borrow on `r`.
-                            let decoded_screenshot = r
-                                .get("screenshot")
-                                .and_then(|v| v.as_str())
-                                .filter(|s| s.starts_with("data:image/"))
-                                .and_then(|uri| uri.split(',').nth(1))
-                                .and_then(|b64| {
-                                    use base64::Engine;
-                                    base64::engine::general_purpose::STANDARD.decode(b64).ok()
-                                });
-                            if let Some(bytes) = decoded_screenshot {
-                                let filename = format!("{tool_call_id}.png");
-                                let store_ref = Arc::clone(&store_media);
-                                let sk_ref = sk_media.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) =
-                                        store_ref.save_media(&sk_ref, &filename, &bytes).await
-                                    {
-                                        warn!("failed to save screenshot media: {e}");
-                                    }
-                                });
-                                let sanitized = SessionStore::key_to_filename(&sk_media);
-                                r["screenshot"] =
-                                    Value::String(format!("media/{sanitized}/{tool_call_id}.png"));
-                            }
-                            // If screenshot is still a data URI (decode failed), strip it.
-                            let strip_screenshot = r
-                                .get("screenshot")
-                                .and_then(|v| v.as_str())
-                                .is_some_and(|s| s.starts_with("data:"));
-                            // Strip legacy document data URIs — they are only
-                            // needed by the channel dispatch (already extracted
-                            // above) and should not be persisted.
-                            let strip_document = r
-                                .get("document")
-                                .and_then(|v| v.as_str())
-                                .is_some_and(|s| s.starts_with("data:"));
-                            if let Some(obj) = r.as_object_mut() {
-                                if strip_screenshot {
-                                    obj.remove("screenshot");
-                                }
-                                if strip_document {
-                                    obj.remove("document");
-                                }
-                                obj.remove("screenshot_scale");
-                            }
+                        // Extract location from show_map results for native pin
+                        let location_to_send = if name == "show_map" {
+                            result.as_ref().and_then(|r| {
+                                let lat = r.get("latitude")?.as_f64()?;
+                                let lon = r.get("longitude")?.as_f64()?;
+                                let label =
+                                    r.get("label").and_then(|l| l.as_str()).map(String::from);
+                                Some((lat, lon, label))
+                            })
+                        } else {
+                            None
+                        };
+
+                        if let Some(ref res) = result {
+                            // Cap output sent to the UI to avoid huge WS frames.
+                            let mut capped = res.clone();
                             for field in &["stdout", "stderr"] {
-                                if let Some(s) = r.get(*field).and_then(|v| v.as_str())
+                                if let Some(s) = capped.get(*field).and_then(|v| v.as_str())
                                     && s.len() > 10_000
                                 {
                                     let truncated = format!(
@@ -6407,143 +6462,308 @@ async fn run_with_tools(
                                         truncate_at_char_boundary(s, 10_000),
                                         s.len()
                                     );
-                                    r[*field] = Value::String(truncated);
+                                    capped[*field] = Value::String(truncated);
                                 }
                             }
-                            r
-                        });
-                        let tracked_reasoning = tool_reasoning_map.remove(&id);
-                        let assistant_tool_call_msg = build_tool_call_assistant_message(
-                            id.clone(),
-                            name.clone(),
-                            tracked_args.clone(),
-                            seq,
-                            Some(run_id.as_str()),
-                        );
-                        let tool_result_msg = PersistedMessage::ToolResult {
-                            tool_call_id: id,
-                            tool_name: name,
-                            arguments: tracked_args,
-                            success,
-                            result: persisted_result,
-                            error,
-                            reasoning: tracked_reasoning,
-                            created_at: Some(now_ms()),
-                            run_id: Some(run_id.clone()),
-                        };
-                        persist_tool_history_pair(
-                            store,
-                            &sk,
-                            assistant_tool_call_msg,
-                            tool_result_msg,
-                            "failed to persist assistant tool call",
-                            "failed to persist tool result",
-                        )
-                        .await;
-                    }
+                            // Cap legacy document data URIs — the LLM never sees
+                            // these and the UI doesn't render them.
+                            if let Some(doc) = capped.get("document").and_then(|v| v.as_str())
+                                && doc.starts_with("data:")
+                                && doc.len() > 200
+                            {
+                                capped["document"] =
+                                    Value::String("[document data omitted]".to_string());
+                            }
+                            payload["result"] = capped;
+                        }
 
-                    payload
-                },
-                RunnerEvent::ThinkingText(text) => {
-                    latest_reasoning = text.clone();
-                    if let Some(ref map) = active_thinking_text {
-                        map.write().await.insert(sk.clone(), text.clone());
-                    }
-                    if let Some(ref map) = active_partial_for_events
-                        && let Some(draft) = map.write().await.get_mut(&sk)
-                    {
-                        draft.set_reasoning(&text);
-                    }
-                    serde_json::json!({
-                        "runId": run_id,
-                        "sessionKey": sk,
-                        "state": "thinking_text",
-                        "text": text,
-                        "seq": seq,
-                    })
-                },
-                RunnerEvent::TextDelta(text) => {
-                    if let Some(ref map) = active_partial_for_events
-                        && let Some(draft) = map.write().await.get_mut(&sk)
-                    {
-                        draft.append_text(&text);
-                    }
-                    if let Some(ref dispatcher) = channel_stream_for_events {
-                        dispatcher.lock().await.send_delta(&text).await;
-                    }
-                    serde_json::json!({
-                        "runId": run_id,
-                        "sessionKey": sk,
-                        "state": "delta",
-                        "text": text,
-                        "seq": seq,
-                    })
-                },
-                RunnerEvent::Iteration(n) => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "iteration",
-                    "iteration": n,
-                    "seq": seq,
-                }),
-                RunnerEvent::SubAgentStart { task, model, depth } => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "sub_agent_start",
-                    "task": task,
-                    "model": model,
-                    "depth": depth,
-                    "seq": seq,
-                }),
-                RunnerEvent::SubAgentEnd {
-                    task,
-                    model,
-                    depth,
-                    iterations,
-                    tool_calls_made,
-                } => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "sub_agent_end",
-                    "task": task,
-                    "model": model,
-                    "depth": depth,
-                    "iterations": iterations,
-                    "toolCallsMade": tool_calls_made,
-                    "seq": seq,
-                }),
-                RunnerEvent::RetryingAfterError { error, delay_ms } => {
-                    let error_obj =
-                        parse_chat_error(&error, Some(provider_name_for_events.as_str()));
-                    if error_obj.get("type").and_then(|v| v.as_str()) == Some("rate_limit_exceeded")
-                    {
-                        let state_clone = Arc::clone(&state);
-                        let sk_clone = sk.clone();
-                        let error_clone = error_obj.clone();
-                        tokio::spawn(async move {
-                            send_retry_status_to_channels(
-                                &state_clone,
-                                &sk_clone,
-                                &error_clone,
-                                Duration::from_millis(delay_ms),
+                        // Send native location pin to channels before the screenshot.
+                        if let Some((lat, lon, label)) = location_to_send {
+                            let state_clone = Arc::clone(&state);
+                            let sk_clone = sk.clone();
+                            tokio::spawn(async move {
+                                send_location_to_channels(
+                                    &state_clone,
+                                    &sk_clone,
+                                    lat,
+                                    lon,
+                                    label.as_deref(),
+                                )
+                                .await;
+                            });
+                        }
+
+                        // Send screenshot/image to channel targets (Telegram) if present.
+                        if let Some(screenshot_data) = screenshot_to_send {
+                            let state_clone = Arc::clone(&state);
+                            let sk_clone = sk.clone();
+                            tokio::spawn(async move {
+                                send_screenshot_to_channels(
+                                    &state_clone,
+                                    &sk_clone,
+                                    &screenshot_data,
+                                    image_caption.as_deref(),
+                                )
+                                .await;
+                            });
+                        }
+
+                        // Send document to channel targets if present.
+                        if let Some(media_ref) = document_ref_to_send {
+                            // New path: read from media dir at upload time.
+                            let state_clone = Arc::clone(&state);
+                            let sk_clone = sk.clone();
+                            let store_clone = store.clone();
+                            let mime = document_ref_mime
+                                .unwrap_or_else(|| "application/octet-stream".to_string());
+                            tokio::spawn(async move {
+                                if let Some(payload) = document_payload_from_ref(
+                                    store_clone.as_ref(),
+                                    &sk_clone,
+                                    &media_ref,
+                                    &mime,
+                                    document_filename.as_deref(),
+                                    document_caption.as_deref(),
+                                )
+                                .await
+                                {
+                                    dispatch_document_to_channels(&state_clone, &sk_clone, payload)
+                                        .await;
+                                }
+                            });
+                        } else if let Some(document_data) = document_to_send {
+                            // Legacy fallback: data URI.
+                            let state_clone = Arc::clone(&state);
+                            let sk_clone = sk.clone();
+                            let payload = document_payload_from_data_uri(
+                                &document_data,
+                                document_filename.as_deref(),
+                                document_caption.as_deref(),
+                            );
+                            tokio::spawn(async move {
+                                dispatch_document_to_channels(&state_clone, &sk_clone, payload)
+                                    .await;
+                            });
+                        }
+
+                        // Buffer tool error result for the channel logbook.
+                        if !success {
+                            send_tool_result_to_channels(
+                                &state, &sk, &name, success, &error, &result,
                             )
                             .await;
-                        });
-                    }
-                    serde_json::json!({
+                        }
+
+                        // Persist tool result to the session JSONL file.
+                        if let Some(ref store) = store {
+                            let tracked_args = tool_args_map.remove(&id);
+                            // Save screenshot to media dir (if present) and replace
+                            // with a lightweight path reference. Strip screenshot_scale
+                            // (only needed for live rendering). Cap stdout/stderr at
+                            // 10 KB, matching the WS broadcast cap.
+                            let store_media = Arc::clone(store);
+                            let sk_media = sk.clone();
+                            let tool_call_id = id.clone();
+                            let persisted_result = result.as_ref().map(|res| {
+                                let mut r = res.clone();
+                                // Try to decode and persist the screenshot to the media
+                                // directory. Extract base64 into an owned Vec first to
+                                // release the borrow on `r`.
+                                let decoded_screenshot = r
+                                    .get("screenshot")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| s.starts_with("data:image/"))
+                                    .and_then(|uri| uri.split(',').nth(1))
+                                    .and_then(|b64| {
+                                        use base64::Engine;
+                                        base64::engine::general_purpose::STANDARD.decode(b64).ok()
+                                    });
+                                if let Some(bytes) = decoded_screenshot {
+                                    let filename = format!("{tool_call_id}.png");
+                                    let store_ref = Arc::clone(&store_media);
+                                    let sk_ref = sk_media.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(e) =
+                                            store_ref.save_media(&sk_ref, &filename, &bytes).await
+                                        {
+                                            warn!("failed to save screenshot media: {e}");
+                                        }
+                                    });
+                                    let sanitized = SessionStore::key_to_filename(&sk_media);
+                                    r["screenshot"] = Value::String(format!(
+                                        "media/{sanitized}/{tool_call_id}.png"
+                                    ));
+                                }
+                                // If screenshot is still a data URI (decode failed), strip it.
+                                let strip_screenshot = r
+                                    .get("screenshot")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|s| s.starts_with("data:"));
+                                // Strip legacy document data URIs — they are only
+                                // needed by the channel dispatch (already extracted
+                                // above) and should not be persisted.
+                                let strip_document = r
+                                    .get("document")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|s| s.starts_with("data:"));
+                                if let Some(obj) = r.as_object_mut() {
+                                    if strip_screenshot {
+                                        obj.remove("screenshot");
+                                    }
+                                    if strip_document {
+                                        obj.remove("document");
+                                    }
+                                    obj.remove("screenshot_scale");
+                                }
+                                for field in &["stdout", "stderr"] {
+                                    if let Some(s) = r.get(*field).and_then(|v| v.as_str())
+                                        && s.len() > 10_000
+                                    {
+                                        let truncated = format!(
+                                            "{}\n\n... [truncated — {} bytes total]",
+                                            truncate_at_char_boundary(s, 10_000),
+                                            s.len()
+                                        );
+                                        r[*field] = Value::String(truncated);
+                                    }
+                                }
+                                r
+                            });
+                            let tracked_reasoning = tool_reasoning_map.remove(&id);
+                            let assistant_tool_call_msg = build_tool_call_assistant_message(
+                                id.clone(),
+                                name.clone(),
+                                tracked_args.clone(),
+                                seq,
+                                Some(run_id.as_str()),
+                            );
+                            let tool_result_msg = PersistedMessage::ToolResult {
+                                tool_call_id: id,
+                                tool_name: name,
+                                arguments: tracked_args,
+                                success,
+                                result: persisted_result,
+                                error,
+                                reasoning: tracked_reasoning,
+                                created_at: Some(now_ms()),
+                                run_id: Some(run_id.clone()),
+                            };
+                            persist_tool_history_pair(
+                                store,
+                                &sk,
+                                assistant_tool_call_msg,
+                                tool_result_msg,
+                                "failed to persist assistant tool call",
+                                "failed to persist tool result",
+                            )
+                            .await;
+                        }
+
+                        payload
+                    },
+                    RunnerEvent::ThinkingText(text) => {
+                        latest_reasoning = text.clone();
+                        if let Some(ref map) = active_thinking_text {
+                            map.write().await.insert(sk.clone(), text.clone());
+                        }
+                        if let Some(ref map) = active_partial_for_events
+                            && let Some(draft) = map.write().await.get_mut(&sk)
+                        {
+                            draft.set_reasoning(&text);
+                        }
+                        serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": sk,
+                            "state": "thinking_text",
+                            "text": text,
+                            "seq": seq,
+                        })
+                    },
+                    RunnerEvent::TextDelta(text) => {
+                        if let Some(ref map) = active_partial_for_events
+                            && let Some(draft) = map.write().await.get_mut(&sk)
+                        {
+                            draft.append_text(&text);
+                        }
+                        if let Some(ref dispatcher) = channel_stream_for_events {
+                            dispatcher.lock().await.send_delta(&text).await;
+                        }
+                        serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": sk,
+                            "state": "delta",
+                            "text": text,
+                            "seq": seq,
+                        })
+                    },
+                    RunnerEvent::Iteration(n) => serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
-                        "state": "retrying",
-                        "error": error_obj,
-                        "retryAfterMs": delay_ms,
+                        "state": "iteration",
+                        "iteration": n,
                         "seq": seq,
-                    })
-                },
-            };
-            broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
+                    }),
+                    RunnerEvent::SubAgentStart { task, model, depth } => serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": sk,
+                        "state": "sub_agent_start",
+                        "task": task,
+                        "model": model,
+                        "depth": depth,
+                        "seq": seq,
+                    }),
+                    RunnerEvent::SubAgentEnd {
+                        task,
+                        model,
+                        depth,
+                        iterations,
+                        tool_calls_made,
+                    } => serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": sk,
+                        "state": "sub_agent_end",
+                        "task": task,
+                        "model": model,
+                        "depth": depth,
+                        "iterations": iterations,
+                        "toolCallsMade": tool_calls_made,
+                        "seq": seq,
+                    }),
+                    RunnerEvent::RetryingAfterError { error, delay_ms } => {
+                        let error_obj =
+                            parse_chat_error(&error, Some(provider_name_for_events.as_str()));
+                        if error_obj.get("type").and_then(|v| v.as_str())
+                            == Some("rate_limit_exceeded")
+                        {
+                            let state_clone = Arc::clone(&state);
+                            let sk_clone = sk.clone();
+                            let error_clone = error_obj.clone();
+                            tokio::spawn(async move {
+                                send_retry_status_to_channels(
+                                    &state_clone,
+                                    &sk_clone,
+                                    &error_clone,
+                                    Duration::from_millis(delay_ms),
+                                )
+                                .await;
+                            });
+                        }
+                        serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": sk,
+                            "state": "retrying",
+                            "error": error_obj,
+                            "retryAfterMs": delay_ms,
+                            "seq": seq,
+                        })
+                    },
+                };
+                broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
+            }
+            latest_reasoning
         }
-        latest_reasoning
-    });
+        .instrument(run_span.clone()),
+    );
     active_event_forwarders
         .write()
         .await
@@ -6576,6 +6796,16 @@ async fn run_with_tools(
     if let Some(cid) = conn_id.as_deref() {
         tool_context["_conn_id"] = serde_json::json!(cid);
     }
+    if let Some(settings) = langfuse_settings {
+        tool_context["__telemetry_trace_content"] =
+            serde_json::json!(match settings.trace_content {
+                TraceContentMode::Off => "off",
+                TraceContentMode::Sanitized => "sanitized",
+                TraceContentMode::Full => "full",
+            });
+        tool_context["__telemetry_max_content_bytes"] =
+            serde_json::json!(settings.max_content_bytes);
+    }
 
     let provider_ref = provider.clone();
     let first_result = run_agent_loop_streaming(
@@ -6588,6 +6818,7 @@ async fn run_with_tools(
         Some(tool_context.clone()),
         hook_registry.clone(),
     )
+    .instrument(run_span.clone())
     .await;
 
     // On context-window overflow, compact the session and retry once.
@@ -6657,6 +6888,7 @@ async fn run_with_tools(
                         Some(tool_context),
                         hook_registry,
                     )
+                    .instrument(run_span.clone())
                     .await
                 },
                 Err(e) => {
@@ -6739,9 +6971,31 @@ async fn run_with_tools(
                     run_id: run_id.to_string(),
                     session_key: session_key.to_string(),
                     state: "error",
+                    trace_id: trace_id.clone(),
                     error: error_obj,
                     seq: client_seq,
                 };
+                run_span.set_attribute("langfuse.observation.level", "ERROR");
+                run_span.set_attribute(
+                    "langfuse.observation.status_message",
+                    "empty response with zero tokens",
+                );
+                set_langfuse_json_attribute(
+                    &run_span,
+                    "langfuse.trace.output",
+                    &serde_json::json!({
+                        "error": "empty response with zero tokens",
+                    }),
+                    langfuse_settings,
+                );
+                set_langfuse_json_attribute(
+                    &run_span,
+                    "langfuse.observation.output",
+                    &serde_json::json!({
+                        "error": "empty response with zero tokens",
+                    }),
+                    langfuse_settings,
+                );
                 #[allow(clippy::unwrap_used)] // serializing known-valid struct
                 let payload_val = serde_json::to_value(&error_payload).unwrap();
                 terminal_runs.write().await.insert(run_id.to_string());
@@ -6793,6 +7047,7 @@ async fn run_with_tools(
                 run_id: run_id.to_string(),
                 session_key: session_key.to_string(),
                 state: "final",
+                trace_id: trace_id.clone(),
                 text: display_text.clone(),
                 model: provider_ref.id().to_string(),
                 provider: provider_name.to_string(),
@@ -6810,6 +7065,26 @@ async fn run_with_tools(
                 reasoning: reasoning.clone(),
                 seq: client_seq,
             };
+            let final_output = serde_json::json!({
+                "text": display_text.clone(),
+                "reasoning": reasoning.clone(),
+                "usage": usage_observability_value(&usage),
+                "request_usage": usage_observability_value(&request_usage),
+                "iterations": iterations,
+                "tool_calls_made": tool_calls_made,
+            });
+            set_langfuse_json_attribute(
+                &run_span,
+                "langfuse.trace.output",
+                &final_output,
+                langfuse_settings,
+            );
+            set_langfuse_json_attribute(
+                &run_span,
+                "langfuse.observation.output",
+                &final_output,
+                langfuse_settings,
+            );
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
             let payload_val = serde_json::to_value(&final_payload).unwrap();
             terminal_runs.write().await.insert(run_id.to_string());
@@ -6841,6 +7116,7 @@ async fn run_with_tools(
                 audio_path,
                 reasoning,
                 llm_api_response,
+                trace_id: trace_id.clone(),
             })
         },
         Err(e) => {
@@ -6854,9 +7130,24 @@ async fn run_with_tools(
                 run_id: run_id.to_string(),
                 session_key: session_key.to_string(),
                 state: "error",
+                trace_id,
                 error: error_obj,
                 seq: client_seq,
             };
+            run_span.set_attribute("langfuse.observation.level", "ERROR");
+            run_span.set_attribute("langfuse.observation.status_message", error_str.clone());
+            set_langfuse_json_attribute(
+                &run_span,
+                "langfuse.trace.output",
+                &serde_json::json!({ "error": error_str }),
+                langfuse_settings,
+            );
+            set_langfuse_json_attribute(
+                &run_span,
+                "langfuse.observation.output",
+                &serde_json::json!({ "error": error_str }),
+                langfuse_settings,
+            );
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
             let payload_val = serde_json::to_value(&error_payload).unwrap();
             terminal_runs.write().await.insert(run_id.to_string());
@@ -7053,6 +7344,39 @@ async fn run_streaming(
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
     let system_prompt = apply_voice_reply_suffix(system_prompt, desired_reply_medium);
+    let langfuse_settings = langfuse_content_settings(&persona.config);
+    let run_span = tracing::info_span!(
+        "chat.run",
+        run_id = %run_id,
+        session_key = %session_key,
+        agent_id = %agent_id,
+        provider = %provider_name,
+        model = %model_id,
+        tools_enabled = false,
+    );
+    configure_chat_run_span(
+        &run_span,
+        &persona.config,
+        langfuse_settings,
+        run_id,
+        session_key,
+        agent_id,
+        provider_name,
+        model_id,
+        desired_reply_medium,
+        user_message_index,
+        ToolMode::Off,
+        false,
+        false,
+        None,
+        user_content,
+    );
+    let trace_id = trace_id_for_span(&run_span);
+    if let Some(ref map) = active_partial_assistant
+        && let Some(draft) = map.write().await.get_mut(session_key)
+    {
+        draft.set_trace_id(trace_id.clone());
+    }
 
     let mut messages: Vec<ChatMessage> = Vec::new();
     messages.push(ChatMessage::system(system_prompt));
@@ -7076,6 +7400,33 @@ async fn run_streaming(
     'attempts: loop {
         #[cfg(feature = "metrics")]
         let stream_start = Instant::now();
+
+        let llm_span = tracing::info_span!(
+            parent: &run_span,
+            "llm.request",
+            provider = %provider_name,
+            model = %model_id
+        );
+        llm_span.set_attribute("langfuse.observation.type", "generation");
+        llm_span.set_attribute("langfuse.observation.model.name", model_id.to_string());
+        if let Ok(metadata) = serde_json::to_string(&serde_json::json!({
+            "message_count": messages.len(),
+            "streaming": true,
+            "tool_mode": "off",
+            "retryable_server_retries_remaining": server_retries_remaining,
+            "retryable_rate_limit_retries_remaining": rate_limit_retries_remaining,
+        })) {
+            llm_span.set_attribute("langfuse.observation.metadata", metadata);
+        }
+        let request_payload = serde_json::json!({
+            "messages": messages.iter().map(ChatMessage::to_openai_value).collect::<Vec<_>>(),
+        });
+        set_langfuse_json_attribute(
+            &llm_span,
+            "langfuse.observation.input",
+            &request_payload,
+            langfuse_settings,
+        );
 
         let mut stream = provider.stream(messages.clone());
         let mut accumulated = String::new();
@@ -7215,9 +7566,38 @@ async fn run_streaming(
                             run_id: run_id.to_string(),
                             session_key: session_key.to_string(),
                             state: "error",
+                            trace_id: trace_id.clone(),
                             error: error_obj,
                             seq: client_seq,
                         };
+                        llm_span.set_attribute("langfuse.observation.level", "ERROR");
+                        llm_span.set_attribute(
+                            "langfuse.observation.status_message",
+                            "empty stream with zero tokens",
+                        );
+                        set_langfuse_json_attribute(
+                            &llm_span,
+                            "langfuse.observation.output",
+                            &serde_json::json!({ "error": "empty stream with zero tokens" }),
+                            langfuse_settings,
+                        );
+                        run_span.set_attribute("langfuse.observation.level", "ERROR");
+                        run_span.set_attribute(
+                            "langfuse.observation.status_message",
+                            "empty stream with zero tokens",
+                        );
+                        set_langfuse_json_attribute(
+                            &run_span,
+                            "langfuse.trace.output",
+                            &serde_json::json!({ "error": "empty stream with zero tokens" }),
+                            langfuse_settings,
+                        );
+                        set_langfuse_json_attribute(
+                            &run_span,
+                            "langfuse.observation.output",
+                            &serde_json::json!({ "error": "empty stream with zero tokens" }),
+                            langfuse_settings,
+                        );
                         #[allow(clippy::unwrap_used)] // serializing known-valid struct
                         let payload_val = serde_json::to_value(&error_payload).unwrap();
                         terminal_runs.write().await.insert(run_id.to_string());
@@ -7268,6 +7648,7 @@ async fn run_streaming(
                         run_id: run_id.to_string(),
                         session_key: session_key.to_string(),
                         state: "final",
+                        trace_id: trace_id.clone(),
                         text: accumulated.clone(),
                         model: provider.id().to_string(),
                         provider: provider_name.to_string(),
@@ -7285,6 +7666,34 @@ async fn run_streaming(
                         reasoning: reasoning.clone(),
                         seq: client_seq,
                     };
+                    let final_output = serde_json::json!({
+                        "text": accumulated.clone(),
+                        "reasoning": reasoning.clone(),
+                        "usage": usage_observability_value(&usage),
+                    });
+                    if let Ok(usage_json) =
+                        serde_json::to_string(&usage_observability_value(&usage))
+                    {
+                        llm_span.set_attribute("langfuse.observation.usage_details", usage_json);
+                    }
+                    set_langfuse_json_attribute(
+                        &llm_span,
+                        "langfuse.observation.output",
+                        &final_output,
+                        langfuse_settings,
+                    );
+                    set_langfuse_json_attribute(
+                        &run_span,
+                        "langfuse.trace.output",
+                        &final_output,
+                        langfuse_settings,
+                    );
+                    set_langfuse_json_attribute(
+                        &run_span,
+                        "langfuse.observation.output",
+                        &final_output,
+                        langfuse_settings,
+                    );
                     #[allow(clippy::unwrap_used)] // serializing known-valid struct
                     let payload_val = serde_json::to_value(&final_payload).unwrap();
                     terminal_runs.write().await.insert(run_id.to_string());
@@ -7318,6 +7727,7 @@ async fn run_streaming(
                         audio_path,
                         reasoning,
                         llm_api_response,
+                        trace_id: trace_id.clone(),
                     });
                 },
                 StreamEvent::Error(msg) => {
@@ -7334,6 +7744,14 @@ async fn run_streaming(
                             &mut rate_limit_backoff_ms,
                         )
                     {
+                        llm_span.set_attribute("langfuse.observation.level", "ERROR");
+                        llm_span.set_attribute("langfuse.observation.status_message", msg.clone());
+                        set_langfuse_json_attribute(
+                            &llm_span,
+                            "langfuse.observation.output",
+                            &serde_json::json!({ "error": msg.clone(), "retry_after_ms": delay_ms }),
+                            langfuse_settings,
+                        );
                         warn!(
                             run_id,
                             error = %msg,
@@ -7383,9 +7801,32 @@ async fn run_streaming(
                         run_id: run_id.to_string(),
                         session_key: session_key.to_string(),
                         state: "error",
+                        trace_id,
                         error: error_obj,
                         seq: client_seq,
                     };
+                    llm_span.set_attribute("langfuse.observation.level", "ERROR");
+                    llm_span.set_attribute("langfuse.observation.status_message", msg.clone());
+                    set_langfuse_json_attribute(
+                        &llm_span,
+                        "langfuse.observation.output",
+                        &serde_json::json!({ "error": msg.clone() }),
+                        langfuse_settings,
+                    );
+                    run_span.set_attribute("langfuse.observation.level", "ERROR");
+                    run_span.set_attribute("langfuse.observation.status_message", msg.clone());
+                    set_langfuse_json_attribute(
+                        &run_span,
+                        "langfuse.trace.output",
+                        &serde_json::json!({ "error": msg }),
+                        langfuse_settings,
+                    );
+                    set_langfuse_json_attribute(
+                        &run_span,
+                        "langfuse.observation.output",
+                        &serde_json::json!({ "error": msg }),
+                        langfuse_settings,
+                    );
                     #[allow(clippy::unwrap_used)] // serializing known-valid struct
                     let payload_val = serde_json::to_value(&error_payload).unwrap();
                     terminal_runs.write().await.insert(run_id.to_string());
@@ -12112,6 +12553,46 @@ mod tests {
         assert!(json.get("started_at").is_none());
     }
 
+    #[test]
+    fn chat_final_broadcast_serializes_trace_id_in_camel_case() {
+        let payload = ChatFinalBroadcast {
+            run_id: "run-1".to_string(),
+            session_key: "session-1".to_string(),
+            state: "final",
+            trace_id: Some("trace-1".to_string()),
+            text: "done".to_string(),
+            model: "gpt-5".to_string(),
+            provider: "openai".to_string(),
+            input_tokens: 12,
+            output_tokens: 34,
+            duration_ms: 56,
+            request_input_tokens: Some(12),
+            request_output_tokens: Some(34),
+            message_index: 7,
+            reply_medium: ReplyMedium::Text,
+            iterations: None,
+            tool_calls_made: None,
+            audio: None,
+            audio_warning: None,
+            reasoning: None,
+            seq: None,
+        };
+        let json = serde_json::to_value(payload).unwrap();
+        assert_eq!(json["traceId"], "trace-1");
+        assert!(json.get("trace_id").is_none());
+    }
+
+    #[test]
+    fn active_assistant_draft_persists_trace_id() {
+        let mut draft = ActiveAssistantDraft::new("run-1", "gpt-5", "openai", None);
+        draft.append_text("partial");
+        draft.set_trace_id(Some("trace-1".to_string()));
+
+        let persisted = draft.to_persisted_message().to_value();
+        assert_eq!(persisted["trace_id"], "trace-1");
+        assert_eq!(persisted["run_id"], "run-1");
+    }
+
     #[tokio::test]
     async fn peek_returns_inactive_when_no_run() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -12218,6 +12699,7 @@ mod tests {
                 let mut draft =
                     ActiveAssistantDraft::new(run_id, "test-model", "test-provider", None);
                 draft.append_text("Partial answer");
+                draft.set_trace_id(Some("trace-abort".to_string()));
                 draft
             });
         service
@@ -12293,6 +12775,7 @@ mod tests {
         assert_eq!(history[1]["role"].as_str(), Some("tool_result"));
         assert_eq!(history[2]["role"].as_str(), Some("assistant"));
         assert_eq!(history[2]["content"].as_str(), Some("Partial answer"));
+        assert_eq!(history[2]["trace_id"].as_str(), Some("trace-abort"));
     }
 
     #[tokio::test]

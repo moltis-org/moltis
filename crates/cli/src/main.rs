@@ -39,11 +39,14 @@ mod sandbox_commands;
 mod service_commands;
 #[cfg(feature = "tailscale")]
 mod tailscale_commands;
+mod telemetry;
 
 use {
     anyhow::anyhow,
     clap::{Parser, Subcommand},
     moltis_gateway::logs::{EnabledLogLevels, LogBroadcastLayer, LogBuffer},
+    opentelemetry::trace::TracerProvider as _,
+    telemetry::{TelemetryHandles, build_langfuse_tracing},
     tracing::info,
     tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt},
 };
@@ -236,7 +239,11 @@ enum SkillAction {
 
 /// Initialise tracing and optionally attach a [`LogBroadcastLayer`] that
 /// captures events into an in-memory ring buffer for the web UI.
-fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
+fn init_telemetry(
+    cli: &Cli,
+    config: &moltis_config::MoltisConfig,
+    log_buffer: Option<LogBuffer>,
+) -> anyhow::Result<TelemetryHandles> {
     // Start with user-specified or default log level
     let base_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
@@ -257,25 +264,50 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
     }
 
     let registry = tracing_subscriber::registry().with(filter);
-
-    // Optionally attach the in-memory capture layer.
-    let log_layer = log_buffer.map(LogBroadcastLayer::new);
+    let langfuse = build_langfuse_tracing(config)?;
 
     if cli.json_logs {
-        registry
-            .with(fmt::layer().json().with_target(true).with_thread_ids(false))
-            .with(log_layer)
-            .init();
+        if let Some(langfuse) = langfuse {
+            let fmt_layer = fmt::layer().json().with_target(true).with_thread_ids(false);
+            let log_layer = log_buffer.map(LogBroadcastLayer::new);
+            let otel_layer =
+                tracing_opentelemetry::layer().with_tracer(langfuse.provider.tracer("moltis"));
+            registry
+                .with(otel_layer)
+                .with(fmt_layer)
+                .with(log_layer)
+                .init();
+            Ok(TelemetryHandles::new(langfuse.provider))
+        } else {
+            let fmt_layer = fmt::layer().json().with_target(true).with_thread_ids(false);
+            let log_layer = log_buffer.map(LogBroadcastLayer::new);
+            registry.with(fmt_layer).with(log_layer).init();
+            Ok(TelemetryHandles::empty())
+        }
     } else {
-        registry
-            .with(
-                fmt::layer()
-                    .with_target(true)
-                    .with_thread_ids(false)
-                    .with_ansi(true),
-            )
-            .with(log_layer)
-            .init();
+        if let Some(langfuse) = langfuse {
+            let fmt_layer = fmt::layer()
+                .with_target(true)
+                .with_thread_ids(false)
+                .with_ansi(true);
+            let log_layer = log_buffer.map(LogBroadcastLayer::new);
+            let otel_layer =
+                tracing_opentelemetry::layer().with_tracer(langfuse.provider.tracer("moltis"));
+            registry
+                .with(otel_layer)
+                .with(fmt_layer)
+                .with(log_layer)
+                .init();
+            Ok(TelemetryHandles::new(langfuse.provider))
+        } else {
+            let fmt_layer = fmt::layer()
+                .with_target(true)
+                .with_thread_ids(false)
+                .with_ansi(true);
+            let log_layer = log_buffer.map(LogBroadcastLayer::new);
+            registry.with(fmt_layer).with(log_layer).init();
+            Ok(TelemetryHandles::empty())
+        }
     }
 }
 
@@ -358,21 +390,8 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
 
-    // Create the log buffer only for the gateway command so the web UI can
-    // display captured log entries. Default capacity (1000) can be overridden
-    // via `server.log_buffer_size` in moltis.toml.
-    let log_buffer = if matches!(cli.command, None | Some(Commands::Gateway)) {
-        Some(LogBuffer::default())
-    } else {
-        None
-    };
-
-    init_telemetry(&cli, log_buffer.clone());
-
-    info!(version = moltis_config::VERSION, "moltis starting");
-
-    // Apply directory overrides before any command so all subcommands
-    // (config check, db, sandbox, etc.) respect --config-dir / --data-dir.
+    // Apply directory overrides before loading config so telemetry reads the
+    // same configuration path as the rest of the process.
     if let Some(ref dir) = cli.config_dir {
         moltis_config::set_config_dir(dir.clone());
     }
@@ -387,27 +406,39 @@ async fn main() -> anyhow::Result<()> {
     // hard requirement for startup; fail fast if directory initialization fails.
     let config_dir =
         moltis_config::config_dir().ok_or_else(|| anyhow!("unable to resolve config directory"))?;
-    std::fs::create_dir_all(&config_dir).unwrap_or_else(|e| {
-        panic!(
-            "failed to create config directory {}: {e}",
+    std::fs::create_dir_all(&config_dir).map_err(|error| {
+        anyhow!(
+            "failed to create config directory {}: {error}",
             config_dir.display()
         )
-    });
+    })?;
 
     let data_dir = moltis_config::data_dir();
-    std::fs::create_dir_all(&data_dir).unwrap_or_else(|e| {
-        panic!(
-            "failed to create data directory {}: {e}",
+    std::fs::create_dir_all(&data_dir).map_err(|error| {
+        anyhow!(
+            "failed to create data directory {}: {error}",
             data_dir.display()
         )
-    });
+    })?;
 
-    match cli.command {
+    let config = moltis_config::discover_and_load();
+
+    // Create the log buffer only for the gateway command so the web UI can
+    // display captured log entries. Default capacity (1000) can be overridden
+    // via `server.log_buffer_size` in moltis.toml.
+    let log_buffer = if matches!(cli.command, None | Some(Commands::Gateway)) {
+        Some(LogBuffer::default())
+    } else {
+        None
+    };
+
+    let telemetry = init_telemetry(&cli, &config, log_buffer.clone())?;
+
+    info!(version = moltis_config::VERSION, "moltis starting");
+
+    let result = match cli.command {
         // Default: start gateway when no subcommand is provided
         None | Some(Commands::Gateway) => {
-            // Load config to get server settings
-            let config = moltis_config::discover_and_load();
-
             // CLI args override config values
             let bind = cli.bind.unwrap_or(config.server.bind);
             let port = cli.port.unwrap_or(config.server.port);
@@ -474,7 +505,10 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("command not yet implemented");
             Ok(())
         },
-    }
+    };
+
+    telemetry.shutdown();
+    result
 }
 
 async fn handle_skills(action: SkillAction) -> anyhow::Result<()> {

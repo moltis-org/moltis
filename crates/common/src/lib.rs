@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod hooks;
+pub mod observability;
 pub mod secret_serde;
 pub mod types;
 

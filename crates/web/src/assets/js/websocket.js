@@ -63,6 +63,14 @@ function clearChatEmptyState() {
 	S.chatMsgBox.classList.remove("chat-messages-empty");
 }
 
+function appendTraceIdText(container, traceId) {
+	if (!(container && traceId)) return;
+	var trace = document.createElement("span");
+	trace.className = "msg-token-speed";
+	trace.textContent = ` \u00b7 trace ${traceId}`;
+	container.appendChild(trace);
+}
+
 function toolCallLogicalId(payload) {
 	if (!payload) return "";
 	if (payload.runId) return `${payload.runId}:${payload.toolCallId}`;
@@ -558,6 +566,7 @@ function appendFinalFooter(msgEl, p, eventSession) {
 		badge.textContent = p.replyMedium;
 		footer.appendChild(badge);
 	}
+	appendTraceIdText(footer, p.traceId);
 	msgEl.appendChild(footer);
 
 	void attachMessageVoiceControl({
@@ -601,6 +610,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 				reasoning: p.reasoning || null,
 				audio: p.audio || null,
 				run_id: p.runId || null,
+				trace_id: p.traceId || null,
 				created_at: Date.now(),
 			},
 			p.messageIndex,
@@ -795,10 +805,18 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	}
 	removeThinking();
 	clearStaleRunningToolCards();
+	var errorEl = null;
 	if (p.error?.title) {
-		chatAddErrorCard(localizeStructuredError(p.error));
+		errorEl = chatAddErrorCard(localizeStructuredError(p.error));
 	} else {
-		chatAddErrorMsg(p.message || "unknown");
+		errorEl = chatAddErrorMsg(p.message || "unknown");
+	}
+	if (errorEl && p.traceId) {
+		var traceEl = document.createElement("div");
+		traceEl.className = "error-detail";
+		traceEl.textContent = `Trace ID: ${p.traceId}`;
+		var body = errorEl.querySelector(".error-body");
+		if (body) body.appendChild(traceEl);
 	}
 	S.setStreamEl(null);
 	S.setStreamText("");
@@ -840,6 +858,7 @@ function cacheAbortedPartial(eventSession, p, abortSession, partialState) {
 			reasoning: partial?.reasoning || null,
 			audio: partial?.audio || null,
 			run_id: partial?.run_id || p.runId || null,
+			trace_id: partial?.trace_id || null,
 			created_at: partial?.created_at || Date.now(),
 		},
 		p.messageIndex,
@@ -876,6 +895,7 @@ function renderAbortedPartialInDom(eventSession, p, partialState) {
 			audio: partial?.audio || null,
 			audioWarning: null,
 			runId: p.runId,
+			traceId: partial?.trace_id || null,
 			messageIndex: p.messageIndex,
 			sessionKey: eventSession,
 		},

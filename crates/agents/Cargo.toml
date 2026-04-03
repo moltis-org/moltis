@@ -16,6 +16,7 @@ moltis-common   = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-sessions = { workspace = true }
 moltis-skills   = { workspace = true }
+opentelemetry   = { workspace = true }
 reqwest         = { workspace = true }
 secrecy         = { workspace = true }
 serde           = { workspace = true }
@@ -24,6 +25,7 @@ thiserror       = { workspace = true }
 tokio           = { workspace = true }
 tokio-stream    = { workspace = true }
 tracing         = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 uuid            = { workspace = true }
 
 # Optional

@@ -143,7 +143,7 @@ thiserror = "2"
 openssl = { features = ["vendored"], version = "0.10" }
 # Logging
 opentelemetry         = { version = "0.29" }
-opentelemetry-otlp    = { features = ["tonic"], version = "0.29" }
+opentelemetry-otlp    = { default-features = false, features = ["http-proto", "reqwest-client", "trace"], version = "0.29" }
 opentelemetry_sdk     = { features = ["rt-tokio"], version = "0.29" }
 tracing               = "0.1"
 tracing-opentelemetry = "0.30"

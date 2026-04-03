@@ -2,13 +2,20 @@ use std::{borrow::Cow, fmt::Write, sync::Arc};
 
 use {
     anyhow::{Result, bail},
-    tracing::{debug, info, trace, warn},
+    tracing::{Instrument, Span, debug, info, trace, warn},
+    tracing_opentelemetry::OpenTelemetrySpanExt,
 };
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
 
-use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
+use {
+    moltis_common::{
+        hooks::{HookAction, HookPayload, HookRegistry},
+        observability::{sanitize_json_for_observability, sanitize_text_for_observability},
+    },
+    moltis_config::schema::TraceContentMode,
+};
 
 use crate::{
     model::{
@@ -80,6 +87,23 @@ fn sanitize_tool_name(name: &str) -> Cow<'_, str> {
 const MALFORMED_TOOL_RETRY_PROMPT: &str = "Your tool call was malformed. Retry with exact format:\n\
      ```tool_call\n{\"tool\": \"name\", \"arguments\": {...}}\n```";
 const EMPTY_TOOL_NAME_RETRY_PROMPT: &str = "Your structured tool call had an empty tool name. Retry the same tool call using the intended tool's exact name and the same arguments.";
+const TELEMETRY_TRACE_CONTENT_KEY: &str = "__telemetry_trace_content";
+const TELEMETRY_MAX_CONTENT_BYTES_KEY: &str = "__telemetry_max_content_bytes";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ObservabilitySettings {
+    trace_content: TraceContentMode,
+    max_content_bytes: usize,
+}
+
+impl Default for ObservabilitySettings {
+    fn default() -> Self {
+        Self {
+            trace_content: TraceContentMode::Off,
+            max_content_bytes: 8_192,
+        }
+    }
+}
 
 fn find_empty_tool_name_call(tool_calls: &[ToolCall]) -> Option<&ToolCall> {
     tool_calls
@@ -121,6 +145,129 @@ fn streaming_tool_call_message_content(
         Some(accumulated_text.to_string())
     } else {
         None
+    }
+}
+
+fn observability_settings(tool_context: &Option<serde_json::Value>) -> ObservabilitySettings {
+    let Some(ctx) = tool_context.as_ref().and_then(serde_json::Value::as_object) else {
+        return ObservabilitySettings::default();
+    };
+
+    let trace_content = match ctx
+        .get(TELEMETRY_TRACE_CONTENT_KEY)
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("sanitized") => TraceContentMode::Sanitized,
+        Some("full") => TraceContentMode::Full,
+        _ => TraceContentMode::Off,
+    };
+    let max_content_bytes = ctx
+        .get(TELEMETRY_MAX_CONTENT_BYTES_KEY)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8_192);
+
+    ObservabilitySettings {
+        trace_content,
+        max_content_bytes,
+    }
+}
+
+fn is_internal_tool_context_key(key: &str) -> bool {
+    key.starts_with("__telemetry_")
+}
+
+fn merge_tool_context(args: &mut serde_json::Value, tool_context: &Option<serde_json::Value>) {
+    if let Some(ctx) = tool_context.as_ref()
+        && let (Some(args_obj), Some(ctx_obj)) = (args.as_object_mut(), ctx.as_object())
+    {
+        for (key, value) in ctx_obj {
+            if is_internal_tool_context_key(key) {
+                continue;
+            }
+            args_obj.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn tool_calls_to_json(tool_calls: &[ToolCall]) -> serde_json::Value {
+    serde_json::Value::Array(
+        tool_calls
+            .iter()
+            .map(|tool_call| {
+                serde_json::json!({
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": tool_call.arguments,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn usage_to_json(usage: &Usage) -> serde_json::Value {
+    serde_json::json!({
+        "input": usage.input_tokens,
+        "output": usage.output_tokens,
+        "cache_read": usage.cache_read_tokens,
+        "cache_write": usage.cache_write_tokens,
+    })
+}
+
+fn set_json_attribute(
+    span: &Span,
+    key: &'static str,
+    value: &serde_json::Value,
+    settings: ObservabilitySettings,
+) {
+    let serialized = match settings.trace_content {
+        TraceContentMode::Off => None,
+        TraceContentMode::Sanitized => serde_json::to_string(&sanitize_json_for_observability(
+            value,
+            settings.max_content_bytes,
+            true,
+        ))
+        .ok(),
+        TraceContentMode::Full => serde_json::to_string(&sanitize_json_for_observability(
+            value,
+            settings.max_content_bytes,
+            false,
+        ))
+        .ok(),
+    };
+    if let Some(serialized) = serialized {
+        span.set_attribute(key, serialized);
+    }
+}
+
+fn set_text_attribute(
+    span: &Span,
+    key: &'static str,
+    value: &str,
+    settings: ObservabilitySettings,
+) {
+    let serialized = match settings.trace_content {
+        TraceContentMode::Off => None,
+        TraceContentMode::Sanitized => Some(sanitize_text_for_observability(
+            value,
+            settings.max_content_bytes,
+            true,
+        )),
+        TraceContentMode::Full => Some(sanitize_text_for_observability(
+            value,
+            settings.max_content_bytes,
+            false,
+        )),
+    };
+    if let Some(serialized) = serialized {
+        span.set_attribute(key, serialized);
+    }
+}
+
+fn set_usage_attributes(span: &Span, usage: &Usage) {
+    if let Ok(serialized) = serde_json::to_string(&usage_to_json(usage)) {
+        span.set_attribute("langfuse.observation.usage_details", serialized);
     }
 }
 
@@ -721,6 +868,7 @@ pub async fn run_agent_loop_with_context(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let observability = observability_settings(&tool_context);
 
     let mut iterations = 0;
     let mut total_tool_calls = 0;
@@ -761,6 +909,33 @@ pub async fn run_agent_loop_with_context(
         );
         trace!(iteration = iterations, messages = ?messages, "LLM request messages");
 
+        let llm_span = tracing::info_span!(
+            "llm.request",
+            iteration = iterations,
+            provider = %provider.name(),
+            model = %provider.id()
+        );
+        llm_span.set_attribute("langfuse.observation.type", "generation");
+        llm_span.set_attribute("langfuse.observation.model.name", provider.id().to_string());
+        if let Ok(metadata) = serde_json::to_string(&serde_json::json!({
+            "iteration": iterations,
+            "message_count": messages.len(),
+            "tool_schema_count": schemas_for_api.len(),
+            "native_tools": native_tools,
+        })) {
+            llm_span.set_attribute("langfuse.observation.metadata", metadata);
+        }
+        let request_payload = serde_json::json!({
+            "messages": messages.iter().map(ChatMessage::to_openai_value).collect::<Vec<_>>(),
+            "tool_schema_count": schemas_for_api.len(),
+        });
+        set_json_attribute(
+            &llm_span,
+            "langfuse.observation.input",
+            &request_payload,
+            observability,
+        );
+
         // Dispatch BeforeLLMCall hook — may block the LLM call.
         if let Some(ref hooks) = hook_registry {
             let msgs_json: Vec<serde_json::Value> =
@@ -794,44 +969,67 @@ pub async fn run_agent_loop_with_context(
             cb(RunnerEvent::Thinking);
         }
 
-        let mut response: CompletionResponse =
-            match provider.complete(&messages, schemas_for_api).await {
-                Ok(r) => r,
-                Err(e) => {
-                    let msg = e.to_string();
-                    if is_context_window_error(&msg) {
-                        return Err(AgentRunError::ContextWindowExceeded(msg));
-                    }
-                    if let Some(delay_ms) = next_retry_delay_ms(
-                        &msg,
-                        &mut server_retries_remaining,
-                        &mut rate_limit_retries_remaining,
-                        &mut rate_limit_backoff_ms,
-                    ) {
-                        iterations -= 1;
-                        warn!(
-                            error = %msg,
+        let mut response: CompletionResponse = match provider
+            .complete(&messages, schemas_for_api)
+            .instrument(llm_span.clone())
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = e.to_string();
+                llm_span.set_attribute("langfuse.observation.level", "ERROR");
+                llm_span.set_attribute("langfuse.observation.status_message", msg.clone());
+                set_text_attribute(
+                    &llm_span,
+                    "langfuse.observation.output",
+                    &msg,
+                    observability,
+                );
+                if is_context_window_error(&msg) {
+                    return Err(AgentRunError::ContextWindowExceeded(msg));
+                }
+                if let Some(delay_ms) = next_retry_delay_ms(
+                    &msg,
+                    &mut server_retries_remaining,
+                    &mut rate_limit_retries_remaining,
+                    &mut rate_limit_backoff_ms,
+                ) {
+                    iterations -= 1;
+                    warn!(
+                        error = %msg,
+                        delay_ms,
+                        server_retries_remaining,
+                        rate_limit_retries_remaining,
+                        "transient LLM error, retrying after delay"
+                    );
+                    if let Some(cb) = on_event {
+                        cb(RunnerEvent::RetryingAfterError {
+                            error: msg,
                             delay_ms,
-                            server_retries_remaining,
-                            rate_limit_retries_remaining,
-                            "transient LLM error, retrying after delay"
-                        );
-                        if let Some(cb) = on_event {
-                            cb(RunnerEvent::RetryingAfterError {
-                                error: msg,
-                                delay_ms,
-                            });
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-                        continue;
+                        });
                     }
-                    return Err(AgentRunError::Other(e));
-                },
-            };
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+                return Err(AgentRunError::Other(e));
+            },
+        };
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::ThinkingDone);
         }
+
+        set_usage_attributes(&llm_span, &response.usage);
+        let response_payload = serde_json::json!({
+            "text": response.text,
+            "tool_calls": tool_calls_to_json(&response.tool_calls),
+        });
+        set_json_attribute(
+            &llm_span,
+            "langfuse.observation.output",
+            &response_payload,
+            observability,
+        );
 
         total_input_tokens = total_input_tokens.saturating_add(response.usage.input_tokens);
         total_output_tokens = total_output_tokens.saturating_add(response.usage.output_tokens);
@@ -1064,14 +1262,27 @@ pub async fn run_agent_loop_with_context(
                 let tc_name = sanitized.to_string();
                 let _tc_id = tc.id.clone();
 
-                if let Some(ref ctx) = tool_context
-                    && let (Some(args_obj), Some(ctx_obj)) = (args.as_object_mut(), ctx.as_object())
-                {
-                    for (k, v) in ctx_obj {
-                        args_obj.insert(k.clone(), v.clone());
-                    }
+                merge_tool_context(&mut args, &tool_context);
+                let tool_span = tracing::info_span!(
+                    "tool.call",
+                    tool = %tc_name,
+                    tool_call_id = %tc.id,
+                );
+                tool_span.set_attribute("langfuse.observation.type", "tool");
+                if let Ok(metadata) = serde_json::to_string(&serde_json::json!({
+                    "tool_call_id": tc.id,
+                    "iteration": iterations,
+                })) {
+                    tool_span.set_attribute("langfuse.observation.metadata", metadata);
                 }
+                set_json_attribute(
+                    &tool_span,
+                    "langfuse.observation.input",
+                    &args,
+                    observability,
+                );
                 async move {
+                    let tool_span = Span::current();
                     // Run BeforeToolCall hook.
                     if let Some(ref hooks) = hook_registry {
                         let payload = HookPayload::BeforeToolCall {
@@ -1083,6 +1294,15 @@ pub async fn run_agent_loop_with_context(
                             Ok(HookAction::Block(reason)) => {
                                 warn!(tool = %tc_name, reason = %reason, "tool call blocked by hook");
                                 let err_str = format!("blocked by hook: {reason}");
+                                tool_span.set_attribute("langfuse.observation.level", "ERROR");
+                                tool_span
+                                    .set_attribute("langfuse.observation.status_message", err_str.clone());
+                                set_text_attribute(
+                                    &tool_span,
+                                    "langfuse.observation.output",
+                                    &err_str,
+                                    observability,
+                                );
                                 return (
                                     false,
                                     serde_json::json!({ "error": err_str }),
@@ -1128,14 +1348,42 @@ pub async fn run_agent_loop_with_context(
                                 }
 
                                 if has_error {
+                                    tool_span.set_attribute("langfuse.observation.level", "ERROR");
+                                    if let Some(error) = error_msg.as_ref() {
+                                        tool_span.set_attribute(
+                                            "langfuse.observation.status_message",
+                                            error.clone(),
+                                        );
+                                    }
+                                    set_json_attribute(
+                                        &tool_span,
+                                        "langfuse.observation.output",
+                                        &val,
+                                        observability,
+                                    );
                                     // Tool executed but returned an error in the result
                                     (false, serde_json::json!({ "result": val }), error_msg)
                                 } else {
+                                    set_json_attribute(
+                                        &tool_span,
+                                        "langfuse.observation.output",
+                                        &val,
+                                        observability,
+                                    );
                                     (true, serde_json::json!({ "result": val }), None)
                                 }
                             },
                             Err(e) => {
                                 let err_str = e.to_string();
+                                tool_span.set_attribute("langfuse.observation.level", "ERROR");
+                                tool_span
+                                    .set_attribute("langfuse.observation.status_message", err_str.clone());
+                                set_text_attribute(
+                                    &tool_span,
+                                    "langfuse.observation.output",
+                                    &err_str,
+                                    observability,
+                                );
                                 // Dispatch AfterToolCall hook on failure.
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
@@ -1157,6 +1405,14 @@ pub async fn run_agent_loop_with_context(
                         }
                     } else {
                         let err_str = format!("unknown tool: {tc_name}");
+                        tool_span.set_attribute("langfuse.observation.level", "ERROR");
+                        tool_span.set_attribute("langfuse.observation.status_message", err_str.clone());
+                        set_text_attribute(
+                            &tool_span,
+                            "langfuse.observation.output",
+                            &err_str,
+                            observability,
+                        );
                         (
                             false,
                             serde_json::json!({ "error": err_str }),
@@ -1164,6 +1420,7 @@ pub async fn run_agent_loop_with_context(
                         )
                     }
                 }
+                .instrument(tool_span)
             })
             .collect();
 
@@ -1272,6 +1529,7 @@ pub async fn run_agent_loop_streaming(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let observability = observability_settings(&tool_context);
 
     let mut iterations = 0;
     let mut total_tool_calls = 0;
@@ -1354,119 +1612,162 @@ pub async fn run_agent_loop_streaming(
         // Use streaming API.
         #[cfg(feature = "metrics")]
         let iter_start = std::time::Instant::now();
-        let mut stream = provider.stream_with_tools(messages.clone(), schemas_for_api.clone());
-
-        // Accumulate answer text, reasoning text, and tool calls from the stream.
-        let mut accumulated_text = String::new();
-        let mut accumulated_reasoning = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        // Map streaming index → accumulated JSON args string.
-        let mut tool_call_args: std::collections::HashMap<usize, String> =
-            std::collections::HashMap::new();
-        // Map streaming index → position in the `tool_calls` vec.
-        // The streaming index may not start at 0 (e.g. Copilot proxying
-        // Anthropic uses the content-block index, so a text block at index 0
-        // pushes the tool_use to index 1).
-        let mut stream_idx_to_vec_pos: std::collections::HashMap<usize, usize> =
-            std::collections::HashMap::new();
-        let mut input_tokens: u32 = 0;
-        let mut output_tokens: u32 = 0;
-        let mut stream_error: Option<String> = None;
-
-        while let Some(event) = stream.next().await {
-            match event {
-                StreamEvent::Delta(text) => {
-                    accumulated_text.push_str(&text);
-                    if let Some(cb) = on_event {
-                        cb(RunnerEvent::TextDelta(text));
-                    }
-                },
-                StreamEvent::ProviderRaw(raw) => {
-                    if raw_llm_responses.len() < 256 {
-                        raw_llm_responses.push(raw);
-                    }
-                },
-                StreamEvent::ReasoningDelta(text) => {
-                    accumulated_reasoning.push_str(&text);
-                    if let Some(cb) = on_event {
-                        cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
-                    }
-                },
-                StreamEvent::ToolCallStart { id, name, index } => {
-                    let vec_pos = tool_calls.len();
-                    debug!(tool = %name, id = %id, stream_index = index, vec_pos, "tool call started in stream");
-                    tool_calls.push(ToolCall {
-                        id,
-                        name,
-                        arguments: serde_json::json!({}),
-                    });
-                    stream_idx_to_vec_pos.insert(index, vec_pos);
-                    tool_call_args.insert(index, String::new());
-                },
-                StreamEvent::ToolCallArgumentsDelta { index, delta } => {
-                    if let Some(args) = tool_call_args.get_mut(&index) {
-                        args.push_str(&delta);
-                    }
-                },
-                StreamEvent::ToolCallComplete { index } => {
-                    // Arguments are finalized after stream completes.
-                    // Just log for now - we'll parse accumulated args later.
-                    debug!(index, "tool call arguments complete");
-                },
-                StreamEvent::Done(usage) => {
-                    input_tokens = usage.input_tokens;
-                    output_tokens = usage.output_tokens;
-                    debug!(input_tokens, output_tokens, "stream done");
-
-                    #[cfg(feature = "metrics")]
-                    {
-                        let provider_name = provider.name().to_string();
-                        let model_id = provider.id().to_string();
-                        let duration = iter_start.elapsed().as_secs_f64();
-                        counter!(
-                            llm_metrics::COMPLETIONS_TOTAL,
-                            labels::PROVIDER => provider_name.clone(),
-                            labels::MODEL => model_id.clone()
-                        )
-                        .increment(1);
-                        counter!(
-                            llm_metrics::INPUT_TOKENS_TOTAL,
-                            labels::PROVIDER => provider_name.clone(),
-                            labels::MODEL => model_id.clone()
-                        )
-                        .increment(u64::from(usage.input_tokens));
-                        counter!(
-                            llm_metrics::OUTPUT_TOKENS_TOTAL,
-                            labels::PROVIDER => provider_name.clone(),
-                            labels::MODEL => model_id.clone()
-                        )
-                        .increment(u64::from(usage.output_tokens));
-                        counter!(
-                            llm_metrics::CACHE_READ_TOKENS_TOTAL,
-                            labels::PROVIDER => provider_name.clone(),
-                            labels::MODEL => model_id.clone()
-                        )
-                        .increment(u64::from(usage.cache_read_tokens));
-                        counter!(
-                            llm_metrics::CACHE_WRITE_TOKENS_TOTAL,
-                            labels::PROVIDER => provider_name.clone(),
-                            labels::MODEL => model_id.clone()
-                        )
-                        .increment(u64::from(usage.cache_write_tokens));
-                        histogram!(
-                            llm_metrics::COMPLETION_DURATION_SECONDS,
-                            labels::PROVIDER => provider_name,
-                            labels::MODEL => model_id
-                        )
-                        .record(duration);
-                    }
-                },
-                StreamEvent::Error(msg) => {
-                    stream_error = Some(msg);
-                    break;
-                },
-            }
+        let llm_span = tracing::info_span!(
+            "llm.request",
+            iteration = iterations,
+            provider = %provider.name(),
+            model = %provider.id()
+        );
+        llm_span.set_attribute("langfuse.observation.type", "generation");
+        llm_span.set_attribute("langfuse.observation.model.name", provider.id().to_string());
+        if let Ok(metadata) = serde_json::to_string(&serde_json::json!({
+            "iteration": iterations,
+            "message_count": messages.len(),
+            "tool_schema_count": schemas_for_api.len(),
+            "native_tools": native_tools,
+            "streaming": true,
+        })) {
+            llm_span.set_attribute("langfuse.observation.metadata", metadata);
         }
+        let request_payload = serde_json::json!({
+            "messages": messages.iter().map(ChatMessage::to_openai_value).collect::<Vec<_>>(),
+            "tool_schema_count": schemas_for_api.len(),
+        });
+        set_json_attribute(
+            &llm_span,
+            "langfuse.observation.input",
+            &request_payload,
+            observability,
+        );
+
+        let (
+            mut accumulated_text,
+            accumulated_reasoning,
+            mut tool_calls,
+            tool_call_args,
+            stream_idx_to_vec_pos,
+            input_tokens,
+            output_tokens,
+            stream_error,
+        ) = async {
+            let mut stream = provider.stream_with_tools(messages.clone(), schemas_for_api.clone());
+            let mut accumulated_text = String::new();
+            let mut accumulated_reasoning = String::new();
+            let mut tool_calls: Vec<ToolCall> = Vec::new();
+            let mut tool_call_args: std::collections::HashMap<usize, String> =
+                std::collections::HashMap::new();
+            let mut stream_idx_to_vec_pos: std::collections::HashMap<usize, usize> =
+                std::collections::HashMap::new();
+            let mut input_tokens: u32 = 0;
+            let mut output_tokens: u32 = 0;
+            let mut stream_error: Option<String> = None;
+
+            while let Some(event) = stream.next().await {
+                match event {
+                    StreamEvent::Delta(text) => {
+                        accumulated_text.push_str(&text);
+                        if let Some(cb) = on_event {
+                            cb(RunnerEvent::TextDelta(text));
+                        }
+                    },
+                    StreamEvent::ProviderRaw(raw) => {
+                        if raw_llm_responses.len() < 256 {
+                            raw_llm_responses.push(raw);
+                        }
+                    },
+                    StreamEvent::ReasoningDelta(text) => {
+                        accumulated_reasoning.push_str(&text);
+                        if let Some(cb) = on_event {
+                            cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
+                        }
+                    },
+                    StreamEvent::ToolCallStart { id, name, index } => {
+                        let vec_pos = tool_calls.len();
+                        debug!(tool = %name, id = %id, stream_index = index, vec_pos, "tool call started in stream");
+                        tool_calls.push(ToolCall {
+                            id,
+                            name,
+                            arguments: serde_json::json!({}),
+                        });
+                        stream_idx_to_vec_pos.insert(index, vec_pos);
+                        tool_call_args.insert(index, String::new());
+                    },
+                    StreamEvent::ToolCallArgumentsDelta { index, delta } => {
+                        if let Some(args) = tool_call_args.get_mut(&index) {
+                            args.push_str(&delta);
+                        }
+                    },
+                    StreamEvent::ToolCallComplete { index } => {
+                        debug!(index, "tool call arguments complete");
+                    },
+                    StreamEvent::Done(usage) => {
+                        input_tokens = usage.input_tokens;
+                        output_tokens = usage.output_tokens;
+                        debug!(input_tokens, output_tokens, "stream done");
+
+                        #[cfg(feature = "metrics")]
+                        {
+                            let provider_name = provider.name().to_string();
+                            let model_id = provider.id().to_string();
+                            let duration = iter_start.elapsed().as_secs_f64();
+                            counter!(
+                                llm_metrics::COMPLETIONS_TOTAL,
+                                labels::PROVIDER => provider_name.clone(),
+                                labels::MODEL => model_id.clone()
+                            )
+                            .increment(1);
+                            counter!(
+                                llm_metrics::INPUT_TOKENS_TOTAL,
+                                labels::PROVIDER => provider_name.clone(),
+                                labels::MODEL => model_id.clone()
+                            )
+                            .increment(u64::from(usage.input_tokens));
+                            counter!(
+                                llm_metrics::OUTPUT_TOKENS_TOTAL,
+                                labels::PROVIDER => provider_name.clone(),
+                                labels::MODEL => model_id.clone()
+                            )
+                            .increment(u64::from(usage.output_tokens));
+                            counter!(
+                                llm_metrics::CACHE_READ_TOKENS_TOTAL,
+                                labels::PROVIDER => provider_name.clone(),
+                                labels::MODEL => model_id.clone()
+                            )
+                            .increment(u64::from(usage.cache_read_tokens));
+                            counter!(
+                                llm_metrics::CACHE_WRITE_TOKENS_TOTAL,
+                                labels::PROVIDER => provider_name.clone(),
+                                labels::MODEL => model_id.clone()
+                            )
+                            .increment(u64::from(usage.cache_write_tokens));
+                            histogram!(
+                                llm_metrics::COMPLETION_DURATION_SECONDS,
+                                labels::PROVIDER => provider_name,
+                                labels::MODEL => model_id
+                            )
+                            .record(duration);
+                        }
+                    },
+                    StreamEvent::Error(msg) => {
+                        stream_error = Some(msg);
+                        break;
+                    },
+                }
+            }
+
+            (
+                accumulated_text,
+                accumulated_reasoning,
+                tool_calls,
+                tool_call_args,
+                stream_idx_to_vec_pos,
+                input_tokens,
+                output_tokens,
+                stream_error,
+            )
+        }
+        .instrument(llm_span.clone())
+        .await;
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::ThinkingDone);
@@ -1474,6 +1775,14 @@ pub async fn run_agent_loop_streaming(
 
         // Handle stream errors — retry on transient failures/rate limits.
         if let Some(err) = stream_error {
+            llm_span.set_attribute("langfuse.observation.level", "ERROR");
+            llm_span.set_attribute("langfuse.observation.status_message", err.clone());
+            set_text_attribute(
+                &llm_span,
+                "langfuse.observation.output",
+                &err,
+                observability,
+            );
             if is_context_window_error(&err) {
                 return Err(AgentRunError::ContextWindowExceeded(err));
             }
@@ -1503,6 +1812,24 @@ pub async fn run_agent_loop_streaming(
             }
             return Err(AgentRunError::Other(anyhow::anyhow!(err)));
         }
+
+        let stream_usage = Usage {
+            input_tokens,
+            output_tokens,
+            ..Default::default()
+        };
+        set_usage_attributes(&llm_span, &stream_usage);
+        let response_payload = serde_json::json!({
+            "text": accumulated_text,
+            "reasoning": accumulated_reasoning,
+            "tool_calls": tool_calls_to_json(&tool_calls),
+        });
+        set_json_attribute(
+            &llm_span,
+            "langfuse.observation.output",
+            &response_payload,
+            observability,
+        );
 
         total_input_tokens = total_input_tokens.saturating_add(input_tokens);
         total_output_tokens = total_output_tokens.saturating_add(output_tokens);
@@ -1747,14 +2074,27 @@ pub async fn run_agent_loop_streaming(
                 let session_key = session_key_for_hooks.clone();
                 let tc_name = sanitized.to_string();
 
-                if let Some(ref ctx) = tool_context
-                    && let (Some(args_obj), Some(ctx_obj)) = (args.as_object_mut(), ctx.as_object())
-                {
-                    for (k, v) in ctx_obj {
-                        args_obj.insert(k.clone(), v.clone());
-                    }
+                merge_tool_context(&mut args, &tool_context);
+                let tool_span = tracing::info_span!(
+                    "tool.call",
+                    tool = %tc_name,
+                    tool_call_id = %tc.id,
+                );
+                tool_span.set_attribute("langfuse.observation.type", "tool");
+                if let Ok(metadata) = serde_json::to_string(&serde_json::json!({
+                    "tool_call_id": tc.id,
+                    "iteration": iterations,
+                })) {
+                    tool_span.set_attribute("langfuse.observation.metadata", metadata);
                 }
+                set_json_attribute(
+                    &tool_span,
+                    "langfuse.observation.input",
+                    &args,
+                    observability,
+                );
                 async move {
+                    let tool_span = Span::current();
                     // Run BeforeToolCall hook.
                     if let Some(ref hooks) = hook_registry {
                         let payload = HookPayload::BeforeToolCall {
@@ -1766,6 +2106,15 @@ pub async fn run_agent_loop_streaming(
                             Ok(HookAction::Block(reason)) => {
                                 warn!(tool = %tc_name, reason = %reason, "tool call blocked by hook");
                                 let err_str = format!("blocked by hook: {reason}");
+                                tool_span.set_attribute("langfuse.observation.level", "ERROR");
+                                tool_span
+                                    .set_attribute("langfuse.observation.status_message", err_str.clone());
+                                set_text_attribute(
+                                    &tool_span,
+                                    "langfuse.observation.output",
+                                    &err_str,
+                                    observability,
+                                );
                                 return (
                                     false,
                                     serde_json::json!({ "error": err_str }),
@@ -1810,13 +2159,41 @@ pub async fn run_agent_loop_streaming(
                                 }
 
                                 if has_error {
+                                    tool_span.set_attribute("langfuse.observation.level", "ERROR");
+                                    if let Some(error) = error_msg.as_ref() {
+                                        tool_span.set_attribute(
+                                            "langfuse.observation.status_message",
+                                            error.clone(),
+                                        );
+                                    }
+                                    set_json_attribute(
+                                        &tool_span,
+                                        "langfuse.observation.output",
+                                        &val,
+                                        observability,
+                                    );
                                     (false, serde_json::json!({ "result": val }), error_msg)
                                 } else {
+                                    set_json_attribute(
+                                        &tool_span,
+                                        "langfuse.observation.output",
+                                        &val,
+                                        observability,
+                                    );
                                     (true, serde_json::json!({ "result": val }), None)
                                 }
                             }
                             Err(e) => {
                                 let err_str = e.to_string();
+                                tool_span.set_attribute("langfuse.observation.level", "ERROR");
+                                tool_span
+                                    .set_attribute("langfuse.observation.status_message", err_str.clone());
+                                set_text_attribute(
+                                    &tool_span,
+                                    "langfuse.observation.output",
+                                    &err_str,
+                                    observability,
+                                );
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
@@ -1837,6 +2214,14 @@ pub async fn run_agent_loop_streaming(
                         }
                     } else {
                         let err_str = format!("unknown tool: {tc_name}");
+                        tool_span.set_attribute("langfuse.observation.level", "ERROR");
+                        tool_span.set_attribute("langfuse.observation.status_message", err_str.clone());
+                        set_text_attribute(
+                            &tool_span,
+                            "langfuse.observation.output",
+                            &err_str,
+                            observability,
+                        );
                         (
                             false,
                             serde_json::json!({ "error": err_str }),
@@ -1844,6 +2229,7 @@ pub async fn run_agent_loop_streaming(
                         )
                     }
                 }
+                .instrument(tool_span)
             })
             .collect();
 
@@ -1959,6 +2345,29 @@ mod tests {
             "prefix_that_is_intentionally_way_too_long_for_openai_tool_call_ids",
         );
         assert!(long_prefix_id.len() <= 40);
+    }
+
+    #[test]
+    fn observability_settings_default_to_off_without_tool_context() {
+        let settings = observability_settings(&None);
+        assert_eq!(settings.trace_content, TraceContentMode::Off);
+        assert_eq!(settings.max_content_bytes, 8_192);
+    }
+
+    #[test]
+    fn merge_tool_context_skips_internal_telemetry_keys() {
+        let mut args = serde_json::json!({ "command": "pwd" });
+        let context = Some(serde_json::json!({
+            "_session_key": "chat-123",
+            "__telemetry_trace_content": "sanitized",
+            "__telemetry_max_content_bytes": 4096,
+        }));
+
+        merge_tool_context(&mut args, &context);
+
+        assert_eq!(args["_session_key"], "chat-123");
+        assert!(args.get("__telemetry_trace_content").is_none());
+        assert!(args.get("__telemetry_max_content_bytes").is_none());
     }
 
     #[test]

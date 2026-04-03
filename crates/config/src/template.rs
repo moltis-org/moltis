@@ -503,6 +503,21 @@ prometheus_endpoint = true        # Expose /metrics endpoint for Prometheus scra
 # labels = {{ environment = "production", instance = "main" }}
                                   # Additional labels to add to all metrics
 
+# ── Langfuse Trace Export (optional) ─────────────────────────────────────────
+# Exports tracing spans to Langfuse via OTLP/HTTP.
+# This is separate from Prometheus metrics and is disabled by default.
+
+# [metrics.langfuse]
+# enabled = true
+# host = "https://cloud.langfuse.com"   # Base URL of your Langfuse instance
+# public_key = "pk-lf-..."              # Or use env substitution
+# secret_key = "sk-lf-..."              # Or use env substitution
+# environment = "development"           # Optional environment label in Langfuse
+# tags = ["moltis", "local"]            # Optional immutable trace tags
+# sample_rate = 1.0                     # 0.0..=1.0, applied at the root trace
+# trace_content = "sanitized"           # "off" | "sanitized" | "full"
+# max_content_bytes = 8192              # Per prompt/output/tool attribute cap
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HEARTBEAT
 # ══════════════════════════════════════════════════════════════════════════════
