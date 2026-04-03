@@ -26,7 +26,7 @@ struct CacheEntry {
     expires_at: Instant,
 }
 
-/// Web search tool — lets the LLM search the web via Brave Search or Perplexity.
+/// Web search tool — lets the LLM search the web via Brave Search, Perplexity, or Jina.
 ///
 /// When the configured provider's API key is missing and fallback is enabled,
 /// the tool falls back to DuckDuckGo HTML search.
@@ -55,6 +55,7 @@ enum SearchProvider {
         base_url_override: Option<String>,
         model: String,
     },
+    Jina,
 }
 
 fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
@@ -93,6 +94,21 @@ struct PerplexityChoice {
 #[derive(Debug, Deserialize)]
 struct PerplexityMessage {
     content: String,
+}
+
+/// Jina Search API response.
+#[derive(Debug, Deserialize)]
+struct JinaSearchResponse {
+    #[serde(default)]
+    data: Vec<JinaSearchResult>,
+}
+
+/// A single Jina search result.
+#[derive(Debug, Deserialize)]
+struct JinaSearchResult {
+    title: Option<String>,
+    url: Option<String>,
+    content: Option<String>,
 }
 
 impl WebSearchTool {
@@ -167,6 +183,25 @@ impl WebSearchTool {
                     config.duckduckgo_fallback,
                 ))
             },
+            ConfigSearchProvider::Jina => {
+                let api_key = config
+                    .api_key
+                    .as_ref()
+                    .map(|s| s.expose_secret().clone())
+                    .or_else(|| env_value_with_overrides(env_overrides, "JINA_API_KEY"))
+                    .unwrap_or_default();
+                if api_key.is_empty() && !config.duckduckgo_fallback {
+                    return None;
+                }
+                Some(Self::new(
+                    SearchProvider::Jina,
+                    Secret::new(api_key),
+                    config.max_results,
+                    Duration::from_secs(config.timeout_seconds),
+                    Duration::from_secs(config.cache_ttl_minutes * 60),
+                    config.duckduckgo_fallback,
+                ))
+            },
         }
     }
 
@@ -233,6 +268,7 @@ impl WebSearchTool {
         match &self.provider {
             SearchProvider::Brave => &["BRAVE_API_KEY"],
             SearchProvider::Perplexity { .. } => &["PERPLEXITY_API_KEY", "OPENROUTER_API_KEY"],
+            SearchProvider::Jina => &["JINA_API_KEY"],
         }
     }
 
@@ -409,6 +445,89 @@ impl WebSearchTool {
         }))
     }
 
+    /// Search the web via Jina Search API (s.jina.ai).
+    async fn search_jina(
+        &self,
+        query: &str,
+        count: u8,
+        params: &serde_json::Value,
+        api_key: &str,
+    ) -> crate::Result<serde_json::Value> {
+        self.search_jina_with_base_url(query, count, params, api_key, "https://s.jina.ai")
+            .await
+    }
+
+    /// Search the web via Jina Search API with a configurable base URL.
+    async fn search_jina_with_base_url(
+        &self,
+        query: &str,
+        count: u8,
+        params: &serde_json::Value,
+        api_key: &str,
+        base_url: &str,
+    ) -> crate::Result<serde_json::Value> {
+        if api_key.trim().is_empty() {
+            return Ok(serde_json::json!({
+                "error": "Jina Search API key not configured",
+                "hint": "Set JINA_API_KEY environment variable or tools.web.search.api_key in config"
+            }));
+        }
+
+        let url = format!(
+            "{}/{}",
+            base_url.trim_end_matches('/'),
+            urlencoding::encode(query)
+        );
+
+        let client = crate::shared_http_client();
+
+        // Build query params: count is always included; gl (country) and hl
+        // (language) are optional and map to the existing `country` and
+        // `search_lang` tool params so the LLM uses the same vocabulary for all
+        // providers.
+        let mut query_params: Vec<(&str, String)> = vec![("count", count.to_string())];
+        if let Some(gl) = params.get("country").and_then(|v| v.as_str()) {
+            query_params.push(("gl", gl.to_lowercase()));
+        }
+        if let Some(hl) = params.get("search_lang").and_then(|v| v.as_str()) {
+            query_params.push(("hl", hl.to_lowercase()));
+        }
+
+        let resp = client
+            .get(&url)
+            .timeout(self.timeout)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Accept", "application/json")
+            .query(&query_params)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::message(format!(
+                "Jina Search API returned {status}: {body}"
+            )));
+        }
+
+        let body_text = resp.text().await.map_err(|error| {
+            Error::message(format!("failed to read Jina response body: {error}"))
+        })?;
+        let body: serde_json::Value = serde_json::from_str(&body_text).map_err(|error| {
+            let snippet: String = body_text.chars().take(400).collect();
+            Error::message(format!(
+                "failed to parse Jina JSON body: {error}; body starts with: {snippet}"
+            ))
+        })?;
+        let results = parse_jina_results(&body, count);
+
+        Ok(serde_json::json!({
+            "provider": "jina",
+            "query": query,
+            "results": results,
+        }))
+    }
+
     /// Check whether DuckDuckGo is temporarily blocked due to a prior CAPTCHA.
     fn is_ddg_blocked(&self) -> bool {
         self.ddg_blocked_until
@@ -431,7 +550,8 @@ impl WebSearchTool {
         if self.is_ddg_blocked() {
             return Err(Error::message(
                 "Web search unavailable: DuckDuckGo is rate-limited (CAPTCHA) and no search \
-                 API key is configured. Set BRAVE_API_KEY or PERPLEXITY_API_KEY to enable search.",
+                 API key is configured. Set BRAVE_API_KEY, PERPLEXITY_API_KEY, or JINA_API_KEY \
+                 to enable search.",
             ));
         }
 
@@ -459,7 +579,7 @@ impl WebSearchTool {
             warn!("DuckDuckGo CAPTCHA detected — blocking fallback for 1 hour");
             return Err(Error::message(
                 "Web search unavailable: DuckDuckGo returned a CAPTCHA challenge. \
-                 Configure BRAVE_API_KEY or PERPLEXITY_API_KEY for reliable search.",
+                 Configure BRAVE_API_KEY, PERPLEXITY_API_KEY, or JINA_API_KEY for reliable search.",
             ));
         }
 
@@ -527,6 +647,48 @@ fn parse_brave_results(body: &serde_json::Value) -> Vec<BraveResult> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Parse Jina Search JSON response into normalized result rows.
+///
+/// `max_results` enforces a client-side cap because the Jina SERP API does not
+/// document a `count` query parameter — the API may return more items than
+/// requested.
+fn parse_jina_results(body: &serde_json::Value, max_results: u8) -> Vec<serde_json::Value> {
+    let resp: JinaSearchResponse = match serde_json::from_value(body.clone()) {
+        Ok(r) => r,
+        Err(err) => {
+            warn!("failed to deserialize Jina response: {err}");
+            return Vec::new();
+        },
+    };
+    resp.data
+        .into_iter()
+        .take(max_results as usize)
+        .filter_map(|result| {
+            let title = result
+                .title
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .to_string();
+            let url = result
+                .url
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .to_string();
+            if title.is_empty() || url.is_empty() {
+                return None;
+            }
+            let content = result.content.as_deref().map(str::trim).unwrap_or_default();
+            Some(serde_json::json!({
+                "title": title,
+                "url": url,
+                "description": content,
+            }))
+        })
+        .collect()
 }
 
 /// Parse DuckDuckGo HTML search results into structured result objects.
@@ -682,15 +844,15 @@ impl AgentTool for WebSearchTool {
                 },
                 "country": {
                     "type": "string",
-                    "description": "Country code for search results (e.g. 'US', 'GB')"
+                    "description": "Country code for search results (e.g. 'us', 'gb'). Supported by Brave and Jina (mapped to 'gl')."
                 },
                 "search_lang": {
                     "type": "string",
-                    "description": "Search language (e.g. 'en')"
+                    "description": "Search language code (e.g. 'en', 'fr'). Supported by Brave and Jina (mapped to 'hl')."
                 },
                 "ui_lang": {
                     "type": "string",
-                    "description": "UI language (e.g. 'en-US')"
+                    "description": "UI language (e.g. 'en-US'). Brave only."
                 },
                 "freshness": {
                     "type": "string",
@@ -757,6 +919,7 @@ impl AgentTool for WebSearchTool {
                     self.search_perplexity(query, &api_key, &base_url, model)
                         .await?
                 },
+                SearchProvider::Jina => self.search_jina(query, count, &params, &api_key).await?,
             }
         };
 
@@ -1007,6 +1170,97 @@ mod tests {
     }
 
     #[test]
+    fn test_from_config_jina_no_key_no_fallback() {
+        let cfg = WebSearchConfig {
+            provider: ConfigSearchProvider::Jina,
+            ..Default::default()
+        };
+        assert!(
+            WebSearchTool::from_config(&cfg).is_none(),
+            "Jina should not register without an API key and no DDG fallback"
+        );
+    }
+
+    #[test]
+    fn test_from_config_jina_with_ddg_fallback() {
+        let cfg = WebSearchConfig {
+            provider: ConfigSearchProvider::Jina,
+            duckduckgo_fallback: true,
+            ..Default::default()
+        };
+        let tool =
+            WebSearchTool::from_config(&cfg).expect("Jina should be enabled with DDG fallback");
+        assert!(tool.fallback_enabled);
+    }
+
+    #[test]
+    fn test_from_config_jina_with_key() {
+        let cfg = WebSearchConfig {
+            provider: ConfigSearchProvider::Jina,
+            api_key: Some(Secret::new("jina-test-key".into())),
+            ..Default::default()
+        };
+        let tool = WebSearchTool::from_config(&cfg).expect("Jina should be enabled with API key");
+        assert!(!tool.fallback_enabled);
+    }
+
+    #[tokio::test]
+    async fn test_jina_search_with_mock_server() {
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .match_header("Authorization", "Bearer jina-test-key")
+            .match_header("Accept", "application/json")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "data": [
+                        {
+                            "title": "Mock Result",
+                            "url": "https://example.com",
+                            "content": "Mock content"
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new("jina-test-key".into()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        );
+
+        // Test via search_jina_with_base_url to target the mock server.
+        let result = tool
+            .search_jina_with_base_url(
+                "test query",
+                5,
+                &serde_json::Value::Null,
+                "jina-test-key",
+                &server.url(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["provider"], "jina");
+        assert_eq!(result["query"], "test query");
+        let results = result["results"]
+            .as_array()
+            .expect("results should be array");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["title"], "Mock Result");
+
+        mock.assert_async().await;
+    }
+
+    #[test]
     fn test_count_clamping() {
         // count parameter should be clamped to 1-10
         let params = serde_json::json!({"query": "test", "count": 50});
@@ -1145,5 +1399,298 @@ mod tests {
             extract_href_before(html, class_pos),
             Some("https://example.com".to_string())
         );
+    }
+
+    // ── Jina Search tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_jina_response_parsing() {
+        let json = serde_json::json!({
+            "data": [
+                {
+                    "title": "Rust Programming",
+                    "url": "https://rust-lang.org",
+                    "content": "A systems programming language"
+                },
+                {
+                    "title": "Crates.io",
+                    "url": "https://crates.io",
+                    "content": "Rust package registry"
+                }
+            ]
+        });
+        let results = parse_jina_results(&json, 10);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["title"], "Rust Programming");
+        assert_eq!(results[0]["url"], "https://rust-lang.org");
+        assert_eq!(results[0]["description"], "A systems programming language");
+        assert_eq!(results[1]["title"], "Crates.io");
+    }
+
+    #[test]
+    fn test_jina_parse_client_side_truncation() {
+        let json = serde_json::json!({
+            "data": [
+                {"title": "A", "url": "https://a.com", "content": "a"},
+                {"title": "B", "url": "https://b.com", "content": "b"},
+                {"title": "C", "url": "https://c.com", "content": "c"},
+                {"title": "D", "url": "https://d.com", "content": "d"},
+                {"title": "E", "url": "https://e.com", "content": "e"},
+            ]
+        });
+        let results = parse_jina_results(&json, 3);
+        assert_eq!(results.len(), 3, "should truncate to max_results");
+        assert_eq!(results[2]["title"], "C");
+    }
+
+    #[test]
+    fn test_jina_response_parsing_empty() {
+        let json = serde_json::json!({"data": []});
+        let results = parse_jina_results(&json, 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_jina_response_parsing_tolerates_nulls() {
+        let json = serde_json::json!({
+            "data": [
+                {"title": "Valid", "url": "https://example.com", "content": "OK"},
+                {"title": "No URL", "url": null, "content": "Filtered"},
+                {"title": null, "url": "https://no-title.com", "content": "Filtered"},
+                {"title": "No content", "url": "https://example.org"}
+            ]
+        });
+        let results = parse_jina_results(&json, 10);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["title"], "Valid");
+        assert_eq!(results[1]["title"], "No content");
+        assert_eq!(results[1]["description"], "");
+    }
+
+    #[tokio::test]
+    async fn test_jina_missing_api_key_returns_hint() {
+        let tool = jina_tool();
+        let result = tool
+            .search_jina("test", 5, &serde_json::Value::Null, "")
+            .await
+            .unwrap();
+        assert!(result["error"].as_str().unwrap().contains("not configured"));
+        assert!(result["hint"].as_str().unwrap().contains("JINA_API_KEY"));
+    }
+
+    fn jina_tool() -> WebSearchTool {
+        WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new(String::new()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        )
+    }
+
+    #[test]
+    fn test_jina_api_key_candidates() {
+        let tool = jina_tool();
+        assert_eq!(tool.api_key_candidates(), &["JINA_API_KEY"]);
+    }
+
+    #[test]
+    fn test_jina_parse_malformed_json() {
+        let json = serde_json::json!({"not_data": "unexpected structure"});
+        let results = parse_jina_results(&json, 10);
+        assert!(
+            results.is_empty(),
+            "malformed JSON should produce empty results"
+        );
+    }
+
+    #[test]
+    fn test_jina_parse_missing_data_key() {
+        let json = serde_json::json!({});
+        let results = parse_jina_results(&json, 10);
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_jina_search_http_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(429)
+            .with_body("rate limited")
+            .create_async()
+            .await;
+
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new("jina-test-key".into()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        );
+
+        let result = tool
+            .search_jina_with_base_url(
+                "test",
+                5,
+                &serde_json::Value::Null,
+                "jina-test-key",
+                &server.url(),
+            )
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("429"),
+            "error should mention status code: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jina_search_malformed_body() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("not valid json {{{")
+            .create_async()
+            .await;
+
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new("jina-test-key".into()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        );
+
+        let result = tool
+            .search_jina_with_base_url(
+                "test",
+                5,
+                &serde_json::Value::Null,
+                "jina-test-key",
+                &server.url(),
+            )
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("failed to parse Jina JSON"),
+            "error should mention parse failure: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jina_search_empty_results() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("{\"data\":[]}")
+            .create_async()
+            .await;
+
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new("jina-test-key".into()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        );
+
+        let result = tool
+            .search_jina_with_base_url(
+                "test",
+                5,
+                &serde_json::Value::Null,
+                "jina-test-key",
+                &server.url(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["provider"], "jina");
+        assert!(result["results"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_jina_env_var_resolution() {
+        let key = format!("JINA_API_KEY_TEST_{}", std::process::id());
+        let provider = Arc::new(MockEnvProvider {
+            vars: vec![(key.clone(), "runtime-jina-key".to_string())],
+        });
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new(String::new()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        )
+        .with_env_provider(provider);
+
+        assert_eq!(
+            tool.env_value_with_provider(&key).await,
+            Some("runtime-jina-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_jina_cache_key_includes_provider() {
+        // Verify that Jina provider produces distinct cache keys from Brave.
+        let jina = jina_tool();
+        let brave = brave_tool();
+        let jina_key = format!("{:?}:no-key:test:5", jina.provider);
+        let brave_key = format!("{:?}:no-key:test:5", brave.provider);
+        assert_ne!(
+            jina_key, brave_key,
+            "cache keys must differ between providers"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jina_search_with_gl_hl_params() {
+        let mut server = mockito::Server::new_async().await;
+
+        // Expect gl=pl and hl=pl forwarded as query params.
+        let mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("gl".into(), "pl".into()),
+                mockito::Matcher::UrlEncoded("hl".into(), "pl".into()),
+                mockito::Matcher::UrlEncoded("count".into(), "3".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::json!({"data": []}).to_string())
+            .create_async()
+            .await;
+
+        let tool = WebSearchTool::new(
+            SearchProvider::Jina,
+            Secret::new("jina-test-key".into()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        );
+
+        let params = serde_json::json!({
+            "query": "rust language",
+            "country": "PL",
+            "search_lang": "PL"
+        });
+        let result = tool
+            .search_jina_with_base_url("rust language", 3, &params, "jina-test-key", &server.url())
+            .await
+            .unwrap();
+        assert_eq!(result["provider"], "jina");
+        mock.assert_async().await;
     }
 }

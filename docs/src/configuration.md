@@ -141,12 +141,12 @@ Configure the built-in `web_search` tool:
 ```toml
 [tools.web.search]
 enabled = true
-provider = "brave"               # "brave" or "perplexity"
+provider = "brave"               # "brave", "perplexity", or "jina"
 max_results = 5                  # 1-10
 timeout_seconds = 30
 cache_ttl_minutes = 15
 duckduckgo_fallback = false      # Default: do not use DuckDuckGo fallback
-# api_key = "..."                # Brave key, or use BRAVE_API_KEY
+# api_key = "..."                # Brave/Jina key, or use BRAVE_API_KEY / JINA_API_KEY
 
 [tools.web.search.perplexity]
 # api_key = "..."                # Or use PERPLEXITY_API_KEY / OPENROUTER_API_KEY
@@ -154,9 +154,15 @@ duckduckgo_fallback = false      # Default: do not use DuckDuckGo fallback
 # model = "perplexity/sonar-pro" # Optional override
 ```
 
+| Provider | Env var | Notes |
+|---|---|---|
+| `brave` | `BRAVE_API_KEY` | Supports `country`, `search_lang`, `ui_lang`, `freshness` |
+| `perplexity` | `PERPLEXITY_API_KEY` or `OPENROUTER_API_KEY` | LLM-based answer with citations |
+| `jina` | `JINA_API_KEY` | Supports `country` (→ `gl`) and `search_lang` (→ `hl`) |
+
 If no search API key is configured:
 
-- with `duckduckgo_fallback = false` (default), Moltis returns a clear hint to set `BRAVE_API_KEY` or `PERPLEXITY_API_KEY`
+- with `duckduckgo_fallback = false` (default), Moltis returns a clear hint to set `BRAVE_API_KEY`, `PERPLEXITY_API_KEY`, or `JINA_API_KEY`
 - with `duckduckgo_fallback = true`, Moltis attempts DuckDuckGo HTML search, which may hit CAPTCHA/rate limits
 
 ## Skills

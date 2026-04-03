@@ -1595,6 +1595,7 @@ pub enum SearchProvider {
     #[default]
     Brave,
     Perplexity,
+    Jina,
 }
 
 /// Web search tool configuration.
@@ -1604,7 +1605,7 @@ pub struct WebSearchConfig {
     pub enabled: bool,
     /// Search provider.
     pub provider: SearchProvider,
-    /// Brave Search API key (overrides `BRAVE_API_KEY` env var).
+    /// Search API key (overrides `BRAVE_API_KEY` / `JINA_API_KEY` env var).
     #[serde(
         default,
         serialize_with = "serialize_option_secret",

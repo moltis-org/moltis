@@ -271,7 +271,7 @@ docker run -d \
 
 ### API Keys and the `[env]` Section
 
-Features like web search (Brave), embeddings, and LLM provider API calls read
+Features like web search (Brave, Perplexity, Jina), embeddings, and LLM provider API calls read
 keys from process environment variables (`std::env::var`). In Docker, there are
 three ways to provide these:
 
@@ -301,6 +301,7 @@ preferred because they are less likely to collide with other containers.
 docker run -d \
   --name moltis \
   -e BRAVE_API_KEY=your-key \
+  -e JINA_API_KEY=jina_... \
   -e OPENROUTER_API_KEY=sk-or-... \
   ...
   ghcr.io/moltis-org/moltis:latest
@@ -314,6 +315,7 @@ the Moltis process at startup, making them available to all features:
 ```toml
 [env]
 BRAVE_API_KEY = "your-brave-key"
+JINA_API_KEY = "jina_..."
 OPENROUTER_API_KEY = "sk-or-..."
 ```
 
