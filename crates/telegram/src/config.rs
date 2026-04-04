@@ -104,6 +104,11 @@ pub struct TelegramAccountConfig {
     /// Per-user model/provider overrides (user_id -> override).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub user_overrides: HashMap<String, UserOverride>,
+
+    /// Proxy URL for Telegram API requests (e.g., "http://127.0.0.1:7890").
+    /// When set, all Telegram API calls will be routed through this proxy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
 }
 
 impl std::fmt::Debug for TelegramAccountConfig {
@@ -114,6 +119,7 @@ impl std::fmt::Debug for TelegramAccountConfig {
             .field("group_policy", &self.group_policy)
             .field("channel_overrides", &self.channel_overrides)
             .field("user_overrides", &self.user_overrides)
+            .field("proxy", &self.proxy.as_deref().map(|_| "[REDACTED]"))
             .finish_non_exhaustive()
     }
 }
@@ -129,6 +135,7 @@ impl Serialize for RedactedConfig<'_> {
         count += c.model_provider.is_some() as usize;
         count += !c.channel_overrides.is_empty() as usize;
         count += !c.user_overrides.is_empty() as usize;
+        count += c.proxy.is_some() as usize;
         let mut s = serializer.serialize_struct("TelegramAccountConfig", count)?;
         s.serialize_field("token", secret_serde::REDACTED)?;
         s.serialize_field("dm_policy", &c.dm_policy)?;
@@ -154,6 +161,9 @@ impl Serialize for RedactedConfig<'_> {
         }
         if !c.user_overrides.is_empty() {
             s.serialize_field("user_overrides", &c.user_overrides)?;
+        }
+        if c.proxy.is_some() {
+            s.serialize_field("proxy", secret_serde::REDACTED)?;
         }
         s.end()
     }
@@ -229,6 +239,7 @@ impl Default for TelegramAccountConfig {
             reply_to_message: false,
             channel_overrides: HashMap::new(),
             user_overrides: HashMap::new(),
+            proxy: None,
         }
     }
 }

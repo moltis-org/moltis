@@ -420,6 +420,7 @@ function AddTelegramModal() {
 	var addModel = useSignal("");
 	var allowlistItems = useSignal([]);
 	var accountDraft = useSignal("");
+	var proxyDraft = useSignal("");
 
 	function onSubmit(e) {
 		e.preventDefault();
@@ -444,6 +445,9 @@ function AddTelegramModal() {
 			var found = modelsSig.value.find((x) => x.id === addModel.value);
 			if (found?.provider) addConfig.model_provider = found.provider;
 		}
+		if (proxyDraft.value.trim()) {
+			addConfig.proxy = proxyDraft.value.trim();
+		}
 		addChannel("telegram", accountId, addConfig).then((res) => {
 			saving.value = false;
 			if (res?.ok) {
@@ -451,6 +455,7 @@ function AddTelegramModal() {
 				addModel.value = "";
 				allowlistItems.value = [];
 				accountDraft.value = "";
+				proxyDraft.value = "";
 				loadChannels();
 			} else {
 				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.";
@@ -490,6 +495,14 @@ function AddTelegramModal() {
 	        <a href="https://t.me/${accountDraft.value.trim()}" target="_blank" class="text-[var(--accent)] underline">t.me/${accountDraft.value.trim()}</a>
 	      </div>`
 				}
+	      <label class="text-xs text-[var(--muted)]">Proxy URL (optional)</label>
+	      <input type="text" placeholder="e.g. http://127.0.0.1:7890"
+	        value=${proxyDraft.value}
+	        onInput=${(e) => {
+						proxyDraft.value = e.target.value;
+					}}
+	        class="channel-input" />
+	      <div class="text-xs text-[var(--muted)] channel-help">Leave empty to connect directly without proxy</div>
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>

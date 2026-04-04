@@ -2621,6 +2621,7 @@ function TelegramForm({ onConnected, error, setError }) {
 	var [token, setToken] = useState("");
 	var [dmPolicy, setDmPolicy] = useState("allowlist");
 	var [allowlist, setAllowlist] = useState("");
+	var [proxy, setProxy] = useState("");
 	var [saving, setSaving] = useState(false);
 
 	function onSubmit(e) {
@@ -2637,12 +2638,16 @@ function TelegramForm({ onConnected, error, setError }) {
 			.split(/\n/)
 			.map((s) => s.trim())
 			.filter(Boolean);
-		addChannel("telegram", accountId.trim(), {
+		var config = {
 			token: token.trim(),
 			dm_policy: dmPolicy,
 			mention_mode: "mention",
 			allowlist: allowlistEntries,
-		}).then((res) => {
+		};
+		if (proxy.trim()) {
+			config.proxy = proxy.trim();
+		}
+		addChannel("telegram", accountId.trim(), config).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
 				onConnected(accountId.trim(), "telegram");
@@ -2681,6 +2686,17 @@ function TelegramForm({ onConnected, error, setError }) {
 				autocorrect="off"
 				spellcheck="false"
 				name="telegram_bot_token" />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Proxy URL (optional)</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${proxy} onInput=${(e) => setProxy(e.target.value)}
+				placeholder="e.g. http://127.0.0.1:7890"
+				autocomplete="off"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false" />
+			<div class="text-xs text-[var(--muted)] mt-1">Leave empty to connect directly without proxy</div>
 		</div>
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>

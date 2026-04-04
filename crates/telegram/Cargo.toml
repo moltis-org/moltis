@@ -13,6 +13,8 @@ moltis-media      = { workspace = true }
 moltis-metrics    = { optional = true, workspace = true }
 rand              = { workspace = true }
 reqwest           = { workspace = true }
+# reqwest 0.11 for teloxide compatibility (teloxide uses 0.11)
+reqwest-011       = { workspace = true }
 secrecy           = { workspace = true }
 serde             = { workspace = true }
 serde_json        = { workspace = true }

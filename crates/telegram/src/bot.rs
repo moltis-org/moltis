@@ -11,6 +11,9 @@ use {
     tracing::{debug, error, info, warn},
 };
 
+// reqwest 0.11 for teloxide compatibility (teloxide uses 0.11)
+use reqwest_011 as reqwest;
+
 use moltis_channels::{ChannelEventSink, message_log::MessageLog};
 
 use crate::{
@@ -33,8 +36,18 @@ pub async fn start_polling(
 ) -> crate::Result<CancellationToken> {
     // Build bot with a client timeout longer than the long-polling timeout (30s)
     // so the HTTP client doesn't abort the request before Telegram responds.
-    let client = teloxide::net::default_reqwest_settings()
-        .timeout(std::time::Duration::from_secs(45))
+    let mut client_builder =
+        teloxide::net::default_reqwest_settings().timeout(std::time::Duration::from_secs(45));
+
+    // Configure proxy if specified.
+    if let Some(proxy_url) = &config.proxy {
+        let proxy = reqwest::Proxy::all(proxy_url)
+            .map_err(|source| crate::Error::external("parse telegram proxy", source))?;
+        client_builder = client_builder.proxy(proxy);
+        info!(account_id, proxy = %proxy_url, "using proxy for telegram");
+    }
+
+    let client = client_builder
         .build()
         .map_err(|source| crate::Error::external("build telegram client", source))?;
     let bot = Bot::with_client(config.token.expose_secret(), client);

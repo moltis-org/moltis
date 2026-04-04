@@ -154,6 +154,8 @@ clap = { features = ["derive", "env"], version = "4" }
 sqlx = { features = ["migrate", "runtime-tokio", "sqlite"], version = "0.8" }
 # HTTP client
 reqwest = { features = ["json", "multipart", "stream"], version = "0.12" }
+# reqwest 0.11 for teloxide compatibility (teloxide uses 0.11)
+reqwest-011 = { features = ["json"], package = "reqwest", version = "0.11" }
 # UUID
 uuid = { features = ["v4"], version = "1" }
 # Async
