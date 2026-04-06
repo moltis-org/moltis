@@ -35,6 +35,7 @@ impl ExternalAgentRegistry {
     }
 
     /// Start a session with the appropriate transport for the given spec.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, spec), fields(kind = %spec.kind)))]
     pub async fn start_session(
         &self,
         spec: &ExternalAgentSpec,
@@ -54,6 +55,7 @@ impl ExternalAgentRegistry {
     }
 
     /// List all known agent kinds with their availability status.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub async fn list_agents(&self) -> Vec<ExternalAgentInfo> {
         let mut infos = Vec::new();
         for transport in &self.transports {

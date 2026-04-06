@@ -1,4 +1,7 @@
 /// Errors specific to external agent operations.
+///
+/// Each variant represents a concrete failure mode. New failure modes in
+/// later phases should get their own named variant rather than a catch-all.
 #[derive(Debug, thiserror::Error)]
 pub enum ExternalAgentError {
     #[error("external agent binary not found: {binary}")]
@@ -25,12 +28,9 @@ pub enum ExternalAgentError {
     #[error("agent registry: no runtime registered for kind {kind}")]
     NoRuntimeForKind { kind: String },
 
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
+    #[error("child process failed to spawn: {0}")]
+    ProcessSpawn(#[from] std::io::Error),
 
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("protocol error: {0}")]
+    Protocol(#[from] serde_json::Error),
 }

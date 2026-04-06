@@ -6974,7 +6974,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
- "moltis-agents",
  "moltis-config",
  "moltis-metrics",
  "serde",

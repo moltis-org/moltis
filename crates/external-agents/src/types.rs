@@ -144,7 +144,7 @@ impl ExternalAgentSpec {
 pub struct BridgeState {
     pub agent_kind: AgentTransportKind,
     pub external_session_id: Option<String>,
-    pub last_synced_message_index: u32,
+    pub synced_message_count: u32,
     pub last_synced_tail_hash: Option<String>,
     pub initialized: bool,
     pub compaction_generation: u64,
@@ -157,7 +157,7 @@ impl BridgeState {
         Self {
             agent_kind,
             external_session_id: None,
-            last_synced_message_index: 0,
+            synced_message_count: 0,
             last_synced_tail_hash: None,
             initialized: false,
             compaction_generation: 0,

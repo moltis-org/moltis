@@ -18,7 +18,6 @@ tracing     = ["dep:tracing"]
 anyhow         = { workspace = true }
 async-trait    = { workspace = true }
 futures        = { workspace = true }
-moltis-agents  = { workspace = true }
 moltis-config  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 serde          = { workspace = true }

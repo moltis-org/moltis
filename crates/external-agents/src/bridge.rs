@@ -65,7 +65,7 @@ pub fn compute_delta(
     }
 
     // Check if the sync point is still valid
-    let sync_idx = state.last_synced_message_index;
+    let sync_idx = state.synced_message_count;
 
     // Moltis has fewer messages than at last sync — compaction happened
     if current_count < sync_idx {
@@ -106,7 +106,7 @@ pub fn advance_bridge_state(
     external_session_id: Option<String>,
 ) {
     let count = messages.len() as u32;
-    state.last_synced_message_index = count;
+    state.synced_message_count = count;
     state.last_synced_tail_hash = messages.last().map(message_hash);
     state.initialized = true;
     if external_session_id.is_some() {
@@ -208,12 +208,12 @@ mod tests {
         let messages = make_messages(3);
         let mut state = BridgeState::new(AgentTransportKind::Codex);
         assert!(!state.initialized);
-        assert_eq!(state.last_synced_message_index, 0);
+        assert_eq!(state.synced_message_count, 0);
 
         advance_bridge_state(&mut state, &messages, Some("ext-123".into()));
 
         assert!(state.initialized);
-        assert_eq!(state.last_synced_message_index, 3);
+        assert_eq!(state.synced_message_count, 3);
         assert!(state.last_synced_tail_hash.is_some());
         assert_eq!(state.external_session_id.as_deref(), Some("ext-123"));
     }

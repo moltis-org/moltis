@@ -47,6 +47,11 @@ pub struct SessionEntry {
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+    /// External agent transport kind (e.g. `"claude-code"`, `"codex"`).
+    ///
+    /// Stored as a plain `String` because `moltis-sessions` has no dependency
+    /// on `moltis-external-agents`. Values are produced by
+    /// `AgentTransportKind::as_str()` and validated at the gateway boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_agent_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
