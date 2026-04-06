@@ -10,6 +10,55 @@ use serde::{Deserialize, Serialize};
 
 use crate::Result;
 
+/// External agent transport kind for session binding.
+///
+/// Mirror of `moltis_external_agents::AgentTransportKind` — defined here so
+/// `moltis-sessions` can stay free of the `moltis-external-agents` dependency.
+/// Serialises to kebab-case strings matching the canonical agent identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExternalAgentKind {
+    ClaudeCode,
+    Opencode,
+    Codex,
+    PiAgent,
+    Acp,
+}
+
+impl ExternalAgentKind {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Opencode => "opencode",
+            Self::Codex => "codex",
+            Self::PiAgent => "pi-agent",
+            Self::Acp => "acp",
+        }
+    }
+}
+
+impl std::fmt::Display for ExternalAgentKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ExternalAgentKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "claude-code" => Ok(Self::ClaudeCode),
+            "opencode" => Ok(Self::Opencode),
+            "codex" => Ok(Self::Codex),
+            "pi-agent" => Ok(Self::PiAgent),
+            "acp" => Ok(Self::Acp),
+            other => Err(format!("unknown external agent kind: {other}")),
+        }
+    }
+}
+
 /// A single session entry in the metadata index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionEntry {
@@ -47,13 +96,8 @@ pub struct SessionEntry {
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
-    /// External agent transport kind (e.g. `"claude-code"`, `"codex"`).
-    ///
-    /// Stored as a plain `String` because `moltis-sessions` has no dependency
-    /// on `moltis-external-agents`. Values are produced by
-    /// `AgentTransportKind::as_str()` and validated at the gateway boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external_agent_kind: Option<String>,
+    pub external_agent_kind: Option<ExternalAgentKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_session_id: Option<String>,
     #[serde(default)]

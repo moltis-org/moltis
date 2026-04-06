@@ -23,6 +23,7 @@ impl ExternalAgentTransport for AcpTransport {
         "acp"
     }
 
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     async fn is_available(&self) -> bool {
         which::which(&self.binary).is_ok()
     }
@@ -31,6 +32,7 @@ impl ExternalAgentTransport for AcpTransport {
         &[AgentTransportKind::Acp]
     }
 
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, _spec)))]
     async fn start_session(
         &self,
         _spec: &ExternalAgentSpec,

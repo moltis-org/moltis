@@ -33,6 +33,7 @@ impl ExternalAgentTransport for ClaudeCodeTransport {
         "claude-code"
     }
 
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     async fn is_available(&self) -> bool {
         which::which(BINARY_NAME).is_ok()
     }
@@ -41,6 +42,7 @@ impl ExternalAgentTransport for ClaudeCodeTransport {
         &[AgentTransportKind::ClaudeCode]
     }
 
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, _spec)))]
     async fn start_session(
         &self,
         _spec: &ExternalAgentSpec,

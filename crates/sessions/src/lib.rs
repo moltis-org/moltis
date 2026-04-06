@@ -17,6 +17,7 @@ pub use {
     error::{Error, Result},
     key::SessionKey,
     message::{ContentBlock, MessageContent, PersistedMessage},
+    metadata::ExternalAgentKind,
     store::SearchResult,
 };
 

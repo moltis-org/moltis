@@ -29,6 +29,7 @@ impl ExternalAgentTransport for PiAgentTransport {
         "pi-agent"
     }
 
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     async fn is_available(&self) -> bool {
         which::which(BINARY_NAME).is_ok()
     }
@@ -37,6 +38,7 @@ impl ExternalAgentTransport for PiAgentTransport {
         &[AgentTransportKind::PiAgent]
     }
 
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, _spec)))]
     async fn start_session(
         &self,
         _spec: &ExternalAgentSpec,
