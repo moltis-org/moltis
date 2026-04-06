@@ -244,6 +244,31 @@ pub struct MoltisConfig {
     /// Process env vars take precedence (existing vars are not overwritten).
     #[serde(default)]
     pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub external_agents: ExternalAgentsConfig,
+}
+
+/// Configuration for external CLI agent integrations.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExternalAgentsConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub agents: HashMap<String, ExternalAgentConfig>,
+}
+
+/// Per-agent configuration for an external CLI agent.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExternalAgentConfig {
+    pub binary: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    pub working_dir: Option<String>,
+    pub timeout_secs: Option<u64>,
+    pub use_tmux: Option<bool>,
 }
 
 /// Agent spawn presets used by tools like `spawn_agent`.

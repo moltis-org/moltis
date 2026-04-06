@@ -636,6 +636,33 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # api_key = "..."                 # API key (optional for local endpoints like Ollama)
 
 # ══════════════════════════════════════════════════════════════════════════════
+# EXTERNAL AGENTS
+# ══════════════════════════════════════════════════════════════════════════════
+# Connect Moltis chat sessions to external CLI coding agents.
+# Each agent runs as an external process (PTY/tmux or JSON-RPC).
+# Moltis acts as orchestrator; the CLI agent owns its own context window.
+
+[external_agents]
+# enabled = false                   # Enable external agent bridge
+
+# Per-agent configuration (key = agent kind)
+# [external_agents.agents.claude-code]
+# binary = "claude"                 # Override binary path (default: look up on $PATH)
+# args = []                         # Additional CLI arguments
+# working_dir = "."                 # Override working directory
+# timeout_secs = 300                # Session timeout
+# use_tmux = false                  # Force tmux backend (vs direct PTY)
+# [external_agents.agents.claude-code.env]
+# ANTHROPIC_API_KEY = "sk-..."      # Extra env vars for this agent
+
+# [external_agents.agents.codex]
+# binary = "codex"
+
+# [external_agents.agents.opencode]
+# binary = "opencode"
+# use_tmux = true                   # opencode requires tmux (TUI app)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CHANNELS
 # ══════════════════════════════════════════════════════════════════════════════
 # External messaging integrations.

@@ -1649,6 +1649,7 @@ impl GatewayServices {
             project: self.project.clone(),
             local_llm: self.local_llm.clone(),
             system_info,
+            external_agent: Arc::new(NoopExternalAgentService),
         })
     }
 

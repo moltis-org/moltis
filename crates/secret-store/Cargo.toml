@@ -14,7 +14,7 @@ workspace = true
 
 [features]
 default = []
-vault = ["dep:moltis-vault"]
+vault   = ["dep:moltis-vault"]
 
 [dev-dependencies]
 sqlx  = { workspace = true }

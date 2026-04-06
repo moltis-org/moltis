@@ -15,6 +15,7 @@ default-members = [
   "crates/config",
   "crates/cron",
   "crates/discord",
+  "crates/external-agents",
   "crates/gateway",
   "crates/graphql",
   "crates/httpd",
@@ -36,8 +37,8 @@ default-members = [
   "crates/providers",
   "crates/qmd",
   "crates/routing",
-  "crates/service-traits",
   "crates/secret-store",
+  "crates/service-traits",
   "crates/sessions",
   "crates/skills",
   "crates/slack",
@@ -70,6 +71,7 @@ members = [
   "crates/common",
   "crates/config",
   "crates/cron",
+  "crates/external-agents",
   "crates/gateway",
   "crates/graphql",
   "crates/httpd",
@@ -91,8 +93,8 @@ members = [
   "crates/qmd",
   "crates/routing",
   "crates/schema-export",
-  "crates/service-traits",
   "crates/secret-store",
+  "crates/service-traits",
   "crates/sessions",
   "crates/skills",
   "crates/slack",
@@ -116,8 +118,8 @@ resolver = "2"
 # Widen libsqlite3-sys pin (0.30.1 → >=0.30.1,<0.36.0) so sqlx-sqlite 0.8.6
 # can coexist with matrix-sdk-sqlite's rusqlite 0.37 (libsqlite3-sys 0.35).
 # Remove once sqlx ≥ 0.9 ships stable.
+sqlx-core   = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
 sqlx-sqlite = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
-sqlx-core = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
 
 [workspace.lints.rust]
 unsafe_code           = "deny"
@@ -317,6 +319,7 @@ moltis-common          = { path = "crates/common" }
 moltis-config          = { path = "crates/config" }
 moltis-cron            = { path = "crates/cron" }
 moltis-discord         = { path = "crates/discord" }
+moltis-external-agents = { path = "crates/external-agents" }
 moltis-gateway         = { default-features = false, path = "crates/gateway" }
 moltis-graphql         = { path = "crates/graphql" }
 moltis-httpd           = { default-features = false, path = "crates/httpd" }

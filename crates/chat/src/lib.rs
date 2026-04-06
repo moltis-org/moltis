@@ -9249,6 +9249,8 @@ mod tests {
             preview: None,
             agent_id: None,
             node_id: None,
+            external_agent_kind: None,
+            external_session_id: None,
             version: 0,
         }
     }

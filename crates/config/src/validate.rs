@@ -691,6 +691,23 @@ fn build_schema_map() -> KnownKeys {
                 ),
             ])),
         ),
+        (
+            "external_agents",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                (
+                    "agents",
+                    Map(Box::new(Struct(HashMap::from([
+                        ("binary", Leaf),
+                        ("args", Leaf),
+                        ("env", Map(Box::new(Leaf))),
+                        ("working_dir", Leaf),
+                        ("timeout_secs", Leaf),
+                        ("use_tmux", Leaf),
+                    ])))),
+                ),
+            ])),
+        ),
     ]))
 }
 

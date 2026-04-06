@@ -47,6 +47,10 @@ pub struct SessionEntry {
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_agent_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_session_id: Option<String>,
     #[serde(default)]
     pub version: u64,
 }
@@ -137,6 +141,8 @@ impl SessionMetadata {
                 preview: None,
                 agent_id: None,
                 node_id: None,
+                external_agent_kind: None,
+                external_session_id: None,
                 version: 0,
             })
     }
@@ -329,6 +335,8 @@ impl From<SessionRow> for SessionEntry {
             preview: r.preview,
             agent_id: r.agent_id,
             node_id: r.node_id,
+            external_agent_kind: None,
+            external_session_id: None,
             version: r.version as u64,
         }
     }

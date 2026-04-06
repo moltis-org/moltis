@@ -1274,6 +1274,41 @@ impl SystemInfoService for NoopSystemInfoService {
     }
 }
 
+// ── External Agents ─────────────────────────────────────────────────────────
+
+#[async_trait]
+pub trait ExternalAgentService: Send + Sync {
+    /// List available external agents with install status.
+    async fn list(&self) -> ServiceResult;
+    /// Bind a session to an external agent.
+    async fn bind(&self, params: Value) -> ServiceResult;
+    /// Unbind an external agent from a session.
+    async fn unbind(&self, params: Value) -> ServiceResult;
+    /// Get bridge status for a session.
+    async fn status(&self, params: Value) -> ServiceResult;
+}
+
+pub struct NoopExternalAgentService;
+
+#[async_trait]
+impl ExternalAgentService for NoopExternalAgentService {
+    async fn list(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn bind(&self, _params: Value) -> ServiceResult {
+        Err("external agents not configured".into())
+    }
+
+    async fn unbind(&self, _params: Value) -> ServiceResult {
+        Err("external agents not configured".into())
+    }
+
+    async fn status(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "bound": false }))
+    }
+}
+
 // ── Services bundle ─────────────────────────────────────────────────────────
 
 use std::sync::Arc;
@@ -1307,6 +1342,7 @@ pub struct Services {
     pub project: Arc<dyn ProjectService>,
     pub local_llm: Arc<dyn LocalLlmService>,
     pub system_info: Arc<dyn SystemInfoService>,
+    pub external_agent: Arc<dyn ExternalAgentService>,
 }
 
 impl Default for Services {
@@ -1335,6 +1371,7 @@ impl Default for Services {
             project: Arc::new(NoopProjectService),
             local_llm: Arc::new(NoopLocalLlmService),
             system_info: Arc::new(NoopSystemInfoService),
+            external_agent: Arc::new(NoopExternalAgentService),
         }
     }
 }
