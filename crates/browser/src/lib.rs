@@ -34,14 +34,17 @@ pub mod detect;
 pub mod error;
 pub mod manager;
 pub mod pool;
+pub mod screencast;
 pub mod snapshot;
 pub mod types;
 
 pub use {
     error::Error,
-    manager::BrowserManager,
+    manager::{ActionHook, BrowserManager},
+    pool::BrowserSessionInfo,
+    screencast::{ScreencastFrame, ScreencastRegistry},
     types::{
         BrowserAction, BrowserConfig, BrowserKind, BrowserPreference, BrowserRequest,
-        BrowserResponse,
+        BrowserResponse, CookieParam, ExportedCookie,
     },
 };

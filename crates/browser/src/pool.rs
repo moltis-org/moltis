@@ -24,7 +24,20 @@ use crate::{
     types::{BrowserConfig, BrowserPreference},
 };
 
-pub(crate) const MAX_BROWSER_INSTANCE_LIFETIME: Duration = Duration::from_secs(30 * 60);
+/// Containers now host multiple tabs with shared cookies — keep them
+/// alive for a full day so logins persist and tabs aren't disrupted.
+pub(crate) const MAX_BROWSER_INSTANCE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Information about an active browser session.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BrowserSessionInfo {
+    pub session_id: String,
+    pub sandboxed: bool,
+    pub url: String,
+    pub age_secs: u64,
+    pub idle_secs: u64,
+    pub profile_id: String,
+}
 
 /// Get current system memory usage as a percentage (0-100).
 fn get_memory_usage_percent() -> u8 {
@@ -59,7 +72,7 @@ pub(crate) fn low_memory_chrome_args(total_mb: u64, threshold_mb: u64) -> &'stat
 
 /// A pooled browser instance with one or more pages.
 struct BrowserInstance {
-    browser: Browser,
+    browser: Arc<Browser>,
     pages: HashMap<String, Page>,
     last_used: Instant,
     /// When this instance was first created. Used to enforce a hard TTL that
@@ -71,6 +84,8 @@ struct BrowserInstance {
     /// Container for sandboxed instances (None for host browser).
     #[allow(dead_code)]
     container: Option<BrowserContainer>,
+    /// Browser profile identifier for cookie isolation.
+    profile_id: String,
 }
 
 /// Pool of browser instances for reuse.
@@ -103,16 +118,60 @@ impl BrowserPool {
         session_id: Option<&str>,
         sandbox: bool,
         browser: Option<BrowserPreference>,
+        profile_id: &str,
     ) -> Result<String, Error> {
         // Treat empty string as None (generate new session ID)
         let session_id = session_id.filter(|s| !s.is_empty());
 
-        // Check if we have an existing instance
+        // Check if we have an existing instance with this session ID
         if let Some(sid) = session_id {
             let instances = self.instances.read().await;
             if instances.contains_key(sid) {
                 debug!(session_id = sid, "reusing existing browser instance");
                 return Ok(sid.to_string());
+            }
+        }
+
+        // If another session with the same profile is already running,
+        // create a new tab in that browser instead of launching a new
+        // container. This shares cookies, local storage, and avoids
+        // Chrome's SingletonLock conflicts.
+        if sandbox {
+            let instances = self.instances.read().await;
+            let existing = instances.iter().find(|(_, inst_arc)| {
+                // Can't await lock here — try_lock to avoid blocking
+                if let Ok(inst) = inst_arc.try_lock() {
+                    inst.profile_id == profile_id && inst.sandboxed
+                } else {
+                    false
+                }
+            });
+            if let Some((_, existing_inst)) = existing {
+                let sid = session_id
+                    .map(String::from)
+                    .unwrap_or_else(generate_session_id);
+                // Clone the browser handle and create a new page (tab)
+                let inst = existing_inst.lock().await;
+                let new_inst = BrowserInstance {
+                    browser: Arc::clone(&inst.browser),
+                    pages: HashMap::new(),
+                    last_used: Instant::now(),
+                    created_at: Instant::now(),
+                    sandboxed: true,
+                    container: None, // shares parent's container
+                    profile_id: profile_id.to_string(),
+                };
+                drop(inst);
+                drop(instances);
+
+                let new_inst = Arc::new(Mutex::new(new_inst));
+                self.instances.write().await.insert(sid.clone(), new_inst);
+
+                info!(
+                    session_id = sid,
+                    profile_id, "created new tab in existing browser (shared cookies)"
+                );
+                return Ok(sid);
             }
         }
 
@@ -156,7 +215,9 @@ impl BrowserPool {
             .map(String::from)
             .unwrap_or_else(generate_session_id);
 
-        let instance = self.launch_browser(&sid, sandbox, browser).await?;
+        let instance = self
+            .launch_browser(&sid, sandbox, browser, profile_id)
+            .await?;
         let instance = Arc::new(Mutex::new(instance));
 
         {
@@ -227,6 +288,11 @@ impl BrowserPool {
 
         inst.pages.insert("main".to_string(), page.clone());
         Ok(page)
+    }
+
+    /// Check if a session exists in the pool.
+    pub async fn has_session(&self, session_id: &str) -> bool {
+        self.instances.read().await.contains_key(session_id)
     }
 
     /// Close a specific browser session.
@@ -323,22 +389,50 @@ impl BrowserPool {
         self.instances.read().await.len()
     }
 
+    /// List all active session IDs with their metadata.
+    pub async fn list_sessions(&self) -> Vec<BrowserSessionInfo> {
+        let instances = self.instances.read().await;
+        let mut sessions = Vec::with_capacity(instances.len());
+        for (sid, instance) in instances.iter() {
+            let inst = instance.lock().await;
+            let url = if let Some(page) = inst.pages.values().next() {
+                page.url().await.ok().flatten().unwrap_or_default()
+            } else {
+                String::new()
+            };
+            sessions.push(BrowserSessionInfo {
+                session_id: sid.clone(),
+                sandboxed: inst.sandboxed,
+                url,
+                age_secs: inst.created_at.elapsed().as_secs(),
+                idle_secs: inst.last_used.elapsed().as_secs(),
+                profile_id: inst.profile_id.clone(),
+            });
+        }
+        sessions
+    }
+
     /// Launch a new browser instance.
     async fn launch_browser(
         &self,
         session_id: &str,
         sandbox: bool,
         browser: Option<BrowserPreference>,
+        profile_id: &str,
     ) -> Result<BrowserInstance, Error> {
         if sandbox {
-            self.launch_sandboxed_browser(session_id).await
+            self.launch_sandboxed_browser(session_id, profile_id).await
         } else {
             self.launch_host_browser(session_id, browser).await
         }
     }
 
     /// Launch a browser inside a container (sandboxed mode).
-    async fn launch_sandboxed_browser(&self, session_id: &str) -> Result<BrowserInstance, Error> {
+    async fn launch_sandboxed_browser(
+        &self,
+        session_id: &str,
+        profile_id: &str,
+    ) -> Result<BrowserInstance, Error> {
         use crate::container;
 
         // All container operations (CLI checks, image pulls, container start +
@@ -355,7 +449,7 @@ impl BrowserPool {
             self.config.navigation_timeout_ms,
             MAX_BROWSER_INSTANCE_LIFETIME.as_secs(),
         );
-        let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
+        let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), profile_id);
         let container_host = self.config.container_host.clone();
 
         let container = tokio::task::spawn_blocking(move || {
@@ -392,7 +486,20 @@ impl BrowserPool {
                         error = %e,
                         "failed to create browser profile directory for container"
                     ),
-                    Ok(()) => set_container_dir_permissions(dir),
+                    Ok(()) => {
+                        set_container_dir_permissions(dir);
+                        // Remove stale Chrome singleton files from a previous
+                        // session. These are symlinks that dangle after the
+                        // container dies. Use symlink_metadata (not exists())
+                        // because exists() follows symlinks and returns false
+                        // for dangling ones.
+                        for name in ["SingletonLock", "SingletonCookie", "SingletonSocket"] {
+                            let path = dir.join(name);
+                            if std::fs::symlink_metadata(&path).is_ok() {
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    },
                 }
             }
 
@@ -459,12 +566,13 @@ impl BrowserPool {
         info!(session_id, "sandboxed browser connected successfully");
 
         Ok(BrowserInstance {
-            browser,
+            browser: Arc::new(browser),
             pages: HashMap::new(),
             last_used: Instant::now(),
             created_at: Instant::now(),
             sandboxed: true,
             container: Some(container),
+            profile_id: profile_id.to_string(),
         })
     }
 
@@ -563,6 +671,34 @@ impl BrowserPool {
             builder = builder.arg(arg);
         }
 
+        // ── Stealth flags to reduce headless browser detection ──
+        // Sites like LinkedIn detect headless Chrome via navigator.webdriver,
+        // user agent strings, missing plugins, etc.
+        builder = builder
+            // Remove navigator.webdriver = true
+            .arg("--disable-blink-features=AutomationControlled")
+            // Use new headless mode (more like real Chrome)
+            .arg("--headless=new")
+            // Disable automation info bar
+            .arg("--disable-infobars")
+            // Realistic window size
+            .arg("--window-size=1440,900")
+            // Disable "Chrome is being controlled" notification
+            .arg("--disable-automation-extension");
+
+        // Set a realistic user agent if not explicitly configured
+        if self.config.user_agent.is_none() {
+            builder = builder.arg(
+                "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+                 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            );
+        }
+
+        // Restore session cookies across browser restarts so logins persist.
+        // Without this, cookies marked as "session" (no expiry) are lost
+        // when Chrome exits, even with a persistent profile directory.
+        builder = builder.arg("--restore-session-cookies");
+
         // Set persistent profile directory if configured
         if let Some(ref profile_path) = self.config.resolved_profile_dir() {
             if let Err(e) = std::fs::create_dir_all(profile_path) {
@@ -572,6 +708,13 @@ impl BrowserPool {
                     "failed to create browser profile directory, falling back to ephemeral"
                 );
             } else {
+                // Clean up stale Chrome singleton files from previous sessions
+                for name in ["SingletonLock", "SingletonCookie", "SingletonSocket"] {
+                    let p = profile_path.join(name);
+                    if std::fs::symlink_metadata(&p).is_ok() {
+                        let _ = std::fs::remove_file(&p);
+                    }
+                }
                 info!(
                     path = %profile_path.display(),
                     "using persistent browser profile"
@@ -632,12 +775,13 @@ impl BrowserPool {
         });
 
         Ok(BrowserInstance {
-            browser,
+            browser: Arc::new(browser),
             pages: HashMap::new(),
             last_used: Instant::now(),
             created_at: Instant::now(),
             sandboxed: false,
             container: None,
+            profile_id: "default".to_string(),
         })
     }
 }
@@ -681,10 +825,14 @@ fn sanitize_session_component(session_id: &str) -> String {
 }
 
 /// Derive a per-session sandbox profile directory from a configured profile root.
-fn sandbox_profile_dir(profile_root: Option<PathBuf>, session_id: &str) -> Option<PathBuf> {
+fn sandbox_profile_dir(profile_root: Option<PathBuf>, profile_id: &str) -> Option<PathBuf> {
+    // Each profile_id gets its own directory so agents with different
+    // profiles have isolated cookies/local storage, while sessions within
+    // the same profile share state and persist across restarts.
+    // Chrome's SingletonLock is cleaned up before launch to avoid conflicts.
     profile_root.map(|root| {
         root.join("sandbox")
-            .join(sanitize_session_component(session_id))
+            .join(sanitize_session_component(profile_id))
     })
 }
 
@@ -728,12 +876,18 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_profile_dir_is_namespaced_by_session() {
+    fn sandbox_profile_dir_uses_profile_id() {
         let base = PathBuf::from("/tmp/moltis-profile");
-        let path = sandbox_profile_dir(Some(base), "browser-abc123");
+        let path = sandbox_profile_dir(Some(base.clone()), "default");
         assert_eq!(
             path,
-            Some(PathBuf::from("/tmp/moltis-profile/sandbox/browser-abc123"))
+            Some(PathBuf::from("/tmp/moltis-profile/sandbox/default"))
+        );
+
+        let path = sandbox_profile_dir(Some(base), "session:main");
+        assert_eq!(
+            path,
+            Some(PathBuf::from("/tmp/moltis-profile/sandbox/session_main"))
         );
     }
 
@@ -799,6 +953,51 @@ mod tests {
     fn drop_empty_pool_does_not_panic() {
         let pool = BrowserPool::new(test_config());
         drop(pool);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn singleton_lock_dangling_symlink_detected() {
+        let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir failed: {e}"));
+        let link = tmp.path().join("dangling-link");
+        // Create a symlink to a non-existent target
+        std::os::unix::fs::symlink("/nonexistent/target", &link)
+            .unwrap_or_else(|e| panic!("symlink failed: {e}"));
+
+        // symlink_metadata succeeds (the symlink inode exists)
+        assert!(
+            link.symlink_metadata().is_ok(),
+            "symlink_metadata should succeed for dangling symlink"
+        );
+        // exists() returns false because the target doesn't exist
+        assert!(
+            !link.exists(),
+            "exists() should return false for dangling symlink"
+        );
+        // remove_file works on dangling symlinks
+        assert!(
+            std::fs::remove_file(&link).is_ok(),
+            "remove_file should succeed on dangling symlink"
+        );
+    }
+
+    #[test]
+    fn sandbox_profile_same_id_same_path() {
+        let root = PathBuf::from("/tmp/profiles");
+        let a = sandbox_profile_dir(Some(root.clone()), "default");
+        let b = sandbox_profile_dir(Some(root), "default");
+        assert_eq!(a, b, "same profile_id should produce the same path");
+    }
+
+    #[test]
+    fn sandbox_profile_different_ids_different_paths() {
+        let root = PathBuf::from("/tmp/profiles");
+        let a = sandbox_profile_dir(Some(root.clone()), "alice");
+        let b = sandbox_profile_dir(Some(root), "bob");
+        assert_ne!(
+            a, b,
+            "different profile_ids should produce different paths"
+        );
     }
 
     #[test]

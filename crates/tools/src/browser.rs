@@ -32,8 +32,11 @@ use crate::error::Error;
 /// across unrelated chats.
 pub struct BrowserTool {
     config: moltis_browser::BrowserConfig,
-    manager: OnceCell<Arc<BrowserManager>>,
+    manager: Arc<OnceCell<Arc<BrowserManager>>>,
     sandbox_router: Option<Arc<SandboxRouter>>,
+    /// Override sandbox mode for browsers. When Some(false), browsers
+    /// always run on the host regardless of the global sandbox setting.
+    sandbox_override: Option<bool>,
     /// Track the most recent browser session ID per chat/session context.
     /// This prevents pool exhaustion when the LLM forgets to pass session_id,
     /// without reusing a stale browser across different chats.
@@ -53,8 +56,9 @@ impl BrowserTool {
     pub fn new(config: moltis_browser::BrowserConfig) -> Self {
         Self {
             config,
-            manager: OnceCell::new(),
+            manager: Arc::new(OnceCell::new()),
             sandbox_router: None,
+            sandbox_override: None,
             session_ids: RwLock::new(HashMap::new()),
         }
     }
@@ -63,6 +67,28 @@ impl BrowserTool {
     pub fn with_sandbox_router(mut self, router: Arc<SandboxRouter>) -> Self {
         self.sandbox_router = Some(router);
         self
+    }
+
+    /// Override sandbox mode for browsers. When Some(false), browsers
+    /// always run on the host regardless of the global sandbox setting.
+    pub fn with_sandbox_override(mut self, sandbox: Option<bool>) -> Self {
+        self.sandbox_override = sandbox;
+        self
+    }
+
+    /// Set the container name prefix for sandboxed browser instances.
+    pub fn with_container_prefix(mut self, prefix: String) -> Self {
+        self.config.container_prefix = prefix;
+        self
+    }
+
+    /// Return a shared handle to the lazy browser manager cell.
+    ///
+    /// This allows other components (e.g. the browser UI service) to share
+    /// the same [`BrowserManager`] so that sessions created by the tool are
+    /// visible in the management API.
+    pub fn shared_manager_cell(&self) -> Arc<OnceCell<Arc<BrowserManager>>> {
+        Arc::clone(&self.manager)
     }
 
     /// Create from config; returns `None` if browser is disabled.
@@ -230,15 +256,13 @@ impl AgentTool for BrowserTool {
     async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let mut params = params;
 
-        // Browser sandbox mode follows the session sandbox mode from the shared router.
+        // Browser sandbox mode: explicit config override > session sandbox mode.
         let session_key = Self::cache_key(params.get("_session_key").and_then(|v| v.as_str()));
-        let sandbox_mode = if let Some(ref router) = self.sandbox_router {
+        let sandbox_mode = if let Some(forced) = self.sandbox_override {
+            forced
+        } else if let Some(ref router) = self.sandbox_router {
             router.is_sandboxed(&session_key).await
         } else {
-            debug!(
-                session_key = %session_key,
-                "browser running in host mode (no container backend)"
-            );
             false
         };
 
@@ -262,6 +286,17 @@ impl AgentTool for BrowserTool {
 
             // Inject sandbox mode from session context
             obj.insert("sandbox".to_string(), serde_json::json!(sandbox_mode));
+
+            // Use the "default" profile so agents share cookies with the
+            // UI's browser sessions. Users log in via the UI, then agents
+            // can act on those authenticated sessions. Agents that need
+            // isolated cookies can explicitly set profile_id in their tool call.
+            obj.entry("profile_id".to_string())
+                .or_insert_with(|| serde_json::json!("default"));
+
+            // Strip explicit nulls — LLMs often send them for optional/defaulted fields
+            // and serde(default) only handles *missing* keys, not null values.
+            obj.retain(|_, v| !v.is_null());
         }
 
         // Check if this is a "close" action - we'll clear saved session after

@@ -1,6 +1,6 @@
 //! Web-UI API handlers (bootstrap, skills, images, containers, media, logs).
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use {
     axum::{
@@ -16,6 +16,7 @@ use {
 
 use crate::templates::{build_nav_counts, onboarding_completed};
 
+const BROWSER_REQUEST_FAILED: &str = "BROWSER_REQUEST_FAILED";
 const MCP_LIST_FAILED: &str = "MCP_LIST_FAILED";
 const IMAGE_CACHE_DELETE_FAILED: &str = "IMAGE_CACHE_DELETE_FAILED";
 const IMAGE_CACHE_PRUNE_FAILED: &str = "IMAGE_CACHE_PRUNE_FAILED";
@@ -1110,6 +1111,140 @@ pub async fn api_restart_daemon_handler() -> impl IntoResponse {
         Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             SANDBOX_DAEMON_RESTART_FAILED,
+            e.to_string(),
+        ),
+    }
+}
+
+// ── Browser API handlers ─────────────────────────────────────────────────────
+
+/// Send a browser action request (navigate, screenshot, click, type, etc.).
+pub async fn api_browser_action_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // Peek at the action to know if we need to start a frame relay afterwards.
+    let is_start_screencast = body
+        .get("action")
+        .and_then(|v| v.as_str())
+        .is_some_and(|a| a == "start_screencast");
+    let session_id = body
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    match state.gateway.services.browser.request(body).await {
+        Ok(result) => {
+            // If we just started a screencast, spawn a relay task that
+            // broadcasts frames to all WebSocket clients.
+            if is_start_screencast {
+                if let Some(sid) = session_id {
+                    spawn_screencast_relay(state, &sid).await;
+                }
+            }
+            (StatusCode::OK, Json(result)).into_response()
+        },
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            BROWSER_REQUEST_FAILED,
+            e.to_string(),
+        ),
+    }
+}
+
+/// Spawn a background task that subscribes to screencast frames for the given
+/// session and broadcasts each frame as a `browser.screencast.frame` event to
+/// all connected WebSocket clients.
+async fn spawn_screencast_relay(state: AppState, session_id: &str) {
+    let Some(mut rx) = state
+        .gateway
+        .services
+        .browser
+        .subscribe_screencast(session_id)
+        .await
+    else {
+        tracing::warn!(
+            session_id,
+            "screencast relay: failed to subscribe, no frames will be relayed"
+        );
+        return;
+    };
+    tracing::info!(
+        session_id,
+        "screencast relay: subscribed, broadcasting frames to WebSocket clients"
+    );
+
+    let gateway = Arc::clone(&state.gateway);
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(payload) => {
+                    moltis_gateway::broadcast::broadcast(
+                        &gateway,
+                        "browser.screencast.frame",
+                        payload,
+                        moltis_gateway::broadcast::BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                },
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::debug!(lagged = n, "screencast relay lagged, continuing");
+                },
+            }
+        }
+    });
+}
+
+/// List active browser sessions.
+pub async fn api_browser_sessions_handler(State(state): State<AppState>) -> Response {
+    match state.gateway.services.browser.list_sessions().await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            BROWSER_REQUEST_FAILED,
+            e.to_string(),
+        ),
+    }
+}
+
+/// List browser session history (active + closed).
+pub async fn api_browser_history_handler(State(state): State<AppState>) -> Response {
+    match state
+        .gateway
+        .services
+        .browser
+        .list_session_history(100)
+        .await
+    {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            BROWSER_REQUEST_FAILED,
+            e.to_string(),
+        ),
+    }
+}
+
+/// Get action log for a specific browser session.
+pub async fn api_browser_actions_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Response {
+    match state
+        .gateway
+        .services
+        .browser
+        .get_session_actions(&session_id, 200)
+        .await
+    {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            BROWSER_REQUEST_FAILED,
             e.to_string(),
         ),
     }

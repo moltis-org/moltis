@@ -12,6 +12,7 @@ import { localizedApiErrorMessage, sendRpc } from "./helpers.js";
 import { setLocale } from "./i18n.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { initAgents, teardownAgents } from "./page-agents.js";
+import { initBrowser, teardownBrowser } from "./page-browser.js";
 // Moved page init/teardown imports
 import { initChannels, teardownChannels } from "./page-channels.js";
 import { initCrons, teardownCrons } from "./page-crons.js";
@@ -226,6 +227,12 @@ var sections = [
 		icon: html`<span class="icon icon-microphone"></span>`,
 	},
 	{ group: "Systems" },
+	{
+		id: "browser",
+		label: "Browser",
+		icon: html`<span class="icon icon-monitor"></span>`,
+		page: true,
+	},
 	{ id: "terminal", label: "Terminal", page: true },
 	{ id: "monitoring", label: "Monitoring", page: true },
 	{ id: "logs", label: "Logs", page: true },
@@ -5329,6 +5336,7 @@ var pageSectionHandlers = {
 	hooks: { init: initHooks, teardown: teardownHooks },
 	skills: { init: initSkills, teardown: teardownSkills },
 	agents: { init: initAgents, teardown: teardownAgents },
+	browser: { init: initBrowser, teardown: teardownBrowser },
 	terminal: { init: initTerminal, teardown: teardownTerminal },
 	sandboxes: { init: initImages, teardown: teardownImages },
 	monitoring: {

@@ -1300,9 +1300,20 @@ fn set_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
 // ── Browser (Real implementation — depends on moltis-browser) ───────────────
 
 /// Real browser service using BrowserManager.
+///
+/// When a [`BrowserTool`](moltis_tools::browser::BrowserTool) exists, the
+/// service should share its manager cell so that sessions created by
+/// agent tool calls are visible in the browser management UI.
 pub struct RealBrowserService {
     config: moltis_browser::BrowserConfig,
-    manager: tokio::sync::OnceCell<Arc<moltis_browser::BrowserManager>>,
+    manager: Arc<tokio::sync::OnceCell<Arc<moltis_browser::BrowserManager>>>,
+    /// Default sandbox mode for UI-created requests that don't specify it.
+    default_sandbox: bool,
+    /// Persistent session history store for action logging.
+    /// Set after database initialization via `set_session_store`.
+    session_store: tokio::sync::OnceCell<crate::browser_session_store::BrowserSessionStore>,
+    /// Action hook to register on the manager when it initializes.
+    action_hook: tokio::sync::OnceCell<moltis_browser::ActionHook>,
 }
 
 impl RealBrowserService {
@@ -1311,8 +1322,74 @@ impl RealBrowserService {
         browser_config.container_prefix = container_prefix;
         Self {
             config: browser_config,
-            manager: tokio::sync::OnceCell::new(),
+            manager: Arc::new(tokio::sync::OnceCell::new()),
+            default_sandbox: false,
+            session_store: tokio::sync::OnceCell::new(),
+            action_hook: tokio::sync::OnceCell::new(),
         }
+    }
+
+    /// Create from a shared manager cell (typically obtained from
+    /// [`BrowserTool::shared_manager_cell`]). This ensures the tool and
+    /// service operate on the same browser pool.
+    pub fn with_shared_manager(
+        config: &moltis_config::schema::BrowserConfig,
+        manager: Arc<tokio::sync::OnceCell<Arc<moltis_browser::BrowserManager>>>,
+    ) -> Self {
+        Self {
+            config: moltis_browser::BrowserConfig::from(config),
+            manager,
+            default_sandbox: false,
+            session_store: tokio::sync::OnceCell::new(),
+            action_hook: tokio::sync::OnceCell::new(),
+        }
+    }
+
+    /// Set the default sandbox mode for requests that don't specify it.
+    pub fn with_default_sandbox(mut self, sandbox: bool) -> Self {
+        self.default_sandbox = sandbox;
+        self
+    }
+
+    /// Set the persistent session store (called after database initialization).
+    pub fn set_session_store(&self, pool: sqlx::SqlitePool) {
+        let _ = self
+            .session_store
+            .set(crate::browser_session_store::BrowserSessionStore::new(
+                pool.clone(),
+            ));
+        // Pre-build the action hook so it's ready when the manager initializes.
+        let store = crate::browser_session_store::BrowserSessionStore::new(pool);
+        let _ = self.action_hook.set(Arc::new(
+            move |sid: &str,
+                  action: &str,
+                  url: Option<&str>,
+                  success: bool,
+                  error: Option<&str>,
+                  duration_ms: u64| {
+                let store = store.clone();
+                let sid = sid.to_string();
+                let action = action.to_string();
+                let url = url.map(String::from);
+                let error = error.map(String::from);
+                tokio::spawn(async move {
+                    let _ = store.start_session(&sid, false).await;
+                    let _ = store
+                        .log_action(
+                            &sid,
+                            &action,
+                            url.as_deref(),
+                            success,
+                            error.as_deref(),
+                            duration_ms,
+                        )
+                        .await;
+                    if action == "close" {
+                        let _ = store.close_session(&sid).await;
+                    }
+                });
+            },
+        ));
     }
 
     pub fn from_config(
@@ -1326,13 +1403,11 @@ impl RealBrowserService {
     }
 
     async fn manager(&self) -> Arc<moltis_browser::BrowserManager> {
-        Arc::clone(
+        let manager = Arc::clone(
             self.manager
                 .get_or_init(|| async {
                     let config = self.config.clone();
-                    match tokio::task::spawn_blocking(move || {
-                        // Browser detection and stale-container cleanup can block;
-                        // run these off the async runtime worker threads.
+                    let mgr = match tokio::task::spawn_blocking(move || {
                         moltis_browser::detect::check_and_warn(config.chrome_path.as_deref());
                         Arc::new(moltis_browser::BrowserManager::new(config))
                     })
@@ -1348,10 +1423,16 @@ impl RealBrowserService {
                             moltis_browser::detect::check_and_warn(config.chrome_path.as_deref());
                             Arc::new(moltis_browser::BrowserManager::new(config))
                         },
+                    };
+                    // Register action hook for session logging if available
+                    if let Some(hook) = self.action_hook.get() {
+                        mgr.set_action_hook(Arc::clone(hook)).await;
                     }
+                    mgr
                 })
                 .await,
-        )
+        );
+        manager
     }
 
     fn manager_if_initialized(&self) -> Option<Arc<moltis_browser::BrowserManager>> {
@@ -1362,13 +1443,164 @@ impl RealBrowserService {
 #[async_trait]
 impl BrowserService for RealBrowserService {
     async fn request(&self, params: Value) -> ServiceResult {
+        // Inject defaults for UI-created requests that omit them.
+        let mut params = params;
+        if let Some(obj) = params.as_object_mut() {
+            if self.default_sandbox {
+                obj.entry("sandbox").or_insert(serde_json::json!(true));
+            }
+            obj.entry("profile_id")
+                .or_insert(serde_json::json!("default"));
+        }
+
+        // Extract action name and session_id for logging before consuming params
+        let action_name = params
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let req_sandbox = params
+            .get("sandbox")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         let request: moltis_browser::BrowserRequest =
             serde_json::from_value(params).map_err(|e| format!("invalid request: {e}"))?;
 
         let manager = self.manager().await;
         let response = manager.handle_request(request).await;
 
+        // Log action to persistent session store (best-effort, don't fail the request)
+        if let Some(store) = self.session_store.get() {
+            let sid = &response.session_id;
+            if !sid.is_empty() {
+                // Ensure session record exists (INSERT OR IGNORE is idempotent)
+                let _ = store.start_session(sid, req_sandbox).await;
+
+                // Log the action (skip high-frequency events)
+                if !matches!(
+                    action_name.as_str(),
+                    "mouse_input"
+                        | "keyboard_input"
+                        | "start_screencast"
+                        | "stop_screencast"
+                        | "get_url"
+                        | "get_title"
+                        | "screenshot"
+                ) {
+                    let _ = store
+                        .log_action(
+                            sid,
+                            &action_name,
+                            response.url.as_deref(),
+                            response.success,
+                            response.error.as_deref(),
+                            response.duration_ms,
+                        )
+                        .await;
+                }
+
+                // Mark session as closed
+                if action_name == "close" {
+                    let _ = store.close_session(sid).await;
+                }
+            }
+        }
+
         Ok(serde_json::to_value(&response).map_err(|e| format!("serialization error: {e}"))?)
+    }
+
+    async fn list_sessions(&self) -> ServiceResult {
+        if let Some(manager) = self.manager_if_initialized() {
+            let sessions = manager.list_sessions().await;
+            let screencast_sessions = manager.screencasts().active_sessions().await;
+            let enriched: Vec<Value> = sessions
+                .into_iter()
+                .map(|s| {
+                    let screencasting = screencast_sessions.contains(&s.session_id);
+                    let mut v = serde_json::to_value(&s).unwrap_or_default();
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert(
+                            "screencasting".to_string(),
+                            serde_json::json!(screencasting),
+                        );
+                    }
+                    v
+                })
+                .collect();
+            Ok(serde_json::json!({ "sessions": enriched }))
+        } else {
+            Ok(serde_json::json!({ "sessions": [] }))
+        }
+    }
+
+    async fn list_session_history(&self, limit: u32) -> ServiceResult {
+        if let Some(store) = self.session_store.get() {
+            match store.list_all(limit).await {
+                Ok(sessions) => Ok(serde_json::json!({ "sessions": sessions })),
+                Err(e) => Err(format!("failed to list session history: {e}").into()),
+            }
+        } else {
+            Ok(serde_json::json!({ "sessions": [] }))
+        }
+    }
+
+    async fn get_session_actions(&self, session_id: &str, limit: u32) -> ServiceResult {
+        if let Some(store) = self.session_store.get() {
+            match store.get_actions(session_id, limit).await {
+                Ok(actions) => Ok(serde_json::json!({ "actions": actions })),
+                Err(e) => Err(format!("failed to get session actions: {e}").into()),
+            }
+        } else {
+            Ok(serde_json::json!({ "actions": [] }))
+        }
+    }
+
+    async fn subscribe_screencast(
+        &self,
+        session_id: &str,
+    ) -> Option<tokio::sync::broadcast::Receiver<Value>> {
+        let manager = match self.manager_if_initialized() {
+            Some(m) => m,
+            None => {
+                tracing::warn!(session_id, "subscribe_screencast: manager not initialized");
+                return None;
+            },
+        };
+        let raw_rx = match manager.screencasts().subscribe(session_id).await {
+            Some(rx) => rx,
+            None => {
+                tracing::warn!(
+                    session_id,
+                    "subscribe_screencast: session not in active screencasts"
+                );
+                return None;
+            },
+        };
+
+        // Create a Value-typed broadcast channel and spawn an adapter task
+        // that serializes ScreencastFrame → serde_json::Value.
+        let (tx, rx) = tokio::sync::broadcast::channel::<Value>(4);
+        tokio::spawn({
+            let mut raw_rx = raw_rx;
+            async move {
+                loop {
+                    match raw_rx.recv().await {
+                        Ok(frame) => {
+                            if let Ok(val) = serde_json::to_value(&frame) {
+                                if tx.send(val).is_err() {
+                                    break; // no subscribers
+                                }
+                            }
+                        },
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    }
+                }
+            }
+        });
+
+        Some(rx)
     }
 
     async fn warmup(&self) {

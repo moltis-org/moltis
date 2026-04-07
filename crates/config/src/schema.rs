@@ -1829,6 +1829,11 @@ pub struct BrowserConfig {
     /// Moltis can reach the sibling browser container via the host's port mapping.
     #[serde(default = "default_container_host")]
     pub container_host: String,
+    /// Whether to run browsers in sandbox containers.
+    /// When false, browsers run directly on the host (uses less memory but
+    /// no isolation). Default follows the global sandbox mode.
+    /// Set to false explicitly to force host-mode browsers.
+    pub sandbox: Option<bool>,
 }
 
 fn default_sandbox_image() -> String {
@@ -1853,9 +1858,9 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             headless: true,
-            viewport_width: 2560,
-            viewport_height: 1440,
-            device_scale_factor: 2.0,
+            viewport_width: 1440,
+            viewport_height: 900,
+            device_scale_factor: 1.0,
             max_instances: 0, // 0 = unlimited, limited by memory
             memory_limit_percent: 90,
             idle_timeout_secs: 300,
@@ -1868,6 +1873,7 @@ impl Default for BrowserConfig {
             persist_profile: default_persist_profile(),
             profile_dir: None,
             container_host: default_container_host(),
+            sandbox: None,
         }
     }
 }

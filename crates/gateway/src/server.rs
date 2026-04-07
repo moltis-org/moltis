@@ -1379,12 +1379,33 @@ pub async fn prepare_gateway_core(
 
     services.exec_approval = Arc::new(LiveExecApprovalService::new(Arc::clone(&approval_manager)));
 
-    // Wire browser service if enabled.
-    if let Some(browser_svc) =
-        crate::services::RealBrowserService::from_config(&config, browser_container_prefix)
-    {
-        services.browser = Arc::new(browser_svc);
-    }
+    // Create BrowserTool early so the browser service can share its manager.
+    // The tool is registered into the tool_registry later; we just hold it here.
+    let browser_tool = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser)
+        .map(|t| {
+            t.with_container_prefix(browser_container_prefix)
+                .with_sandbox_override(config.tools.browser.sandbox)
+        });
+    let browser_svc_ref: Option<Arc<crate::services::RealBrowserService>> =
+        if let Some(ref tool) = browser_tool {
+            // Browser sandbox: explicit config > global sandbox mode
+            let sandbox_enabled = config
+                .tools
+                .browser
+                .sandbox
+                .unwrap_or(config.tools.exec.sandbox.mode != "none");
+            let svc = Arc::new(
+                crate::services::RealBrowserService::with_shared_manager(
+                    &config.tools.browser,
+                    tool.shared_manager_cell(),
+                )
+                .with_default_sandbox(sandbox_enabled),
+            );
+            services.browser = Arc::clone(&svc) as Arc<dyn crate::services::BrowserService>;
+            Some(svc)
+        } else {
+            None
+        };
 
     // Wire live onboarding service.
     let onboarding_config_path = moltis_config::find_or_default_config_path();
@@ -1608,6 +1629,12 @@ pub async fn prepare_gateway_core(
     moltis_vault::run_migrations(&db_pool)
         .await
         .expect("failed to run vault migrations");
+
+    // Wire browser session store after DB is ready. The action hook for
+    // logging is registered lazily when the manager first initializes.
+    if let Some(ref svc) = browser_svc_ref {
+        svc.set_session_store(db_pool.clone());
+    }
 
     // Migrate plugins data into unified skills system (idempotent, non-fatal).
     moltis_skills::migration::migrate_plugins_to_skills(&data_dir).await;
@@ -3558,7 +3585,7 @@ pub async fn prepare_gateway_core(
         {
             tool_registry.register(Box::new(t));
         }
-        if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
+        if let Some(t) = browser_tool {
             let t = if sandbox_router.backend_name() != "none" {
                 t.with_sandbox_router(Arc::clone(&sandbox_router))
             } else {

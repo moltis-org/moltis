@@ -403,6 +403,8 @@ fn browserless_container_env(session_timeout_ms: u64) -> Vec<String> {
         format!("TIMEOUT={session_timeout_ms}"),
         "MAX_CONCURRENT_SESSIONS=1".to_string(),
         "PREBOOT_CHROME=true".to_string(),
+        // Restore session cookies so logins persist across container restarts
+        "CHROME_FLAGS=--restore-session-cookies".to_string(),
     ]
 }
 

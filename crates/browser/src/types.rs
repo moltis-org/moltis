@@ -72,10 +72,159 @@ pub enum BrowserAction {
 
     /// Close the browser session.
     Close,
+
+    /// Start streaming screenshots of the page (CDP screencast).
+    StartScreencast {
+        /// JPEG quality 1-100 (default 60).
+        #[serde(default = "default_screencast_quality")]
+        quality: u8,
+        /// Max width to downscale to (default 1280).
+        #[serde(default = "default_screencast_max_width")]
+        max_width: u32,
+        /// Max height to downscale to (default 800).
+        #[serde(default = "default_screencast_max_height")]
+        max_height: u32,
+    },
+
+    /// Stop the screencast stream.
+    StopScreencast,
+
+    /// Send a mouse event directly to the browser page.
+    MouseInput {
+        /// X coordinate in CSS pixels.
+        x: f64,
+        /// Y coordinate in CSS pixels.
+        y: f64,
+        /// Mouse event type.
+        event_type: MouseInputType,
+        /// Mouse button (default: left).
+        #[serde(default)]
+        button: MouseInputButton,
+        /// Click count (default: 1).
+        #[serde(default = "default_click_count")]
+        click_count: u32,
+        /// Horizontal scroll delta (for mouseWheel).
+        #[serde(default)]
+        delta_x: f64,
+        /// Vertical scroll delta (for mouseWheel).
+        #[serde(default)]
+        delta_y: f64,
+    },
+
+    /// Send a keyboard event directly to the browser page.
+    KeyboardInput {
+        /// Keyboard event type.
+        event_type: KeyInputType,
+        /// Key identifier (e.g. "Enter", "a", "ArrowDown").
+        #[serde(default)]
+        key: Option<String>,
+        /// Text to insert (for char/keyDown events).
+        #[serde(default)]
+        text: Option<String>,
+        /// Physical key code (e.g. "KeyA", "Enter").
+        #[serde(default)]
+        code: Option<String>,
+        /// Modifier bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8.
+        #[serde(default)]
+        modifiers: Option<i64>,
+    },
+
+    /// Export cookies from the browser session.
+    ExportCookies {
+        /// Optional domain filter (e.g. "example.com").
+        #[serde(default)]
+        domain: Option<String>,
+    },
+
+    /// Import cookies into the browser session.
+    ImportCookies {
+        /// Cookies to set.
+        cookies: Vec<CookieParam>,
+    },
 }
 
 fn default_wait_timeout_ms() -> u64 {
     30000
+}
+
+fn default_screencast_quality() -> u8 {
+    60
+}
+
+fn default_screencast_max_width() -> u32 {
+    1280
+}
+
+fn default_screencast_max_height() -> u32 {
+    800
+}
+
+fn default_click_count() -> u32 {
+    1
+}
+
+/// Mouse event type for direct input.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MouseInputType {
+    #[serde(rename = "mousePressed")]
+    Pressed,
+    #[serde(rename = "mouseReleased")]
+    Released,
+    #[serde(rename = "mouseMoved")]
+    Moved,
+    #[serde(rename = "mouseWheel")]
+    Wheel,
+}
+
+/// Mouse button for direct input.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MouseInputButton {
+    #[default]
+    Left,
+    Right,
+    Middle,
+}
+
+/// Keyboard event type for direct input.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeyInputType {
+    KeyDown,
+    KeyUp,
+    Char,
+}
+
+/// Cookie parameter for import.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CookieParam {
+    pub name: String,
+    pub value: String,
+    pub domain: Option<String>,
+    pub path: Option<String>,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub http_only: bool,
+    /// Expiry as Unix timestamp (seconds).
+    pub expires: Option<f64>,
+    #[serde(default)]
+    pub same_site: Option<String>,
+}
+
+/// Exported cookie from the browser.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportedCookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
+    pub expires: f64,
+    pub same_site: String,
+    pub size: u32,
 }
 
 /// Known Chromium-family browser engines we can launch.
@@ -182,6 +331,21 @@ impl fmt::Display for BrowserAction {
             Self::Forward => write!(f, "forward"),
             Self::Refresh => write!(f, "refresh"),
             Self::Close => write!(f, "close"),
+            Self::StartScreencast { .. } => write!(f, "start_screencast"),
+            Self::StopScreencast => write!(f, "stop_screencast"),
+            Self::MouseInput { x, y, .. } => write!(f, "mouse_input(x={x}, y={y})"),
+            Self::KeyboardInput { key, text, .. } => match (key, text) {
+                (Some(k), _) => write!(f, "keyboard_input(key={k})"),
+                (_, Some(t)) => write!(f, "keyboard_input(text={t})"),
+                _ => write!(f, "keyboard_input"),
+            },
+            Self::ExportCookies { domain } => match domain {
+                Some(d) => write!(f, "export_cookies(domain={d})"),
+                None => write!(f, "export_cookies"),
+            },
+            Self::ImportCookies { cookies } => {
+                write!(f, "import_cookies(count={})", cookies.len())
+            },
         }
     }
 }
@@ -211,6 +375,12 @@ pub struct BrowserRequest {
     /// - specific browser ("brave", "chrome", etc): use that browser
     #[serde(default)]
     pub browser: Option<BrowserPreference>,
+
+    /// Browser profile identifier for cookie isolation.
+    /// Sessions with the same profile_id share cookies and local storage.
+    /// Defaults to "default" when not specified.
+    #[serde(default)]
+    pub profile_id: Option<String>,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -334,6 +504,10 @@ pub struct BrowserResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 
+    /// Exported cookies (for export_cookies action).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cookies: Option<Vec<ExportedCookie>>,
+
     /// Duration of the action in milliseconds.
     pub duration_ms: u64,
 }
@@ -351,6 +525,7 @@ impl BrowserResponse {
             result: None,
             url: None,
             title: None,
+            cookies: None,
             duration_ms,
         }
     }
@@ -367,6 +542,7 @@ impl BrowserResponse {
             result: None,
             url: None,
             title: None,
+            cookies: None,
             duration_ms,
         }
     }
@@ -394,6 +570,11 @@ impl BrowserResponse {
 
     pub fn with_title(mut self, title: String) -> Self {
         self.title = Some(title);
+        self
+    }
+
+    pub fn with_cookies(mut self, cookies: Vec<ExportedCookie>) -> Self {
+        self.cookies = Some(cookies);
         self
     }
 }
@@ -465,12 +646,12 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             headless: true,
-            viewport_width: 2560,
-            viewport_height: 1440,
-            device_scale_factor: 2.0,
+            viewport_width: 1440,
+            viewport_height: 900,
+            device_scale_factor: 1.0,
             max_instances: 0, // 0 = unlimited, limited by memory
             memory_limit_percent: 90,
-            idle_timeout_secs: 300,
+            idle_timeout_secs: 86400,
             navigation_timeout_ms: 30000,
             user_agent: None,
             chrome_args: Vec::new(),
@@ -654,5 +835,131 @@ mod tests {
         };
         // profile_dir takes precedence, implicitly enabling persistence
         assert!(config.resolved_profile_dir().is_some());
+    }
+
+    #[test]
+    fn browser_request_null_timeout_fails_without_stripping() {
+        // LLMs send `"timeout_ms": null` — serde rejects null for a non-Option u64
+        let raw = serde_json::json!({
+            "action": "navigate",
+            "url": "https://example.com",
+            "timeout_ms": null,
+        });
+        let result = serde_json::from_value::<BrowserRequest>(raw);
+        assert!(
+            result.is_err(),
+            "deserializing null timeout_ms without stripping should fail"
+        );
+    }
+
+    #[test]
+    fn browser_request_all_optional_null_after_stripping() {
+        // Every optional/defaulted field set to null, then stripped.
+        let raw = serde_json::json!({
+            "action": "navigate",
+            "url": "https://example.com",
+            "session_id": null,
+            "browser": null,
+            "timeout_ms": null,
+            "sandbox": null,
+            "profile_id": null,
+        });
+        let mut obj = raw
+            .as_object()
+            .unwrap_or(&serde_json::Map::new())
+            .clone();
+        obj.retain(|_, v| !v.is_null());
+        let cleaned = serde_json::Value::Object(obj);
+
+        let req: BrowserRequest = serde_json::from_value(cleaned).unwrap_or_else(|e| {
+            panic!("should deserialize after null-stripping: {e}");
+        });
+        assert!(req.session_id.is_none());
+        assert_eq!(req.timeout_ms, 60000); // default
+        assert!(req.browser.is_none());
+        assert!(req.sandbox.is_none());
+        assert!(req.profile_id.is_none());
+    }
+
+    #[test]
+    fn mouse_wheel_defaults_deltas_to_zero() {
+        let raw = serde_json::json!({
+            "action": "mouse_input",
+            "x": 100.0,
+            "y": 200.0,
+            "event_type": "mouseWheel",
+        });
+        let action: BrowserAction = serde_json::from_value(raw).unwrap_or_else(|e| {
+            panic!("should deserialize mouseWheel without deltas: {e}");
+        });
+        if let BrowserAction::MouseInput {
+            delta_x, delta_y, ..
+        } = action
+        {
+            assert!(
+                (delta_x - 0.0).abs() < f64::EPSILON,
+                "delta_x should default to 0.0"
+            );
+            assert!(
+                (delta_y - 0.0).abs() < f64::EPSILON,
+                "delta_y should default to 0.0"
+            );
+        } else {
+            panic!("expected MouseInput variant");
+        }
+    }
+
+    #[test]
+    fn mouse_input_display_includes_params() {
+        let action = BrowserAction::MouseInput {
+            x: 42.5,
+            y: 99.0,
+            event_type: MouseInputType::Pressed,
+            button: MouseInputButton::Left,
+            click_count: 1,
+            delta_x: 0.0,
+            delta_y: 0.0,
+        };
+        let display = format!("{}", action);
+        assert!(
+            display.starts_with("mouse_input("),
+            "Display should start with 'mouse_input(', got: {display}"
+        );
+        assert!(
+            display.contains("42.5"),
+            "Display should contain x coordinate, got: {display}"
+        );
+        assert!(
+            display.contains("99"),
+            "Display should contain y coordinate, got: {display}"
+        );
+    }
+
+    #[test]
+    fn browser_request_deserializes_after_null_stripping() {
+        // LLMs often send explicit nulls for optional/defaulted fields.
+        // The tool strips nulls before deserializing, so simulate that here.
+        let raw = serde_json::json!({
+            "action": "navigate",
+            "url": "https://example.com",
+            "session_id": null,
+            "browser": null,
+            "timeout_ms": null,
+            "sandbox": null,
+        });
+
+        // Without stripping, this would fail: "invalid type: null, expected u64"
+        let mut obj = raw.as_object().unwrap_or(&serde_json::Map::new()).clone();
+        obj.retain(|_, v| !v.is_null());
+        let cleaned = serde_json::Value::Object(obj);
+
+        let req: BrowserRequest = serde_json::from_value(cleaned).unwrap_or_else(|e| {
+            panic!("should deserialize after null-stripping: {e}");
+        });
+        assert!(req.session_id.is_none());
+        assert_eq!(req.timeout_ms, 60000); // default
+        assert!(req.browser.is_none());
+        assert!(req.sandbox.is_none());
+        assert!(matches!(req.action, BrowserAction::Navigate { .. }));
     }
 }

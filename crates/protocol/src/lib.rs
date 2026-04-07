@@ -476,6 +476,9 @@ pub const KNOWN_EVENTS: &[&str] = &[
     "node.pair.requested",
     "node.pair.resolved",
     "node.invoke.request",
+    "browser.screencast.frame",
+    "browser.screencast.started",
+    "browser.screencast.stopped",
 ];
 
 // ── Roles and scopes ─────────────────────────────────────────────────────────

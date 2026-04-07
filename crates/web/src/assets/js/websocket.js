@@ -30,6 +30,7 @@ import {
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
 import { attachMessageVoiceControl } from "./message-voice.js";
 import { fetchModels } from "./models.js";
+import { navigateToBrowserSession } from "./page-browser.js";
 import { prefetchChannels } from "./page-channels.js";
 import { maybeRefreshFullContext, renderCompactCard } from "./page-chat.js";
 import { fetchProjects } from "./projects.js";
@@ -285,6 +286,19 @@ function appendToolResult(toolCard, result, eventSession) {
 			? result.screenshot
 			: `data:image/png;base64,${result.screenshot}`;
 		renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
+	}
+	// "View browser session" link for browser tool results
+	if (result.session_id && result.session_id.startsWith("browser-")) {
+		var viewLink = document.createElement("a");
+		viewLink.href = "/settings/browser";
+		viewLink.className = "text-xs text-[var(--accent)] hover:underline mt-1 inline-block";
+		viewLink.textContent = "\u{1F310} View browser session";
+		viewLink.onclick = (e) => {
+			e.preventDefault();
+			navigateToBrowserSession(result.session_id);
+			navigate("/settings/browser");
+		};
+		toolCard.appendChild(viewLink);
 	}
 	// Document card (send_document tool)
 	if (result.document_ref) {
@@ -1355,6 +1369,7 @@ var connectOpts = {
 				"metrics.update",
 				"skills.install.progress",
 				"mcp.status",
+				"browser.screencast.frame",
 			]),
 		);
 		S.setSubscribed(true);

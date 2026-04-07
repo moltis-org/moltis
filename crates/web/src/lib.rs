@@ -107,6 +107,23 @@ fn build_api_routes() -> Router<AppState> {
             axum::routing::delete(api::api_remove_container_handler),
         )
         .route("/api/sandbox/disk-usage", get(api::api_disk_usage_handler))
+        // Browser viewer API
+        .route(
+            "/api/browser/action",
+            axum::routing::post(api::api_browser_action_handler),
+        )
+        .route(
+            "/api/browser/sessions",
+            get(api::api_browser_sessions_handler),
+        )
+        .route(
+            "/api/browser/history",
+            get(api::api_browser_history_handler),
+        )
+        .route(
+            "/api/browser/actions/{session_id}",
+            get(api::api_browser_actions_handler),
+        )
         .route(
             "/api/sandbox/daemon/restart",
             axum::routing::post(api::api_restart_daemon_handler),

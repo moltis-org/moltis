@@ -116,6 +116,12 @@ const routeCases = [
 		settingsActive: true,
 		heading: "Identity",
 	},
+	{
+		path: "/settings/browser",
+		expectedUrl: /\/settings\/browser$/,
+		settingsActive: true,
+		heading: "Browser Sessions",
+	},
 ];
 
 for (const routeCase of routeCases) {
