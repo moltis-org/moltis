@@ -198,7 +198,7 @@ async-graphql-axum = "7"
 gix                = "0.78"
 hex                = "0.4"
 hmac               = "0.12"
-jsonwebtoken       = "9"
+jsonwebtoken       = "10"
 llama-cpp-2        = "0.1"
 matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
 mockito            = "1.7"
