@@ -18,6 +18,25 @@ var editingProject = signal(null);
 var detecting = signal(false);
 var clearing = signal(false);
 
+export function initProjects(container) {
+	container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
+	editingProject.value = null;
+	completions.value = [];
+	detecting.value = false;
+	render(html`<${ProjectsPage} />`, container);
+}
+
+export function teardownProjects() {
+	var container = S.$("pageContent");
+	if (container) render(null, container);
+}
+
+registerPage(
+	routes.projects,
+	initProjects,
+	teardownProjects,
+);
+
 function PathInput(props) {
 	var inputRef = useRef(null);
 	var timerRef = useRef(null);
@@ -318,15 +337,6 @@ function ProjectsPage() {
 
 registerPage(
 	routes.projects,
-	function initProjects(container) {
-		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-		editingProject.value = null;
-		completions.value = [];
-		detecting.value = false;
-		render(html`<${ProjectsPage} />`, container);
-	},
-	function teardownProjects() {
-		var container = S.$("pageContent");
-		if (container) render(null, container);
-	},
+	initProjects,
+	teardownProjects,
 );

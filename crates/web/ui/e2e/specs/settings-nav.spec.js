@@ -169,6 +169,7 @@ test.describe("Settings navigation", () => {
 
 	const settingsSections = [
 		{ id: "identity", heading: "Identity" },
+		{ id: "projects", heading: "Repositories" },
 		{ id: "memory", heading: "Memory" },
 		{ id: "environment", heading: "Environment" },
 		{ id: "crons", heading: "Cron Jobs" },

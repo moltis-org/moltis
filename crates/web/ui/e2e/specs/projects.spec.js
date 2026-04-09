@@ -27,9 +27,16 @@ test.describe("Projects page", () => {
 		await expect(page.getByText(/scans common directories/i)).toBeVisible();
 	});
 
-	test("projects route is hidden from nav", async ({ page }) => {
-		await navigateAndWait(page, "/projects");
-		await expect(page.locator('a.nav-link[href="/projects"]')).toHaveCount(0);
+	test("projects link visible in settings sidebar", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/identity");
+		await expect(page.locator(".settings-sidebar-nav")).toBeVisible();
+		await expect(page.locator('.settings-nav-item[data-section="projects"]')).toBeVisible();
+		await expect(page.getByText("Projects", { exact: true })).toBeVisible();
+		await page.locator('.settings-nav-item[data-section="projects"]').click();
+		await expect(page).toHaveURL(/\/settings\/projects$/);
+		await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("page has no JS errors", async ({ page }) => {
