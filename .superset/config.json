@@ -1,6 +1,6 @@
 {
   "setup": [
-    "mise trust; ./scripts/bd-worktree-attach.sh"
+    "bash ./.superset/setup.sh"
   ],
   "teardown": []
 }

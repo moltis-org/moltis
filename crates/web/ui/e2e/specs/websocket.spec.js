@@ -45,7 +45,7 @@ async function expectRpcOk(page, method, params) {
 
 async function clearChatAndWait(page) {
 	await expectRpcOk(page, "chat.clear", {});
-	await expect(page.locator("#messages")).toBeEmpty({ timeout: 10_000 });
+	await expect.poll(() => page.locator("#messages .msg").count(), { timeout: 10_000 }).toBe(0);
 }
 async function waitForChatSessionReady(page) {
 	await page.waitForFunction(

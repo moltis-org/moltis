@@ -60,6 +60,17 @@ test.describe("MCP page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("custom form supports Streamable HTTP transport option", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/mcp");
+
+		await page.getByRole("button", { name: "Streamable HTTP", exact: true }).click();
+		await expect(page.getByPlaceholder("https://mcp.linear.app/mcp")).toBeVisible();
+		await expect(page.getByPlaceholder("Authorization=Bearer ...")).toBeVisible();
+		await expect(page.getByText("Request headers (optional, KEY=VALUE per line)", { exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("configured remote server edit form shows sanitized metadata only", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.route("**/api/mcp", async (route) => {

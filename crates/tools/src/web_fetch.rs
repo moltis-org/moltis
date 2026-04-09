@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "firecrawl")]
+use secrecy::ExposeSecret;
 use {async_trait::async_trait, tracing::debug, url::Url};
 
 use crate::error::Error;
@@ -29,6 +31,20 @@ pub struct WebFetchTool {
     ssrf_allowlist: Vec<ipnet::IpNet>,
     cache: Mutex<HashMap<String, CacheEntry>>,
     proxy_url: Option<String>,
+    /// Firecrawl fallback: API key for calling Firecrawl when local extraction
+    /// produces poor results.
+    #[cfg(feature = "firecrawl")]
+    firecrawl_api_key: Option<secrecy::Secret<String>>,
+    /// Firecrawl base URL.
+    #[cfg(feature = "firecrawl")]
+    firecrawl_base_url: String,
+    /// Firecrawl: only extract main content.
+    #[cfg(feature = "firecrawl")]
+    firecrawl_only_main_content: bool,
+    /// Whether to use Firecrawl as fallback when readability extraction
+    /// produces poor results.
+    #[cfg(feature = "firecrawl")]
+    firecrawl_fallback: bool,
 }
 
 impl WebFetchTool {
@@ -57,6 +73,14 @@ impl WebFetchTool {
             ssrf_allowlist,
             cache: Mutex::new(HashMap::new()),
             proxy_url: None,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_api_key: None,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_base_url: crate::firecrawl::DEFAULT_BASE_URL.into(),
+            #[cfg(feature = "firecrawl")]
+            firecrawl_only_main_content: true,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_fallback: false,
         })
     }
 
@@ -64,6 +88,33 @@ impl WebFetchTool {
     #[must_use]
     pub fn with_proxy(mut self, url: String) -> Self {
         self.proxy_url = Some(url);
+        self
+    }
+
+    /// Attach Firecrawl config for fallback extraction.
+    ///
+    /// When enabled, `web_fetch` will try Firecrawl as a fallback when local
+    /// readability extraction produces poor results (very short output
+    /// relative to the HTML body).
+    #[cfg(feature = "firecrawl")]
+    #[must_use]
+    pub fn with_firecrawl(mut self, config: &moltis_config::schema::FirecrawlConfig) -> Self {
+        if config.enabled && config.web_fetch_fallback {
+            self.firecrawl_api_key = crate::firecrawl::resolve_api_key(config);
+            self.firecrawl_base_url = if config.base_url.trim().is_empty() {
+                crate::firecrawl::DEFAULT_BASE_URL.into()
+            } else {
+                config.base_url.clone()
+            };
+            self.firecrawl_only_main_content = config.only_main_content;
+            self.firecrawl_fallback = self.firecrawl_api_key.is_some();
+            if !self.firecrawl_fallback {
+                tracing::warn!(
+                    "firecrawl web_fetch_fallback is enabled but no API key found; \
+                     set tools.web.firecrawl.api_key or FIRECRAWL_API_KEY env var"
+                );
+            }
+        }
         self
     }
 
@@ -111,7 +162,11 @@ impl WebFetchTool {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .redirect(reqwest::redirect::Policy::none()); // Manual redirect handling.
-        if let Some(ref url) = self.proxy_url
+        // Prefer the sandbox proxy when set, otherwise fall through to the
+        // upstream proxy (if configured).
+        let upstream = moltis_common::http_client::upstream_proxy_url();
+        let effective_proxy = self.proxy_url.as_deref().or(upstream);
+        if let Some(url) = effective_proxy
             && let Ok(proxy) = reqwest::Proxy::all(url)
         {
             let proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
@@ -179,8 +234,54 @@ impl WebFetchTool {
 
             let body = resp.text().await?;
 
-            let (content, detected_mode) =
+            let (mut content, mut detected_mode) =
                 extract_content(&body, &content_type, extract_mode, self.readability);
+
+            // Firecrawl fallback: when readability extraction produced very
+            // little content relative to the HTML body, try Firecrawl.
+            #[cfg(feature = "firecrawl")]
+            if self.firecrawl_fallback
+                && detected_mode != "json"
+                && content_type.to_lowercase().contains("html")
+                && let Some(ref api_key) = self.firecrawl_api_key
+            {
+                // Heuristic: readability output < 10% of HTML body suggests
+                // extraction failed (JS-rendered page, anti-bot protection, etc.).
+                let ratio_poor = !body.is_empty() && content.len() < body.len() / 10;
+                let content_very_short = content.len() < 200 && body.len() > 1000;
+                if ratio_poor || content_very_short {
+                    debug!(
+                        "web_fetch: readability produced {}/{} chars, trying firecrawl fallback",
+                        content.len(),
+                        body.len()
+                    );
+                    match crate::firecrawl::firecrawl_scrape(
+                        crate::shared_http_client(),
+                        &self.firecrawl_base_url,
+                        api_key.expose_secret(),
+                        current_url.as_str(),
+                        self.firecrawl_only_main_content,
+                        self.timeout,
+                    )
+                    .await
+                    {
+                        Ok(Some(scrape)) => {
+                            content = scrape.markdown;
+                            detected_mode = "firecrawl".into();
+                        },
+                        Ok(None) => {
+                            debug!(
+                                "web_fetch: firecrawl returned no content, keeping local extraction"
+                            );
+                        },
+                        Err(e) => {
+                            debug!(
+                                "web_fetch: firecrawl fallback failed: {e}, keeping local extraction"
+                            );
+                        },
+                    }
+                }
+            }
 
             let truncated = content.len() > max_chars;
             let content = if truncated {
@@ -257,7 +358,7 @@ fn html_to_text(html: &str) -> String {
 }
 
 /// Truncate a string at a char boundary, not mid-UTF-8.
-fn truncate_at_char_boundary(s: &str, max: usize) -> String {
+pub(crate) fn truncate_at_char_boundary(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.into();
     }
@@ -357,6 +458,14 @@ mod tests {
             ssrf_allowlist: vec![],
             cache: Mutex::new(HashMap::new()),
             proxy_url: None,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_api_key: None,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_base_url: crate::firecrawl::DEFAULT_BASE_URL.into(),
+            #[cfg(feature = "firecrawl")]
+            firecrawl_only_main_content: true,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_fallback: false,
         }
     }
 

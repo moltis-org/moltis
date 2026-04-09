@@ -189,6 +189,7 @@ static BRIDGE: LazyLock<BridgeState> = LazyLock::new(BridgeState::new);
 /// Handle to a running httpd server, used to shut it down.
 struct HttpdHandle {
     shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    server_task: tokio::task::JoinHandle<()>,
     addr: SocketAddr,
     /// Gateway state — used for abort/peek FFI calls and kept alive while
     /// the server is running.
@@ -197,6 +198,20 @@ struct HttpdHandle {
 
 /// Global server handle — `None` when stopped, `Some` when running.
 static HTTPD: Mutex<Option<HttpdHandle>> = Mutex::new(None);
+
+fn stop_httpd_handle(handle: HttpdHandle, log_target: &str, stop_message: &str) {
+    emit_log("INFO", log_target, stop_message);
+    let _ = handle.shutdown_tx.send(());
+    BRIDGE.runtime.block_on(async {
+        if let Err(error) = handle.server_task.await {
+            emit_log(
+                "WARN",
+                log_target,
+                &format!("httpd task join failed during shutdown: {error}"),
+            );
+        }
+    });
+}
 
 #[derive(Debug, Deserialize)]
 struct StartHttpdRequest {
@@ -502,6 +517,7 @@ struct BridgeModelInfo {
     provider: String,
     display_name: String,
     created_at: Option<i64>,
+    recommended: bool,
 }
 
 #[derive(Deserialize)]
@@ -1538,6 +1554,7 @@ pub extern "C" fn moltis_list_models() -> *mut c_char {
                 provider: m.provider.clone(),
                 display_name: m.display_name.clone(),
                 created_at: m.created_at,
+                recommended: m.recommended,
             })
             .collect();
         emit_log("INFO", "bridge", &format!("Listed {} models", models.len()));
@@ -1768,7 +1785,7 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
         #[cfg(feature = "trusted-network")]
         let _proxy_shutdown_tx = prepared._proxy_shutdown_tx;
 
-        BRIDGE.runtime.spawn(async move {
+        let server_task = BRIDGE.runtime.spawn(async move {
             // Hold the proxy sender inside the spawn so it lives as long as the server.
             #[cfg(feature = "trusted-network")]
             let _keep_proxy = _proxy_shutdown_tx;
@@ -1792,6 +1809,7 @@ pub extern "C" fn moltis_start_httpd(request_json: *const c_char) -> *mut c_char
         );
         *guard = Some(HttpdHandle {
             shutdown_tx,
+            server_task,
             addr,
             state: gateway_state,
         });
@@ -1812,13 +1830,11 @@ pub extern "C" fn moltis_stop_httpd() -> *mut c_char {
 
     with_ffi_boundary(|| {
         let mut guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(handle) = guard.take() {
-            emit_log(
-                "INFO",
-                "bridge.httpd",
-                &format!("Stopping httpd on {}", handle.addr),
-            );
-            let _ = handle.shutdown_tx.send(());
+        let handle = guard.take();
+        drop(guard);
+        if let Some(handle) = handle {
+            let message = format!("Stopping httpd on {}", handle.addr);
+            stop_httpd_handle(handle, "bridge.httpd", &message);
         } else {
             emit_log(
                 "DEBUG",
@@ -3699,13 +3715,11 @@ pub extern "C" fn moltis_shutdown() {
 
     // Stop the HTTP server if it is running.
     let mut guard = HTTPD.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(handle) = guard.take() {
-        emit_log(
-            "INFO",
-            "bridge",
-            &format!("Stopping httpd on {} during shutdown", handle.addr),
-        );
-        let _ = handle.shutdown_tx.send(());
+    let handle = guard.take();
+    drop(guard);
+    if let Some(handle) = handle {
+        let message = format!("Stopping httpd on {} during shutdown", handle.addr);
+        stop_httpd_handle(handle, "bridge", &message);
     }
 
     emit_log("INFO", "bridge", "Shutdown complete");

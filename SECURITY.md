@@ -27,9 +27,23 @@ Security updates are provided for the latest release only.
 
 ## Verifying Release Signatures
 
-All release artifacts are signed using [Sigstore](https://sigstore.dev) keyless
-signing. This provides cryptographic proof that artifacts were built by our
-GitHub Actions workflow, not tampered with after the fact.
+All release artifacts are protected with multiple verification layers:
+
+- **[GitHub artifact attestations](https://github.com/moltis-org/moltis/attestations)** — SLSA v1.0 Build Level 2 provenance
+- **[Sigstore](https://sigstore.dev) keyless signing** — OIDC-bound CI signatures recorded in the Rekor transparency log
+- **GPG signing** — maintainer authorization via YubiKey-resident key
+
+### Quick verification (recommended)
+
+```bash
+# Verify any release artifact with the GitHub CLI
+gh attestation verify <artifact> -R moltis-org/moltis
+
+# Verify a Docker image
+gh attestation verify oci://ghcr.io/moltis-org/moltis:VERSION -R moltis-org/moltis
+```
+
+Browse all attestations at <https://github.com/moltis-org/moltis/attestations>.
 
 ### Install cosign
 

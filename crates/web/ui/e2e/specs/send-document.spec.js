@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { createSession, navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {
 	if (typeof message !== "string") return false;
@@ -43,17 +43,23 @@ async function expectRpcOk(page, method, params) {
 	return response;
 }
 
+async function openFreshChatSession(page) {
+	await navigateAndWait(page, "/");
+	await waitForWsConnected(page);
+	await createSession(page);
+	return page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "");
+}
+
 test.describe("send_document rendering", () => {
 	test("renders document card with filename and download link for document_ref", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/chats/main");
-		await waitForWsConnected(page);
+		const sessionKey = await openFreshChatSession(page);
 
 		// Simulate tool_call_start to create the tool card
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
-				sessionKey: "main",
+				sessionKey,
 				state: "tool_call_start",
 				toolCallId: "test-doc-call",
 				toolName: "send_document",
@@ -65,7 +71,7 @@ test.describe("send_document rendering", () => {
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
-				sessionKey: "main",
+				sessionKey,
 				state: "tool_call_end",
 				toolCallId: "test-doc-call",
 				toolName: "send_document",
@@ -80,7 +86,7 @@ test.describe("send_document rendering", () => {
 		});
 
 		// Verify the document card renders
-		const docContainer = page.locator(".document-container").first();
+		const docContainer = page.locator(".document-container").filter({ hasText: "report.pdf" });
 		await expect(docContainer).toBeVisible({ timeout: 5_000 });
 
 		// Verify filename is displayed
@@ -95,7 +101,7 @@ test.describe("send_document rendering", () => {
 		const downloadBtn = docContainer.locator(".document-download-btn");
 		await expect(downloadBtn).toBeVisible();
 		const href = await downloadBtn.getAttribute("href");
-		expect(href).toContain("/api/sessions/main/media/abc123_report.pdf");
+		expect(href).toContain(`/api/sessions/${encodeURIComponent(sessionKey)}/media/abc123_report.pdf`);
 
 		// PDF should open in new tab (not trigger download)
 		const target = await downloadBtn.getAttribute("target");
@@ -106,13 +112,12 @@ test.describe("send_document rendering", () => {
 
 	test("renders document card for zip file with download attribute", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/chats/main");
-		await waitForWsConnected(page);
+		const sessionKey = await openFreshChatSession(page);
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
-				sessionKey: "main",
+				sessionKey,
 				state: "tool_call_start",
 				toolCallId: "test-zip-call",
 				toolName: "send_document",
@@ -123,7 +128,7 @@ test.describe("send_document rendering", () => {
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
-				sessionKey: "main",
+				sessionKey,
 				state: "tool_call_end",
 				toolCallId: "test-zip-call",
 				toolName: "send_document",
@@ -137,7 +142,7 @@ test.describe("send_document rendering", () => {
 			},
 		});
 
-		const docContainer = page.locator(".document-container").first();
+		const docContainer = page.locator(".document-container").filter({ hasText: "archive.zip" });
 		await expect(docContainer).toBeVisible({ timeout: 5_000 });
 
 		const filenameEl = docContainer.locator(".document-filename");
@@ -156,13 +161,12 @@ test.describe("send_document rendering", () => {
 
 	test("renders document icon appropriate to file type", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/chats/main");
-		await waitForWsConnected(page);
+		const sessionKey = await openFreshChatSession(page);
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
-				sessionKey: "main",
+				sessionKey,
 				state: "tool_call_start",
 				toolCallId: "test-csv-call",
 				toolName: "send_document",
@@ -173,7 +177,7 @@ test.describe("send_document rendering", () => {
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
-				sessionKey: "main",
+				sessionKey,
 				state: "tool_call_end",
 				toolCallId: "test-csv-call",
 				toolName: "send_document",
@@ -187,9 +191,7 @@ test.describe("send_document rendering", () => {
 			},
 		});
 
-		// Session may already contain documents from prior tests in this file;
-		// locate the CSV document specifically by its filename.
-		const csvDoc = page.locator(".document-container", { has: page.locator('.document-filename:text-is("data.csv")') });
+		const csvDoc = page.locator(".document-container").filter({ hasText: "data.csv" });
 		await expect(csvDoc).toBeVisible({ timeout: 10_000 });
 
 		// Document icon should be present

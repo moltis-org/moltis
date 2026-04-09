@@ -110,10 +110,12 @@ default = [
   "caldav",
   "code-splitter",
   "file-watcher",
+  "firecrawl",
   "graphql",
   "jemalloc",
   "local-llm",
   "local-llm-metal",
+  "matrix",
   "mdns",
   "metrics",
   "ngrok",
@@ -136,6 +138,7 @@ code-splitter   = ["moltis-memory/code-splitter"]
 embedded-assets = ["moltis-web?/embedded-assets"]
 embedded-wasm   = ["moltis-tools/embedded-wasm"]
 file-watcher    = ["moltis-gateway/file-watcher"]
+firecrawl       = ["moltis-gateway/firecrawl"]
 graphql         = ["moltis-httpd/graphql", "moltis-web?/graphql"]
 jemalloc        = ["dep:tikv-jemallocator"]
 lang-bash       = ["moltis-memory/lang-bash"]
@@ -156,6 +159,7 @@ local-llm          = ["moltis-gateway/local-llm"]
 local-llm-cuda     = ["local-llm", "moltis-gateway/local-llm-cuda"]
 local-llm-metal    = ["local-llm", "moltis-gateway/local-llm-metal"]
 local-llm-vulkan   = ["local-llm", "moltis-gateway/local-llm-vulkan"]
+matrix             = ["moltis-httpd/matrix"]
 mdns               = ["moltis-gateway/mdns"]
 metrics            = ["moltis-httpd/metrics", "moltis-web?/metrics"]
 ngrok              = ["moltis-httpd/ngrok", "moltis-web?/ngrok"]

@@ -12,6 +12,8 @@ export default {
 	modelDetectionFailed: "Model detection failed.",
 	detectAllModels: "Detect All Models",
 	detectingModels: "Detecting Models\u2026",
+	stopDetection: "Stop",
+	detectionCancelled: "Detection stopped.",
 	probingModels: "Probing models: {{checked}}/{{total}} ({{pct}}%)",
 	detectSummary: "Detected {{supported}} supported, {{unsupported}} unsupported out of {{total}} models.",
 	noProvidersConfigured: "No LLM providers configured yet.",
@@ -109,6 +111,9 @@ export default {
 		configurationTimedOut: "Configuration timed out. Please try again.",
 		configurationFailed: "Configuration failed",
 	},
+	preferred: "Preferred",
+	showAllModels: "Show {{count}} more models\u2026",
+	showFewerModels: "Show fewer models",
 	badges: {
 		apiKey: "API Key",
 		oauth: "OAuth",

@@ -814,6 +814,23 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	} else {
 		chatAddErrorMsg(p.message || "unknown");
 	}
+	// Add continue button for max_iterations_reached errors.
+	if (p.error?.canContinue) {
+		var lastCard = S.chatMsgBox.querySelector(".error-card:last-child");
+		if (lastCard) {
+			var btn = document.createElement("button");
+			btn.className = "provider-btn error-continue-btn";
+			btn.textContent = t("errors:chat.continue", "Continue");
+			btn.onclick = function () {
+				btn.disabled = true;
+				btn.textContent = t("errors:chat.continuing", "Continuing...");
+				S.chatInput.value = t("errors:chat.continueMessage", "Please continue where you left off.");
+				sendChat();
+			};
+			var body = lastCard.querySelector(".error-body");
+			if (body) body.appendChild(btn);
+		}
+	}
 	S.setStreamEl(null);
 	S.setStreamText("");
 	S.setVoicePending(false);

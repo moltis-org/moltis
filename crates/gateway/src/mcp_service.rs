@@ -84,6 +84,9 @@ fn parse_server_config(
 ) -> Result<moltis_mcp::McpServerConfig, ServiceError> {
     let transport = match params.get("transport").and_then(|v| v.as_str()) {
         Some("sse") => moltis_mcp::TransportType::Sse,
+        Some("streamable-http" | "streamable_http" | "http") => {
+            moltis_mcp::TransportType::StreamableHttp
+        },
         Some(_) => moltis_mcp::TransportType::Stdio,
         None => existing
             .map(|cfg| cfg.transport)
@@ -147,7 +150,10 @@ fn parse_server_config(
         existing.and_then(|cfg| cfg.url.clone())
     };
 
-    let headers = if matches!(transport, moltis_mcp::TransportType::Sse) {
+    let headers = if matches!(
+        transport,
+        moltis_mcp::TransportType::Sse | moltis_mcp::TransportType::StreamableHttp
+    ) {
         if params.get("headers").is_some() {
             parse_secret_string_map(params.get("headers").unwrap_or(&Value::Null))
         } else {
@@ -157,7 +163,10 @@ fn parse_server_config(
         HashMap::new()
     };
 
-    let env = if matches!(transport, moltis_mcp::TransportType::Sse) {
+    let env = if matches!(
+        transport,
+        moltis_mcp::TransportType::Sse | moltis_mcp::TransportType::StreamableHttp
+    ) {
         HashMap::new()
     } else if params.get("env").is_some() {
         parse_string_map(params.get("env").unwrap_or(&Value::Null))
@@ -165,15 +174,18 @@ fn parse_server_config(
         existing.map(|cfg| cfg.env.clone()).unwrap_or_default()
     };
 
-    if matches!(transport, moltis_mcp::TransportType::Sse)
-        && url
-            .as_ref()
-            .map(ExposeSecret::expose_secret)
-            .is_none_or(|candidate| candidate.trim().is_empty())
+    if matches!(
+        transport,
+        moltis_mcp::TransportType::Sse | moltis_mcp::TransportType::StreamableHttp
+    ) && url
+        .as_ref()
+        .map(ExposeSecret::expose_secret)
+        .is_none_or(|candidate| candidate.trim().is_empty())
     {
-        return Err(ServiceError::message(
-            "missing 'url' parameter for 'sse' transport",
-        ));
+        return Err(ServiceError::message(format!(
+            "missing 'url' parameter for '{}' transport",
+            transport
+        )));
     }
 
     let oauth = if let Some(v) = params.get("oauth") {
@@ -223,7 +235,10 @@ fn parse_server_config(
         enabled,
         request_timeout_secs,
         transport,
-        url: if matches!(transport, moltis_mcp::TransportType::Sse) {
+        url: if matches!(
+            transport,
+            moltis_mcp::TransportType::Sse | moltis_mcp::TransportType::StreamableHttp
+        ) {
             url
         } else {
             None
@@ -700,6 +715,54 @@ mod tests {
         assert_eq!(
             err.as_ref().map(ToString::to_string).as_deref(),
             Some("missing 'url' parameter for 'sse' transport")
+        );
+    }
+
+    #[test]
+    fn parse_server_config_allows_streamable_http_without_command() {
+        let cfg = parse_server_config(
+            &serde_json::json!({
+                "transport": "streamable-http",
+                "url": "https://mcp.example.com/mcp",
+                "enabled": true
+            }),
+            None,
+        );
+        assert!(
+            cfg.is_ok(),
+            "expected Streamable HTTP config to parse without command, got: {cfg:?}"
+        );
+        let Ok(cfg) = cfg else {
+            panic!("Streamable HTTP config unexpectedly failed to parse");
+        };
+
+        assert!(matches!(
+            cfg.transport,
+            moltis_mcp::TransportType::StreamableHttp
+        ));
+        assert_eq!(cfg.command, "");
+        assert_eq!(
+            cfg.url
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("https://mcp.example.com/mcp")
+        );
+    }
+
+    #[test]
+    fn parse_server_config_requires_url_for_streamable_http() {
+        let err = parse_server_config(
+            &serde_json::json!({
+                "transport": "streamable-http",
+            }),
+            None,
+        )
+        .err();
+
+        assert_eq!(
+            err.as_ref().map(ToString::to_string).as_deref(),
+            Some("missing 'url' parameter for 'streamable-http' transport")
         );
     }
 

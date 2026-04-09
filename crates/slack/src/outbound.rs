@@ -111,7 +111,7 @@ impl SlackOutbound {
         stream: &mut StreamReceiver,
     ) -> ChannelResult<()> {
         let bot_token = self.get_bot_token(account_id)?;
-        let http = reqwest::Client::new();
+        let http = moltis_common::http_client::build_default_http_client();
         let throttle = self.get_edit_throttle(account_id);
 
         let stream_id = start_native_stream(&http, &bot_token, to, thread_ts).await?;

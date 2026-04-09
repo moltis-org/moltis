@@ -149,6 +149,17 @@ impl ToolRegistry {
                 schemas.push(entry_to_schema(entry));
             }
         }
+        schemas.sort_by(|left, right| {
+            let left_name = left
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let right_name = right
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            left_name.cmp(right_name)
+        });
         schemas
     }
 
@@ -161,6 +172,7 @@ impl ToolRegistry {
                 names.push(name.clone());
             }
         }
+        names.sort();
         names
     }
 
@@ -449,9 +461,35 @@ mod tests {
             name: "web_fetch".to_string(),
         }));
 
-        let mut names = registry.list_names();
-        names.sort();
+        let names = registry.list_names();
         assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
+    }
+
+    #[test]
+    fn test_list_schemas_are_sorted_by_name() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "zeta".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "alpha".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "mu".to_string(),
+        }));
+
+        let names: Vec<String> = registry
+            .list_schemas()
+            .into_iter()
+            .filter_map(|schema| {
+                schema
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(names, vec!["alpha", "mu", "zeta"]);
     }
 
     #[test]
@@ -478,8 +516,7 @@ mod tests {
         }));
 
         let filtered = registry.clone_allowed_by(|name| name.starts_with("web") || name == "exec");
-        let mut names = filtered.list_names();
-        names.sort();
+        let names = filtered.list_names();
         assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
     }
 }

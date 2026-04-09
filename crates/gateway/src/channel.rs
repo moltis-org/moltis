@@ -26,6 +26,58 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
+fn is_redacted_secret(value: &Value) -> bool {
+    matches!(value, Value::String(text) if text == moltis_common::secret_serde::REDACTED)
+}
+
+fn merge_channel_config_value(existing: &mut Value, patch: Value) {
+    if is_redacted_secret(&patch) {
+        return;
+    }
+
+    match (existing, patch) {
+        (Value::Object(existing_obj), Value::Object(patch_obj)) => {
+            for (key, patch_value) in patch_obj {
+                if is_redacted_secret(&patch_value) {
+                    continue;
+                }
+                if let Some(existing_value) = existing_obj.get_mut(&key) {
+                    merge_channel_config_value(existing_value, patch_value);
+                } else {
+                    existing_obj.insert(key, patch_value);
+                }
+            }
+        },
+        (existing_value, patch_value) => {
+            *existing_value = patch_value;
+        },
+    }
+}
+
+fn merge_channel_config(existing: Option<Value>, patch: Value) -> Value {
+    match existing {
+        Some(mut existing_value) => {
+            merge_channel_config_value(&mut existing_value, patch);
+            existing_value
+        },
+        None => patch,
+    }
+}
+
+fn sender_allowlist_key(channel_type: ChannelType) -> &'static str {
+    match channel_type {
+        ChannelType::Matrix => "user_allowlist",
+        _ => "allowlist",
+    }
+}
+
+fn otp_pending_payload(code: &str, expires_at: i64) -> Value {
+    serde_json::json!({
+        "code": code,
+        "expires_at": expires_at,
+    })
+}
+
 /// Live channel service backed by the channel registry.
 ///
 /// All per-channel dispatch is handled by the registry — no match arms needed.
@@ -110,6 +162,9 @@ impl LiveChannelService {
         });
         if let Some(cfg) = config {
             entry["config"] = cfg;
+        }
+        if let Some(extra) = snap.extra {
+            entry["extra"] = extra;
         }
 
         let ct = channel_type.as_str();
@@ -291,13 +346,23 @@ impl ChannelService for LiveChannelService {
             .get("config")
             .cloned()
             .ok_or_else(|| "missing 'config'".to_string())?;
+        let ct = channel_type.as_str();
+        let existing = self
+            .store
+            .get(ct, account_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let created_at = existing
+            .as_ref()
+            .map(|stored| stored.created_at)
+            .unwrap_or_else(unix_now);
+        let config = merge_channel_config(existing.map(|stored| stored.config), config);
 
         info!(
             account_id,
             channel_type = channel_type.as_str(),
             "updating channel account"
         );
-        let ct = channel_type.as_str();
         let mut live_update_warning = None;
         match channel_type {
             ChannelType::Whatsapp => {
@@ -347,13 +412,6 @@ impl ChannelService for LiveChannelService {
             },
         }
 
-        let created_at = self
-            .store
-            .get(ct, account_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .map(|s| s.created_at)
-            .unwrap_or_else(unix_now);
         let now = unix_now();
         if let Err(e) = self
             .store
@@ -377,6 +435,47 @@ impl ChannelService for LiveChannelService {
             result["warning"] = Value::String(warning.to_string());
         }
         Ok(result)
+    }
+
+    #[tracing::instrument(skip(self, params))]
+    async fn retry_ownership(&self, params: Value) -> ServiceResult {
+        let account_id = params
+            .get("account_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'account_id'".to_string())?;
+        let channel_type = self
+            .resolve_channel_type(&params, account_id, ChannelType::Telegram)
+            .await?;
+
+        if channel_type != ChannelType::Matrix {
+            return Err(ServiceError::message(
+                "ownership retry is only supported for Matrix accounts",
+            ));
+        }
+
+        info!(
+            account_id,
+            channel_type = channel_type.as_str(),
+            "retrying channel ownership setup"
+        );
+
+        self.registry
+            .retry_account_setup(account_id)
+            .await
+            .map_err(|error| {
+                error!(
+                    error = %error,
+                    account_id,
+                    channel_type = channel_type.as_str(),
+                    "failed to retry channel ownership setup"
+                );
+                ServiceError::message(error)
+            })?;
+
+        Ok(serde_json::json!({
+            "retried": account_id,
+            "type": channel_type.to_string()
+        }))
     }
 
     async fn send(&self, params: Value) -> ServiceResult {
@@ -523,10 +622,7 @@ impl ChannelService for LiveChannelService {
                     .as_ref()
                     .and_then(|pending| pending.iter().find(|c| c.peer_id == s.peer_id))
                 {
-                    entry["otp_pending"] = serde_json::json!({
-                        "code": otp.code,
-                        "expires_at": otp.expires_at,
-                    });
+                    entry["otp_pending"] = otp_pending_payload(&otp.code, otp.expires_at);
                 }
                 entry
             })
@@ -565,14 +661,15 @@ impl ChannelService for LiveChannelService {
             })?;
 
         let mut config = stored.config.clone();
+        let allowlist_key = sender_allowlist_key(channel_type);
         let allowlist = config
             .as_object_mut()
             .ok_or_else(|| "config is not an object".to_string())?
-            .entry("allowlist")
+            .entry(allowlist_key)
             .or_insert_with(|| serde_json::json!([]));
         let arr = allowlist
             .as_array_mut()
-            .ok_or_else(|| "allowlist is not an array".to_string())?;
+            .ok_or_else(|| format!("{allowlist_key} is not an array"))?;
 
         let id_lower = identifier.to_lowercase();
         if !arr
@@ -646,9 +743,10 @@ impl ChannelService for LiveChannelService {
             })?;
 
         let mut config = stored.config.clone();
+        let allowlist_key = sender_allowlist_key(channel_type);
         if let Some(arr) = config
             .as_object_mut()
-            .and_then(|o| o.get_mut("allowlist"))
+            .and_then(|o| o.get_mut(allowlist_key))
             .and_then(|v| v.as_array_mut())
         {
             let id_lower = identifier.to_lowercase();
@@ -687,5 +785,87 @@ impl ChannelService for LiveChannelService {
             "denied": identifier,
             "type": channel_type.to_string()
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::{merge_channel_config, otp_pending_payload, sender_allowlist_key},
+        moltis_channels::ChannelType,
+        serde_json::json,
+    };
+
+    #[test]
+    fn merge_channel_config_preserves_omitted_fields() {
+        let existing = json!({
+            "dm_policy": "allowlist",
+            "reply_to_message": false,
+            "allowlist": ["alice"]
+        });
+        let patch = json!({
+            "dm_policy": "open"
+        });
+
+        let merged = merge_channel_config(Some(existing), patch);
+        assert_eq!(merged["dm_policy"], "open");
+        assert_eq!(merged["reply_to_message"], false);
+        assert_eq!(merged["allowlist"], json!(["alice"]));
+    }
+
+    #[test]
+    fn merge_channel_config_ignores_redacted_secret_placeholders() {
+        let existing = json!({
+            "token": "real-secret",
+            "webhook_secret": "real-webhook-secret"
+        });
+        let patch = json!({
+            "token": "[REDACTED]",
+            "webhook_secret": "[REDACTED]"
+        });
+
+        let merged = merge_channel_config(Some(existing), patch);
+        assert_eq!(merged["token"], "real-secret");
+        assert_eq!(merged["webhook_secret"], "real-webhook-secret");
+    }
+
+    #[test]
+    fn merge_channel_config_allows_explicit_replacements() {
+        let existing = json!({
+            "channel_overrides": {
+                "C123": {
+                    "model": "old-model",
+                    "model_provider": "anthropic"
+                }
+            }
+        });
+        let patch = json!({
+            "channel_overrides": {
+                "C123": {
+                    "model": "new-model"
+                }
+            }
+        });
+
+        let merged = merge_channel_config(Some(existing), patch);
+        assert_eq!(merged["channel_overrides"]["C123"]["model"], "new-model");
+        assert_eq!(
+            merged["channel_overrides"]["C123"]["model_provider"],
+            "anthropic"
+        );
+    }
+
+    #[test]
+    fn sender_allowlist_key_uses_matrix_user_allowlist() {
+        assert_eq!(sender_allowlist_key(ChannelType::Matrix), "user_allowlist");
+        assert_eq!(sender_allowlist_key(ChannelType::Telegram), "allowlist");
+    }
+
+    #[test]
+    fn otp_pending_payload_includes_code_for_authenticated_ui() {
+        let payload = otp_pending_payload("954502", 1_234_567);
+
+        assert_eq!(payload["expires_at"], 1_234_567);
+        assert_eq!(payload["code"], "954502");
     }
 }

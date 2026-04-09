@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{collections::HashSet, pin::Pin, sync::mpsc, time::Duration};
 
 use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_stream::Stream};
 
@@ -21,6 +21,8 @@ pub struct AnthropicProvider {
     /// Prompt cache retention policy. When `None`, caching is disabled.
     cache_retention: moltis_config::CacheRetention,
 }
+
+const ANTHROPIC_MODELS_ENDPOINT_PATH: &str = "/v1/models";
 
 impl AnthropicProvider {
     pub fn new(api_key: secrecy::Secret<String>, model: String, base_url: String) -> Self {
@@ -132,6 +134,198 @@ impl AnthropicProvider {
 
         Ok(())
     }
+}
+
+fn formatted_model_name(model_id: &str) -> String {
+    let raw = model_id.strip_prefix("claude-").unwrap_or(model_id);
+    let mut pieces = Vec::new();
+    let chunks: Vec<&str> = raw.split('-').filter(|chunk| !chunk.is_empty()).collect();
+    let mut index = 0usize;
+    while index < chunks.len() {
+        let chunk = chunks[index];
+        let piece = if chunk.chars().all(|ch| ch.is_ascii_digit()) && chunk.len() == 1 {
+            if let Some(next) = chunks.get(index + 1)
+                && next.chars().all(|ch| ch.is_ascii_digit())
+                && next.len() == 1
+            {
+                index += 1;
+                format!("{chunk}.{next}")
+            } else {
+                chunk.to_string()
+            }
+        } else if chunk.chars().all(|ch| ch.is_ascii_digit()) && chunk.len() == 8 {
+            let year = &chunk[0..4];
+            let month = &chunk[4..6];
+            let day = &chunk[6..8];
+            format!("{year}-{month}-{day}")
+        } else {
+            let mut chars = chunk.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut out = String::new();
+                    out.push(first.to_ascii_uppercase());
+                    out.push_str(chars.as_str());
+                    out
+                },
+                None => continue,
+            }
+        };
+        pieces.push(piece);
+        index += 1;
+    }
+
+    if pieces.is_empty() {
+        return model_id.to_string();
+    }
+
+    format!("Claude {}", pieces.join(" "))
+}
+
+fn normalize_display_name(model_id: &str, display_name: Option<&str>) -> String {
+    let normalized = display_name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(model_id);
+    if normalized == model_id {
+        return formatted_model_name(model_id);
+    }
+    normalized.to_string()
+}
+
+fn parse_model_entry(entry: &serde_json::Value) -> Option<crate::DiscoveredModel> {
+    let obj = entry.as_object()?;
+    let model_id = obj.get("id").and_then(serde_json::Value::as_str)?;
+
+    if !super::is_chat_capable_model(model_id) {
+        return None;
+    }
+
+    let display_name = obj.get("display_name").and_then(serde_json::Value::as_str);
+
+    Some(crate::DiscoveredModel::new(
+        model_id,
+        normalize_display_name(model_id, display_name),
+    ))
+}
+
+fn parse_models_payload(value: &serde_json::Value) -> Vec<crate::DiscoveredModel> {
+    let entries = value
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut models = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in entries {
+        if let Some(model) = parse_model_entry(&entry)
+            && seen.insert(model.id.clone())
+        {
+            models.push(model);
+        }
+    }
+
+    models
+}
+
+fn mark_recommended_models(models: &mut [crate::DiscoveredModel]) {
+    for model in models.iter_mut().take(3) {
+        model.recommended = true;
+    }
+}
+
+fn models_endpoint(base_url: &str) -> String {
+    format!(
+        "{}{ANTHROPIC_MODELS_ENDPOINT_PATH}",
+        base_url.trim_end_matches('/')
+    )
+}
+
+pub async fn fetch_models_from_api(
+    api_key: secrecy::Secret<String>,
+    base_url: String,
+) -> anyhow::Result<Vec<crate::DiscoveredModel>> {
+    let client = crate::shared_http_client();
+    let mut models = Vec::new();
+    let mut seen_ids = HashSet::new();
+    let mut seen_after_ids = HashSet::new();
+    let mut after_id: Option<String> = None;
+
+    loop {
+        let mut request = client
+            .get(models_endpoint(&base_url))
+            .timeout(Duration::from_secs(15))
+            .header("x-api-key", api_key.expose_secret())
+            .header("anthropic-version", "2023-06-01")
+            .header("accept", "application/json");
+
+        if let Some(ref after) = after_id {
+            request = request.query(&[("after_id", after)]);
+        }
+
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("anthropic models API error HTTP {status}: {body}");
+        }
+
+        let payload: serde_json::Value = serde_json::from_str(&body)?;
+        for model in parse_models_payload(&payload) {
+            if seen_ids.insert(model.id.clone()) {
+                models.push(model);
+            }
+        }
+
+        let has_more = payload
+            .get("has_more")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let next_after_id = payload
+            .get("last_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(ToOwned::to_owned);
+
+        if !has_more {
+            break;
+        }
+
+        let Some(next_after_id) = next_after_id else {
+            break;
+        };
+
+        if !seen_after_ids.insert(next_after_id.clone()) {
+            break;
+        }
+        after_id = Some(next_after_id);
+    }
+
+    mark_recommended_models(&mut models);
+
+    if models.is_empty() {
+        anyhow::bail!("anthropic models API returned no models");
+    }
+
+    Ok(models)
+}
+
+pub fn start_model_discovery(
+    api_key: secrecy::Secret<String>,
+    base_url: String,
+) -> mpsc::Receiver<anyhow::Result<Vec<crate::DiscoveredModel>>> {
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(anyhow::Error::from)
+            .and_then(|rt| rt.block_on(fetch_models_from_api(api_key, base_url)));
+        let _ = tx.send(result);
+    });
+    rx
 }
 
 /// Convert tool schemas from the generic format to Anthropic's tool format.
@@ -672,9 +866,17 @@ impl LlmProvider for AnthropicProvider {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
 
-    use axum::{Router, extract::Request, routing::post};
+    use axum::{
+        Json, Router,
+        extract::{Query, Request},
+        http::StatusCode,
+        routing::{get, post},
+    };
 
     use super::*;
 
@@ -713,6 +915,40 @@ mod tests {
         });
 
         (format!("http://{addr}"), captured)
+    }
+
+    async fn start_models_mock(
+        responses: Arc<Mutex<HashMap<Option<String>, (StatusCode, serde_json::Value)>>>,
+    ) -> String {
+        let app = Router::new().route(
+            ANTHROPIC_MODELS_ENDPOINT_PATH,
+            get(move |Query(params): Query<HashMap<String, String>>| {
+                let responses = responses.clone();
+                async move {
+                    let key = params.get("after_id").cloned();
+                    let (status, body) = responses
+                        .lock()
+                        .expect("lock responses")
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            (
+                                StatusCode::NOT_FOUND,
+                                serde_json::json!({ "error": "missing test response" }),
+                            )
+                        });
+                    (status, Json(body))
+                }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        format!("http://{addr}")
     }
 
     #[test]
@@ -835,6 +1071,127 @@ mod tests {
         assert_eq!(reqs.len(), 1);
         let body = reqs[0].body.as_ref().expect("request should have a body");
         assert_eq!(body["max_tokens"], 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_models_from_api_paginates_deduplicates_and_marks_first_three_once() {
+        let mut responses = HashMap::new();
+        responses.insert(
+            None,
+            (
+                StatusCode::OK,
+                serde_json::json!({
+                    "data": [
+                        {"id": "claude-opus-4-6", "display_name": "Claude Opus 4.6", "type": "model"},
+                        {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "type": "model"},
+                        {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5", "type": "model"}
+                    ],
+                    "has_more": true,
+                    "last_id": "cursor-1"
+                }),
+            ),
+        );
+        responses.insert(
+            Some("cursor-1".to_string()),
+            (
+                StatusCode::OK,
+                serde_json::json!({
+                    "data": [
+                        {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5", "type": "model"},
+                        {"id": "claude-3-7-sonnet-20250219", "display_name": "Claude 3.7 Sonnet", "type": "model"}
+                    ],
+                    "has_more": false,
+                    "last_id": "cursor-2"
+                }),
+            ),
+        );
+        let base_url = start_models_mock(Arc::new(Mutex::new(responses))).await;
+
+        let models = fetch_models_from_api(secrecy::Secret::new("test-key".into()), base_url)
+            .await
+            .expect("model discovery should succeed");
+
+        let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(ids, vec![
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "claude-3-7-sonnet-20250219",
+        ]);
+        assert!(models[0].recommended);
+        assert!(models[1].recommended);
+        assert!(models[2].recommended);
+        assert!(!models[3].recommended);
+    }
+
+    #[tokio::test]
+    async fn fetch_models_from_api_ignores_non_chat_entries() {
+        let mut responses = HashMap::new();
+        responses.insert(
+            None,
+            (
+                StatusCode::OK,
+                serde_json::json!({
+                    "data": [
+                        {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "type": "model"},
+                        {"id": "claude-embeddings-v1", "display_name": "Claude Embeddings", "type": "model"},
+                        {"id": "claude-opus-4-6", "display_name": "Claude Opus 4.6", "type": "model"}
+                    ],
+                    "has_more": false
+                }),
+            ),
+        );
+        let base_url = start_models_mock(Arc::new(Mutex::new(responses))).await;
+
+        let models = fetch_models_from_api(secrecy::Secret::new("test-key".into()), base_url)
+            .await
+            .expect("model discovery should succeed");
+
+        let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(ids, vec!["claude-sonnet-4-6", "claude-opus-4-6"]);
+    }
+
+    #[tokio::test]
+    async fn fetch_models_from_api_errors_on_http_failure() {
+        let mut responses = HashMap::new();
+        responses.insert(
+            None,
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                serde_json::json!({ "error": { "message": "rate limited" } }),
+            ),
+        );
+        let base_url = start_models_mock(Arc::new(Mutex::new(responses))).await;
+
+        let err = fetch_models_from_api(secrecy::Secret::new("test-key".into()), base_url)
+            .await
+            .expect_err("HTTP failure should surface as an error");
+
+        assert!(err.to_string().contains("HTTP 429"));
+    }
+
+    #[tokio::test]
+    async fn fetch_models_from_api_errors_when_no_chat_models_are_returned() {
+        let mut responses = HashMap::new();
+        responses.insert(
+            None,
+            (
+                StatusCode::OK,
+                serde_json::json!({
+                    "data": [
+                        {"id": "claude-embeddings-v1", "display_name": "Claude Embeddings", "type": "model"}
+                    ],
+                    "has_more": false
+                }),
+            ),
+        );
+        let base_url = start_models_mock(Arc::new(Mutex::new(responses))).await;
+
+        let err = fetch_models_from_api(secrecy::Secret::new("test-key".into()), base_url)
+            .await
+            .expect_err("empty chat-capable catalog should error");
+
+        assert!(err.to_string().contains("returned no models"));
     }
 
     #[test]
@@ -996,5 +1353,53 @@ mod tests {
             "https://api.anthropic.com".into(),
         );
         assert!(provider.caching_enabled());
+    }
+
+    #[test]
+    fn normalize_display_name_formats_alias_when_missing() {
+        assert_eq!(
+            normalize_display_name("claude-sonnet-4-6", None),
+            "Claude Sonnet 4.6"
+        );
+        assert_eq!(
+            normalize_display_name("claude-sonnet-4-5-20250929", None),
+            "Claude Sonnet 4.5 2025-09-29"
+        );
+    }
+
+    #[test]
+    fn parse_models_payload_does_not_mark_recommendations() {
+        let payload = serde_json::json!({
+            "data": [
+                {"id": "claude-opus-4-6", "display_name": "Claude Opus 4.6", "type": "model"},
+                {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "type": "model"},
+                {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5", "type": "model"},
+                {"id": "claude-3-7-sonnet-20250219", "display_name": "Claude 3.7 Sonnet", "type": "model"}
+            ]
+        });
+
+        let models = parse_models_payload(&payload);
+        assert_eq!(models.len(), 4);
+        assert!(!models[0].recommended);
+        assert!(!models[1].recommended);
+        assert!(!models[2].recommended);
+        assert!(!models[3].recommended);
+    }
+
+    #[test]
+    fn mark_recommended_models_marks_first_three_globally() {
+        let mut models = vec![
+            crate::DiscoveredModel::new("claude-opus-4-6", "Claude Opus 4.6"),
+            crate::DiscoveredModel::new("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+            crate::DiscoveredModel::new("claude-haiku-4-5", "Claude Haiku 4.5"),
+            crate::DiscoveredModel::new("claude-3-7-sonnet-20250219", "Claude 3.7 Sonnet"),
+        ];
+
+        mark_recommended_models(&mut models);
+
+        assert!(models[0].recommended);
+        assert!(models[1].recommended);
+        assert!(models[2].recommended);
+        assert!(!models[3].recommended);
     }
 }

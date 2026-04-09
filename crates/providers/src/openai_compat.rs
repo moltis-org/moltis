@@ -498,6 +498,8 @@ pub fn parse_openai_compat_usage(usage: &serde_json::Value) -> Usage {
         cache_read_tokens: usage_field_u32(usage, &[
             &["prompt_tokens_details", "cached_tokens"],
             &["promptTokensDetails", "cachedTokens"],
+            &["input_tokens_details", "cached_tokens"],
+            &["inputTokensDetails", "cachedTokens"],
             &["cache_read_input_tokens"],
             &["cacheReadInputTokens"],
             &["input_tokens_details", "cache_read_input_tokens"],

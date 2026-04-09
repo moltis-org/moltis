@@ -3,7 +3,7 @@ services:
     name: moltis
     runtime: image
     image:
-      url: ghcr.io/moltis-org/moltis:20260328.03
+      url: ghcr.io/moltis-org/moltis:20260408.01
     plan: free
     healthCheckPath: /health
     envVars:

@@ -1,0 +1,24 @@
+[package]
+edition.workspace = true
+name              = "moltis-secret-store"
+version.workspace = true
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dependencies.moltis-vault]
+optional  = true
+workspace = true
+
+[features]
+default = []
+vault = ["dep:moltis-vault"]
+
+[dev-dependencies]
+sqlx  = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

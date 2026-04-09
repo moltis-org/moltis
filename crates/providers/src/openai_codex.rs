@@ -372,10 +372,7 @@ pub fn has_stored_tokens() -> bool {
 }
 
 pub fn default_model_catalog() -> Vec<super::DiscoveredModel> {
-    DEFAULT_CODEX_MODELS
-        .iter()
-        .map(|(id, name)| super::DiscoveredModel::new(*id, *name))
-        .collect()
+    super::catalog_to_discovered(DEFAULT_CODEX_MODELS, 3)
 }
 
 fn formatted_model_name(model_id: &str) -> String {

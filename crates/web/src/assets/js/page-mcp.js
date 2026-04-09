@@ -84,7 +84,8 @@ async function saveConfig() {
 
 async function addServer(payload) {
 	var req = { ...payload };
-	if ((payload.transport || "stdio") === "sse") {
+	var t = payload.transport || "stdio";
+	if (t === "sse" || t === "streamable-http") {
 		req.redirectUri = oauthCallbackUrl();
 	}
 	var res = await sendRpc("mcp.add", req);
@@ -176,7 +177,7 @@ function remoteHeaderSummary(server) {
 }
 
 function buildSseEditPayload(server, editUrlText, editHeadersText, clearHeaders) {
-	var isExistingSse = (server.transport || "stdio") === "sse";
+	var isExistingSse = (server.transport || "stdio") === "sse" || (server.transport || "stdio") === "streamable-http";
 	var replacementUrl = editUrlText.trim();
 	if (!(replacementUrl || isExistingSse)) {
 		return { error: "Remote MCP servers require a URL" };
@@ -308,6 +309,7 @@ function StatusBadge({ state }) {
 }
 
 function transportLabel(transport) {
+	if (transport === "streamable-http") return "streamable-http remote";
 	return transport === "sse" ? "sse remote" : "stdio local";
 }
 
@@ -330,7 +332,7 @@ function renderServerName({ server }) {
 }
 
 function ConfigForm({ server, argsVal, envVal, urlVal, headerVal, timeoutVal, onCancel }) {
-	var isSse = server.transport === "sse";
+	var isSse = server.transport === "sse" || server.transport === "streamable-http";
 	return html`<div class="mt-2 flex flex-col gap-1.5">
 	    ${server.hint && html`<div class="text-xs text-[var(--warn)]">${server.hint}</div>`}
 	    ${
@@ -410,8 +412,13 @@ function FeaturedCard(props) {
 	var headerVal = useSignal("");
 	var timeoutVal = useSignal("");
 
-	var needsConfig = Boolean(f.requiresConfig || (f.envKeys && f.envKeys.length > 0) || f.transport === "sse");
-	var isSse = f.transport === "sse";
+	var needsConfig = Boolean(
+		f.requiresConfig ||
+			(f.envKeys && f.envKeys.length > 0) ||
+			f.transport === "sse" ||
+			f.transport === "streamable-http",
+	);
+	var isSse = f.transport === "sse" || f.transport === "streamable-http";
 
 	async function addConfiguredFeaturedServer(payload) {
 		try {
@@ -556,7 +563,7 @@ function InstallBox() {
 	var timeoutVal = useSignal("");
 	var displayNameVal = useSignal("");
 
-	var isSse = transportType.value === "sse";
+	var isSse = transportType.value === "sse" || transportType.value === "streamable-http";
 	var canAdd = isSse ? sseUrl.value.trim().length > 0 : cmdLine.value.trim().length > 0;
 	var detectedName = isSse ? deriveSseName(sseUrl.value) : deriveNameFromCommand(cmdLine.value);
 
@@ -586,7 +593,7 @@ function InstallBox() {
 					command: "",
 					args: [],
 					headers: parseEnvLines(sseHeaders.value),
-					transport: "sse",
+					transport: transportType.value,
 					url: sseUrl.value.trim(),
 					request_timeout_secs: timeoutResult.value,
 				},
@@ -637,6 +644,10 @@ function InstallBox() {
 				transportType.value = "sse";
 			}}
         class="provider-btn provider-btn-sm ${transportType.value === "sse" ? "" : "provider-btn-secondary"}">SSE (remote)</button>
+      <button onClick=${() => {
+				transportType.value = "streamable-http";
+			}}
+        class="provider-btn provider-btn-sm ${transportType.value === "streamable-http" ? "" : "provider-btn-secondary"}">Streamable HTTP</button>
     </div>
     ${
 			!isSse &&
@@ -752,7 +763,7 @@ function ServerCard({ server }) {
 	var editTimeout = useSignal("");
 	var saving = useSignal(false);
 	var reauthing = useSignal(false);
-	var isSse = (server.transport || "stdio") === "sse";
+	var isSse = (server.transport || "stdio") === "sse" || (server.transport || "stdio") === "streamable-http";
 	var authState = server.auth_state || "not_required";
 	var currentSafeUrl = safeRemoteUrlText(server);
 	var currentHeaderSummary = remoteHeaderSummary(server);
@@ -844,14 +855,14 @@ function ServerCard({ server }) {
 	}
 
 	function buildEditPayload() {
-		var transport = editTransport.value === "sse" ? "sse" : "stdio";
+		var transport = editTransport.value;
 		var timeoutResult = resolveTimeoutOrAbort(editTimeout.value, (next) => {
 			saving.value = next;
 		});
 		if (!timeoutResult.ok) return null;
 
 		var editResult =
-			transport === "sse"
+			transport === "sse" || transport === "streamable-http"
 				? buildSseEditPayload(server, editUrl.value, editHeaders.value, clearHeaders.value)
 				: buildStdioEditPayload(editCmd.value, editArgs.value, editEnv.value);
 		if (editResult.error) {
@@ -948,6 +959,10 @@ function ServerCard({ server }) {
 								editTransport.value = "sse";
 							}}
 	              class="provider-btn provider-btn-sm ${editTransport.value === "sse" ? "" : "provider-btn-secondary"}">SSE (remote)</button>
+	            <button onClick=${() => {
+								editTransport.value = "streamable-http";
+							}}
+	              class="provider-btn provider-btn-sm ${editTransport.value === "streamable-http" ? "" : "provider-btn-secondary"}">Streamable HTTP</button>
 	          </div>
 	        </div>
         ${html`<div class="project-edit-group mb-2">
@@ -960,7 +975,7 @@ function ServerCard({ server }) {
 		  <div class="text-xs text-[var(--muted)] mt-1">Technical ID: <span class="font-mono">${server.name}</span></div>
 		</div>`}
 	        ${
-						editTransport.value === "sse" &&
+						(editTransport.value === "sse" || editTransport.value === "streamable-http") &&
 						html`<div class="project-edit-group mb-2">
 	          <div class="text-xs text-[var(--muted)] mb-1">Current URL</div>
 	          <div class="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]">${currentSafeUrl || "(stored URL hidden until the API returns sanitized text)"}</div>
@@ -992,9 +1007,10 @@ function ServerCard({ server }) {
 	          <div class="text-xs text-[var(--muted)] mt-1">${clearHeaders.value ? html`Saving now removes every stored header for this remote server.` : html`Leave blank to preserve stored headers. Enter new lines to replace them, or click <strong>Clear stored headers</strong> to remove them entirely. Use <code>$NAME</code> or <code>${"{NAME}"}</code> for env-backed values.`}</div>
 	        </div>`
 					}
-	        ${
-						editTransport.value !== "sse" &&
-						html`<div>
+		        ${
+							editTransport.value !== "sse" &&
+							editTransport.value !== "streamable-http" &&
+							html`<div>
         <div class="project-edit-group mb-2 mt-2">
           <div class="text-xs text-[var(--muted)] mb-1">Command</div>
           <input type="text" class="provider-key-input w-full font-mono" value=${editCmd.value}
@@ -1018,7 +1034,7 @@ function ServerCard({ server }) {
 						}} />
         </div>
         </div>`
-					}
+						}
         <div class="project-edit-group mb-2">
           <div class="text-xs text-[var(--muted)] mb-1">Timeout override (seconds, optional)</div>
           <input type="number" class="provider-key-input w-full font-mono" min="1" step="1" placeholder="Use global default"

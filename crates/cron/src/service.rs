@@ -30,6 +30,8 @@ pub struct AgentTurnResult {
     pub output: String,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// The session key used for this turn (links to the session store).
+    pub session_key: Option<String>,
 }
 
 /// Callback for running an isolated agent turn.
@@ -544,6 +546,7 @@ impl CronService {
                     output: "system event injected".to_string(),
                     input_tokens: None,
                     output_tokens: None,
+                    session_key: None,
                 })
             },
             CronPayload::AgentTurn {
@@ -570,7 +573,7 @@ impl CronService {
 
         let finished = now_ms();
         let duration_ms = finished - started;
-        let (status, error_msg, output, input_tokens, output_tokens) = match &result {
+        let (status, error_msg, output, input_tokens, output_tokens, session_key) = match &result {
             Ok(r) => {
                 #[cfg(feature = "metrics")]
                 {
@@ -587,13 +590,21 @@ impl CronService {
                     Some(r.output.clone()),
                     r.input_tokens,
                     r.output_tokens,
+                    r.session_key.clone(),
                 )
             },
             Err(e) => {
                 error!(id = %job.id, error = %e, "cron job failed");
                 #[cfg(feature = "metrics")]
                 counter!(cron_metrics::ERRORS_TOTAL).increment(1);
-                (RunStatus::Error, Some(e.to_string()), None, None, None)
+                (
+                    RunStatus::Error,
+                    Some(e.to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
             },
         };
 
@@ -611,6 +622,7 @@ impl CronService {
             output,
             input_tokens,
             output_tokens,
+            session_key,
         };
         if let Err(e) = self.store.append_run(&job.id, &run).await {
             warn!(error = %e, "failed to record cron run");
@@ -755,6 +767,7 @@ mod tests {
                     output: "ok".into(),
                     input_tokens: None,
                     output_tokens: None,
+                    session_key: None,
                 })
             })
         })
@@ -775,6 +788,7 @@ mod tests {
                     output: "done".into(),
                     input_tokens: None,
                     output_tokens: None,
+                    session_key: None,
                 })
             })
         })

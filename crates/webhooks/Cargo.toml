@@ -1,0 +1,38 @@
+[package]
+edition.workspace = true
+name              = "moltis-webhooks"
+version.workspace = true
+
+[dependencies]
+anyhow         = { workspace = true }
+async-trait    = { workspace = true }
+axum           = { workspace = true }
+hmac           = { workspace = true }
+hex            = { workspace = true }
+moltis-common  = { workspace = true }
+moltis-config  = { workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+rand           = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+sha2           = { workspace = true }
+sqlx           = { workspace = true }
+subtle         = { workspace = true }
+thiserror      = { workspace = true }
+time           = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+uuid           = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
+tracing = []
+
+[dev-dependencies]
+ipnet    = { workspace = true }
+rstest   = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

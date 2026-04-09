@@ -49,7 +49,11 @@ use {
 };
 
 #[derive(Parser)]
-#[command(name = "moltis", about = "Moltis — personal AI gateway", version)]
+#[command(
+    name = "moltis",
+    about = "Moltis — personal AI gateway",
+    version = moltis_config::VERSION
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -234,22 +238,26 @@ enum SkillAction {
     },
 }
 
+fn default_telemetry_filter(log_level: &str) -> EnvFilter {
+    let mut filter = EnvFilter::new(log_level);
+    for directive in [
+        "chromiumoxide=off",
+        "matrix_sdk=warn",
+        "matrix_sdk_base=warn",
+        "matrix_sdk_crypto=error",
+    ] {
+        if let Ok(directive) = directive.parse() {
+            filter = filter.add_directive(directive);
+        }
+    }
+    filter
+}
+
 /// Initialise tracing and optionally attach a [`LogBroadcastLayer`] that
 /// captures events into an in-memory ring buffer for the web UI.
 fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
-    // Start with user-specified or default log level
-    let base_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
-
-    // Suppress noisy chromiumoxide logs:
-    // - "WS Invalid message" warnings (Chrome sends CDP events the library doesn't recognize)
-    // - "WS Connection error" errors (normal when idle connections are closed)
-    // These are expected browser sandbox behavior, not actionable errors.
-    let filter = if let Ok(directive) = "chromiumoxide=off".parse() {
-        base_filter.add_directive(directive)
-    } else {
-        base_filter
-    };
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| default_telemetry_filter(&cli.log_level));
 
     if let Some(ref buffer) = log_buffer {
         let levels = EnabledLogLevels::from_max_level_hint(filter.max_level_hint());
@@ -563,4 +571,19 @@ async fn handle_skills(action: SkillAction) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::default_telemetry_filter;
+
+    #[test]
+    fn default_telemetry_filter_quiets_noisy_targets() {
+        let filter = default_telemetry_filter("info").to_string();
+        assert!(filter.contains("info"));
+        assert!(filter.contains("chromiumoxide=off"));
+        assert!(filter.contains("matrix_sdk=warn"));
+        assert!(filter.contains("matrix_sdk_base=warn"));
+        assert!(filter.contains("matrix_sdk_crypto=error"));
+    }
 }

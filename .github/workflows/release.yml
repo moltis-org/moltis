@@ -1126,7 +1126,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write # Required for Sigstore keyless signing
+      id-token: write        # Required for Sigstore keyless signing
+      attestations: write    # Required for artifact attestations
 
     steps:
       - name: Download digests
@@ -1234,6 +1235,14 @@ jobs:
             --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
             "ghcr.io/${{ github.repository }}@${DIGEST}"
 
+      - name: Attest build provenance for container image
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
   upload-release:
     needs:
       - build-deb
@@ -1249,6 +1258,8 @@ jobs:
     name: Upload release assets
     permissions:
       contents: write
+      id-token: write        # Required for artifact attestations
+      attestations: write    # Required for artifact attestations
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -1287,6 +1298,19 @@ jobs:
           files: release-files/*
           prerelease: ${{ env.RELEASE_PRE_RELEASE == 'true' }}
 
+      - name: Attest build provenance for release artifacts
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-path: |
+            release-files/*.tar.gz
+            release-files/*.deb
+            release-files/*.rpm
+            release-files/*.pkg.tar.zst
+            release-files/*.AppImage
+            release-files/*.snap
+            release-files/*.zip
+            release-files/*.exe
+
   # Generate SBOM for the entire release
   generate-sbom:
     needs:
@@ -1297,7 +1321,8 @@ jobs:
     name: Generate Release SBOM
     permissions:
       contents: write
-      id-token: write # Required for Sigstore keyless signing
+      id-token: write        # Required for Sigstore keyless signing
+      attestations: write    # Required for artifact attestations
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -1334,6 +1359,13 @@ jobs:
             moltis-sbom.spdx.json.sha256
             moltis-sbom.spdx.json.sig
             moltis-sbom.spdx.json.crt
+
+      - name: Attest build provenance for SBOMs
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-path: |
+            moltis-sbom.cdx.json
+            moltis-sbom.spdx.json
 
   update-homebrew-tap:
     needs:

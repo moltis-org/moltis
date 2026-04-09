@@ -7,9 +7,22 @@ import { useEffect, useState } from "preact/hooks";
 import {
 	addChannel,
 	buildTeamsEndpoint,
+	channelStorageNote,
 	defaultTeamsBaseUrl,
+	deriveMatrixAccountId,
 	fetchChannelStatus,
 	generateWebhookSecretHex,
+	MATRIX_DEFAULT_HOMESERVER,
+	MATRIX_DOCS_URL,
+	MATRIX_ENCRYPTION_GUIDANCE,
+	matrixAuthModeGuidance,
+	matrixCredentialLabel,
+	matrixCredentialPlaceholder,
+	matrixOwnershipModeGuidance,
+	normalizeMatrixAuthMode,
+	normalizeMatrixOtpCooldown,
+	normalizeMatrixOwnershipMode,
+	parseChannelConfigPatch,
 	validateChannelFields,
 } from "./channel-utils.js";
 import { onEvent } from "./events.js";
@@ -24,7 +37,7 @@ import { ConfirmDialog, Modal, ModelSelect, requestConfirm, showToast } from "./
 var channels = signal([]);
 
 export function prefetchChannels() {
-	fetchChannelStatus().then((res) => {
+	return fetchChannelStatus().then((res) => {
 		if (res?.ok) {
 			var ch = res.payload?.channels || [];
 			channels.value = ch;
@@ -39,6 +52,7 @@ var showAddTeams = signal(false);
 var showAddDiscord = signal(false);
 var showAddWhatsApp = signal(false);
 var showAddSlack = signal(false);
+var showAddMatrix = signal(false);
 var editingChannel = signal(null);
 var sendersAccount = signal("");
 
@@ -58,6 +72,7 @@ function channelLabel(type) {
 	if (t === "discord") return "Discord";
 	if (t === "whatsapp") return "WhatsApp";
 	if (t === "slack") return "Slack";
+	if (t === "matrix") return "Matrix";
 	return "Telegram";
 }
 
@@ -91,6 +106,212 @@ function ConnectionModeHint({ type }) {
 		<span class="tier-badge">${MODE_LABELS[desc.capabilities.inbound_mode]}</span>
 		<span>${hint}</span>
 	</div>`;
+}
+
+function ChannelStorageNotice({ compact = false }) {
+	return html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs text-[var(--muted)] ${compact ? "" : "max-w-3xl"}">
+		<span class="font-medium text-[var(--text-strong)]">Storage note.</span> ${channelStorageNote()}
+	</div>`;
+}
+
+function prettyConfigJson(value) {
+	try {
+		return JSON.stringify(value || {}, null, 2);
+	} catch (_error) {
+		return "{}";
+	}
+}
+
+function copyToClipboard(value, successMessage) {
+	var text = String(value || "").trim();
+	if (!text) return;
+	navigator.clipboard.writeText(text).then(() => showToast(successMessage));
+}
+
+function MatrixInfoRow({ label, value, copyLabel = null }) {
+	var text = String(value || "").trim();
+	return html`<div class="flex items-center justify-between gap-3">
+		<div class="min-w-0">
+			<div class="text-[11px] uppercase tracking-wide text-emerald-200/70">${label}</div>
+			<div class="truncate font-mono text-emerald-50">${text || "\u2014"}</div>
+		</div>
+		${
+			text &&
+			html`<button
+				type="button"
+				class="provider-btn provider-btn-sm provider-btn-secondary"
+				onClick=${() => copyToClipboard(text, copyLabel || `${label} copied`)}>
+				Copy
+			</button>`
+		}
+	</div>`;
+}
+
+function MatrixOwnershipCard({ channel, matrixStatus }) {
+	var retryingOwnership = useSignal(false);
+	var retryOwnershipError = useSignal("");
+	var ownershipMode = normalizeMatrixOwnershipMode(matrixStatus?.ownership_mode);
+	var authMode = normalizeMatrixAuthMode(matrixStatus?.auth_mode);
+	var recoveryState = String(matrixStatus?.recovery_state || "unknown");
+	var deviceVerified = !!matrixStatus?.device_verified_by_owner;
+	var ownershipError = String(matrixStatus?.ownership_error || "").trim();
+	var approvalMatch = ownershipError.match(/https?:\/\/\S+/);
+	var ownershipIssue =
+		ownershipMode !== "moltis_owned" || ownershipError.length === 0
+			? "none"
+			: ownershipError.includes("requires browser approval to reset cross-signing")
+				? "approval_required"
+				: ownershipError.includes("incomplete secret storage")
+					? "incomplete_secret_storage"
+					: "generic_blocked";
+	var modeTitle =
+		ownershipIssue === "approval_required"
+			? "Ownership approval required"
+			: ownershipIssue !== "none"
+				? "Moltis ownership blocked"
+				: ownershipMode === "moltis_owned"
+					? "Managed by Moltis"
+					: "User-managed in Element";
+	var modeText =
+		ownershipIssue === "approval_required"
+			? "This existing Matrix account can already chat, but Matrix needs one browser approval before Moltis can take over encryption ownership. Open the approval page, approve the reset, then retry ownership setup."
+			: ownershipIssue === "incomplete_secret_storage"
+				? "This account already has partial Matrix secure-backup state. Finish or repair it in Element, or switch this channel to user-managed mode."
+				: ownershipIssue === "generic_blocked"
+					? "Moltis could not take ownership of this Matrix account automatically. Repair the account in Element or switch this channel to user-managed mode."
+					: authMode === "password"
+						? matrixOwnershipModeGuidance(authMode, ownershipMode)
+						: "Access token auth is always user-managed. If you want encrypted Matrix chats, reconnect this channel with password auth so Moltis can create its own device.";
+	var detailTitle =
+		ownershipIssue === "approval_required"
+			? "Browser approval pending"
+			: ownershipError
+				? "Ownership setup needs attention"
+				: "";
+	var detailText =
+		ownershipIssue === "approval_required"
+			? `Approve the reset while signed into ${matrixStatus?.user_id || "this Matrix account"} in the browser, then use the retry button here so Moltis can finish taking ownership.`
+			: ownershipError;
+	var approvalUrl = approvalMatch ? approvalMatch[0].replace(/[;),.]+$/, "") : "";
+	var verificationText = deviceVerified ? "Device verified by owner" : "Device not yet verified by owner";
+	var hasAccountDetails =
+		!!String(channel.config?.homeserver || "").trim() ||
+		!!String(matrixStatus?.user_id || "").trim() ||
+		!!String(matrixStatus?.device_id || "").trim() ||
+		!!String(matrixStatus?.device_display_name || channel.config?.device_display_name || "").trim();
+
+	function retryOwnershipSetup() {
+		retryingOwnership.value = true;
+		retryOwnershipError.value = "";
+		sendRpc("channels.retry_ownership", {
+			type: channelType(channel.type),
+			account_id: channel.account_id,
+		}).then((res) => {
+			retryingOwnership.value = false;
+			if (res?.ok) {
+				showToast("Retrying Matrix ownership setup");
+				loadChannels();
+				return;
+			}
+			retryOwnershipError.value =
+				(res?.error && (res.error.message || res.error.detail)) || "Failed to retry Matrix ownership setup.";
+		});
+	}
+
+	return html`<div class="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
+		<div class="flex items-center gap-2">
+			<div class="font-medium text-sky-50">${modeTitle}</div>
+			<span class="provider-item-badge ${deviceVerified ? "configured" : "oauth"}">${verificationText}</span>
+		</div>
+		<div class="mt-1 text-sky-100/90">${modeText}</div>
+		<div class="mt-2 text-sky-100/90">
+			Cross-signing: <span class="font-medium">${matrixStatus?.cross_signing_complete ? "ready" : "not ready"}</span>.
+			Recovery: <span class="font-medium">${recoveryState}</span>.
+		</div>
+		${
+			hasAccountDetails &&
+			html`<details class="mt-2 rounded-md border border-sky-500/20 bg-sky-500/5 px-3 py-2">
+				<summary class="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-sky-100/80">
+					Matrix account details
+				</summary>
+				<div class="mt-2 grid gap-2">
+					<${MatrixInfoRow} label="Homeserver" value=${channel.config?.homeserver || ""} copyLabel="Homeserver copied" />
+					<${MatrixInfoRow} label="Matrix user" value=${matrixStatus?.user_id || ""} copyLabel="Matrix user ID copied" />
+					<${MatrixInfoRow} label="Device ID" value=${matrixStatus?.device_id || ""} copyLabel="Matrix device ID copied" />
+					<${MatrixInfoRow}
+						label="Device name"
+						value=${matrixStatus?.device_display_name || channel.config?.device_display_name || ""}
+						copyLabel="Matrix device name copied" />
+				</div>
+			</details>`
+		}
+		${
+			ownershipIssue === "approval_required" &&
+			approvalUrl &&
+			html`<div class="mt-2">
+				<div class="flex flex-wrap gap-2">
+					<a
+						href=${approvalUrl}
+						target="_blank"
+						rel="noreferrer"
+						class="provider-btn provider-btn-sm"
+						aria-label=${`Open approval page for ${matrixStatus?.user_id || "this Matrix account"}`}>
+						Open approval page for ${matrixStatus?.user_id || "this account"}
+					</a>
+					<button
+						type="button"
+						class="provider-btn provider-btn-sm"
+						onClick=${retryOwnershipSetup}
+						disabled=${retryingOwnership.value}>
+						${retryingOwnership.value ? "Retrying ownership setup..." : "Click here once you reset the account"}
+					</button>
+				</div>
+				<div class="mt-2 text-[11px] text-sky-100/80">Make sure the browser page is signed into <span class="font-mono text-sky-50">${matrixStatus?.user_id || "the Matrix bot account"}</span>.</div>
+				${
+					retryOwnershipError.value &&
+					html`<div class="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-100">
+						${retryOwnershipError.value}
+					</div>`
+				}
+			</div>`
+		}
+		${
+			detailTitle &&
+			html`<div class="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-100">
+				<div class="font-medium text-amber-50">${detailTitle}</div>
+				<div class="mt-1">${detailText}</div>
+			</div>`
+		}
+	</div>`;
+}
+
+function AdvancedConfigPatchField({ value, onInput, currentConfig = null }) {
+	return html`<details class="channel-card">
+		<summary class="cursor-pointer text-xs font-medium text-[var(--text-strong)]">Advanced Config JSON</summary>
+		<div class="mt-2 flex flex-col gap-3">
+			<div class="text-xs text-[var(--muted)]">
+				Optional JSON object merged on top of the form before save. Use this for channel-specific settings that do not have dedicated fields yet.
+			</div>
+			${
+				currentConfig &&
+				html`<div class="flex flex-col gap-1">
+					<label class="text-xs text-[var(--muted)]">Current stored config (read-only)</label>
+					<textarea class="channel-input min-h-[160px] font-mono text-xs" readOnly value=${prettyConfigJson(currentConfig)} />
+				</div>`
+			}
+			<div class="flex flex-col gap-1">
+				<label class="text-xs text-[var(--muted)]">Advanced config JSON patch (optional)</label>
+				<textarea
+					data-field="advancedConfigPatch"
+					class="channel-input min-h-[140px] font-mono text-xs"
+					value=${value}
+					onInput=${(e) => {
+						onInput(e.target.value);
+					}}
+					placeholder='{"reply_to_message": true}'></textarea>
+			</div>
+		</div>
+	</details>`;
 }
 
 function senderSelectionKey(ch) {
@@ -134,6 +355,8 @@ function ChannelIcon({ type }) {
 	if (t === "msteams") return html`<span class="icon icon-msteams"></span>`;
 	if (t === "discord") return html`<span class="icon icon-discord"></span>`;
 	if (t === "whatsapp") return html`<span class="icon icon-whatsapp"></span>`;
+	if (t === "slack") return html`<span class="icon icon-slack"></span>`;
+	if (t === "matrix") return html`<span class="icon icon-matrix"></span>`;
 	return html`<span class="icon icon-telegram"></span>`;
 }
 
@@ -161,6 +384,14 @@ function ChannelCard(props) {
 	}
 	var desc = channelDescriptor(ch.type);
 	var modeLabel = desc ? MODE_LABELS[desc.capabilities.inbound_mode] || desc.capabilities.inbound_mode : null;
+	var matrixStatus = ch.extra?.matrix || null;
+	var pendingVerifications = Array.isArray(matrixStatus?.pending_verifications)
+		? matrixStatus.pending_verifications
+		: [];
+	var verificationStateLabel = matrixStatus?.verification_state || null;
+	var showOwnershipCard =
+		channelType(ch.type) === "matrix" &&
+		(matrixStatus?.user_id || matrixStatus?.device_id || ch.config?.homeserver || matrixStatus?.ownership_error);
 
 	return html`<div class="provider-card p-3 rounded-lg mb-2">
     <div class="flex items-center gap-2.5">
@@ -171,11 +402,30 @@ function ChannelCard(props) {
 	        <span class="text-sm text-[var(--text-strong)]">${ch.name || ch.account_id || channelLabel(ch.type)}</span>
         ${ch.details && html`<span class="text-xs text-[var(--muted)]">${ch.details}</span>`}
         ${sessionLine && html`<span class="text-xs text-[var(--muted)]">${sessionLine}</span>`}
+        ${
+					channelType(ch.type) === "matrix" &&
+					verificationStateLabel &&
+					html`<span class="text-xs text-[var(--muted)]">Encryption device state: ${verificationStateLabel}</span>`
+				}
         ${channelType(ch.type) === "telegram" && ch.account_id && html`<a href="https://t.me/${ch.account_id}" target="_blank" class="text-xs text-[var(--accent)] underline">t.me/${ch.account_id}</a>`}
       </div>
       <span class="provider-item-badge ${statusClass}">${ch.status || "unknown"}</span>
       ${modeLabel && html`<span class="tier-badge">${modeLabel}</span>`}
     </div>
+    ${
+			channelType(ch.type) === "matrix" &&
+			pendingVerifications.length > 0 &&
+			html`<div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+		      <div class="font-medium text-emerald-50">Verification pending</div>
+		      ${pendingVerifications.map(
+						(prompt) => html`<div class="mt-1">
+							<div>With ${prompt.other_user_id}</div>
+							<div class="text-emerald-200/90">Send <span class="font-mono">verify yes</span>, <span class="font-mono">verify no</span>, <span class="font-mono">verify show</span>, or <span class="font-mono">verify cancel</span> as a normal message in that same Matrix chat.</div>
+						</div>`,
+					)}
+		    </div>`
+		}
+    ${showOwnershipCard && html`<${MatrixOwnershipCard} channel=${ch} matrixStatus=${matrixStatus} />`}
     <div class="flex gap-2">
       <button class="provider-btn provider-btn-sm provider-btn-secondary" title="Edit ${ch.account_id || "channel"}"
         onClick=${() => {
@@ -189,7 +439,7 @@ function ChannelCard(props) {
 
 // ── Connect channel buttons ──────────────────────────────────
 function ConnectButtons() {
-	var offered = new Set(getGon("channels_offered") || ["telegram"]);
+	var offered = new Set(getGon("channels_offered") || ["telegram", "discord", "slack", "matrix"]);
 	return html`<div class="flex gap-2">
 		${
 			offered.has("telegram") &&
@@ -228,6 +478,15 @@ function ConnectButtons() {
 		</button>`
 		}
 		${
+			offered.has("matrix") &&
+			html`<button class="provider-btn provider-btn-secondary inline-flex items-center gap-1.5"
+			onClick=${() => {
+				if (connected.value) showAddMatrix.value = true;
+			}}>
+			<span class="icon icon-matrix"></span> Connect Matrix
+		</button>`
+		}
+		${
 			offered.has("whatsapp") &&
 			html`<button class="provider-btn provider-btn-secondary inline-flex items-center gap-1.5"
 			onClick=${() => {
@@ -254,6 +513,7 @@ function ChannelsTab() {
 function renderSenderRow(s, onAction) {
 	var identifier = s.username || s.peer_id;
 	var lastSeenMs = s.last_seen ? s.last_seen * 1000 : 0;
+	var usernameLabel = s.username ? (String(s.username).startsWith("@") ? s.username : `@${s.username}`) : "\u2014";
 	var statusBadge = s.otp_pending
 		? html`<span class="provider-item-badge cursor-pointer select-none" style="background:var(--warning-bg, #fef3c7);color:var(--warning-text, #92400e);" onClick=${() => {
 				navigator.clipboard.writeText(s.otp_pending.code).then(() => showToast("OTP code copied"));
@@ -264,7 +524,7 @@ function renderSenderRow(s, onAction) {
 		: html`<button class="provider-btn provider-btn-sm" onClick=${() => onAction(identifier, "approve")}>Approve</button>`;
 	return html`<tr key=${s.peer_id}>
     <td class="senders-td">${s.sender_name || s.peer_id}</td>
-    <td class="senders-td" style="color:var(--muted);">${s.username ? `@${s.username}` : "\u2014"}</td>
+    <td class="senders-td" style="color:var(--muted);">${usernameLabel}</td>
     <td class="senders-td">${s.message_count}</td>
     <td class="senders-td" style="color:var(--muted);font-size:12px;">${lastSeenMs ? html`<time data-epoch-ms="${lastSeenMs}">${new Date(lastSeenMs).toISOString()}</time>` : "\u2014"}</td>
     <td class="senders-td">${statusBadge}</td>
@@ -332,11 +592,11 @@ function SendersTab() {
 }
 
 // ── Tag-style allowlist input ────────────────────────────────
-function AllowlistInput({ value, onChange }) {
+function AllowlistInput({ value, onChange, preserveAt }) {
 	var input = useSignal("");
 
 	function addTag(raw) {
-		var tag = raw.trim().replace(/^@/, "");
+		var tag = preserveAt ? raw.trim() : raw.trim().replace(/^@/, "");
 		if (tag && !value.includes(tag)) onChange([...value, tag]);
 		input.value = "";
 	}
@@ -420,6 +680,7 @@ function AddTelegramModal() {
 	var addModel = useSignal("");
 	var allowlistItems = useSignal([]);
 	var accountDraft = useSignal("");
+	var advancedConfigPatch = useSignal("");
 
 	function onSubmit(e) {
 		e.preventDefault();
@@ -429,6 +690,11 @@ function AddTelegramModal() {
 		var v = validateChannelFields("telegram", accountId, credential);
 		if (!v.valid) {
 			error.value = v.error;
+			return;
+		}
+		var advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+		if (!advancedPatch.ok) {
+			error.value = advancedPatch.error;
 			return;
 		}
 		error.value = "";
@@ -444,6 +710,7 @@ function AddTelegramModal() {
 			var found = modelsSig.value.find((x) => x.id === addModel.value);
 			if (found?.provider) addConfig.model_provider = found.provider;
 		}
+		Object.assign(addConfig, advancedPatch.value);
 		addChannel("telegram", accountId, addConfig).then((res) => {
 			saving.value = false;
 			if (res?.ok) {
@@ -451,6 +718,7 @@ function AddTelegramModal() {
 				addModel.value = "";
 				allowlistItems.value = [];
 				accountDraft.value = "";
+				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
 				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.";
@@ -491,6 +759,9 @@ function AddTelegramModal() {
 	      </div>`
 				}
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
+	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
+					advancedConfigPatch.value = value;
+				}} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Telegram"}
@@ -509,6 +780,51 @@ function AddTeamsModal() {
 	var webhookSecret = useSignal("");
 	var baseUrlDraft = useSignal(defaultTeamsBaseUrl());
 	var bootstrapEndpoint = useSignal("");
+	var tsStatus = useSignal(null);
+	var tsLoading = useSignal(true);
+	var enablingFunnel = useSignal(false);
+	var advancedConfigPatch = useSignal("");
+
+	// Fetch Tailscale status on mount.
+	useEffect(() => {
+		fetch("/api/tailscale/status")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => {
+				tsStatus.value = data;
+				tsLoading.value = false;
+				if (data?.mode === "funnel" && data?.url) {
+					baseUrlDraft.value = data.url.replace(/\/$/, "");
+				}
+			})
+			.catch(() => {
+				tsLoading.value = false;
+			});
+	}, []);
+
+	function onEnableFunnel() {
+		enablingFunnel.value = true;
+		error.value = "";
+		fetch("/api/tailscale/configure", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ mode: "funnel" }),
+		})
+			.then((r) => r.json())
+			.then((data) => {
+				enablingFunnel.value = false;
+				if (data?.ok !== false && data?.url) {
+					baseUrlDraft.value = data.url.replace(/\/$/, "");
+					tsStatus.value = data;
+					refreshBootstrapEndpoint();
+				} else {
+					error.value = data?.error || "Failed to enable Tailscale Funnel.";
+				}
+			})
+			.catch((e) => {
+				enablingFunnel.value = false;
+				error.value = `Tailscale error: ${e.message}`;
+			});
+	}
 
 	function refreshBootstrapEndpoint() {
 		if (!bootstrapEndpoint.value) return;
@@ -557,6 +873,11 @@ function AddTeamsModal() {
 			error.value = v.error;
 			return;
 		}
+		var advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+		if (!advancedPatch.ok) {
+			error.value = advancedPatch.error;
+			return;
+		}
 		error.value = "";
 		saving.value = true;
 		var addConfig = {
@@ -572,6 +893,7 @@ function AddTeamsModal() {
 			var found = modelsSig.value.find((x) => x.id === addModel.value);
 			if (found?.provider) addConfig.model_provider = found.provider;
 		}
+		Object.assign(addConfig, advancedPatch.value);
 		addChannel("msteams", accountId, addConfig).then((res) => {
 			saving.value = false;
 			if (res?.ok) {
@@ -582,6 +904,7 @@ function AddTeamsModal() {
 				webhookSecret.value = "";
 				baseUrlDraft.value = defaultTeamsBaseUrl();
 				bootstrapEndpoint.value = "";
+				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
 				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.";
@@ -594,36 +917,71 @@ function AddTeamsModal() {
 	}}
 	    title="Connect Microsoft Teams">
 	    <div class="channel-form">
+	      ${
+					!tsLoading.value &&
+					!(tsStatus.value?.mode === "funnel" && tsStatus.value?.url) &&
+					html`
+	        <div class="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex flex-col gap-2">
+	          <span class="font-medium text-[var(--text-strong)]">Public URL required</span>
+	          <span class="text-[var(--muted)]">Teams sends messages to your server via webhook. Your Moltis instance must be reachable over HTTPS.</span>
+	          ${
+							tsStatus.value?.installed && tsStatus.value?.tailscale_up
+								? html`<div class="flex flex-col gap-2">
+	              <span class="text-[var(--muted)]">Tailscale is connected. Enable <strong>Funnel</strong> to make it publicly reachable:</span>
+	              <button type="button" class="provider-btn provider-btn-sm" onClick=${onEnableFunnel} disabled=${enablingFunnel.value}>
+	                ${enablingFunnel.value ? "Enabling\u2026" : "Enable Tailscale Funnel"}
+	              </button>
+	            </div>`
+								: html`<span class="text-[var(--muted)]">Enable <strong>Tailscale Funnel</strong> in Settings, or use <a href="https://ngrok.com/" target="_blank" class="text-[var(--accent)] underline">ngrok</a> / <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/" target="_blank" class="text-[var(--accent)] underline">Cloudflare Tunnel</a>.</span>`
+						}
+	        </div>
+	      `
+				}
+	      ${
+					tsStatus.value?.mode === "funnel" &&
+					tsStatus.value?.url &&
+					html`
+	        <div class="rounded-md border border-green-500/30 bg-green-500/5 p-3 text-xs flex items-center gap-2">
+	          <span class="text-green-600">\u2713</span>
+	          <span class="text-[var(--muted)]">Tailscale Funnel active \u2014 publicly reachable at <strong>${tsStatus.value.url}</strong></span>
+	        </div>
+	      `
+				}
 	      <div class="channel-card">
-	        <div>
-	          <span class="text-xs font-medium text-[var(--text-strong)]">Microsoft Teams setup</span>
-	          <div class="text-xs text-[var(--muted)]">1. <a href="https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration" target="_blank" class="text-[var(--accent)] underline">Create an Azure Bot registration</a> and copy the App ID + App Password.</div>
-	          <div class="text-xs text-[var(--muted)]">2. Use Bootstrap Teams below to generate the exact messaging endpoint.</div>
-	          <div class="text-xs text-[var(--muted)]">3. Optional CLI shortcut: <code>moltis channels teams bootstrap</code>.</div>
+	        <div class="flex flex-col gap-1">
+	          <span class="text-xs font-medium text-[var(--text-strong)]">How to create a Teams bot</span>
+	          <span class="text-xs font-medium text-[var(--text-strong)] opacity-70" style="font-size:10px">Option A: Teams Developer Portal (easiest)</span>
+	          <div class="text-xs text-[var(--muted)]">1. Open <a href="https://dev.teams.microsoft.com/bots" target="_blank" class="text-[var(--accent)] underline">Teams Developer Portal \u2192 Bot Management</a></div>
+	          <div class="text-xs text-[var(--muted)]">2. Click <strong>+ New Bot</strong>, give it a name, copy the <strong>Bot ID</strong> (App ID)</div>
+	          <div class="text-xs text-[var(--muted)]">3. Under <strong>Client secrets</strong>, add a secret and copy the value (App Password)</div>
+	          <span class="text-xs font-medium text-[var(--text-strong)] opacity-70" style="font-size:10px;margin-top:4px">Option B: Azure Portal</span>
+	          <div class="text-xs text-[var(--muted)]">1. <a href="https://portal.azure.com/#create/Microsoft.AzureBot" target="_blank" class="text-[var(--accent)] underline">Create an Azure Bot</a>, then find App ID in Configuration</div>
+	          <div class="text-xs text-[var(--muted)]">2. Click <strong>Manage Password</strong> \u2192 <strong>New client secret</strong> for the App Password</div>
+	          <div class="text-xs text-[var(--muted)]" style="margin-top:4px">Then generate the endpoint below and paste it as the <strong>Messaging endpoint</strong> in your bot settings. <a href="https://docs.moltis.org/teams.html" target="_blank" class="text-[var(--accent)] underline">Full guide \u2192</a></div>
 	        </div>
 	      </div>
 	      <${ConnectionModeHint} type="msteams" />
-	      <label class="text-xs text-[var(--muted)]">App ID / Account ID</label>
-	      <input data-field="accountId" type="text" placeholder="Azure App ID or alias"
+	      <label class="text-xs text-[var(--muted)]">App ID (Bot ID from Azure)</label>
+	      <input data-field="accountId" type="text" placeholder="e.g. 12345678-abcd-efgh-ijkl-000000000000"
 	        value=${accountDraft.value}
 	        onInput=${(e) => {
 						accountDraft.value = e.target.value;
 						refreshBootstrapEndpoint();
 					}}
 	        class="channel-input" />
-	      <label class="text-xs text-[var(--muted)]">App Password (client secret)</label>
-	      <input data-field="credential" type="password" placeholder="Azure client secret" class="channel-input"
+	      <label class="text-xs text-[var(--muted)]">App Password (client secret from Azure)</label>
+	      <input data-field="credential" type="password" placeholder="Client secret value" class="channel-input"
 	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
 	        name="teams_app_password" />
 	      <div>
-	        <label class="text-xs text-[var(--muted)]">Webhook Secret (optional)</label>
-	        <input type="text" placeholder="shared secret for ?secret=..." class="channel-input"
+	        <label class="text-xs text-[var(--muted)]">Webhook Secret <span class="opacity-60">(optional \u2014 auto-generated if blank)</span></label>
+	        <input type="text" placeholder="Leave blank to auto-generate" class="channel-input"
 	          value=${webhookSecret.value}
 	          onInput=${(e) => {
 							webhookSecret.value = e.target.value;
 							refreshBootstrapEndpoint();
 						}} />
-	        <label class="text-xs text-[var(--muted)] mt-2">Public Base URL (for Teams webhook)</label>
+	        <label class="text-xs text-[var(--muted)] mt-2">Public Base URL <span class="opacity-60">(your server\u2019s HTTPS address)</span></label>
 	        <input type="text" placeholder="https://bot.example.com" class="channel-input"
 	          value=${baseUrlDraft.value}
 	          onInput=${(e) => {
@@ -643,13 +1001,17 @@ function AddTeamsModal() {
 	        </div>
 	        ${
 						bootstrapEndpoint.value &&
-						html`<div class="mt-2">
-	          <div class="text-xs text-[var(--muted)]">Messaging endpoint</div>
-	          <code class="text-xs block break-all">${bootstrapEndpoint.value}</code>
+						html`<div class="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2">
+	          <div class="text-xs text-[var(--muted)] mb-1">Messaging endpoint \u2014 paste this into your bot\u2019s configuration:</div>
+	          <code class="text-xs block break-all select-all">${bootstrapEndpoint.value}</code>
 	        </div>`
 					}
+	        <div class="text-[10px] text-[var(--muted)] mt-1 opacity-70">Teams requires HTTPS. For local dev, use <a href="https://ngrok.com/" target="_blank" class="text-[var(--accent)] underline">ngrok</a> or <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/" target="_blank" class="text-[var(--accent)] underline">Cloudflare Tunnel</a>.</div>
 	      </div>
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
+	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
+					advancedConfigPatch.value = value;
+				}} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Microsoft Teams"}
@@ -680,6 +1042,7 @@ function AddDiscordModal() {
 	var allowlistItems = useSignal([]);
 	var accountDraft = useSignal("");
 	var tokenDraft = useSignal("");
+	var advancedConfigPatch = useSignal("");
 
 	function onSubmit(e) {
 		e.preventDefault();
@@ -689,6 +1052,11 @@ function AddDiscordModal() {
 		var v = validateChannelFields("discord", accountId, credential);
 		if (!v.valid) {
 			error.value = v.error;
+			return;
+		}
+		var advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+		if (!advancedPatch.ok) {
+			error.value = advancedPatch.error;
 			return;
 		}
 		error.value = "";
@@ -704,6 +1072,7 @@ function AddDiscordModal() {
 			var found = modelsSig.value.find((x) => x.id === addModel.value);
 			if (found?.provider) addConfig.model_provider = found.provider;
 		}
+		Object.assign(addConfig, advancedPatch.value);
 		addChannel("discord", accountId, addConfig).then((res) => {
 			saving.value = false;
 			if (res?.ok) {
@@ -712,6 +1081,7 @@ function AddDiscordModal() {
 				allowlistItems.value = [];
 				accountDraft.value = "";
 				tokenDraft.value = "";
+				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
 				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.";
@@ -761,6 +1131,9 @@ function AddDiscordModal() {
 	      </div>`
 				}
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
+	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
+					advancedConfigPatch.value = value;
+				}} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Discord"}
@@ -781,6 +1154,7 @@ function AddSlackModal() {
 	var appTokenDraft = useSignal("");
 	var connectionMode = useSignal("socket_mode");
 	var signingSecretDraft = useSignal("");
+	var advancedConfigPatch = useSignal("");
 
 	function onSubmit(e) {
 		e.preventDefault();
@@ -803,6 +1177,11 @@ function AddSlackModal() {
 			error.value = "Signing Secret is required for Events API mode.";
 			return;
 		}
+		var advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+		if (!advancedPatch.ok) {
+			error.value = advancedPatch.error;
+			return;
+		}
 		error.value = "";
 		saving.value = true;
 		var addConfig = {
@@ -823,6 +1202,7 @@ function AddSlackModal() {
 			var found = modelsSig.value.find((x) => x.id === addModel.value);
 			if (found?.provider) addConfig.model_provider = found.provider;
 		}
+		Object.assign(addConfig, advancedPatch.value);
 		addChannel("slack", accountId, addConfig).then((res) => {
 			saving.value = false;
 			if (res?.ok) {
@@ -835,6 +1215,7 @@ function AddSlackModal() {
 				appTokenDraft.value = "";
 				signingSecretDraft.value = "";
 				connectionMode.value = "socket_mode";
+				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
 				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect Slack.";
@@ -917,9 +1298,266 @@ function AddSlackModal() {
 	        onChange=${(items) => {
 						channelAllowlistItems.value = items;
 					}} />
+	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
+					advancedConfigPatch.value = value;
+				}} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Slack"}
+	      </button>
+	    </div>
+	  </${Modal}>`;
+}
+
+// ── Add Matrix modal ─────────────────────────────────────────
+function AddMatrixModal() {
+	var error = useSignal("");
+	var saving = useSignal(false);
+	var addModel = useSignal("");
+	var userAllowlistItems = useSignal([]);
+	var roomAllowlistItems = useSignal([]);
+	var homeserverDraft = useSignal(MATRIX_DEFAULT_HOMESERVER);
+	var authModeDraft = useSignal("password");
+	var userIdDraft = useSignal("");
+	var credentialDraft = useSignal("");
+	var deviceDisplayNameDraft = useSignal("");
+	var ownershipModeDraft = useSignal("moltis_owned");
+	var otpSelfApprovalDraft = useSignal(true);
+	var otpCooldownDraft = useSignal("300");
+	var advancedConfigPatch = useSignal("");
+
+	function onSubmit(e) {
+		e.preventDefault();
+		var form = e.target.closest(".channel-form");
+		var authMode = normalizeMatrixAuthMode(authModeDraft.value);
+		var credential = credentialDraft.value.trim();
+		var homeserver = homeserverDraft.value.trim();
+		var userId = userIdDraft.value.trim();
+		var accountId = deriveMatrixAccountId({ userId, homeserver });
+		var v = validateChannelFields("matrix", accountId, credential, {
+			matrixAuthMode: authMode,
+			matrixUserId: userId,
+		});
+		if (!v.valid) {
+			error.value = v.error;
+			return;
+		}
+		if (!homeserver) {
+			error.value = "Homeserver URL is required.";
+			return;
+		}
+		var advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+		if (!advancedPatch.ok) {
+			error.value = advancedPatch.error;
+			return;
+		}
+		error.value = "";
+		saving.value = true;
+		var addConfig = {
+			homeserver: homeserver,
+			ownership_mode: authMode === "password" ? normalizeMatrixOwnershipMode(ownershipModeDraft.value) : "user_managed",
+			dm_policy: form.querySelector("[data-field=dmPolicy]").value,
+			room_policy: form.querySelector("[data-field=roomPolicy]").value,
+			mention_mode: form.querySelector("[data-field=mentionMode]").value,
+			auto_join: form.querySelector("[data-field=autoJoin]").value,
+			user_allowlist: userAllowlistItems.value,
+			room_allowlist: roomAllowlistItems.value,
+			otp_self_approval: otpSelfApprovalDraft.value,
+			otp_cooldown_secs: normalizeMatrixOtpCooldown(otpCooldownDraft.value),
+		};
+		if (authMode === "password") {
+			addConfig.password = credential;
+		} else {
+			addConfig.access_token = credential;
+		}
+		if (userId) addConfig.user_id = userId;
+		if (deviceDisplayNameDraft.value.trim()) addConfig.device_display_name = deviceDisplayNameDraft.value.trim();
+		if (addModel.value) {
+			addConfig.model = addModel.value;
+			var found = modelsSig.value.find((x) => x.id === addModel.value);
+			if (found?.provider) addConfig.model_provider = found.provider;
+		}
+		Object.assign(addConfig, advancedPatch.value);
+		addChannel("matrix", accountId, addConfig).then((res) => {
+			saving.value = false;
+			if (res?.ok) {
+				showAddMatrix.value = false;
+				addModel.value = "";
+				userAllowlistItems.value = [];
+				roomAllowlistItems.value = [];
+				homeserverDraft.value = MATRIX_DEFAULT_HOMESERVER;
+				authModeDraft.value = "password";
+				userIdDraft.value = "";
+				credentialDraft.value = "";
+				deviceDisplayNameDraft.value = "";
+				ownershipModeDraft.value = "moltis_owned";
+				otpSelfApprovalDraft.value = true;
+				otpCooldownDraft.value = "300";
+				advancedConfigPatch.value = "";
+				loadChannels();
+			} else {
+				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect Matrix.";
+			}
+		});
+	}
+
+	var defaultPlaceholder =
+		modelsSig.value.length > 0
+			? `(default: ${modelsSig.value[0].displayName || modelsSig.value[0].id})`
+			: "(server default)";
+
+	return html`<${Modal} show=${showAddMatrix.value} onClose=${() => {
+		showAddMatrix.value = false;
+	}}
+	    title="Connect Matrix">
+	    <div class="channel-form">
+	      <div class="channel-card">
+	        <div>
+	          <span class="text-xs font-medium text-[var(--text-strong)]">Connect a Matrix bot user</span>
+	          <div class="text-xs text-[var(--muted)] channel-help">1. Leave the homeserver as <span class="font-mono">${MATRIX_DEFAULT_HOMESERVER}</span> for matrix.org accounts</div>
+	          <div class="text-xs text-[var(--muted)]">2. Password is the default because it supports encrypted Matrix chats. Access token auth is only for plain Matrix traffic</div>
+	          <div class="text-xs text-[var(--muted)]">3. Moltis generates the local account ID automatically from the Matrix user or homeserver</div>
+	        </div>
+	      </div>
+	      <div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+	        <div class="font-medium text-emerald-50">Encrypted chats require password auth</div>
+	        <div>${MATRIX_ENCRYPTION_GUIDANCE}</div>
+	      </div>
+	      <${ConnectionModeHint} type="matrix" />
+	      <label class="text-xs text-[var(--muted)]">Homeserver URL</label>
+	      <input data-field="homeserver" type="text" placeholder=${MATRIX_DEFAULT_HOMESERVER}
+	        value=${homeserverDraft.value}
+	        onInput=${(e) => {
+						homeserverDraft.value = e.target.value;
+					}}
+	        class="channel-input"
+	        autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+	        autofocus />
+	      <label class="text-xs text-[var(--muted)]">Authentication</label>
+	      <select data-field="authMode" class="channel-select"
+	        value=${authModeDraft.value}
+	        onChange=${(e) => {
+						authModeDraft.value = normalizeMatrixAuthMode(e.target.value);
+					}}>
+	        <option value="password">Password</option>
+	        <option value="access_token">Access token</option>
+	      </select>
+	      <div class="text-xs text-[var(--muted)]">${matrixAuthModeGuidance(authModeDraft.value)}</div>
+	      ${
+					authModeDraft.value === "password"
+						? html`
+	        <label class="flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2">
+	          <input
+	            type="checkbox"
+	            aria-label="Let Moltis own this Matrix account"
+	            checked=${normalizeMatrixOwnershipMode(ownershipModeDraft.value) === "moltis_owned"}
+	            onChange=${(e) => {
+								ownershipModeDraft.value = e.target.checked ? "moltis_owned" : "user_managed";
+							}} />
+	          <span class="flex flex-col gap-1">
+	            <span class="text-xs font-medium text-[var(--text-strong)]">Let Moltis own this Matrix account</span>
+	            <span class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(
+								authModeDraft.value,
+								ownershipModeDraft.value,
+							)}</span>
+	          </span>
+	        </label>`
+						: html`<div class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(
+								authModeDraft.value,
+								"user_managed",
+							)}</div>`
+				}
+	      <label class="text-xs text-[var(--muted)]">Matrix User ID${authModeDraft.value === "password" ? " (required)" : " (optional)"}</label>
+	      <input data-field="userId" type="text" placeholder="@bot:example.com"
+	        value=${userIdDraft.value}
+	        onInput=${(e) => {
+						userIdDraft.value = e.target.value;
+					}}
+	        class="channel-input" />
+	      <label class="text-xs text-[var(--muted)]">${matrixCredentialLabel(authModeDraft.value)}</label>
+	      <input data-field="credential" type="password" placeholder=${matrixCredentialPlaceholder(authModeDraft.value)}
+	        value=${credentialDraft.value}
+	        onInput=${(e) => {
+						credentialDraft.value = e.target.value;
+					}}
+	        class="channel-input"
+	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" />
+	      <div class="text-xs text-[var(--muted)]">
+	        ${
+						authModeDraft.value === "password"
+							? html`Use the password for the dedicated Matrix bot account. This is the required mode for encrypted Matrix chats because Moltis needs to create and persist its own Matrix device keys.`
+							: html`Get the access token in Element: <span class="font-mono">Settings -> Help & About -> Advanced -> Access Token</span>. Access token mode does <span class="font-medium">not</span> support encrypted Matrix chats because Moltis cannot import that existing device's private encryption keys.`
+					}
+	        ${" "}
+	        <a href=${MATRIX_DOCS_URL} target="_blank" rel="noreferrer" class="text-[var(--accent)] underline">Matrix setup docs</a>
+	      </div>
+	      <label class="text-xs text-[var(--muted)]">Device Display Name (optional)</label>
+	      <input data-field="deviceDisplayName" type="text" placeholder="Moltis Matrix Bot"
+	        value=${deviceDisplayNameDraft.value}
+	        onInput=${(e) => {
+						deviceDisplayNameDraft.value = e.target.value;
+					}}
+	        class="channel-input" />
+	      <label class="text-xs text-[var(--muted)]">DM Policy</label>
+	      <select data-field="dmPolicy" class="channel-select">
+	        <option value="allowlist">Allowlist only</option>
+	        <option value="open">Open (anyone)</option>
+	        <option value="disabled">Disabled</option>
+	      </select>
+	      <label class="text-xs text-[var(--muted)]">Room Policy</label>
+	      <select data-field="roomPolicy" class="channel-select">
+	        <option value="allowlist">Room allowlist only</option>
+	        <option value="open">Open (any joined room)</option>
+	        <option value="disabled">Disabled</option>
+	      </select>
+	      <label class="text-xs text-[var(--muted)]">Room Mention Mode</label>
+	      <select data-field="mentionMode" class="channel-select">
+	        <option value="mention">Must mention bot</option>
+	        <option value="always">Always respond</option>
+	        <option value="none">Never respond in rooms</option>
+	      </select>
+	      <label class="text-xs text-[var(--muted)]">Invite Auto-Join</label>
+	      <select data-field="autoJoin" class="channel-select">
+	        <option value="always">Always join invites</option>
+	        <option value="allowlist">Only when inviter or room is allowlisted</option>
+	        <option value="off">Do not auto-join</option>
+	      </select>
+	      <label class="text-xs text-[var(--muted)]">Unknown DM Approval</label>
+	      <select data-field="otpSelfApproval" class="channel-select"
+	        value=${otpSelfApprovalDraft.value ? "on" : "off"}
+	        onChange=${(e) => {
+						otpSelfApprovalDraft.value = e.target.value !== "off";
+					}}>
+	        <option value="on">PIN challenge enabled (recommended)</option>
+	        <option value="off">Reject unknown DMs without a PIN</option>
+	      </select>
+	      <label class="text-xs text-[var(--muted)]">PIN Cooldown Seconds</label>
+	      <input data-field="otpCooldown" type="number" min="1" step="1" class="channel-input"
+	        value=${otpCooldownDraft.value}
+	        onInput=${(e) => {
+						otpCooldownDraft.value = e.target.value;
+					}} />
+	      <div class="text-xs text-[var(--muted)]">With DM policy on allowlist, unknown users get a 6-digit PIN challenge by default.</div>
+	      <label class="text-xs text-[var(--muted)]">Default Model</label>
+	      <${ModelSelect} models=${modelsSig.value} value=${addModel.value}
+	        onChange=${(v) => {
+						addModel.value = v;
+					}}
+	        placeholder=${defaultPlaceholder} />
+	      <label class="text-xs text-[var(--muted)]">DM Allowlist (Matrix user IDs)</label>
+	      <${AllowlistInput} value=${userAllowlistItems.value} preserveAt=${true} onChange=${(items) => {
+					userAllowlistItems.value = items;
+				}} />
+	      <label class="text-xs text-[var(--muted)]">Room Allowlist (room IDs or aliases)</label>
+	      <${AllowlistInput} value=${roomAllowlistItems.value} preserveAt=${true} onChange=${(items) => {
+					roomAllowlistItems.value = items;
+				}} />
+	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
+					advancedConfigPatch.value = value;
+				}} />
+	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
+	        ${saving.value ? "Connecting\u2026" : "Connect Matrix"}
 	      </button>
 	    </div>
 	  </${Modal}>`;
@@ -973,12 +1611,19 @@ function AddWhatsAppModal() {
 	var pairingStarted = useSignal(false);
 	var allowlistItems = useSignal([]);
 	var accountDraft = useSignal("");
+	var advancedConfigPatch = useSignal("");
 
 	function onStartPairing(e) {
 		e.preventDefault();
 		var accountId = accountDraft.value.trim();
 		if (!accountId) {
 			error.value = "Account ID is required.";
+			return;
+		}
+		var form = e.target.closest(".channel-form");
+		var advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+		if (!advancedPatch.ok) {
+			error.value = advancedPatch.error;
 			return;
 		}
 		error.value = "";
@@ -989,7 +1634,7 @@ function AddWhatsAppModal() {
 		waPairingAccountId.value = accountId;
 
 		var addConfig = {
-			dm_policy: "open",
+			dm_policy: form.querySelector("[data-field=dmPolicy]")?.value || "open",
 			allowlist: allowlistItems.value,
 		};
 		if (addModel.value) {
@@ -997,6 +1642,7 @@ function AddWhatsAppModal() {
 			var found = modelsSig.value.find((x) => x.id === addModel.value);
 			if (found?.provider) addConfig.model_provider = found.provider;
 		}
+		Object.assign(addConfig, advancedPatch.value);
 		addChannel("whatsapp", accountId, addConfig).then((res) => {
 			saving.value = false;
 			if (res?.ok) {
@@ -1016,6 +1662,7 @@ function AddWhatsAppModal() {
 		waPairingAccountId.value = null;
 		allowlistItems.value = [];
 		accountDraft.value = "";
+		advancedConfigPatch.value = "";
 		loadChannels();
 	}
 
@@ -1071,6 +1718,9 @@ function AddWhatsAppModal() {
         <${AllowlistInput} value=${allowlistItems.value} onChange=${(v) => {
 					allowlistItems.value = v;
 				}} />
+        <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
+					advancedConfigPatch.value = value;
+				}} />
         ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
         <button class="provider-btn" onClick=${onStartPairing} disabled=${saving.value}>
           ${saving.value ? "Starting\u2026" : "Start Pairing"}
@@ -1088,13 +1738,37 @@ function EditChannelModal() {
 	var saving = useSignal(false);
 	var editModel = useSignal("");
 	var allowlistItems = useSignal([]);
+	var roomAllowlistItems = useSignal([]);
 	var editCredential = useSignal("");
 	var editWebhookSecret = useSignal("");
+	var editStreamMode = useSignal("edit_in_place");
+	var editReplyStyle = useSignal("top_level");
+	var editWelcomeCard = useSignal(true);
+	var editBotName = useSignal("");
+	var editMatrixAuthMode = useSignal("access_token");
+	var editMatrixDeviceDisplayName = useSignal("");
+	var editMatrixOwnershipMode = useSignal("user_managed");
+	var editMatrixOtpSelfApproval = useSignal(true);
+	var editMatrixOtpCooldown = useSignal("300");
+	var editAdvancedConfigPatch = useSignal("");
 	useEffect(() => {
 		editModel.value = ch?.config?.model || "";
-		allowlistItems.value = ch?.config?.allowlist || [];
+		allowlistItems.value = ch?.config?.allowlist || ch?.config?.user_allowlist || [];
+		roomAllowlistItems.value = ch?.config?.room_allowlist || [];
 		editCredential.value = "";
 		editWebhookSecret.value = ch?.config?.webhook_secret || "";
+		editStreamMode.value = ch?.config?.stream_mode || "edit_in_place";
+		editReplyStyle.value = ch?.config?.reply_style || "top_level";
+		editWelcomeCard.value = ch?.config?.welcome_card !== false;
+		editBotName.value = ch?.config?.bot_name || "";
+		editMatrixAuthMode.value = ch?.config?.password ? "password" : "access_token";
+		editMatrixDeviceDisplayName.value = ch?.config?.device_display_name || "";
+		editMatrixOwnershipMode.value = normalizeMatrixOwnershipMode(
+			ch?.config?.ownership_mode || (ch?.config?.password ? "moltis_owned" : "user_managed"),
+		);
+		editMatrixOtpSelfApproval.value = ch?.config?.otp_self_approval !== false;
+		editMatrixOtpCooldown.value = String(ch?.config?.otp_cooldown_secs || 300);
+		editAdvancedConfigPatch.value = "";
 	}, [ch]);
 	if (!ch) return null;
 	var cfg = ch.config || {};
@@ -1103,6 +1777,7 @@ function EditChannelModal() {
 	var isDiscord = chType === "discord";
 	var isWhatsApp = chType === "whatsapp";
 	var isTelegram = chType === "telegram";
+	var isMatrix = chType === "matrix";
 
 	function addModelToConfig(config) {
 		if (!editModel.value) return;
@@ -1111,7 +1786,7 @@ function EditChannelModal() {
 		if (found?.provider) config.model_provider = found.provider;
 	}
 
-	function addChannelCredentials(config) {
+	function addChannelCredentials(config, form) {
 		if (isTeams) {
 			config.app_id = cfg.app_id || ch.account_id;
 			config.app_password = editCredential.value || cfg.app_password || "";
@@ -1120,6 +1795,22 @@ function EditChannelModal() {
 			config.token = editCredential.value || cfg.token || "";
 		} else if (isTelegram) {
 			config.token = cfg.token || "";
+		} else if (isMatrix) {
+			config.homeserver = form.querySelector("[data-field=homeserver]")?.value || cfg.homeserver || "";
+			config.user_id = form.querySelector("[data-field=userId]")?.value || cfg.user_id || "";
+			config.device_id = cfg.device_id || undefined;
+			config.device_display_name = editMatrixDeviceDisplayName.value.trim() || null;
+			config.ownership_mode =
+				normalizeMatrixAuthMode(editMatrixAuthMode.value) === "password"
+					? normalizeMatrixOwnershipMode(editMatrixOwnershipMode.value)
+					: "user_managed";
+			if (normalizeMatrixAuthMode(editMatrixAuthMode.value) === "password") {
+				config.password = editCredential.value || cfg.password || "";
+				config.access_token = "";
+			} else {
+				config.access_token = editCredential.value || cfg.access_token || "";
+				config.password = null;
+			}
 		}
 	}
 
@@ -1127,23 +1818,44 @@ function EditChannelModal() {
 		var updateConfig = {};
 		updateConfig.dm_policy = form.querySelector("[data-field=dmPolicy]")?.value || "open";
 		updateConfig.allowlist = allowlistItems.value;
+		if (isMatrix) {
+			updateConfig.user_allowlist = allowlistItems.value;
+			updateConfig.room_policy = form.querySelector("[data-field=roomPolicy]")?.value || cfg.room_policy || "allowlist";
+			updateConfig.auto_join = form.querySelector("[data-field=autoJoin]")?.value || cfg.auto_join || "always";
+			updateConfig.room_allowlist = roomAllowlistItems.value;
+			updateConfig.otp_self_approval = editMatrixOtpSelfApproval.value;
+			updateConfig.otp_cooldown_secs = normalizeMatrixOtpCooldown(editMatrixOtpCooldown.value);
+		}
 		if (!isWhatsApp) {
 			updateConfig.mention_mode = form.querySelector("[data-field=mentionMode]")?.value || "mention";
 		}
-		addChannelCredentials(updateConfig);
+		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
+		if (isTeams) {
+			updateConfig.stream_mode = editStreamMode.value;
+			updateConfig.reply_style = editReplyStyle.value;
+			updateConfig.welcome_card = editWelcomeCard.value;
+			if (editBotName.value.trim()) updateConfig.bot_name = editBotName.value.trim();
+		}
 		return updateConfig;
 	}
 
 	function onSave(e) {
 		e.preventDefault();
 		var form = e.target.closest(".channel-form");
+		var advancedPatch = parseChannelConfigPatch(editAdvancedConfigPatch.value);
+		if (!advancedPatch.ok) {
+			error.value = advancedPatch.error;
+			return;
+		}
 		error.value = "";
 		saving.value = true;
+		var updateConfig = buildUpdateConfig(form);
+		Object.assign(updateConfig, advancedPatch.value);
 		sendRpc("channels.update", {
 			type: channelType(ch.type),
 			account_id: ch.account_id,
-			config: buildUpdateConfig(form),
+			config: updateConfig,
 		}).then((res) => {
 			saving.value = false;
 			if (res?.ok) {
@@ -1168,9 +1880,9 @@ function EditChannelModal() {
 	      ${isTelegram && ch.account_id && html`<a href="https://t.me/${ch.account_id}" target="_blank" class="text-xs text-[var(--accent)] underline">t.me/${ch.account_id}</a>`}
 	      ${
 					isTeams &&
-					html`<div>
+					html`<div class="flex flex-col gap-1">
 				        <label class="text-xs text-[var(--muted)]">App Password (optional: leave blank to keep existing)</label>
-				        <input type="password" class="channel-input" value=${editCredential.value}
+				        <input type="password" class="channel-input w-full" value=${editCredential.value}
 				          onInput=${(e) => {
 										editCredential.value = e.target.value;
 									}} />
@@ -1178,21 +1890,155 @@ function EditChannelModal() {
 				}
 	      ${
 					isTeams &&
-					html`<div>
+					html`<div class="flex flex-col gap-1">
 				        <label class="text-xs text-[var(--muted)]">Webhook Secret</label>
-				        <input type="text" class="channel-input" value=${editWebhookSecret.value}
+				        <input type="text" class="channel-input w-full" value=${editWebhookSecret.value}
 				          onInput=${(e) => {
 										editWebhookSecret.value = e.target.value;
 									}} />
+				      </div>
+				      <div class="flex gap-3">
+				        <div class="flex-1">
+				          <label class="text-xs text-[var(--muted)]">Streaming</label>
+				          <select class="channel-select" value=${editStreamMode.value}
+				            onChange=${(e) => {
+											editStreamMode.value = e.target.value;
+										}}>
+				            <option value="edit_in_place">Edit-in-place (live updates)</option>
+				            <option value="off">Off (send once complete)</option>
+				          </select>
+				        </div>
+				        <div class="flex-1">
+				          <label class="text-xs text-[var(--muted)]">Reply Style</label>
+				          <select class="channel-select" value=${editReplyStyle.value}
+				            onChange=${(e) => {
+											editReplyStyle.value = e.target.value;
+										}}>
+				            <option value="top_level">Top-level message</option>
+				            <option value="thread">Reply in thread</option>
+				          </select>
+				        </div>
+				      </div>
+				      <div class="flex gap-3 items-end">
+				        <div class="flex-1">
+				          <label class="text-xs text-[var(--muted)]">Bot Name (for welcome card)</label>
+				          <input type="text" class="channel-input" value=${editBotName.value}
+				            onInput=${(e) => {
+											editBotName.value = e.target.value;
+										}}
+				            placeholder="Moltis" />
+				        </div>
+				        <label class="flex items-center gap-2 text-xs text-[var(--muted)] pb-2 cursor-pointer">
+				          <input type="checkbox" checked=${editWelcomeCard.value}
+				            onChange=${(e) => {
+											editWelcomeCard.value = e.target.checked;
+										}} />
+				          Welcome card
+				        </label>
 				      </div>`
 				}
 	      ${
 					isDiscord &&
-					html`<div>
+					html`<div class="flex flex-col gap-1">
 				        <label class="text-xs text-[var(--muted)]">Bot Token (optional: leave blank to keep existing)</label>
-				        <input type="password" class="channel-input" value=${editCredential.value}
+				        <input type="password" class="channel-input w-full" value=${editCredential.value}
 				          onInput=${(e) => {
 										editCredential.value = e.target.value;
+									}} />
+				      </div>`
+				}
+	      ${
+					isMatrix &&
+					html`<div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+				        <div class="font-medium text-emerald-50">Encrypted chats require password auth</div>
+				        <div>${MATRIX_ENCRYPTION_GUIDANCE}</div>
+				      </div>`
+				}
+	      ${
+					isMatrix &&
+					html`<div class="flex flex-col gap-1">
+				        <label class="text-xs text-[var(--muted)]">Authentication</label>
+				        <select class="channel-select w-full" value=${editMatrixAuthMode.value}
+				          onChange=${(e) => {
+										editMatrixAuthMode.value = normalizeMatrixAuthMode(e.target.value);
+									}}>
+				          <option value="access_token">Access token</option>
+				          <option value="password">Password</option>
+				        </select>
+				        <div class="text-xs text-[var(--muted)]">${matrixAuthModeGuidance(editMatrixAuthMode.value)}</div>
+				      </div>`
+				}
+	      ${
+					isMatrix &&
+					html`
+	        <div class="flex flex-col gap-1">
+	          ${
+							editMatrixAuthMode.value === "password"
+								? html`
+					<label class="flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2">
+					  <input
+					    type="checkbox"
+					    aria-label="Let Moltis own this Matrix account"
+					    checked=${normalizeMatrixOwnershipMode(editMatrixOwnershipMode.value) === "moltis_owned"}
+					    onChange=${(e) => {
+								editMatrixOwnershipMode.value = e.target.checked ? "moltis_owned" : "user_managed";
+							}} />
+					  <span class="flex flex-col gap-1">
+					    <span class="text-xs font-medium text-[var(--text-strong)]">Let Moltis own this Matrix account</span>
+					    <span class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(
+								editMatrixAuthMode.value,
+								editMatrixOwnershipMode.value,
+							)}</span>
+					  </span>
+					</label>`
+								: html`<div class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(
+										editMatrixAuthMode.value,
+										"user_managed",
+									)}</div>`
+						}
+	        </div>`
+				}
+	      ${
+					isMatrix &&
+					html`<div class="flex flex-col gap-1">
+				        <label class="text-xs text-[var(--muted)]">Homeserver URL</label>
+				        <input data-field="homeserver" type="text" class="channel-input w-full" defaultValue=${cfg.homeserver || ""} />
+				      </div>`
+				}
+	      ${
+					isMatrix &&
+					html`<div class="flex flex-col gap-1">
+				        <label class="text-xs text-[var(--muted)]">Matrix User ID${editMatrixAuthMode.value === "password" ? " (required)" : " (optional)"}</label>
+				        <input data-field="userId" type="text" class="channel-input w-full" defaultValue=${cfg.user_id || ""} />
+				      </div>`
+				}
+	      ${
+					isMatrix &&
+					html`<div class="flex flex-col gap-1">
+				        <label class="text-xs text-[var(--muted)]">${matrixCredentialLabel(editMatrixAuthMode.value)} (optional: leave blank to keep existing)</label>
+				        <input type="password" class="channel-input w-full" value=${editCredential.value}
+				          onInput=${(e) => {
+										editCredential.value = e.target.value;
+									}}
+				          placeholder=${matrixCredentialPlaceholder(editMatrixAuthMode.value)} />
+				        <div class="text-xs text-[var(--muted)]">
+				          ${
+										editMatrixAuthMode.value === "password"
+											? html`Password auth is required for encrypted Matrix chats because Moltis needs its own Matrix device keys.`
+											: html`Access token mode does <span class="font-medium">not</span> support encrypted Matrix chats because Moltis cannot import the existing device's private encryption keys.`
+									}
+				          ${" "}
+				          <a href=${MATRIX_DOCS_URL} target="_blank" rel="noreferrer" class="text-[var(--accent)] underline">Matrix setup docs</a>
+				        </div>
+				      </div>`
+				}
+	      ${
+					isMatrix &&
+					html`<div class="flex flex-col gap-1">
+				        <label class="text-xs text-[var(--muted)]">Device Display Name (optional)</label>
+				        <input type="text" class="channel-input w-full" value=${editMatrixDeviceDisplayName.value}
+				          onInput=${(e) => {
+										editMatrixDeviceDisplayName.value = e.target.value;
 									}} />
 				      </div>`
 				}
@@ -1214,6 +2060,38 @@ function EditChannelModal() {
         </select>
       `
 			}
+      ${
+				isMatrix &&
+				html`
+        <label class="text-xs text-[var(--muted)]">Unknown DM Approval</label>
+        <select class="channel-select" value=${editMatrixOtpSelfApproval.value ? "on" : "off"}
+          onChange=${(e) => {
+						editMatrixOtpSelfApproval.value = e.target.value !== "off";
+					}}>
+          <option value="on">PIN challenge enabled (recommended)</option>
+          <option value="off">Reject unknown DMs without a PIN</option>
+        </select>
+        <label class="text-xs text-[var(--muted)]">PIN Cooldown Seconds</label>
+        <input type="number" min="1" step="1" class="channel-input"
+          value=${editMatrixOtpCooldown.value}
+          onInput=${(e) => {
+						editMatrixOtpCooldown.value = e.target.value;
+					}} />
+        <div class="text-xs text-[var(--muted)]">With DM policy on allowlist, unknown users get a 6-digit PIN challenge by default.</div>
+        <label class="text-xs text-[var(--muted)]">Room Policy</label>
+        <select data-field="roomPolicy" class="channel-select" value=${cfg.room_policy || "allowlist"}>
+          <option value="allowlist">Room allowlist only</option>
+          <option value="open">Open (any joined room)</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <label class="text-xs text-[var(--muted)]">Invite Auto-Join</label>
+        <select data-field="autoJoin" class="channel-select" value=${cfg.auto_join || "always"}>
+          <option value="always">Always join invites</option>
+          <option value="allowlist">Only when inviter or room is allowlisted</option>
+          <option value="off">Do not auto-join</option>
+        </select>
+      `
+			}
       <label class="text-xs text-[var(--muted)]">Default Model</label>
       <${ModelSelect} models=${modelsSig.value} value=${editModel.value}
         onChange=${(v) => {
@@ -1221,9 +2099,23 @@ function EditChannelModal() {
 				}}
         placeholder=${defaultPlaceholder} />
       <label class="text-xs text-[var(--muted)]">DM Allowlist</label>
-      <${AllowlistInput} value=${allowlistItems.value} onChange=${(v) => {
+      <${AllowlistInput} value=${allowlistItems.value} preserveAt=${isMatrix} onChange=${(v) => {
 				allowlistItems.value = v;
 			}} />
+      ${
+				isMatrix &&
+				html`
+        <label class="text-xs text-[var(--muted)]">Room Allowlist</label>
+        <${AllowlistInput} value=${roomAllowlistItems.value} preserveAt=${true} onChange=${(v) => {
+					roomAllowlistItems.value = v;
+				}} />
+      `
+			}
+	      <${AdvancedConfigPatchField} value=${editAdvancedConfigPatch.value}
+	        onInput=${(value) => {
+						editAdvancedConfigPatch.value = value;
+					}}
+	        currentConfig=${cfg} />
       ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
 	      <button class="provider-btn"
 	        onClick=${onSave} disabled=${saving.value}>
@@ -1303,12 +2195,14 @@ function ChannelsPage() {
         </div>
         ${activeTab.value === "channels" && channels.value.length > 0 && html`<${ConnectButtons} />`}
       </div>
+      ${activeTab.value === "channels" && html`<${ChannelStorageNotice} />`}
       ${activeTab.value === "channels" ? html`<${ChannelsTab} />` : html`<${SendersTab} />`}
     </div>
     <${AddTelegramModal} />
     <${AddTeamsModal} />
     <${AddDiscordModal} />
     <${AddSlackModal} />
+    <${AddMatrixModal} />
     <${AddWhatsAppModal} />
     <${EditChannelModal} />
     <${ConfirmDialog} />
@@ -1324,6 +2218,8 @@ export function initChannels(container) {
 	showAddTelegram.value = false;
 	showAddTeams.value = false;
 	showAddDiscord.value = false;
+	showAddSlack.value = false;
+	showAddMatrix.value = false;
 	showAddWhatsApp.value = false;
 	editingChannel.value = null;
 	sendersAccount.value = "";

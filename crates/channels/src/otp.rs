@@ -11,6 +11,11 @@ use std::{
 
 use rand::Rng;
 
+use crate::{
+    ChannelType,
+    plugin::{ChannelEvent, ChannelEventSink},
+};
+
 /// How long an OTP code stays valid.
 const OTP_TTL: Duration = Duration::from_secs(300);
 
@@ -230,10 +235,171 @@ fn generate_otp_code() -> String {
     code.to_string()
 }
 
+pub async fn emit_otp_challenge(
+    sink: Option<&dyn ChannelEventSink>,
+    channel_type: ChannelType,
+    account_id: &str,
+    peer_id: &str,
+    username: Option<&str>,
+    sender_name: Option<&str>,
+    code: String,
+    expires_at: i64,
+) {
+    if let Some(sink) = sink {
+        sink.emit(ChannelEvent::OtpChallenge {
+            channel_type,
+            account_id: account_id.to_string(),
+            peer_id: peer_id.to_string(),
+            username: username.map(String::from),
+            sender_name: sender_name.map(String::from),
+            code,
+            expires_at,
+        })
+        .await;
+    }
+}
+
+pub async fn emit_otp_resolution(
+    sink: Option<&dyn ChannelEventSink>,
+    channel_type: ChannelType,
+    account_id: &str,
+    peer_id: &str,
+    username: Option<&str>,
+    resolution: &str,
+) {
+    if let Some(sink) = sink {
+        sink.emit(ChannelEvent::OtpResolved {
+            channel_type,
+            account_id: account_id.to_string(),
+            peer_id: peer_id.to_string(),
+            username: username.map(String::from),
+            resolution: resolution.to_string(),
+        })
+        .await;
+    }
+}
+
+pub async fn approve_sender_via_otp(
+    sink: Option<&dyn ChannelEventSink>,
+    channel_type: ChannelType,
+    account_id: &str,
+    approval_identifier: &str,
+    peer_id: &str,
+    username: Option<&str>,
+) {
+    if let Some(sink) = sink {
+        sink.request_sender_approval(channel_type.as_str(), account_id, approval_identifier)
+            .await;
+        emit_otp_resolution(
+            Some(sink),
+            channel_type,
+            account_id,
+            peer_id,
+            username,
+            "approved",
+        )
+        .await;
+    }
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use {
+        super::*,
+        crate::{ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget, Result},
+        async_trait::async_trait,
+    };
+
+    #[derive(Default)]
+    struct TestSinkState {
+        events: Mutex<Vec<ChannelEvent>>,
+        approvals: Mutex<Vec<(String, String, String)>>,
+    }
+
+    struct TestSink {
+        state: Arc<TestSinkState>,
+    }
+
+    #[async_trait]
+    impl ChannelEventSink for TestSink {
+        async fn emit(&self, event: ChannelEvent) {
+            self.state
+                .events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(event);
+        }
+
+        async fn dispatch_to_chat(
+            &self,
+            _text: &str,
+            _reply_to: ChannelReplyTarget,
+            _meta: ChannelMessageMeta,
+        ) {
+        }
+
+        async fn dispatch_command(
+            &self,
+            _command: &str,
+            _reply_to: ChannelReplyTarget,
+        ) -> Result<String> {
+            Ok(String::new())
+        }
+
+        async fn request_disable_account(
+            &self,
+            _channel_type: &str,
+            _account_id: &str,
+            _reason: &str,
+        ) {
+        }
+
+        async fn request_sender_approval(
+            &self,
+            channel_type: &str,
+            account_id: &str,
+            identifier: &str,
+        ) {
+            self.state
+                .approvals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((
+                    channel_type.to_string(),
+                    account_id.to_string(),
+                    identifier.to_string(),
+                ));
+        }
+
+        async fn save_channel_voice(
+            &self,
+            _audio_data: &[u8],
+            _filename: &str,
+            _reply_to: &ChannelReplyTarget,
+        ) -> Option<String> {
+            None
+        }
+
+        async fn transcribe_voice(&self, _audio_data: &[u8], _format: &str) -> Result<String> {
+            Err(crate::Error::unavailable("not needed"))
+        }
+
+        async fn voice_stt_available(&self) -> bool {
+            false
+        }
+
+        async fn update_location(
+            &self,
+            _reply_to: &ChannelReplyTarget,
+            _lat: f64,
+            _lon: f64,
+        ) -> bool {
+            false
+        }
+    }
 
     #[test]
     fn initiate_creates_challenge() {
@@ -418,6 +584,51 @@ mod tests {
             let n: u32 = code.parse().unwrap();
             assert!(n >= 100_000);
             assert!(n < 1_000_000);
+        }
+    }
+
+    #[tokio::test]
+    async fn approve_sender_via_otp_requests_approval_and_emits_resolution() {
+        let state = Arc::new(TestSinkState::default());
+        let sink = TestSink {
+            state: Arc::clone(&state),
+        };
+
+        approve_sender_via_otp(
+            Some(&sink),
+            ChannelType::Matrix,
+            "bot1",
+            "@alice:matrix.org",
+            "@alice:matrix.org",
+            Some("@alice:matrix.org"),
+        )
+        .await;
+
+        let approvals = state.approvals.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(approvals.as_slice(), [(
+            "matrix".to_string(),
+            "bot1".to_string(),
+            "@alice:matrix.org".to_string()
+        )]);
+        drop(approvals);
+
+        let events = state.events.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ChannelEvent::OtpResolved {
+                channel_type,
+                account_id,
+                peer_id,
+                username,
+                resolution,
+            } => {
+                assert_eq!(*channel_type, ChannelType::Matrix);
+                assert_eq!(account_id, "bot1");
+                assert_eq!(peer_id, "@alice:matrix.org");
+                assert_eq!(username.as_deref(), Some("@alice:matrix.org"));
+                assert_eq!(resolution, "approved");
+            },
+            other => panic!("unexpected event: {other:?}"),
         }
     }
 }

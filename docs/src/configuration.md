@@ -261,6 +261,11 @@ env = { GITHUB_TOKEN = "ghp_..." }
 transport = "sse"
 url = "https://mcp.example.com/mcp?api_key=$REMOTE_MCP_KEY"
 headers = { Authorization = "Bearer ${REMOTE_MCP_TOKEN}" }
+
+[mcp.servers.remote_http]
+transport = "streamable-http"
+url = "https://mcp.example.com/mcp"
+headers = { Authorization = "Bearer ${API_KEY}" }
 ```
 
 Remote MCP URLs and headers support `$NAME` or `${NAME}` placeholders. For live remote servers, values resolve from Moltis-managed env overrides, either `[env]` in config or **Settings** → **Environment Variables**.

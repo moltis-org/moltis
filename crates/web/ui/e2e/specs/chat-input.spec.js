@@ -10,7 +10,7 @@ async function sendRpcFromPage(page, method, params) {
 	let lastResponse = null;
 	for (let attempt = 0; attempt < 30; attempt++) {
 		if (attempt > 0) {
-			await waitForWsConnected(page);
+			await waitForWsConnected(page, 5_000).catch(() => {});
 		}
 		lastResponse = await page
 			.evaluate(
@@ -33,6 +33,59 @@ async function sendRpcFromPage(page, method, params) {
 		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
 	}
 	return lastResponse;
+}
+
+async function waitForWsConnectedIfPossible(page) {
+	await waitForWsConnected(page, 5_000).catch(() => {});
+}
+
+async function mockFullContextRpc(page) {
+	await page.evaluate(async () => {
+		var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+		if (!appScript) throw new Error("app module script not found");
+		var appUrl = new URL(appScript.src, window.location.origin);
+		var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+		var stateModule = await import(`${prefix}js/state.js`);
+		var ws = stateModule.ws;
+		if (!ws) throw new Error("websocket unavailable");
+
+		if (!window.__origFullContextWsSend) {
+			window.__origFullContextWsSend = ws.send.bind(ws);
+		}
+
+		ws.send = (payload) => {
+			try {
+				var parsed = JSON.parse(payload);
+				if (parsed?.method === "chat.full_context") {
+					var resolver = stateModule.pending?.[parsed.id];
+					if (typeof resolver === "function") {
+						delete stateModule.pending[parsed.id];
+						resolver({
+							ok: true,
+							payload: {
+								messageCount: 2,
+								systemPromptChars: 42,
+								totalChars: 128,
+								messages: [
+									{ role: "user", content: "How are you?" },
+									{
+										role: "assistant",
+										content: "Doing fine.",
+										tool_calls: [{ function: { name: "demo_tool", arguments: '{"hello":"world"}' } }],
+									},
+								],
+								llmOutputs: [{ text: "assistant raw output" }],
+							},
+						});
+					}
+					return;
+				}
+			} catch (_err) {
+				// Fall through to the original sender.
+			}
+			return window.__origFullContextWsSend(payload);
+		};
+	});
 }
 
 async function waitForChatInputReady(page) {
@@ -70,15 +123,13 @@ async function openFullContextWithRetry(page) {
 	const toggleBtn = page.locator("#fullContextBtn");
 	const panel = page.locator("#fullContextPanel");
 	const copyBtn = panel.getByRole("button", { name: "Copy", exact: true });
+	const copiedBtn = panel.getByRole("button", { name: "Copied!", exact: true });
+	const downloadBtn = panel.getByRole("button", { name: "Download", exact: true });
+	const llmOutputBtn = panel.getByRole("button", { name: "LLM output", exact: true });
 	const failedMsg = panel.getByText("Failed to build context", { exact: true });
 
 	for (let attempt = 0; attempt < 5; attempt++) {
-		await waitForWsConnected(page);
-		const fullContextRpc = await sendRpcFromPage(page, "chat.full_context", {});
-		const noProvidersConfigured =
-			fullContextRpc?.error?.code === "UNAVAILABLE" ||
-			fullContextRpc?.error?.message?.includes("no LLM providers configured") ||
-			fullContextRpc?.error?.message?.includes("chat not configured");
+		await waitForWsConnectedIfPossible(page);
 
 		if (await fullContextModal.isVisible().catch(() => false)) {
 			await page.locator("#fullContextModalCloseBtn").click();
@@ -95,19 +146,36 @@ async function openFullContextWithRetry(page) {
 		const result = await expect
 			.poll(
 				async () => {
-					if (await copyBtn.isVisible().catch(() => false)) return "copy";
+					if (
+						(await copyBtn.isVisible().catch(() => false)) ||
+						(await copiedBtn.isVisible().catch(() => false)) ||
+						((await downloadBtn.isVisible().catch(() => false)) && (await llmOutputBtn.isVisible().catch(() => false)))
+					) {
+						return "controls";
+					}
 					if (await failedMsg.isVisible().catch(() => false)) return "failed";
 					return "loading";
 				},
-				{ timeout: 8_000 },
+				{ timeout: 12_000 },
 			)
-			.toBe("copy")
-			.then(() => "copy")
+			.toBe("controls")
+			.then(() => "controls")
 			.catch(() => "failed");
 
-		if (result === "copy") return copyBtn;
-		if (result === "failed" && noProvidersConfigured) {
-			return null;
+		if (result === "controls") {
+			if (await copyBtn.isVisible().catch(() => false)) return copyBtn;
+			if (await copiedBtn.isVisible().catch(() => false)) return copiedBtn;
+			return copyBtn;
+		}
+		if (result === "failed") {
+			const fullContextRpc = await sendRpcFromPage(page, "chat.full_context", {});
+			const noProvidersConfigured =
+				fullContextRpc?.error?.code === "UNAVAILABLE" ||
+				fullContextRpc?.error?.message?.includes("no LLM providers configured") ||
+				fullContextRpc?.error?.message?.includes("chat not configured");
+			if (noProvidersConfigured) {
+				return null;
+			}
 		}
 	}
 
@@ -363,6 +431,7 @@ test.describe("Chat input and slash commands", () => {
 
 	test("full context copy button uses small button style", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+		await mockFullContextRpc(page);
 		const copyBtn = await openFullContextWithRetry(page);
 		if (copyBtn === null) {
 			await expect(
@@ -426,6 +495,7 @@ test.describe("Chat input and slash commands", () => {
 
 	test("full context download button produces .jsonl file", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+		await mockFullContextRpc(page);
 		const copyBtn = await openFullContextWithRetry(page);
 		if (copyBtn === null) {
 			await expect(

@@ -1,16 +1,11 @@
 use std::{
-    collections::HashMap,
     path::{Component, Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 
 use tracing::warn;
 
-use {
-    moltis_config::VoiceSttProvider,
-    moltis_protocol::{ErrorShape, error_codes},
-};
+use moltis_protocol::{ErrorShape, error_codes};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
@@ -18,19 +13,6 @@ use crate::{
 };
 
 use super::{MethodContext, MethodRegistry};
-
-pub(super) fn model_probe_params(provider: Option<&str>) -> serde_json::Value {
-    let mut params = serde_json::json!({
-        "background": true,
-        "reason": "provider_connected",
-    });
-    if let Some(provider) = provider
-        && !provider.trim().is_empty()
-    {
-        params["provider"] = serde_json::json!(provider);
-    }
-    params
-}
 
 async fn active_session_key_for_ctx(ctx: &MethodContext) -> Option<String> {
     if let Some(session_key) = ctx
@@ -1344,6 +1326,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
     reg.register(
+        "channels.retry_ownership",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .channel
+                    .retry_ownership(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
         "channels.logout",
         Box::new(|ctx| {
             Box::pin(async move {
@@ -1569,6 +1564,138 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
 
+    // Webhooks
+    reg.register(
+        "webhooks.list",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .list()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.get",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .get(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.create",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .create(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.update",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .update(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.delete",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .delete(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.deliveries",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .deliveries(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.delivery.get",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .delivery_get(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.delivery.payload",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .delivery_payload(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.delivery.actions",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .delivery_actions(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "webhooks.profiles",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .webhooks
+                    .profiles()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
     // Heartbeat
     reg.register(
         "heartbeat.status",
@@ -1682,6 +1809,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             sandbox: Some(moltis_cron::types::CronSandboxConfig {
                                 enabled: patch.sandbox_enabled,
                                 image: patch.sandbox_image.clone(),
+                                auto_prune_container: None,
                             }),
                             ..Default::default()
                         };
@@ -1718,6 +1846,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             sandbox: moltis_cron::types::CronSandboxConfig {
                                 enabled: patch.sandbox_enabled,
                                 image: patch.sandbox_image.clone(),
+                                auto_prune_container: None,
                             },
                             wake_mode: moltis_cron::types::CronWakeMode::default(),
                         };
@@ -2327,7 +2456,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                     )),
                                 ];
                                 let result = tokio::time::timeout(
-                                    Duration::from_secs(3),
+                                    std::time::Duration::from_secs(3),
                                     provider.complete(&messages, &[]),
                                 )
                                 .await;
@@ -3168,6 +3297,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
     reg.register(
+        "models.cancel_detect",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .model
+                    .cancel_detect()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
         "models.test",
         Box::new(|ctx| {
             Box::pin(async move {
@@ -3199,30 +3341,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "providers.save_key",
         Box::new(|ctx| {
             Box::pin(async move {
-                let provider_name = ctx
-                    .params
-                    .get("provider")
-                    .and_then(|v| v.as_str())
-                    .map(ToOwned::to_owned);
-
-                let result = ctx
-                    .state
+                ctx.state
                     .services
                     .provider_setup
                     .save_key(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)?;
-
-                // Kick off background model detection after saving provider
-                // credentials, matching the behaviour of oauth.complete.
-                let model_service = Arc::clone(&ctx.state.services.model);
-                tokio::spawn(async move {
-                    let _ = model_service
-                        .detect_supported(model_probe_params(provider_name.as_deref()))
-                        .await;
-                });
-
-                Ok(result)
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -3243,35 +3367,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "providers.oauth.start",
         Box::new(|ctx| {
             Box::pin(async move {
-                let provider_name = ctx
-                    .params
-                    .get("provider")
-                    .and_then(|v| v.as_str())
-                    .map(ToOwned::to_owned);
-                let result = ctx
-                    .state
+                ctx.state
                     .services
                     .provider_setup
                     .oauth_start(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)?;
-
-                // If oauth.start short-circuited because valid tokens already
-                // existed, trigger a provider-scoped background probe now.
-                if result
-                    .get("alreadyAuthenticated")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
-                    let model_service = Arc::clone(&ctx.state.services.model);
-                    tokio::spawn(async move {
-                        let _ = model_service
-                            .detect_supported(model_probe_params(provider_name.as_deref()))
-                            .await;
-                    });
-                }
-
-                Ok(result)
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -3292,28 +3393,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "providers.oauth.complete",
         Box::new(|ctx| {
             Box::pin(async move {
-                let result = ctx
-                    .state
+                ctx.state
                     .services
                     .provider_setup
                     .oauth_complete(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)?;
-
-                let provider_name = result
-                    .get("provider")
-                    .and_then(|v| v.as_str())
-                    .map(ToOwned::to_owned);
-
-                // Kick off background support probing after OAuth provider connect.
-                let model_service = Arc::clone(&ctx.state.services.model);
-                tokio::spawn(async move {
-                    let _ = model_service
-                        .detect_supported(model_probe_params(provider_name.as_deref()))
-                        .await;
-                });
-
-                Ok(result)
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -3334,29 +3419,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "providers.save_models",
         Box::new(|ctx| {
             Box::pin(async move {
-                let provider_name = ctx
-                    .params
-                    .get("provider")
-                    .and_then(|v| v.as_str())
-                    .map(ToOwned::to_owned);
-
-                let result = ctx
-                    .state
+                ctx.state
                     .services
                     .provider_setup
                     .save_models(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)?;
-
-                // Kick off background support probing after saving preferred models.
-                let model_service = Arc::clone(&ctx.state.services.model);
-                tokio::spawn(async move {
-                    let _ = model_service
-                        .detect_supported(model_probe_params(provider_name.as_deref()))
-                        .await;
-                });
-
-                Ok(result)
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -4006,7 +4074,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 // Auto-enable both TTS and STT with ElevenLabs
                                 cfg.voice.tts.provider = "elevenlabs".to_string();
                                 cfg.voice.tts.enabled = true;
-                                cfg.voice.stt.provider = Some(VoiceSttProvider::ElevenLabs);
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::ElevenLabs);
                                 cfg.voice.stt.enabled = true;
                             },
                             "openai" | "openai-tts" => {
@@ -4024,25 +4093,29 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 // Auto-enable both TTS and STT with Google
                                 cfg.voice.tts.provider = "google".to_string();
                                 cfg.voice.tts.enabled = true;
-                                cfg.voice.stt.provider = Some(VoiceSttProvider::Google);
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::Google);
                                 cfg.voice.stt.enabled = true;
                             },
                             // STT providers
                             "whisper" => {
                                 cfg.voice.stt.whisper.api_key =
                                     Some(Secret::new(api_key.to_string()));
-                                cfg.voice.stt.provider = Some(VoiceSttProvider::Whisper);
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::Whisper);
                                 cfg.voice.stt.enabled = true;
                             },
                             "groq" => {
                                 cfg.voice.stt.groq.api_key = Some(Secret::new(api_key.to_string()));
-                                cfg.voice.stt.provider = Some(VoiceSttProvider::Groq);
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::Groq);
                                 cfg.voice.stt.enabled = true;
                             },
                             "deepgram" => {
                                 cfg.voice.stt.deepgram.api_key =
                                     Some(Secret::new(api_key.to_string()));
-                                cfg.voice.stt.provider = Some(VoiceSttProvider::Deepgram);
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::Deepgram);
                                 cfg.voice.stt.enabled = true;
                             },
                             "google" => {
@@ -4052,7 +4125,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 cfg.voice.tts.google.api_key =
                                     Some(Secret::new(api_key.to_string()));
                                 // Auto-enable both STT and TTS with Google
-                                cfg.voice.stt.provider = Some(VoiceSttProvider::Google);
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::Google);
                                 cfg.voice.stt.enabled = true;
                                 cfg.voice.tts.provider = "google".to_string();
                                 cfg.voice.tts.enabled = true;
@@ -4060,7 +4134,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "mistral" => {
                                 cfg.voice.stt.mistral.api_key =
                                     Some(Secret::new(api_key.to_string()));
-                                cfg.voice.stt.provider = Some(VoiceSttProvider::Mistral);
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::Mistral);
                                 cfg.voice.stt.enabled = true;
                             },
                             "elevenlabs-stt" => {
@@ -4070,7 +4145,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 cfg.voice.tts.elevenlabs.api_key =
                                     Some(Secret::new(api_key.to_string()));
                                 // Auto-enable both STT and TTS with ElevenLabs
-                                cfg.voice.stt.provider = Some(VoiceSttProvider::ElevenLabs);
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::ElevenLabs);
                                 cfg.voice.stt.enabled = true;
                                 cfg.voice.tts.provider = "elevenlabs".to_string();
                                 cfg.voice.tts.enabled = true;
@@ -4391,7 +4467,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             .command
                             .clone()
                             .unwrap_or_else(|| "qmd".into()),
-                        collections: HashMap::new(),
+                        collections: std::collections::HashMap::new(),
                         max_results: config.memory.qmd.max_results.unwrap_or(10),
                         timeout_ms: config.memory.qmd.timeout_ms.unwrap_or(30_000),
                         work_dir: moltis_config::data_dir(),

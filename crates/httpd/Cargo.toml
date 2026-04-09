@@ -18,6 +18,7 @@ chrono-tz             = { workspace = true }
 dashmap               = { workspace = true }
 futures               = { workspace = true }
 hostname              = { workspace = true }
+ipnet                 = { workspace = true }
 moltis-agents         = { workspace = true }
 moltis-auth           = { workspace = true }
 moltis-browser        = { workspace = true }
@@ -27,6 +28,7 @@ moltis-config         = { workspace = true }
 moltis-cron           = { workspace = true }
 moltis-gateway        = { workspace = true }
 moltis-graphql        = { optional = true, workspace = true }
+moltis-matrix         = { optional = true, workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-msteams        = { workspace = true }
 moltis-protocol       = { workspace = true }
@@ -37,6 +39,7 @@ moltis-slack          = { optional = true, workspace = true }
 moltis-tls            = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-vault          = { optional = true, workspace = true }
+moltis-webhooks       = { workspace = true }
 ngrok                 = { optional = true, workspace = true }
 rand                  = { workspace = true }
 reqwest               = { workspace = true }
@@ -46,6 +49,7 @@ serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sysinfo               = { workspace = true }
 tempfile              = { workspace = true }
+time                  = { workspace = true }
 tokio                 = { workspace = true }
 tokio-tungstenite     = { workspace = true }
 tokio-util            = { workspace = true }
@@ -60,6 +64,7 @@ webauthn-rs           = { features = ["danger-allow-state-serialisation"], works
 [features]
 default = [
   "graphql",
+  "matrix",
   "mdns",
   "metrics",
   "prometheus",
@@ -77,6 +82,7 @@ graphql = [
   "dep:moltis-graphql",
   "moltis-gateway/graphql",
 ]
+matrix = ["dep:moltis-matrix", "moltis-gateway/matrix"]
 mdns = ["moltis-gateway/mdns"]
 metrics = ["dep:moltis-metrics", "moltis-gateway/metrics"]
 ngrok = ["dep:ngrok"]

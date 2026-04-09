@@ -10,7 +10,9 @@ use {
 
 use moltis_channels::{
     ChannelAttachment, ChannelEvent, ChannelMessageKind, ChannelMessageMeta, ChannelReplyTarget,
-    ChannelType, message_log::MessageLogEntry,
+    ChannelType,
+    message_log::MessageLogEntry,
+    otp::{approve_sender_via_otp, emit_otp_challenge, emit_otp_resolution},
 };
 
 use crate::{
@@ -839,23 +841,21 @@ async fn handle_otp_flow(
 
         match result {
             OtpVerifyResult::Approved => {
+                approve_sender_via_otp(
+                    state.event_sink.as_deref(),
+                    ChannelType::Whatsapp,
+                    account_id,
+                    peer_id,
+                    peer_id,
+                    username,
+                )
+                .await;
+
                 let reply = wa::Message {
                     conversation: Some("Access granted! You can now use this bot.".into()),
                     ..Default::default()
                 };
                 let _ = state.send_message(chat_jid.clone(), reply).await;
-
-                // Emit OTP resolved event for the gateway to persist the allowlist change.
-                if let Some(ref sink) = state.event_sink {
-                    sink.emit(ChannelEvent::OtpResolved {
-                        channel_type: ChannelType::Whatsapp,
-                        account_id: account_id.to_string(),
-                        peer_id: peer_id.to_string(),
-                        username: username.map(String::from),
-                        resolution: "approved".to_string(),
-                    })
-                    .await;
-                }
             },
             OtpVerifyResult::WrongCode { attempts_left } => {
                 let reply = wa::Message {
@@ -877,6 +877,15 @@ async fn handle_otp_flow(
                     ..Default::default()
                 };
                 let _ = state.send_message(chat_jid.clone(), reply).await;
+                emit_otp_resolution(
+                    state.event_sink.as_deref(),
+                    ChannelType::Whatsapp,
+                    account_id,
+                    peer_id,
+                    username,
+                    "locked_out",
+                )
+                .await;
             },
             OtpVerifyResult::Expired => {
                 let reply = wa::Message {
@@ -886,6 +895,15 @@ async fn handle_otp_flow(
                     ..Default::default()
                 };
                 let _ = state.send_message(chat_jid.clone(), reply).await;
+                emit_otp_resolution(
+                    state.event_sink.as_deref(),
+                    ChannelType::Whatsapp,
+                    account_id,
+                    peer_id,
+                    username,
+                    "expired",
+                )
+                .await;
             },
             OtpVerifyResult::NoPending => {},
         }
@@ -924,18 +942,17 @@ async fn handle_otp_flow(
                 .as_secs() as i64
                 + 300;
 
-            if let Some(ref sink) = state.event_sink {
-                sink.emit(ChannelEvent::OtpChallenge {
-                    channel_type: ChannelType::Whatsapp,
-                    account_id: account_id.to_string(),
-                    peer_id: peer_id.to_string(),
-                    username: username.map(String::from),
-                    sender_name: sender_name.map(String::from),
-                    code,
-                    expires_at,
-                })
-                .await;
-            }
+            emit_otp_challenge(
+                state.event_sink.as_deref(),
+                ChannelType::Whatsapp,
+                account_id,
+                peer_id,
+                username,
+                sender_name,
+                code,
+                expires_at,
+            )
+            .await;
         },
         OtpInitResult::AlreadyPending => {
             // Resend the challenge message.

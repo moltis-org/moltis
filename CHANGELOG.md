@@ -19,6 +19,286 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260409.01] - 2026-04-09
+### Added
+- [matrix] Add slash command support
+- [models] Make model detection opt-in and add stop button
+
+
+### Fixed
+- [matrix] Match help command by exact name, not prefix
+- [models] Abort probe tasks on cancel, show feedback, await RPC
+- [tls] Include lan bind SANs in auto-generated certs
+- [tls] Address PR review feedback
+- [agents] Use system message for auto-continue nudge instead of user message
+- [common] Add default User-Agent header to shared HTTP client
+- [common] Use MOLTIS_VERSION for default user-agent and apply headers in apply_proxy
+- [agents] Keep auto-continue nudge as user message
+- [provider-setup] Include lmstudio in known_providers and replace ollama name checks
+- [provider-setup] Add dedicated local_only field to KnownProvider
+- Harden superset setup envrc handling
+
+## [20260408.01] - 2026-04-08
+### Added
+- [agents] Auto-continue when model stops mid-task + max iterations UX
+- [config] Make auto-continue tool-call threshold configurable
+
+
+### Fixed
+- Address PR review — translatable continue message, document tool-call threshold
+- Guard auto-continue against min_tool_calls=0 usize tautology
+- [minimax] Restore system prompts and null tool args
+- [providers] Discover live anthropic models
+- [providers] Mark anthropic recommendations globally
+
+## [20260407.01] - 2026-04-07
+### Added
+- [webhooks] Add generic webhook ingress for triggering AI agents
+- [web] Link to Hoppscotch for webhook testing
+- [web] Add CORS to webhook ingress and copy-curl button
+- [website] Add Webhooks to landing page features
+
+
+### Changed
+- [web] Extract webhooks nav icon to external SVG file
+
+
+### Fixed
+- [cli] Report release version in --version output
+- [providers] Propagate cache tokens in Responses API and custom providers
+- [providers] Read cached_tokens from input_tokens_details in non-streaming Responses SSE
+- [agents] Match provider-specific context window error strings
+- [chat] Honor public sessionKey in GraphQL flows
+- [chat] Address PR review — safer mock assertions and precedence test
+- [web] Use globe icon for webhooks settings nav
+- [web] Use ModelSelect and ComboSelect for webhook agent/model fields
+- [web] Use public URL (ngrok/tailscale) for webhook endpoint display
+- Improve webhook test script with verbose output and TLS support
+- Use OnceLock for webhook state fields instead of Arc::get_mut
+- [web] Show Hoppscotch link below webhook list, not only in empty state
+- [web] Match webhooks layout to cron/sandbox and fix nav icon
+- [web] Add missing space before Hoppscotch link
+- [web] Constrain webhooks list width with max-w-form
+- [web] Revert max-w-form, keep webhooks list full width
+- [web] Add webhooks icon to settings nav via components.css
+- [web] Recommend curl and Hoppscotch desktop for webhook testing
+- Use HeaderValue::from_static for CORS headers, remove warning
+- [web] Improve webhook test command button and footer text
+- Don't dedup generic webhooks by body hash, rebuild i18n
+- Address PR review comments
+- [security] Redact auth secrets from webhook API responses
+- Drain unprocessed webhook deliveries on worker startup
+- Include 'processing' deliveries in crash-recovery drain
+- Gitlab_token auth config key mismatch, add regression tests
+- [security] Fail closed on non-parseable Stripe signature timestamp
+- Enable foreign_keys pragma and explicit cascade delete
+- [ci] Restore CHANGELOG.md to main state (changelog guard)
+- Forward agent_id to chat.send_sync in webhook worker
+- Enforce CIDR allowlist, set foreign_keys on pool options
+- [security] Gate forwarded headers on behind_proxy, fix PagerDuty multi-sig
+- Use ConnectInfo for direct IP, disable source_profile on edit
+- [webhooks] Harden webhook execution and secrets
+- Proactive audit — 6 issues found and fixed
+- Wrap cascade deletes in transactions to prevent partial data loss
+- Resolve settings nav CI regression
+
+
+### Security
+- Add webhooks feature documentation
+
+## [20260406.05] - 2026-04-06
+### Added
+- [openclaw-import] Convert non-default agents to spawn_agent presets
+
+
+### Fixed
+- [web] Allow session sidebar links to open in new tabs
+- [web] Tighten session sidebar link accessibility
+- [docker] Add missing default features to Dockerfile build
+- [docker] Use default features instead of explicit list
+
+## [20260406.04] - 2026-04-06
+### Added
+- [website] Add provider/channel pills section and update branding
+- [website] Add positioning, how-it-works, use cases, and community quote
+
+
+### Changed
+- [providers] Avoid quadratic SSE buffer copies
+- [providers] Align copilot stream error handling
+
+
+### Fixed
+- [providers] Route Copilot enterprise tokens via proxy endpoint (#352)
+- [providers] Address PR review comments on Copilot enterprise
+- [providers] Harden Copilot enterprise proxy security
+- [providers] Reject bare IP addresses in Copilot proxy-ep
+- [providers] Address Copilot enterprise review feedback
+- [providers] Stream enterprise copilot responses
+- [website] Crop MiniMax icon, grayscale raster icons, official GraphQL logo
+- [website] Add Discord source links to community quote
+- [website] Update LoC stats on security page
+- [website] Update LoC stats in all locale files
+- [website] Regenerate all locale files with new homepage sections
+- [website] Update i18n titles and regenerate all locale files
+- [website] Translate new homepage sections in all 9 locale files
+- [website] Translate remaining English strings in all locale files
+- [website] Localize injected nav tabs
+- [website] Address greptile review feedback
+- [website] Sync i18n builder with locale pages
+- [website] Correct i18n generator keys
+
+
+### Security
+- [providers] Redact CopilotTokenResponse token in Debug output
+
+## [20260406.03] - 2026-04-06
+### Fixed
+- [web] Restore all-features build
+
+## [20260406.02] - 2026-04-06
+### Fixed
+- [web] Map config reload errors explicitly
+
+## [20260406.01] - 2026-04-06
+### Added
+- [cron] Auto-clean orphaned sessions and prune sandbox containers
+
+
+### Fixed
+- [swift-bridge] Await embedded httpd shutdown
+- [cron] Use time crate for retention math and fix named-session guard
+- [sandbox] Include remove_image_override in cleanup_session
+- [cron] Skip pruning cycle when session key lookup fails
+- [web] Reload offered channels from config
+- [ci] Await channel preload in settings e2e
+
+## [20260405.06] - 2026-04-05
+### Security
+- Add GitHub artifact attestations to release workflow
+
+## [20260405.05] - 2026-04-05
+
+## [20260405.04] - 2026-04-05
+
+## [20260405.03] - 2026-04-05
+### Fixed
+- [web] Restore matrix onboarding icon
+
+## [20260405.02] - 2026-04-05
+### Added
+- [providers] Add zai-code provider for Z.AI Coding plan
+- [tools] Add cross-session search recall
+- [tools] Add automatic edit checkpoints
+- [projects] Harden context loading
+- [skills] Add portable bundle quarantine flow
+- [exec] Add ssh remote routing
+- [web] Add skills bundle ui and ssh target visibility
+- [web] Clarify ssh execution targets
+- [ssh] Add managed deploy keys and targets
+- [nodes] Add remote exec doctor panel
+- [ssh] Harden managed targets and host pinning
+- [nodes] Repair active ssh host pins from doctor
+- [ssh] Add actionable runtime failure hints
+- [web] Add tools overview to settings
+- [web] Allow renaming channel-bound sessions
+- [security] Add GPG signing for release artifacts
+- [security] Add release verification script
+- [gateway] Add channel settings agent tool
+- [providers] Collapse model lists, hide legacy models, add recommended flag
+- [web] Add live remote access settings
+- [remote] Improve onboarding public access flow
+- [tools] Add Firecrawl integration for web scraping and search
+- [web] Add recommended provider tier in onboarding and docs guide
+- [config] Add upstream_proxy for application-level HTTP proxy support
+- [channels] Add Matrix channel integration
+- [matrix] Complete channel parity and web ui coverage
+- [matrix] Add encrypted chat support and vault-backed channel secrets
+- [matrix] Add account ownership mode
+- [matrix] Harden ownership recovery flow
+- [matrix] Add generic channel location fallback
+
+
+### Changed
+- [ssh] Use secrecy for imported key material
+- Replace vendored sqlx-sqlite with git dependency
+
+
+### Removed
+- [web] Remove unused gon import
+
+
+### Fixed
+- [providers] Address PR review comments for zai-code
+- [vault] Allow unencrypted session history while sealed
+- [vault] Address PR review comments
+- [security] Address PR review feedback
+- [ssh] Tighten timeout and warning handling
+- [ssh] Address latest review follow-ups
+- [gateway] Collapse legacy ssh node lookup
+- [auth] Guard ssh key deletion race
+- [httpd] Satisfy ssh route lint
+- [ssh] Reject option-like targets
+- [ssh] Hide import passphrases from argv
+- [ssh] Quote known hosts path
+- [web] Use browser location port for node join URL
+- [web] Guard e2e assertion for default-port case
+- [e2e] Use sidebar selector for sealed-vault session visibility test
+- [web] Fall back to getRandomValues for session UUID on plain HTTP
+- [web] Address PR review feedback
+- [providers] Speed up model probes
+- [security] Address PR review feedback for GPG signing
+- [security] Prevent gpg --import grep from aborting verify script
+- [security] Show GPG signer identity and failure diagnostics
+- [security] Pin GPG key fingerprint to prevent TOFU attacks
+- [voice] Surface elevenlabs stt failures
+- [gateway] Address channel settings PR feedback
+- [voice] Handle empty stt transcripts
+- [web] Show unsupported model reason inline instead of tooltip-only
+- [web] Show probe error inline in model selector cards
+- [web] Show probe error inline in preferred models selector
+- [web] Preserve server error message for model probes
+- [web] Sort and collapse onboarding model selector like settings
+- [web] Sort models by version number when no date available
+- [httpd] Harden ngrok controller lifecycle
+- [httpd] Retain ngrok controller after startup
+- [ngrok] Harden loopback tunnel handling
+- [ngrok] Avoid fatal startup on tunnel errors
+- [ngrok] Clarify defaults and warnings
+- Update local setup and ElevenLabs error logging
+- [web] Localize toggle button in onboarding and fix JSDoc comment
+- [chat] Use relative timestamps in created_at test
+- [tools] Address firecrawl PR review feedback
+- [tools] Resolve firecrawl web_search registration and timeout race
+- [agents] Stabilize prompt cache and compact tool results
+- [web] Stabilize send-document e2e test
+- [mcp] Address PR review comments for streamable HTTP transport
+- [mcp] Update template docs and log messages for streamable HTTP
+- [providers] Default to vision support for unknown models (#556)
+- [providers] Also exempt gpt-4-vision from denylist
+- [providers] Surface real error on provider probe failure
+- [web] Apply serverMessage pattern to validateProviderConnection
+- [web] Allow multi-model selection during provider setup
+- [web] Scope Select All to visible models, check save_models response
+- [config] Wrap upstream_proxy in Secret<String> and redact credentials in logs
+- [proxy] Use rfind for @ redaction, warn on parse failure, document Slack gap
+- [providers] Rediscover models from /v1/models before probing
+- [providers] Address PR review — move Ollama probes outside lock, use runtime env
+- [providers] Check total model count in RediscoveryResult::is_empty
+- [matrix] Address review feedback
+- [matrix] Address latest review feedback
+- [matrix] Set reply thread ids after main merge
+- [matrix] Gate DM invites through dm_policy instead of room_policy
+- [matrix] Gate poll responses through access control
+- [voice] Use inspect_err in elevenlabs stt
+- [web] Preserve @ in matrix allowlists
+- [matrix] Unify otp approval flow and sender visibility
+- [web] Default matrix setup to password auth
+- [matrix] Improve ownership recovery UX
+- [graphql] Implement retry ownership in test mock
+- [e2e] Correct username assertion in matrix senders test
+- [web] Satisfy biome hook and lint checks
+
 ## [20260328.03] - 2026-03-28
 ### Fixed
 - [telegram] Route forum-topic replies to correct thread

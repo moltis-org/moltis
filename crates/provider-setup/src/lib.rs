@@ -729,8 +729,24 @@ pub struct KnownProvider {
     pub default_base_url: Option<&'static str>,
     /// Whether this provider requires a model to be specified.
     pub requires_model: bool,
-    /// Whether the API key is optional (e.g. Ollama runs locally without auth).
+    /// Whether the API key is optional (e.g. Ollama and LM Studio run locally
+    /// without auth).
     pub key_optional: bool,
+    /// Whether this provider only runs locally (binds to localhost) and should
+    /// be hidden from cloud deployments. Separate from `key_optional` because a
+    /// remote provider could legitimately support unauthenticated access without
+    /// binding to localhost.
+    pub local_only: bool,
+}
+
+impl KnownProvider {
+    /// Returns true if this provider is local-only — runs on the user's
+    /// machine and isn't reachable from cloud deployments. Used by cloud-mode
+    /// filters to hide providers that bind to localhost.
+    #[must_use]
+    pub fn is_local_only(&self) -> bool {
+        self.auth_type == AuthType::Local || self.local_only
+    }
 }
 
 /// Build the known providers list at runtime, including local-llm if enabled.
@@ -744,6 +760,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.anthropic.com"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "openai",
@@ -753,6 +770,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.openai.com/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "gemini",
@@ -762,6 +780,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "groq",
@@ -771,6 +790,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.groq.com/openai/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "xai",
@@ -780,6 +800,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.x.ai/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "deepseek",
@@ -789,6 +810,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.deepseek.com"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "fireworks",
@@ -798,6 +820,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.fireworks.ai/inference/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "mistral",
@@ -807,6 +830,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.mistral.ai/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "openrouter",
@@ -816,6 +840,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://openrouter.ai/api/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "cerebras",
@@ -825,6 +850,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.cerebras.ai/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "minimax",
@@ -834,6 +860,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.minimax.io/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "moonshot",
@@ -843,6 +870,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.moonshot.cn/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "zai",
@@ -852,6 +880,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.z.ai/api/paas/v4"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "zai-code",
@@ -861,6 +890,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.z.ai/api/coding/paas/v4"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "venice",
@@ -870,6 +900,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.venice.ai/api/v1"),
             requires_model: true,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "ollama",
@@ -879,6 +910,17 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("http://localhost:11434"),
             requires_model: false,
             key_optional: true,
+            local_only: true,
+        },
+        KnownProvider {
+            name: "lmstudio",
+            display_name: "LM Studio",
+            auth_type: AuthType::ApiKey,
+            env_key: Some("LMSTUDIO_API_KEY"),
+            default_base_url: Some("http://127.0.0.1:1234/v1"),
+            requires_model: false,
+            key_optional: true,
+            local_only: true,
         },
         KnownProvider {
             name: "openai-codex",
@@ -888,6 +930,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: None,
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "github-copilot",
@@ -897,6 +940,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: None,
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
         KnownProvider {
             name: "kimi-code",
@@ -906,6 +950,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: Some("https://api.kimi.com/coding/v1"),
             requires_model: false,
             key_optional: false,
+            local_only: false,
         },
     ];
 
@@ -921,6 +966,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             default_base_url: None,
             requires_model: true,
             key_optional: false,
+            local_only: true,
         });
         p
     };
@@ -1115,7 +1161,7 @@ pub fn detect_auto_provider_sources_with_overrides(
 
     for provider in known_providers().into_iter().filter(|p| {
         if is_cloud {
-            return p.auth_type != AuthType::Local && p.name != "ollama";
+            return !p.is_local_only();
         }
         true
     }) {
@@ -1681,8 +1727,7 @@ impl ProviderSetupService for LiveProviderSetupService {
             .enumerate()
             .filter_map(|(known_idx, provider)| {
                 // Hide local-only providers on cloud deployments.
-                if is_cloud && (provider.auth_type == AuthType::Local || provider.name == "ollama")
-                {
+                if is_cloud && provider.is_local_only() {
                     return None;
                 }
 
@@ -1826,10 +1871,9 @@ impl ProviderSetupService for LiveProviderSetupService {
                 })
                 .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
 
-            // API key is required for api-key providers (except Ollama which is optional)
-            if provider.auth_type == AuthType::ApiKey
-                && provider_name != "ollama"
-                && api_key.is_none()
+            // API key is required for api-key providers unless the provider
+            // marks the key as optional (Ollama, LM Studio).
+            if provider.auth_type == AuthType::ApiKey && !provider.key_optional && api_key.is_none()
             {
                 return Err("missing 'apiKey' parameter".into());
             }
@@ -2238,6 +2282,14 @@ impl ProviderSetupService for LiveProviderSetupService {
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .map(ToString::to_string);
+        let saved_config = self.key_store.load_config(provider_name);
+        let saved_base_url = saved_config
+            .as_ref()
+            .and_then(|config| config.base_url.as_deref())
+            .filter(|url| !url.trim().is_empty());
+        let effective_base_url = base_url
+            .filter(|url| !url.trim().is_empty())
+            .or(saved_base_url);
 
         // Custom providers bypass known_providers() validation.
         let is_custom = is_custom_provider(provider_name);
@@ -2249,9 +2301,9 @@ impl ProviderSetupService for LiveProviderSetupService {
                 .iter()
                 .find(|p| p.name == provider_name)
                 .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
-            // API key is required for api-key providers (except Ollama).
-            if info.auth_type == AuthType::ApiKey && provider_name != "ollama" && api_key.is_none()
-            {
+            // API key is required for api-key providers unless the provider
+            // marks the key as optional (Ollama, LM Studio).
+            if info.auth_type == AuthType::ApiKey && !info.key_optional && api_key.is_none() {
                 return Err("missing 'apiKey' parameter".into());
             }
             Some(KnownProvider {
@@ -2262,22 +2314,22 @@ impl ProviderSetupService for LiveProviderSetupService {
                 default_base_url: info.default_base_url,
                 requires_model: info.requires_model,
                 key_optional: info.key_optional,
+                local_only: info.local_only,
             })
         };
 
         if is_custom && api_key.is_none() {
             return Err("missing 'apiKey' parameter".into());
         }
-        if is_custom && base_url.filter(|s| !s.trim().is_empty()).is_none() {
+        if is_custom && effective_base_url.is_none() {
             return Err("missing 'baseUrl' parameter".into());
         }
 
         let selected_model = preferred_models.first().map(String::as_str);
-        let base_url_value = base_url.filter(|s| !s.trim().is_empty());
         let validation_provider_name = validation_provider_name_for_endpoint(
             provider_name,
             provider_info.as_ref().and_then(|p| p.default_base_url),
-            base_url_value,
+            effective_base_url,
         );
         let _timing =
             ProviderSetupTiming::start("providers.validate_key", Some(&validation_provider_name));
@@ -2295,7 +2347,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         // If no model is supplied, return discovered models for UI selection.
         if provider_name == "ollama" {
             let ollama_api_base = normalize_ollama_api_base_url(
-                base_url_value.or(provider_info.as_ref().and_then(|p| p.default_base_url)),
+                effective_base_url.or(provider_info.as_ref().and_then(|p| p.default_base_url)),
             );
             let discovered_models = match discover_ollama_models(&ollama_api_base).await {
                 Ok(models) => models,
@@ -2379,7 +2431,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         // when no model is specified, instead of probing (which can timeout).
         if is_custom && selected_model.is_none() {
             let api_key_str = api_key.unwrap_or_default();
-            let base = base_url_value.unwrap_or_default();
+            let base = effective_base_url.unwrap_or_default();
             match moltis_providers::openai::fetch_models_from_api(
                 Secret::new(api_key_str.to_string()),
                 base.to_string(),
@@ -2432,9 +2484,9 @@ impl ProviderSetupService for LiveProviderSetupService {
         }
 
         let normalized_base_url = if provider_name == "ollama" {
-            base_url_value.map(|url| normalize_ollama_openai_base_url(Some(url)))
+            effective_base_url.map(|url| normalize_ollama_openai_base_url(Some(url)))
         } else {
-            base_url_value.map(String::from)
+            effective_base_url.map(String::from)
         };
 
         // Build a temporary ProvidersConfig with just this provider.
@@ -4044,8 +4096,52 @@ mod tests {
         assert!(names.contains(&"kimi-code"), "missing kimi-code");
         assert!(names.contains(&"venice"), "missing venice");
         assert!(names.contains(&"ollama"), "missing ollama");
+        assert!(names.contains(&"lmstudio"), "missing lmstudio");
         // OAuth providers
         assert!(names.contains(&"github-copilot"), "missing github-copilot");
+    }
+
+    #[test]
+    fn lmstudio_is_local_only_with_optional_key() {
+        let providers = known_providers();
+        let lmstudio = providers
+            .iter()
+            .find(|p| p.name == "lmstudio")
+            .expect("lmstudio not in known_providers");
+        assert_eq!(lmstudio.auth_type, AuthType::ApiKey);
+        assert!(
+            lmstudio.key_optional,
+            "lmstudio runs locally and must not require an API key"
+        );
+        assert!(
+            lmstudio.is_local_only(),
+            "lmstudio must be filtered out of cloud deployments"
+        );
+        assert_eq!(lmstudio.env_key, Some("LMSTUDIO_API_KEY"));
+        assert_eq!(
+            lmstudio.default_base_url,
+            Some("http://127.0.0.1:1234/v1"),
+            "lmstudio default base URL must match LM Studio's default server port"
+        );
+    }
+
+    #[test]
+    fn is_local_only_is_superset_of_legacy_check() {
+        // Regression: before the typed `is_local_only()` helper, cloud-mode
+        // filters used `auth_type == Local || name == "ollama"`. Confirm the
+        // typed method is a superset of that legacy set — every provider the
+        // old check flagged must still be flagged. The new method intentionally
+        // also catches providers like `lmstudio` that the old string check
+        // missed, so `typed == true && legacy == false` is expected.
+        for p in known_providers() {
+            let legacy = p.auth_type == AuthType::Local || p.name == "ollama";
+            let typed = p.is_local_only();
+            assert!(
+                typed || !legacy,
+                "{}: legacy says local but typed disagrees",
+                p.name
+            );
+        }
     }
 
     #[test]
@@ -4072,6 +4168,7 @@ mod tests {
             ("kimi-code", "KIMI_API_KEY"),
             ("venice", "VENICE_API_KEY"),
             ("ollama", "OLLAMA_API_KEY"),
+            ("lmstudio", "LMSTUDIO_API_KEY"),
         ];
         let providers = known_providers();
         for (name, env_key) in expected {
@@ -4104,6 +4201,7 @@ mod tests {
             "kimi-code",
             "venice",
             "ollama",
+            "lmstudio",
         ] {
             // We can't actually persist in tests (would write to real disk),
             // but we can verify the provider name is recognized.
@@ -4142,6 +4240,7 @@ mod tests {
             "kimi-code",
             "venice",
             "ollama",
+            "lmstudio",
             "github-copilot",
         ] {
             assert!(
@@ -4169,7 +4268,7 @@ mod tests {
             .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
             .collect();
 
-        // local-llm and ollama should be hidden on cloud deployments
+        // local-only providers should be hidden on cloud deployments
         assert!(
             !names.contains(&"local-llm"),
             "local-llm should be hidden on cloud: {names:?}"
@@ -4177,6 +4276,10 @@ mod tests {
         assert!(
             !names.contains(&"ollama"),
             "ollama should be hidden on cloud: {names:?}"
+        );
+        assert!(
+            !names.contains(&"lmstudio"),
+            "lmstudio should be hidden on cloud: {names:?}"
         );
 
         // Cloud-compatible providers should still be present
@@ -4208,6 +4311,10 @@ mod tests {
         assert!(
             names.contains(&"ollama"),
             "ollama should be present locally: {names:?}"
+        );
+        assert!(
+            names.contains(&"lmstudio"),
+            "lmstudio should be present locally: {names:?}"
         );
         assert!(
             names.contains(&"openai"),
@@ -4671,6 +4778,7 @@ mod tests {
             provider: "test".to_string(),
             display_name: id.to_string(),
             created_at: None,
+            recommended: false,
         }
     }
 
@@ -4849,6 +4957,64 @@ mod tests {
                 .iter()
                 .any(|m| m.get("id").and_then(|v| v.as_str())
                     == Some("custom-test-server::dall-e-3"))
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_key_custom_provider_uses_saved_base_url_when_request_omits_it() {
+        use axum::{Json, Router, routing::get};
+
+        let app = Router::new().route(
+            "/models",
+            get(|| async {
+                Json(serde_json::json!({
+                    "data": [
+                        {"id": "gpt-4o-mini", "object": "model", "created": 1700000001}
+                    ]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        svc.key_store
+            .save_config(
+                "custom-test-server",
+                Some("sk-saved".into()),
+                Some(format!("http://{addr}")),
+                None,
+            )
+            .expect("save custom provider config");
+
+        let result = svc
+            .validate_key(serde_json::json!({
+                "provider": "custom-test-server",
+                "apiKey": "sk-test"
+            }))
+            .await
+            .expect("validate_key should return payload");
+        server.abort();
+
+        assert_eq!(result.get("valid").and_then(|v| v.as_bool()), Some(true));
+        let models = result
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array should be present");
+        assert!(
+            models
+                .iter()
+                .any(|m| m.get("id").and_then(|v| v.as_str())
+                    == Some("custom-test-server::gpt-4o-mini")),
+            "expected discovered model via saved base_url, got: {models:?}"
         );
     }
 

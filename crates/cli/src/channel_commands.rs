@@ -50,6 +50,10 @@ pub struct TeamsBootstrapArgs {
     /// Optional webhook shared secret. If omitted, a random value is generated.
     #[arg(long)]
     webhook_secret: Option<String>,
+    /// Azure AD tenant ID for JWT validation (e.g. your directory tenant GUID).
+    /// Leave as default for multi-tenant bots.
+    #[arg(long, default_value = DEFAULT_OAUTH_TENANT)]
+    tenant_id: String,
     /// OAuth tenant segment used for token issuance.
     #[arg(long, default_value = DEFAULT_OAUTH_TENANT)]
     oauth_tenant: String,
@@ -156,6 +160,7 @@ fn run_teams_bootstrap(args: TeamsBootstrapArgs) -> Result<()> {
     let config_value = build_channel_config(
         &app_id,
         &app_password,
+        &args.tenant_id,
         &args.oauth_tenant,
         &args.oauth_scope,
         &webhook_secret,
@@ -166,6 +171,7 @@ fn run_teams_bootstrap(args: TeamsBootstrapArgs) -> Result<()> {
     println!("Teams bootstrap summary");
     println!("  account_id:      {account_id}");
     println!("  app_id:          {app_id}");
+    println!("  tenant_id:       {}", args.tenant_id);
     println!("  oauth_tenant:    {}", args.oauth_tenant);
     println!("  oauth_scope:     {}", args.oauth_scope);
     println!("  webhook_endpoint:");
@@ -264,6 +270,7 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> Result<bool> {
 fn build_channel_config(
     app_id: &str,
     app_password: &str,
+    tenant_id: &str,
     oauth_tenant: &str,
     oauth_scope: &str,
     webhook_secret: &str,
@@ -279,6 +286,7 @@ fn build_channel_config(
         "app_password".into(),
         Value::String(app_password.to_string()),
     );
+    map.insert("tenant_id".into(), Value::String(tenant_id.to_string()));
     map.insert(
         "oauth_tenant".into(),
         Value::String(oauth_tenant.to_string()),
@@ -432,8 +440,9 @@ fn hex_upper(value: u8) -> char {
 
 fn print_setup_links() {
     println!("Microsoft setup links:");
+    println!("  - Teams Developer Portal (easiest): https://dev.teams.microsoft.com/bots");
     println!(
-        "  - Bot registration docs: https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration?view=azure-bot-service-4.0"
+        "  - Azure Bot registration docs: https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration?view=azure-bot-service-4.0"
     );
     println!(
         "  - Teams bot docs: https://learn.microsoft.com/en-us/microsoftteams/platform/bots/build-conversational-capability"
@@ -441,10 +450,12 @@ fn print_setup_links() {
     println!(
         "  - Azure app registrations: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
     );
+    println!("  - Moltis Teams guide: https://docs.moltis.org/teams.html");
 }
 
 fn open_setup_links() {
     for url in [
+        "https://dev.teams.microsoft.com/bots",
         "https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration?view=azure-bot-service-4.0",
         "https://learn.microsoft.com/en-us/microsoftteams/platform/bots/build-conversational-capability",
         "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",

@@ -21,6 +21,31 @@ pub fn parse_chat_error(raw: &str, provider_name: Option<&str>) -> Value {
 }
 
 fn try_parse_known_error(raw: &str) -> Value {
+    // Max iterations reached — before JSON parsing since the message is plain text.
+    if raw.contains("agent loop exceeded max iterations") {
+        let limit = raw
+            .rsplit('(')
+            .next()
+            .and_then(|s| s.trim_end_matches(')').trim().parse::<u64>().ok())
+            .unwrap_or(25);
+        let mut err = build_error(
+            "max_iterations_reached",
+            "\u{1F504}",
+            "Iteration limit reached",
+            &format!(
+                "The agent stopped after {} iterations. You can continue if needed.",
+                limit
+            ),
+            None,
+            None,
+            Some(serde_json::json!({ "limit": limit })),
+        );
+        if let Some(obj) = err.as_object_mut() {
+            obj.insert("canContinue".into(), Value::Bool(true));
+        }
+        return err;
+    }
+
     let http_status = extract_http_status(raw);
 
     // Try to extract embedded JSON from the error string.
@@ -417,6 +442,10 @@ fn translation_keys_for(error_type: &str) -> (Option<&'static str>, Option<&'sta
             Some("errors:chat.billingExhausted.title"),
             Some("errors:chat.billingExhausted.detail"),
         ),
+        "max_iterations_reached" => (
+            Some("errors:chat.maxIterationsReached.title"),
+            Some("errors:chat.maxIterationsReached.detail"),
+        ),
         "api_error" | "unknown" => (Some("errors:generic.title"), None),
         _ => (None, None),
     }
@@ -609,5 +638,33 @@ mod tests {
         let result = parse_chat_error(raw, Some("openai"));
         assert_eq!(result["type"], "unsupported_model");
         assert_eq!(result["provider"], "openai");
+    }
+
+    #[test]
+    fn test_max_iterations_reached() {
+        let raw = "agent loop exceeded max iterations (25)";
+        let result = parse_chat_error(raw, None);
+        assert_eq!(result["type"], "max_iterations_reached");
+        assert_eq!(result["title"], "Iteration limit reached");
+        assert_eq!(result["canContinue"], true);
+        assert_eq!(result["detail_params"]["limit"], 25u64);
+        assert_eq!(
+            result["title_key"],
+            "errors:chat.maxIterationsReached.title"
+        );
+        assert_eq!(
+            result["detail_key"],
+            "errors:chat.maxIterationsReached.detail"
+        );
+        assert!(result["detail"].as_str().unwrap().contains("25 iterations"));
+    }
+
+    #[test]
+    fn test_max_iterations_reached_custom_limit() {
+        let raw = "agent loop exceeded max iterations (10)";
+        let result = parse_chat_error(raw, Some("anthropic"));
+        assert_eq!(result["type"], "max_iterations_reached");
+        assert_eq!(result["detail_params"]["limit"], 10u64);
+        assert_eq!(result["provider"], "anthropic");
     }
 }

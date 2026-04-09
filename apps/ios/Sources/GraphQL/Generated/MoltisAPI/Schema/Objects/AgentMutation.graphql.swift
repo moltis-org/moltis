@@ -4,7 +4,7 @@
 import ApolloAPI
 
 extension MoltisAPI.Objects {
-  static let AgentMutation = ApolloAPI.Object(
+  nonisolated static let AgentMutation = ApolloAPI.Object(
     typename: "AgentMutation",
     implementedInterfaces: [],
     keyFields: nil

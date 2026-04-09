@@ -46,9 +46,14 @@ impl From<&str> for ServiceError {
 
 impl From<ServiceError> for moltis_protocol::ErrorShape {
     fn from(err: ServiceError) -> Self {
+        // INTERNAL is correct here: ServiceError represents application-level failures
+        // (validation errors, probe failures, noop-service "not configured" errors).
+        // Transient UNAVAILABLE codes are emitted directly by gateway/state.rs,
+        // methods/node.rs, and client-side WS checks — they do not flow through
+        // ServiceError and are unaffected by this mapping.
         let code = match &err {
             ServiceError::Forbidden { .. } => moltis_protocol::error_codes::FORBIDDEN,
-            _ => moltis_protocol::error_codes::UNAVAILABLE,
+            _ => moltis_protocol::error_codes::INTERNAL,
         };
         Self::new(code, err.to_string())
     }
@@ -191,6 +196,7 @@ pub trait ChannelService: Send + Sync {
     async fn add(&self, params: Value) -> ServiceResult;
     async fn remove(&self, params: Value) -> ServiceResult;
     async fn update(&self, params: Value) -> ServiceResult;
+    async fn retry_ownership(&self, params: Value) -> ServiceResult;
     async fn senders_list(&self, params: Value) -> ServiceResult;
     async fn sender_approve(&self, params: Value) -> ServiceResult;
     async fn sender_deny(&self, params: Value) -> ServiceResult;
@@ -221,6 +227,10 @@ impl ChannelService for NoopChannelService {
     }
 
     async fn update(&self, _p: Value) -> ServiceResult {
+        Err("no channel service configured".into())
+    }
+
+    async fn retry_ownership(&self, _p: Value) -> ServiceResult {
         Err("no channel service configured".into())
     }
 
@@ -315,6 +325,67 @@ impl CronService for NoopCronService {
     }
 
     async fn runs(&self, _p: Value) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+}
+
+// ── Webhooks ────────────────────────────────────────────────────────────────
+
+#[async_trait]
+pub trait WebhooksService: Send + Sync {
+    async fn list(&self) -> ServiceResult;
+    async fn get(&self, params: Value) -> ServiceResult;
+    async fn create(&self, params: Value) -> ServiceResult;
+    async fn update(&self, params: Value) -> ServiceResult;
+    async fn delete(&self, params: Value) -> ServiceResult;
+    async fn deliveries(&self, params: Value) -> ServiceResult;
+    async fn delivery_get(&self, params: Value) -> ServiceResult;
+    async fn delivery_payload(&self, params: Value) -> ServiceResult;
+    async fn delivery_actions(&self, params: Value) -> ServiceResult;
+    async fn profiles(&self) -> ServiceResult;
+}
+
+pub struct NoopWebhooksService;
+
+#[async_trait]
+impl WebhooksService for NoopWebhooksService {
+    async fn list(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn get(&self, _params: Value) -> ServiceResult {
+        Err("webhooks not configured".into())
+    }
+
+    async fn create(&self, _params: Value) -> ServiceResult {
+        Err("webhooks not configured".into())
+    }
+
+    async fn update(&self, _params: Value) -> ServiceResult {
+        Err("webhooks not configured".into())
+    }
+
+    async fn delete(&self, _params: Value) -> ServiceResult {
+        Err("webhooks not configured".into())
+    }
+
+    async fn deliveries(&self, _params: Value) -> ServiceResult {
+        Err("webhooks not configured".into())
+    }
+
+    async fn delivery_get(&self, _params: Value) -> ServiceResult {
+        Err("webhooks not configured".into())
+    }
+
+    async fn delivery_payload(&self, _params: Value) -> ServiceResult {
+        Err("webhooks not configured".into())
+    }
+
+    async fn delivery_actions(&self, _params: Value) -> ServiceResult {
+        Err("webhooks not configured".into())
+    }
+
+    async fn profiles(&self) -> ServiceResult {
         Ok(serde_json::json!([]))
     }
 }
@@ -923,6 +994,8 @@ pub trait ModelService: Send + Sync {
     async fn enable(&self, params: Value) -> ServiceResult;
     /// Probe configured models and flag unsupported ones for this account.
     async fn detect_supported(&self, params: Value) -> ServiceResult;
+    /// Cancel an in-flight `detect_supported` run.
+    async fn cancel_detect(&self) -> ServiceResult;
     /// Test a single model by sending a probe request.
     async fn test(&self, params: Value) -> ServiceResult;
 }
@@ -959,6 +1032,10 @@ impl ModelService for NoopModelService {
         Err(model_service_not_configured_error(
             "models.detect_supported",
         ))
+    }
+
+    async fn cancel_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "ok": true, "cancelled": false }))
     }
 
     async fn test(&self, _params: Value) -> ServiceResult {

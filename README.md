@@ -116,8 +116,10 @@ Use `--no-default-features --features lightweight` for constrained devices (Rasp
 - **SSRF protection** — DNS-resolved, blocks loopback/private/link-local
 - **Origin validation** — rejects cross-origin WebSocket upgrades
 - **Hook gating** — `BeforeToolCall` hooks can inspect/block any tool invocation
+- **Supply chain integrity** — [artifact attestations](https://github.com/moltis-org/moltis/attestations), Sigstore keyless signing, GPG signing (YubiKey), SHA-256/SHA-512 checksums
 
 See [Security Architecture](https://docs.moltis.org/security.html) for details.
+Verify releases with `gh attestation verify <artifact> -R moltis-org/moltis` or see [Release Verification](https://docs.moltis.org/release-verification.html).
 
 ## Features
 

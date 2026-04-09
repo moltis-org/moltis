@@ -4,8 +4,9 @@ name              = "moltis-tools"
 version.workspace = true
 
 [features]
-default       = ["metrics", "wasm"]
+default       = ["firecrawl", "metrics", "wasm"]
 embedded-wasm = []
+firecrawl     = []
 metrics       = ["dep:moltis-metrics"]
 wasm          = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 

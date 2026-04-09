@@ -21,7 +21,7 @@ static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock
 /// Initialize the shared HTTP client with optional proxy.
 /// Call once at gateway startup; subsequent calls are no-ops.
 pub fn init_shared_http_client(proxy_url: Option<&str>) {
-    let _ = SHARED_CLIENT.set(build_http_client(proxy_url));
+    let _ = SHARED_CLIENT.set(moltis_common::http_client::build_http_client(proxy_url));
 }
 
 /// Shared HTTP client for tools that don't need custom configuration.
@@ -37,15 +37,11 @@ pub fn shared_http_client() -> &'static reqwest::Client {
 }
 
 /// Build a `reqwest::Client` with optional proxy configuration.
+///
+/// Re-export of [`moltis_common::http_client::build_http_client`] for
+/// backward compatibility.
 pub fn build_http_client(proxy_url: Option<&str>) -> reqwest::Client {
-    let mut builder = reqwest::Client::builder();
-    if let Some(url) = proxy_url
-        && let Ok(proxy) = reqwest::Proxy::all(url)
-    {
-        let proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
-        builder = builder.proxy(proxy);
-    }
-    builder.build().unwrap_or_else(|_| reqwest::Client::new())
+    moltis_common::http_client::build_http_client(proxy_url)
 }
 pub mod browser;
 pub mod calc;
@@ -54,6 +50,8 @@ pub mod cron_tool;
 pub mod embedded_wasm;
 pub mod exec;
 pub mod file_io;
+#[cfg(feature = "firecrawl")]
+pub mod firecrawl;
 pub mod image_cache;
 pub mod location;
 pub mod map;

@@ -50,6 +50,11 @@ request_timeout_secs = 90
 transport = "sse"
 url = "https://mcp.example.com/mcp?api_key=$REMOTE_MCP_KEY"
 headers = { Authorization = "Bearer ${REMOTE_MCP_TOKEN}" }
+
+[mcp.servers.remote_http]
+transport = "streamable-http"
+url = "https://mcp.example.com/mcp"
+headers = { Authorization = "Bearer ${API_KEY}" }
 ```
 
 Remote URLs and headers support `$NAME` and `${NAME}` placeholders. For live remote servers, placeholder values resolve from Moltis-managed env overrides, either `[env]` in config or **Settings** → **Environment Variables**.
@@ -88,8 +93,8 @@ env = { API_KEY = "secret", DEBUG = "true" }
 request_timeout_secs = 90
 
 # Optional: remote transport
-transport = "sse"               # "stdio" (default) or "sse"
-url = "https://mcp.example.com/mcp"  # Required when transport = "sse"
+transport = "sse"               # "stdio" (default), "sse", or "streamable-http"
+url = "https://mcp.example.com/mcp"  # Required when transport = "sse" or "streamable-http"
 headers = { "x-api-key" = "$REMOTE_MCP_KEY" }  # Optional request headers
 ```
 
@@ -100,7 +105,7 @@ Moltis applies MCP request timeouts in two layers:
 - `mcp.request_timeout_secs` sets the global default for every MCP server
 - `mcp.servers.<name>.request_timeout_secs` optionally overrides that default for a specific server
 
-This is useful when most local MCP servers respond quickly, but one remote SSE server or one expensive tool server needs a longer timeout.
+This is useful when most local MCP servers respond quickly, but one remote server or one expensive tool server needs a longer timeout.
 
 ```toml
 [mcp]
@@ -114,9 +119,9 @@ request_timeout_secs = 120
 
 In the web UI, the MCP settings page lets you edit both the global default timeout and the optional timeout override for each configured server.
 
-## Remote SSE Secrets and Placeholders
+## Remote Server Secrets and Placeholders
 
-Remote MCP servers often expect API keys or bearer tokens in the URL query string or request headers. Moltis supports both patterns.
+Remote MCP servers (SSE or Streamable HTTP) often expect API keys or bearer tokens in the URL query string or request headers. Moltis supports both patterns.
 
 ```toml
 [mcp.servers.linear_remote]

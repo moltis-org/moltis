@@ -1,7 +1,7 @@
 // ── Provider modal ──────────────────────────────────────
 
 import { onEvent } from "./events.js";
-import { sendRpc } from "./helpers.js";
+import { modelVersionScore, sendRpc } from "./helpers.js";
 import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
@@ -645,37 +645,82 @@ export function showApiKeyForm(provider) {
 
 function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skipSave) {
 	var m = els();
-	m.title.textContent = `${provider.displayName} — Select Model`;
+	m.title.textContent = `${provider.displayName} — Select Models`;
 	m.body.textContent = "";
 
+	var selectedIds = new Set();
+
 	var wrapper = document.createElement("div");
-	wrapper.className = "provider-key-form";
+	wrapper.className = "provider-key-form flex flex-col min-h-0 flex-1";
 
 	var label = document.createElement("div");
-	label.className = "text-xs font-medium text-[var(--text-strong)] mb-2";
-	label.textContent = "Choose a model to use";
+	label.className = "text-xs font-medium text-[var(--text-strong)] mb-1 shrink-0";
+	label.textContent = "Select models to add";
 	wrapper.appendChild(label);
 
-	// Search input when >5 models
+	var hint = document.createElement("div");
+	hint.className = "text-xs text-[var(--muted)] mb-2 shrink-0";
+	hint.textContent = "Click models to toggle selection, or use Select All.";
+	wrapper.appendChild(hint);
+
+	// Search + Select All row when >5 models
 	var searchInp = null;
 	if (models.length > 5) {
 		searchInp = document.createElement("input");
 		searchInp.type = "text";
-		searchInp.className = "provider-key-input w-full text-xs mb-2";
+		searchInp.className = "provider-key-input w-full text-xs mb-2 shrink-0";
 		searchInp.placeholder = "Search models\u2026";
 		wrapper.appendChild(searchInp);
 	}
 
+	var selectAllBtn = document.createElement("button");
+	selectAllBtn.className = "provider-btn provider-btn-secondary text-xs mb-2 shrink-0";
+
+	function getVisibleModels() {
+		var currentFilter = searchInp?.value.trim() || null;
+		if (!currentFilter) return models;
+		var q = currentFilter.toLowerCase();
+		return models.filter((mdl) => mdl.displayName.toLowerCase().includes(q) || mdl.id.toLowerCase().includes(q));
+	}
+
+	function updateSelectAllLabel() {
+		var visible = getVisibleModels();
+		var allVisible = visible.length > 0 && visible.every((mdl) => selectedIds.has(mdl.id));
+		selectAllBtn.textContent = allVisible ? "Deselect All" : "Select All";
+	}
+	updateSelectAllLabel();
+
+	selectAllBtn.addEventListener("click", () => {
+		var visible = getVisibleModels();
+		var allVisible = visible.every((mdl) => selectedIds.has(mdl.id));
+		if (allVisible) {
+			for (var mdl of visible) selectedIds.delete(mdl.id);
+		} else {
+			for (var visibleModel of visible) selectedIds.add(visibleModel.id);
+		}
+		updateSelectAllLabel();
+		updateStatus();
+		renderCards(searchInp?.value.trim() || null);
+	});
+	wrapper.appendChild(selectAllBtn);
+
 	var list = document.createElement("div");
-	list.className = "flex flex-col gap-2 max-h-56 overflow-y-auto";
+	list.className = "flex flex-col gap-1 overflow-y-auto flex-1 min-h-0 max-h-56";
 	wrapper.appendChild(list);
 
+	var statusArea = document.createElement("div");
+	statusArea.className = "text-xs text-[var(--muted)] mt-2 shrink-0";
+	wrapper.appendChild(statusArea);
+
+	function updateStatus() {
+		var count = selectedIds.size;
+		statusArea.textContent = count === 0 ? "No models selected" : `${count} model${count > 1 ? "s" : ""} selected`;
+	}
+
 	var errorArea = document.createElement("div");
-	errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
+	errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line shrink-0";
 	errorArea.style.display = "none";
 	wrapper.appendChild(errorArea);
-
-	var selectedCard = null;
 
 	function renderCards(filter) {
 		list.textContent = "";
@@ -693,7 +738,7 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 		}
 		filtered.forEach((mdl) => {
 			var card = document.createElement("div");
-			card.className = "model-card";
+			card.className = `model-card ${selectedIds.has(mdl.id) ? "selected" : ""}`;
 
 			var header = document.createElement("div");
 			header.className = "flex items-center justify-between";
@@ -721,72 +766,87 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 			idLine.textContent = mdl.id;
 			card.appendChild(idLine);
 
-			card.addEventListener("click", () => {
-				if (selectedCard) return; // prevent double-click
-				// Deselect all, select this one
-				for (var c of list.querySelectorAll(".model-card")) c.classList.remove("selected");
-				card.classList.add("selected");
-				selectedCard = card;
-
-				// Show testing state
-				var testBadge = document.createElement("span");
-				testBadge.className = "tier-badge";
-				testBadge.textContent = "Testing\u2026";
-				badges.appendChild(testBadge);
-				errorArea.style.display = "none";
-
-				saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, mdl.id, !!skipSave);
-			});
+			((modelId) => {
+				card.addEventListener("click", () => {
+					if (selectedIds.has(modelId)) {
+						selectedIds.delete(modelId);
+					} else {
+						selectedIds.add(modelId);
+					}
+					updateSelectAllLabel();
+					updateStatus();
+					renderCards(searchInp?.value.trim() || null);
+				});
+			})(mdl.id);
 
 			list.appendChild(card);
 		});
 	}
 
 	renderCards(null);
+	updateStatus();
 
 	if (searchInp) {
 		searchInp.addEventListener("input", () => {
-			selectedCard = null;
 			renderCards(searchInp.value.trim());
 		});
 	}
 
 	// Buttons
 	var btns = document.createElement("div");
-	btns.className = "btn-row mt-3";
+	btns.className = "btn-row mt-3 shrink-0";
 
 	var backBtn = document.createElement("button");
 	backBtn.className = "provider-btn provider-btn-secondary";
 	backBtn.textContent = "Back";
 	backBtn.addEventListener("click", () => {
 		if (skipSave) {
-			// OAuth flow — go back to provider list
 			openProviderModal();
 		} else {
 			showApiKeyForm(provider);
 		}
 	});
 	btns.appendChild(backBtn);
+
+	var continueBtn = document.createElement("button");
+	continueBtn.className = "provider-btn";
+	continueBtn.textContent = "Continue";
+	continueBtn.addEventListener("click", () => {
+		if (selectedIds.size === 0) {
+			errorArea.textContent = "Select at least one model to continue.";
+			errorArea.style.display = "";
+			return;
+		}
+		errorArea.style.display = "none";
+		continueBtn.disabled = true;
+		continueBtn.textContent = "Saving\u2026";
+		saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, Array.from(selectedIds), !!skipSave);
+	});
+	btns.appendChild(continueBtn);
+
 	wrapper.appendChild(btns);
 
 	// Expose error area for saveAndFinishProvider to use
 	wrapper._errorArea = errorArea;
 	wrapper._resetSelection = () => {
-		selectedCard = null;
+		continueBtn.disabled = false;
+		continueBtn.textContent = "Continue";
 		renderCards(searchInp?.value.trim() || null);
 	};
 
 	m.body.appendChild(wrapper);
 }
 
-function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelId, skipSave) {
+function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelIds, skipSave) {
+	// selectedModelIds can be a single string (legacy callers) or an array
+	var modelIds = Array.isArray(selectedModelIds) ? selectedModelIds : selectedModelIds ? [selectedModelIds] : [];
+
 	var m = els();
 	var saveAsCustomProvider = !skipSave && shouldUseCustomProviderForOpenAi(provider, endpointVal);
-	var selectedModelForSave = selectedModelId;
-	if (saveAsCustomProvider && selectedModelForSave) {
-		selectedModelForSave = stripModelNamespace(selectedModelForSave);
-	}
-	var effectiveModelVal = provider.keyOptional && selectedModelForSave ? selectedModelForSave : modelVal;
+
+	var modelsForSave = saveAsCustomProvider ? modelIds.map(stripModelNamespace) : [...modelIds];
+	var firstModelForSave = modelsForSave[0] || null;
+	var effectiveModelVal = provider.keyOptional && firstModelForSave ? firstModelForSave : modelVal;
 
 	function showError(msg) {
 		var wrapper = m.body.querySelector(".provider-key-form");
@@ -801,8 +861,7 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 		savePromise = Promise.resolve({ ok: true });
 	} else if (saveAsCustomProvider) {
 		var customPayload = { baseUrl: endpointVal, apiKey: keyVal };
-		var customModel = selectedModelForSave || stripModelNamespace(effectiveModelVal);
-		if (customModel) customPayload.model = customModel;
+		if (firstModelForSave) customPayload.model = firstModelForSave;
 		savePromise = sendRpc("providers.add_custom", customPayload);
 	} else {
 		savePromise = saveProviderKey(provider.name, keyVal, endpointVal, effectiveModelVal);
@@ -819,12 +878,14 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 				? res?.payload?.displayName || provider.displayName
 				: provider.displayName;
 
-			if (selectedModelId) {
-				var modelForStorage = selectedModelForSave || selectedModelId;
-				var modelForTest = saveAsCustomProvider ? `${savedProviderName}::${modelForStorage}` : selectedModelId;
-				var testResult = await testModel(modelForTest);
+			var modelTimedOut = false;
+			if (modelIds.length > 0) {
+				// Test first model as a connectivity check
+				var firstModelId = modelIds[0];
+				var firstModelForTest = saveAsCustomProvider ? `${savedProviderName}::${modelsForSave[0]}` : firstModelId;
+				var testResult = await testModel(firstModelForTest);
 				var modelServiceUnavailable = !testResult.ok && isModelServiceNotConfigured(testResult.error || "");
-				var modelTimedOut = !testResult.ok && isTimeoutError(testResult.error || "");
+				modelTimedOut = !testResult.ok && isTimeoutError(testResult.error || "");
 				if (!(testResult.ok || modelServiceUnavailable || modelTimedOut)) {
 					showError(testResult.error || "Model test failed. Try another model.");
 					return;
@@ -832,22 +893,32 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 				if (modelTimedOut) {
 					console.warn(
 						"models.test timed out for",
-						modelForTest,
-						"— saving model anyway (local servers may need longer to load)",
+						firstModelForTest,
+						"— saving models anyway (local servers may need longer to load)",
 					);
 				}
-				await sendRpc("providers.save_model", { provider: savedProviderName, model: modelForStorage });
-				if (modelServiceUnavailable) {
-					console.warn("models.test unavailable in provider settings, saved selected model without probe");
+
+				// Save all selected models at once
+				var saveModelsRes = await sendRpc("providers.save_models", {
+					provider: savedProviderName,
+					models: modelsForSave,
+				});
+				if (!saveModelsRes?.ok) {
+					showError(saveModelsRes?.error?.message || "Failed to save models.");
+					return;
 				}
-				localStorage.setItem("moltis-model", modelForTest);
+				if (modelServiceUnavailable) {
+					console.warn("models.test unavailable in provider settings, saved selected models without probe");
+				}
+				localStorage.setItem("moltis-model", firstModelForTest);
 			}
 
 			// Success
 			m.body.textContent = "";
 			var status = document.createElement("div");
 			status.className = "provider-status";
-			status.textContent = `${successDisplayName} configured successfully!`;
+			var countMsg = modelIds.length > 1 ? ` with ${modelIds.length} models` : "";
+			status.textContent = `${successDisplayName} configured successfully${countMsg}!`;
 			m.body.appendChild(status);
 			if (modelTimedOut) {
 				var slowHint = document.createElement("div");
@@ -1049,12 +1120,6 @@ function showOAuthModelSelector(provider) {
 			}));
 			showModelSelector(provider, mapped, null, null, null, true);
 		} else {
-			// No models found yet — trigger detection in background and show success.
-			sendRpc("models.detect_supported", {
-				background: true,
-				reason: "provider_connected",
-				provider: provider.name,
-			});
 			fetchModels();
 			if (S.refreshProvidersPage) S.refreshProvidersPage();
 			var modal = els();
@@ -1185,15 +1250,18 @@ function showMultiModelSelector(providerName, providerDisplayName, models, saved
 		statusArea.textContent = count === 0 ? "No models selected" : `${count} model${count > 1 ? "s" : ""} selected`;
 	}
 
-	function modelSortKey(m) {
-		return { selected: selectedIds.has(m.id) ? 0 : 1, time: m.createdAt || 0, name: m.displayName || m.id };
-	}
-
 	function sortModelsForSelection(items) {
 		return [...items].sort((a, b) => {
-			var ka = modelSortKey(a);
-			var kb = modelSortKey(b);
-			return ka.selected - kb.selected || kb.time - ka.time || ka.name.localeCompare(kb.name);
+			var aSel = selectedIds.has(a.id) ? 0 : 1;
+			var bSel = selectedIds.has(b.id) ? 0 : 1;
+			if (aSel !== bSel) return aSel - bSel;
+			var aTime = a.createdAt || 0;
+			var bTime = b.createdAt || 0;
+			if (aTime !== bTime) return bTime - aTime;
+			var aVer = modelVersionScore(a.id);
+			var bVer = modelVersionScore(b.id);
+			if (aVer !== bVer) return bVer - aVer;
+			return (a.displayName || a.id).localeCompare(b.displayName || b.id);
 		});
 	}
 
@@ -1245,7 +1313,6 @@ function showMultiModelSelector(providerName, providerDisplayName, models, saved
 				var unsupBadge = document.createElement("span");
 				unsupBadge.className = probe.timeout ? "tier-badge" : "provider-item-badge warning";
 				unsupBadge.textContent = probe.timeout ? "Slow" : "Unsupported";
-				unsupBadge.title = probe.error || "";
 				badges.appendChild(unsupBadge);
 			}
 			header.appendChild(badges);
@@ -1255,6 +1322,13 @@ function showMultiModelSelector(providerName, providerDisplayName, models, saved
 			idLine.className = "text-xs text-[var(--muted)] mt-1 font-mono";
 			idLine.textContent = mdl.id;
 			card.appendChild(idLine);
+
+			if (probe && probe !== "ok" && probe !== "probing" && probe.error) {
+				var errorLine = document.createElement("div");
+				errorLine.className = "text-xs font-medium text-[var(--danger,#ef4444)] mt-0.5";
+				errorLine.textContent = probe.error;
+				card.appendChild(errorLine);
+			}
 
 			if (mdl.createdAt) {
 				var dateLine = document.createElement("time");

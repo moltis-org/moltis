@@ -98,7 +98,7 @@ fn discover_flat(base_path: &Path, source: &SkillSource, skills: &mut Vec<SkillM
         match parse::parse_metadata(&content, &skill_dir) {
             Ok(mut meta) => {
                 meta.source = Some(source.clone());
-                tracing::info!(
+                tracing::debug!(
                     path = %skill_md.display(),
                     source = ?source,
                     name = %meta.name,
@@ -187,7 +187,7 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
                     match parse::parse_metadata(&content, &skill_dir) {
                         Ok(mut meta) => {
                             meta.source = Some(SkillSource::Registry);
-                            tracing::info!(
+                            tracing::debug!(
                                 path = %skill_md.display(),
                                 source = "registry",
                                 name = %meta.name,

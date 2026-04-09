@@ -11,6 +11,8 @@ export default {
 	modelDetectionFailed: "模型检测失败。",
 	detectAllModels: "检测所有模型",
 	detectingModels: "检测模型中\u2026",
+	stopDetection: "停止",
+	detectionCancelled: "检测已停止。",
 	probingModels: "探测模型：{{checked}}/{{total}} ({{pct}}%)",
 	detectSummary: "检测到 {{supported}} 个支持、{{unsupported}} 个不支持，共 {{total}} 个模型。",
 	noProvidersConfigured: "尚未配置 LLM 供应商。",
@@ -107,6 +109,9 @@ export default {
 		configurationTimedOut: "配置超时。请重试。",
 		configurationFailed: "配置失败",
 	},
+	preferred: "首选",
+	showAllModels: "显示其余 {{count}} 个模型\u2026",
+	showFewerModels: "收起模型列表",
 	badges: {
 		apiKey: "API 密钥",
 		oauth: "OAuth",

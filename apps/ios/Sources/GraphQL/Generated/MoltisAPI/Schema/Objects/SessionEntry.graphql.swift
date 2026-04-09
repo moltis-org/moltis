@@ -4,7 +4,7 @@
 import ApolloAPI
 
 extension MoltisAPI.Objects {
-  static let SessionEntry = ApolloAPI.Object(
+  nonisolated static let SessionEntry = ApolloAPI.Object(
     typename: "SessionEntry",
     implementedInterfaces: [],
     keyFields: nil

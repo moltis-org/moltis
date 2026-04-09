@@ -1,12 +1,16 @@
 # Release Verification
 
-Moltis releases use **dual signing** to provide strong supply chain guarantees:
+Moltis releases use **multiple signing layers** to provide strong supply chain guarantees:
 
 | Method | Proves | Verification |
 |--------|--------|-------------|
+| **GitHub Artifact Attestations** (CI-generated) | Artifact was built by this repo's GitHub Actions workflow | `gh attestation verify` |
 | **Sigstore** (keyless, CI-generated) | Artifact was built by GitHub Actions from this repo | `cosign verify-blob` |
 | **GPG** (YubiKey-resident key, maintainer-signed) | A specific maintainer authorized the release | `gpg --verify` |
 | **SHA256/SHA512 checksums** | File integrity (no corruption/tampering in transit) | `sha256sum --check` |
+
+All attestations are publicly visible on the
+[repository attestations page](https://github.com/moltis-org/moltis/attestations).
 
 ## Quick Verification
 
@@ -22,6 +26,29 @@ The easiest way to verify a release is with the included script:
 # Verify specific local files
 ./scripts/verify-release.sh moltis-VERSION-x86_64-unknown-linux-gnu.tar.gz
 ```
+
+### GitHub Artifact Attestations
+
+GitHub artifact attestations provide cryptographic proof that release artifacts
+were built inside this repository's GitHub Actions workflow. Verification uses
+the [GitHub CLI](https://cli.github.com/):
+
+```bash
+# Verify a downloaded binary
+gh attestation verify moltis-VERSION-x86_64-unknown-linux-gnu.tar.gz \
+  -R moltis-org/moltis
+
+# Verify a Docker image
+gh attestation verify oci://ghcr.io/moltis-org/moltis:VERSION \
+  -R moltis-org/moltis
+
+# Verify an SBOM
+gh attestation verify moltis-sbom.spdx.json \
+  -R moltis-org/moltis
+```
+
+Browse all attestations at
+<https://github.com/moltis-org/moltis/attestations>.
 
 ### Manual Verification
 
@@ -92,20 +119,25 @@ cosign verify \
 **Checksums** detect download corruption or CDN tampering. They do not prove
 who created the file.
 
+**GitHub artifact attestations** create unfalsifiable provenance records tied
+to the repository, workflow, commit SHA, and triggering event. They are stored
+in GitHub's attestation ledger and verifiable with `gh attestation verify`.
+This provides SLSA v1.0 Build Level 2 guarantees.
+
 **Sigstore signatures** prove the artifact was built inside the
 `moltis-org/moltis` GitHub Actions workflow using OIDC-based keyless signing.
 This guards against a compromised maintainer laptop — even if someone steals
 credentials, they cannot reproduce a valid Sigstore certificate from the CI
-environment.
+environment. Signatures are recorded in Sigstore's Rekor transparency log.
 
 **GPG signatures** prove the release was reviewed and authorized by a specific
 maintainer holding the corresponding private key. Because the key lives on a
 YubiKey hardware token, compromise requires physical access to the device plus
 the PIN.
 
-Together, the two signatures create a strong chain: Sigstore proves *where* the
-artifact was built (CI), and GPG proves *who* authorized it (maintainer with
-hardware key).
+Together, these layers create a strong chain: GitHub attestations and Sigstore
+prove *where* the artifact was built (CI), and GPG proves *who* authorized it
+(maintainer with hardware key).
 
 ## Release Artifacts Per File
 

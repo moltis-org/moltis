@@ -869,6 +869,27 @@ pub async fn prepare_gateway(
                     let teams_plugin = Arc::clone(&teams_plugin_for_webhook);
                     let gw_state = Arc::clone(&state_for_teams_webhook);
                     async move {
+                        // JWT pre-validation: if a JWT validator is configured,
+                        // the Authorization header is mandatory and must be valid.
+                        // A missing header is treated as an auth failure (not skipped).
+                        let jwt_validator = {
+                            let plugin = teams_plugin.read().await;
+                            plugin.jwt_validator(&account_id)
+                        };
+                        if let Some(validator) = jwt_validator {
+                            let header_str = headers
+                                .get("authorization")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("");
+                            if !validator.validate(header_str).await {
+                                return (
+                                    StatusCode::UNAUTHORIZED,
+                                    Json(serde_json::json!({ "ok": false, "error": "invalid JWT" })),
+                                )
+                                    .into_response();
+                            }
+                        }
+
                         // Get the verifier from the plugin.
                         let verifier = {
                             let plugin = teams_plugin.read().await;
@@ -910,7 +931,7 @@ pub async fn prepare_gateway(
                             )
                                 .into_response(),
                             Ok((verified, moltis_channels::ChannelWebhookDedupeResult::New)) => {
-                                // Parse verified body and dispatch.
+                                // Parse verified body.
                                 let payload: serde_json::Value =
                                     match serde_json::from_slice(&verified.body) {
                                         Ok(v) => v,
@@ -922,35 +943,30 @@ pub async fn prepare_gateway(
                                                 .into_response();
                                         },
                                     };
-                                let result = {
-                                    let plugin = teams_plugin.read().await;
-                                    plugin
-                                        .ingest_verified_activity(&account_id, payload)
+
+                                // Spawn processing asynchronously and return 202
+                                // immediately. This prevents Teams from retrying
+                                // when LLM processing takes longer than ~15 seconds.
+                                let account_id_owned = account_id.clone();
+                                let teams_plugin_for_spawn = Arc::clone(&teams_plugin);
+                                tokio::spawn(async move {
+                                    let plugin = teams_plugin_for_spawn.read().await;
+                                    if let Err(e) = plugin
+                                        .ingest_verified_activity(&account_id_owned, payload)
                                         .await
-                                };
-                                match result {
-                                    Ok(()) => (
-                                        StatusCode::OK,
-                                        Json(serde_json::json!({ "ok": true })),
-                                    )
-                                        .into_response(),
-                                    Err(e) => {
-                                        let msg = e.to_string();
-                                        if msg.contains("unknown Teams account") {
-                                            (
-                                                StatusCode::NOT_FOUND,
-                                                Json(serde_json::json!({ "ok": false, "error": msg })),
-                                            )
-                                                .into_response()
-                                        } else {
-                                            (
-                                                StatusCode::BAD_REQUEST,
-                                                Json(serde_json::json!({ "ok": false, "error": msg })),
-                                            )
-                                                .into_response()
-                                        }
-                                    },
-                                }
+                                    {
+                                        tracing::warn!(
+                                            account_id = account_id_owned,
+                                            "Teams webhook processing failed: {e}"
+                                        );
+                                    }
+                                });
+
+                                (
+                                    StatusCode::ACCEPTED,
+                                    Json(serde_json::json!({ "ok": true })),
+                                )
+                                    .into_response()
                             },
                         }
                     }
@@ -1120,6 +1136,347 @@ pub async fn prepare_gateway(
         );
     }
 
+    // ── Generic webhook ingress ────────────────────────────────────────────
+    {
+        fn webhook_cors_headers(mut resp: axum::response::Response) -> axum::response::Response {
+            use axum::http::HeaderValue;
+            let h = resp.headers_mut();
+            h.insert(
+                axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                HeaderValue::from_static("*"),
+            );
+            h.insert(
+                axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+                HeaderValue::from_static("POST, OPTIONS"),
+            );
+            h.insert(axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Content-Type, Authorization, X-Hub-Signature-256, X-GitHub-Event, X-GitHub-Delivery, X-Gitlab-Token, X-Gitlab-Event, Stripe-Signature, X-Webhook-Secret, X-Event-Type, X-Delivery-Id, Idempotency-Key, Linear-Signature, X-PagerDuty-Signature, Sentry-Hook-Signature"));
+            h.insert(
+                axum::http::header::ACCESS_CONTROL_MAX_AGE,
+                HeaderValue::from_static("86400"),
+            );
+            resp
+        }
+
+        // OPTIONS preflight handler.
+        app = app.route(
+            "/api/webhooks/ingest/{public_id}",
+            axum::routing::options(move |_: axum::extract::Path<String>| async move {
+                webhook_cors_headers(StatusCode::NO_CONTENT.into_response())
+            }),
+        );
+
+        let state_for_webhook_ingest = Arc::clone(&state);
+        app = app.route(
+            "/api/webhooks/ingest/{public_id}",
+            axum::routing::post(
+                move |axum::extract::Path(public_id): axum::extract::Path<String>,
+                      ConnectInfo(peer): ConnectInfo<SocketAddr>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let gw = Arc::clone(&state_for_webhook_ingest);
+                    async move {
+                        // Extract remote IP. Behind a proxy, trust forwarded
+                        // headers; otherwise use the real TCP peer address.
+                        let remote_ip = if gw.behind_proxy {
+                            headers
+                                .get("x-forwarded-for")
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.split(',').next())
+                                .map(|s| s.trim().to_string())
+                                .or_else(|| {
+                                    headers
+                                        .get("x-real-ip")
+                                        .and_then(|v| v.to_str().ok())
+                                        .map(|s| s.trim().to_string())
+                                })
+                                .or_else(|| Some(peer.ip().to_string()))
+                        } else {
+                            Some(peer.ip().to_string())
+                        };
+
+                        let resp = async {
+                            let Some(store) = gw.webhook_store.get() else {
+                                return (
+                                    StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({ "error": "webhooks not configured" })),
+                                )
+                                    .into_response();
+                            };
+
+                            // Look up webhook by public_id.
+                            let webhook = match store.get_webhook_by_public_id(&public_id).await {
+                                Ok(w) if w.enabled => w,
+                                Ok(_) => {
+                                    return (
+                                        StatusCode::NOT_FOUND,
+                                        Json(serde_json::json!({ "error": "webhook not found" })),
+                                    )
+                                        .into_response();
+                                },
+                                Err(_) => {
+                                    return (
+                                        StatusCode::NOT_FOUND,
+                                        Json(serde_json::json!({ "error": "webhook not found" })),
+                                    )
+                                        .into_response();
+                                },
+                            };
+
+                            #[allow(unused_mut)]
+                            // Secret decryption mutates the webhook only when the vault feature is enabled.
+                            let mut webhook = webhook;
+
+                            #[cfg(feature = "vault")]
+                            if let Err(error) = moltis_gateway::webhooks::decrypt_webhook_secrets(
+                                &mut webhook,
+                                gw.vault.as_ref(),
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    public_id = %webhook.public_id,
+                                    error = %error,
+                                    "webhook secrets unavailable for runtime verification"
+                                );
+                                return (
+                                    StatusCode::SERVICE_UNAVAILABLE,
+                                    Json(serde_json::json!({
+                                        "error": "webhook secrets unavailable",
+                                    })),
+                                )
+                                    .into_response();
+                            }
+
+                            // Check CIDR allowlist (before auth to avoid timing side-channels).
+                            if !webhook.allowed_cidrs.is_empty() {
+                                let allowed = match &remote_ip {
+                                    Some(ip) => {
+                                        if let Ok(addr) = ip.parse::<std::net::IpAddr>() {
+                                            webhook.allowed_cidrs.iter().any(|cidr| {
+                                                cidr.parse::<ipnet::IpNet>()
+                                                    .map(|net| net.contains(&addr))
+                                                    .unwrap_or_else(|_| {
+                                                        // Fall back to exact string match.
+                                                        cidr == ip
+                                                    })
+                                            })
+                                        } else {
+                                            // IP couldn't be parsed — no match.
+                                            false
+                                        }
+                                    },
+                                    None => false, // No IP available — can't match allowlist.
+                                };
+                                if !allowed {
+                                    return (
+                                        StatusCode::FORBIDDEN,
+                                        Json(serde_json::json!({ "error": "IP not in allowlist" })),
+                                    )
+                                        .into_response();
+                                }
+                            }
+
+                            // Check body size limit.
+                            if body.len() > webhook.max_body_bytes {
+                                return (
+                                    StatusCode::PAYLOAD_TOO_LARGE,
+                                    Json(serde_json::json!({
+                                        "error": "payload too large",
+                                        "maxBytes": webhook.max_body_bytes,
+                                    })),
+                                )
+                                    .into_response();
+                            }
+
+                            // Verify authentication.
+                            if let Err(e) = moltis_webhooks::auth::verify(
+                                &webhook.auth_mode,
+                                webhook.auth_config.as_ref(),
+                                &headers,
+                                &body,
+                            ) {
+                                tracing::warn!(
+                                    webhook_id = webhook.id,
+                                    public_id = %webhook.public_id,
+                                    error = %e,
+                                    "webhook auth verification failed"
+                                );
+                                return (
+                                    StatusCode::UNAUTHORIZED,
+                                    Json(serde_json::json!({ "error": "authentication failed" })),
+                                )
+                                    .into_response();
+                            }
+
+                            // Parse event type and delivery key from source profile.
+                            let profile_registry =
+                                moltis_webhooks::profiles::ProfileRegistry::new();
+                            let profile = profile_registry.get(&webhook.source_profile);
+                            let event_type =
+                                profile.and_then(|p| p.parse_event_type(&headers, &body));
+                            let delivery_key =
+                                profile.and_then(|p| p.parse_delivery_key(&headers, &body));
+
+                            // Check event filter.
+                            if let Some(ref et) = event_type
+                                && !webhook.event_filter.accepts(et)
+                            {
+                                return (
+                                    StatusCode::OK,
+                                    Json(serde_json::json!({
+                                        "status": "filtered",
+                                        "eventType": et,
+                                    })),
+                                )
+                                    .into_response();
+                            }
+
+                            // Check rate limit.
+                            if !gw
+                                .webhook_rate_limiter
+                                .check(webhook.id, webhook.rate_limit_per_minute)
+                            {
+                                return (
+                                    StatusCode::TOO_MANY_REQUESTS,
+                                    Json(serde_json::json!({ "error": "rate limited" })),
+                                )
+                                    .into_response();
+                            }
+
+                            // Dedup check.
+                            if let Some(ref dk) = delivery_key {
+                                match moltis_webhooks::dedup::check_duplicate(
+                                    store.as_ref(),
+                                    webhook.id,
+                                    Some(dk.as_str()),
+                                )
+                                .await
+                                {
+                                    Ok(Some(existing_id)) => {
+                                        return (
+                                            StatusCode::OK,
+                                            Json(serde_json::json!({
+                                                "status": "deduplicated",
+                                                "existingDeliveryId": existing_id,
+                                            })),
+                                        )
+                                            .into_response();
+                                    },
+                                    Ok(None) => { /* new delivery, continue */ },
+                                    Err(e) => {
+                                        tracing::error!(
+                                            webhook_id = webhook.id,
+                                            error = %e,
+                                            "dedup check failed"
+                                        );
+                                        // Continue despite dedup error — better to
+                                        // accept a potential duplicate than reject.
+                                    },
+                                }
+                            }
+
+                            // Build timestamp.
+                            let received_at = time::OffsetDateTime::now_utc()
+                                .format(&time::format_description::well_known::Rfc3339)
+                                .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into());
+
+                            // Extract entity key.
+                            let entity_key = if let (Some(p), Some(et)) = (profile, &event_type) {
+                                let body_val: serde_json::Value =
+                                    serde_json::from_slice(&body).unwrap_or_default();
+                                p.entity_key(et, &body_val)
+                            } else {
+                                None
+                            };
+
+                            // Extract safe headers for audit logging.
+                            let safe_headers =
+                                moltis_webhooks::normalize::extract_safe_headers(&headers);
+                            let headers_json = serde_json::to_string(&safe_headers).ok();
+
+                            let content_type = headers
+                                .get("content-type")
+                                .and_then(|v| v.to_str().ok())
+                                .map(String::from);
+
+                            // Persist delivery.
+                            let delivery = moltis_webhooks::store::NewDelivery {
+                                webhook_id: webhook.id,
+                                received_at: received_at.clone(),
+                                status: moltis_webhooks::types::DeliveryStatus::Queued,
+                                event_type: event_type.clone(),
+                                entity_key,
+                                delivery_key,
+                                http_method: Some("POST".into()),
+                                content_type,
+                                remote_ip: remote_ip.clone(),
+                                headers_json,
+                                body_size: body.len(),
+                                body_blob: Some(body.to_vec()),
+                                rejection_reason: None,
+                            };
+
+                            let delivery_id = match store.insert_delivery(&delivery).await {
+                                Ok(id) => id,
+                                Err(e) => {
+                                    tracing::error!(
+                                        webhook_id = webhook.id,
+                                        error = %e,
+                                        "failed to persist webhook delivery"
+                                    );
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        Json(serde_json::json!({
+                                            "error": "failed to persist delivery"
+                                        })),
+                                    )
+                                        .into_response();
+                                },
+                            };
+
+                            // Update denormalized delivery count.
+                            if let Err(e) = store
+                                .increment_delivery_count(webhook.id, &received_at)
+                                .await
+                            {
+                                tracing::warn!(
+                                    webhook_id = webhook.id,
+                                    error = %e,
+                                    "failed to increment delivery count"
+                                );
+                            }
+
+                            // Queue for async processing.
+                            if let Some(tx) = gw.webhook_worker_tx.get()
+                                && let Err(e) = tx.send(delivery_id).await
+                            {
+                                tracing::error!(
+                                    delivery_id,
+                                    error = %e,
+                                    "failed to queue webhook delivery for processing"
+                                );
+                            }
+
+                            (
+                                StatusCode::ACCEPTED,
+                                Json(serde_json::json!({
+                                    "deliveryId": delivery_id,
+                                    "status": "queued",
+                                    "webhookId": webhook.public_id,
+                                    "eventType": event_type,
+                                    "receivedAt": received_at,
+                                })),
+                            )
+                                .into_response()
+                        }
+                        .await;
+                        webhook_cors_headers(resp)
+                    }
+                },
+            ),
+        );
+    }
+
     // Resolve TLS configuration (only when compiled with the `tls` feature).
     #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
     let tls_active = tls_enabled_for_gateway;
@@ -1138,7 +1495,8 @@ pub async fn prepare_gateway(
         } else if tls_config.auto_generate {
             // Auto-generate certificates.
             let mgr = moltis_tls::FsCertManager::new()?;
-            let (ca, cert, key) = mgr.ensure_certs()?;
+            let runtime_sans = tls_runtime_sans(bind);
+            let (ca, cert, key) = mgr.ensure_certs(&runtime_sans)?;
             (Some(ca), cert, key)
         } else {
             anyhow::bail!(
@@ -1766,6 +2124,7 @@ pub async fn prepare_gateway(
                     sandbox: Some(moltis_cron::types::CronSandboxConfig {
                         enabled: hb.sandbox_enabled,
                         image: hb.sandbox_image.clone(),
+                        auto_prune_container: None,
                     }),
                     ..Default::default()
                 };
@@ -1797,6 +2156,7 @@ pub async fn prepare_gateway(
                     sandbox: moltis_cron::types::CronSandboxConfig {
                         enabled: hb.sandbox_enabled,
                         image: hb.sandbox_image.clone(),
+                        auto_prune_container: None,
                     },
                     wake_mode: moltis_cron::types::CronWakeMode::default(),
                 };
@@ -2110,7 +2470,8 @@ pub async fn start_gateway(
         } else if tls_config.auto_generate {
             // Auto-generate certificates.
             let mgr = moltis_tls::FsCertManager::new()?;
-            let (ca, cert, key) = mgr.ensure_certs()?;
+            let runtime_sans = tls_runtime_sans(bind);
+            let (ca, cert, key) = mgr.ensure_certs(&runtime_sans)?;
             (Some(ca), cert, key)
         } else {
             anyhow::bail!(
@@ -2594,6 +2955,39 @@ fn resolve_outbound_ip(ipv6: bool) -> Option<std::net::IpAddr> {
     Some(socket.local_addr().ok()?.ip())
 }
 
+#[cfg(feature = "tls")]
+fn tls_runtime_sans(bind: &str) -> Vec<moltis_tls::ServerSan> {
+    let normalized = bind.trim().trim_end_matches('.');
+    if normalized.is_empty() {
+        return Vec::new();
+    }
+
+    if let Ok(ip) = normalized.parse::<std::net::IpAddr>() {
+        if ip.is_unspecified() {
+            // For wildcard binds we can only infer one "best" reachable IP
+            // from the current routing table, which fixes the common single-LAN
+            // case but still cannot cover every interface on multi-homed hosts.
+            return resolve_outbound_ip(ip.is_ipv6())
+                .filter(|resolved| !resolved.is_loopback() && !resolved.is_unspecified())
+                .map(moltis_tls::ServerSan::Ip)
+                .into_iter()
+                .collect();
+        }
+
+        if !ip.is_loopback() {
+            return vec![moltis_tls::ServerSan::Ip(ip)];
+        }
+
+        return Vec::new();
+    }
+
+    if matches!(normalized, "localhost") || normalized.ends_with(".localhost") {
+        Vec::new()
+    } else {
+        vec![moltis_tls::ServerSan::Dns(normalized.to_ascii_lowercase())]
+    }
+}
+
 fn startup_bind_line(addr: SocketAddr) -> String {
     format!("bind (--bind): {addr}")
 }
@@ -2826,6 +3220,65 @@ mod tests {
             let display = SocketAddr::new(ip, addr.port());
             assert!(!display.ip().is_unspecified());
             assert_eq!(display.port(), 9999);
+        }
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_runtime_sans_uses_dns_for_non_localhost_names() {
+        assert_eq!(tls_runtime_sans("gateway.local"), vec![
+            moltis_tls::ServerSan::Dns("gateway.local".to_string())
+        ]);
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_runtime_sans_uses_ip_for_concrete_non_loopback_bind() {
+        assert_eq!(tls_runtime_sans("192.168.1.9"), vec![
+            moltis_tls::ServerSan::Ip("192.168.1.9".parse().unwrap())
+        ]);
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_runtime_sans_uses_ip_for_concrete_non_loopback_ipv6_bind() {
+        assert_eq!(tls_runtime_sans("2001:db8::42"), vec![
+            moltis_tls::ServerSan::Ip("2001:db8::42".parse().unwrap())
+        ]);
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_runtime_sans_skips_loopback_hosts() {
+        assert!(tls_runtime_sans("127.0.0.1").is_empty());
+        assert!(tls_runtime_sans("::1").is_empty());
+        assert!(tls_runtime_sans("localhost").is_empty());
+        assert!(tls_runtime_sans("moltis.localhost").is_empty());
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_runtime_sans_wildcard_bind_uses_resolved_outbound_ip_when_available() {
+        let sans = tls_runtime_sans("0.0.0.0");
+        if let Some(ip) =
+            resolve_outbound_ip(false).filter(|ip| !ip.is_loopback() && !ip.is_unspecified())
+        {
+            assert_eq!(sans, vec![moltis_tls::ServerSan::Ip(ip)]);
+        } else {
+            assert!(sans.is_empty());
+        }
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_runtime_sans_ipv6_wildcard_bind_uses_resolved_outbound_ip_when_available() {
+        let sans = tls_runtime_sans("::");
+        if let Some(ip) =
+            resolve_outbound_ip(true).filter(|ip| !ip.is_loopback() && !ip.is_unspecified())
+        {
+            assert_eq!(sans, vec![moltis_tls::ServerSan::Ip(ip)]);
+        } else {
+            assert!(sans.is_empty());
         }
     }
 

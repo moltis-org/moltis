@@ -1,6 +1,6 @@
 //! SPA templates, gon data, and template rendering.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use {
     askama::Template,
@@ -73,6 +73,7 @@ pub(crate) struct GonData {
     deploy_platform: Option<String>,
     channels_offered: Vec<String>,
     channel_descriptors: Vec<moltis_channels::ChannelDescriptor>,
+    channel_storage_db_path: String,
     update: moltis_gateway::update_check::UpdateAvailability,
     sandbox: SandboxGonInfo,
     routes: SpaRoutes,
@@ -82,6 +83,8 @@ pub(crate) struct GonData {
     /// Small recent session snapshot for instant sidebar paint.
     sessions_recent: Vec<serde_json::Value>,
     agents: Vec<serde_json::Value>,
+    webhooks: Vec<serde_json::Value>,
+    webhook_profiles: Vec<serde_json::Value>,
     #[cfg(feature = "vault")]
     vault_status: String,
 }
@@ -361,7 +364,20 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .unwrap_or_default();
 
     let counts = build_nav_counts(gw).await;
-    let (crons, cron_status) = tokio::join!(gw.services.cron.list(), gw.services.cron.status());
+    let (crons, cron_status, webhooks_val, webhook_profiles_val) = tokio::join!(
+        gw.services.cron.list(),
+        gw.services.cron.status(),
+        gw.services.webhooks.list(),
+        gw.services.webhooks.profiles(),
+    );
+    let webhooks: Vec<serde_json::Value> = webhooks_val
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let webhook_profiles: Vec<serde_json::Value> = webhook_profiles_val
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
     let crons: Vec<moltis_cron::types::CronJob> = crons
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
@@ -370,13 +386,14 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let (heartbeat_config, channels_offered) = {
+    let (heartbeat_config, cached_channels_offered) = {
         let inner = gw.inner.read().await;
         (
             inner.heartbeat_config.clone(),
             inner.channels_offered.clone(),
         )
     };
+    let channels_offered = resolve_channels_offered(cached_channels_offered);
     let channel_descriptors: Vec<moltis_channels::ChannelDescriptor> = channels_offered
         .iter()
         .filter_map(|s| s.parse::<moltis_channels::ChannelType>().ok())
@@ -444,6 +461,10 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         deploy_platform: gw.deploy_platform.clone(),
         channels_offered,
         channel_descriptors,
+        channel_storage_db_path: moltis_config::data_dir()
+            .join("moltis.db")
+            .display()
+            .to_string(),
         update: gw.inner.read().await.update.clone(),
         sandbox,
         routes: SPA_ROUTES.clone(),
@@ -451,6 +472,8 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
         sessions_recent,
         agents,
+        webhooks,
+        webhook_profiles,
         #[cfg(feature = "vault")]
         vault_status: {
             if let Some(ref vault) = gw.vault {
@@ -461,6 +484,30 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
             } else {
                 "disabled".to_owned()
             }
+        },
+    }
+}
+
+fn load_channels_offered_from_config_path(
+    path: &Path,
+) -> Result<Vec<String>, moltis_config::Error> {
+    moltis_config::loader::load_config(path).map(|config| config.channels.offered)
+}
+
+fn resolve_channels_offered(cached_channels_offered: Vec<String>) -> Vec<String> {
+    let Some(path) = moltis_config::loader::find_config_file() else {
+        return cached_channels_offered;
+    };
+
+    match load_channels_offered_from_config_path(&path) {
+        Ok(channels_offered) => channels_offered,
+        Err(error) => {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to reload channels.offered for gon data, using startup value"
+            );
+            cached_channels_offered
         },
     }
 }
@@ -766,7 +813,7 @@ pub(crate) async fn onboarding_completed(gw: &GatewayState) -> bool {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
+    use {super::*, std::io::Write};
 
     #[test]
     fn parse_git_branch_filters_defaults() {
@@ -842,5 +889,25 @@ mod tests {
         assert!(!should_redirect_from_onboarding(true, true));
         assert!(!should_redirect_from_onboarding(false, false));
         assert!(!should_redirect_from_onboarding(false, true));
+    }
+
+    #[test]
+    fn load_channels_offered_from_config_path_reads_matrix_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("moltis.toml");
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(
+            file,
+            "[channels]\noffered = [\"telegram\", \"matrix\", \"whatsapp\"]"
+        )
+        .unwrap();
+
+        let offered = load_channels_offered_from_config_path(&path).unwrap();
+
+        assert_eq!(offered, vec![
+            "telegram".to_owned(),
+            "matrix".to_owned(),
+            "whatsapp".to_owned(),
+        ]);
     }
 }

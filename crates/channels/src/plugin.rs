@@ -17,6 +17,7 @@ pub enum ChannelType {
     MsTeams,
     Discord,
     Slack,
+    Matrix,
 }
 
 impl ChannelType {
@@ -28,6 +29,7 @@ impl ChannelType {
             Self::MsTeams => "msteams",
             Self::Discord => "discord",
             Self::Slack => "slack",
+            Self::Matrix => "matrix",
         }
     }
 
@@ -39,6 +41,19 @@ impl ChannelType {
             Self::MsTeams => "Microsoft Teams",
             Self::Discord => "Discord",
             Self::Slack => "Slack",
+            Self::Matrix => "Matrix",
+        }
+    }
+
+    /// Top-level config fields that must be treated as persisted secrets.
+    pub fn secret_fields(&self) -> &'static [&'static str] {
+        match self {
+            Self::Telegram => &["token"],
+            Self::Whatsapp => &[],
+            Self::MsTeams => &["app_password", "webhook_secret"],
+            Self::Discord => &["token"],
+            Self::Slack => &["bot_token", "app_token", "signing_secret"],
+            Self::Matrix => &["access_token", "password"],
         }
     }
 }
@@ -59,6 +74,7 @@ impl std::str::FromStr for ChannelType {
             "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
             "discord" => Ok(Self::Discord),
             "slack" => Ok(Self::Slack),
+            "matrix" | "element" => Ok(Self::Matrix),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -74,6 +90,7 @@ impl ChannelType {
         Self::MsTeams,
         Self::Discord,
         Self::Slack,
+        Self::Matrix,
     ];
 
     /// Returns the static descriptor for this channel type.
@@ -119,12 +136,12 @@ impl ChannelType {
                     inbound_mode: InboundMode::Webhook,
                     supports_outbound: true,
                     supports_streaming: true,
-                    supports_interactive: false,
-                    supports_threads: false,
+                    supports_interactive: true,
+                    supports_threads: true,
                     supports_voice_ingest: false,
                     supports_pairing: false,
                     supports_otp: false,
-                    supports_reactions: false,
+                    supports_reactions: true,
                     supports_location: true,
                 },
             },
@@ -158,6 +175,22 @@ impl ChannelType {
                     supports_otp: false,
                     supports_reactions: true,
                     supports_location: false,
+                },
+            },
+            Self::Matrix => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Matrix",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: true,
+                    supports_threads: true,
+                    supports_voice_ingest: true,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: true,
+                    supports_location: true,
                 },
             },
         }
@@ -539,6 +572,14 @@ pub trait ChannelPlugin: Send + Sync {
     /// Stop an account connection.
     async fn stop_account(&mut self, account_id: &str) -> Result<()>;
 
+    /// Retry account-specific setup that is waiting on some external action.
+    ///
+    /// Most channels do not need this. Matrix uses it to resume a pending
+    /// browser-approved cross-signing reset without tearing down the account.
+    async fn retry_account_setup(&mut self, _account_id: &str) -> Result<()> {
+        Err(Error::unavailable("account setup retry not supported"))
+    }
+
     /// Get outbound adapter for sending messages.
     fn outbound(&self) -> Option<&dyn ChannelOutbound>;
 
@@ -737,6 +778,7 @@ pub struct ChannelHealthSnapshot {
     pub connected: bool,
     pub account_id: String,
     pub details: Option<String>,
+    pub extra: Option<serde_json::Value>,
 }
 
 /// Stream event for edit-in-place streaming.
@@ -1019,9 +1061,11 @@ mod tests {
     fn channel_type_round_trip() {
         for (s, expected) in [
             ("telegram", ChannelType::Telegram),
+            ("whatsapp", ChannelType::Whatsapp),
             ("msteams", ChannelType::MsTeams),
             ("discord", ChannelType::Discord),
             ("slack", ChannelType::Slack),
+            ("matrix", ChannelType::Matrix),
         ] {
             let parsed: ChannelType = s.parse().unwrap_or_else(|e| panic!("parse {s}: {e}"));
             assert_eq!(parsed, expected);
@@ -1040,9 +1084,11 @@ mod tests {
     fn channel_type_serde_round_trip() {
         for ct in [
             ChannelType::Telegram,
+            ChannelType::Whatsapp,
             ChannelType::MsTeams,
             ChannelType::Discord,
             ChannelType::Slack,
+            ChannelType::Matrix,
         ] {
             let json = serde_json::to_string(&ct).unwrap_or_else(|e| panic!("serialize: {e}"));
             let back: ChannelType =
@@ -1054,7 +1100,7 @@ mod tests {
     #[test]
     fn all_covers_every_variant() {
         // If a new variant is added to ChannelType, this test forces updating ALL.
-        assert_eq!(ChannelType::ALL.len(), 5);
+        assert_eq!(ChannelType::ALL.len(), 6);
         for ct in ChannelType::ALL {
             // descriptor() must not panic
             let desc = ct.descriptor();
@@ -1072,6 +1118,7 @@ mod tests {
         );
         assert_eq!(ChannelType::Discord.descriptor().display_name, "Discord");
         assert_eq!(ChannelType::Slack.descriptor().display_name, "Slack");
+        assert_eq!(ChannelType::Matrix.descriptor().display_name, "Matrix");
     }
 
     #[test]
@@ -1084,6 +1131,26 @@ mod tests {
             );
             assert_eq!(desc.display_name, ct.display_name());
         }
+    }
+
+    #[test]
+    fn channel_type_secret_fields_are_declared() {
+        assert_eq!(ChannelType::Telegram.secret_fields(), ["token"]);
+        assert_eq!(ChannelType::Whatsapp.secret_fields(), &[] as &[&str]);
+        assert_eq!(ChannelType::MsTeams.secret_fields(), [
+            "app_password",
+            "webhook_secret"
+        ]);
+        assert_eq!(ChannelType::Discord.secret_fields(), ["token"]);
+        assert_eq!(ChannelType::Slack.secret_fields(), [
+            "bot_token",
+            "app_token",
+            "signing_secret"
+        ]);
+        assert_eq!(ChannelType::Matrix.secret_fields(), [
+            "access_token",
+            "password"
+        ]);
     }
 
     #[test]

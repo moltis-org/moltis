@@ -7,12 +7,17 @@ const { expect } = require("@playwright/test");
 async function expectPageContentMounted(page) {
 	await expect
 		.poll(
-			() => {
-				return page.evaluate(() => {
-					const el = document.getElementById("pageContent");
-					if (!el) return 0;
-					return el.childElementCount;
-				});
+			async () => {
+				try {
+					return await page.evaluate(() => {
+						const el = document.getElementById("pageContent");
+						if (!el) return 0;
+						return el.childElementCount;
+					});
+				} catch (error) {
+					if (isRetryableNavigationError(error)) return 0;
+					throw error;
+				}
 			},
 			{
 				timeout: 20_000,
@@ -41,7 +46,7 @@ function watchPageErrors(page) {
  * Note: #statusText is intentionally set to "" when connected, so we
  * only check the dot's CSS class.
  */
-async function waitForWsConnected(page) {
+async function waitForWsConnected(page, timeoutMs = 20_000) {
 	await expect
 		.poll(
 			async () => {
@@ -62,9 +67,18 @@ async function waitForWsConnected(page) {
 					})
 					.catch(() => false);
 			},
-			{ timeout: 20_000 },
+			{ timeout: timeoutMs },
 		)
 		.toBe(true);
+}
+
+function isRetryableNavigationError(error) {
+	var message = error?.message || String(error || "");
+	return (
+		message.includes("net::ERR_ABORTED") ||
+		message.includes("Execution context was destroyed") ||
+		message.includes("Target page, context or browser has been closed")
+	);
 }
 
 /**
@@ -74,13 +88,16 @@ async function waitForWsConnected(page) {
 async function navigateAndWait(page, path) {
 	const pageErrors = watchPageErrors(page);
 	let lastError = null;
-	for (let attempt = 0; attempt < 2; attempt++) {
-		await page.goto(path, { waitUntil: "domcontentloaded" });
+	for (let attempt = 0; attempt < 3; attempt++) {
 		try {
+			await page.goto(path, { waitUntil: "domcontentloaded" });
 			await expectPageContentMounted(page);
 			return pageErrors;
 		} catch (error) {
 			lastError = error;
+			if (!isRetryableNavigationError(error) || attempt === 2) {
+				break;
+			}
 		}
 	}
 	if (lastError) throw lastError;

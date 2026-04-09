@@ -28,6 +28,16 @@ ws_request_logs = false                # Enable WebSocket RPC request/response l
 update_releases_url = "https://www.moltis.org/releases.json"    # Releases manifest URL for update checks (override to use a custom URL)
 
 # ══════════════════════════════════════════════════════════════════════════════
+# UPSTREAM PROXY
+# ══════════════════════════════════════════════════════════════════════════════
+# Route all outbound traffic (providers, channels, tools, OAuth) through a
+# proxy. Supports http://, https://, socks5://, socks5h:// schemes.
+# Authentication via URL: "http://user:pass@host:port"
+# When unset, reqwest honours HTTP_PROXY / HTTPS_PROXY / ALL_PROXY env vars.
+
+# upstream_proxy = "http://127.0.0.1:1080"
+
+# ══════════════════════════════════════════════════════════════════════════════
 # AUTHENTICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -93,6 +103,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 
 [providers]
 offered = ["local-llm", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
+# show_legacy_models = true  # Show models older than 1 year in the chat model selector (they always appear in Settings)
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "fireworks", "mistral", "openrouter", "cerebras", "minimax",
@@ -215,6 +226,8 @@ message_queue_mode = "followup"   # Default: process queued messages one-by-one 
 [tools]
 agent_timeout_secs = 600          # Max seconds for an agent run (0 = no timeout)
 agent_max_iterations = 25         # Max LLM/tool loop iterations before stopping
+agent_max_auto_continues = 2      # Auto-continue nudges when model stops mid-task (0 = off)
+agent_auto_continue_min_tool_calls = 3  # Min tool calls before auto-continue can trigger
 max_tool_result_bytes = 50000     # Max bytes per tool result before truncation (50KB)
 # registry_mode = "full"          # "full" = all schemas every turn, "lazy" = tool_search discovery
 
@@ -406,6 +419,21 @@ max_redirects = 3                 # Maximum HTTP redirects to follow
 readability = true                # Use readability extraction for HTML (cleaner output)
 # ssrf_allowlist = ["172.22.0.0/16"] # CIDR ranges exempt from SSRF blocking (e.g. Docker networks)
 
+# ── Firecrawl (API-based web scraping) ────────────────────────────────────────
+# High-quality markdown extraction from web pages, including JS-heavy and
+# bot-protected sites.  Used as a standalone firecrawl_scrape tool, as a
+# web_search provider, and as a fallback extractor in web_fetch.
+# Get an API key at https://firecrawl.dev or self-host.
+
+# [tools.web.firecrawl]
+# enabled = false                        # Enable Firecrawl integration
+# api_key = "fc-..."                     # Or set FIRECRAWL_API_KEY env var
+# base_url = "https://api.firecrawl.dev" # API endpoint (change for self-hosted)
+# only_main_content = true               # Strip navs, footers, sidebars
+# timeout_seconds = 30                   # HTTP request timeout
+# cache_ttl_minutes = 15                 # Cache scraped pages (0 = no cache)
+# web_fetch_fallback = true              # Use as fallback when readability fails
+
 # ── Browser Automation ────────────────────────────────────────────────────────
 # Full browser control via Chrome DevTools Protocol (CDP).
 # Use for JavaScript-heavy sites, form filling, screenshots.
@@ -467,9 +495,9 @@ request_timeout_secs = 30        # Default timeout for MCP requests
 # env = {{ KEY = "value" }}         # Environment variables for the process
 # enabled = true                  # Whether this server is enabled
 # request_timeout_secs = 90       # Optional timeout override for this server
-# transport = "stdio"             # Transport: "stdio" (default) or "sse"
-# url = "http://..."              # URL for SSE transport
-# headers = {{ Authorization = "Bearer ${{TOKEN}}" }}  # Optional HTTP headers for SSE transport
+# transport = "stdio"             # Transport: "stdio" (default), "sse", or "streamable-http"
+# url = "http://..."              # URL for SSE/Streamable HTTP transport
+# headers = {{ Authorization = "Bearer ${{TOKEN}}" }}  # Optional HTTP headers for remote transport
 
 # Example: Filesystem access
 # [mcp.servers.filesystem]
@@ -491,6 +519,13 @@ request_timeout_secs = 30        # Default timeout for MCP requests
 # headers = {{ "x-api-key" = "${{REMOTE_MCP_KEY}}" }}
 # enabled = true
 
+# Example: Streamable HTTP server
+# [mcp.servers.remote-http]
+# transport = "streamable-http"
+# url = "https://mcp.example.com/mcp"
+# headers = {{ Authorization = "Bearer ${{API_KEY}}" }}
+# enabled = true
+
 # ══════════════════════════════════════════════════════════════════════════════
 # METRICS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -501,6 +536,17 @@ enabled = true                    # Enable metrics collection
 prometheus_endpoint = true        # Expose /metrics endpoint for Prometheus scraping
 # labels = {{ environment = "production", instance = "main" }}
                                   # Additional labels to add to all metrics
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CRON
+# ══════════════════════════════════════════════════════════════════════════════
+# Settings for the cron scheduler.
+
+# [cron]
+# rate_limit_max = 10                # Max jobs created per rate limit window
+# rate_limit_window_secs = 60        # Rate limit window in seconds
+# session_retention_days = 7         # Auto-clean cron sessions older than N days (0 or omit to disable)
+# auto_prune_cron_containers = true  # Auto-remove sandbox containers after cron job completion
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HEARTBEAT
@@ -606,12 +652,15 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # CHANNELS
 # ══════════════════════════════════════════════════════════════════════════════
 # External messaging integrations.
+# Note: channels added or edited in the web UI are stored in Moltis's internal
+# database at data_dir()/moltis.db. They are not written back into this file.
+# Keep channel config here only if you want to manage it manually in TOML.
 
 [channels]
 # Which channel types appear in the web UI's "+ Add Channel" menu.
-# Default: ["telegram", "discord", "slack"]
-# Add "whatsapp" or "msteams" to enable them in the UI.
-# offered = ["telegram", "discord", "slack", "whatsapp"]
+# Default: ["telegram", "msteams", "discord", "slack", "matrix"]
+# Add "whatsapp" to enable it in the UI.
+# offered = ["telegram", "msteams", "discord", "slack", "matrix", "whatsapp"]
 
 # WhatsApp linked-device accounts
 # [channels.whatsapp.my-bot]
@@ -640,8 +689,22 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # [channels.msteams.my-bot]
 # app_id = "..."                  # Azure Bot App ID
 # app_password = "..."            # Azure Bot App Password (client secret)
+# tenant_id = "botframework.com"  # Azure AD tenant ID (for JWT validation)
 # webhook_secret = "..."          # Optional query secret for webhook URL (?secret=...)
 # allowlist = []                  # User IDs allowed to DM (empty = all unless dm_policy=allowlist)
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# stream_mode = "edit_in_place"   # "edit_in_place" or "off"
+# edit_throttle_ms = 1500         # Min ms between streaming edits
+# text_chunk_limit = 4000         # Max chars per message chunk
+# reply_style = "top_level"       # "top_level" or "thread"
+# welcome_card = true             # Show welcome card in DMs
+# group_welcome_card = false      # Show welcome text in group chats
+# bot_name = "Moltis"             # Bot display name for welcome cards
+# prompt_starters = []            # Prompt starter buttons on welcome card
+# max_retries = 3                 # Max retry attempts for failed sends
+# history_limit = 50              # Max messages for thread context (Graph API)
 
 # Discord bots
 # [channels.discord.my-bot]
@@ -673,6 +736,37 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # stream_mode = "edit_in_place"   # "edit_in_place", "native", or "off"
 # edit_throttle_ms = 500          # Min ms between streaming edits
 # thread_replies = true           # Reply in threads
+
+# Matrix bots / appservices using access tokens or password login
+# NOTE: Matrix encrypted rooms require password auth. Access tokens can connect
+# for plain Matrix traffic, but they reuse an existing Matrix session without
+# that device's private E2EE keys, so Moltis cannot reliably decrypt encrypted
+# chats from token auth alone. Use password auth so Moltis creates and persists
+# its own Matrix device keys, then finish Element verification in the chat with
+# `verify yes`, `verify no`, `verify show`, or `verify cancel`.
+# [channels.matrix.my-bot]
+# homeserver = "https://matrix.example.com"
+# access_token = "syt_..."        # Plain/unencrypted Matrix traffic only
+# password = "..."                # Required for encrypted Matrix chats
+# user_id = "@bot:example.com"    # Required for password login, auto-detected for token auth
+# device_id = "MOLTISBOT"         # Optional device ID for session restore
+# device_display_name = "Moltis Matrix Bot"  # Optional display name for password logins
+# ownership_mode = "moltis_owned" # "moltis_owned" or "user_managed"
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# room_policy = "allowlist"       # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# room_allowlist = []             # Matrix room IDs or aliases
+# user_allowlist = []             # Matrix user IDs
+# auto_join = "always"            # "always", "allowlist", or "off"
+# model = "gpt-4.1"
+# model_provider = "openai"
+# stream_mode = "edit_in_place"   # "edit_in_place" or "off"
+# edit_throttle_ms = 500          # Min ms between streaming edits
+# stream_min_initial_chars = 30   # Delay first streamed send until this many chars
+# reply_to_message = true         # Send threaded/rich replies when possible
+# ack_reaction = "👀"             # Emoji reaction while processing (omit to disable)
+# otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS

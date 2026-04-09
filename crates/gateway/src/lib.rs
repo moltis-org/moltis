@@ -52,10 +52,12 @@ pub mod share_store;
 pub mod state;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
+pub mod teams_agent_tools;
 pub mod tts_phrases;
 pub mod update_check;
 pub mod voice;
 pub mod voice_agent_tools;
+pub mod webhooks;
 
 /// Run database migrations for the gateway crate.
 ///

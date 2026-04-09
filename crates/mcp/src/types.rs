@@ -173,12 +173,12 @@ pub enum McpManagerError {
     /// OAuth callback state did not match any pending flow.
     #[error("unknown or expired MCP OAuth state")]
     OAuthStateNotFound,
-    /// Operation requires an SSE server.
-    #[error("MCP server '{server}' is not configured for SSE transport")]
-    NotSseTransport { server: String },
-    /// Operation requires an SSE URL.
-    #[error("MCP server '{server}' is missing an SSE URL")]
-    MissingSseUrl { server: String },
+    /// Operation requires a remote (SSE or Streamable HTTP) server.
+    #[error("MCP server '{server}' is not configured for SSE or Streamable HTTP transport")]
+    NotRemoteTransport { server: String },
+    /// Operation requires a remote URL.
+    #[error("MCP server '{server}' is missing a remote URL")]
+    MissingRemoteUrl { server: String },
     /// Server was not found in the MCP registry.
     #[error("MCP server '{server}' not found in registry")]
     ServerNotFound { server: String },

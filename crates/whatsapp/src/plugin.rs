@@ -320,12 +320,14 @@ impl ChannelStatus for WhatsAppPlugin {
                         connected,
                         account_id: account_id.to_string(),
                         details,
+                        extra: None,
                     }
                 },
                 None => ChannelHealthSnapshot {
                     connected: false,
                     account_id: account_id.to_string(),
                     details: Some("account not started".into()),
+                    extra: None,
                 },
             }
         };

@@ -3,9 +3,9 @@
 import { signal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { onEvent } from "./events.js";
-import { sendRpc } from "./helpers.js";
+import { modelVersionScore, sendRpc } from "./helpers.js";
 import { t } from "./i18n.js";
 import { fetchModels } from "./models.js";
 import { updateNavCount } from "./nav-counts.js";
@@ -54,6 +54,15 @@ function handleModelsUpdatedEvent(payload) {
 	}
 	if (payload.phase === "complete") {
 		detectingModels.value = false;
+		if (payload.summary) {
+			detectSummary.value = payload.summary;
+			detectProgress.value = progressFromPayload(payload.summary);
+		}
+		return;
+	}
+	if (payload.phase === "cancelled") {
+		detectingModels.value = false;
+		detectError.value = t("providers:detectionCancelled");
 		if (payload.summary) {
 			detectSummary.value = payload.summary;
 			detectProgress.value = progressFromPayload(payload.summary);
@@ -150,6 +159,13 @@ async function runDetectAllModels() {
 	}
 }
 
+async function cancelDetection() {
+	var res = await sendRpc("models.cancel_detect", {});
+	if (!res?.ok) {
+		detectError.value = res?.error?.message || t("providers:modelDetectionFailed");
+	}
+}
+
 function groupProviderRows(models, metaMap) {
 	var groups = new Map();
 	for (var row of models) {
@@ -182,17 +198,33 @@ function groupProviderRows(models, metaMap) {
 	});
 	for (var providerGroup of result) {
 		providerGroup.models.sort((a, b) => {
+			// Preferred > recommended > newest date > highest version number > alpha.
+			var aPref = a.preferred ? 1 : 0;
+			var bPref = b.preferred ? 1 : 0;
+			if (aPref !== bPref) return bPref - aPref;
+			var aRec = a.recommended ? 1 : 0;
+			var bRec = b.recommended ? 1 : 0;
+			if (aRec !== bRec) return bRec - aRec;
 			var aTime = a.createdAt || 0;
 			var bTime = b.createdAt || 0;
 			if (aTime !== bTime) return bTime - aTime;
+			var aVer = modelVersionScore(a.id);
+			var bVer = modelVersionScore(b.id);
+			if (aVer !== bVer) return bVer - aVer;
 			return (a.displayName || a.id).localeCompare(b.displayName || b.id);
 		});
 	}
 	return result;
 }
 
+var DEFAULT_VISIBLE_MODELS = 3;
+
 function ProviderSection(props) {
 	var group = props.group;
+	var [expanded, setExpanded] = useState(false);
+	var hasMore = group.models.length > DEFAULT_VISIBLE_MODELS;
+	var visibleModels = expanded || !hasMore ? group.models : group.models.slice(0, DEFAULT_VISIBLE_MODELS);
+	var hiddenCount = group.models.length - DEFAULT_VISIBLE_MODELS;
 
 	function onDeleteProvider() {
 		if (deletingProvider.value) return;
@@ -263,16 +295,18 @@ function ProviderSection(props) {
 			group.models.length === 0
 				? html`<div class="mt-2 text-xs text-[var(--muted)]">${t("providers:noActiveModels")}</div>`
 				: html`<div class="mt-2 flex flex-col gap-2">
-					${group.models.map(
+					${visibleModels.map(
 						(model) => html`<div key=${model.id} class="flex items-start justify-between gap-3 py-1">
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2 min-w-0">
 									<div class="text-sm font-medium text-[var(--text-strong)] truncate">${model.displayName || model.id}</div>
+									${model.preferred ? html`<span class="recommended-badge">${t("providers:preferred")}</span>` : null}
 									${model.unsupported ? html`<span class="provider-item-badge warning" title=${model.unsupportedReason || t("providers:modelNotSupported")}>${t("providers:unsupported")}</span>` : null}
 									${model.supportsTools ? null : html`<span class="provider-item-badge warning">${t("providers:chatOnly")}</span>`}
 									${model.disabled ? html`<span class="provider-item-badge muted">${t("providers:disabled")}</span>` : null}
 								</div>
 								<div class="mt-1 text-xs text-[var(--muted)] font-mono opacity-75">${model.id}</div>
+								${model.unsupported && model.unsupportedReason ? html`<div class="mt-0.5 text-xs font-medium text-[var(--danger,#ef4444)]">${model.unsupportedReason}</div>` : null}
 								${model.createdAt ? html`<time class="mt-0.5 text-xs text-[var(--muted)] opacity-60 block" data-epoch-ms=${model.createdAt * 1000} data-format="year-month"></time>` : null}
 							</div>
 							<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${() => onToggleModel(model)}>
@@ -280,6 +314,14 @@ function ProviderSection(props) {
 							</button>
 						</div>`,
 					)}
+					${
+						hasMore
+							? html`<button
+						class="text-xs text-[var(--accent)] cursor-pointer bg-transparent border-none py-1 text-left hover:underline"
+						onClick=${() => setExpanded(!expanded)}
+					>${expanded ? t("providers:showFewerModels") : t("providers:showAllModels", { count: hiddenCount })}</button>`
+							: null
+					}
 				</div>`
 		}
 	</div>`;
@@ -335,11 +377,19 @@ function ProvidersPage() {
 				${
 					detectingModels.value
 						? html`<div class="max-w-form">
-							<div class="h-2 w-full overflow-hidden rounded-sm border border-[var(--border)] bg-[var(--surface2)]">
-								<div
-									class="h-full bg-[var(--accent)] transition-all duration-150"
-									style=${`width:${progressPercent}%;`}
-								></div>
+							<div class="flex items-center gap-2">
+								<div class="flex-1 h-2 overflow-hidden rounded-sm border border-[var(--border)] bg-[var(--surface2)]">
+									<div
+										class="h-full bg-[var(--accent)] transition-all duration-150"
+										style=${`width:${progressPercent}%;`}
+									></div>
+								</div>
+								<button
+									class="provider-btn provider-btn-danger provider-btn-sm"
+									onClick=${cancelDetection}
+								>
+									${t("providers:stopDetection")}
+								</button>
 							</div>
 							<div class="mt-1 text-xs text-[var(--muted)]">
 								${t("providers:probingModels", { checked: progressValue.checked, total: progressValue.total, pct: progressPercent })}

@@ -31,6 +31,7 @@ serde_json            = { workspace = true }
 thiserror             = { workspace = true }
 tokio                 = { workspace = true }
 tokio-stream          = { workspace = true }
+tokio-util            = { workspace = true }
 tracing               = { workspace = true }
 uuid                  = { workspace = true }
 
@@ -41,7 +42,7 @@ push-notifications = ["dep:chrono"]
 web-ui             = ["dep:chrono"]
 
 [dev-dependencies]
-async-stream   = { workspace = true }
+async-stream    = { workspace = true }
 moltis-channels = { workspace = true }
 sqlx            = { workspace = true }
 tempfile        = { workspace = true }

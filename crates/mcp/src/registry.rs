@@ -20,6 +20,18 @@ pub enum TransportType {
     #[default]
     Stdio,
     Sse,
+    #[serde(rename = "streamable-http", alias = "streamable_http", alias = "http")]
+    StreamableHttp,
+}
+
+impl std::fmt::Display for TransportType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stdio => write!(f, "stdio"),
+            Self::Sse => write!(f, "sse"),
+            Self::StreamableHttp => write!(f, "streamable-http"),
+        }
+    }
 }
 
 /// Manual OAuth override for MCP servers that don't support standard discovery.
@@ -47,7 +59,7 @@ pub struct McpServerConfig {
     pub request_timeout_secs: Option<u64>,
     #[serde(default)]
     pub transport: TransportType,
-    /// URL for SSE transport. Required when `transport` is `Sse`.
+    /// URL for remote transport. Required when `transport` is `Sse` or `StreamableHttp`.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -244,6 +256,19 @@ where
 #[cfg(test)]
 mod tests {
     use {super::*, secrecy::ExposeSecret};
+
+    #[test]
+    fn test_transport_type_deserialization() {
+        let json = r#"["stdio", "sse", "streamable-http", "streamable_http", "http"]"#;
+        let transports: Vec<TransportType> = serde_json::from_str(json).unwrap();
+        assert_eq!(transports, vec![
+            TransportType::Stdio,
+            TransportType::Sse,
+            TransportType::StreamableHttp,
+            TransportType::StreamableHttp,
+            TransportType::StreamableHttp,
+        ]);
+    }
 
     #[test]
     fn test_registry_add_remove() {

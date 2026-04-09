@@ -25,6 +25,11 @@ use futures::StreamExt;
 
 /// Fallback loop limit when config is missing or invalid.
 const DEFAULT_AGENT_MAX_ITERATIONS: usize = 25;
+const TOOL_RESULT_COMPACTION_RATIO_PERCENT: usize = 75;
+const PREEMPTIVE_OVERFLOW_RATIO_PERCENT: usize = 90;
+const TOOL_RESULT_COMPACTION_PLACEHOLDER: &str =
+    "[tool result compacted to preserve context budget]";
+const TOOL_RESULT_COMPACTION_MIN_BYTES: usize = 200;
 
 fn resolve_agent_max_iterations(configured: usize) -> usize {
     if configured == 0 {
@@ -124,15 +129,135 @@ fn streaming_tool_call_message_content(
     }
 }
 
+#[must_use]
+fn estimate_prompt_text_tokens(text: &str) -> usize {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return 0;
+    }
+    trimmed.len().div_ceil(4).max(1)
+}
+
+#[must_use]
+fn estimate_message_tokens(message: &ChatMessage) -> usize {
+    estimate_prompt_text_tokens(&message.to_openai_value().to_string())
+}
+
+#[must_use]
+fn estimate_prompt_tokens(messages: &[ChatMessage], tool_schemas: &[serde_json::Value]) -> usize {
+    let message_tokens: usize = messages.iter().map(estimate_message_tokens).sum();
+    let tool_tokens: usize = tool_schemas
+        .iter()
+        .map(|schema| estimate_prompt_text_tokens(&schema.to_string()))
+        .sum();
+    message_tokens.saturating_add(tool_tokens)
+}
+
+#[must_use]
+fn has_tool_result_messages(messages: &[ChatMessage]) -> bool {
+    messages
+        .iter()
+        .any(|message| matches!(message, ChatMessage::Tool { .. }))
+}
+
+fn compact_tool_results_newest_first_in_place(
+    messages: &mut [ChatMessage],
+    tokens_needed: usize,
+) -> usize {
+    if tokens_needed == 0 {
+        return 0;
+    }
+
+    let mut reduced = 0;
+    for message in messages.iter_mut().rev() {
+        if reduced >= tokens_needed {
+            break;
+        }
+
+        let ChatMessage::Tool {
+            tool_call_id,
+            content,
+        } = message
+        else {
+            continue;
+        };
+        if content == TOOL_RESULT_COMPACTION_PLACEHOLDER
+            || content.len() < TOOL_RESULT_COMPACTION_MIN_BYTES
+        {
+            continue;
+        }
+
+        let tool_call_id = tool_call_id.clone();
+        let original = content.clone();
+        let before = estimate_message_tokens(&ChatMessage::tool(&tool_call_id, &original));
+        *content = TOOL_RESULT_COMPACTION_PLACEHOLDER.to_string();
+        let after = estimate_message_tokens(&ChatMessage::tool(
+            &tool_call_id,
+            TOOL_RESULT_COMPACTION_PLACEHOLDER,
+        ));
+        let saved = before.saturating_sub(after);
+        if saved == 0 {
+            *content = original;
+            continue;
+        }
+
+        reduced = reduced.saturating_add(saved);
+    }
+
+    reduced
+}
+
+fn enforce_tool_result_context_budget(
+    messages: &mut [ChatMessage],
+    tool_schemas: &[serde_json::Value],
+    context_window: u32,
+) -> Result<(), AgentRunError> {
+    let context_window = context_window as usize;
+    if context_window == 0 || !has_tool_result_messages(messages) {
+        return Ok(());
+    }
+
+    let compaction_budget =
+        context_window.saturating_mul(TOOL_RESULT_COMPACTION_RATIO_PERCENT) / 100;
+    let overflow_budget = context_window.saturating_mul(PREEMPTIVE_OVERFLOW_RATIO_PERCENT) / 100;
+    let current_tokens = estimate_prompt_tokens(messages, tool_schemas);
+
+    if current_tokens > compaction_budget {
+        let needed = current_tokens.saturating_sub(compaction_budget);
+        let reduced = compact_tool_results_newest_first_in_place(messages, needed);
+        debug!(
+            current_tokens,
+            compaction_budget,
+            overflow_budget,
+            needed,
+            reduced,
+            "compacted newest tool results to preserve prompt budget"
+        );
+    }
+
+    let post_compaction_tokens = estimate_prompt_tokens(messages, tool_schemas);
+    if post_compaction_tokens > overflow_budget {
+        return Err(AgentRunError::ContextWindowExceeded(format!(
+            "preemptive context overflow: estimated prompt size {post_compaction_tokens} tokens exceeds {overflow_budget} token budget after tool-result compaction"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Error patterns that indicate the context window has been exceeded.
 const CONTEXT_WINDOW_PATTERNS: &[&str] = &[
     "context_length_exceeded",
+    "context_window_exceeded",
+    "context_window_exceeded",
     "max_tokens",
     "too many tokens",
     "request too large",
     "maximum context length",
     "context window",
     "token limit",
+    "input too long",
+    "input_too_long",
     "content_too_large",
     "request_too_large",
 ];
@@ -373,6 +498,12 @@ pub enum RunnerEvent {
     RetryingAfterError {
         error: String,
         delay_ms: u64,
+    },
+    /// The model stopped without tool calls but iteration budget remains;
+    /// the runner is automatically re-prompting.
+    AutoContinue {
+        iteration: usize,
+        max_iterations: usize,
     },
 }
 
@@ -684,6 +815,8 @@ pub async fn run_agent_loop_with_context(
     let native_tools = provider.supports_tools();
     let config = moltis_config::discover_and_load();
     let max_tool_result_bytes = config.tools.max_tool_result_bytes;
+    let max_auto_continues = config.tools.agent_max_auto_continues;
+    let auto_continue_min_tool_calls = config.tools.agent_auto_continue_min_tool_calls;
     let base_max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
     // Lazy mode needs extra iterations for tool_search discovery round-trips.
     let max_iterations = if config.tools.registry_mode == moltis_config::ToolRegistryMode::Lazy {
@@ -732,23 +865,30 @@ pub async fn run_agent_loop_with_context(
     let mut last_answer_text = String::new();
     let mut malformed_retry_count: u8 = 0;
     let mut empty_tool_name_retry_count: u8 = 0;
+    let mut auto_continue_count: usize = 0;
 
     loop {
         iterations += 1;
         if iterations > max_iterations {
             warn!("agent loop exceeded max iterations ({})", max_iterations);
             return Err(AgentRunError::Other(anyhow::anyhow!(
-                "agent loop exceeded max iterations"
+                "agent loop exceeded max iterations ({})",
+                max_iterations
             )));
         }
 
         // Re-compute schemas each iteration so activated tools appear immediately.
-        let tool_schemas = tools.list_schemas();
         let schemas_for_api = if native_tools {
-            &tool_schemas
+            tools.list_schemas()
         } else {
-            &vec![]
+            vec![]
         };
+
+        enforce_tool_result_context_budget(
+            &mut messages,
+            &schemas_for_api,
+            provider.context_window(),
+        )?;
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Iteration(iterations));
@@ -795,7 +935,7 @@ pub async fn run_agent_loop_with_context(
         }
 
         let mut response: CompletionResponse =
-            match provider.complete(&messages, schemas_for_api).await {
+            match provider.complete(&messages, &schemas_for_api).await {
                 Ok(r) => r,
                 Err(e) => {
                     let msg = e.to_string();
@@ -992,8 +1132,35 @@ pub async fn run_agent_loop_with_context(
             }
         }
 
-        // If no tool calls, return the text response.
+        // If no tool calls, auto-continue or return the text response.
         if response.tool_calls.is_empty() {
+            // Auto-continue: if the model made tool calls earlier in this run
+            // and we haven't exhausted nudges, ask it to keep going.
+            if total_tool_calls > 0
+                && total_tool_calls >= auto_continue_min_tool_calls
+                && auto_continue_count < max_auto_continues
+            {
+                auto_continue_count += 1;
+                info!(
+                    iterations,
+                    auto_continue_count, "model stopped without tool calls, auto-continuing"
+                );
+                if let Some(cb) = on_event {
+                    cb(RunnerEvent::AutoContinue {
+                        iteration: iterations,
+                        max_iterations,
+                    });
+                }
+                let response_text = response.text.filter(|t| !t.is_empty()).unwrap_or_default();
+                if !response_text.is_empty() {
+                    messages.push(ChatMessage::assistant(&response_text));
+                }
+                messages.push(ChatMessage::user(
+                    "Your previous response ended without tool calls. If the task is complete, provide a brief final answer. Otherwise continue executing.",
+                ));
+                continue;
+            }
+
             let text = clean_response(
                 &response
                     .text
@@ -1235,6 +1402,8 @@ pub async fn run_agent_loop_streaming(
     let native_tools = provider.supports_tools();
     let config = moltis_config::discover_and_load();
     let max_tool_result_bytes = config.tools.max_tool_result_bytes;
+    let max_auto_continues = config.tools.agent_max_auto_continues;
+    let auto_continue_min_tool_calls = config.tools.agent_auto_continue_min_tool_calls;
     let base_max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
     // Lazy mode needs extra iterations for tool_search discovery round-trips.
     let max_iterations = if config.tools.registry_mode == moltis_config::ToolRegistryMode::Lazy {
@@ -1287,6 +1456,7 @@ pub async fn run_agent_loop_streaming(
     let mut last_answer_text = String::new();
     let mut malformed_retry_count: u8 = 0;
     let mut empty_tool_name_retry_count: u8 = 0;
+    let mut auto_continue_count: usize = 0;
 
     loop {
         iterations += 1;
@@ -1296,7 +1466,8 @@ pub async fn run_agent_loop_streaming(
                 max_iterations
             );
             return Err(AgentRunError::Other(anyhow::anyhow!(
-                "agent loop exceeded max iterations"
+                "agent loop exceeded max iterations ({})",
+                max_iterations
             )));
         }
 
@@ -1306,6 +1477,12 @@ pub async fn run_agent_loop_streaming(
         } else {
             vec![]
         };
+
+        enforce_tool_result_context_budget(
+            &mut messages,
+            &schemas_for_api,
+            provider.context_window(),
+        )?;
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Iteration(iterations));
@@ -1657,8 +1834,34 @@ pub async fn run_agent_loop_streaming(
             }
         }
 
-        // If no tool calls, return the text response.
+        // If no tool calls, auto-continue or return the text response.
         if tool_calls.is_empty() {
+            // Auto-continue: if the model made tool calls earlier in this run
+            // and we haven't exhausted nudges, ask it to keep going.
+            if total_tool_calls > 0
+                && total_tool_calls >= auto_continue_min_tool_calls
+                && auto_continue_count < max_auto_continues
+            {
+                auto_continue_count += 1;
+                info!(
+                    iterations,
+                    auto_continue_count, "model stopped without tool calls, auto-continuing"
+                );
+                if let Some(cb) = on_event {
+                    cb(RunnerEvent::AutoContinue {
+                        iteration: iterations,
+                        max_iterations,
+                    });
+                }
+                if !accumulated_text.is_empty() {
+                    messages.push(ChatMessage::assistant(&accumulated_text));
+                }
+                messages.push(ChatMessage::user(
+                    "Your previous response ended without tool calls. If the task is complete, provide a brief final answer. Otherwise continue executing.",
+                ));
+                continue;
+            }
+
             // When the final iteration produced no text but a previous iteration
             // streamed answer text alongside tool calls, use that as the response.
             let final_text = if accumulated_text.is_empty() && !last_answer_text.is_empty() {
@@ -2202,6 +2405,35 @@ mod tests {
         }
     }
 
+    struct LargeResultTool {
+        tool_name: &'static str,
+        payload: String,
+    }
+
+    #[async_trait]
+    impl crate::tool_registry::AgentTool for LargeResultTool {
+        fn name(&self) -> &str {
+            self.tool_name
+        }
+
+        fn description(&self) -> &str {
+            "Returns a large payload"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            })
+        }
+
+        async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({
+                "stdout": self.payload,
+            }))
+        }
+    }
+
     /// A tool that actually runs shell commands (test-only, mirrors ExecTool).
     struct TestExecTool;
 
@@ -2237,6 +2469,146 @@ mod tests {
                 "stderr": String::from_utf8_lossy(&output.stderr).to_string(),
                 "exit_code": output.status.code().unwrap_or(-1),
             }))
+        }
+    }
+
+    struct PreemptiveOverflowProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for PreemptiveOverflowProvider {
+        fn name(&self) -> &str {
+            "mock-overflow"
+        }
+
+        fn id(&self) -> &str {
+            "mock-overflow-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        fn context_window(&self) -> u32 {
+            120
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Ok(CompletionResponse {
+                    text: Some("reasoning ".repeat(80)),
+                    tool_calls: vec![ToolCall {
+                        id: "overflow_call".into(),
+                        name: "overflow_tool".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    usage: Usage::default(),
+                })
+            } else {
+                bail!("second provider call should not happen")
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    struct StreamingNewestFirstCompactionProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+        observed_tool_contents: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StreamingNewestFirstCompactionProvider {
+        fn name(&self) -> &str {
+            "mock-stream-compaction"
+        }
+
+        fn id(&self) -> &str {
+            "mock-stream-compaction-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        fn context_window(&self) -> u32 {
+            700
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            bail!("complete() should not be used in streaming compaction test")
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::ToolCallStart {
+                        id: "call_a".into(),
+                        name: "tool_a".into(),
+                        index: 0,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 0,
+                        delta: "{}".into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 0 },
+                    StreamEvent::ToolCallStart {
+                        id: "call_b".into(),
+                        name: "tool_b".into(),
+                        index: 1,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 1,
+                        delta: "{}".into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 1 },
+                    StreamEvent::Done(Usage::default()),
+                ]))
+            } else {
+                let tool_contents = messages
+                    .iter()
+                    .filter_map(|message| match message {
+                        ChatMessage::Tool { content, .. } => Some(content.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                *self.observed_tool_contents.lock().unwrap() = tool_contents;
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Done!".into()),
+                    StreamEvent::Done(Usage::default()),
+                ]))
+            }
         }
     }
 
@@ -5818,6 +6190,27 @@ mod tests {
     }
 
     #[test]
+    fn test_is_context_window_error() {
+        // Existing patterns
+        assert!(is_context_window_error(
+            "context_length_exceeded: max tokens 200000"
+        ));
+        assert!(is_context_window_error("request too large"));
+        assert!(is_context_window_error("maximum context length exceeded"));
+        // New Z.AI / provider-specific patterns
+        assert!(is_context_window_error("model_context_window_exceeded"));
+        assert!(is_context_window_error("context_window_exceeded"));
+        assert!(is_context_window_error("input_too_long"));
+        assert!(is_context_window_error("input too long"));
+        // Case insensitive
+        assert!(is_context_window_error("Model_Context_Window_Exceeded"));
+        assert!(is_context_window_error("INPUT_TOO_LONG"));
+        // Negative cases
+        assert!(!is_context_window_error("connection reset by peer"));
+        assert!(!is_context_window_error("invalid API key"));
+    }
+
+    #[test]
     fn test_is_billing_quota_error() {
         assert!(is_billing_quota_error(
             "You exceeded your current quota, please check your plan and billing details."
@@ -6107,6 +6500,114 @@ mod tests {
         assert!(retry_events.iter().all(|delay| *delay >= 1));
     }
 
+    #[test]
+    fn test_compact_tool_results_newest_first() {
+        let older = format!("older {}", "q".repeat(800));
+        let newer = format!("newer {}", "r".repeat(800));
+        let mut messages = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("hello"),
+            ChatMessage::tool("call_a", &older),
+            ChatMessage::tool("call_b", &newer),
+        ];
+
+        let reduced = compact_tool_results_newest_first_in_place(&mut messages, 1);
+        assert!(reduced > 0, "expected compaction to save prompt tokens");
+
+        let tool_contents: Vec<String> = messages
+            .iter()
+            .filter_map(|message| match message {
+                ChatMessage::Tool { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(tool_contents[0], older);
+        assert_eq!(tool_contents[1], TOOL_RESULT_COMPACTION_PLACEHOLDER);
+    }
+
+    #[tokio::test]
+    async fn test_preemptive_overflow_fires_before_second_non_streaming_llm_call() {
+        let provider = Arc::new(PreemptiveOverflowProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let provider_dyn: Arc<dyn LlmProvider> = provider.clone();
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(LargeResultTool {
+            tool_name: "overflow_tool",
+            payload: format!("tool {}", "z".repeat(2_000)),
+        }));
+
+        let err = run_agent_loop(
+            provider_dyn,
+            &tools,
+            "sys",
+            &UserContent::text("hello"),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        match err {
+            AgentRunError::ContextWindowExceeded(message) => {
+                assert!(message.contains("preemptive context overflow"));
+            },
+            other => panic!("expected context overflow, got: {other:?}"),
+        }
+
+        assert_eq!(
+            provider
+                .call_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "expected the guard to stop the second LLM call",
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_loop_compacts_newest_tool_result_first_before_next_llm_call() {
+        let observed_tool_contents = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = Arc::new(StreamingNewestFirstCompactionProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            observed_tool_contents: Arc::clone(&observed_tool_contents),
+        });
+        let provider_dyn: Arc<dyn LlmProvider> = provider;
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(LargeResultTool {
+            tool_name: "tool_a",
+            payload: format!("older {}", "q".repeat(900)),
+        }));
+        tools.register(Box::new(LargeResultTool {
+            tool_name: "tool_b",
+            payload: format!("newer {}", "r".repeat(900)),
+        }));
+
+        let result = run_agent_loop_streaming(
+            provider_dyn,
+            &tools,
+            "sys",
+            &UserContent::text("hello"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Done!");
+
+        let tool_contents = observed_tool_contents.lock().unwrap().clone();
+        assert_eq!(tool_contents.len(), 2);
+        assert!(
+            tool_contents[0].contains("older"),
+            "oldest tool result should stay intact: {:?}",
+            tool_contents
+        );
+        assert_eq!(tool_contents[1], TOOL_RESULT_COMPACTION_PLACEHOLDER);
+    }
+
     // ── sanitize_tool_name ────────────────────────────────────────────
 
     #[test]
@@ -6231,5 +6732,166 @@ mod tests {
         // "functions_" with no trailing name should produce an empty string,
         // which is handled by find_empty_tool_name_call / EMPTY_TOOL_NAME_RETRY_PROMPT.
         assert_eq!(sanitize_tool_name("functions_"), "");
+    }
+
+    // ── Auto-continue tests ──────────────────────────────────────────
+
+    /// Provider that makes 3 tool calls (one per iteration), then stops with
+    /// text repeatedly. Used to test that auto-continue nudges the model and
+    /// caps at the configured limit. The default threshold for auto-continue
+    /// is `agent_auto_continue_min_tool_calls = 3`, so we need at least 3 tool calls.
+    struct AutoContinueProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for AutoContinueProvider {
+        fn name(&self) -> &str {
+            "mock"
+        }
+
+        fn id(&self) -> &str {
+            "mock-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count < 3 {
+                // First 3 calls: make a tool call each time.
+                Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![ToolCall {
+                        id: format!("call_{}", count + 1),
+                        name: "echo_tool".into(),
+                        arguments: serde_json::json!({"text": format!("step {}", count + 1)}),
+                    }],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                })
+            } else {
+                // Subsequent calls: always return text without tool calls.
+                // This forces auto-continue to fire (until capped).
+                Ok(CompletionResponse {
+                    text: Some(format!("Partial result {count}")),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_auto_continue_triggers_after_tool_calls() {
+        let provider = Arc::new(AutoContinueProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |e| {
+            events_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(e);
+        });
+
+        let uc = UserContent::text("Do work");
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &uc,
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Should have auto-continued `agent_max_auto_continues` (default 2) times,
+        // then returned.
+        let max_ac = moltis_config::discover_and_load()
+            .tools
+            .agent_max_auto_continues;
+        let events = events.lock().unwrap_or_else(|e| e.into_inner());
+        let auto_continue_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, RunnerEvent::AutoContinue { .. }))
+            .collect();
+        assert_eq!(auto_continue_events.len(), max_ac);
+
+        // The provider was called: 3 (tool calls) + 1 (text, auto-continued) +
+        // 1 (text, auto-continued) + 1 (text, returned) = 6 total iterations.
+        assert_eq!(result.iterations, 3 + max_ac + 1);
+        assert_eq!(result.tool_calls_made, 3);
+    }
+
+    #[tokio::test]
+    async fn test_auto_continue_does_not_trigger_for_pure_qa() {
+        // MockProvider returns text without tool calls on the first call.
+        let provider = Arc::new(MockProvider {
+            response_text: "Just a plain answer.".into(),
+        });
+        let tools = ToolRegistry::new();
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |e| {
+            events_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(e);
+        });
+
+        let uc = UserContent::text("What is 2+2?");
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &uc,
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // No auto-continue for pure Q&A (total_tool_calls == 0).
+        let events = events.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, RunnerEvent::AutoContinue { .. })),
+            "auto-continue should not fire when no tool calls were made"
+        );
+        assert_eq!(result.iterations, 1);
+        assert_eq!(result.tool_calls_made, 0);
+        assert_eq!(result.text, "Just a plain answer.");
     }
 }

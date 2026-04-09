@@ -33,6 +33,11 @@ pub async fn start_polling(
 ) -> crate::Result<CancellationToken> {
     // Build bot with a client timeout longer than the long-polling timeout (30s)
     // so the HTTP client doesn't abort the request before Telegram responds.
+    //
+    // NOTE: teloxide bundles reqwest 0.11 internally, so we cannot inject the
+    // reqwest 0.12 upstream proxy directly. Teloxide's reqwest 0.11 honours
+    // the standard HTTPS_PROXY / ALL_PROXY env vars, so users behind a proxy
+    // should set those in addition to `upstream_proxy` in moltis.toml.
     let client = teloxide::net::default_reqwest_settings()
         .timeout(std::time::Duration::from_secs(45))
         .build()

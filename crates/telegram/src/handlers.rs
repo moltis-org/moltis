@@ -15,7 +15,9 @@ use {
 use {
     moltis_channels::{
         ChannelAttachment, ChannelEvent, ChannelMessageKind, ChannelMessageMeta, ChannelOutbound,
-        ChannelReplyTarget, ChannelType, message_log::MessageLogEntry,
+        ChannelReplyTarget, ChannelType,
+        message_log::MessageLogEntry,
+        otp::{approve_sender_via_otp, emit_otp_challenge, emit_otp_resolution},
     },
     moltis_common::types::ChatType,
 };
@@ -868,28 +870,20 @@ async fn handle_otp_flow(
 
         match result {
             OtpVerifyResult::Approved => {
-                // Auto-approve: add to allowlist via the event sink.
                 let identifier = username.unwrap_or(peer_id);
-                if let Some(sink) = event_sink {
-                    sink.request_sender_approval("telegram", account_id, identifier)
-                        .await;
-                }
+                approve_sender_via_otp(
+                    event_sink,
+                    ChannelType::Telegram,
+                    account_id,
+                    identifier,
+                    peer_id,
+                    username,
+                )
+                .await;
 
                 let _ = bot
                     .send_message(chat_id, "Verified! You now have access to this bot.")
                     .await;
-
-                // Emit resolved event.
-                if let Some(sink) = event_sink {
-                    sink.emit(ChannelEvent::OtpResolved {
-                        channel_type: ChannelType::Telegram,
-                        account_id: account_id.to_string(),
-                        peer_id: peer_id.to_string(),
-                        username: username.map(String::from),
-                        resolution: "approved".into(),
-                    })
-                    .await;
-                }
 
                 #[cfg(feature = "metrics")]
                 counter!(tg_metrics::OTP_VERIFICATIONS_TOTAL, "result" => "approved").increment(1);
@@ -918,16 +912,15 @@ async fn handle_otp_flow(
                     .send_message(chat_id, "Too many failed attempts. Please try again later.")
                     .await;
 
-                if let Some(sink) = event_sink {
-                    sink.emit(ChannelEvent::OtpResolved {
-                        channel_type: ChannelType::Telegram,
-                        account_id: account_id.to_string(),
-                        peer_id: peer_id.to_string(),
-                        username: username.map(String::from),
-                        resolution: "locked_out".into(),
-                    })
-                    .await;
-                }
+                emit_otp_resolution(
+                    event_sink,
+                    ChannelType::Telegram,
+                    account_id,
+                    peer_id,
+                    username,
+                    "locked_out",
+                )
+                .await;
 
                 #[cfg(feature = "metrics")]
                 counter!(tg_metrics::OTP_VERIFICATIONS_TOTAL, "result" => "locked_out")
@@ -941,16 +934,15 @@ async fn handle_otp_flow(
                     )
                     .await;
 
-                if let Some(sink) = event_sink {
-                    sink.emit(ChannelEvent::OtpResolved {
-                        channel_type: ChannelType::Telegram,
-                        account_id: account_id.to_string(),
-                        peer_id: peer_id.to_string(),
-                        username: username.map(String::from),
-                        resolution: "expired".into(),
-                    })
-                    .await;
-                }
+                emit_otp_resolution(
+                    event_sink,
+                    ChannelType::Telegram,
+                    account_id,
+                    peer_id,
+                    username,
+                    "expired",
+                )
+                .await;
 
                 #[cfg(feature = "metrics")]
                 counter!(tg_metrics::OTP_VERIFICATIONS_TOTAL, "result" => "expired").increment(1);
@@ -984,25 +976,23 @@ async fn handle_otp_flow(
                     .await;
 
                 // Emit OTP challenge event for the admin UI.
-                if let Some(sink) = event_sink {
-                    // Compute expires_at epoch.
-                    let expires_at = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64
-                        + 300;
+                let expires_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+                    + 300;
 
-                    sink.emit(ChannelEvent::OtpChallenge {
-                        channel_type: ChannelType::Telegram,
-                        account_id: account_id.to_string(),
-                        peer_id: peer_id.to_string(),
-                        username: username.map(String::from),
-                        sender_name: sender_name.map(String::from),
-                        code,
-                        expires_at,
-                    })
-                    .await;
-                }
+                emit_otp_challenge(
+                    event_sink,
+                    ChannelType::Telegram,
+                    account_id,
+                    peer_id,
+                    username,
+                    sender_name,
+                    code,
+                    expires_at,
+                )
+                .await;
 
                 #[cfg(feature = "metrics")]
                 counter!(tg_metrics::OTP_CHALLENGES_TOTAL).increment(1);

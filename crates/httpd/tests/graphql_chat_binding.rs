@@ -41,7 +41,9 @@ impl RecordingChatService {
 impl ChatService for RecordingChatService {
     async fn send(&self, params: Value) -> ServiceResult {
         self.record("send");
-        assert_eq!(params["message"], "Hello");
+        if params["message"] != "Hello" || params["sessionKey"] != "sess1" {
+            return Err(format!("unexpected send params: {params}").into());
+        }
         Ok(json!({ "ok": true }))
     }
 
@@ -53,8 +55,15 @@ impl ChatService for RecordingChatService {
         Ok(json!({ "cleared": 0 }))
     }
 
-    async fn history(&self, _params: Value) -> ServiceResult {
-        Ok(json!([]))
+    async fn history(&self, params: Value) -> ServiceResult {
+        self.record("history");
+        if params["sessionKey"] != "sess1" {
+            return Err(format!("unexpected history params: {params}").into());
+        }
+        Ok(json!([{
+            "role": "assistant",
+            "content": "History",
+        }]))
     }
 
     async fn inject(&self, _params: Value) -> ServiceResult {
@@ -83,7 +92,9 @@ impl ChatService for RecordingChatService {
 
     async fn active(&self, params: Value) -> ServiceResult {
         self.record("active");
-        assert_eq!(params["sessionKey"], "sess1");
+        if params["sessionKey"] != "sess1" {
+            return Err(format!("unexpected active params: {params}").into());
+        }
         Ok(json!({ "active": true }))
     }
 }
@@ -131,7 +142,7 @@ async fn graphql_chat_uses_late_bound_override_after_schema_build() {
     let send_response: Value = client
         .post(format!("http://{addr}/graphql"))
         .json(&json!({
-            "query": r#"mutation { chat { send(message: "Hello") { ok } } }"#,
+            "query": r#"mutation { chat { send(message: "Hello", sessionKey: "sess1") { ok } } }"#,
         }))
         .send()
         .await
@@ -141,6 +152,23 @@ async fn graphql_chat_uses_late_bound_override_after_schema_build() {
         .unwrap();
 
     assert_eq!(send_response["data"]["chat"]["send"]["ok"], true);
+
+    let history_response: Value = client
+        .post(format!("http://{addr}/graphql"))
+        .json(&json!({
+            "query": r#"query { chat { history(sessionKey: "sess1") } }"#,
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        history_response["data"]["chat"]["history"][0]["content"],
+        "History"
+    );
 
     let active_response: Value = client
         .post(format!("http://{addr}/graphql"))
@@ -158,5 +186,5 @@ async fn graphql_chat_uses_late_bound_override_after_schema_build() {
         active_response["data"]["sessions"]["active"]["active"],
         true
     );
-    assert_eq!(chat.calls(), vec!["send", "active"]);
+    assert_eq!(chat.calls(), vec!["send", "history", "active"]);
 }

@@ -1,0 +1,33 @@
+[package]
+edition.workspace = true
+name              = "moltis-matrix"
+version.workspace = true
+
+[dependencies]
+async-trait     = { workspace = true }
+base64          = { workspace = true }
+futures         = { workspace = true }
+matrix-sdk      = { workspace = true }
+moltis-channels = { workspace = true }
+moltis-common   = { workspace = true }
+moltis-config   = { workspace = true }
+moltis-metrics  = { optional = true, workspace = true }
+reqwest         = { workspace = true }
+secrecy         = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+thiserror       = { workspace = true }
+time            = { workspace = true }
+tokio           = { workspace = true }
+tokio-util      = { workspace = true }
+tracing         = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

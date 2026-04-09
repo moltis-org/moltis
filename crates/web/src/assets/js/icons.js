@@ -17,6 +17,18 @@ export function makeDiscordIcon() {
 	return el;
 }
 
+export function makeSlackIcon() {
+	var el = document.createElement("span");
+	el.className = "icon icon-slack";
+	return el;
+}
+
+export function makeMatrixIcon() {
+	var el = document.createElement("span");
+	el.className = "icon icon-matrix";
+	return el;
+}
+
 export function makeCronIcon() {
 	var el = document.createElement("span");
 	el.className = "icon icon-cron";

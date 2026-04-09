@@ -192,6 +192,7 @@ impl ChannelRegistry {
                             connected: false,
                             account_id: account_id.clone(),
                             details: Some(format!("probe error: {e}")),
+                            extra: None,
                         });
                     },
                 }
@@ -259,6 +260,19 @@ impl ChannelRegistry {
             .ok_or_else(|| Error::invalid_input(format!("unknown channel type: {channel_type}")))?;
         let p = plugin.read().await;
         p.update_account_config(account_id, config)
+    }
+
+    /// Retry deferred account setup for a running account.
+    pub async fn retry_account_setup(&self, account_id: &str) -> Result<()> {
+        let channel_type = self
+            .resolve_channel_type(account_id)
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        let plugin = self
+            .plugins
+            .get(&channel_type)
+            .ok_or_else(|| Error::invalid_input(format!("unknown channel type: {channel_type}")))?;
+        let mut p = plugin.write().await;
+        p.retry_account_setup(account_id).await
     }
 
     /// Returns descriptors for all registered channel types.
@@ -613,6 +627,7 @@ mod tests {
                 connected: self.has_account(account_id),
                 account_id: account_id.to_string(),
                 details: None,
+                extra: None,
             })
         }
     }

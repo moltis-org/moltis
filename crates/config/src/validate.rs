@@ -5,6 +5,8 @@
 
 use std::{collections::HashMap, path::Path};
 
+use secrecy::ExposeSecret;
+
 use crate::schema::MoltisConfig;
 
 /// Severity level for a diagnostic.
@@ -103,7 +105,7 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
 ];
 
 /// Static metadata keys allowed directly under `[providers]`.
-const PROVIDERS_META_KEYS: &[&str] = &["offered"];
+const PROVIDERS_META_KEYS: &[&str] = &["offered", "show_legacy_models"];
 
 /// Build the full schema map mirroring every field in `schema.rs`.
 fn build_schema_map() -> KnownKeys {
@@ -198,6 +200,18 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let firecrawl = || {
+        Struct(HashMap::from([
+            ("enabled", Leaf),
+            ("api_key", Leaf),
+            ("base_url", Leaf),
+            ("only_main_content", Leaf),
+            ("timeout_seconds", Leaf),
+            ("cache_ttl_minutes", Leaf),
+            ("web_fetch_fallback", Leaf),
+        ]))
+    };
+
     let exec = || {
         Struct(HashMap::from([
             ("default_timeout_secs", Leaf),
@@ -253,11 +267,14 @@ fn build_schema_map() -> KnownKeys {
                 Struct(HashMap::from([
                     ("search", web_search()),
                     ("fetch", web_fetch()),
+                    ("firecrawl", firecrawl()),
                 ])),
             ),
             ("maps", Struct(HashMap::from([("provider", Leaf)]))),
             ("agent_timeout_secs", Leaf),
             ("agent_max_iterations", Leaf),
+            ("agent_max_auto_continues", Leaf),
+            ("agent_auto_continue_min_tool_calls", Leaf),
             ("max_tool_result_bytes", Leaf),
             ("registry_mode", Leaf),
         ]))
@@ -367,7 +384,10 @@ fn build_schema_map() -> KnownKeys {
         ),
         ("providers", MapWithFields {
             value: Box::new(provider_entry()),
-            fields: HashMap::from([("offered", Array(Box::new(Leaf)))]),
+            fields: HashMap::from([
+                ("offered", Array(Box::new(Leaf))),
+                ("show_legacy_models", Leaf),
+            ]),
         }),
         (
             "chat",
@@ -515,9 +535,12 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("rate_limit_max", Leaf),
                 ("rate_limit_window_secs", Leaf),
+                ("session_retention_days", Leaf),
+                ("auto_prune_cron_containers", Leaf),
             ])),
         ),
         ("env", Map(Box::new(Leaf))),
+        ("upstream_proxy", Leaf),
         (
             "caldav",
             Struct(HashMap::from([
@@ -1077,6 +1100,28 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         });
     }
 
+    // upstream_proxy: must be a valid URL with a supported scheme.
+    if let Some(ref proxy) = config.upstream_proxy {
+        let url = proxy.expose_secret();
+        let valid = url.starts_with("http://")
+            || url.starts_with("https://")
+            || url.starts_with("socks5://")
+            || url.starts_with("socks5h://");
+        if !valid {
+            // Extract only the scheme portion (before "://") to avoid leaking
+            // credentials that may be embedded in the URL.
+            let scheme = url.split("://").next().unwrap_or("<unknown>");
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "invalid-value",
+                path: "upstream_proxy".into(),
+                message: format!(
+                    "upstream_proxy must use http://, https://, socks5://, or socks5h:// scheme (got \"{scheme}://\")"
+                ),
+            });
+        }
+    }
+
     // Loop limit must be positive to avoid immediate run failures.
     if config.tools.agent_max_iterations == 0 {
         diagnostics.push(Diagnostic {
@@ -1105,6 +1150,41 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 message: "mcp server request_timeout_secs must be at least 1".into(),
             });
         }
+
+        if !server.transport.is_empty()
+            && !matches!(
+                server.transport.as_str(),
+                "stdio" | "sse" | "streamable-http" | "streamable_http" | "http"
+            )
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "invalid-value",
+                path: format!("mcp.servers.{name}.transport"),
+                message: format!(
+                    "unknown transport type \"{}\"; expected \"stdio\", \"sse\", or \"streamable-http\"",
+                    server.transport
+                ),
+            });
+        }
+    }
+
+    // Firecrawl as search provider requires an API key.  We cannot check
+    // the FIRECRAWL_API_KEY env var here (static validation), so only emit
+    // an Info-level hint when neither config path supplies a key.
+    if config.tools.web.search.provider == crate::schema::SearchProvider::Firecrawl
+        && config.tools.web.firecrawl.api_key.is_none()
+        && config.tools.web.search.api_key.is_none()
+        && !config.tools.web.search.duckduckgo_fallback
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Info,
+            category: "unknown-provider",
+            path: "tools.web.search.provider".into(),
+            message: "search provider is 'firecrawl' but no API key found in config \
+                      (may be supplied at runtime via FIRECRAWL_API_KEY env var)"
+                .into(),
+        });
     }
 
     // agents.default_preset should reference an existing preset key.
@@ -2588,6 +2668,24 @@ offered = ["telegram", "slack"]
     }
 
     #[test]
+    fn channels_offered_matrix_accepted() {
+        let toml = r#"
+[channels]
+offered = ["telegram", "matrix"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "channels.offered[1]" && d.category == "unknown-field");
+        assert!(
+            warning.is_none(),
+            "matrix should be accepted, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
     fn channels_offered_dynamic_type_accepted() {
         let toml = r#"
 [channels]
@@ -2784,6 +2882,53 @@ cache_retention = "{mode}"
                 type_error.is_none(),
                 "cache_retention = \"{mode}\" should parse without type error, got: {:?}",
                 result.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn upstream_proxy_not_flagged_as_unknown() {
+        let toml = r#"upstream_proxy = "http://127.0.0.1:8080""#;
+        let result = validate_toml_str(toml);
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-field" && d.path.contains("upstream_proxy"))
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "upstream_proxy should be a known field: {unknown:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_proxy_invalid_scheme_rejected() {
+        let toml = r#"upstream_proxy = "ftp://proxy.example.com""#;
+        let result = validate_toml_str(toml);
+        let errors: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error && d.path == "upstream_proxy")
+            .collect();
+        assert!(
+            !errors.is_empty(),
+            "upstream_proxy with ftp:// scheme should produce an error"
+        );
+    }
+
+    #[test]
+    fn upstream_proxy_valid_schemes_accepted() {
+        for scheme in ["http://", "https://", "socks5://", "socks5h://"] {
+            let toml = format!(r#"upstream_proxy = "{scheme}proxy.example.com:1080""#);
+            let result = validate_toml_str(&toml);
+            let errors: Vec<_> = result
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == Severity::Error && d.path == "upstream_proxy")
+                .collect();
+            assert!(
+                errors.is_empty(),
+                "upstream_proxy with {scheme} should not produce errors: {errors:?}"
             );
         }
     }

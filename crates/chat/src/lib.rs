@@ -17,6 +17,7 @@ use {
         task::AbortHandle,
     },
     tokio_stream::StreamExt,
+    tokio_util::sync::CancellationToken,
     tracing::{debug, info, warn},
 };
 
@@ -1494,7 +1495,15 @@ pub struct LiveModelService {
     disabled: Arc<RwLock<DisabledModelsStore>>,
     state: Arc<OnceCell<Arc<dyn ChatRuntime>>>,
     detect_gate: Arc<Semaphore>,
+    /// Token used to cancel an in-flight `detect_supported` run.
+    detect_cancel: Arc<RwLock<Option<CancellationToken>>>,
     priority_models: Arc<RwLock<Vec<String>>>,
+    show_legacy_models: bool,
+    /// Provider config for runtime model rediscovery.
+    providers_config: moltis_config::schema::ProvidersConfig,
+    /// Environment variable overrides for runtime model rediscovery.
+    /// Shared so the gateway can update it after loading UI-stored keys.
+    env_overrides: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl LiveModelService {
@@ -1508,8 +1517,36 @@ impl LiveModelService {
             disabled,
             state: Arc::new(OnceCell::new()),
             detect_gate: Arc::new(Semaphore::new(1)),
+            detect_cancel: Arc::new(RwLock::new(None)),
             priority_models: Arc::new(RwLock::new(priority_models)),
+            show_legacy_models: false,
+            providers_config: moltis_config::schema::ProvidersConfig::default(),
+            env_overrides: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub fn with_show_legacy_models(mut self, show: bool) -> Self {
+        self.show_legacy_models = show;
+        self
+    }
+
+    /// Set the provider config and initial env overrides used for runtime
+    /// model rediscovery when "Detect All Models" is triggered.
+    pub fn with_discovery_config(
+        mut self,
+        providers_config: moltis_config::schema::ProvidersConfig,
+        env_overrides: HashMap<String, String>,
+    ) -> Self {
+        self.providers_config = providers_config;
+        self.env_overrides = Arc::new(RwLock::new(env_overrides));
+        self
+    }
+
+    /// Shared handle to the env overrides. Pass this to code that needs to
+    /// update the overrides after construction (e.g. when runtime UI-stored
+    /// API keys are loaded from the credential store).
+    pub fn env_overrides_handle(&self) -> Arc<RwLock<HashMap<String, String>>> {
+        Arc::clone(&self.env_overrides)
     }
 
     /// Shared handle to the priority models list. Pass this to services
@@ -1730,6 +1767,21 @@ impl ModelService for LiveModelService {
         let disabled = self.disabled.read().await;
         let order = self.priority_order().await;
         let all_models = reg.list_models_with_reasoning_variants();
+
+        // Hide models older than 1 year from the chat selector unless the
+        // user opted in via `providers.show_legacy_models`.  Preferred models
+        // and models without a timestamp are never hidden.
+        let legacy_cutoff: Option<i64> = if self.show_legacy_models {
+            None
+        } else {
+            let one_year_ago = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+                - 365 * 24 * 60 * 60;
+            Some(one_year_ago)
+        };
+
         let prioritized = Self::prioritize_models(
             &order,
             all_models
@@ -1738,10 +1790,20 @@ impl ModelService for LiveModelService {
                 .filter(|m| !disabled.is_disabled(&m.id))
                 .filter(|m| disabled.unsupported_info(&m.id).is_none()),
         );
-        info!(model_count = prioritized.len(), "models.list response");
+        debug!(model_count = prioritized.len(), "models.list response");
         let models: Vec<_> = prioritized
             .iter()
             .copied()
+            .filter(|m| {
+                let preferred = Self::priority_rank(&order, m) != usize::MAX;
+                if preferred {
+                    return true;
+                }
+                match (legacy_cutoff, m.created_at) {
+                    (Some(cutoff), Some(ts)) => ts >= cutoff,
+                    _ => true, // no cutoff or no timestamp → keep
+                }
+            })
             .map(|m| {
                 let supports_tools = reg.get(&m.id).is_some_and(|p| p.supports_tools());
                 let preferred = Self::priority_rank(&order, m) != usize::MAX;
@@ -1751,6 +1813,7 @@ impl ModelService for LiveModelService {
                     "displayName": m.display_name,
                     "supportsTools": supports_tools,
                     "preferred": preferred,
+                    "recommended": m.recommended,
                     "createdAt": m.created_at,
                     "unsupported": false,
                     "unsupportedReason": Value::Null,
@@ -1779,12 +1842,15 @@ impl ModelService for LiveModelService {
             .copied()
             .map(|m| {
                 let supports_tools = reg.get(&m.id).is_some_and(|p| p.supports_tools());
+                let preferred = Self::priority_rank(&order, m) != usize::MAX;
                 let unsupported = disabled.unsupported_info(&m.id);
                 serde_json::json!({
                     "id": m.id,
                     "provider": m.provider,
                     "displayName": m.display_name,
                     "supportsTools": supports_tools,
+                    "preferred": preferred,
+                    "recommended": m.recommended,
                     "createdAt": m.created_at,
                     "disabled": disabled.is_disabled(&m.id),
                     "unsupported": unsupported.is_some(),
@@ -1882,7 +1948,44 @@ impl ModelService for LiveModelService {
                 .map_err(|_| ServiceError::message("model probe gate closed"))?
         };
 
+        // Install a cancellation token for this run so cancel_detect() can stop it.
+        let cancel_token = CancellationToken::new();
+        {
+            let mut guard = self.detect_cancel.write().await;
+            *guard = Some(cancel_token.clone());
+        }
+
         let state = self.state.get().cloned();
+
+        // Phase 0: re-discover models from provider APIs so that newly
+        // added models (e.g. a model loaded into llama.cpp after startup)
+        // are found before probing.
+        //
+        // HTTP fetches and Ollama `/api/show` probes run outside the
+        // registry lock; only the fast in-memory registration takes it.
+        {
+            let env_snapshot = self.env_overrides.read().await.clone();
+            let result = moltis_providers::fetch_discoverable_models(
+                &self.providers_config,
+                &env_snapshot,
+                provider_filter.as_deref(),
+            )
+            .await;
+            if !result.is_empty() {
+                let mut reg = self.providers.write().await;
+                let new_count = reg.register_rediscovered_models(
+                    &self.providers_config,
+                    &env_snapshot,
+                    &result,
+                );
+                if new_count > 0 {
+                    tracing::info!(
+                        new_models = new_count,
+                        "rediscovery registered new models before probe"
+                    );
+                }
+            }
+        }
 
         // Phase 1: notify clients to refresh and show the full current model list first.
         if let Some(state) = state.as_ref() {
@@ -1945,12 +2048,12 @@ impl ModelService for LiveModelService {
         let limiter = Arc::new(Semaphore::new(max_parallel));
         let provider_limiter = Arc::new(ProbeProviderLimiter::new(max_parallel_per_provider));
         let rate_limiter = Arc::new(ProbeRateLimiter::default());
-        let mut tasks = futures::stream::FuturesUnordered::new();
+        let mut tasks = tokio::task::JoinSet::new();
         for (model_id, display_name, provider_name, provider) in checks {
             let limiter = Arc::clone(&limiter);
             let provider_limiter = Arc::clone(&provider_limiter);
             let rate_limiter = Arc::clone(&rate_limiter);
-            tasks.push(tokio::spawn(run_single_probe(
+            tasks.spawn(run_single_probe(
                 model_id,
                 display_name,
                 provider_name,
@@ -1958,7 +2061,7 @@ impl ModelService for LiveModelService {
                 limiter,
                 provider_limiter,
                 rate_limiter,
-            )));
+            ));
         }
 
         let mut results = Vec::with_capacity(total);
@@ -1972,7 +2075,20 @@ impl ModelService for LiveModelService {
         let mut unsupported_by_provider: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         let mut errors_by_provider: BTreeMap<String, Vec<Value>> = BTreeMap::new();
 
-        while let Some(joined) = tasks.next().await {
+        let mut cancelled = false;
+        loop {
+            let joined = tokio::select! {
+                biased;
+                () = cancel_token.cancelled() => {
+                    tasks.abort_all();
+                    cancelled = true;
+                    break;
+                }
+                next = tasks.join_next() => match next {
+                    Some(joined) => joined,
+                    None => break,
+                },
+            };
             checked += 1;
             let outcome = match joined {
                 Ok(outcome) => outcome,
@@ -2147,8 +2263,20 @@ impl ModelService for LiveModelService {
             }
         }
 
+        // Clear the cancellation token now that the loop has exited.
+        {
+            let mut guard = self.detect_cancel.write().await;
+            *guard = None;
+        }
+
+        let phase = if cancelled {
+            "cancelled"
+        } else {
+            "complete"
+        };
         let summary = serde_json::json!({
             "ok": true,
+            "cancelled": cancelled,
             "probeWord": "ping",
             "background": background,
             "reason": reason,
@@ -2174,7 +2302,7 @@ impl ModelService for LiveModelService {
                 state,
                 "models.updated",
                 serde_json::json!({
-                    "phase": "complete",
+                    "phase": phase,
                     "background": background,
                     "reason": reason,
                     "provider": provider_filter.as_deref(),
@@ -2186,6 +2314,17 @@ impl ModelService for LiveModelService {
         }
 
         Ok(summary)
+    }
+
+    async fn cancel_detect(&self) -> ServiceResult {
+        let token = self.detect_cancel.read().await.clone();
+        let cancelled = if let Some(token) = token {
+            token.cancel();
+            true
+        } else {
+            false
+        };
+        Ok(serde_json::json!({ "ok": true, "cancelled": cancelled }))
     }
 
     async fn test(&self, params: Value) -> ServiceResult {
@@ -2675,6 +2814,33 @@ impl LiveChatService {
         "main".to_string()
     }
 
+    /// Resolve the effective session key for chat operations.
+    ///
+    /// Precedence is:
+    /// 1. Internal `_session_key` overrides used by runtime-owned callers.
+    /// 2. Public `sessionKey` / `session_key` request parameters.
+    /// 3. Connection-scoped active session derived from `_conn_id`.
+    /// 4. The default `"main"` session.
+    async fn resolve_session_key_from_params(&self, params: &Value) -> String {
+        if let Some(session_key) = params
+            .get("_session_key")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+        {
+            return session_key.to_string();
+        }
+        if let Some(session_key) = params
+            .get("sessionKey")
+            .or_else(|| params.get("session_key"))
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+        {
+            return session_key.to_string();
+        }
+        let conn_id = params.get("_conn_id").and_then(|v| v.as_str());
+        self.session_key_for(conn_id).await
+    }
+
     /// Resolve the project context prompt section for a session.
     async fn resolve_project_context(
         &self,
@@ -2810,11 +2976,8 @@ impl ChatService for LiveChatService {
             "send() mode decision"
         );
 
-        // Resolve session key: explicit override (used by cron callbacks) or connection-scoped lookup.
-        let session_key = match params.get("_session_key").and_then(|v| v.as_str()) {
-            Some(sk) => sk.to_string(),
-            None => self.session_key_for(conn_id.as_deref()).await,
-        };
+        // Resolve session key from explicit overrides, public request params, or connection context.
+        let session_key = self.resolve_session_key_from_params(&params).await;
         let queued_replay = params
             .get("_queued_replay")
             .and_then(|v| v.as_bool())
@@ -3869,6 +4032,18 @@ impl ChatService for LiveChatService {
             .ok_or_else(|| "missing 'text' parameter".to_string())?
             .to_string();
         let desired_reply_medium = infer_reply_medium(&params, &text);
+        let requested_agent_id = params
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let request_tool_policy = params
+            .get("_tool_policy")
+            .cloned()
+            .map(serde_json::from_value::<ToolPolicy>)
+            .transpose()
+            .map_err(|e| format!("invalid '_tool_policy' parameter: {e}"))?;
 
         let explicit_model = params.get("model").and_then(|v| v.as_str());
         let stream_only = !self.has_tools_sync();
@@ -3914,6 +4089,19 @@ impl ChatService for LiveChatService {
 
         // Ensure this session appears in the sessions list.
         let _ = self.session_metadata.upsert(&session_key, None).await;
+        if let Some(agent_id) = requested_agent_id.as_deref()
+            && let Err(error) = self
+                .session_metadata
+                .set_agent_id(&session_key, Some(agent_id))
+                .await
+        {
+            warn!(
+                session = %session_key,
+                agent_id,
+                error = %error,
+                "send_sync: failed to assign requested agent to session"
+            );
+        }
         self.session_metadata.touch(&session_key, 1).await;
 
         let session_entry = self.session_metadata.get(&session_key).await;
@@ -3939,7 +4127,14 @@ impl ChatService for LiveChatService {
 
         let run_id = uuid::Uuid::new_v4().to_string();
         let state = Arc::clone(&self.state);
-        let tool_registry = Arc::clone(&self.tool_registry);
+        let tool_registry = if let Some(policy) = request_tool_policy.as_ref() {
+            let registry_guard = self.tool_registry.read().await;
+            Arc::new(RwLock::new(
+                registry_guard.clone_allowed_by(|name| policy.is_allowed(name)),
+            ))
+        } else {
+            Arc::clone(&self.tool_registry)
+        };
         let hook_registry = self.hook_registry.clone();
         let provider_name = provider.name().to_string();
         let model_id = provider.id().to_string();
@@ -4179,11 +4374,7 @@ impl ChatService for LiveChatService {
     }
 
     async fn history(&self, params: Value) -> ServiceResult {
-        let conn_id = params
-            .get("_conn_id")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let session_key = self.session_key_for(conn_id.as_deref()).await;
+        let session_key = self.resolve_session_key_from_params(&params).await;
         let messages = self
             .session_store
             .read(&session_key)
@@ -4203,15 +4394,7 @@ impl ChatService for LiveChatService {
     }
 
     async fn clear(&self, params: Value) -> ServiceResult {
-        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
-            sk.to_string()
-        } else {
-            let conn_id = params
-                .get("_conn_id")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            self.session_key_for(conn_id.as_deref()).await
-        };
+        let session_key = self.resolve_session_key_from_params(&params).await;
 
         self.session_store
             .clear(&session_key)
@@ -4247,15 +4430,7 @@ impl ChatService for LiveChatService {
     }
 
     async fn compact(&self, params: Value) -> ServiceResult {
-        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
-            sk.to_string()
-        } else {
-            let conn_id = params
-                .get("_conn_id")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            self.session_key_for(conn_id.as_deref()).await
-        };
+        let session_key = self.resolve_session_key_from_params(&params).await;
         let session_entry = self.session_metadata.get(&session_key).await;
         let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
 
@@ -4422,15 +4597,7 @@ impl ChatService for LiveChatService {
     }
 
     async fn context(&self, params: Value) -> ServiceResult {
-        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
-            sk.to_string()
-        } else {
-            let conn_id = params
-                .get("_conn_id")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            self.session_key_for(conn_id.as_deref()).await
-        };
+        let session_key = self.resolve_session_key_from_params(&params).await;
 
         // Session info
         let message_count = self.session_store.count(&session_key).await.unwrap_or(0);
@@ -4675,15 +4842,7 @@ impl ChatService for LiveChatService {
     }
 
     async fn raw_prompt(&self, params: Value) -> ServiceResult {
-        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
-            sk.to_string()
-        } else {
-            let conn_id = params
-                .get("_conn_id")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            self.session_key_for(conn_id.as_deref()).await
-        };
+        let session_key = self.resolve_session_key_from_params(&params).await;
 
         let conn_id = params
             .get("_conn_id")
@@ -4798,15 +4957,7 @@ impl ChatService for LiveChatService {
     /// Return the **full messages array** that would be sent to the LLM on the
     /// next call — system prompt + conversation history — in OpenAI format.
     async fn full_context(&self, params: Value) -> ServiceResult {
-        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
-            sk.to_string()
-        } else {
-            let conn_id = params
-                .get("_conn_id")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            self.session_key_for(conn_id.as_deref()).await
-        };
+        let session_key = self.resolve_session_key_from_params(&params).await;
 
         let conn_id = params
             .get("_conn_id")
@@ -6474,6 +6625,20 @@ async fn run_with_tools(
                     "depth": depth,
                     "iterations": iterations,
                     "toolCallsMade": tool_calls_made,
+                    "seq": seq,
+                }),
+                RunnerEvent::AutoContinue {
+                    iteration,
+                    max_iterations,
+                } => serde_json::json!({
+                    "runId": run_id,
+                    "sessionKey": sk,
+                    "state": "notice",
+                    "title": "Auto-continue",
+                    "message": format!(
+                        "Model paused at iteration {}/{}. Asking it to continue...",
+                        iteration, max_iterations
+                    ),
                     "seq": seq,
                 }),
                 RunnerEvent::RetryingAfterError { error, delay_ms } => {
@@ -8834,6 +8999,7 @@ mod tests {
         channel_status_log: Mutex<HashMap<String, Vec<String>>>,
         channel_outbound: Option<Arc<dyn moltis_channels::ChannelOutbound>>,
         channel_stream_outbound: Option<Arc<dyn moltis_channels::ChannelStreamOutbound>>,
+        active_sessions: HashMap<String, String>,
         tts: moltis_service_traits::NoopTtsService,
         project: moltis_service_traits::NoopProjectService,
         mcp: moltis_service_traits::NoopMcpService,
@@ -8846,10 +9012,17 @@ mod tests {
                 channel_status_log: Mutex::new(HashMap::new()),
                 channel_outbound: None,
                 channel_stream_outbound: None,
+                active_sessions: HashMap::new(),
                 tts: moltis_service_traits::NoopTtsService,
                 project: moltis_service_traits::NoopProjectService,
                 mcp: moltis_service_traits::NoopMcpService,
             }
+        }
+
+        fn with_active_session(mut self, conn_id: &str, session_key: &str) -> Self {
+            self.active_sessions
+                .insert(conn_id.to_string(), session_key.to_string());
+            self
         }
 
         fn with_channel_outbound(
@@ -8928,8 +9101,8 @@ mod tests {
 
         async fn set_run_error(&self, _run_id: &str, _error: String) {}
 
-        async fn active_session_key(&self, _conn_id: &str) -> Option<String> {
-            None
+        async fn active_session_key(&self, conn_id: &str) -> Option<String> {
+            self.active_sessions.get(conn_id).cloned()
         }
 
         async fn active_project_id(&self, _conn_id: &str) -> Option<String> {
@@ -9969,6 +10142,7 @@ mod tests {
                 provider: "test".to_string(),
                 display_name: "Auto Compact Test".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(AutoCompactRegressionProvider {
                 context_window: 100,
@@ -10888,18 +11062,21 @@ mod tests {
             provider: "openai-codex".into(),
             display_name: "GPT 5.2".into(),
             created_at: None,
+            recommended: false,
         };
         let m2 = moltis_providers::ModelInfo {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
             created_at: None,
+            recommended: false,
         };
         let m3 = moltis_providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "gemini".into(),
             display_name: "Gemini 3 Flash".into(),
             created_at: None,
+            recommended: false,
         };
 
         let order =
@@ -10917,18 +11094,21 @@ mod tests {
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
+            recommended: false,
         };
         let m2 = moltis_providers::ModelInfo {
             id: "anthropic::claude-sonnet-4-5-20250929".into(),
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
             created_at: None,
+            recommended: false,
         };
         let m3 = moltis_providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "gemini".into(),
             display_name: "Gemini 3 Flash".into(),
             created_at: None,
+            recommended: false,
         };
 
         let order =
@@ -10946,18 +11126,21 @@ mod tests {
             provider: "openai".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
+            recommended: false,
         };
         let m2 = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
+            recommended: false,
         };
         let m3 = moltis_providers::ModelInfo {
             id: "anthropic::claude-sonnet-4-5-20250929".into(),
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
             created_at: None,
+            recommended: false,
         };
 
         let order = LiveModelService::build_priority_order(&[]);
@@ -10976,12 +11159,14 @@ mod tests {
             provider: "openai".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
+            recommended: false,
         };
         let m2 = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
+            recommended: false,
         };
 
         let order = LiveModelService::build_priority_order(&["openai::gpt-5.2".into()]);
@@ -10997,18 +11182,21 @@ mod tests {
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
             created_at: None,
+            recommended: false,
         };
         let m2 = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT 5.2".into(),
             created_at: None,
+            recommended: false,
         };
         let m3 = moltis_providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "google".into(),
             display_name: "Gemini 3 Flash".into(),
             created_at: None,
+            recommended: false,
         };
 
         let patterns: Vec<String> = vec!["opus".into()];
@@ -11024,6 +11212,7 @@ mod tests {
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
             created_at: None,
+            recommended: false,
         };
         assert!(model_matches_allowlist(&m, &[]));
     }
@@ -11035,6 +11224,7 @@ mod tests {
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
             created_at: None,
+            recommended: false,
         };
 
         // Uppercase pattern matches lowercase model key.
@@ -11053,6 +11243,7 @@ mod tests {
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
+            recommended: false,
         };
 
         let patterns = vec![normalize_model_key("gpt 5.2")];
@@ -11069,12 +11260,14 @@ mod tests {
             provider: "openai".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
+            recommended: false,
         };
         let extended = moltis_providers::ModelInfo {
             id: "openai::gpt-5.2-chat-latest".into(),
             provider: "openai".into(),
             display_name: "GPT-5.2 Chat Latest".into(),
             created_at: None,
+            recommended: false,
         };
         let patterns = vec![normalize_model_key("gpt 5.2")];
 
@@ -11089,6 +11282,7 @@ mod tests {
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
             created_at: None,
+            recommended: false,
         };
         let patterns = vec![normalize_model_key("sonnet 4.5")];
 
@@ -11102,12 +11296,14 @@ mod tests {
             provider: "local-llm".into(),
             display_name: "Qwen2.5 Coder 7B".into(),
             created_at: None,
+            recommended: false,
         };
         let ollama = moltis_providers::ModelInfo {
             id: "ollama::llama3.1:8b".into(),
             provider: "ollama".into(),
             display_name: "Llama 3.1 8B".into(),
             created_at: None,
+            recommended: false,
         };
         let patterns = vec![normalize_model_key("opus")];
 
@@ -11122,6 +11318,7 @@ mod tests {
             provider: "local-ai".into(),
             display_name: "Llama 3.1 8B".into(),
             created_at: None,
+            recommended: false,
         };
         let patterns = vec![normalize_model_key("opus")];
 
@@ -11141,6 +11338,7 @@ mod tests {
                 provider: "anthropic".to_string(),
                 display_name: "Claude Opus 4.5".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "anthropic".to_string(),
@@ -11153,6 +11351,7 @@ mod tests {
                 provider: "openai-codex".to_string(),
                 display_name: "GPT 5.2".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "openai-codex".to_string(),
@@ -11165,6 +11364,7 @@ mod tests {
                 provider: "google".to_string(),
                 display_name: "Gemini 3 Flash".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "google".to_string(),
@@ -11201,13 +11401,21 @@ mod tests {
 
     #[tokio::test]
     async fn list_includes_created_at_in_response() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let recent_gpt = now - 10 * 24 * 60 * 60; // 10 days ago
+        let recent_babbage = now - 30 * 24 * 60 * 60; // 30 days ago
+
         let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_providers::ModelInfo {
                 id: "openai::gpt-5.3".to_string(),
                 provider: "openai".to_string(),
                 display_name: "GPT-5.3".to_string(),
-                created_at: Some(1700000000),
+                created_at: Some(recent_gpt),
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "openai".to_string(),
@@ -11219,7 +11427,8 @@ mod tests {
                 id: "openai::babbage-002".to_string(),
                 provider: "openai".to_string(),
                 display_name: "babbage-002".to_string(),
-                created_at: Some(1600000000),
+                created_at: Some(recent_babbage),
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "openai".to_string(),
@@ -11232,6 +11441,7 @@ mod tests {
                 provider: "anthropic".to_string(),
                 display_name: "Claude Opus".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "anthropic".to_string(),
@@ -11248,13 +11458,13 @@ mod tests {
 
         // Verify createdAt is present and correct.
         let gpt = arr.iter().find(|m| m["id"] == "openai::gpt-5.3").unwrap();
-        assert_eq!(gpt["createdAt"], 1700000000);
+        assert_eq!(gpt["createdAt"], recent_gpt);
 
         let babbage = arr
             .iter()
             .find(|m| m["id"] == "openai::babbage-002")
             .unwrap();
-        assert_eq!(babbage["createdAt"], 1600000000);
+        assert_eq!(babbage["createdAt"], recent_babbage);
 
         let claude = arr
             .iter()
@@ -11269,7 +11479,7 @@ mod tests {
             .iter()
             .find(|m| m["id"] == "openai::gpt-5.3")
             .unwrap();
-        assert_eq!(gpt_all["createdAt"], 1700000000);
+        assert_eq!(gpt_all["createdAt"], recent_gpt);
     }
 
     #[tokio::test]
@@ -11281,6 +11491,7 @@ mod tests {
                 provider: "openai-codex".to_string(),
                 display_name: "GPT 5.2".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "openai-codex".to_string(),
@@ -11293,6 +11504,7 @@ mod tests {
                 provider: "local-ai".to_string(),
                 display_name: "Llama 3.1 8B".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "ollama".to_string(),
@@ -11391,6 +11603,7 @@ mod tests {
                 provider: "unit-test-provider".to_string(),
                 display_name: "Unit Test Model".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "unit-test-provider".to_string(),
@@ -11423,6 +11636,11 @@ mod tests {
             all_entry.get("disabled").and_then(|v| v.as_bool()),
             Some(true)
         );
+        assert_eq!(
+            all_entry.get("preferred").and_then(|v| v.as_bool()),
+            Some(false),
+            "list_all should include preferred field",
+        );
 
         let visible = service.list().await.expect("models.list should succeed");
         let visible_models = visible
@@ -11434,6 +11652,119 @@ mod tests {
                 .all(|m| m.get("id").and_then(|v| v.as_str())
                     != Some("unit-test-provider::unit-test-model")),
             "disabled model should be hidden from models.list",
+        );
+    }
+
+    #[tokio::test]
+    async fn list_hides_legacy_models_by_default() {
+        let mut registry = ProviderRegistry::empty();
+        let two_years_ago = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+            - 2 * 365 * 24 * 60 * 60;
+        let recent = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+            - 30 * 24 * 60 * 60;
+
+        registry.register(
+            moltis_providers::ModelInfo {
+                id: "old-model".to_string(),
+                provider: "test".to_string(),
+                display_name: "Old Model".to_string(),
+                created_at: Some(two_years_ago),
+                recommended: false,
+            },
+            Arc::new(StaticProvider {
+                name: "test".to_string(),
+                id: "old-model".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_providers::ModelInfo {
+                id: "new-model".to_string(),
+                provider: "test".to_string(),
+                display_name: "New Model".to_string(),
+                created_at: Some(recent),
+                recommended: false,
+            },
+            Arc::new(StaticProvider {
+                name: "test".to_string(),
+                id: "new-model".to_string(),
+            }),
+        );
+
+        let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
+
+        let result = service.list().await.expect("models.list should succeed");
+        let models = result.as_array().expect("should be array");
+        let ids: Vec<_> = models
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+            .collect();
+        assert!(
+            ids.contains(&"test::new-model"),
+            "recent model should be visible",
+        );
+        assert!(
+            !ids.contains(&"test::old-model"),
+            "legacy model should be hidden from chat selector",
+        );
+
+        // list_all still shows everything
+        let all = service.list_all().await.expect("list_all should succeed");
+        let all_ids: Vec<_> = all
+            .as_array()
+            .expect("should be array")
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+            .collect();
+        assert!(
+            all_ids.contains(&"test::old-model"),
+            "legacy model should still appear in list_all",
+        );
+    }
+
+    #[tokio::test]
+    async fn list_shows_legacy_models_when_configured() {
+        let mut registry = ProviderRegistry::empty();
+        let two_years_ago = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+            - 2 * 365 * 24 * 60 * 60;
+
+        registry.register(
+            moltis_providers::ModelInfo {
+                id: "old-model".to_string(),
+                provider: "test".to_string(),
+                display_name: "Old Model".to_string(),
+                created_at: Some(two_years_ago),
+                recommended: false,
+            },
+            Arc::new(StaticProvider {
+                name: "test".to_string(),
+                id: "old-model".to_string(),
+            }),
+        );
+
+        let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![])
+            .with_show_legacy_models(true);
+
+        let result = service.list().await.expect("models.list should succeed");
+        let ids: Vec<_> = result
+            .as_array()
+            .expect("should be array")
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+            .collect();
+        assert!(
+            ids.contains(&"test::old-model"),
+            "legacy model should be visible when show_legacy_models is true",
         );
     }
 
@@ -11497,6 +11828,7 @@ mod tests {
                 provider: "openai".to_string(),
                 display_name: "GPT 5.2 Codex".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "openai".to_string(),
@@ -11509,6 +11841,7 @@ mod tests {
                 provider: "openai".to_string(),
                 display_name: "GPT 5".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "openai".to_string(),
@@ -11568,6 +11901,7 @@ mod tests {
                 provider: "test-provider".to_string(),
                 display_name: "Test Model".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StaticProvider {
                 name: "test-provider".to_string(),
@@ -11938,6 +12272,169 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn history_prefers_public_session_key_over_connection_active_session() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        store
+            .append(
+                "public-session",
+                &serde_json::json!({ "role": "assistant", "content": "public history" }),
+            )
+            .await
+            .expect("seed public session history");
+        store
+            .append(
+                "conn-session",
+                &serde_json::json!({ "role": "assistant", "content": "connection history" }),
+            )
+            .await
+            .expect("seed connection session history");
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(ProviderRegistry::empty())),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new().with_active_session("conn-1", "conn-session")),
+            Arc::clone(&store),
+            metadata,
+        );
+
+        let history = service
+            .history(serde_json::json!({
+                "sessionKey": "public-session",
+                "_conn_id": "conn-1",
+            }))
+            .await
+            .expect("chat.history should succeed");
+
+        assert_eq!(history.as_array().map(Vec::len), Some(1));
+        assert_eq!(history[0]["content"], "public history");
+    }
+
+    #[tokio::test]
+    async fn history_internal_session_key_overrides_public_session_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        store
+            .append(
+                "internal-session",
+                &serde_json::json!({ "role": "assistant", "content": "internal history" }),
+            )
+            .await
+            .expect("seed internal session history");
+        store
+            .append(
+                "public-session",
+                &serde_json::json!({ "role": "assistant", "content": "public history" }),
+            )
+            .await
+            .expect("seed public session history");
+
+        let service = LiveChatService::new(
+            Arc::new(RwLock::new(ProviderRegistry::empty())),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new()),
+            Arc::clone(&store),
+            metadata,
+        );
+
+        let history = service
+            .history(serde_json::json!({
+                "_session_key": "internal-session",
+                "sessionKey": "public-session",
+            }))
+            .await
+            .expect("chat.history should succeed");
+
+        assert_eq!(history.as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            history[0]["content"], "internal history",
+            "_session_key must take priority over public sessionKey"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_prefers_public_session_key_over_connection_active_session() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        let mut providers = ProviderRegistry::empty();
+        providers.register(
+            moltis_providers::ModelInfo {
+                id: "test::auto-compact".to_string(),
+                provider: "test".to_string(),
+                display_name: "Auto Compact Test".to_string(),
+                created_at: None,
+                recommended: false,
+            },
+            Arc::new(AutoCompactRegressionProvider {
+                context_window: 100,
+            }),
+        );
+
+        let chat = LiveChatService::new(
+            Arc::new(RwLock::new(providers)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            Arc::new(MockChatRuntime::new().with_active_session("conn-1", "conn-session")),
+            Arc::clone(&store),
+            metadata,
+        );
+
+        let send_result = chat
+            .send(serde_json::json!({
+                "text": "ping",
+                "sessionKey": "public-session",
+                "_conn_id": "conn-1",
+            }))
+            .await
+            .expect("chat.send should succeed");
+        assert!(
+            send_result
+                .get("runId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+        );
+
+        let public_history = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let messages = store.read("public-session").await.unwrap_or_default();
+                if messages
+                    .iter()
+                    .any(|msg| msg.get("role").and_then(Value::as_str) == Some("assistant"))
+                {
+                    return messages;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("assistant turn should be persisted in public session");
+
+        let conn_history = store
+            .read("conn-session")
+            .await
+            .expect("read connection session history");
+
+        assert!(
+            public_history
+                .iter()
+                .any(|msg| msg.get("role").and_then(Value::as_str) == Some("assistant")),
+            "assistant reply should be written to the public session"
+        );
+        assert!(
+            conn_history.is_empty(),
+            "connection-scoped active session should not override an explicit public sessionKey"
+        );
+    }
+
+    #[tokio::test]
     async fn abort_clears_active_tool_calls() {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = SessionStore::new(dir.path().to_path_buf());
@@ -12113,6 +12610,7 @@ mod tests {
                 provider: "abort-then-continue".to_string(),
                 display_name: "Abort Then Continue".to_string(),
                 created_at: None,
+                recommended: false,
             },
             provider.clone(),
         );
@@ -12197,6 +12695,7 @@ mod tests {
                 provider: "streaming-text-tool".to_string(),
                 display_name: "Streaming Text Tool".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(StreamingTextToolProvider),
         );
@@ -12416,6 +12915,7 @@ mod tests {
                 provider: "local".to_string(),
                 display_name: "Slow Model".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(SlowStartProvider {
                 name: "local".to_string(),
@@ -12451,6 +12951,7 @@ mod tests {
                 provider: "local".to_string(),
                 display_name: "Stuck Model".to_string(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(SlowStartProvider {
                 name: "local".to_string(),

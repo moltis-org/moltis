@@ -31,6 +31,7 @@ pub mod local_llm;
 
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
     pin::Pin,
     sync::Arc,
 };
@@ -43,14 +44,24 @@ use {
 
 use moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent};
 
+static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+/// Initialize the shared provider HTTP client with optional upstream proxy.
+///
+/// Call once at gateway startup; subsequent calls are no-ops.
+pub fn init_shared_http_client(proxy_url: Option<&str>) {
+    let _ = SHARED_CLIENT.set(moltis_common::http_client::build_http_client(proxy_url));
+}
+
 /// Shared HTTP client for LLM providers.
 ///
 /// All providers that don't need custom redirect/proxy settings should
 /// reuse this client to share connection pools, DNS cache, and TLS sessions.
+///
+/// Falls back to a plain client if [`init_shared_http_client`] was never
+/// called (e.g. in tests).
 pub fn shared_http_client() -> &'static reqwest::Client {
-    static CLIENT: std::sync::LazyLock<reqwest::Client> =
-        std::sync::LazyLock::new(reqwest::Client::new);
-    &CLIENT
+    SHARED_CLIENT.get_or_init(reqwest::Client::new)
 }
 
 /// A model discovered from a provider API (e.g. `/v1/models`).
@@ -64,6 +75,9 @@ pub struct DiscoveredModel {
     /// Unix timestamp from the API (e.g. OpenAI `created` field).
     /// Used to sort models newest-first. `None` for static catalog entries.
     pub created_at: Option<i64>,
+    /// Flagged by the provider as a recommended/flagship model.
+    /// Used to surface the most relevant models in the UI.
+    pub recommended: bool,
 }
 
 impl DiscoveredModel {
@@ -72,6 +86,7 @@ impl DiscoveredModel {
             id: id.into(),
             display_name: display_name.into(),
             created_at: None,
+            recommended: false,
         }
     }
 
@@ -79,6 +94,26 @@ impl DiscoveredModel {
         self.created_at = created_at;
         self
     }
+
+    pub fn with_recommended(mut self, recommended: bool) -> Self {
+        self.recommended = recommended;
+        self
+    }
+}
+
+/// Convert a static model catalog into `DiscoveredModel` entries, marking
+/// the first `recommended_count` as recommended.
+pub fn catalog_to_discovered(
+    catalog: &[(&str, &str)],
+    recommended_count: usize,
+) -> Vec<DiscoveredModel> {
+    catalog
+        .iter()
+        .enumerate()
+        .map(|(i, (id, name))| {
+            DiscoveredModel::new(*id, *name).with_recommended(i < recommended_count)
+        })
+        .collect()
 }
 
 const MODEL_ID_NAMESPACE_SEP: &str = "::";
@@ -216,6 +251,7 @@ fn merge_preferred_and_discovered_models(
                 id: model_id,
                 display_name: d.display_name.clone(),
                 created_at: d.created_at,
+                recommended: d.recommended,
             }
         } else {
             DiscoveredModel::new(model_id.clone(), model_id)
@@ -258,9 +294,14 @@ fn merge_discovered_with_fallback_catalog(
                 id: m.id,
                 display_name,
                 created_at: m.created_at,
+                recommended: m.recommended,
             }
         })
         .collect()
+}
+
+fn anthropic_fallback_catalog() -> Vec<DiscoveredModel> {
+    catalog_to_discovered(ANTHROPIC_MODELS, 3)
 }
 
 fn normalize_ollama_api_base_url(base_url: &str) -> String {
@@ -342,6 +383,214 @@ fn start_ollama_discovery(
         let _ = tx.send(result);
     });
     rx
+}
+
+/// Result of a runtime model rediscovery pass.
+///
+/// Bundles the discovered model lists together with any Ollama `/api/show`
+/// probe results so that registration can proceed without further I/O.
+/// Ollama probe data is opaque — callers pass this struct directly to
+/// [`ProviderRegistry::register_rediscovered_models`].
+pub struct RediscoveryResult {
+    /// Models discovered per provider (keyed by config name).
+    models: HashMap<String, Vec<DiscoveredModel>>,
+    /// Ollama `/api/show` probe metadata (keyed by model ID).
+    ollama_probes: HashMap<String, OllamaShowResponse>,
+}
+
+impl RediscoveryResult {
+    /// Returns `true` when no models were discovered across all providers.
+    pub fn is_empty(&self) -> bool {
+        self.models.values().all(|v| v.is_empty())
+    }
+}
+
+/// Asynchronously fetch models from all discoverable provider APIs.
+///
+/// Runs `/v1/models` (or Ollama `/api/tags`) for each eligible provider
+/// concurrently, then batch-probes any discovered Ollama models via
+/// `/api/show` for tool-mode metadata. Returns everything needed for
+/// lock-free registration.
+///
+/// `provider_filter` narrows the scope to a single provider name (case-
+/// insensitive comparison against config name or alias).
+pub async fn fetch_discoverable_models(
+    config: &ProvidersConfig,
+    env_overrides: &HashMap<String, String>,
+    provider_filter: Option<&str>,
+) -> RediscoveryResult {
+    use futures::future::join_all;
+
+    let filter_matches =
+        |name: &str| -> bool { provider_filter.is_none_or(|f| f.eq_ignore_ascii_case(name)) };
+
+    let mut tasks: Vec<(
+        String,
+        Pin<Box<dyn Future<Output = anyhow::Result<Vec<DiscoveredModel>>> + Send>>,
+    )> = Vec::new();
+
+    // ── OpenAI builtin ────────────────────────────────────────────────
+    if filter_matches("openai")
+        && config.is_enabled("openai")
+        && !cfg!(test)
+        && let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides)
+        && should_fetch_models(config, "openai")
+    {
+        let base_url = config
+            .get("openai")
+            .and_then(|e| e.base_url.clone())
+            .or_else(|| env_value(env_overrides, "OPENAI_BASE_URL"))
+            .unwrap_or_else(|| "https://api.openai.com/v1".into());
+        tasks.push((
+            "openai".into(),
+            Box::pin(openai::fetch_models_from_api(key, base_url)),
+        ));
+    }
+
+    // ── Anthropic builtin ─────────────────────────────────────────────
+    if filter_matches("anthropic")
+        && config.is_enabled("anthropic")
+        && !cfg!(test)
+        && let Some(key) = resolve_api_key(config, "anthropic", "ANTHROPIC_API_KEY", env_overrides)
+        && should_fetch_models(config, "anthropic")
+    {
+        let base_url = config
+            .get("anthropic")
+            .and_then(|e| e.base_url.clone())
+            .or_else(|| env_value(env_overrides, "ANTHROPIC_BASE_URL"))
+            .unwrap_or_else(|| "https://api.anthropic.com".into());
+        tasks.push((
+            "anthropic".into(),
+            Box::pin(anthropic::fetch_models_from_api(key, base_url)),
+        ));
+    }
+
+    // ── OpenAI-compatible providers ───────────────────────────────────
+    for def in OPENAI_COMPAT_PROVIDERS {
+        if !filter_matches(def.config_name) || !config.is_enabled(def.config_name) {
+            continue;
+        }
+
+        let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
+        let key = if !def.requires_api_key {
+            key.or_else(|| Some(secrecy::Secret::new(def.config_name.into())))
+        } else if def.config_name == "gemini" {
+            key.or_else(|| env_value(env_overrides, "GOOGLE_API_KEY").map(secrecy::Secret::new))
+        } else {
+            key
+        };
+        let Some(key) = key else {
+            continue;
+        };
+
+        let base_url = config
+            .get(def.config_name)
+            .and_then(|e| e.base_url.clone())
+            .or_else(|| env_value(env_overrides, def.env_base_url_key))
+            .unwrap_or_else(|| def.default_base_url.into());
+
+        if def.local_only {
+            let has_explicit_entry = config.get(def.config_name).is_some();
+            let has_env_base_url = env_value(env_overrides, def.env_base_url_key).is_some();
+            let preferred = configured_models_for_provider(config, def.config_name);
+            if !has_explicit_entry && !has_env_base_url && preferred.is_empty() {
+                continue;
+            }
+        }
+
+        let user_opted_in = config
+            .get(def.config_name)
+            .is_some_and(|entry| entry.fetch_models);
+        let try_fetch = def.supports_model_discovery || user_opted_in;
+        if !try_fetch || !should_fetch_models(config, def.config_name) {
+            continue;
+        }
+
+        if def.config_name == "ollama" {
+            tasks.push((
+                def.config_name.into(),
+                Box::pin(discover_ollama_models_from_api(base_url)),
+            ));
+        } else {
+            tasks.push((
+                def.config_name.into(),
+                Box::pin(openai::fetch_models_from_api(key, base_url)),
+            ));
+        }
+    }
+
+    // ── Custom providers ──────────────────────────────────────────────
+    for (name, entry) in &config.providers {
+        if !name.starts_with("custom-") || !entry.enabled {
+            continue;
+        }
+        if !filter_matches(name) {
+            continue;
+        }
+        let Some(api_key) = entry
+            .api_key
+            .as_ref()
+            .filter(|k| !k.expose_secret().is_empty())
+        else {
+            continue;
+        };
+        let Some(base_url) = entry.base_url.as_ref().filter(|u| !u.trim().is_empty()) else {
+            continue;
+        };
+        if should_fetch_models(config, name) {
+            tasks.push((
+                name.clone(),
+                Box::pin(openai::fetch_models_from_api(
+                    api_key.clone(),
+                    base_url.clone(),
+                )),
+            ));
+        }
+    }
+
+    // Run all fetches concurrently.
+    let names: Vec<String> = tasks.iter().map(|(n, _)| n.clone()).collect();
+    let futures: Vec<_> = tasks.into_iter().map(|(_, fut)| fut).collect();
+    let results = join_all(futures).await;
+
+    let mut map = HashMap::new();
+    for (name, result) in names.into_iter().zip(results) {
+        match result {
+            Ok(models) => {
+                tracing::debug!(
+                    provider = %name,
+                    model_count = models.len(),
+                    "runtime model rediscovery succeeded"
+                );
+                map.insert(name, models);
+            },
+            Err(err) => {
+                tracing::debug!(
+                    provider = %name,
+                    error = %err,
+                    "runtime model rediscovery failed"
+                );
+            },
+        }
+    }
+
+    // Batch-probe any newly discovered Ollama models for `/api/show` metadata
+    // (tool capabilities, family info). Runs outside any registry lock.
+    let ollama_probes = if let Some(ollama_models) = map.get("ollama") {
+        let ollama_base_url = config
+            .get("ollama")
+            .and_then(|e| e.base_url.clone())
+            .or_else(|| env_value(env_overrides, "OLLAMA_BASE_URL"))
+            .unwrap_or_else(|| "http://localhost:11434".into());
+        probe_ollama_models_batch_async(&ollama_base_url, ollama_models).await
+    } else {
+        HashMap::new()
+    };
+
+    RediscoveryResult {
+        models: map,
+        ollama_probes,
+    }
 }
 
 // ── Ollama model info probing ────────────────────────────────────────────────
@@ -525,6 +774,34 @@ fn probe_ollama_models_batch(
     }
 }
 
+/// Async variant of [`probe_ollama_models_batch`] that runs directly on the
+/// current tokio runtime. Suitable for callers already in an async context
+/// (e.g. runtime rediscovery in `detect_supported`).
+async fn probe_ollama_models_batch_async(
+    base_url: &str,
+    models: &[DiscoveredModel],
+) -> HashMap<String, OllamaShowResponse> {
+    if models.is_empty() {
+        return HashMap::new();
+    }
+    let futs: Vec<_> = models
+        .iter()
+        .map(|m| {
+            let base = base_url.to_string();
+            let model_id = m.id.clone();
+            async move {
+                let resp = probe_ollama_model_info(&base, &model_id).await;
+                (model_id, resp)
+            }
+        })
+        .collect();
+    futures::future::join_all(futs)
+        .await
+        .into_iter()
+        .filter_map(|(id, r)| r.ok().map(|resp| (id, resp)))
+        .collect()
+}
+
 struct RegistryModelProvider {
     model_id: String,
     inner: Arc<dyn LlmProvider>,
@@ -682,6 +959,8 @@ pub fn is_chat_capable_model(model_id: &str) -> bool {
         "tts-",
         "whisper",
         "text-embedding",
+        "claude-embedding",
+        "claude-embeddings",
         "omni-moderation",
         "moderation-",
         "sora",
@@ -734,6 +1013,8 @@ pub fn supports_tools_for_model(model_id: &str) -> bool {
         || id.starts_with("tts-")
         || id.starts_with("whisper")
         || id.starts_with("text-embedding")
+        || id.starts_with("claude-embedding")
+        || id.starts_with("claude-embeddings")
         || id.starts_with("omni-moderation")
     {
         return false;
@@ -747,38 +1028,35 @@ pub fn supports_tools_for_model(model_id: &str) -> bool {
 /// Vision-capable models can process images in tool results and user messages.
 /// When true, the runner sends images as multimodal content blocks rather than
 /// stripping them from the context.
+///
+/// Uses a deny-list approach: most modern LLMs support vision, so unknown
+/// models default to `true`. The consequence of a false positive (sending
+/// images to a text-only model) is an API error — visible and diagnosable.
+/// The consequence of a false negative (stripping images from a capable model)
+/// is a silent failure that confuses users.
 pub fn supports_vision_for_model(model_id: &str) -> bool {
-    let model_id = capability_model_id(model_id);
-    // Claude models: all modern Claude models support vision
-    if model_id.starts_with("claude-") {
-        return true;
+    let id = capability_model_id(model_id);
+
+    // ── Known text-only models ──────────────────────────────────────
+    // Code-focused models
+    if id.starts_with("codestral") {
+        return false;
     }
-    // GPT-4o and variants support vision
-    if model_id.starts_with("gpt-4o") {
-        return true;
+    // Legacy OpenAI models without vision
+    if id.starts_with("gpt-3.5") || id.starts_with("text-") || id.starts_with("gpt-4-") {
+        // gpt-4-turbo and gpt-4-vision variants support vision
+        if id.starts_with("gpt-4-turbo") || id.starts_with("gpt-4-vision") {
+            return true;
+        }
+        return false;
     }
-    // GPT-4 turbo supports vision
-    if model_id.starts_with("gpt-4-turbo") {
-        return true;
+    // Z.AI GLM text-only models (vision variants contain 'v' suffix)
+    if id.starts_with("glm-") && !id.contains('v') {
+        return false;
     }
-    // GPT-5 series supports vision
-    if model_id.starts_with("gpt-5") {
-        return true;
-    }
-    // o3/o4 series supports vision
-    if model_id.starts_with("o3") || model_id.starts_with("o4") {
-        return true;
-    }
-    // Gemini models support vision
-    if model_id.starts_with("gemini-") {
-        return true;
-    }
-    // Z.AI GLM vision models
-    if model_id.starts_with("glm-") && model_id.contains('v') {
-        return true;
-    }
-    // Default: no vision support
-    false
+
+    // ── Default: assume vision support ──────────────────────────────
+    true
 }
 
 /// Check if a model supports reasoning/extended thinking.
@@ -825,11 +1103,18 @@ pub struct ModelInfo {
     /// Unix timestamp from the provider API (e.g. OpenAI `created` field).
     /// `None` for static catalog entries.
     pub created_at: Option<i64>,
+    /// Flagged by the provider as a recommended/flagship model.
+    pub recommended: bool,
 }
 
 /// Known Anthropic Claude models (model_id, display_name).
 /// Current models listed first, then legacy models.
 const ANTHROPIC_MODELS: &[(&str, &str)] = &[
+    // Anthropic currently documents Claude 4.6 using alias IDs rather than
+    // dated snapshot IDs. Register the documented aliases instead of
+    // inventing snapshot suffixes that the API rejects.
+    ("claude-opus-4-6", "Claude Opus 4.6"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
     ("claude-opus-4-5-20251101", "Claude Opus 4.5"),
     ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
     ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
@@ -1272,6 +1557,7 @@ impl ProviderRegistry {
                     provider: source.provider_name().to_string(),
                     display_name: source.display_name(&model.id, &model.display_name),
                     created_at: model.created_at,
+                    recommended: model.recommended,
                 },
                 provider,
             );
@@ -1318,6 +1604,7 @@ impl ProviderRegistry {
                         provider: source.provider_name().to_string(),
                         display_name: source.display_name(&model.id, &model.display_name),
                         created_at: model.created_at,
+                        recommended: model.recommended,
                     },
                     source.build_provider(model.id, config),
                 )
@@ -1340,6 +1627,124 @@ impl ProviderRegistry {
         }
 
         true
+    }
+
+    fn desired_anthropic_models(
+        config: &ProvidersConfig,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
+    ) -> Vec<DiscoveredModel> {
+        let preferred = configured_models_for_provider(config, "anthropic");
+        let discovered = if should_fetch_models(config, "anthropic") {
+            match prefetched.get("anthropic") {
+                Some(live) => live.clone(),
+                None => anthropic_fallback_catalog(),
+            }
+        } else {
+            Vec::new()
+        };
+        merge_preferred_and_discovered_models(preferred, discovered)
+    }
+
+    fn register_anthropic_catalog(
+        &mut self,
+        models: Vec<DiscoveredModel>,
+        key: &secrecy::Secret<String>,
+        base_url: &str,
+        provider_label: &str,
+        alias: Option<String>,
+        cache_retention: moltis_config::CacheRetention,
+    ) -> usize {
+        let mut added = 0usize;
+
+        for model in models {
+            let (model_id, display_name, created_at, recommended) = (
+                model.id,
+                model.display_name,
+                model.created_at,
+                model.recommended,
+            );
+            if self.has_provider_model(provider_label, &model_id) {
+                continue;
+            }
+            let provider = Arc::new(
+                anthropic::AnthropicProvider::with_alias(
+                    key.clone(),
+                    model_id.clone(),
+                    base_url.to_string(),
+                    alias.clone(),
+                )
+                .with_cache_retention(cache_retention),
+            );
+            self.register(
+                ModelInfo {
+                    id: model_id,
+                    provider: provider_label.to_string(),
+                    display_name,
+                    created_at,
+                    recommended,
+                },
+                provider,
+            );
+            added += 1;
+        }
+
+        added
+    }
+
+    fn replace_anthropic_catalog(
+        &mut self,
+        models: Vec<DiscoveredModel>,
+        key: &secrecy::Secret<String>,
+        base_url: &str,
+        provider_label: &str,
+        alias: Option<String>,
+        cache_retention: moltis_config::CacheRetention,
+    ) -> usize {
+        let new_entries: Vec<(ModelInfo, Arc<dyn LlmProvider>)> = models
+            .into_iter()
+            .map(|model| {
+                let provider = Arc::new(
+                    anthropic::AnthropicProvider::with_alias(
+                        key.clone(),
+                        model.id.clone(),
+                        base_url.to_string(),
+                        alias.clone(),
+                    )
+                    .with_cache_retention(cache_retention),
+                );
+                (
+                    ModelInfo {
+                        id: model.id,
+                        provider: provider_label.to_string(),
+                        display_name: model.display_name,
+                        created_at: model.created_at,
+                        recommended: model.recommended,
+                    },
+                    provider as Arc<dyn LlmProvider>,
+                )
+            })
+            .collect();
+
+        let previous_ids: HashSet<String> = self
+            .models
+            .iter()
+            .filter(|m| m.provider == provider_label)
+            .map(|m| m.id.clone())
+            .collect();
+
+        self.models.retain(|m| m.provider != provider_label);
+        self.providers.retain(|id, _| !previous_ids.contains(id));
+
+        let next_ids: HashSet<String> = new_entries
+            .iter()
+            .map(|(info, _)| namespaced_model_id(provider_label, raw_model_id(&info.id)))
+            .collect();
+
+        for (info, provider) in new_entries {
+            self.register(info, provider);
+        }
+
+        next_ids.difference(&previous_ids).count()
     }
 
     /// Register a provider manually.
@@ -1502,6 +1907,24 @@ impl ProviderRegistry {
             ));
         }
 
+        // ── Anthropic builtin ───────────────────────────────────────────
+        if config.is_enabled("anthropic")
+            && !cfg!(test)
+            && let Some(key) =
+                resolve_api_key(config, "anthropic", "ANTHROPIC_API_KEY", env_overrides)
+            && should_fetch_models(config, "anthropic")
+        {
+            let base_url = config
+                .get("anthropic")
+                .and_then(|e| e.base_url.clone())
+                .or_else(|| env_value(env_overrides, "ANTHROPIC_BASE_URL"))
+                .unwrap_or_else(|| "https://api.anthropic.com".into());
+            pending.push((
+                "anthropic".into(),
+                anthropic::start_model_discovery(key.clone(), base_url),
+            ));
+        }
+
         // ── OpenAI-compatible providers ──────────────────────────────────
         for def in OPENAI_COMPAT_PROVIDERS {
             if !config.is_enabled(def.config_name) {
@@ -1655,6 +2078,241 @@ impl ProviderRegistry {
         results
     }
 
+    /// Register models from a [`RediscoveryResult`], skipping those already
+    /// present. All I/O (model list fetches, Ollama probes) must be completed
+    /// before calling this — it only does fast in-memory work.
+    ///
+    /// Returns the number of newly registered models.
+    pub fn register_rediscovered_models(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+        result: &RediscoveryResult,
+    ) -> usize {
+        let fetched = &result.models;
+        let mut added = 0usize;
+
+        // ── Anthropic builtin ─────────────────────────────────────────
+        if fetched.contains_key("anthropic")
+            && config.is_enabled("anthropic")
+            && let Some(key) =
+                resolve_api_key(config, "anthropic", "ANTHROPIC_API_KEY", env_overrides)
+        {
+            let base_url = config
+                .get("anthropic")
+                .and_then(|e| e.base_url.clone())
+                .or_else(|| env_value(env_overrides, "ANTHROPIC_BASE_URL"))
+                .unwrap_or_else(|| "https://api.anthropic.com".into());
+            let alias = config.get("anthropic").and_then(|e| e.alias.clone());
+            let provider_label = alias.clone().unwrap_or_else(|| "anthropic".into());
+            let cache_retention = config
+                .get("anthropic")
+                .map(|e| e.cache_retention)
+                .unwrap_or(moltis_config::CacheRetention::Short);
+            let models = Self::desired_anthropic_models(config, fetched);
+
+            added += self.replace_anthropic_catalog(
+                models,
+                &key,
+                &base_url,
+                &provider_label,
+                alias,
+                cache_retention,
+            );
+        }
+
+        // ── OpenAI builtin ────────────────────────────────────────────
+        if let Some(models) = fetched.get("openai")
+            && config.is_enabled("openai")
+            && let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides)
+        {
+            let base_url = config
+                .get("openai")
+                .and_then(|e| e.base_url.clone())
+                .or_else(|| env_value(env_overrides, "OPENAI_BASE_URL"))
+                .unwrap_or_else(|| "https://api.openai.com/v1".into());
+            let alias = config.get("openai").and_then(|e| e.alias.clone());
+            let provider_label = alias.unwrap_or_else(|| "openai".into());
+            let stream_transport = config
+                .get("openai")
+                .map(|entry| entry.stream_transport)
+                .unwrap_or(ProviderStreamTransport::Sse);
+
+            for model in models {
+                if self.has_provider_model(&provider_label, &model.id) {
+                    continue;
+                }
+                let provider = Arc::new(
+                    openai::OpenAiProvider::new_with_name(
+                        key.clone(),
+                        model.id.clone(),
+                        base_url.clone(),
+                        provider_label.clone(),
+                    )
+                    .with_stream_transport(stream_transport),
+                );
+                self.register(
+                    ModelInfo {
+                        id: model.id.clone(),
+                        provider: provider_label.clone(),
+                        display_name: model.display_name.clone(),
+                        created_at: model.created_at,
+                        recommended: model.recommended,
+                    },
+                    provider,
+                );
+                added += 1;
+            }
+        }
+
+        // ── OpenAI-compatible providers ───────────────────────────────
+        for def in OPENAI_COMPAT_PROVIDERS {
+            let Some(models) = fetched.get(def.config_name) else {
+                continue;
+            };
+            if !config.is_enabled(def.config_name) {
+                continue;
+            }
+
+            let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
+            let key = if !def.requires_api_key {
+                key.or_else(|| Some(secrecy::Secret::new(def.config_name.into())))
+            } else if def.config_name == "gemini" {
+                key.or_else(|| env_value(env_overrides, "GOOGLE_API_KEY").map(secrecy::Secret::new))
+            } else {
+                key
+            };
+            let Some(key) = key else {
+                continue;
+            };
+
+            let base_url = config
+                .get(def.config_name)
+                .and_then(|e| e.base_url.clone())
+                .or_else(|| env_value(env_overrides, def.env_base_url_key))
+                .unwrap_or_else(|| def.default_base_url.into());
+            let alias = config.get(def.config_name).and_then(|e| e.alias.clone());
+            let provider_label = alias.unwrap_or_else(|| def.config_name.into());
+            let stream_transport = config
+                .get(def.config_name)
+                .map(|entry| entry.stream_transport)
+                .unwrap_or(ProviderStreamTransport::Sse);
+            let cache_retention = config
+                .get(def.config_name)
+                .map(|e| e.cache_retention)
+                .unwrap_or(moltis_config::CacheRetention::Short);
+            let config_tool_mode = config
+                .get(def.config_name)
+                .map(|e| e.tool_mode)
+                .unwrap_or_default();
+            let is_ollama = def.config_name == "ollama";
+
+            // Use pre-fetched Ollama `/api/show` probes (already collected
+            // outside the registry lock by `fetch_discoverable_models`).
+            let empty_probes = HashMap::new();
+            let ollama_probes: &HashMap<String, OllamaShowResponse> = if is_ollama {
+                &result.ollama_probes
+            } else {
+                &empty_probes
+            };
+
+            for model in models {
+                if self.has_provider_model(&provider_label, &model.id) {
+                    continue;
+                }
+                let effective_tool_mode = if is_ollama {
+                    resolve_ollama_tool_mode(
+                        config_tool_mode,
+                        &model.id,
+                        ollama_probes.get(&model.id),
+                    )
+                } else if !matches!(config_tool_mode, moltis_config::ToolMode::Auto) {
+                    config_tool_mode
+                } else {
+                    moltis_config::ToolMode::Auto
+                };
+
+                let mut oai = openai::OpenAiProvider::new_with_name(
+                    key.clone(),
+                    model.id.clone(),
+                    base_url.clone(),
+                    provider_label.clone(),
+                )
+                .with_stream_transport(stream_transport)
+                .with_cache_retention(cache_retention);
+
+                if !matches!(effective_tool_mode, moltis_config::ToolMode::Auto) {
+                    oai = oai.with_tool_mode(effective_tool_mode);
+                }
+
+                self.register(
+                    ModelInfo {
+                        id: model.id.clone(),
+                        provider: provider_label.clone(),
+                        display_name: model.display_name.clone(),
+                        created_at: model.created_at,
+                        recommended: model.recommended,
+                    },
+                    Arc::new(oai),
+                );
+                added += 1;
+            }
+        }
+
+        // ── Custom providers ──────────────────────────────────────────
+        for (name, entry) in &config.providers {
+            if !name.starts_with("custom-") || !entry.enabled {
+                continue;
+            }
+            let Some(models) = fetched.get(name.as_str()) else {
+                continue;
+            };
+            let Some(api_key) = entry
+                .api_key
+                .as_ref()
+                .filter(|k| !k.expose_secret().is_empty())
+            else {
+                continue;
+            };
+            let Some(base_url) = entry.base_url.as_ref().filter(|u| !u.trim().is_empty()) else {
+                continue;
+            };
+            let custom_tool_mode = entry.tool_mode;
+
+            for model in models {
+                if self.has_provider_model(name, &model.id) {
+                    continue;
+                }
+                let mut oai = openai::OpenAiProvider::new_with_name(
+                    api_key.clone(),
+                    model.id.clone(),
+                    base_url.clone(),
+                    name.clone(),
+                )
+                .with_stream_transport(entry.stream_transport);
+                if !matches!(entry.wire_api, moltis_config::WireApi::ChatCompletions) {
+                    oai = oai.with_wire_api(entry.wire_api);
+                }
+                if !matches!(custom_tool_mode, moltis_config::ToolMode::Auto) {
+                    oai = oai.with_tool_mode(custom_tool_mode);
+                }
+                self.register(
+                    ModelInfo {
+                        id: model.id.clone(),
+                        provider: name.clone(),
+                        display_name: model.display_name.clone(),
+                        created_at: model.created_at,
+                        recommended: model.recommended,
+                    },
+                    Arc::new(oai),
+                );
+                added += 1;
+            }
+        }
+
+        added
+    }
+
     #[cfg(feature = "provider-genai")]
     fn register_genai_providers(
         &mut self,
@@ -1713,6 +2371,7 @@ impl ProviderRegistry {
                     provider: genai_provider_name,
                     display_name: display_name.into(),
                     created_at: None,
+                    recommended: false,
                 },
                 provider,
             );
@@ -1763,6 +2422,7 @@ impl ProviderRegistry {
                 provider: provider_label,
                 display_name: "GPT-4o (async-openai)".into(),
                 created_at: None,
+                recommended: false,
             },
             provider,
         );
@@ -1904,17 +2564,18 @@ impl ProviderRegistry {
 
         let preferred = configured_models_for_provider(config, "kimi-code");
         let discovered = if should_fetch_models(config, "kimi-code") {
-            kimi_code::KIMI_CODE_MODELS
-                .iter()
-                .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                .collect()
+            catalog_to_discovered(kimi_code::KIMI_CODE_MODELS, 1)
         } else {
             Vec::new()
         };
         let models = merge_preferred_and_discovered_models(preferred, discovered);
         for model in models {
-            let (model_id, display_name, created_at) =
-                (model.id, model.display_name, model.created_at);
+            let (model_id, display_name, created_at, recommended) = (
+                model.id,
+                model.display_name,
+                model.created_at,
+                model.recommended,
+            );
             if self.has_provider_model("kimi-code", &model_id) {
                 continue;
             }
@@ -1925,6 +2586,7 @@ impl ProviderRegistry {
                     provider: "kimi-code".into(),
                     display_name,
                     created_at,
+                    recommended,
                 },
                 provider,
             );
@@ -2004,6 +2666,7 @@ impl ProviderRegistry {
                     provider: "local-llm".into(),
                     display_name,
                     created_at: None,
+                    recommended: false,
                 },
                 provider,
             );
@@ -2034,42 +2697,15 @@ impl ProviderRegistry {
                 .get("anthropic")
                 .map(|e| e.cache_retention)
                 .unwrap_or(moltis_config::CacheRetention::Short);
-            let preferred = configured_models_for_provider(config, "anthropic");
-            let discovered = if should_fetch_models(config, "anthropic") {
-                ANTHROPIC_MODELS
-                    .iter()
-                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let models = merge_preferred_and_discovered_models(preferred, discovered);
-
-            for model in models {
-                let (model_id, display_name, created_at) =
-                    (model.id, model.display_name, model.created_at);
-                if self.has_provider_model(&provider_label, &model_id) {
-                    continue;
-                }
-                let provider = Arc::new(
-                    anthropic::AnthropicProvider::with_alias(
-                        key.clone(),
-                        model_id.clone(),
-                        base_url.clone(),
-                        alias.clone(),
-                    )
-                    .with_cache_retention(cache_retention),
-                );
-                self.register(
-                    ModelInfo {
-                        id: model_id,
-                        provider: provider_label.clone(),
-                        display_name,
-                        created_at,
-                    },
-                    provider,
-                );
-            }
+            let models = Self::desired_anthropic_models(config, prefetched);
+            self.register_anthropic_catalog(
+                models,
+                &key,
+                &base_url,
+                &provider_label,
+                alias,
+                cache_retention,
+            );
         }
 
         // OpenAI — register all known OpenAI models when API key is available.
@@ -2107,8 +2743,12 @@ impl ProviderRegistry {
             let models = merge_preferred_and_discovered_models(preferred, discovered);
 
             for model in models {
-                let (model_id, display_name, created_at) =
-                    (model.id, model.display_name, model.created_at);
+                let (model_id, display_name, created_at, recommended) = (
+                    model.id,
+                    model.display_name,
+                    model.created_at,
+                    model.recommended,
+                );
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
@@ -2127,6 +2767,7 @@ impl ProviderRegistry {
                         provider: provider_label.clone(),
                         display_name,
                         created_at,
+                        recommended,
                     },
                     provider,
                 );
@@ -2200,12 +2841,8 @@ impl ProviderRegistry {
                 .get(def.config_name)
                 .is_some_and(|entry| entry.fetch_models);
             let try_fetch = def.supports_model_discovery || user_opted_in;
-            let static_catalog = || -> Vec<DiscoveredModel> {
-                def.models
-                    .iter()
-                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                    .collect()
-            };
+            let static_catalog =
+                || -> Vec<DiscoveredModel> { catalog_to_discovered(def.models, 2) };
             let discovered =
                 if !skip_discovery && try_fetch && should_fetch_models(config, def.config_name) {
                     // Use pre-fetched results from parallel discovery.
@@ -2239,8 +2876,12 @@ impl ProviderRegistry {
             };
 
             for model in models {
-                let (model_id, display_name, created_at) =
-                    (model.id, model.display_name, model.created_at);
+                let (model_id, display_name, created_at, recommended) = (
+                    model.id,
+                    model.display_name,
+                    model.created_at,
+                    model.recommended,
+                );
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
@@ -2279,6 +2920,7 @@ impl ProviderRegistry {
                         provider: provider_label.clone(),
                         display_name,
                         created_at,
+                        recommended,
                     },
                     provider,
                 );
@@ -2333,8 +2975,12 @@ impl ProviderRegistry {
 
             let custom_tool_mode = entry.tool_mode;
             for model in models {
-                let (model_id, display_name, created_at) =
-                    (model.id, model.display_name, model.created_at);
+                let (model_id, display_name, created_at, recommended) = (
+                    model.id,
+                    model.display_name,
+                    model.created_at,
+                    model.recommended,
+                );
                 if self.has_provider_model(name, &model_id) {
                     continue;
                 }
@@ -2344,7 +2990,8 @@ impl ProviderRegistry {
                     base_url.clone(),
                     name.clone(),
                 )
-                .with_stream_transport(entry.stream_transport);
+                .with_stream_transport(entry.stream_transport)
+                .with_cache_retention(entry.cache_retention);
                 if !matches!(entry.wire_api, moltis_config::WireApi::ChatCompletions) {
                     oai = oai.with_wire_api(entry.wire_api);
                 }
@@ -2358,6 +3005,7 @@ impl ProviderRegistry {
                         provider: name.clone(),
                         display_name,
                         created_at,
+                        recommended,
                     },
                     provider,
                 );
@@ -2438,6 +3086,7 @@ impl ProviderRegistry {
                         provider: m.provider.clone(),
                         display_name: format!("{} ({label} reasoning)", m.display_name),
                         created_at: m.created_at,
+                        recommended: false,
                     });
                 }
             }
@@ -2645,8 +3294,9 @@ mod tests {
         assert!(supports_vision_for_model("gpt-4o-mini"));
         assert!(supports_vision_for_model("openrouter::openai/gpt-4o"));
 
-        // GPT-4 turbo supports vision
+        // GPT-4 turbo and vision variants support vision
         assert!(supports_vision_for_model("gpt-4-turbo"));
+        assert!(supports_vision_for_model("gpt-4-vision-preview"));
 
         // GPT-5 supports vision
         assert!(supports_vision_for_model("gpt-5.2-codex"));
@@ -2666,6 +3316,23 @@ mod tests {
         assert!(supports_vision_for_model("glm-4.6v"));
         assert!(supports_vision_for_model("glm-4.6v-flash"));
         assert!(supports_vision_for_model("glm-4.5v"));
+
+        // Mistral vision-capable models
+        assert!(supports_vision_for_model("mistral-large-latest"));
+        assert!(supports_vision_for_model("mistral-medium-2505"));
+        assert!(supports_vision_for_model("mistral-small-latest"));
+        assert!(supports_vision_for_model("pixtral-large-latest"));
+        assert!(supports_vision_for_model("pixtral-12b-2409"));
+
+        // Qwen vision models
+        assert!(supports_vision_for_model("qwen-vl-max"));
+        assert!(supports_vision_for_model("qwen2.5-vl-72b"));
+        assert!(supports_vision_for_model("qwen3-vl-8b"));
+
+        // Unknown models default to vision support (better to try and fail
+        // with an API error than to silently strip images)
+        assert!(supports_vision_for_model("some-unknown-model"));
+        assert!(supports_vision_for_model("kimi-k2.5"));
     }
 
     #[test]
@@ -2673,19 +3340,15 @@ mod tests {
         // Codestral is code-focused, no vision
         assert!(!supports_vision_for_model("codestral-latest"));
 
-        // Mistral Large - no vision
-        assert!(!supports_vision_for_model("mistral-large-latest"));
-
-        // Kimi - no vision
-        assert!(!supports_vision_for_model("kimi-k2.5"));
+        // Legacy OpenAI models without vision
+        assert!(!supports_vision_for_model("gpt-3.5-turbo"));
+        assert!(!supports_vision_for_model("text-davinci-003"));
+        assert!(!supports_vision_for_model("gpt-4-0613"));
 
         // Z.AI text-only models - no vision
         assert!(!supports_vision_for_model("glm-5"));
         assert!(!supports_vision_for_model("glm-4.7"));
         assert!(!supports_vision_for_model("glm-4.5"));
-
-        // Unknown models default to no vision
-        assert!(!supports_vision_for_model("some-unknown-model"));
     }
 
     #[test]
@@ -2730,6 +3393,7 @@ mod tests {
         assert!(!is_chat_capable_model("gpt-4o-realtime-preview"));
         assert!(!is_chat_capable_model("gpt-4o-mini-transcribe"));
         assert!(!is_chat_capable_model("sora"));
+        assert!(!is_chat_capable_model("claude-embeddings-v1"));
 
         // Google Gemini non-chat models
         assert!(!is_chat_capable_model("imagen-3.0-generate-002"));
@@ -2796,6 +3460,7 @@ mod tests {
         assert!(!supports_tools_for_model("tts-1-hd"));
         assert!(!supports_tools_for_model("whisper-1"));
         assert!(!supports_tools_for_model("text-embedding-3-large"));
+        assert!(!supports_tools_for_model("claude-embeddings-v1"));
         assert!(!supports_tools_for_model("omni-moderation-latest"));
         assert!(!supports_tools_for_model(
             "custom-openrouter::openai/text-embedding-3-large"
@@ -2888,6 +3553,17 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_catalog_uses_documented_claude_46_aliases() {
+        let anthropic_ids: Vec<&str> = ANTHROPIC_MODELS.iter().map(|(id, _)| *id).collect();
+
+        assert!(anthropic_ids.contains(&"claude-opus-4-6"));
+        assert!(anthropic_ids.contains(&"claude-sonnet-4-6"));
+        assert!(!anthropic_ids.contains(&"claude-opus-4-6-20260301"));
+        assert!(!anthropic_ids.contains(&"claude-sonnet-4-6-20260301"));
+        assert!(!anthropic_ids.contains(&"claude-haiku-4-6-20260301"));
+    }
+
+    #[test]
     fn openai_compat_providers_have_unique_names() {
         let mut names: Vec<&str> = OPENAI_COMPAT_PROVIDERS
             .iter()
@@ -2950,6 +3626,7 @@ mod tests {
                 provider: "test".into(),
                 display_name: "Test Model".into(),
                 created_at: None,
+                recommended: false,
             },
             provider,
         );
@@ -2978,6 +3655,7 @@ mod tests {
                 provider: "openai-codex".into(),
                 display_name: "GPT-5.2 Codex (Codex/OAuth)".into(),
                 created_at: None,
+                recommended: false,
             },
             provider,
         );
@@ -3391,6 +4069,7 @@ mod tests {
                     provider: prov.into(),
                     display_name: id.into(),
                     created_at: None,
+                    recommended: false,
                 },
                 Arc::new(openai::OpenAiProvider::new_with_name(
                     secret("k"),
@@ -3446,6 +4125,7 @@ mod tests {
                     provider: prov.into(),
                     display_name: id.into(),
                     created_at: None,
+                    recommended: false,
                 },
                 Arc::new(openai::OpenAiProvider::new_with_name(
                     secret("k"),
@@ -3476,6 +4156,7 @@ mod tests {
                     provider: prov.into(),
                     display_name: id.into(),
                     created_at: None,
+                    recommended: false,
                 },
                 Arc::new(openai::OpenAiProvider::new_with_name(
                     secret("k"),
@@ -3506,6 +4187,7 @@ mod tests {
                     provider: prov.into(),
                     display_name: id.into(),
                     created_at: None,
+                    recommended: false,
                 },
                 Arc::new(openai::OpenAiProvider::new_with_name(
                     secret("k"),
@@ -3723,17 +4405,14 @@ mod tests {
 
     #[test]
     fn no_vision_for_text_only_models() {
-        // Models known to NOT support vision
+        // Models known to NOT support vision (deny-listed)
         let text_only_models = [
             "codestral-latest",
-            "mistral-large-latest",
-            "mistral-small-latest",
-            "mistral-7b",
-            "kimi-k2.5",
-            "llama-4-scout-17b-16e-instruct",
-            "MiniMax-M2.1",
-            "gpt-3.5-turbo", // old model without vision
+            "gpt-3.5-turbo",
             "text-davinci-003",
+            "gpt-4-0613",
+            "glm-5",
+            "glm-4.5",
         ];
         for model in text_only_models {
             assert!(
@@ -3745,19 +4424,45 @@ mod tests {
     }
 
     #[test]
-    fn vision_support_is_case_sensitive() {
-        // Model IDs are case-sensitive - uppercase should not match
-        assert!(!supports_vision_for_model("CLAUDE-SONNET-4"));
-        assert!(!supports_vision_for_model("GPT-4O"));
-        assert!(!supports_vision_for_model("Gemini-2.0-flash"));
+    fn vision_for_previously_excluded_models() {
+        // These models were previously excluded but actually support vision
+        let now_vision = [
+            "mistral-large-latest",
+            "mistral-small-latest",
+            "mistral-medium-2505",
+            "pixtral-large-latest",
+            "kimi-k2.5",
+            "llama-4-scout-17b-16e-instruct",
+            "MiniMax-M2.1",
+            "qwen-vl-max",
+            "qwen2.5-vl-72b",
+            "deepseek-chat",
+        ];
+        for model in now_vision {
+            assert!(
+                supports_vision_for_model(model),
+                "expected {} to support vision (default-allow)",
+                model
+            );
+        }
     }
 
     #[test]
-    fn vision_support_requires_exact_prefix() {
-        // Vision support is based on prefix matching - partial matches shouldn't work
-        assert!(!supports_vision_for_model("my-claude-model"));
-        assert!(!supports_vision_for_model("custom-gpt-4o-wrapper"));
-        assert!(!supports_vision_for_model("not-gemini-model"));
+    fn vision_denylist_is_case_sensitive() {
+        // Deny-list entries are lowercase; uppercase variants are not denied
+        // and fall through to default-true. This is fine — model IDs from
+        // providers are always lowercase in practice.
+        assert!(supports_vision_for_model("CODESTRAL-LATEST"));
+        assert!(supports_vision_for_model("GPT-3.5-TURBO"));
+    }
+
+    #[test]
+    fn vision_default_true_for_unknown_prefixes() {
+        // With deny-list approach, unknown models default to vision support
+        assert!(supports_vision_for_model("my-claude-model"));
+        assert!(supports_vision_for_model("custom-gpt-4o-wrapper"));
+        assert!(supports_vision_for_model("not-gemini-model"));
+        assert!(supports_vision_for_model("totally-new-model-2026"));
     }
 
     // ── Ollama tool detection ────────────────────────────────────────────
@@ -4058,6 +4763,7 @@ mod tests {
                 provider: "anthropic".into(),
                 display_name: "Claude Opus 4.5".into(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(anthropic::AnthropicProvider::new(
                 secret("key"),
@@ -4089,6 +4795,7 @@ mod tests {
                 provider: "anthropic".into(),
                 display_name: "Claude Opus 4.5".into(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(anthropic::AnthropicProvider::new(
                 secret("key"),
@@ -4102,6 +4809,7 @@ mod tests {
                 provider: "openai".into(),
                 display_name: "GPT-4o".into(),
                 created_at: None,
+                recommended: false,
             },
             Arc::new(openai::OpenAiProvider::new(
                 secret("key"),
@@ -4218,6 +4926,87 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_prefetched_models_replace_static_fallback_at_startup() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("anthropic".into(), moltis_config::schema::ProviderEntry {
+                enabled: true,
+                api_key: Some(secret("sk-ant-test")),
+                fetch_models: true,
+                ..Default::default()
+            });
+
+        let mut prefetched = HashMap::new();
+        prefetched.insert("anthropic".into(), vec![DiscoveredModel::new(
+            "claude-future-1",
+            "Claude Future 1",
+        )]);
+
+        let registry =
+            ProviderRegistry::from_config_with_prefetched(&config, &HashMap::new(), &prefetched);
+        let ids: Vec<&str> = registry
+            .list_models()
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect();
+
+        assert!(ids.contains(&"anthropic::claude-future-1"));
+        assert!(
+            !ids.contains(&"anthropic::claude-sonnet-4-6"),
+            "live Anthropic discovery should be authoritative, got: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn anthropic_rediscovery_replaces_stale_static_models() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("anthropic".into(), moltis_config::schema::ProviderEntry {
+                enabled: true,
+                api_key: Some(secret("sk-ant-test")),
+                fetch_models: true,
+                ..Default::default()
+            });
+
+        let env_overrides = HashMap::new();
+        let mut registry =
+            ProviderRegistry::from_config_with_static_catalogs(&config, &env_overrides);
+        assert!(
+            registry
+                .list_models()
+                .iter()
+                .any(|m| m.id == "anthropic::claude-sonnet-4-6"),
+            "expected startup fallback Anthropic model to be present"
+        );
+
+        let mut models = HashMap::new();
+        models.insert("anthropic".into(), vec![DiscoveredModel::new(
+            "claude-future-1",
+            "Claude Future 1",
+        )]);
+        let result = RediscoveryResult {
+            models,
+            ollama_probes: HashMap::new(),
+        };
+
+        let added = registry.register_rediscovered_models(&config, &env_overrides, &result);
+        assert_eq!(added, 1);
+
+        let ids: Vec<&str> = registry
+            .list_models()
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect();
+        assert!(ids.contains(&"anthropic::claude-future-1"));
+        assert!(
+            !ids.contains(&"anthropic::claude-sonnet-4-6"),
+            "runtime rediscovery should replace stale Anthropic catalog entries, got: {ids:?}"
+        );
+    }
+
+    #[test]
     fn supports_reasoning_for_known_models() {
         // Models that support reasoning
         assert!(supports_reasoning_for_model("claude-opus-4-5-20251101"));
@@ -4235,5 +5024,84 @@ mod tests {
         assert!(!supports_reasoning_for_model("gpt-4o"));
         assert!(!supports_reasoning_for_model("gpt-5.2"));
         assert!(!supports_reasoning_for_model("claude-3-haiku-20240307"));
+    }
+
+    #[test]
+    fn register_rediscovered_models_adds_new_models() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert(
+            "custom-test".to_string(),
+            moltis_config::schema::ProviderEntry {
+                enabled: true,
+                api_key: Some(secrecy::Secret::new("test-key".into())),
+                base_url: Some("http://localhost:1234/v1".into()),
+                fetch_models: true,
+                ..Default::default()
+            },
+        );
+
+        let env_overrides = HashMap::new();
+
+        // Start with an empty registry (static catalogs only, no live fetch).
+        let mut reg = ProviderRegistry::from_config_with_static_catalogs(&config, &env_overrides);
+        let before = reg.list_models().len();
+
+        // Simulate a rediscovery that found two new models.
+        let mut models = HashMap::new();
+        models.insert("custom-test".to_string(), vec![
+            DiscoveredModel::new("new-model-a", "New Model A"),
+            DiscoveredModel::new("new-model-b", "New Model B"),
+        ]);
+        let result = RediscoveryResult {
+            models,
+            ollama_probes: HashMap::new(),
+        };
+
+        let added = reg.register_rediscovered_models(&config, &env_overrides, &result);
+        assert_eq!(added, 2, "should register 2 new models");
+        assert_eq!(
+            reg.list_models().len(),
+            before + 2,
+            "model list should grow by 2"
+        );
+
+        // Running again with the same models should not add duplicates.
+        let added_again = reg.register_rediscovered_models(&config, &env_overrides, &result);
+        assert_eq!(added_again, 0, "should not re-register existing models");
+    }
+
+    #[test]
+    fn register_rediscovered_models_skips_existing() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert(
+            "custom-test".to_string(),
+            moltis_config::schema::ProviderEntry {
+                enabled: true,
+                api_key: Some(secrecy::Secret::new("test-key".into())),
+                base_url: Some("http://localhost:1234/v1".into()),
+                fetch_models: true,
+                models: vec!["existing-model".to_string()],
+                ..Default::default()
+            },
+        );
+
+        let env_overrides = HashMap::new();
+        let mut reg = ProviderRegistry::from_config_with_static_catalogs(&config, &env_overrides);
+        let before = reg.list_models().len();
+
+        // Rediscovery returns both the existing model and a new one.
+        let mut models = HashMap::new();
+        models.insert("custom-test".to_string(), vec![
+            DiscoveredModel::new("existing-model", "Existing Model"),
+            DiscoveredModel::new("brand-new-model", "Brand New Model"),
+        ]);
+        let result = RediscoveryResult {
+            models,
+            ollama_probes: HashMap::new(),
+        };
+
+        let added = reg.register_rediscovered_models(&config, &env_overrides, &result);
+        assert_eq!(added, 1, "should only add the brand-new model");
+        assert_eq!(reg.list_models().len(), before + 1);
     }
 }

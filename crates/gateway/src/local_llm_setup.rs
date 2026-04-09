@@ -810,6 +810,7 @@ fn build_local_provider_entry(
         provider: LOCAL_LLM_PROVIDER_NAME.into(),
         display_name: entry.display_name(),
         created_at: None,
+        recommended: false,
     };
     Ok((info, provider))
 }
@@ -2300,6 +2301,7 @@ mod tests {
                 provider: "openai".into(),
                 display_name: "Shared Remote Model".into(),
                 created_at: None,
+                recommended: false,
             },
             remote_provider,
         );
@@ -2374,6 +2376,7 @@ mod tests {
                 provider: "openai".into(),
                 display_name: "Remote Stale Alias".into(),
                 created_at: None,
+                recommended: false,
             },
             remote_provider,
         );

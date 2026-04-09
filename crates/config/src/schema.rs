@@ -225,6 +225,20 @@ pub struct MoltisConfig {
     pub cron: CronConfig,
     pub caldav: CalDavConfig,
     pub webhooks: WebhooksConfig,
+    /// Upstream HTTP/SOCKS proxy for all outbound requests.
+    ///
+    /// Supports `http://`, `https://`, `socks5://`, and `socks5h://` schemes.
+    /// Proxy authentication via URL: `http://user:pass@host:port`.
+    /// When set, overrides the `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` environment
+    /// variables for all traffic (providers, channels, tools, OAuth).
+    /// Localhost/loopback addresses are automatically excluded (`no_proxy`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub upstream_proxy: Option<Secret<String>>,
     /// Environment variables injected into the Moltis process at startup.
     /// Useful for API keys in Docker where you can't easily set env vars.
     /// Process env vars take precedence (existing vars are not overwritten).
@@ -953,6 +967,14 @@ pub struct CronConfig {
     pub rate_limit_max: usize,
     /// Rate limit window in seconds. Defaults to 60 (1 minute).
     pub rate_limit_window_secs: u64,
+    /// Number of days to retain cron session data before auto-cleanup.
+    /// Set to `None` (or 0) to disable retention pruning. Defaults to 7 days.
+    pub session_retention_days: Option<u64>,
+    /// Whether to auto-prune sandbox containers after cron job completion.
+    /// Per-job `auto_prune_container` overrides this global default.
+    /// Defaults to true.
+    #[serde(default = "default_true")]
+    pub auto_prune_cron_containers: bool,
 }
 
 impl Default for CronConfig {
@@ -960,6 +982,8 @@ impl Default for CronConfig {
         Self {
             rate_limit_max: 10,
             rate_limit_window_secs: 60,
+            session_retention_days: Some(7),
+            auto_prune_cron_containers: true,
         }
     }
 }
@@ -1307,10 +1331,10 @@ pub struct McpServerEntry {
     /// Optional per-server MCP request timeout override in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_timeout_secs: Option<u64>,
-    /// Transport type: "stdio" (default) or "sse".
+    /// Transport type: "stdio" (default), "sse", or "streamable-http".
     #[serde(default)]
     pub transport: String,
-    /// URL for SSE transport. Required when `transport` is "sse".
+    /// URL for SSE/Streamable HTTP transport. Required when `transport` is "sse" or "streamable-http".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// Custom headers for remote HTTP/SSE transport.
@@ -1345,14 +1369,16 @@ pub struct McpOAuthOverrideEntry {
 ///
 /// Kept in `moltis-config` (not `moltis-channels`) so the config crate stays
 /// independent of the channels crate while still validating channel names.
-pub const KNOWN_CHANNEL_TYPES: &[&str] = &["telegram", "whatsapp", "msteams", "discord", "slack"];
+pub const KNOWN_CHANNEL_TYPES: &[&str] = &[
+    "telegram", "whatsapp", "msteams", "discord", "slack", "matrix",
+];
 
 /// Channel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChannelsConfig {
     /// Which channel types are offered in the web UI (onboarding + channels page).
-    /// Defaults to `["telegram", "discord", "slack"]`. Add `"msteams"` or `"whatsapp"` to opt in.
+    /// Defaults to `["telegram", "msteams", "discord", "slack", "matrix"]`. Add `"whatsapp"` to opt in.
     #[serde(
         default = "default_channels_offered",
         skip_serializing_if = "Vec::is_empty"
@@ -1408,7 +1434,13 @@ impl ChannelsConfig {
 }
 
 fn default_channels_offered() -> Vec<String> {
-    vec!["telegram".into(), "discord".into(), "slack".into()]
+    vec![
+        "telegram".into(),
+        "msteams".into(),
+        "discord".into(),
+        "slack".into(),
+        "matrix".into(),
+    ]
 }
 
 impl Default for ChannelsConfig {
@@ -1524,6 +1556,12 @@ pub struct ToolsConfig {
     /// Maximum number of agent loop iterations before aborting. Default 25.
     #[serde(default = "default_agent_max_iterations")]
     pub agent_max_iterations: usize,
+    /// Maximum auto-continue nudges when the model stops mid-task (0 = disabled). Default 2.
+    #[serde(default = "default_agent_max_auto_continues")]
+    pub agent_max_auto_continues: usize,
+    /// Minimum tool calls in the current run before auto-continue can trigger. Default 3.
+    #[serde(default = "default_agent_auto_continue_min_tool_calls")]
+    pub agent_auto_continue_min_tool_calls: usize,
     /// Maximum bytes for a single tool result before truncation. Default 50KB.
     #[serde(default = "default_max_tool_result_bytes")]
     pub max_tool_result_bytes: usize,
@@ -1542,6 +1580,8 @@ impl Default for ToolsConfig {
             browser: BrowserConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
             agent_max_iterations: default_agent_max_iterations(),
+            agent_max_auto_continues: default_agent_max_auto_continues(),
+            agent_auto_continue_min_tool_calls: default_agent_auto_continue_min_tool_calls(),
             max_tool_result_bytes: default_max_tool_result_bytes(),
             registry_mode: ToolRegistryMode::default(),
         }
@@ -1554,6 +1594,14 @@ fn default_agent_timeout_secs() -> u64 {
 
 fn default_agent_max_iterations() -> usize {
     25
+}
+
+fn default_agent_max_auto_continues() -> usize {
+    2
+}
+
+fn default_agent_auto_continue_min_tool_calls() -> usize {
+    3
 }
 
 fn default_max_tool_result_bytes() -> usize {
@@ -1580,12 +1628,13 @@ pub enum MapProvider {
     OpenStreetMap,
 }
 
-/// Web tools configuration (search, fetch).
+/// Web tools configuration (search, fetch, firecrawl).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebConfig {
     pub search: WebSearchConfig,
     pub fetch: WebFetchConfig,
+    pub firecrawl: FirecrawlConfig,
 }
 
 /// Search provider selection.
@@ -1595,6 +1644,7 @@ pub enum SearchProvider {
     #[default]
     Brave,
     Perplexity,
+    Firecrawl,
 }
 
 /// Web search tool configuration.
@@ -1687,6 +1737,51 @@ impl Default for WebFetchConfig {
             max_redirects: 3,
             readability: true,
             ssrf_allowlist: Vec::new(),
+        }
+    }
+}
+
+/// Firecrawl integration configuration.
+///
+/// Firecrawl provides high-quality markdown extraction from web pages,
+/// including JS-heavy and bot-protected sites.  Used as a standalone
+/// `firecrawl_scrape` tool, as a `web_search` provider, and as a
+/// fallback extractor inside `web_fetch`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FirecrawlConfig {
+    /// Enable Firecrawl integration.
+    pub enabled: bool,
+    /// Firecrawl API key (overrides `FIRECRAWL_API_KEY` env var).
+    #[serde(
+        default,
+        serialize_with = "serialize_option_secret",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Firecrawl API base URL (for self-hosted instances).
+    pub base_url: String,
+    /// Only extract main content (skip navs, footers, etc.).
+    pub only_main_content: bool,
+    /// HTTP request timeout in seconds.
+    pub timeout_seconds: u64,
+    /// In-memory cache TTL in minutes (0 to disable).
+    pub cache_ttl_minutes: u64,
+    /// Use Firecrawl as fallback in `web_fetch` when readability
+    /// extraction produces poor results.
+    pub web_fetch_fallback: bool,
+}
+
+impl Default for FirecrawlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: None,
+            base_url: "https://api.firecrawl.dev".into(),
+            only_main_content: true,
+            timeout_seconds: 30,
+            cache_ttl_minutes: 15,
+            web_fetch_fallback: true,
         }
     }
 }
@@ -2186,6 +2281,12 @@ pub struct ProvidersConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offered: Vec<String>,
 
+    /// Show models older than one year in the chat model selector.
+    /// By default only recent models are shown; legacy models remain
+    /// accessible in the settings page regardless of this flag.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub show_legacy_models: bool,
+
     /// Provider-specific settings keyed by provider name.
     /// Known keys: "anthropic", "openai", "gemini", "groq", "xai", "deepseek"
     #[serde(flatten)]
@@ -2393,6 +2494,10 @@ where
 
 const fn is_true(value: &bool) -> bool {
     *value
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 const fn is_default_provider_stream_transport(value: &ProviderStreamTransport) -> bool {
@@ -2700,12 +2805,14 @@ deny = ["exec"]
     }
 
     #[test]
-    fn channels_config_defaults_to_telegram_discord_slack_offered() {
+    fn channels_config_defaults_offered() {
         let config = ChannelsConfig::default();
         assert_eq!(config.offered, vec![
             "telegram".to_string(),
+            "msteams".to_string(),
             "discord".to_string(),
             "slack".to_string(),
+            "matrix".to_string(),
         ]);
     }
 
@@ -2714,8 +2821,10 @@ deny = ["exec"]
         let config: ChannelsConfig = toml::from_str("").unwrap();
         assert_eq!(config.offered, vec![
             "telegram".to_string(),
+            "msteams".to_string(),
             "discord".to_string(),
             "slack".to_string(),
+            "matrix".to_string(),
         ]);
     }
 

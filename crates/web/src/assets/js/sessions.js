@@ -546,13 +546,13 @@ newSessionBtn.addEventListener("click", () => {
 });
 
 function isClearableSession(session) {
-	return (
-		session.key !== "main" &&
-		!session.key.startsWith("cron:") &&
-		!session.key.startsWith("telegram:") &&
-		!session.key.startsWith("msteams:") &&
-		!session.channelBinding
-	);
+	var isChannelSessionKey =
+		session.key.startsWith("telegram:") ||
+		session.key.startsWith("msteams:") ||
+		session.key.startsWith("discord:") ||
+		session.key.startsWith("slack:") ||
+		session.key.startsWith("matrix:");
+	return session.key !== "main" && !session.key.startsWith("cron:") && !isChannelSessionKey && !session.channelBinding;
 }
 
 export function clearAllSessions() {

@@ -319,7 +319,12 @@ impl GatewayInner {
             cached_location: moltis_config::load_user().and_then(|u| u.location),
             channel_status_log: HashMap::new(),
             channel_command_mode_sessions: HashSet::new(),
-            channels_offered: vec!["telegram".into()],
+            channels_offered: vec![
+                "telegram".into(),
+                "discord".into(),
+                "slack".into(),
+                "matrix".into(),
+            ],
             passkey_host_update_pending: HashSet::new(),
             shiki_cdn_url: None,
         }
@@ -411,6 +416,14 @@ pub struct GatewayState {
 
     /// Per-(channel, account) rate limiter for channel webhooks.
     pub channel_webhook_rate_limiter: crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter,
+
+    // ── Generic webhook ingress ───────────────────────────────────────────────
+    /// Webhook store for direct access from HTTP ingress handlers.
+    pub webhook_store: std::sync::OnceLock<Arc<dyn moltis_webhooks::store::WebhookStore>>,
+    /// Per-webhook rate limiter for generic webhook ingress.
+    pub webhook_rate_limiter: moltis_webhooks::rate_limit::WebhookRateLimiter,
+    /// Sender for queueing delivery IDs to the webhook worker.
+    pub webhook_worker_tx: std::sync::OnceLock<mpsc::Sender<i64>>,
 
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     /// Monotonically increasing sequence counter for broadcast events.
@@ -510,6 +523,9 @@ impl GatewayState {
             ),
             channel_webhook_rate_limiter:
                 crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter::new(),
+            webhook_store: std::sync::OnceLock::new(),
+            webhook_rate_limiter: moltis_webhooks::rate_limit::WebhookRateLimiter::default(),
+            webhook_worker_tx: std::sync::OnceLock::new(),
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
             node_count: Arc::new(AtomicUsize::new(0)),
@@ -952,6 +968,18 @@ mod tests {
             negotiated_protocol: moltis_protocol::PROTOCOL_VERSION,
         };
         (client, rx)
+    }
+
+    #[tokio::test]
+    async fn default_channels_offered_include_matrix() {
+        let state = test_state();
+        let inner = state.inner.read().await;
+        assert_eq!(inner.channels_offered, vec![
+            "telegram".to_owned(),
+            "discord".to_owned(),
+            "slack".to_owned(),
+            "matrix".to_owned(),
+        ]);
     }
 
     #[tokio::test]

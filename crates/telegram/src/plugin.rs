@@ -290,17 +290,20 @@ impl ChannelStatus for TelegramPlugin {
                         "Bot: @{}",
                         me.username.as_deref().unwrap_or("unknown")
                     )),
+                    extra: None,
                 },
                 Err(e) => ChannelHealthSnapshot {
                     connected: false,
                     account_id: account_id.to_string(),
                     details: Some(format!("API error: {e}")),
+                    extra: None,
                 },
             },
             None => ChannelHealthSnapshot {
                 connected: false,
                 account_id: account_id.to_string(),
                 details: Some("account not started".into()),
+                extra: None,
             },
         };
 

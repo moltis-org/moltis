@@ -2,7 +2,18 @@ use {async_trait::async_trait, sqlx::SqlitePool};
 
 use moltis_channels::{
     Error as ChannelError, Result as ChannelResult,
+    plugin::ChannelType,
     store::{ChannelStore, StoredChannel},
+};
+
+#[cfg(feature = "vault")]
+use {
+    moltis_secret_store::{
+        decrypt_secret_fields, encrypt_secret_fields, has_encrypted_secret_fields,
+        has_plaintext_secret_fields,
+    },
+    moltis_vault::VaultStatus,
+    std::sync::Arc,
 };
 
 fn channel_db_error(context: &'static str, source: sqlx::Error) -> ChannelError {
@@ -63,6 +74,156 @@ impl SqliteChannelStore {
         .await
         .map_err(|e| channel_db_error("init channels table", e))?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "vault")]
+fn channel_secret_fields(channel_type: &str) -> ChannelResult<&'static [&'static str]> {
+    channel_type
+        .parse::<ChannelType>()
+        .map(|channel_type| channel_type.secret_fields())
+}
+
+#[cfg(feature = "vault")]
+fn channel_secret_aad_scope(channel_type: &str, account_id: &str) -> String {
+    format!("channel:{channel_type}:{account_id}")
+}
+
+#[cfg(feature = "vault")]
+fn channel_secret_store_error(
+    context: &'static str,
+    source: moltis_secret_store::Error,
+) -> ChannelError {
+    ChannelError::external(context, source)
+}
+
+/// Vault-aware wrapper that encrypts declared secret fields in channel configs.
+#[cfg(feature = "vault")]
+pub struct VaultChannelStore {
+    inner: Arc<dyn ChannelStore>,
+    vault: Option<Arc<moltis_vault::Vault>>,
+}
+
+#[cfg(feature = "vault")]
+impl VaultChannelStore {
+    pub fn new(inner: Arc<dyn ChannelStore>, vault: Option<Arc<moltis_vault::Vault>>) -> Self {
+        Self { inner, vault }
+    }
+
+    async fn prepare_for_storage(&self, channel: StoredChannel) -> ChannelResult<StoredChannel> {
+        let mut config = channel.config;
+        let secret_fields = channel_secret_fields(&channel.channel_type)?;
+        if secret_fields.is_empty() {
+            return Ok(StoredChannel { config, ..channel });
+        }
+
+        let Some(vault) = self.vault.as_ref() else {
+            return Ok(StoredChannel { config, ..channel });
+        };
+
+        if vault.is_unsealed().await {
+            encrypt_secret_fields(
+                &mut config,
+                secret_fields,
+                &channel_secret_aad_scope(&channel.channel_type, &channel.account_id),
+                vault.as_ref(),
+            )
+            .await
+            .map_err(|error| channel_secret_store_error("encrypt channel secrets", error))?;
+            return Ok(StoredChannel { config, ..channel });
+        }
+
+        let status = vault
+            .status()
+            .await
+            .map_err(|error| ChannelError::external("check vault status", error))?;
+        if matches!(status, VaultStatus::Uninitialized) {
+            return Ok(StoredChannel { config, ..channel });
+        }
+
+        let has_plaintext =
+            has_plaintext_secret_fields(&config, secret_fields).map_err(|error| {
+                channel_secret_store_error("inspect plaintext channel secrets", error)
+            })?;
+        if has_plaintext {
+            return Err(ChannelError::unavailable(
+                "vault is sealed; channel secrets cannot be persisted",
+            ));
+        }
+
+        Ok(StoredChannel { config, ..channel })
+    }
+
+    async fn prepare_for_runtime(&self, channel: StoredChannel) -> ChannelResult<StoredChannel> {
+        let mut config = channel.config;
+        let secret_fields = channel_secret_fields(&channel.channel_type)?;
+        if secret_fields.is_empty() {
+            return Ok(StoredChannel { config, ..channel });
+        }
+
+        let has_encrypted =
+            has_encrypted_secret_fields(&config, secret_fields).map_err(|error| {
+                channel_secret_store_error("inspect encrypted channel secrets", error)
+            })?;
+        if !has_encrypted {
+            return Ok(StoredChannel { config, ..channel });
+        }
+
+        let Some(vault) = self.vault.as_ref() else {
+            return Err(ChannelError::unavailable(
+                "encrypted channel secrets require the vault",
+            ));
+        };
+
+        if !vault.is_unsealed().await {
+            return Err(ChannelError::unavailable(
+                "vault is sealed; encrypted channel secrets are unavailable",
+            ));
+        }
+
+        decrypt_secret_fields(
+            &mut config,
+            secret_fields,
+            &channel_secret_aad_scope(&channel.channel_type, &channel.account_id),
+            vault.as_ref(),
+        )
+        .await
+        .map_err(|error| channel_secret_store_error("decrypt channel secrets", error))?;
+
+        Ok(StoredChannel { config, ..channel })
+    }
+}
+
+#[cfg(feature = "vault")]
+#[async_trait]
+impl ChannelStore for VaultChannelStore {
+    async fn list(&self) -> ChannelResult<Vec<StoredChannel>> {
+        let mut channels = Vec::new();
+        for channel in self.inner.list().await? {
+            channels.push(self.prepare_for_runtime(channel).await?);
+        }
+        Ok(channels)
+    }
+
+    async fn get(
+        &self,
+        channel_type: &str,
+        account_id: &str,
+    ) -> ChannelResult<Option<StoredChannel>> {
+        let Some(channel) = self.inner.get(channel_type, account_id).await? else {
+            return Ok(None);
+        };
+
+        self.prepare_for_runtime(channel).await.map(Some)
+    }
+
+    async fn upsert(&self, channel: StoredChannel) -> ChannelResult<()> {
+        let channel = self.prepare_for_storage(channel).await?;
+        self.inner.upsert(channel).await
+    }
+
+    async fn delete(&self, channel_type: &str, account_id: &str) -> ChannelResult<()> {
+        self.inner.delete(channel_type, account_id).await
     }
 }
 
@@ -130,10 +291,37 @@ impl ChannelStore for SqliteChannelStore {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "vault")]
+    use std::sync::Arc;
+
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         SqliteChannelStore::init(&pool).await.unwrap();
         pool
+    }
+
+    #[cfg(feature = "vault")]
+    async fn test_vault(pool: SqlitePool) -> Arc<moltis_vault::Vault> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS vault_metadata (
+                id                   INTEGER PRIMARY KEY CHECK (id = 1),
+                version              INTEGER NOT NULL DEFAULT 1,
+                kdf_salt             TEXT NOT NULL,
+                kdf_params           TEXT NOT NULL,
+                wrapped_dek          TEXT NOT NULL,
+                recovery_wrapped_dek TEXT,
+                recovery_key_hash    TEXT,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let vault = Arc::new(moltis_vault::Vault::new(pool).await.unwrap());
+        vault.initialize("test-password").await.unwrap();
+        vault
     }
 
     fn now() -> i64 {
@@ -255,5 +443,107 @@ mod tests {
         let pool = test_pool().await;
         let store = SqliteChannelStore::new(pool);
         assert!(store.get("telegram", "nope").await.unwrap().is_none());
+    }
+
+    #[cfg(feature = "vault")]
+    #[tokio::test]
+    async fn vault_store_encrypts_and_decrypts_secret_fields() {
+        let pool = test_pool().await;
+        let vault = test_vault(pool.clone()).await;
+        let inner: Arc<dyn ChannelStore> = Arc::new(SqliteChannelStore::new(pool.clone()));
+        let store = VaultChannelStore::new(inner, Some(vault));
+        let timestamp = now();
+
+        store
+            .upsert(StoredChannel {
+                account_id: "bot1".into(),
+                channel_type: "telegram".into(),
+                config: serde_json::json!({"token": "abc"}),
+                created_at: timestamp,
+                updated_at: timestamp,
+            })
+            .await
+            .unwrap();
+
+        let raw: (String,) = sqlx::query_as(
+            "SELECT config FROM channels WHERE channel_type = 'telegram' AND account_id = 'bot1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!raw.0.contains("\"abc\""));
+        assert!(raw.0.contains("vault_encrypted"));
+
+        let got = store.get("telegram", "bot1").await.unwrap().unwrap();
+        assert_eq!(got.config["token"], "abc");
+    }
+
+    #[cfg(feature = "vault")]
+    #[tokio::test]
+    async fn vault_store_falls_back_to_plaintext_when_uninitialized() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS vault_metadata (
+                id                   INTEGER PRIMARY KEY CHECK (id = 1),
+                version              INTEGER NOT NULL DEFAULT 1,
+                kdf_salt             TEXT NOT NULL,
+                kdf_params           TEXT NOT NULL,
+                wrapped_dek          TEXT NOT NULL,
+                recovery_wrapped_dek TEXT,
+                recovery_key_hash    TEXT,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let vault = Arc::new(moltis_vault::Vault::new(pool.clone()).await.unwrap());
+        let inner: Arc<dyn ChannelStore> = Arc::new(SqliteChannelStore::new(pool.clone()));
+        let store = VaultChannelStore::new(inner, Some(vault));
+        let timestamp = now();
+
+        store
+            .upsert(StoredChannel {
+                account_id: "bot1".into(),
+                channel_type: "telegram".into(),
+                config: serde_json::json!({"token": "abc"}),
+                created_at: timestamp,
+                updated_at: timestamp,
+            })
+            .await
+            .unwrap();
+
+        let raw: (String,) = sqlx::query_as(
+            "SELECT config FROM channels WHERE channel_type = 'telegram' AND account_id = 'bot1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(raw.0.contains("\"abc\""));
+    }
+
+    #[cfg(feature = "vault")]
+    #[tokio::test]
+    async fn vault_store_rejects_plaintext_secret_updates_when_sealed() {
+        let pool = test_pool().await;
+        let vault = test_vault(pool.clone()).await;
+        vault.seal().await;
+        let inner: Arc<dyn ChannelStore> = Arc::new(SqliteChannelStore::new(pool));
+        let store = VaultChannelStore::new(inner, Some(vault));
+        let timestamp = now();
+
+        let error = store
+            .upsert(StoredChannel {
+                account_id: "bot1".into(),
+                channel_type: "telegram".into(),
+                config: serde_json::json!({"token": "abc"}),
+                created_at: timestamp,
+                updated_at: timestamp,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("vault is sealed"));
     }
 }

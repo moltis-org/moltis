@@ -12,25 +12,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light dark">
-    <title>Moltis — A Rust-native claw you can trust</title>
+    <title>Moltis — A secure persistent personal agent server in Rust</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <meta name="description" content="A Rust-native claw you can trust. One binary, sandboxed execution, multi-provider LLMs, voice, memory, Telegram, WhatsApp, Discord, Teams, and MCP tools. Secure by design, runs on your hardware.">
-    <meta property="og:title" content="Moltis — A Rust-native claw you can trust">
-    <meta property="og:description" content="A Rust-native claw you can trust. One binary, sandboxed execution, multi-provider LLMs, voice, memory, Telegram, WhatsApp, Discord, Teams, and MCP tools. Secure by design, runs on your hardware.">
+    <meta name="description" content="A secure persistent personal agent server in Rust. One binary, sandboxed execution, multi-provider LLMs, voice, memory, Telegram, WhatsApp, Discord, Teams, and MCP tools. Secure by design, runs on your hardware.">
+    <meta property="og:title" content="Moltis — A secure persistent personal agent server in Rust">
+    <meta property="og:description" content="A secure persistent personal agent server in Rust. One binary, sandboxed execution, multi-provider LLMs, voice, memory, Telegram, WhatsApp, Discord, Teams, and MCP tools. Secure by design, runs on your hardware.">
     <meta property="og:site_name" content="Moltis">
     <meta property="og:locale" content="en_US">
-    <meta property="og:image" content="https://moltis.org/og-social.png?v=8">
-    <meta property="og:image:secure_url" content="https://moltis.org/og-social.png?v=8">
+    <meta property="og:image" content="https://moltis.org/og-social.png?v=9">
+    <meta property="og:image:secure_url" content="https://moltis.org/og-social.png?v=9">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="Moltis — A Rust-native claw you can trust">
+    <meta property="og:image:alt" content="Moltis — A secure persistent personal agent server in Rust">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://moltis.org">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:image" content="https://moltis.org/og-social.png?v=8">
-    <meta name="twitter:image:alt" content="Moltis — A Rust-native claw you can trust">
-    <meta name="twitter:title" content="Moltis — A Rust-native claw you can trust">
-    <meta name="twitter:description" content="A Rust-native claw you can trust. One binary, sandboxed execution, multi-provider LLMs, voice, memory, Telegram, WhatsApp, Discord, Teams, and MCP tools. Secure by design, runs on your hardware.">
+    <meta name="twitter:image" content="https://moltis.org/og-social.png?v=9">
+    <meta name="twitter:image:alt" content="Moltis — A secure persistent personal agent server in Rust">
+    <meta name="twitter:title" content="Moltis — A secure persistent personal agent server in Rust">
+    <meta name="twitter:description" content="A secure persistent personal agent server in Rust. One binary, sandboxed execution, multi-provider LLMs, voice, memory, Telegram, WhatsApp, Discord, Teams, and MCP tools. Secure by design, runs on your hardware.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400&family=Outfit:wght@700&display=swap" rel="stylesheet">
@@ -60,17 +60,7 @@
             if ((localStorage.getItem('theme') || 'system') === 'system') applyTheme('system');
         });
     </script>
-    <style>
-        @keyframes pulse-slow {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 0.7; }
-        }
-        .animate-pulse-slow { animation: pulse-slow 4s ease-in-out infinite; }
-        .animation-delay-2s { animation-delay: 2s; }
-        .font-outfit { font-family: 'Outfit', sans-serif; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-white dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen relative transition-colors duration-300 overflow-x-hidden w-full">
     <!-- Toast notification -->
@@ -104,7 +94,7 @@
     <!-- PAGE: Home -->
     <!-- ============================================================ -->
     <div id="page-home" class="page-content">
-        <div class="relative z-10 text-center px-4 sm:px-6 w-full max-w-2xl mx-auto pt-12 pb-8">
+        <div class="relative z-10 text-center px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
             <!-- Announcement banner -->
             <a href="#features" onclick="navigateTo('features')" class="group inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 hover:border-orange-400 dark:hover:border-orange-500 transition-all hover:shadow-md">
                 <span class="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-bold uppercase tracking-wide">New</span>
@@ -112,8 +102,15 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-orange-500 dark:text-orange-400 group-hover:translate-x-0.5 transition-transform"><polyline points="9 18 15 12 9 6"/></svg>
             </a>
 
-            <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-2 text-gray-800 dark:text-gray-100">A Rust-native claw you can trust</h1>
-            <p class="text-sm sm:text-base text-gray-400 dark:text-gray-500 mb-6">One binary — sandboxed, secure, yours.</p>
+            <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-2 text-gray-800 dark:text-gray-100">A secure persistent personal agent server</h1>
+            <p class="text-sm sm:text-base text-gray-400 dark:text-gray-500 mb-4">One binary — sandboxed, built in Rust, yours to own.</p>
+
+            <!-- Positioning -->
+            <p class="text-sm sm:text-base text-gray-600 dark:text-gray-400 max-w-xl mx-auto mb-6 leading-relaxed">
+                Not a chatbot wrapper. Not a cloud service tied to one provider.
+                A real agent server that runs on your hardware, remembers across sessions,
+                and reaches you through every channel you use.
+            </p>
 
             <!-- CTA buttons -->
             <div class="flex items-center justify-center gap-3 mb-6">
@@ -139,6 +136,49 @@
                     <img src="screenshots/thumbs/5.png" alt="Sandboxed shell execution in Docker container" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(4)">
                     <img src="screenshots/thumbs/6.png" alt="Telegram bot channel with voice and events" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(5)">
                     <img src="screenshots/thumbs/7.png" alt="Web UI showing Telegram channel messages" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(6)">
+                </div>
+            </div>
+
+            <!-- How it works -->
+            <div class="max-w-3xl mx-auto mb-8 text-left">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1 text-center">Up and running in 60 seconds</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6 text-center">Three steps. No dependencies.</p>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <!-- Step 1: Install -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">1</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Install</h3>
+                        </div>
+                        <div class="rounded-md bg-gray-900 dark:bg-gray-800 p-3 font-mono text-[11px] text-gray-300 leading-relaxed overflow-x-auto">
+                            <span class="text-gray-500">$</span> curl -fsSL moltis.org/install.sh | sh
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Configure -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">2</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Configure</h3>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Open <span class="font-mono text-orange-500 dark:text-orange-400">localhost:13131</span>, paste your provider key, pick a model. OAuth providers like GitHub Copilot work with zero config.</p>
+                    </div>
+
+                    <!-- Step 3: Chat from anywhere -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">3</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Chat from anywhere</h3>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5">
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/globe.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Web UI</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/telegram.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Telegram</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/whatsapp.svg" alt="" width="12" height="12" class="dark:invert opacity-60">WhatsApp</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/discord.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Discord</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/teams.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Teams</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -178,6 +218,149 @@
                 </a>
             </div>
 
+            <!-- What your agent actually does -->
+            <div class="max-w-3xl mx-auto mb-8 text-center">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">What your agent actually does</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6">Not a demo. These run today.</p>
+
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Schedules tasks</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Recurring cron jobs in natural language</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Runs code safely</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Sandboxed shell in Docker or Apple Containers</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Browses the web</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Fetches, summarizes, and SSRF-protected</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Manages your calendar</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">CalDAV integration for events and reminders</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Messages everywhere</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Telegram, WhatsApp, Discord, Teams</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Remembers context</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Persistent memory with vector + full-text search</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Talks and listens</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Voice input and output with cloud and local providers</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Extends itself</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Creates its own skills, hooks, and MCP tools at runtime</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Community quote -->
+            <div class="max-w-xl mx-auto mb-8 p-5 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 text-left">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" class="text-orange-300 dark:text-orange-700 mb-2"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983z"/></svg>
+                <blockquote class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed mb-2">
+                    Moltis worked in 1 command. I found several AI guardrails missing or turned off in OpenClaw which are working out of the box here. Moltis is way more performant and stable.
+                </blockquote>
+                <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                    <img src="images/icons/discord.svg" alt="" width="14" height="14" class="opacity-60">
+                    <span class="font-medium">Noita</span> on Discord
+                    <a href="https://discord.com/channels/1469505370169933837/1469505371398996115/1488503462487654500" class="text-orange-500 dark:text-orange-400 hover:underline ml-1">#1</a>
+                    <a href="https://discord.com/channels/1469505370169933837/1469505371398996115/1488498690376204379" class="text-orange-500 dark:text-orange-400 hover:underline">#2</a>
+                </p>
+            </div>
+
+            <!-- Works with your stack -->
+            <div class="max-w-3xl mx-auto mb-10 text-center">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Works with your stack</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6">20+ providers, local models, and every major channel — all built in.</p>
+
+                <div class="space-y-6">
+                    <!-- Cloud Providers -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">Cloud Providers</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/anthropic.svg" alt="" class="pill-icon">Anthropic</span>
+                            <span class="pill"><img src="images/icons/openai.svg" alt="" class="pill-icon">OpenAI</span>
+                            <span class="pill"><img src="images/icons/gemini.svg" alt="" class="pill-icon">Google Gemini</span>
+                            <span class="pill"><img src="images/icons/mistral.svg" alt="" class="pill-icon">Mistral</span>
+                            <span class="pill"><img src="images/icons/deepseek.svg" alt="" class="pill-icon">DeepSeek</span>
+                            <span class="pill"><img src="images/icons/fireworks.svg" alt="" class="pill-icon">Fireworks</span>
+                            <span class="pill"><img src="images/icons/cerebras.svg" alt="" class="pill-icon">Cerebras</span>
+                            <span class="pill"><img src="images/icons/minimax.png" alt="" class="pill-icon pill-icon-color">MiniMax</span>
+                            <span class="pill"><img src="images/icons/moonshot.svg" alt="" class="pill-icon">Moonshot</span>
+                            <span class="pill"><img src="images/icons/zai.svg" alt="" class="pill-icon">Z.AI</span>
+                            <span class="pill"><img src="images/icons/globe.svg" alt="" class="pill-icon">Venice</span>
+                        </div>
+                    </div>
+
+                    <!-- Local & BYOM -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">Local & Bring Your Own</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/ollama.svg" alt="" class="pill-icon">Ollama</span>
+                            <span class="pill"><img src="images/icons/lmstudio.webp" alt="" class="pill-icon pill-icon-color">LM Studio</span>
+                            <span class="pill">Local GGUF <span class="pill-badge bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-300">CPU/GPU</span></span>
+                            <span class="pill"><img src="images/apple.svg" alt="" class="pill-icon">MLX <span class="pill-badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">Apple Silicon</span></span>
+                            <span class="pill"><img src="images/icons/huggingface.svg" alt="" class="pill-icon">Hugging Face</span>
+                            <span class="pill"><img src="images/icons/openrouter.svg" alt="" class="pill-icon">OpenRouter</span>
+                            <span class="pill"><img src="images/icons/openai-compat.svg" alt="" class="pill-icon">Any OpenAI-compatible</span>
+                        </div>
+                    </div>
+
+                    <!-- OAuth / Zero-Config -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">OAuth &mdash; Zero Config</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/github.svg" alt="" class="pill-icon">GitHub Copilot</span>
+                            <span class="pill"><img src="images/icons/openai.svg" alt="" class="pill-icon">OpenAI Codex</span>
+                            <span class="pill"><img src="images/icons/moonshot.svg" alt="" class="pill-icon">Kimi Code</span>
+                        </div>
+                    </div>
+
+                    <!-- Channels -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">Channels</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/globe.svg" alt="" class="pill-icon">Web UI</span>
+                            <span class="pill"><img src="images/icons/telegram.svg" alt="" class="pill-icon">Telegram</span>
+                            <span class="pill"><img src="images/icons/whatsapp.svg" alt="" class="pill-icon">WhatsApp</span>
+                            <span class="pill"><img src="images/icons/discord.svg" alt="" class="pill-icon">Discord</span>
+                            <span class="pill"><img src="images/icons/teams.svg" alt="" class="pill-icon">Microsoft Teams</span>
+                            <span class="pill"><img src="images/apple.svg" alt="" class="pill-icon">iOS <span class="pill-badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">Soon</span></span>
+                            <span class="pill"><img src="images/icons/graphql.svg" alt="" class="pill-icon">GraphQL API</span>
+                            <span class="pill"><img src="images/icons/code.svg" alt="" class="pill-icon">JSON-RPC</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
         </div>
     </div>
@@ -505,6 +688,16 @@
                     </div>
                     <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Full i18n support. Ten locales are built in today.</p>
                 </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 0 0 8.7-6.7M12 21a9 9 0 0 1-8.7-6.7M12 21c2.5 0 4.5-4 4.5-9S14.5 3 12 3m0 18c-2.5 0-4.5-4-4.5-9S9.5 3 12 3m0 0a9 9 0 0 1 7.8 4.6M12 3a9 9 0 0 0-7.8 4.6m15.6 0A12 12 0 0 1 12 10.5 12 12 0 0 1 4.2 7.6m15.6 0A9 9 0 0 1 21 12c0 .8-.1 1.5-.3 2.3m0 0A18 18 0 0 1 12 16.5a18 18 0 0 1-8.7-2.2m0 0A9 9 0 0 1 3 12c0-1.3.3-2.5.7-3.6"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Webhooks</p>
+                        <span class="px-1.5 py-0.5 rounded-full bg-orange-500 text-white text-[9px] font-bold uppercase">New</span>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Run AI agents on GitHub PRs, Stripe payments, or any webhook. Review code, triage issues, handle payments &mdash; automatically.</p>
+                </div>
             </div>
 
             <!-- Extended features checklist -->
@@ -557,6 +750,7 @@
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> CalDAV calendar integration</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Hook system (lifecycle)</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Cron job scheduling</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> <a href="https://docs.moltis.org/webhooks.html" class="hover:text-orange-500 transition-colors">Webhook triggers</a></li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> i18n (10 locales)</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> <a href="https://docs.moltis.org/openclaw-import.html" class="hover:text-orange-500 transition-colors">OpenClaw import</a></li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> TOML configuration</li>
@@ -731,11 +925,11 @@
                         <p class="text-xs text-gray-500 dark:text-gray-400">npm dependencies</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~5K</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~11K</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400">LoC agent core</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~150K</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~216K</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400">lines of Rust (full)</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
@@ -1201,6 +1395,19 @@
                 });
             });
         }
+        // Scroll-reveal for pill groups
+        var revealObserver = new IntersectionObserver(function(entries) {
+            var idx = 0;
+            entries.forEach(function(entry) {
+                if (!entry.isIntersecting) return;
+                setTimeout(function() { entry.target.classList.add('revealed'); }, idx * 100);
+                idx++;
+                revealObserver.unobserve(entry.target);
+            });
+        }, { threshold: 0.15 });
+        document.querySelectorAll('[data-reveal]').forEach(function(el) {
+            revealObserver.observe(el);
+        });
     </script>
 </body>
 </html>

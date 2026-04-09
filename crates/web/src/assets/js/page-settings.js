@@ -13,7 +13,6 @@ import { setLocale } from "./i18n.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { initAgents, teardownAgents } from "./page-agents.js";
 import { initBrowser, teardownBrowser } from "./page-browser.js";
-// Moved page init/teardown imports
 import { initChannels, teardownChannels } from "./page-channels.js";
 import { initCrons, teardownCrons } from "./page-crons.js";
 import { initHooks, teardownHooks } from "./page-hooks.js";
@@ -26,6 +25,7 @@ import { initNodes, teardownNodes } from "./page-nodes.js";
 import { initProviders, teardownProviders } from "./page-providers.js";
 import { initSkills, teardownSkills } from "./page-skills.js";
 import { initTerminal, teardownTerminal } from "./page-terminal.js";
+import { initWebhooks, teardownWebhooks } from "./page-webhooks.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import * as push from "./push.js";
 import { isStandalone } from "./pwa.js";
@@ -139,6 +139,12 @@ var sections = [
 		id: "crons",
 		label: "Crons",
 		icon: html`<span class="icon icon-cron"></span>`,
+		page: true,
+	},
+	{
+		id: "webhooks",
+		label: "Webhooks",
+		icon: html`<span class="icon icon-webhooks"></span>`,
 		page: true,
 	},
 	{
@@ -5329,6 +5335,7 @@ var pageSectionHandlers = {
 		init: (container) => initCrons(container, "heartbeat"),
 		teardown: teardownCrons,
 	},
+	webhooks: { init: initWebhooks, teardown: teardownWebhooks },
 	providers: { init: initProviders, teardown: teardownProviders },
 	channels: { init: initChannels, teardown: teardownChannels },
 	mcp: { init: initMcp, teardown: teardownMcp },

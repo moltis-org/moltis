@@ -252,9 +252,16 @@
   padding: 8px 12px;
   transition: background 0.15s;
   display: flex;
+  color: inherit;
+  text-decoration: none;
 }
 
 .session-item:hover { background: var(--bg-hover); }
+
+.session-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 .session-item.active {
   background: var(--accent-subtle);

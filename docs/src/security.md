@@ -569,11 +569,16 @@ disclosed.
 
 ## Release Signing and Verification
 
-All release artifacts are signed with two independent methods:
+All release artifacts are signed with three independent methods:
 
-1. **Sigstore keyless signing** (automated in CI) — proves the artifact was
-   built by the `moltis-org/moltis` GitHub Actions pipeline
-2. **GPG signing** (maintainer's YubiKey hardware key) — proves a specific
+1. **[GitHub artifact attestations](https://github.com/moltis-org/moltis/attestations)**
+   (automated in CI) — cryptographic provenance records tied to the repository,
+   workflow, and commit SHA; provides SLSA v1.0 Build Level 2 guarantees;
+   verifiable with `gh attestation verify`
+2. **Sigstore keyless signing** (automated in CI) — proves the artifact was
+   built by the `moltis-org/moltis` GitHub Actions pipeline; recorded in
+   Sigstore's Rekor transparency log
+3. **GPG signing** (maintainer's YubiKey hardware key) — proves a specific
    maintainer authorized the release
 
 Checksums (SHA-256 and SHA-512) are generated for every artifact.

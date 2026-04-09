@@ -109,6 +109,18 @@ Never merge features into a single endpoint.
 for LLM failures, transcription failures, unhandled message types. Access control via
 allowlist/OTP flow.
 
+## Adding Channels
+
+When adding a new channel or extending one, follow `docs/channel-integration-checklist.md`.
+
+Minimum bar before shipping:
+- Settings reachable from the web UI, with onboarding coverage if the channel is offered there
+- Advanced JSON config escape hatch for settings without dedicated HTML fields yet
+- Prefer declarative channel field definitions that can drive both HTML forms and advanced JSON guidance
+- Storage behavior explained clearly, web UI channel settings live in `data_dir()/moltis.db`, not `moltis.toml`
+- Config template, validation, docs, and tests updated in the same PR
+- No silent access-control failures, OTP and allowlist behavior must be user-visible
+
 ## Authentication Architecture
 
 Password + passkey (WebAuthn) auth in `crates/gateway/src/auth.rs`, routes in `auth_routes.rs`,

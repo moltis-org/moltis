@@ -876,6 +876,7 @@ mod tests {
                     output: "ok".into(),
                     input_tokens: None,
                     output_tokens: None,
+                    session_key: None,
                 })
             })
         })

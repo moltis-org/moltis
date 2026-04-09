@@ -163,6 +163,12 @@
   font-size: 0.8rem;
 }
 
+.error-continue-btn {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  padding: 4px 16px;
+}
+
 .error-countdown {
   color: var(--muted);
   white-space: nowrap;
