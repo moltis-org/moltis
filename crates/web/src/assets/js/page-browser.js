@@ -1050,7 +1050,7 @@ function BrowserCanvas() {
 			<span>Frame #${frameSeq.value}</span>
 			${frameMeta.value ? html`<span>${frameMeta.value.device_width}x${frameMeta.value.device_height}</span>` : null}
 		</div>
-		<div class="relative inline-block w-full">
+		<div class="relative w-full">
 			<canvas
 				ref=${canvasRefCallback}
 				class="block w-full rounded-lg border border-[var(--border)] cursor-crosshair bg-black"
