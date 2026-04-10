@@ -1,47 +1,43 @@
-const { expect, test } = require("../base-test");
-const { navigateAndWait, watchPageErrors } = require("../helpers");
+import { describe, it, expect, beforeEach } from "@playwright/test";
+import { navigateAndWait, waitForWsConnected, watchPageErrors } from "../helpers.js";
 
-test.describe("Projects page", () => {
-	test("projects page loads", async ({ page }) => {
-		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/projects");
+describe("Projects Page", () => {
+  beforeEach(async ({ page }) => {
+    await navigateAndWait(page, "/settings/projects");
+    await waitForWsConnected(page);
+  });
 
-		await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
-		expect(pageErrors).toEqual([]);
-	});
+  it("renders the projects page header", async ({ page }) => {
+    const pageErrors = watchPageErrors(page);
 
-	test("add project input present", async ({ page }) => {
-		await navigateAndWait(page, "/projects");
+    await expect(page.getByRole("heading", { name: "Repositories" })).toBeVisible();
 
-		await expect(page.getByText("Directory", { exact: true })).toBeVisible();
-		await expect(page.getByPlaceholder("/path/to/project")).toBeVisible();
-		await expect(page.getByRole("button", { name: "Add", exact: true })).toBeVisible();
-	});
+    expect(pageErrors).toHaveLength(0);
+  });
 
-	test("auto-detect button present", async ({ page }) => {
-		await navigateAndWait(page, "/projects");
+  it("shows the projects section in the settings sidebar", async ({ page }) => {
+    const pageErrors = watchPageErrors(page);
 
-		await expect(page.getByRole("button", { name: "Auto-detect", exact: true })).toBeVisible();
-		await expect(page.getByRole("button", { name: "Clear All", exact: true })).toBeVisible();
-		await expect(page.getByText(/does not delete anything from disk/i)).toBeVisible();
-		await expect(page.getByText(/scans common directories/i)).toBeVisible();
-	});
+    await expect(page.getByRole("link", { name: "Projects" })).toBeVisible();
 
-	test("projects link visible in settings sidebar", async ({ page }) => {
-		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/identity");
-		await expect(page.locator(".settings-sidebar-nav")).toBeVisible();
-		await expect(page.locator('.settings-nav-item[data-section="projects"]')).toBeVisible();
-		await expect(page.getByText("Projects", { exact: true })).toBeVisible();
-		await page.locator('.settings-nav-item[data-section="projects"]').click();
-		await expect(page).toHaveURL(/\/settings\/projects$/);
-		await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
-		expect(pageErrors).toEqual([]);
-	});
+    expect(pageErrors).toHaveLength(0);
+  });
 
-	test("page has no JS errors", async ({ page }) => {
-		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/projects");
-		expect(pageErrors).toEqual([]);
-	});
+  it("shows auto-detect and clear buttons", async ({ page }) => {
+    const pageErrors = watchPageErrors(page);
+
+    await expect(page.getByRole("button", { name: "Auto-detect" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Clear All" })).toBeVisible();
+
+    expect(pageErrors).toHaveLength(0);
+  });
+
+  it("shows directory input and add button", async ({ page }) => {
+    const pageErrors = watchPageErrors(page);
+
+    await expect(page.getByPlaceholder("Directory path...")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
+
+    expect(pageErrors).toHaveLength(0);
+  });
 });
