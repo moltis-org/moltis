@@ -141,11 +141,11 @@ impl AgentTool for FileInfoTool {
 
         let readable = {
             use std::os::unix::fs::PermissionsExt;
-            meta.permissions().mode() & 0o444 != 0
+            meta.permissions().mode() & 0o400 != 0
         };
         let writable = {
             use std::os::unix::fs::PermissionsExt;
-            meta.permissions().mode() & 0o222 != 0
+            meta.permissions().mode() & 0o200 != 0
         };
 
         if meta.is_file() {

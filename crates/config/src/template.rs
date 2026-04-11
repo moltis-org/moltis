@@ -392,6 +392,16 @@ allow = []                        # Tools to always allow (e.g., ["exec", "web_f
 deny = []                         # Tools to always deny (e.g., ["browser"])
 # profile = "default"             # Named policy profile
 
+# ── Filesystem Tools ──────────────────────────────────────────────────────────
+# Native file_read and file_info tools. Enable to replace MCP filesystem server.
+# NOTE: allowed_dirs = [] is unconditionally permissive and overrides
+# security_level. Set explicit dirs to enforce containment.
+
+# [tools.filesystem]
+# max_lines = 150           # Maximum lines returned per file_read call (1–10000)
+# max_write_bytes = 20971520 # Maximum bytes for file_write content (phase 2, 20 MB default)
+# allowed_dirs = []         # Allowed root directories (empty = all paths allowed)
+
 # ── Web Search ────────────────────────────────────────────────────────────────
 
 [tools.web.search]

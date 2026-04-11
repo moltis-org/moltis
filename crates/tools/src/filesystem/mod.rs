@@ -117,7 +117,7 @@ pub(crate) async fn enforce_approval(
 
     match approval_manager {
         Some(mgr) => {
-            let action = mgr.check_path(path, allowed_dirs)?;
+            let action = mgr.check_path_resolved(resolved)?;
             if action == ApprovalAction::NeedsApproval {
                 tracing::info!(path, "filesystem access needs approval, waiting...");
                 let (req_id, rx) = mgr.create_request(path).await;

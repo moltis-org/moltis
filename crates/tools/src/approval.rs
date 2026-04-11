@@ -368,6 +368,25 @@ impl ApprovalManager {
         }
     }
 
+    /// Like [`check_path`](Self::check_path) but accepts an already-canonicalized
+    /// path.  Skips the canonicalization and `check_allowed_dir` calls since the
+    /// caller has already determined the path is outside the allowed directories.
+    pub fn check_path_resolved(
+        &self,
+        _resolved: &std::path::Path,
+    ) -> Result<ApprovalAction> {
+        match self.security_level {
+            SecurityLevel::Deny => Err(Error::message(
+                "filesystem access denied: security level is 'deny'",
+            )),
+            SecurityLevel::Full => Ok(ApprovalAction::Proceed),
+            SecurityLevel::Allowlist => match self.mode {
+                ApprovalMode::Off => Ok(ApprovalAction::Proceed),
+                ApprovalMode::Always | ApprovalMode::OnMiss => Ok(ApprovalAction::NeedsApproval),
+            },
+        }
+    }
+
     /// Register a pending approval request. Returns an ID and a receiver for the decision.
     pub async fn create_request(
         &self,
