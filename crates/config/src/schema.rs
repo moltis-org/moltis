@@ -1618,7 +1618,6 @@ fn default_max_tool_result_bytes() -> usize {
     50_000
 }
 
-
 /// Native filesystem tools configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

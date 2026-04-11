@@ -3,15 +3,20 @@
 //! Provides size, line count, type, extension, modification time, and
 //! permissions. Useful for deciding whether to read a file at all.
 
+use std::sync::Arc;
+
 use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     serde_json::{Value, json},
     time::format_description::well_known::Rfc3339,
-    tracing::instrument,
+    tracing::{info, instrument, warn},
 };
 
-use crate::error::Error;
+use crate::{
+    approval::{ApprovalAction, ApprovalBroadcaster, ApprovalDecision, ApprovalManager},
+    error::Error,
+};
 
 use super::{canonicalize_or_original, check_allowed_dir};
 
@@ -24,6 +29,8 @@ const LINE_COUNT_MAX_BYTES: u64 = 1024 * 1024; // 1 MB
 #[derive(Default)]
 pub struct FileInfoTool {
     allowed_dirs: Vec<String>,
+    approval_manager: Option<Arc<ApprovalManager>>,
+    broadcaster: Option<Arc<dyn ApprovalBroadcaster>>,
 }
 
 impl FileInfoTool {
@@ -31,6 +38,8 @@ impl FileInfoTool {
     pub fn new() -> Self {
         Self {
             allowed_dirs: Vec::new(),
+            approval_manager: None,
+            broadcaster: None,
         }
     }
 
@@ -41,7 +50,22 @@ impl FileInfoTool {
     /// mode, same as `new`).
     #[must_use]
     pub fn new_with_allowed_dirs(allowed_dirs: Vec<String>) -> Self {
-        Self { allowed_dirs }
+        Self {
+            allowed_dirs,
+            approval_manager: None,
+            broadcaster: None,
+        }
+    }
+
+    /// Attach approval gating to this tool.
+    pub fn with_approval(
+        mut self,
+        manager: Arc<ApprovalManager>,
+        broadcaster: Arc<dyn ApprovalBroadcaster>,
+    ) -> Self {
+        self.approval_manager = Some(manager);
+        self.broadcaster = Some(broadcaster);
+        self
     }
 }
 
@@ -79,7 +103,45 @@ impl AgentTool for FileInfoTool {
 
         // --- Resolve & validate path ---
         let resolved = canonicalize_or_original(std::path::Path::new(path));
-        check_allowed_dir(&resolved, &self.allowed_dirs)?;
+
+        // Approval gating: if an approval manager is attached, route
+        // out-of-bounds paths through the approval flow instead of
+        // hard-rejecting.
+        if let Some(ref mgr) = self.approval_manager {
+            let action = mgr.check_path(path, &self.allowed_dirs)?;
+            if action == ApprovalAction::NeedsApproval {
+                info!(path, "filesystem access needs approval, waiting...");
+                let (req_id, rx) = mgr.create_request(path).await;
+
+                if let Some(ref bc) = self.broadcaster
+                    && let Err(e) = bc.broadcast_request(&req_id, path).await
+                {
+                    warn!(error = %e, "failed to broadcast approval request");
+                }
+
+                let decision = mgr.wait_for_decision(rx).await;
+                match decision {
+                    ApprovalDecision::Approved => {
+                        info!(path, "filesystem access approved");
+                    },
+                    ApprovalDecision::Denied => {
+                        return Err(Error::message(format!(
+                            "filesystem access denied by user: {path}"
+                        ))
+                        .into());
+                    },
+                    ApprovalDecision::Timeout => {
+                        return Err(Error::message(format!(
+                            "approval timed out for filesystem access: {path}"
+                        ))
+                        .into());
+                    },
+                }
+            }
+        } else {
+            // No approval manager — hard-reject paths outside allowed_dirs.
+            check_allowed_dir(&resolved, &self.allowed_dirs)?;
+        }
 
         let display_path = resolved.to_string_lossy().to_string();
 

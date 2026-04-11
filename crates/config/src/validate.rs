@@ -270,6 +270,14 @@ fn build_schema_map() -> KnownKeys {
                     ("firecrawl", firecrawl()),
                 ])),
             ),
+            (
+                "filesystem",
+                Struct(HashMap::from([
+                    ("max_lines", Leaf),
+                    ("max_write_bytes", Leaf),
+                    ("allowed_dirs", Leaf),
+                ])),
+            ),
             ("maps", Struct(HashMap::from([("provider", Leaf)]))),
             ("agent_timeout_secs", Leaf),
             ("agent_max_iterations", Leaf),

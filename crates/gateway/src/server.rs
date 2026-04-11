@@ -3514,7 +3514,8 @@ pub async fn prepare_gateway_core(
 
     // Wire live chat service (needs state reference, so done after state creation).
     {
-        let broadcaster = Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
+        let broadcaster: Arc<dyn moltis_tools::approval::ApprovalBroadcaster> =
+            Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
         let env_provider: Arc<dyn EnvVarProvider> = credential_store.clone();
         let eq = cron_service.events_queue().clone();
         let cs = Arc::clone(&cron_service);
@@ -3532,7 +3533,7 @@ pub async fn prepare_gateway_core(
                 config.tools.exec.default_timeout_secs,
             ))
             .with_max_output_bytes(config.tools.exec.max_output_bytes)
-            .with_approval(Arc::clone(&approval_manager), broadcaster)
+            .with_approval(Arc::clone(&approval_manager), Arc::clone(&broadcaster))
             .with_sandbox_router(Arc::clone(&sandbox_router))
             .with_env_provider(Arc::clone(&env_provider))
             .with_completion_callback(exec_cb);
@@ -3568,6 +3569,23 @@ pub async fn prepare_gateway_core(
             .with_sandbox_router(Arc::clone(&sandbox_router));
 
         tool_registry.register(Box::new(exec_tool));
+
+        // Native filesystem tools with approval gating.
+        let fs_config = &config.tools.filesystem;
+        tool_registry.register(Box::new(
+            moltis_tools::filesystem::read::FileReadTool::new_with_allowed_dirs(
+                fs_config.max_lines,
+                fs_config.allowed_dirs.clone(),
+            )
+            .with_approval(Arc::clone(&approval_manager), Arc::clone(&broadcaster)),
+        ));
+        tool_registry.register(Box::new(
+            moltis_tools::filesystem::info::FileInfoTool::new_with_allowed_dirs(
+                fs_config.allowed_dirs.clone(),
+            )
+            .with_approval(Arc::clone(&approval_manager), Arc::clone(&broadcaster)),
+        ));
+
         tool_registry.register(Box::new(moltis_tools::calc::CalcTool::new()));
         #[cfg(feature = "wasm")]
         {

@@ -39,11 +39,7 @@ use crate::{
 
 const MAX_SANDBOX_RECOVERY_RETRIES: usize = 1;
 
-/// Broadcaster that notifies connected clients about pending approval requests.
-#[async_trait]
-pub trait ApprovalBroadcaster: Send + Sync {
-    async fn broadcast_request(&self, request_id: &str, command: &str) -> Result<()>;
-}
+pub use crate::approval::ApprovalBroadcaster;
 
 /// Provider of environment variables to inject into sandbox execution.
 /// Values are wrapped in `Secret` to prevent accidental logging.

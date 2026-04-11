@@ -2,14 +2,20 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use {
     crate::error::Error,
+    async_trait::async_trait,
     regex::RegexSet,
     serde::{Deserialize, Serialize},
     tokio::sync::{RwLock, oneshot},
     tracing::{debug, warn},
 };
 
-use crate::Result;
+use crate::{Result, filesystem::check_allowed_dir};
 
+/// Broadcaster that notifies connected clients about pending approval requests.
+#[async_trait]
+pub trait ApprovalBroadcaster: Send + Sync {
+    async fn broadcast_request(&self, request_id: &str, command: &str) -> Result<()>;
+}
 /// Outcome of an approval request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -304,6 +310,45 @@ impl ApprovalManager {
                 }
                 Ok(ApprovalAction::NeedsApproval)
             },
+        }
+    }
+
+    /// Decide whether a filesystem path needs approval.
+    ///
+    /// Uses [`check_allowed_dir`] from the filesystem module to determine if
+    /// the path falls within the allowed directories.
+    ///
+    /// # Returns
+    /// - `Proceed` if the path is inside `allowed_dirs` (empty allowed_dirs = all allowed)
+    /// - `Proceed` if `security_level` is `Full`
+    /// - `Err` if `security_level` is `Deny`
+    /// - For `Allowlist` + `OnMiss` mode: `NeedsApproval` for paths outside allowed_dirs
+    /// - For `Off` mode: `Proceed` (no approval needed)
+    pub fn check_path(&self, path: &str, allowed_dirs: &[String]) -> Result<ApprovalAction> {
+        use std::path::Path;
+
+        let resolved = crate::filesystem::canonicalize_or_original(Path::new(path));
+
+        // If the path is inside allowed_dirs, proceed immediately.
+        if check_allowed_dir(&resolved, allowed_dirs).is_ok() {
+            return Ok(ApprovalAction::Proceed);
+        }
+
+        // Path is outside allowed_dirs — check security level and mode.
+        match self.security_level {
+            SecurityLevel::Deny => {
+                return Err(Error::message(
+                    "filesystem access denied: security level is 'deny'",
+                ));
+            },
+            SecurityLevel::Full => return Ok(ApprovalAction::Proceed),
+            SecurityLevel::Allowlist => {},
+        }
+
+        match self.mode {
+            ApprovalMode::Off => Ok(ApprovalAction::Proceed),
+            ApprovalMode::Always => Ok(ApprovalAction::NeedsApproval),
+            ApprovalMode::OnMiss => Ok(ApprovalAction::NeedsApproval),
         }
     }
 
@@ -625,5 +670,126 @@ mod tests {
         };
         let action = mgr.check_command("git reset --hard").await.unwrap();
         assert_eq!(action, ApprovalAction::NeedsApproval);
+    }
+
+    // --- check_path tests ---
+
+    #[test]
+    fn test_check_path_empty_allowed_dirs() {
+        let mgr = ApprovalManager::default();
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        let action = mgr.check_path(file.to_str().unwrap(), &[]).unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[test]
+    fn test_check_path_inside_allowed_dir() {
+        let mgr = ApprovalManager::default();
+        let allowed = tempfile::tempdir().unwrap();
+        let file = allowed.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        let action = mgr
+            .check_path(file.to_str().unwrap(), &[allowed
+                .path()
+                .to_str()
+                .unwrap()
+                .to_string()])
+            .unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[test]
+    fn test_check_path_outside_allowed_dir_needs_approval() {
+        let mgr = ApprovalManager::default(); // Allowlist + OnMiss
+        let allowed = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        let action = mgr
+            .check_path(file.to_str().unwrap(), &[allowed
+                .path()
+                .to_str()
+                .unwrap()
+                .to_string()])
+            .unwrap();
+        assert_eq!(action, ApprovalAction::NeedsApproval);
+    }
+
+    #[test]
+    fn test_check_path_deny_security_level() {
+        let mgr = ApprovalManager {
+            security_level: SecurityLevel::Deny,
+            ..Default::default()
+        };
+        let allowed = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        // Path is outside allowed_dirs and security level is Deny.
+        assert!(
+            mgr.check_path(file.to_str().unwrap(), &[allowed
+                .path()
+                .to_str()
+                .unwrap()
+                .to_string()],)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_check_path_full_security_level() {
+        let mgr = ApprovalManager {
+            security_level: SecurityLevel::Full,
+            ..Default::default()
+        };
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        let action = mgr
+            .check_path(file.to_str().unwrap(), &["/nonexistent".to_string()])
+            .unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[test]
+    fn test_check_path_off_mode_outside_allowed() {
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            ..Default::default()
+        };
+        let allowed = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        let action = mgr
+            .check_path(file.to_str().unwrap(), &[allowed
+                .path()
+                .to_str()
+                .unwrap()
+                .to_string()])
+            .unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[test]
+    fn test_check_path_always_mode_inside_allowed() {
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Always,
+            ..Default::default()
+        };
+        let allowed = tempfile::tempdir().unwrap();
+        let file = allowed.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        // Inside allowed_dirs → Proceed even with Always mode
+        let action = mgr
+            .check_path(file.to_str().unwrap(), &[allowed
+                .path()
+                .to_str()
+                .unwrap()
+                .to_string()])
+            .unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
     }
 }
