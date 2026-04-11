@@ -1558,6 +1558,7 @@ pub struct ToolsConfig {
     pub web: WebConfig,
     pub maps: MapsConfig,
     pub browser: BrowserConfig,
+    pub filesystem: FilesystemToolsConfig,
     /// Maximum wall-clock seconds for an agent run (0 = no timeout). Default 600.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
@@ -1586,6 +1587,7 @@ impl Default for ToolsConfig {
             web: WebConfig::default(),
             maps: MapsConfig::default(),
             browser: BrowserConfig::default(),
+            filesystem: FilesystemToolsConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
             agent_max_iterations: default_agent_max_iterations(),
             agent_max_auto_continues: default_agent_max_auto_continues(),
@@ -1614,6 +1616,40 @@ fn default_agent_auto_continue_min_tool_calls() -> usize {
 
 fn default_max_tool_result_bytes() -> usize {
     50_000
+}
+
+
+/// Native filesystem tools configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FilesystemToolsConfig {
+    /// Maximum lines returned per `file_read` call. Default 150.
+    #[serde(default = "default_fs_max_lines")]
+    pub max_lines: usize,
+    /// Maximum bytes for `file_write` content. Default 20 MB.
+    #[serde(default = "default_fs_max_write_bytes")]
+    pub max_write_bytes: u64,
+    /// Allowed root directories (empty = all paths allowed).
+    #[serde(default)]
+    pub allowed_dirs: Vec<String>,
+}
+
+impl Default for FilesystemToolsConfig {
+    fn default() -> Self {
+        Self {
+            max_lines: default_fs_max_lines(),
+            max_write_bytes: default_fs_max_write_bytes(),
+            allowed_dirs: Vec::new(),
+        }
+    }
+}
+
+fn default_fs_max_lines() -> usize {
+    150
+}
+
+fn default_fs_max_write_bytes() -> u64 {
+    20 * 1024 * 1024
 }
 
 /// Map tools configuration.
