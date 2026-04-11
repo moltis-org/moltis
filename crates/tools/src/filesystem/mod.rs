@@ -9,7 +9,7 @@ pub mod read;
 
 use {
     crate::{
-        approval::{ApprovalAction, ApprovalBroadcaster, ApprovalDecision, ApprovalManager},
+        approval::{ApprovalBroadcaster, ApprovalDecision, ApprovalManager},
         error::Error,
     },
     std::{
@@ -93,9 +93,28 @@ pub(crate) fn canonicalize_or_original(path: &Path) -> Option<PathBuf> {
 
 /// Enforce path containment and approval gating for filesystem tools.
 ///
-/// If an approval manager is attached, paths outside `allowed_dirs` are routed
-/// through the user approval flow.  Without an approval manager, paths outside
-/// `allowed_dirs` are hard-rejected.
+/// The approval manager (if present) is consulted **first**, before the
+/// `allowed_dirs` containment check.  This ensures that a `Deny` security
+/// level or an `Always` approval mode cannot be bypassed by placing a path
+/// inside `allowed_dirs`.
+///
+/// # Precedence
+///
+/// ```text
+/// is_inside = check_allowed_dir(resolved, allowed_dirs).is_ok()
+///
+/// No approval manager → allowed_dirs is the only gate:
+///   inside  = proceed
+///   outside = reject
+///
+/// Approval manager present → ALWAYS consult it:
+///   SecurityLevel::Deny     → reject ALL paths
+///   SecurityLevel::Full     → proceed ALL paths
+///   SecurityLevel::Allowlist:
+///     ApprovalMode::Off     → inside = proceed, outside = reject (containment only)
+///     ApprovalMode::OnMiss  → inside = proceed, outside = needs_approval
+///     ApprovalMode::Always  → needs_approval for ALL paths (even inside allowed_dirs)
+/// ```
 ///
 /// # Arguments
 /// * `path` — the raw user-supplied path string (used in approval messages)
@@ -110,45 +129,92 @@ pub(crate) async fn enforce_approval(
     approval_manager: Option<&Arc<ApprovalManager>>,
     broadcaster: Option<&Arc<dyn ApprovalBroadcaster>>,
 ) -> crate::Result<()> {
-    // If inside allowed_dirs, proceed immediately.
-    if check_allowed_dir(resolved, allowed_dirs).is_ok() {
-        return Ok(());
-    }
+    let is_inside = check_allowed_dir(resolved, allowed_dirs).is_ok();
 
     match approval_manager {
-        Some(mgr) => {
-            let action = mgr.check_path_resolved(resolved)?;
-            if action == ApprovalAction::NeedsApproval {
-                tracing::info!(path, "filesystem access needs approval, waiting...");
-                let (req_id, rx) = mgr.create_request(path).await;
-
-                if let Some(bc) = broadcaster
-                    && let Err(e) = bc.broadcast_request(&req_id, path).await
-                {
-                    tracing::warn!(error = %e, "failed to broadcast approval request");
-                }
-
-                match mgr.wait_for_decision(rx).await {
-                    ApprovalDecision::Approved => {
-                        tracing::info!(path, "filesystem access approved");
-                    },
-                    ApprovalDecision::Denied => {
-                        return Err(Error::message(format!(
-                            "filesystem access denied by user: {path}"
-                        )));
-                    },
-                    ApprovalDecision::Timeout => {
-                        return Err(Error::message(format!(
-                            "approval timed out for filesystem access: {path}"
-                        )));
-                    },
-                }
+        None => {
+            // No approval manager — allowed_dirs is the only gate.
+            if is_inside {
+                Ok(())
+            } else {
+                check_allowed_dir(resolved, allowed_dirs)
             }
+        },
+        Some(mgr) => {
+            // Always consult the approval manager first.
+            match mgr.security_level {
+                crate::approval::SecurityLevel::Deny => {
+                    return Err(Error::message(format!(
+                        "filesystem access denied: security level is 'deny': {path}"
+                    )));
+                },
+                crate::approval::SecurityLevel::Full => return Ok(()),
+                crate::approval::SecurityLevel::Allowlist => {},
+            }
+
+            // SecurityLevel::Allowlist — consult mode.
+            let needs_approval = match mgr.mode {
+                crate::approval::ApprovalMode::Off => {
+                    // Containment only: inside = proceed, outside = reject.
+                    if is_inside {
+                        return Ok(());
+                    } else {
+                        return check_allowed_dir(resolved, allowed_dirs);
+                    }
+                },
+                crate::approval::ApprovalMode::OnMiss => {
+                    // Inside = proceed, outside = needs_approval.
+                    !is_inside
+                },
+                crate::approval::ApprovalMode::Always => {
+                    // Always prompt, even for inside paths.
+                    true
+                },
+            };
+
+            if needs_approval {
+                let display = if is_inside {
+                    format!("{path} (path is inside allowed directories)")
+                } else {
+                    path.to_string()
+                };
+                request_approval(&display, mgr, broadcaster).await
+            } else {
+                Ok(())
+            }
+        },
+    }
+}
+
+/// Broadcast an approval request and wait for the user's decision.
+async fn request_approval(
+    display_path: &str,
+    approval_manager: &Arc<ApprovalManager>,
+    broadcaster: Option<&Arc<dyn ApprovalBroadcaster>>,
+) -> crate::Result<()> {
+    tracing::info!(path = %display_path, "filesystem access needs approval, waiting...");
+    let (req_id, rx) = approval_manager.create_request(display_path).await;
+
+    if let Some(bc) = broadcaster
+        && let Err(e) = bc.broadcast_request(&req_id, display_path).await
+    {
+        tracing::warn!(error = %e, "failed to broadcast approval request");
+    }
+
+    match approval_manager.wait_for_decision(rx).await {
+        ApprovalDecision::Approved => {
+            tracing::info!(path = %display_path, "filesystem access approved");
             Ok(())
         },
-        None => {
-            // No approval manager — hard-reject.
-            check_allowed_dir(resolved, allowed_dirs)
+        ApprovalDecision::Denied => {
+            Err(Error::message(format!(
+                "filesystem access denied by user: {display_path}"
+            )))
+        },
+        ApprovalDecision::Timeout => {
+            Err(Error::message(format!(
+                "approval timed out for filesystem access: {display_path}"
+            )))
         },
     }
 }
@@ -297,5 +363,67 @@ mod tests {
 
         // Only allowed dir is non-existent — file should be rejected.
         assert!(check_allowed_dir(&resolved, &["/nonexistent/path/12345".to_string()]).is_err());
+    }
+
+    // --- enforce_approval tests ---
+
+    #[tokio::test]
+    async fn deny_level_blocks_even_when_inside_allowed_dir() {
+        use crate::approval::{ApprovalManager, SecurityLevel};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("secret.txt");
+        std::fs::write(&file, "data").unwrap();
+        let resolved = canonicalize_or_original(&file).unwrap();
+
+        let mut mgr = ApprovalManager::default();
+        mgr.security_level = SecurityLevel::Deny;
+
+        let result = enforce_approval(
+            file.to_str().unwrap(),
+            &resolved,
+            &[tmp.path().to_str().unwrap().to_string()],
+            Some(&Arc::new(mgr)),
+            None,
+        )
+        .await;
+
+        assert!(result.is_err(), "Deny level should reject even paths inside allowed_dirs");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("deny"), "error message should mention deny: {msg}");
+    }
+
+    #[tokio::test]
+    async fn always_mode_prompts_even_when_inside_allowed_dir() {
+        use crate::approval::{ApprovalManager, ApprovalMode};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        let resolved = canonicalize_or_original(&file).unwrap();
+
+        let mut mgr = ApprovalManager::default();
+        mgr.mode = ApprovalMode::Always;
+        mgr.timeout = std::time::Duration::from_millis(100);
+
+        let result = enforce_approval(
+            file.to_str().unwrap(),
+            &resolved,
+            &[tmp.path().to_str().unwrap().to_string()],
+            Some(&Arc::new(mgr)),
+            None,
+        )
+        .await;
+
+        // No broadcaster → no one to approve → should timeout (which we map to error)
+        assert!(
+            result.is_err(),
+            "Always mode should require approval even for paths inside allowed_dirs"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("timed out") || msg.contains("denied"),
+            "expected timeout/denied but got: {msg}"
+        );
     }
 }

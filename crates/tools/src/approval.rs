@@ -315,42 +315,30 @@ impl ApprovalManager {
 
     /// Decide whether a filesystem path needs approval.
     ///
-    /// Uses [`check_allowed_dir`] from the filesystem module to determine if
-    /// the path falls within the allowed directories.
+    /// Security level and approval mode are consulted **first**, before the
+    /// `allowed_dirs` containment check.  This prevents `allowed_dirs` from
+    /// bypassing a `Deny` security level or an `Always` approval mode.
     ///
-    /// # Returns
-    /// - `Proceed` if the path is inside `allowed_dirs` (empty allowed_dirs = all allowed)
-    /// - `Proceed` if `security_level` is `Full`
-    /// - `Err` if `security_level` is `Deny`
-    /// - For `Allowlist` + `OnMiss` mode: `NeedsApproval` for paths outside allowed_dirs
-    /// - For `Off` mode: `Proceed` (no approval needed)
+    /// # Precedence
+    ///
+    /// 1. `SecurityLevel::Deny` → **reject** all paths (regardless of containment).
+    /// 2. `SecurityLevel::Full` → **proceed** for all paths.
+    /// 3. `SecurityLevel::Allowlist` → consult mode:
+    ///    - `Off`    → inside `allowed_dirs` = proceed, outside = reject (containment only).
+    ///    - `OnMiss` → inside = proceed, outside = needs approval.
+    ///    - `Always` → needs approval for **all** paths (even inside `allowed_dirs`).
+    ///
+    /// When the path does not exist on disk, it is treated as outside `allowed_dirs`.
     pub fn check_path(&self, path: &str, allowed_dirs: &[String]) -> Result<ApprovalAction> {
         use std::path::Path;
 
-        let Some(resolved) = crate::filesystem::canonicalize_or_original(Path::new(path)) else {
-            // Path doesn't exist — treat as outside allowed_dirs.
-            // The caller will either deny, request approval, or proceed
-            // based on its security level and mode.
-            return match self.security_level {
-                SecurityLevel::Deny => Err(Error::message(
-                    "filesystem access denied: path does not exist",
-                )),
-                SecurityLevel::Full => Ok(ApprovalAction::Proceed),
-                SecurityLevel::Allowlist => match self.mode {
-                    ApprovalMode::Off => Ok(ApprovalAction::Proceed),
-                    ApprovalMode::Always | ApprovalMode::OnMiss => {
-                        Ok(ApprovalAction::NeedsApproval)
-                    },
-                },
-            };
-        };
+        let resolved = crate::filesystem::canonicalize_or_original(Path::new(path));
+        let is_inside = resolved
+            .as_ref()
+            .map(|r| check_allowed_dir(r, allowed_dirs).is_ok())
+            .unwrap_or(false);
 
-        // If the path is inside allowed_dirs, proceed immediately.
-        if check_allowed_dir(&resolved, allowed_dirs).is_ok() {
-            return Ok(ApprovalAction::Proceed);
-        }
-
-        // Path is outside allowed_dirs — check security level and mode.
+        // Always consult security level first — it overrides everything.
         match self.security_level {
             SecurityLevel::Deny => {
                 return Err(Error::message(
@@ -361,29 +349,25 @@ impl ApprovalManager {
             SecurityLevel::Allowlist => {},
         }
 
+        // SecurityLevel::Allowlist — consult mode.
         match self.mode {
-            ApprovalMode::Off => Ok(ApprovalAction::Proceed),
-            ApprovalMode::Always => Ok(ApprovalAction::NeedsApproval),
-            ApprovalMode::OnMiss => Ok(ApprovalAction::NeedsApproval),
-        }
-    }
-
-    /// Like [`check_path`](Self::check_path) but accepts an already-canonicalized
-    /// path.  Skips the canonicalization and `check_allowed_dir` calls since the
-    /// caller has already determined the path is outside the allowed directories.
-    pub fn check_path_resolved(
-        &self,
-        _resolved: &std::path::Path,
-    ) -> Result<ApprovalAction> {
-        match self.security_level {
-            SecurityLevel::Deny => Err(Error::message(
-                "filesystem access denied: security level is 'deny'",
-            )),
-            SecurityLevel::Full => Ok(ApprovalAction::Proceed),
-            SecurityLevel::Allowlist => match self.mode {
-                ApprovalMode::Off => Ok(ApprovalAction::Proceed),
-                ApprovalMode::Always | ApprovalMode::OnMiss => Ok(ApprovalAction::NeedsApproval),
+            ApprovalMode::Off => {
+                if is_inside {
+                    Ok(ApprovalAction::Proceed)
+                } else {
+                    Err(Error::message(format!(
+                        "path '{path}' is outside the allowed directories"
+                    )))
+                }
             },
+            ApprovalMode::OnMiss => {
+                if is_inside {
+                    Ok(ApprovalAction::Proceed)
+                } else {
+                    Ok(ApprovalAction::NeedsApproval)
+                }
+            },
+            ApprovalMode::Always => Ok(ApprovalAction::NeedsApproval),
         }
     }
 
@@ -759,10 +743,9 @@ mod tests {
             ..Default::default()
         };
         let allowed = tempfile::tempdir().unwrap();
-        let other = tempfile::tempdir().unwrap();
-        let file = other.path().join("test.txt");
+        // Create the test file INSIDE allowed_dirs — Deny must still reject.
+        let file = allowed.path().join("test.txt");
         std::fs::write(&file, "data").unwrap();
-        // Path is outside allowed_dirs and security level is Deny.
         assert!(
             mgr.check_path(file.to_str().unwrap(), &[allowed
                 .path()
@@ -798,14 +781,16 @@ mod tests {
         let other = tempfile::tempdir().unwrap();
         let file = other.path().join("test.txt");
         std::fs::write(&file, "data").unwrap();
-        let action = mgr
-            .check_path(file.to_str().unwrap(), &[allowed
-                .path()
-                .to_str()
-                .unwrap()
-                .to_string()])
-            .unwrap();
-        assert_eq!(action, ApprovalAction::Proceed);
+        // Off mode is containment-only: outside allowed_dirs → reject
+        let result = mgr.check_path(file.to_str().unwrap(), &[allowed
+            .path()
+            .to_str()
+            .unwrap()
+            .to_string()]);
+        assert!(result.is_err(), "Off mode should reject paths outside allowed_dirs");
+        assert!(
+            result.unwrap_err().to_string().contains("outside the allowed directories"),
+        );
     }
 
     #[test]
@@ -817,7 +802,26 @@ mod tests {
         let allowed = tempfile::tempdir().unwrap();
         let file = allowed.path().join("test.txt");
         std::fs::write(&file, "data").unwrap();
-        // Inside allowed_dirs → Proceed even with Always mode
+        // Always mode → NeedsApproval even when inside allowed_dirs
+        let action = mgr
+            .check_path(file.to_str().unwrap(), &[allowed
+                .path()
+                .to_str()
+                .unwrap()
+                .to_string()])
+            .unwrap();
+        assert_eq!(action, ApprovalAction::NeedsApproval);
+    }
+
+    #[test]
+    fn test_check_path_off_mode_inside_allowed() {
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            ..Default::default()
+        };
+        let allowed = tempfile::tempdir().unwrap();
+        let file = allowed.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
         let action = mgr
             .check_path(file.to_str().unwrap(), &[allowed
                 .path()
