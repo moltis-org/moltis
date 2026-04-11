@@ -1626,6 +1626,7 @@ pub struct FilesystemToolsConfig {
     #[serde(default = "default_fs_max_lines")]
     pub max_lines: usize,
     /// Maximum bytes for `file_write` content. Default 20 MB.
+    // TODO: consumed by file_write tool (phase 2)
     #[serde(default = "default_fs_max_write_bytes")]
     pub max_write_bytes: u64,
     /// Allowed root directories (empty = all paths allowed).

@@ -8,8 +8,14 @@ pub mod info;
 pub mod read;
 
 use {
-    crate::error::Error,
-    std::path::{Path, PathBuf},
+    crate::{
+        approval::{ApprovalAction, ApprovalBroadcaster, ApprovalDecision, ApprovalManager},
+        error::Error,
+    },
+    std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
 };
 
 /// Validate that a resolved (canonicalized) path falls within the allowed
@@ -75,14 +81,76 @@ pub(crate) fn check_allowed_dir(
     )))
 }
 
-/// Canonicalize a path, returning the canonical form or the original as a
-/// fallback (e.g. when the file doesn't exist yet).
+/// Canonicalize a path.  Returns `None` if the path does not exist on disk.
 ///
-/// For allowed-dir enforcement we want to resolve symlinks first, so the
-/// canonical form is preferred.  The fallback ensures we can still produce
-/// a useful error when the path doesn't exist at all.
-pub(crate) fn canonicalize_or_original(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+/// For allowed-dir enforcement we want to resolve symlinks first.  Returning
+/// `None` (rather than falling back to the raw string) prevents crafted paths
+/// like `/allowed/sneaky/../etc/passwd` from bypassing containment when the
+/// intermediate components don't exist.
+pub(crate) fn canonicalize_or_original(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok()
+}
+
+/// Enforce path containment and approval gating for filesystem tools.
+///
+/// If an approval manager is attached, paths outside `allowed_dirs` are routed
+/// through the user approval flow.  Without an approval manager, paths outside
+/// `allowed_dirs` are hard-rejected.
+///
+/// # Arguments
+/// * `path` — the raw user-supplied path string (used in approval messages)
+/// * `resolved` — the canonicalized path (used for containment checks)
+/// * `allowed_dirs` — directory allowlist (empty = all allowed)
+/// * `approval_manager` — optional approval manager
+/// * `broadcaster` — optional approval broadcaster
+pub(crate) async fn enforce_approval(
+    path: &str,
+    resolved: &Path,
+    allowed_dirs: &[String],
+    approval_manager: Option<&Arc<ApprovalManager>>,
+    broadcaster: Option<&Arc<dyn ApprovalBroadcaster>>,
+) -> crate::Result<()> {
+    // If inside allowed_dirs, proceed immediately.
+    if check_allowed_dir(resolved, allowed_dirs).is_ok() {
+        return Ok(());
+    }
+
+    match approval_manager {
+        Some(mgr) => {
+            let action = mgr.check_path(path, allowed_dirs)?;
+            if action == ApprovalAction::NeedsApproval {
+                tracing::info!(path, "filesystem access needs approval, waiting...");
+                let (req_id, rx) = mgr.create_request(path).await;
+
+                if let Some(bc) = broadcaster
+                    && let Err(e) = bc.broadcast_request(&req_id, path).await
+                {
+                    tracing::warn!(error = %e, "failed to broadcast approval request");
+                }
+
+                match mgr.wait_for_decision(rx).await {
+                    ApprovalDecision::Approved => {
+                        tracing::info!(path, "filesystem access approved");
+                    },
+                    ApprovalDecision::Denied => {
+                        return Err(Error::message(format!(
+                            "filesystem access denied by user: {path}"
+                        )));
+                    },
+                    ApprovalDecision::Timeout => {
+                        return Err(Error::message(format!(
+                            "approval timed out for filesystem access: {path}"
+                        )));
+                    },
+                }
+            }
+            Ok(())
+        },
+        None => {
+            // No approval manager — hard-reject.
+            check_allowed_dir(resolved, allowed_dirs)
+        },
+    }
 }
 
 #[cfg(test)]
@@ -96,7 +164,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let file = tmp.path().join("some_file.txt");
         std::fs::write(&file, "data").unwrap();
-        let resolved = canonicalize_or_original(&file);
+        let resolved = canonicalize_or_original(&file).unwrap();
         assert!(check_allowed_dir(&resolved, &[]).is_ok());
     }
 
@@ -106,7 +174,7 @@ mod tests {
         let file = tmp.path().join("subdir").join("file.txt");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "data").unwrap();
-        let resolved = canonicalize_or_original(&file);
+        let resolved = canonicalize_or_original(&file).unwrap();
         assert!(check_allowed_dir(&resolved, &[tmp.path().to_str().unwrap().to_string()]).is_ok());
     }
 
@@ -116,7 +184,7 @@ mod tests {
         let other = tempfile::tempdir().unwrap();
         let file = other.path().join("secret.txt");
         std::fs::write(&file, "data").unwrap();
-        let resolved = canonicalize_or_original(&file);
+        let resolved = canonicalize_or_original(&file).unwrap();
         let err = check_allowed_dir(&resolved, &[allowed.path().to_str().unwrap().to_string()])
             .unwrap_err();
         let msg = err.to_string();
@@ -135,7 +203,7 @@ mod tests {
 
         let sneaky_file = sneaky_dir.join("data.txt");
         std::fs::write(&sneaky_file, "sneaky").unwrap();
-        let resolved = canonicalize_or_original(&sneaky_file);
+        let resolved = canonicalize_or_original(&sneaky_file).unwrap();
 
         let err =
             check_allowed_dir(&resolved, &[allowed_dir.to_str().unwrap().to_string()]).unwrap_err();
@@ -157,7 +225,7 @@ mod tests {
 
         let file = target.join("file.txt");
         std::fs::write(&file, "data").unwrap();
-        let resolved = canonicalize_or_original(&file);
+        let resolved = canonicalize_or_original(&file).unwrap();
 
         // Allowed dir is specified via symlink — should still work because
         // both sides canonicalize to the same real path.
@@ -173,7 +241,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(outside.path(), &link).unwrap();
 
-        let resolved = canonicalize_or_original(&link);
+        let resolved = canonicalize_or_original(&link).unwrap();
         let err = check_allowed_dir(&resolved, &[allowed.path().to_str().unwrap().to_string()])
             .unwrap_err();
         assert!(
@@ -186,7 +254,7 @@ mod tests {
     #[test]
     fn exact_allowed_dir_match_is_allowed() {
         let tmp = tempfile::tempdir().unwrap();
-        let resolved = canonicalize_or_original(tmp.path());
+        let resolved = canonicalize_or_original(tmp.path()).unwrap();
         assert!(check_allowed_dir(&resolved, &[tmp.path().to_str().unwrap().to_string()]).is_ok());
     }
 
@@ -198,7 +266,7 @@ mod tests {
 
         let file_in_dir2 = dir2.path().join("file.txt");
         std::fs::write(&file_in_dir2, "data").unwrap();
-        let resolved = canonicalize_or_original(&file_in_dir2);
+        let resolved = canonicalize_or_original(&file_in_dir2).unwrap();
 
         assert!(
             check_allowed_dir(&resolved, &[
@@ -210,7 +278,7 @@ mod tests {
 
         let file_outside = outside.path().join("other.txt");
         std::fs::write(&file_outside, "data").unwrap();
-        let resolved_out = canonicalize_or_original(&file_outside);
+        let resolved_out = canonicalize_or_original(&file_outside).unwrap();
         assert!(
             check_allowed_dir(&resolved_out, &[
                 dir1.path().to_str().unwrap().to_string(),
@@ -225,7 +293,7 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         let file = outside.path().join("file.txt");
         std::fs::write(&file, "data").unwrap();
-        let resolved = canonicalize_or_original(&file);
+        let resolved = canonicalize_or_original(&file).unwrap();
 
         // Only allowed dir is non-existent — file should be rejected.
         assert!(check_allowed_dir(&resolved, &["/nonexistent/path/12345".to_string()]).is_err());

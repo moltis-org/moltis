@@ -10,15 +10,15 @@ use {
     moltis_agents::tool_registry::AgentTool,
     serde_json::{Value, json},
     time::format_description::well_known::Rfc3339,
-    tracing::{info, instrument, warn},
+    tracing::instrument,
 };
 
 use crate::{
-    approval::{ApprovalAction, ApprovalBroadcaster, ApprovalDecision, ApprovalManager},
+    approval::{ApprovalBroadcaster, ApprovalManager},
     error::Error,
 };
 
-use super::{canonicalize_or_original, check_allowed_dir};
+use super::{canonicalize_or_original, enforce_approval};
 
 /// File size threshold (bytes) below which we count lines by reading.
 /// Above this, line_count is omitted from the response to avoid loading
@@ -58,6 +58,7 @@ impl FileInfoTool {
     }
 
     /// Attach approval gating to this tool.
+    #[must_use]
     pub fn with_approval(
         mut self,
         manager: Arc<ApprovalManager>,
@@ -102,46 +103,20 @@ impl AgentTool for FileInfoTool {
             .ok_or_else(|| Error::message("missing 'path' parameter"))?;
 
         // --- Resolve & validate path ---
-        let resolved = canonicalize_or_original(std::path::Path::new(path));
+        let Some(resolved) = canonicalize_or_original(std::path::Path::new(path)) else {
+            return Err(Error::message(format!("path '{path}' does not exist")).into());
+        };
 
-        // Approval gating: if an approval manager is attached, route
-        // out-of-bounds paths through the approval flow instead of
-        // hard-rejecting.
-        if let Some(ref mgr) = self.approval_manager {
-            let action = mgr.check_path(path, &self.allowed_dirs)?;
-            if action == ApprovalAction::NeedsApproval {
-                info!(path, "filesystem access needs approval, waiting...");
-                let (req_id, rx) = mgr.create_request(path).await;
-
-                if let Some(ref bc) = self.broadcaster
-                    && let Err(e) = bc.broadcast_request(&req_id, path).await
-                {
-                    warn!(error = %e, "failed to broadcast approval request");
-                }
-
-                let decision = mgr.wait_for_decision(rx).await;
-                match decision {
-                    ApprovalDecision::Approved => {
-                        info!(path, "filesystem access approved");
-                    },
-                    ApprovalDecision::Denied => {
-                        return Err(Error::message(format!(
-                            "filesystem access denied by user: {path}"
-                        ))
-                        .into());
-                    },
-                    ApprovalDecision::Timeout => {
-                        return Err(Error::message(format!(
-                            "approval timed out for filesystem access: {path}"
-                        ))
-                        .into());
-                    },
-                }
-            }
-        } else {
-            // No approval manager — hard-reject paths outside allowed_dirs.
-            check_allowed_dir(&resolved, &self.allowed_dirs)?;
-        }
+        // Approval gating: route out-of-bounds paths through the approval
+        // flow (if configured) or hard-reject.
+        enforce_approval(
+            path,
+            &resolved,
+            &self.allowed_dirs,
+            self.approval_manager.as_ref(),
+            self.broadcaster.as_ref(),
+        )
+        .await?;
 
         let display_path = resolved.to_string_lossy().to_string();
 
@@ -192,13 +167,19 @@ impl AgentTool for FileInfoTool {
 
             // Count lines only for files under the threshold.
             if size_bytes <= LINE_COUNT_MAX_BYTES {
-                match tokio::fs::read_to_string(&resolved).await {
-                    Ok(content) => {
-                        let line_count = content.lines().count();
-                        result["line_count"] = json!(line_count);
+                match tokio::fs::File::open(&resolved).await {
+                    Ok(file) => {
+                        use tokio::io::{AsyncBufReadExt, BufReader};
+                        let reader = BufReader::new(file);
+                        let mut count = 0usize;
+                        let mut lines = reader.lines();
+                        while lines.next_line().await.is_ok_and(|line| line.is_some()) {
+                            count = count.saturating_add(1);
+                        }
+                        result["line_count"] = json!(count);
                     },
                     Err(_) => {
-                        // Non-UTF-8 file — skip line count.
+                        // Can't open — skip line count.
                     },
                 }
             }
@@ -320,7 +301,7 @@ mod tests {
             .execute(json!({ "path": "/tmp/does-not-exist-file-info-test-98765" }))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("cannot access"));
+        assert!(err.to_string().contains("does not exist"));
     }
 
     #[tokio::test]

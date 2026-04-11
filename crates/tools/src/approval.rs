@@ -327,7 +327,23 @@ impl ApprovalManager {
     pub fn check_path(&self, path: &str, allowed_dirs: &[String]) -> Result<ApprovalAction> {
         use std::path::Path;
 
-        let resolved = crate::filesystem::canonicalize_or_original(Path::new(path));
+        let Some(resolved) = crate::filesystem::canonicalize_or_original(Path::new(path)) else {
+            // Path doesn't exist — treat as outside allowed_dirs.
+            // The caller will either deny, request approval, or proceed
+            // based on its security level and mode.
+            return match self.security_level {
+                SecurityLevel::Deny => Err(Error::message(
+                    "filesystem access denied: path does not exist",
+                )),
+                SecurityLevel::Full => Ok(ApprovalAction::Proceed),
+                SecurityLevel::Allowlist => match self.mode {
+                    ApprovalMode::Off => Ok(ApprovalAction::Proceed),
+                    ApprovalMode::Always | ApprovalMode::OnMiss => {
+                        Ok(ApprovalAction::NeedsApproval)
+                    },
+                },
+            };
+        };
 
         // If the path is inside allowed_dirs, proceed immediately.
         if check_allowed_dir(&resolved, allowed_dirs).is_ok() {

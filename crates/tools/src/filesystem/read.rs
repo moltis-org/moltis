@@ -12,15 +12,15 @@ use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     serde_json::{Value, json},
-    tracing::{info, instrument, warn},
+    tracing::instrument,
 };
 
 use crate::{
-    approval::{ApprovalAction, ApprovalBroadcaster, ApprovalDecision, ApprovalManager},
+    approval::{ApprovalBroadcaster, ApprovalManager},
     error::Error,
 };
 
-use super::{canonicalize_or_original, check_allowed_dir};
+use super::{canonicalize_or_original, enforce_approval};
 
 /// Default maximum lines per call when no config override is set.
 const DEFAULT_MAX_LINES: usize = 150;
@@ -74,6 +74,7 @@ impl FileReadTool {
     }
 
     /// Attach approval gating to this tool.
+    #[must_use]
     pub fn with_approval(
         mut self,
         manager: Arc<ApprovalManager>,
@@ -102,7 +103,8 @@ impl AgentTool for FileReadTool {
          lines along with metadata (total_lines, byte_size, truncated). By \
          default returns at most 150 lines starting from line 1. Use \
          start_line and end_line to read a specific range, or set max_lines \
-         to override the per-call limit."
+         to override the per-call limit. Line endings are normalized to \
+         LF (\\n) in the returned content."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -145,50 +147,24 @@ impl AgentTool for FileReadTool {
         let max_lines = params
             .get("max_lines")
             .and_then(Value::as_i64)
-            .map(|v| v as usize)
+            .map(|v| (v as usize).clamp(1, 10_000))
             .unwrap_or(self.max_lines);
 
         // --- Resolve & validate path ---
-        let resolved = canonicalize_or_original(std::path::Path::new(path));
+        let Some(resolved) = canonicalize_or_original(std::path::Path::new(path)) else {
+            return Err(Error::message(format!("path '{path}' does not exist")).into());
+        };
 
-        // Approval gating: if an approval manager is attached, route
-        // out-of-bounds paths through the approval flow instead of
-        // hard-rejecting.
-        if let Some(ref mgr) = self.approval_manager {
-            let action = mgr.check_path(path, &self.allowed_dirs)?;
-            if action == ApprovalAction::NeedsApproval {
-                info!(path, "filesystem access needs approval, waiting...");
-                let (req_id, rx) = mgr.create_request(path).await;
-
-                if let Some(ref bc) = self.broadcaster
-                    && let Err(e) = bc.broadcast_request(&req_id, path).await
-                {
-                    warn!(error = %e, "failed to broadcast approval request");
-                }
-
-                let decision = mgr.wait_for_decision(rx).await;
-                match decision {
-                    ApprovalDecision::Approved => {
-                        info!(path, "filesystem access approved");
-                    },
-                    ApprovalDecision::Denied => {
-                        return Err(Error::message(format!(
-                            "filesystem access denied by user: {path}"
-                        ))
-                        .into());
-                    },
-                    ApprovalDecision::Timeout => {
-                        return Err(Error::message(format!(
-                            "approval timed out for filesystem access: {path}"
-                        ))
-                        .into());
-                    },
-                }
-            }
-        } else {
-            // No approval manager — hard-reject paths outside allowed_dirs.
-            check_allowed_dir(&resolved, &self.allowed_dirs)?;
-        }
+        // Approval gating: route out-of-bounds paths through the approval
+        // flow (if configured) or hard-reject.
+        enforce_approval(
+            path,
+            &resolved,
+            &self.allowed_dirs,
+            self.approval_manager.as_ref(),
+            self.broadcaster.as_ref(),
+        )
+        .await?;
 
         let display_path = resolved.to_string_lossy().to_string();
 
@@ -388,7 +364,7 @@ mod tests {
             .execute(json!({ "path": "/tmp/does-not-exist-file-read-test-98765.bin" }))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("cannot access"));
+        assert!(err.to_string().contains("does not exist"));
     }
 
     #[tokio::test]
