@@ -15,6 +15,8 @@ use {
 
 use crate::error::Error;
 
+use super::{canonicalize_or_original, check_allowed_dir};
+
 /// Default maximum lines per call when no config override is set.
 const DEFAULT_MAX_LINES: usize = 150;
 
@@ -24,6 +26,7 @@ const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 /// Read file contents with line-range control and metadata.
 pub struct FileReadTool {
     max_lines: usize,
+    allowed_dirs: Vec<String>,
 }
 
 impl FileReadTool {
@@ -31,12 +34,32 @@ impl FileReadTool {
     pub fn new(max_lines: usize) -> Self {
         Self {
             max_lines: max_lines.clamp(1, 10_000),
+            allowed_dirs: Vec::new(),
         }
     }
 
     #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(DEFAULT_MAX_LINES)
+    }
+
+    /// Create a tool that restricts reads to the given directories.
+    ///
+    /// Paths are canonicalized before checking, so symlinks cannot escape
+    /// the boundary.  An empty `allowed_dirs` permits all paths (permissive
+    /// mode, same as `new`).
+    #[must_use]
+    pub fn new_with_allowed_dirs(max_lines: usize, allowed_dirs: Vec<String>) -> Self {
+        Self {
+            max_lines: max_lines.clamp(1, 10_000),
+            allowed_dirs,
+        }
+    }
+
+    /// Create a default-configuration tool restricted to the given directories.
+    #[must_use]
+    pub fn with_defaults_and_allowed_dirs(allowed_dirs: Vec<String>) -> Self {
+        Self::new_with_allowed_dirs(DEFAULT_MAX_LINES, allowed_dirs)
     }
 }
 
@@ -103,20 +126,19 @@ impl AgentTool for FileReadTool {
             .map(|v| v as usize)
             .unwrap_or(self.max_lines);
 
-        // --- Resolve display path ---
-        let display_path = std::path::Path::new(path)
-            .canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(path))
-            .to_string_lossy()
-            .to_string();
+        // --- Resolve & validate path ---
+        let resolved = canonicalize_or_original(std::path::Path::new(path));
+        check_allowed_dir(&resolved, &self.allowed_dirs)?;
+
+        let display_path = resolved.to_string_lossy().to_string();
 
         // --- File metadata ---
-        let meta = tokio::fs::metadata(path)
+        let meta = tokio::fs::metadata(&resolved)
             .await
-            .map_err(|e| Error::message(format!("cannot access '{path}': {e}")))?;
+            .map_err(|e| Error::message(format!("cannot access '{display_path}': {e}")))?;
 
         if !meta.is_file() {
-            return Err(Error::message(format!("'{path}' is not a regular file")).into());
+            return Err(Error::message(format!("'{display_path}' is not a regular file")).into());
         }
 
         let byte_size = meta.len();
@@ -125,19 +147,21 @@ impl AgentTool for FileReadTool {
                 "file is too large ({:.1} MB) — maximum is {:.0} MB",
                 byte_size as f64 / (1024.0 * 1024.0),
                 MAX_FILE_BYTES as f64 / (1024.0 * 1024.0),
-            )).into());
+            ))
+            .into());
         }
 
         // --- Read content ---
-        let raw = tokio::fs::read(path)
+        let raw = tokio::fs::read(&resolved)
             .await
-            .map_err(|e| Error::message(format!("failed to read '{path}': {e}")))?;
+            .map_err(|e| Error::message(format!("failed to read '{display_path}': {e}")))?;
 
-        let content = String::from_utf8(raw)
-            .map_err(|e| Error::message(format!(
-                "'{path}' is not valid UTF-8 (first error at byte {})",
+        let content = String::from_utf8(raw).map_err(|e| {
+            Error::message(format!(
+                "'{display_path}' is not valid UTF-8 (first error at byte {})",
                 e.utf8_error().valid_up_to()
-            )))?;
+            ))
+        })?;
 
         // --- Line logic ---
         let lines: Vec<&str> = content.lines().collect();
@@ -208,8 +232,7 @@ impl AgentTool for FileReadTool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::io::Write;
+    use {super::*, std::io::Write};
 
     fn tmp_file_with(content: &str) -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().unwrap();
@@ -233,7 +256,12 @@ mod tests {
         assert_eq!(result["metadata"]["start_line"], 1);
         assert_eq!(result["metadata"]["end_line"], 150);
         assert_eq!(result["metadata"]["truncated"], true);
-        assert!(result["content"].as_str().unwrap().starts_with("line 1\nline 2"));
+        assert!(
+            result["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("line 1\nline 2")
+        );
         assert!(result["content"].as_str().unwrap().ends_with("line 150"));
     }
 
@@ -388,5 +416,113 @@ mod tests {
             .unwrap();
 
         assert_eq!(result["metadata"]["end_line"], 5);
+    }
+
+    // --- allowed_dirs containment tests ---
+
+    #[tokio::test]
+    async fn allowed_dirs_path_inside_is_allowed() {
+        let allowed = tempfile::tempdir().unwrap();
+        let file = allowed.path().join("subdir").join("file.txt");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "hello").unwrap();
+
+        let tool = FileReadTool::new_with_allowed_dirs(100, vec![
+            allowed.path().to_str().unwrap().to_string(),
+        ]);
+        let result = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(result["content"].as_str().unwrap(), "hello");
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_path_outside_is_rejected() {
+        let allowed = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("secret.txt");
+        std::fs::write(&file, "secret data").unwrap();
+
+        let tool = FileReadTool::new_with_allowed_dirs(100, vec![
+            allowed.path().to_str().unwrap().to_string(),
+        ]);
+        let err = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("outside the allowed directories"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_empty_allows_everything() {
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("anywhere.txt");
+        std::fs::write(&file, "data").unwrap();
+
+        // Empty allowed_dirs — permissive, same as no restriction.
+        let tool = FileReadTool::new_with_allowed_dirs(100, vec![]);
+        let result = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(result["content"].as_str().unwrap(), "data");
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_symlink_escape_is_blocked() {
+        let allowed = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+
+        // Create a file outside the allowed dir.
+        let outside_file = outside.path().join("escape.txt");
+        std::fs::write(&outside_file, "escaped!").unwrap();
+
+        // Create a symlink inside the allowed dir pointing outside.
+        let link = allowed.path().join("sneaky_link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_file, &link).unwrap();
+
+        let tool = FileReadTool::new_with_allowed_dirs(100, vec![
+            allowed.path().to_str().unwrap().to_string(),
+        ]);
+        let err = tool
+            .execute(json!({ "path": link.to_str().unwrap() }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("outside the allowed directories"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn with_defaults_and_allowed_dirs_factory() {
+        let allowed = tempfile::tempdir().unwrap();
+        let file = allowed.path().join("test.txt");
+        std::fs::write(&file, "works").unwrap();
+
+        let tool = FileReadTool::with_defaults_and_allowed_dirs(vec![
+            allowed.path().to_str().unwrap().to_string(),
+        ]);
+        let result = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(result["content"].as_str().unwrap(), "works");
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_default_constructor_is_permissive() {
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("unrestricted.txt");
+        std::fs::write(&file, "ok").unwrap();
+
+        // Plain new() / with_defaults() has no allowed_dirs — should be permissive.
+        let tool = FileReadTool::with_defaults();
+        let result = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(result["content"].as_str().unwrap(), "ok");
     }
 }

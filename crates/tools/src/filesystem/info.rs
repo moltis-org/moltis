@@ -13,6 +13,8 @@ use {
 
 use crate::error::Error;
 
+use super::{canonicalize_or_original, check_allowed_dir};
+
 /// File size threshold (bytes) below which we count lines by reading.
 /// Above this, line_count is omitted from the response to avoid loading
 /// large binaries into memory just to count newlines.
@@ -20,12 +22,26 @@ const LINE_COUNT_MAX_BYTES: u64 = 1024 * 1024; // 1 MB
 
 /// Retrieve file or directory metadata without reading content.
 #[derive(Default)]
-pub struct FileInfoTool;
+pub struct FileInfoTool {
+    allowed_dirs: Vec<String>,
+}
 
 impl FileInfoTool {
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            allowed_dirs: Vec::new(),
+        }
+    }
+
+    /// Create a tool that restricts info queries to the given directories.
+    ///
+    /// Paths are canonicalized before checking, so symlinks cannot escape
+    /// the boundary.  An empty `allowed_dirs` permits all paths (permissive
+    /// mode, same as `new`).
+    #[must_use]
+    pub fn new_with_allowed_dirs(allowed_dirs: Vec<String>) -> Self {
+        Self { allowed_dirs }
     }
 }
 
@@ -61,17 +77,17 @@ impl AgentTool for FileInfoTool {
             .and_then(Value::as_str)
             .ok_or_else(|| Error::message("missing 'path' parameter"))?;
 
-        let meta = tokio::fs::metadata(path)
+        // --- Resolve & validate path ---
+        let resolved = canonicalize_or_original(std::path::Path::new(path));
+        check_allowed_dir(&resolved, &self.allowed_dirs)?;
+
+        let display_path = resolved.to_string_lossy().to_string();
+
+        let meta = tokio::fs::metadata(&resolved)
             .await
-            .map_err(|e| Error::message(format!("cannot access '{path}': {e}")))?;
+            .map_err(|e| Error::message(format!("cannot access '{display_path}': {e}")))?;
 
-        let display_path = std::path::Path::new(path)
-            .canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(path))
-            .to_string_lossy()
-            .to_string();
-
-        let name = std::path::Path::new(path)
+        let name = resolved
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| display_path.clone());
@@ -96,7 +112,7 @@ impl AgentTool for FileInfoTool {
         };
 
         if meta.is_file() {
-            let extension = std::path::Path::new(path)
+            let extension = resolved
                 .extension()
                 .map(|e| e.to_string_lossy().to_string())
                 .unwrap_or_default();
@@ -114,7 +130,7 @@ impl AgentTool for FileInfoTool {
 
             // Count lines only for files under the threshold.
             if size_bytes <= LINE_COUNT_MAX_BYTES {
-                match tokio::fs::read_to_string(path).await {
+                match tokio::fs::read_to_string(&resolved).await {
                     Ok(content) => {
                         let line_count = content.lines().count();
                         result["line_count"] = json!(line_count);
@@ -127,7 +143,7 @@ impl AgentTool for FileInfoTool {
 
             Ok(result)
         } else if meta.is_dir() {
-            let entry_count = match tokio::fs::read_dir(path).await {
+            let entry_count = match tokio::fs::read_dir(&resolved).await {
                 Ok(mut rd) => {
                     let mut count = 0usize;
                     while let Ok(Some(_)) = rd.next_entry().await {
@@ -165,8 +181,7 @@ impl AgentTool for FileInfoTool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::io::Write;
+    use {super::*, std::io::Write};
 
     #[tokio::test]
     async fn file_info_basic() {
@@ -189,10 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_info_extension() {
-        let mut f = tempfile::Builder::new()
-            .suffix(".rs")
-            .tempfile()
-            .unwrap();
+        let mut f = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
         write!(f, "fn main() {{}}").unwrap();
         f.flush().unwrap();
 
@@ -207,10 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_info_no_extension() {
-        let f = tempfile::Builder::new()
-            .suffix("")
-            .tempfile()
-            .unwrap();
+        let f = tempfile::Builder::new().suffix("").tempfile().unwrap();
 
         let tool = FileInfoTool::new();
         let result = tool
@@ -275,5 +284,105 @@ mod tests {
 
         assert_eq!(result["type"], "file");
         assert!(result.get("line_count").is_none());
+    }
+
+    // --- allowed_dirs containment tests ---
+
+    #[tokio::test]
+    async fn allowed_dirs_path_inside_is_allowed() {
+        let allowed = tempfile::tempdir().unwrap();
+        let file = allowed.path().join("info_test.txt");
+        std::fs::write(&file, "data").unwrap();
+
+        let tool =
+            FileInfoTool::new_with_allowed_dirs(vec![allowed.path().to_str().unwrap().to_string()]);
+        let result = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(result["type"], "file");
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_directory_inside_is_allowed() {
+        let allowed = tempfile::tempdir().unwrap();
+        std::fs::write(allowed.path().join("a.txt"), "a").unwrap();
+
+        let tool =
+            FileInfoTool::new_with_allowed_dirs(vec![allowed.path().to_str().unwrap().to_string()]);
+        let result = tool
+            .execute(json!({ "path": allowed.path().to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(result["type"], "directory");
+        assert_eq!(result["entry_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_path_outside_is_rejected() {
+        let allowed = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("outside.txt");
+        std::fs::write(&file, "data").unwrap();
+
+        let tool =
+            FileInfoTool::new_with_allowed_dirs(vec![allowed.path().to_str().unwrap().to_string()]);
+        let err = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("outside the allowed directories"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_empty_allows_everything() {
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("anywhere.txt");
+        std::fs::write(&file, "data").unwrap();
+
+        let tool = FileInfoTool::new_with_allowed_dirs(vec![]);
+        let result = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(result["type"], "file");
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_symlink_escape_is_blocked() {
+        let allowed = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+
+        let outside_dir = outside.path().join("secret_dir");
+        std::fs::create_dir_all(&outside_dir).unwrap();
+
+        let link = allowed.path().join("sneaky");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_dir, &link).unwrap();
+
+        let tool =
+            FileInfoTool::new_with_allowed_dirs(vec![allowed.path().to_str().unwrap().to_string()]);
+        let err = tool
+            .execute(json!({ "path": link.to_str().unwrap() }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("outside the allowed directories"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn allowed_dirs_default_constructor_is_permissive() {
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("unrestricted.txt");
+        std::fs::write(&file, "ok").unwrap();
+
+        // Plain new() has no allowed_dirs — should be permissive.
+        let tool = FileInfoTool::new();
+        let result = tool
+            .execute(json!({ "path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+        assert_eq!(result["type"], "file");
     }
 }
