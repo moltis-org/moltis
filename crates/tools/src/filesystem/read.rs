@@ -185,7 +185,9 @@ impl AgentTool for FileReadTool {
             None => (start + max_lines - 1).min(total_lines),
         };
 
-        let truncated = end < total_lines;
+        // Truncation only applies when the range was capped by max_lines,
+        // not when the user explicitly requested a specific end_line.
+        let truncated = end_line.is_none() && end < total_lines;
         let selected: Vec<&str> = lines[(start - 1)..end].to_vec();
         let result_content = selected.join("\n");
 
