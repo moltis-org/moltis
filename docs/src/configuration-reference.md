@@ -36,6 +36,7 @@
   - [`ngrok`](#ngrok)
   - [`tailscale`](#tailscale)
   - [`upstream_proxy`](#upstream-proxy)
+  - [`failover`](#failover)
 - **Observability**
   - [`metrics`](#metrics)
 - **Identity & User**
@@ -262,7 +263,7 @@ User profile collected during onboarding.
 | `prompt_memory_mode` | enum: `live-reload`, `frozen-at-session-start` | `"live-reload"` | How `MEMORY.md` is loaded into the prompt for an ongoing session. `live-reload` reloads from disk before each turn; `frozen-at-session-start` freezes the initial content for the session lifetime. |
 | `workspace_file_max_chars` | integer | `32000` | Maximum characters from each workspace prompt file (`AGENTS.md`, `TOOLS.md`). |
 | `priority_models` | array | `[]` | Preferred model IDs to show first in selectors (full or raw model IDs). |
-| `allowed_models` | array | `[]` | Legacy model allowlist. Kept for backward compatibility; currently ignored (model visibility is provider-driven). |
+| `allowed_models` | array | `[]` | ⚠️ **Deprecated.** Legacy model allowlist kept for backward compatibility; currently ignored (model visibility is provider-driven). Will be removed in a future release. |
 
 
 ### `chat.compaction` — CompactionConfig
@@ -275,8 +276,8 @@ User profile collected during onboarding.
 | `protect_tail_min` | integer | `20` | Minimum number of tail messages preserved verbatim (floor under token-budget cut). |
 | `tail_budget_ratio` | float | `0.20` | Tail protection window as a fraction of `threshold_percent × context_window`. |
 | `tool_prune_char_threshold` | integer | `200` | Tool-result content longer than this is replaced with a placeholder in the collapsed middle region. |
-| `summary_model` | optional string | `null` | Provider-qualified model for LLM summary calls (e.g. `"openrouter/google/gemini-2.5-flash"`). Not wired yet; setting triggers a warning. |
-| `max_summary_tokens` | integer | `4096` | Maximum output tokens for LLM summary calls. `0` accepts provider default. Not wired yet. |
+| `summary_model` | optional string | `null` | Provider-qualified model for LLM summary calls (e.g. `"openrouter/google/gemini-2.5-flash"`). ⚠️ **Not yet implemented** — setting this field triggers a warning. |
+| `max_summary_tokens` | integer | `4096` | Maximum output tokens for LLM summary calls. `0` accepts provider default. ⚠️ **Not yet implemented** — has no effect. |
 | `show_settings_hint` | bool | `true` | Whether the "Change `chat.compaction.mode` in moltis.toml…" hint is included in compaction notifications. |
 
 
@@ -488,7 +489,7 @@ Default `tool_overrides` entries:
 | cache_ttl_minutes | integer | `15` | In-memory cache TTL in minutes (0 to disable). |
 | max_redirects | integer | `3` | Maximum number of HTTP redirects to follow. |
 | readability | bool | `true` | Use readability extraction for HTML pages. |
-| ssrf_allowlist | array | `[]` | CIDR ranges exempt from SSRF blocking (e.g. `["172.22.0.0/16"]`). Default: empty (all private IPs blocked). |
+| ssrf_allowlist | array | `[]` | CIDR ranges exempt from SSRF blocking (e.g. `["172.22.0.0/16"]`). Default: empty (all private IPs blocked). ⚠️ **Security**: ranges added here bypass SSRF protection. Only add specific, trusted CIDR ranges (e.g. a known sidecar subnet), never broad private ranges like `10.0.0.0/8`. |
 
 
 ### `tools.web.firecrawl` — FirecrawlConfig
@@ -860,9 +861,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `bool` | `true` | Enable TTS globally |
-| `provider` | `String` | `""` | Active provider (`"openai"`, `"elevenlabs"`, `"google"`, `"piper"`, `"coqui"`). Empty string auto-selects the first configured provider |
-| `providers` | `Vec<String>` | `[]` | Provider IDs to list in the UI. Empty means list all |
+| `enabled` | bool | `true` | Enable TTS globally |
+| `provider` | string | `""` | Active provider (`"openai"`, `"elevenlabs"`, `"google"`, `"piper"`, `"coqui"`). Empty string auto-selects the first configured provider |
+| `providers` | array of string | `[]` | Provider IDs to list in the UI. Empty means list all |
 | `elevenlabs` | `VoiceElevenLabsConfig` | (see below) | ElevenLabs-specific settings |
 | `openai` | `VoiceOpenAiConfig` | (see below) | OpenAI TTS settings |
 | `google` | `VoiceGoogleTtsConfig` | (see below) | Google Cloud TTS settings |
@@ -876,9 +877,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key (from `ELEVENLABS_API_KEY` env or config) |
-| `voice_id` | `Option<String>` | `None` | Default voice ID |
-| `model` | `Option<String>` | `None` | Model to use (e.g. `"eleven_flash_v2_5"` for lowest latency) |
+| `api_key` | optional secret string | `null` | API key (from `ELEVENLABS_API_KEY` env or config) |
+| `voice_id` | optional string | `null` | Default voice ID |
+| `model` | optional string | `null` | Model to use (e.g. `"eleven_flash_v2_5"` for lowest latency) |
 
 
 ### `voice.tts.openai`
@@ -887,10 +888,10 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key (from `OPENAI_API_KEY` env or config) |
-| `base_url` | `Option<String>` | `None` | Override the OpenAI TTS endpoint for compatible local servers |
-| `voice` | `Option<String>` | `None` | Voice to use for TTS (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) |
-| `model` | `Option<String>` | `None` | Model to use for TTS (`tts-1`, `tts-1-hd`) |
+| `api_key` | optional secret string | `null` | API key (from `OPENAI_API_KEY` env or config) |
+| `base_url` | optional string | `null` | Override the OpenAI TTS endpoint for compatible local servers |
+| `voice` | optional string | `null` | Voice to use for TTS (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) |
+| `model` | optional string | `null` | Model to use for TTS (`tts-1`, `tts-1-hd`) |
 
 
 ### `voice.tts.google`
@@ -899,11 +900,11 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key for Google Cloud Text-to-Speech |
-| `voice` | `Option<String>` | `None` | Voice name (e.g. `"en-US-Neural2-A"`, `"en-US-Wavenet-D"`) |
-| `language_code` | `Option<String>` | `None` | Language code (e.g. `"en-US"`, `"fr-FR"`) |
-| `speaking_rate` | `Option<f32>` | `None` | Speaking rate (0.25–4.0, default 1.0) |
-| `pitch` | `Option<f32>` | `None` | Pitch (-20.0–20.0, default 0.0) |
+| `api_key` | optional secret string | `null` | API key for Google Cloud Text-to-Speech |
+| `voice` | optional string | `null` | Voice name (e.g. `"en-US-Neural2-A"`, `"en-US-Wavenet-D"`) |
+| `language_code` | optional string | `null` | Language code (e.g. `"en-US"`, `"fr-FR"`) |
+| `speaking_rate` | optional float | `null` | Speaking rate (0.25–4.0, default 1.0) |
+| `pitch` | optional float | `null` | Pitch (-20.0–20.0, default 0.0) |
 
 
 ### `voice.tts.piper`
@@ -912,11 +913,11 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `binary_path` | `Option<String>` | `None` | Path to piper binary. If not set, looks in `PATH` |
-| `model_path` | `Option<String>` | `None` | Path to the voice model file (`.onnx`) |
-| `config_path` | `Option<String>` | `None` | Path to the model config file (`.onnx.json`). Defaults to `model_path` + `".json"` |
-| `speaker_id` | `Option<u32>` | `None` | Speaker ID for multi-speaker models |
-| `length_scale` | `Option<f32>` | `None` | Speaking rate multiplier (default 1.0) |
+| `binary_path` | optional string | `null` | Path to piper binary. If not set, looks in `PATH` |
+| `model_path` | optional string | `null` | Path to the voice model file (`.onnx`) |
+| `config_path` | optional string | `null` | Path to the model config file (`.onnx.json`). Defaults to `model_path` + `".json"` |
+| `speaker_id` | optional integer | `null` | Speaker ID for multi-speaker models |
+| `length_scale` | optional float | `null` | Speaking rate multiplier (default 1.0) |
 
 
 ### `voice.tts.coqui`
@@ -925,10 +926,10 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `endpoint` | `String` | `"http://localhost:5002"` | Coqui TTS server endpoint |
-| `model` | `Option<String>` | `None` | Model name to use (if server supports multiple models) |
-| `speaker` | `Option<String>` | `None` | Speaker name or ID for multi-speaker models |
-| `language` | `Option<String>` | `None` | Language code for multilingual models |
+| `endpoint` | string | `"http://localhost:5002"` | Coqui TTS server endpoint |
+| `model` | optional string | `null` | Model name to use (if server supports multiple models) |
+| `speaker` | optional string | `null` | Speaker name or ID for multi-speaker models |
+| `language` | optional string | `null` | Language code for multilingual models |
 
 ---
 
@@ -944,9 +945,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `bool` | `true` | Enable STT globally |
-| `provider` | `Option<VoiceSttProvider>` | `None` | Active provider. `None` auto-selects the first configured provider. Values: `"whisper"`, `"groq"`, `"deepgram"`, `"google"`, `"mistral"`, `"elevenlabs-stt"`, `"voxtral-local"`, `"whisper-cli"`, `"sherpa-onnx"` |
-| `providers` | `Vec<String>` | `[]` | Provider IDs to list in the UI. Empty means list all |
+| `enabled` | bool | `true` | Enable STT globally |
+| `provider` | optional enum: `whisper`, `groq`, `deepgram`, `google`, `mistral`, `elevenlabs-stt`, `voxtral-local`, `whisper-cli`, `sherpa-onnx` | `null` | Active provider. `null` auto-selects the first configured provider. Values: `"whisper"`, `"groq"`, `"deepgram"`, `"google"`, `"mistral"`, `"elevenlabs-stt"`, `"voxtral-local"`, `"whisper-cli"`, `"sherpa-onnx"` |
+| `providers` | array of string | `[]` | Provider IDs to list in the UI. Empty means list all |
 | `whisper` | `VoiceWhisperConfig` | (see below) | OpenAI Whisper settings |
 | `groq` | `VoiceGroqSttConfig` | (see below) | Groq (Whisper-compatible) settings |
 | `deepgram` | `VoiceDeepgramConfig` | (see below) | Deepgram settings |
@@ -964,10 +965,10 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key (from `OPENAI_API_KEY` env or config) |
-| `base_url` | `Option<String>` | `None` | Override the Whisper endpoint for compatible local servers |
-| `model` | `Option<String>` | `None` | Model to use (`whisper-1`) |
-| `language` | `Option<String>` | `None` | Language hint (ISO 639-1 code) |
+| `api_key` | optional secret string | `null` | API key (from `OPENAI_API_KEY` env or config) |
+| `base_url` | optional string | `null` | Override the Whisper endpoint for compatible local servers |
+| `model` | optional string | `null` | Model to use (`whisper-1`) |
+| `language` | optional string | `null` | Language hint (ISO 639-1 code) |
 
 
 ### `voice.stt.groq`
@@ -976,9 +977,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key (from `GROQ_API_KEY` env or config) |
-| `model` | `Option<String>` | `None` | Model to use (e.g. `"whisper-large-v3-turbo"`) |
-| `language` | `Option<String>` | `None` | Language hint (ISO 639-1 code) |
+| `api_key` | optional secret string | `null` | API key (from `GROQ_API_KEY` env or config) |
+| `model` | optional string | `null` | Model to use (e.g. `"whisper-large-v3-turbo"`) |
+| `language` | optional string | `null` | Language hint (ISO 639-1 code) |
 
 
 ### `voice.stt.deepgram`
@@ -987,10 +988,10 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key (from `DEEPGRAM_API_KEY` env or config) |
-| `model` | `Option<String>` | `None` | Model to use (e.g. `"nova-3"`) |
-| `language` | `Option<String>` | `None` | Language hint (e.g. `"en-US"`) |
-| `smart_format` | `bool` | `false` | Enable smart formatting (punctuation, capitalization) |
+| `api_key` | optional secret string | `null` | API key (from `DEEPGRAM_API_KEY` env or config) |
+| `model` | optional string | `null` | Model to use (e.g. `"nova-3"`) |
+| `language` | optional string | `null` | Language hint (e.g. `"en-US"`) |
+| `smart_format` | bool | `false` | Enable smart formatting (punctuation, capitalization) |
 
 
 ### `voice.stt.google`
@@ -999,10 +1000,10 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key for Google Cloud Speech-to-Text |
-| `service_account_json` | `Option<String>` | `None` | Path to service account JSON file (alternative to API key) |
-| `language` | `Option<String>` | `None` | Language code (e.g. `"en-US"`) |
-| `model` | `Option<String>` | `None` | Model variant (e.g. `"latest_long"`, `"latest_short"`) |
+| `api_key` | optional secret string | `null` | API key for Google Cloud Speech-to-Text |
+| `service_account_json` | optional string | `null` | Path to service account JSON file (alternative to API key) |
+| `language` | optional string | `null` | Language code (e.g. `"en-US"`) |
+| `model` | optional string | `null` | Model variant (e.g. `"latest_long"`, `"latest_short"`) |
 
 
 ### `voice.stt.mistral`
@@ -1011,9 +1012,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key (from `MISTRAL_API_KEY` env or config) |
-| `model` | `Option<String>` | `None` | Model to use (e.g. `"voxtral-mini-latest"`) |
-| `language` | `Option<String>` | `None` | Language hint (ISO 639-1 code) |
+| `api_key` | optional secret string | `null` | API key (from `MISTRAL_API_KEY` env or config) |
+| `model` | optional string | `null` | Model to use (e.g. `"voxtral-mini-latest"`) |
+| `language` | optional string | `null` | Language hint (ISO 639-1 code) |
 
 
 ### `voice.stt.elevenlabs`
@@ -1022,9 +1023,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | `Option<Secret<String>>` | `None` | API key (from `ELEVENLABS_API_KEY` env or config). Shared with TTS if not specified separately |
-| `model` | `Option<String>` | `None` | Model to use (`scribe_v1` or `scribe_v2`) |
-| `language` | `Option<String>` | `None` | Language hint (ISO 639-1 code) |
+| `api_key` | optional secret string | `null` | API key (from `ELEVENLABS_API_KEY` env or config). Shared with TTS if not specified separately |
+| `model` | optional string | `null` | Model to use (`scribe_v1` or `scribe_v2`) |
+| `language` | optional string | `null` | Language hint (ISO 639-1 code) |
 
 
 ### `voice.stt.voxtral_local`
@@ -1033,9 +1034,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `endpoint` | `String` | `"http://localhost:8000"` | vLLM server endpoint |
-| `model` | `Option<String>` | `None` | Model to use (optional, server default if not set) |
-| `language` | `Option<String>` | `None` | Language hint (ISO 639-1 code) |
+| `endpoint` | string | `"http://localhost:8000"` | vLLM server endpoint |
+| `model` | optional string | `null` | Model to use (optional, server default if not set) |
+| `language` | optional string | `null` | Language hint (ISO 639-1 code) |
 
 
 ### `voice.stt.whisper_cli`
@@ -1044,9 +1045,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `binary_path` | `Option<String>` | `None` | Path to whisper-cli binary. If not set, looks in `PATH` |
-| `model_path` | `Option<String>` | `None` | Path to the GGML model file (e.g. `"~/.moltis/models/ggml-base.en.bin"`) |
-| `language` | `Option<String>` | `None` | Language hint (ISO 639-1 code) |
+| `binary_path` | optional string | `null` | Path to whisper-cli binary. If not set, looks in `PATH` |
+| `model_path` | optional string | `null` | Path to the GGML model file (e.g. `"~/.moltis/models/ggml-base.en.bin"`) |
+| `language` | optional string | `null` | Language hint (ISO 639-1 code) |
 
 
 ### `voice.stt.sherpa_onnx`
@@ -1055,9 +1056,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `binary_path` | `Option<String>` | `None` | Path to sherpa-onnx-offline binary. If not set, looks in `PATH` |
-| `model_dir` | `Option<String>` | `None` | Path to the ONNX model directory |
-| `language` | `Option<String>` | `None` | Language hint (ISO 639-1 code) |
+| `binary_path` | optional string | `null` | Path to sherpa-onnx-offline binary. If not set, looks in `PATH` |
+| `model_dir` | optional string | `null` | Path to the ONNX model directory |
+| `language` | optional string | `null` | Language hint (ISO 639-1 code) |
 
 
 ---
