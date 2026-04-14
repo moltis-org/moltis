@@ -1,6 +1,6 @@
 # Configuration Reference
 
-> **Auto-generated from source:** `crates/config/src/schema/` + `crates/config/src/validate/schema_map.rs`
+> **Manually authored from source:** `crates/config/src/schema/` + `crates/config/src/validate/schema_map.rs`
 
 >
 
