@@ -190,6 +190,10 @@ fn build_api_routes() -> Router<AppState> {
         )
         .route("/api/sessions", get(api::api_sessions_handler))
         .route(
+            "/api/browser/sessions",
+            get(api::api_browser_sessions_handler),
+        )
+        .route(
             "/api/sessions/{session_key}/history",
             get(api::api_session_history_handler),
         )

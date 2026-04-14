@@ -41,6 +41,7 @@ const SESSION_LIST_DEFAULT_LIMIT: usize = 40;
 const SESSION_LIST_MAX_LIMIT: usize = 200;
 const SESSION_HISTORY_DEFAULT_LIMIT: usize = 120;
 const SESSION_HISTORY_MAX_LIMIT: usize = 500;
+const BROWSER_SESSIONS_LIST_FAILED: &str = "BROWSER_SESSIONS_LIST_FAILED";
 
 fn api_error(code: &str, error: impl Into<String>) -> serde_json::Value {
     serde_json::json!({
@@ -161,6 +162,22 @@ pub async fn api_sessions_handler(
             StatusCode::INTERNAL_SERVER_ERROR,
             SESSION_LIST_FAILED,
             e.to_string(),
+        ),
+    }
+}
+
+pub async fn api_browser_sessions_handler() -> impl IntoResponse {
+    let sessions = moltis_tools::browser::list_tracked_browser_sessions();
+    if sessions.is_empty() {
+        return Json(serde_json::json!({ "sessions": [] })).into_response();
+    }
+
+    match serde_json::to_value(&sessions) {
+        Ok(serialized) => Json(serde_json::json!({ "sessions": serialized })).into_response(),
+        Err(error) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            BROWSER_SESSIONS_LIST_FAILED,
+            error.to_string(),
         ),
     }
 }

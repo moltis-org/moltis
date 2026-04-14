@@ -356,6 +356,19 @@ impl BrowserPool {
         self.instances.read().await.len()
     }
 
+    /// Return the sandbox browser HTTP base URL for a session, if available.
+    pub async fn sandbox_http_url(&self, session_id: &str) -> Option<String> {
+        let instance = {
+            let instances = self.instances.read().await;
+            instances.get(session_id).cloned()
+        }?;
+
+        let inst = instance.lock().await;
+        inst.container
+            .as_ref()
+            .map(|container| container.http_url())
+    }
+
     /// Launch a new browser instance.
     async fn launch_browser(
         &self,

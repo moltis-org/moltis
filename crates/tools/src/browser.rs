@@ -12,7 +12,12 @@ use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     moltis_browser::{BrowserManager, BrowserRequest},
-    std::{borrow::Cow, collections::HashMap, sync::Arc},
+    std::{
+        borrow::Cow,
+        collections::HashMap,
+        sync::{Arc, LazyLock, RwLock as StdRwLock},
+    },
+    time::OffsetDateTime,
     tokio::sync::{OnceCell, RwLock},
     tracing::debug,
 };
@@ -40,6 +45,26 @@ pub struct BrowserTool {
     /// Bounded to [`MAX_TRACKED_SESSIONS`] to prevent unbounded growth when
     /// chats end without an explicit browser close action.
     session_ids: RwLock<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BrowserSessionOverview {
+    pub chat_session_key: String,
+    pub browser_session_id: String,
+    pub sandboxed: bool,
+    pub last_seen_unix_ms: i128,
+}
+
+static TRACKED_BROWSER_SESSIONS: LazyLock<StdRwLock<HashMap<String, BrowserSessionOverview>>> =
+    LazyLock::new(|| StdRwLock::new(HashMap::new()));
+
+pub fn list_tracked_browser_sessions() -> Vec<BrowserSessionOverview> {
+    let guard = TRACKED_BROWSER_SESSIONS
+        .read()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut items: Vec<BrowserSessionOverview> = guard.values().cloned().collect();
+    items.sort_by(|a, b| b.last_seen_unix_ms.cmp(&a.last_seen_unix_ms));
+    items
 }
 
 impl BrowserTool {
@@ -86,11 +111,15 @@ impl BrowserTool {
     async fn clear_session(&self, session_key: &str) {
         let mut guard = self.session_ids.write().await;
         guard.remove(session_key);
+        let mut tracked = TRACKED_BROWSER_SESSIONS
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        tracked.remove(session_key);
     }
 
     /// Save the browser session ID for future reuse in the same chat/session
     /// context.
-    async fn save_session(&self, session_key: &str, session_id: &str) {
+    async fn save_session(&self, session_key: &str, session_id: &str, sandboxed: bool) {
         if !session_id.is_empty() {
             let mut guard = self.session_ids.write().await;
             // Evict an arbitrary entry when at capacity to bound memory.
@@ -100,8 +129,22 @@ impl BrowserTool {
             {
                 debug!(evicted = %evict_key, "browser session cache full, evicting entry");
                 guard.remove(&evict_key);
+                let mut tracked = TRACKED_BROWSER_SESSIONS
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner());
+                tracked.remove(&evict_key);
             }
             guard.insert(session_key.to_string(), session_id.to_string());
+
+            let mut tracked = TRACKED_BROWSER_SESSIONS
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            tracked.insert(session_key.to_string(), BrowserSessionOverview {
+                chat_session_key: session_key.to_string(),
+                browser_session_id: session_id.to_string(),
+                sandboxed,
+                last_seen_unix_ms: OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000,
+            });
         }
     }
 
@@ -153,7 +196,8 @@ impl AgentTool for BrowserTool {
          or needs interaction (clicking, forms, screenshots, JavaScript-heavy pages).\n\n\
          REQUIRED: You MUST specify an 'action' parameter. Example:\n\
          {\"action\": \"navigate\", \"url\": \"https://example.com\"}\n\n\
-         Actions: navigate, screenshot, snapshot, click, type, scroll, evaluate, wait, close\n\n\
+         Actions: navigate, screenshot, snapshot, click, type, scroll, evaluate, wait, \
+         get_url, get_title, back, forward, refresh, live_url, close\n\n\
          BROWSER CHOICE: optionally set \"browser\" to choose one (auto, chrome, chromium, \
          edge, brave, opera, vivaldi, arc). If no browser is installed, Moltis will try \
          to auto-install one.\n\n\
@@ -165,7 +209,8 @@ impl AgentTool for BrowserTool {
          2. {\"action\": \"snapshot\"} - get interactive elements with ref numbers\n\
          3. {\"action\": \"click\", \"ref_\": N} - click element by ref number\n\
          4. {\"action\": \"screenshot\"} - capture the current view\n\
-         5. {\"action\": \"close\"} - close the browser when done"
+         5. {\"action\": \"live_url\"} - get a manual browser view URL for human login/takeover\n\
+         6. {\"action\": \"close\"} - close the browser when done"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -175,7 +220,7 @@ impl AgentTool for BrowserTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["navigate", "screenshot", "snapshot", "click", "type", "scroll", "evaluate", "wait", "get_url", "get_title", "back", "forward", "refresh", "close"],
+                    "enum": ["navigate", "screenshot", "snapshot", "click", "type", "scroll", "evaluate", "wait", "get_url", "get_title", "back", "forward", "refresh", "live_url", "close"],
                     "description": "REQUIRED. The browser action to perform. Use 'navigate' with 'url' to open a page, 'snapshot' to see elements, 'screenshot' to capture."
                 },
                 "session_id": {
@@ -222,6 +267,10 @@ impl AgentTool for BrowserTool {
                 "timeout_ms": {
                     "type": "integer",
                     "description": "Timeout in milliseconds (default: 60000)"
+                },
+                "interactive": {
+                    "type": "boolean",
+                    "description": "For 'live_url': true for interactive takeover, false to prefer read-only view."
                 }
             }
         })
@@ -302,7 +351,8 @@ impl AgentTool for BrowserTool {
             if is_close {
                 self.clear_session(&session_key).await;
             } else {
-                self.save_session(&session_key, &response.session_id).await;
+                self.save_session(&session_key, &response.session_id, response.sandboxed)
+                    .await;
             }
         }
 
@@ -367,9 +417,9 @@ mod tests {
         };
         let tool = BrowserTool::from_config(&config).unwrap();
 
-        tool.save_session("web:session:one", "browser-session-one")
+        tool.save_session("web:session:one", "browser-session-one", true)
             .await;
-        tool.save_session("web:session:two", "browser-session-two")
+        tool.save_session("web:session:two", "browser-session-two", false)
             .await;
 
         assert_eq!(
@@ -390,7 +440,7 @@ mod tests {
             ..Default::default()
         };
         let tool = BrowserTool::from_config(&config).unwrap();
-        tool.save_session("web:session:one", "").await;
+        tool.save_session("web:session:one", "", true).await;
         assert_eq!(tool.get_saved_session("web:session:one").await, None);
     }
 
@@ -404,7 +454,7 @@ mod tests {
 
         // Fill the cache to capacity
         for i in 0..BrowserTool::MAX_TRACKED_SESSIONS {
-            tool.save_session(&format!("session-{i}"), &format!("sid-{i}"))
+            tool.save_session(&format!("session-{i}"), &format!("sid-{i}"), true)
                 .await;
         }
         assert_eq!(
@@ -413,7 +463,7 @@ mod tests {
         );
 
         // Adding one more should evict an entry and stay at capacity
-        tool.save_session("session-new", "sid-new").await;
+        tool.save_session("session-new", "sid-new", true).await;
         let guard = tool.session_ids.read().await;
         assert_eq!(guard.len(), BrowserTool::MAX_TRACKED_SESSIONS);
         assert_eq!(guard.get("session-new"), Some(&"sid-new".to_string()));
@@ -427,9 +477,9 @@ mod tests {
         };
         let tool = BrowserTool::from_config(&config).unwrap();
 
-        tool.save_session("web:session:one", "browser-session-one")
+        tool.save_session("web:session:one", "browser-session-one", true)
             .await;
-        tool.save_session("web:session:two", "browser-session-two")
+        tool.save_session("web:session:two", "browser-session-two", false)
             .await;
 
         tool.clear_session("web:session:one").await;
@@ -439,5 +489,24 @@ mod tests {
             tool.get_saved_session("web:session:two").await,
             Some("browser-session-two".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn tracked_browser_sessions_are_listed() {
+        let config = moltis_config::schema::BrowserConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let tool = BrowserTool::from_config(&config).unwrap();
+
+        tool.save_session("web:session:list", "browser-session-list", true)
+            .await;
+
+        let list = list_tracked_browser_sessions();
+        assert!(list.iter().any(|entry| {
+            entry.chat_session_key == "web:session:list"
+                && entry.browser_session_id == "browser-session-list"
+                && entry.sandboxed
+        }));
     }
 }

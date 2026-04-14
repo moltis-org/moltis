@@ -70,12 +70,25 @@ pub enum BrowserAction {
     /// Refresh the page.
     Refresh,
 
+    /// Return a user-facing URL for live manual interaction with this browser
+    /// session (for login/takeover workflows).
+    LiveUrl {
+        /// Optional hint for future transport backends.
+        /// `true` = full interactive session, `false` = read-only view preferred.
+        #[serde(default = "default_live_interactive")]
+        interactive: bool,
+    },
+
     /// Close the browser session.
     Close,
 }
 
 fn default_wait_timeout_ms() -> u64 {
     30000
+}
+
+fn default_live_interactive() -> bool {
+    true
 }
 
 /// Known Chromium-family browser engines we can launch.
@@ -181,6 +194,13 @@ impl fmt::Display for BrowserAction {
             Self::Back => write!(f, "back"),
             Self::Forward => write!(f, "forward"),
             Self::Refresh => write!(f, "refresh"),
+            Self::LiveUrl { interactive } => {
+                if *interactive {
+                    write!(f, "live_url(interactive)")
+                } else {
+                    write!(f, "live_url(read_only)")
+                }
+            },
             Self::Close => write!(f, "close"),
         }
     }
@@ -334,6 +354,10 @@ pub struct BrowserResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 
+    /// User-facing URL for manual browser viewing/control.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_url: Option<String>,
+
     /// Duration of the action in milliseconds.
     pub duration_ms: u64,
 }
@@ -351,6 +375,7 @@ impl BrowserResponse {
             result: None,
             url: None,
             title: None,
+            live_url: None,
             duration_ms,
         }
     }
@@ -367,6 +392,7 @@ impl BrowserResponse {
             result: None,
             url: None,
             title: None,
+            live_url: None,
             duration_ms,
         }
     }
@@ -394,6 +420,11 @@ impl BrowserResponse {
 
     pub fn with_title(mut self, title: String) -> Self {
         self.title = Some(title);
+        self
+    }
+
+    pub fn with_live_url(mut self, live_url: String) -> Self {
+        self.live_url = Some(live_url);
         self
     }
 }
@@ -638,6 +669,16 @@ mod tests {
             Err(error) => panic!("failed to deserialize browser preference: {error}"),
         };
         assert_eq!(value, BrowserPreference::Brave);
+    }
+
+    #[test]
+    fn test_browser_action_live_url_deserialize_defaults_interactive() {
+        let req: BrowserRequest = serde_json::from_str(r#"{"action":"live_url"}"#)
+            .unwrap_or_else(|e| panic!("failed to deserialize live_url action: {e}"));
+        match req.action {
+            BrowserAction::LiveUrl { interactive } => assert!(interactive),
+            _ => panic!("expected BrowserAction::LiveUrl"),
+        }
     }
 
     #[test]

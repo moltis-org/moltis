@@ -119,6 +119,7 @@ also the base domain itself.
 | `back` | Go back in history | - |
 | `forward` | Go forward in history | - |
 | `refresh` | Reload the page | - |
+| `live_url` | Get a human-viewable DevTools URL for manual login/takeover (sandbox mode) | `interactive` (optional) |
 | `close` | Close browser session | - |
 
 ### Automatic Session Tracking
@@ -145,6 +146,10 @@ pass `session_id` explicitly:
 ```
 
 This prevents pool exhaustion from LLMs that forget to pass the session_id.
+
+The web UI now exposes tracked browser sessions in **Settings → Tools** so you
+can see active chat-to-browser mappings and copy a session ID before requesting
+`live_url`.
 
 ### Browser selection
 

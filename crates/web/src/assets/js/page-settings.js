@@ -1747,12 +1747,13 @@ function ToolsSection() {
 	var [loadingTools, setLoadingTools] = useState(true);
 	var [toolData, setToolData] = useState(null);
 	var [nodeInventory, setNodeInventory] = useState([]);
+	var [browserSessions, setBrowserSessions] = useState([]);
 	var [toolsErr, setToolsErr] = useState(null);
 
 	function loadToolsOverview() {
 		setLoadingTools(true);
 		setToolsErr(null);
-		Promise.allSettled([sendRpc("chat.context", {}), sendRpc("node.list", {})])
+		Promise.allSettled([sendRpc("chat.context", {}), sendRpc("node.list", {}), fetch("/api/browser/sessions")])
 			.then((results) => {
 				var contextResult = results[0];
 				if (contextResult.status !== "fulfilled" || !contextResult.value?.ok) {
@@ -1764,8 +1765,20 @@ function ToolsSection() {
 					nodesResult.status === "fulfilled" && nodesResult.value?.ok && Array.isArray(nodesResult.value.payload)
 						? nodesResult.value.payload
 						: [];
+				var browserSessionsResult = results[2];
+				var nextBrowserSessions = [];
+				if (browserSessionsResult.status === "fulfilled") {
+					nextBrowserSessions = browserSessionsResult.value
+						.json()
+						.then((payload) => (Array.isArray(payload?.sessions) ? payload.sessions : []))
+						.catch(() => []);
+				}
 				setToolData(nextToolData);
 				setNodeInventory(nextNodeInventory);
+				return Promise.resolve(nextBrowserSessions);
+			})
+			.then((nextBrowserSessions) => {
+				setBrowserSessions(nextBrowserSessions);
 				setLoadingTools(false);
 			})
 			.catch((error) => {
@@ -2040,6 +2053,49 @@ function ToolsSection() {
 					}
 				</div>
 			</div>
+		</div>
+
+		<div class="rounded border border-[var(--border)] bg-[var(--surface)] p-4 max-w-[1100px]">
+			<div class="flex items-center justify-between gap-2 flex-wrap">
+				<h3 class="text-sm font-medium text-[var(--text-strong)] m-0">Browser Sessions</h3>
+				<span class="provider-item-badge muted">${browserSessions.length}</span>
+			</div>
+			<div class="text-xs text-[var(--muted)] mt-2 leading-relaxed">
+				Tracked browser sessions mapped to chat sessions. Use this to find active browser IDs before requesting
+				<code class="text-[var(--text)]">live_url</code> for manual login/takeover.
+			</div>
+			${
+				browserSessions.length > 0
+					? html`<div class="mt-3 overflow-x-auto">
+						<table class="w-full text-xs border border-[var(--border)] rounded">
+							<thead class="bg-[var(--surface2)] text-[var(--muted)]">
+								<tr>
+									<th class="text-left p-2 font-medium">Chat Session</th>
+									<th class="text-left p-2 font-medium">Browser Session</th>
+									<th class="text-left p-2 font-medium">Mode</th>
+									<th class="text-left p-2 font-medium">Last Seen</th>
+								</tr>
+							</thead>
+							<tbody>
+								${browserSessions.map(
+									(entry) => html`<tr key=${entry.chat_session_key} class="border-t border-[var(--border)]">
+										<td class="p-2 break-all text-[var(--text)]">${entry.chat_session_key || "main"}</td>
+										<td class="p-2 break-all text-[var(--text)]">${entry.browser_session_id || "—"}</td>
+										<td class="p-2">
+											<span class="provider-item-badge ${entry.sandboxed ? "configured" : "warning"}">
+												${entry.sandboxed ? "Sandbox" : "Host"}
+											</span>
+										</td>
+										<td class="p-2 text-[var(--muted)]">
+											${entry.last_seen_unix_ms ? new Date(Number(entry.last_seen_unix_ms)).toLocaleString() : "—"}
+										</td>
+									</tr>`,
+								)}
+							</tbody>
+						</table>
+					</div>`
+					: html`<div class="text-xs text-[var(--muted)] mt-3">No tracked browser sessions yet.</div>`
+			}
 		</div>
 	</div>`;
 }

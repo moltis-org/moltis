@@ -223,6 +223,10 @@ impl BrowserManager {
             BrowserAction::Back => self.go_back(session_id, sandbox).await,
             BrowserAction::Forward => self.go_forward(session_id, sandbox).await,
             BrowserAction::Refresh => self.refresh(session_id, sandbox).await,
+            BrowserAction::LiveUrl { interactive } => {
+                self.live_url(session_id, sandbox, browser, interactive)
+                    .await
+            },
             BrowserAction::Close => self.close(session_id, sandbox).await,
         };
 
@@ -313,6 +317,36 @@ impl BrowserManager {
             sid.clone(),
             BrowserResponse::success(sid, 0, sandbox).with_url(current_url),
         ))
+    }
+
+    /// Return a human-usable live URL for this browser session.
+    async fn live_url(
+        &self,
+        session_id: Option<&str>,
+        sandbox: bool,
+        browser: Option<BrowserPreference>,
+        _interactive: bool,
+    ) -> Result<(String, BrowserResponse), Error> {
+        if !sandbox {
+            return Err(Error::InvalidAction(
+                "live_url currently requires sandboxed browser sessions".to_string(),
+            ));
+        }
+
+        let sid = self
+            .pool
+            .get_or_create(session_id, sandbox, browser)
+            .await?;
+        // Ensure a page target exists before asking browserless for /json/list
+        let _ = self.pool.get_page(&sid).await?;
+
+        let http_url = self.pool.sandbox_http_url(&sid).await.ok_or_else(|| {
+            Error::LaunchFailed("sandbox browser HTTP endpoint not available".to_string())
+        })?;
+
+        let live_url = fetch_devtools_live_url(&http_url).await?;
+        let response = BrowserResponse::success(sid.clone(), 0, true).with_live_url(live_url);
+        Ok((sid, response))
     }
 
     /// Take a screenshot of the page.
@@ -872,6 +906,40 @@ fn truncate_url(url: &str) -> String {
         format!("{}...", &url[..url.floor_char_boundary(100)])
     } else {
         url.to_string()
+    }
+}
+
+async fn fetch_devtools_live_url(http_base: &str) -> Result<String, Error> {
+    let endpoint = format!("{}/json/list", http_base.trim_end_matches('/'));
+    let response = reqwest::get(&endpoint)
+        .await
+        .map_err(|e| Error::Cdp(format!("failed to query browser targets: {e}")))?;
+
+    if !response.status().is_success() {
+        return Err(Error::Cdp(format!(
+            "browser target list returned HTTP {}",
+            response.status()
+        )));
+    }
+
+    let targets = response
+        .json::<Vec<serde_json::Value>>()
+        .await
+        .map_err(|e| Error::Cdp(format!("failed to parse browser target list: {e}")))?;
+
+    let target = targets.first().ok_or_else(|| {
+        Error::Cdp("browser target list is empty; navigate first, then retry live_url".to_string())
+    })?;
+    let frontend = target
+        .get("devtoolsFrontendUrl")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::Cdp("browser target is missing devtoolsFrontendUrl".to_string()))?;
+
+    if frontend.starts_with("http://") || frontend.starts_with("https://") {
+        Ok(frontend.to_string())
+    } else {
+        Ok(format!("{}{}", http_base.trim_end_matches('/'), frontend))
     }
 }
 
