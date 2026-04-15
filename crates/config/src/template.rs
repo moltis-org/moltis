@@ -107,6 +107,19 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 #   strict_tools - Force strict/non-strict tool schemas (default: auto-detect per provider)
 #   policy    - Per-provider tool policy override (allow/deny lists)
+#   model_overrides.<model_id>.context_window - Override context window for a specific model
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODEL OVERRIDES (GLOBAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Override context window sizes for specific models across all providers.
+# Provider-scoped overrides ([providers.<name>.model_overrides.<id>]) take precedence.
+#
+# [models.claude-opus-4-6]
+# context_window = 1_000_000                  # Override the built-in heuristic
+#
+# [models.glm-5-turbo]
+# context_window = 200_000
 
 [providers]
 offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
@@ -128,6 +141,8 @@ offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", 
 # cache_retention = "short"                    # Prompt caching: "none" | "short" | "long"
 # policy.deny = ["exec"]                       # Deny specific tools when using this provider
 # policy.allow = []                            # Restrict to only these tools (empty = all allowed)
+# [providers.anthropic.model_overrides.claude-opus-4-6]
+# context_window = 1_000_000                   # Provider-scoped model override
 
 # ── OpenAI ────────────────────────────────────────────────────
 [providers.openai]

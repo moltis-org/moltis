@@ -827,6 +827,24 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `tool_mode` | enum (`auto`, `native`, `text`, `off`) | `"auto"` | How tool calling is handled for this provider. |
 | `cache_retention` | enum (`none`, `short`, `long`) | `"short"` | Prompt cache retention policy. |
 | `policy` | optional `ToolPolicyConfig` (see below) | — | Tool policy override merged on top of global `[tools.policy]`. |
+| `model_overrides` | map of `ModelOverride` | `{}` | Per-model context window overrides. Keys are model IDs. |
+
+### `providers.<name>.model_overrides.<model_id>` — ModelOverride
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `context_window` | optional integer | — | Override the context window size (in tokens) for this model. Must be ≥ 1. Values > 10,000,000 produce a warning. |
+
+### `models` — Global Model Overrides
+
+**Struct:** `HashMap<String, ModelOverride>`
+
+Per-model overrides that apply across all providers. Provider-scoped overrides (`providers.<name>.model_overrides.<id>`) take precedence over these.
+
+```toml
+[models.claude-opus-4-6]
+context_window = 1_000_000
+```
 
 
 ### `providers.<name>.policy`

@@ -30,6 +30,12 @@ pub(super) fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let model_override = || {
+        Struct(HashMap::from([
+            ("context_window", Leaf),
+        ]))
+    };
+
     let provider_entry = || {
         Struct(HashMap::from([
             ("enabled", Leaf),
@@ -45,6 +51,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("cache_retention", Leaf),
             ("strict_tools", Leaf),
             ("policy", tool_policy_entry()),
+            ("model_overrides", Map(Box::new(model_override()))),
         ]))
     };
 
@@ -676,6 +683,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ),
             ])),
         ),
+        ("models", Map(Box::new(model_override()))),
     ]))
 }
 

@@ -732,6 +732,50 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             message: "port is 0; a random port will be assigned at startup".into(),
         });
     }
+
+    // Validate global model overrides
+    for (model_id, override_cfg) in &config.models {
+        if let Some(cw) = override_cfg.context_window {
+            if cw == 0 {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    category: "invalid-value",
+                    path: format!("models.{model_id}.context_window"),
+                    message: "context_window must be at least 1".into(),
+                });
+            } else if cw > 10_000_000 {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "invalid-value",
+                    path: format!("models.{model_id}.context_window"),
+                    message: format!("context_window is {cw}, which is unusually large (> 10M)").into(),
+                });
+            }
+        }
+    }
+
+    // Validate provider-scoped model overrides
+    for (provider_name, provider_entry) in &config.providers.providers {
+        for (model_id, override_cfg) in &provider_entry.model_overrides {
+            if let Some(cw) = override_cfg.context_window {
+                if cw == 0 {
+                    diagnostics.push(Diagnostic {
+                        severity: Severity::Error,
+                        category: "invalid-value",
+                        path: format!("providers.{provider_name}.models.{model_id}.context_window"),
+                        message: "context_window must be at least 1".into(),
+                    });
+                } else if cw > 10_000_000 {
+                    diagnostics.push(Diagnostic {
+                        severity: Severity::Warning,
+                        category: "invalid-value",
+                        path: format!("providers.{provider_name}.models.{model_id}.context_window"),
+                        message: format!("context_window is {cw}, which is unusually large (> 10M)").into(),
+                    });
+                }
+            }
+        }
+    }
 }
 
 /// Check that file paths referenced in TLS config exist on disk.

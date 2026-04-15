@@ -5,6 +5,41 @@ use crate::model_id::capability_model_id;
 /// Return the known context window size (in tokens) for a model ID.
 /// Falls back to 200,000 for unknown models.
 pub fn context_window_for_model(model_id: &str) -> u32 {
+    context_window_for_model_inner(model_id)
+}
+
+/// Return the context window size for a model ID, respecting config overrides.
+///
+/// Precedence (highest to lowest):
+/// 1. Provider-scoped config override (`provider_overrides[model_id].context_window`)
+/// 2. Global config override (`global_overrides[model_id].context_window`)
+/// 3. Hardcoded heuristic ([`context_window_for_model_inner`])
+///
+/// Both override maps use the **normalized** model ID (after
+/// [`capability_model_id`] processing) as the lookup key.
+///
+/// When no config is provided, this is equivalent to [`context_window_for_model`].
+pub fn context_window_for_model_with_config(
+    model_id: &str,
+    global_overrides: &std::collections::HashMap<String, u32>,
+    provider_overrides: &std::collections::HashMap<String, u32>,
+) -> u32 {
+    let normalized = capability_model_id(model_id);
+
+    // 1. Provider-scoped override (highest precedence)
+    if let Some(&cw) = provider_overrides.get(normalized) {
+        return cw;
+    }
+    // 2. Global override
+    if let Some(&cw) = global_overrides.get(normalized) {
+        return cw;
+    }
+    // 3. Hardcoded heuristic
+    context_window_for_model_inner(model_id)
+}
+
+/// Inner heuristic — kept private so callers go through the public wrappers.
+fn context_window_for_model_inner(model_id: &str) -> u32 {
     let model_id = capability_model_id(model_id);
     // Codestral has the largest window at 256k.
     if model_id.starts_with("codestral") {
@@ -656,5 +691,76 @@ mod tests {
         assert!(supports_vision_for_model("custom-gpt-4o-wrapper"));
         assert!(supports_vision_for_model("not-gemini-model"));
         assert!(supports_vision_for_model("totally-new-model-2026"));
+    }
+
+    // ── Config override tests ─────────────────────────────────────────────
+
+    fn empty_map() -> std::collections::HashMap<String, u32> {
+        std::collections::HashMap::new()
+    }
+
+    #[test]
+    fn config_override_returns_heuristic_when_no_overrides() {
+        // With empty overrides, should behave identically to the heuristic.
+        assert_eq!(
+            context_window_for_model_with_config("claude-sonnet-4-20250514", &empty_map(), &empty_map()),
+            200_000,
+        );
+        assert_eq!(
+            context_window_for_model_with_config("gpt-4o", &empty_map(), &empty_map()),
+            128_000,
+        );
+        assert_eq!(
+            context_window_for_model_with_config("some-unknown-model", &empty_map(), &empty_map()),
+            200_000,
+        );
+    }
+
+    #[test]
+    fn global_override_takes_precedence_over_heuristic() {
+        let mut global = empty_map();
+        global.insert("claude-opus-4-6".into(), 1_000_000);
+        assert_eq!(
+            context_window_for_model_with_config("claude-opus-4-6", &global, &empty_map()),
+            1_000_000,
+        );
+    }
+
+    #[test]
+    fn provider_override_takes_precedence_over_global() {
+        let mut global = empty_map();
+        global.insert("glm-5-turbo".into(), 150_000);
+        let mut provider = empty_map();
+        provider.insert("glm-5-turbo".into(), 200_000);
+        assert_eq!(
+            context_window_for_model_with_config("glm-5-turbo", &global, &provider),
+            200_000, // provider-scoped wins
+        );
+    }
+
+    #[test]
+    fn config_override_uses_normalized_model_id() {
+        let mut global = empty_map();
+        // The override key should match the *normalized* ID
+        global.insert("gpt-5.2".into(), 256_000);
+        assert_eq!(
+            context_window_for_model_with_config(
+                "custom-openrouter::openai/gpt-5.2@reasoning-high",
+                &global,
+                &empty_map(),
+            ),
+            256_000,
+        );
+    }
+
+    #[test]
+    fn config_override_does_not_affect_other_models() {
+        let mut global = empty_map();
+        global.insert("claude-opus-4-6".into(), 1_000_000);
+        // Claude Sonnet should still use heuristic
+        assert_eq!(
+            context_window_for_model_with_config("claude-sonnet-4-20250514", &global, &empty_map()),
+            200_000,
+        );
     }
 }
