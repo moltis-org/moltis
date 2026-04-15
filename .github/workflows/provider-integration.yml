@@ -355,10 +355,18 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config curl
+          sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config curl zstd
 
       - name: Install Ollama
-        run: curl -fsSL https://ollama.com/install.sh | sh
+        env:
+          OLLAMA_VERSION: v0.20.7
+          OLLAMA_TARBALL: ollama-linux-amd64.tar.zst
+          OLLAMA_TARBALL_SHA256: 193c41ffee30411a76af4484dae9cdd4c2d6f8f877b7096925c36f2489af131f
+        run: |
+          curl -fsSL -o ollama.tar.zst "https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/${OLLAMA_TARBALL}"
+          echo "${OLLAMA_TARBALL_SHA256}  ollama.tar.zst" | sha256sum -c -
+          sudo tar --use-compress-program=unzstd -C /usr -xf ollama.tar.zst
+          ollama --version
 
       - name: Install npm dependencies
         working-directory: crates/web/ui

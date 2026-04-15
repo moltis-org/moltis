@@ -124,6 +124,25 @@ impl OpenAiProvider {
             || self.base_url.to_ascii_lowercase().contains("minimax")
     }
 
+    fn is_custom_openai_compatible_provider(&self) -> bool {
+        self.provider_name.starts_with("custom-")
+    }
+
+    fn is_alibaba_qwen_backend(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("alibaba-coding")
+            || self.provider_name.eq_ignore_ascii_case("alibaba")
+            || self.provider_name.eq_ignore_ascii_case("dashscope-coding")
+            || self.base_url.contains("dashscope.aliyuncs.com")
+            || self.base_url.contains("alibabacloud.com")
+    }
+
+    fn is_qwen_single_system_backend(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("ollama")
+            || self.provider_name.to_ascii_lowercase().contains("ollama")
+            || self.is_custom_openai_compatible_provider()
+            || self.is_alibaba_qwen_backend()
+    }
+
     /// Some backends ship chat templates that only accept a single system
     /// message at the front of the conversation. Qwen-based OpenAI-compatible
     /// backends commonly behave this way (e.g. llama.cpp chat templates).
@@ -131,6 +150,7 @@ impl OpenAiProvider {
         raw_model_id(&self.model)
             .to_ascii_lowercase()
             .contains("qwen")
+            && self.is_qwen_single_system_backend()
     }
 
     fn system_message_rewrite_strategy(&self) -> SystemMessageRewriteStrategy {
@@ -487,5 +507,51 @@ mod tests {
         assert_eq!(messages[0]["role"], "system");
         assert_eq!(messages[1]["role"], "user");
         assert_eq!(messages[2]["role"], "system");
+    }
+
+    #[test]
+    fn system_message_rewrite_qwen_model_on_openai_provider_is_unchanged() {
+        let provider = provider("qwen3-coder-plus", "openai", "https://api.openai.com/v1");
+        let mut body = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "sys1"},
+                {"role": "user", "content": "hello"},
+                {"role": "system", "content": "sys2"}
+            ]
+        });
+
+        provider.apply_system_prompt_rewrite(&mut body);
+
+        let messages = body_messages(&body);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "sys1");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "system");
+        assert_eq!(messages[2]["content"], "sys2");
+    }
+
+    #[test]
+    fn system_message_rewrite_alibaba_qwen_merges_multiple_messages_into_one_leading_message() {
+        let provider = provider(
+            "qwen3.5-plus",
+            "alibaba-coding",
+            "https://coding-intl.dashscope.aliyuncs.com/v1",
+        );
+        let mut body = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "sys1"},
+                {"role": "user", "content": "hello"},
+                {"role": "system", "content": "sys2"}
+            ]
+        });
+
+        provider.apply_system_prompt_rewrite(&mut body);
+
+        let messages = body_messages(&body);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "sys1\n\nsys2");
+        assert_eq!(messages[1]["role"], "user");
     }
 }
