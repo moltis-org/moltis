@@ -17,9 +17,9 @@ export function matrixAuthModeGuidance(authMode) {
 export function channelStorageNote() {
 	var dbPath = String(getGon("channel_storage_db_path") || "").trim();
 	if (dbPath) {
-		return `Channels added or edited in the web UI are stored in Moltis's internal database (${dbPath}). They are not written back to moltis.toml.`;
+		return `Channels added or edited in the web UI are stored in Moltis's internal database (${dbPath}). They are not written back to moltis.toml. The channel picker itself comes from [channels].offered in moltis.toml, so reload this page after editing that list.`;
 	}
-	return "Channels added or edited in the web UI are stored in Moltis's internal database (moltis.db). They are not written back to moltis.toml.";
+	return "Channels added or edited in the web UI are stored in Moltis's internal database (moltis.db). They are not written back to moltis.toml. The channel picker itself comes from [channels].offered in moltis.toml, so reload this page after editing that list.";
 }
 
 /**

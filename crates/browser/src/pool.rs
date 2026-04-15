@@ -16,12 +16,13 @@ use {
     sysinfo::System,
     tokio::sync::{Mutex, RwLock},
     tracing::{debug, info, warn},
+    url::Url,
 };
 
 use crate::{
     container::{BrowserContainer, browserless_session_timeout_ms},
     error::Error,
-    types::{BrowserConfig, BrowserPreference},
+    types::{BrowserConfig, BrowserPreference, BrowserlessApiVersion},
 };
 
 pub(crate) const MAX_BROWSER_INSTANCE_LIFETIME: Duration = Duration::from_secs(30 * 60);
@@ -55,6 +56,38 @@ pub(crate) fn low_memory_chrome_args(total_mb: u64, threshold_mb: u64) -> &'stat
         "--renderer-process-limit=1",
         "--js-flags=--max-old-space-size=128",
     ]
+}
+
+/// Build websocket connection candidates based on Browserless API version.
+///
+/// - v1 (default): connect only to the base URL.
+/// - v2: when URL path is root (`/`), also try `/chrome` and `/chromium`.
+fn websocket_connect_candidates(
+    base_ws_url: &str,
+    browserless_api_version: BrowserlessApiVersion,
+) -> Vec<String> {
+    let mut candidates = vec![base_ws_url.to_string()];
+    if browserless_api_version != BrowserlessApiVersion::V2 {
+        return candidates;
+    }
+
+    let Ok(parsed) = Url::parse(base_ws_url) else {
+        return candidates;
+    };
+    if parsed.path() != "/" {
+        return candidates;
+    }
+
+    for suffix in ["/chrome", "/chromium"] {
+        let mut with_suffix = parsed.clone();
+        with_suffix.set_path(suffix);
+        let candidate = with_suffix.to_string();
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
 }
 
 /// A pooled browser instance with one or more pages.
@@ -359,11 +392,11 @@ impl BrowserPool {
         let container_host = self.config.container_host.clone();
 
         let container = tokio::task::spawn_blocking(move || {
-            // Check container runtime availability (Docker or Apple Container)
+            // Check container runtime availability (Docker, Podman, or Apple Container)
             if !container::is_container_available() {
                 return Err(Error::LaunchFailed(
                     "No container runtime available for sandboxed browser. \
-                     Please install Docker or Apple Container."
+                     Please install Docker, Podman, or Apple Container."
                         .to_string(),
                 ));
             }
@@ -420,28 +453,59 @@ impl BrowserPool {
             "connecting to sandboxed browser"
         );
 
-        // Connect to the containerized browser with custom timeout
-        let handler_config = HandlerConfig {
-            request_timeout: Duration::from_millis(self.config.navigation_timeout_ms),
-            viewport: Some(chromiumoxide::handler::viewport::Viewport {
-                width: self.config.viewport_width,
-                height: self.config.viewport_height,
-                device_scale_factor: Some(self.config.device_scale_factor),
-                emulating_mobile: false,
-                is_landscape: true,
-                has_touch: false,
-            }),
-            ..Default::default()
-        };
+        let ws_candidates =
+            websocket_connect_candidates(&ws_url, self.config.browserless_api_version);
+        let mut last_error = String::new();
+        let mut connected = None;
+        for candidate in &ws_candidates {
+            let attempt_config = HandlerConfig {
+                request_timeout: Duration::from_millis(self.config.navigation_timeout_ms),
+                viewport: Some(chromiumoxide::handler::viewport::Viewport {
+                    width: self.config.viewport_width,
+                    height: self.config.viewport_height,
+                    device_scale_factor: Some(self.config.device_scale_factor),
+                    emulating_mobile: false,
+                    is_landscape: true,
+                    has_touch: false,
+                }),
+                ..Default::default()
+            };
 
-        let (browser, mut handler) = Browser::connect_with_config(&ws_url, handler_config)
-            .await
-            .map_err(|e| {
-                Error::LaunchFailed(format!(
-                    "failed to connect to containerized browser at {}: {}",
-                    ws_url, e
-                ))
-            })?;
+            match Browser::connect_with_config(candidate, attempt_config).await {
+                Ok(pair) => {
+                    if candidate != &ws_url {
+                        info!(
+                            session_id,
+                            original_ws_url = ws_url,
+                            ws_url = candidate,
+                            browserless_api_version = %self.config.browserless_api_version,
+                            "sandboxed browser connected using fallback websocket path"
+                        );
+                    }
+                    connected = Some(pair);
+                    break;
+                },
+                Err(e) => {
+                    last_error = e.to_string();
+                    debug!(
+                        session_id,
+                        ws_url = candidate,
+                        browserless_api_version = %self.config.browserless_api_version,
+                        error = %last_error,
+                        "sandboxed browser websocket candidate failed, trying next"
+                    );
+                },
+            }
+        }
+
+        let (browser, mut handler) = connected.ok_or_else(|| {
+            Error::LaunchFailed(format!(
+                "failed to connect to containerized browser at {} (candidates: {}): {}",
+                ws_url,
+                ws_candidates.join(", "),
+                last_error
+            ))
+        })?;
 
         // Spawn handler to process browser events
         let session_id_clone = session_id.to_string();
@@ -657,7 +721,7 @@ impl Drop for BrowserPool {
 
 /// Generate a random session ID.
 fn generate_session_id() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let id: u64 = rng.random();
     format!("browser-{:016x}", id)
@@ -819,5 +883,40 @@ mod tests {
     #[test]
     fn low_memory_args_disabled_when_threshold_zero() {
         assert!(low_memory_chrome_args(512, 0).is_empty());
+    }
+
+    #[test]
+    fn websocket_candidates_v1_uses_base_url_only() {
+        let candidates = websocket_connect_candidates(
+            "ws://browser-host.local:45029/",
+            BrowserlessApiVersion::V1,
+        );
+        assert_eq!(candidates, vec![
+            "ws://browser-host.local:45029/".to_string()
+        ]);
+    }
+
+    #[test]
+    fn websocket_candidates_v2_adds_browser_paths_for_root() {
+        let candidates = websocket_connect_candidates(
+            "ws://browser-host.local:45029/",
+            BrowserlessApiVersion::V2,
+        );
+        assert_eq!(candidates, vec![
+            "ws://browser-host.local:45029/".to_string(),
+            "ws://browser-host.local:45029/chrome".to_string(),
+            "ws://browser-host.local:45029/chromium".to_string()
+        ]);
+    }
+
+    #[test]
+    fn websocket_candidates_v2_keeps_explicit_path() {
+        let candidates = websocket_connect_candidates(
+            "ws://browser-host.local:45029/chrome",
+            BrowserlessApiVersion::V2,
+        );
+        assert_eq!(candidates, vec![
+            "ws://browser-host.local:45029/chrome".to_string()
+        ]);
     }
 }

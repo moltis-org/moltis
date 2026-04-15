@@ -11,6 +11,7 @@ import { parseAgentsListPayload, sendRpc } from "../helpers.js";
 import {
 	clearActiveSession,
 	fetchSessions,
+	isArchivableSession,
 	setSessionActiveRunId,
 	setSessionReplying,
 	switchSession,
@@ -71,13 +72,16 @@ export function SessionHeader({
 	showStop = true,
 	showClear = true,
 	showDelete = true,
+	showArchive = true,
 	nameOwnLine = false,
 	showRenameButton = false,
 	actionButtonClass = "chat-session-btn",
 	onBeforeShare = null,
+	onBeforeArchive = null,
 	onBeforeDelete = null,
 } = {}) {
 	var session = sessionStore.activeSession.value;
+	var sessionDataVersion = session?.dataVersion.value || 0;
 	var currentKey = sessionStore.activeSessionKey.value;
 	var gonAgentsPayload = parseAgentsListPayload(gon.get("agents"));
 	var initialAgentOptions = Array.isArray(gonAgentsPayload?.agents) ? gonAgentsPayload.agents : [];
@@ -103,6 +107,8 @@ export function SessionHeader({
 	var isCron = currentKey.startsWith("cron:");
 	var canRename = !(isMain || isCron);
 	var canStop = !isCron && replying;
+	var canArchive = !!session && isArchivableSession(session);
+	var showArchivedSessions = sessionStore.showArchivedSessions.value;
 	var currentAgentId = session?.agent_id || defaultAgentId || "main";
 	var currentNodeId = session?.node_id || "";
 
@@ -191,7 +197,8 @@ export function SessionHeader({
 		if (typeof onBeforeDelete === "function") {
 			onBeforeDelete();
 		}
-		var msgCount = session ? session.messageCount || 0 : 0;
+		var currentSession = sessionStore.getByKey(currentKey);
+		var msgCount = currentSession ? currentSession.messageCount || 0 : 0;
 		var nextKey = nextSessionKey(currentKey);
 		var doDelete = () => {
 			sendRpc("sessions.delete", { key: currentKey }).then((res) => {
@@ -209,7 +216,7 @@ export function SessionHeader({
 				fetchSessions();
 			});
 		};
-		var isUnmodifiedFork = session && session.forkPoint != null && msgCount <= session.forkPoint;
+		var isUnmodifiedFork = currentSession && currentSession.forkPoint != null && msgCount <= currentSession.forkPoint;
 		if (msgCount > 0 && !isUnmodifiedFork) {
 			confirmDialog("Delete this session?").then((yes) => {
 				if (yes) doDelete();
@@ -217,7 +224,7 @@ export function SessionHeader({
 		} else {
 			doDelete();
 		}
-	}, [currentKey, onBeforeDelete, session]);
+	}, [currentKey, onBeforeDelete, sessionDataVersion]);
 
 	var onClear = useCallback(() => {
 		if (clearing) return;
@@ -277,6 +284,28 @@ export function SessionHeader({
 			void shareSnapshot(visibility);
 		});
 	}, [onBeforeShare, shareSnapshot]);
+
+	var onArchive = useCallback(() => {
+		if (!(session && canArchive)) return;
+		if (typeof onBeforeArchive === "function") {
+			onBeforeArchive();
+		}
+		var nextArchived = !session.archived;
+		sendRpc("sessions.patch", { key: currentKey, archived: nextArchived }).then((res) => {
+			if (!res?.ok) {
+				showToast(res?.error?.message || "Failed to update archive state", "error");
+				return;
+			}
+			if (session) {
+				session.archived = nextArchived;
+				session.dataVersion.value++;
+			}
+			if (nextArchived && !showArchivedSessions) {
+				switchSession("main");
+			}
+			fetchSessions();
+		});
+	}, [canArchive, currentKey, onBeforeArchive, session, showArchivedSessions]);
 
 	var onAgentChange = useCallback(
 		(nextAgentId) => {
@@ -452,6 +481,15 @@ export function SessionHeader({
 			}
 			${!nameOwnLine && showName && nameControl}
 			${!nameOwnLine && renameCta}
+				${
+					showArchive &&
+					canArchive &&
+					html`
+					<button class=${actionButtonClass} onClick=${onArchive} title=${session?.archived ? "Unarchive session" : "Archive session"}>
+						${session?.archived ? "Unarchive" : "Archive"}
+					</button>
+				`
+				}
 				${
 					showDelete &&
 					!isMain &&

@@ -103,7 +103,7 @@ impl ChatRuntime for GatewayChatRuntime {
         self.state.sandbox_router.as_ref()
     }
 
-    fn memory_manager(&self) -> Option<&Arc<moltis_memory::manager::MemoryManager>> {
+    fn memory_manager(&self) -> Option<&moltis_memory::runtime::DynMemoryRuntime> {
         self.state.memory_manager.as_ref()
     }
 

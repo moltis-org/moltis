@@ -31,14 +31,22 @@ serde_json            = { workspace = true }
 thiserror             = { workspace = true }
 tokio                 = { workspace = true }
 tokio-stream          = { workspace = true }
+tokio-util            = { workspace = true }
 tracing               = { workspace = true }
 uuid                  = { workspace = true }
 
 [features]
+# Enable the LLM-backed compaction modes (`structured` and `llm_replace`).
+# Default-on so users get full compaction out of the box. Disabling this
+# removes the streaming-summary path and LLM modes become a runtime config
+# error; the `deterministic` and `recency_preserving` modes remain available.
+llm-compaction     = []
 local-llm          = []
 metrics            = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 push-notifications = ["dep:chrono"]
 web-ui             = ["dep:chrono"]
+
+default = ["llm-compaction"]
 
 [dev-dependencies]
 async-stream    = { workspace = true }

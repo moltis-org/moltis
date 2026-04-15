@@ -32,6 +32,14 @@ test.describe("Projects page", () => {
 		await expect(page.locator('a.nav-link[href="/projects"]')).toHaveCount(0);
 	});
 
+	test("projects accessible from settings sidebar", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/projects");
+
+		await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/projects");

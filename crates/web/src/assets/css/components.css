@@ -1113,6 +1113,10 @@
   -webkit-mask-image: url("../icons/masks/mask-2f9b873ab7f9e17f.svg");
   mask-image: url("../icons/masks/mask-2f9b873ab7f9e17f.svg");
 }
+.settings-nav-item[data-section="projects"]::before {
+  -webkit-mask-image: url("../icons/masks/mask-9efc91f08692af1a.svg");
+  mask-image: url("../icons/masks/mask-9efc91f08692af1a.svg");
+}
 .settings-nav-item[data-section="environment"]::before,
 .settings-nav-item[data-section="terminal"]::before {
   -webkit-mask-image: url("../icons/masks/mask-2920334234a725b2.svg");
@@ -1129,6 +1133,10 @@
 .settings-nav-item[data-section="crons"]::before {
   -webkit-mask-image: url("../icons/masks/mask-47feaf85cf1fb335.svg");
   mask-image: url("../icons/masks/mask-47feaf85cf1fb335.svg");
+}
+.settings-nav-item[data-section="webhooks"]::before {
+  -webkit-mask-image: url("../icons/masks/mask-c29a75ad443b68da.svg");
+  mask-image: url("../icons/masks/mask-c29a75ad443b68da.svg");
 }
 .settings-nav-item[data-section="heartbeat"]::before {
   -webkit-mask-image: url("../icons/masks/mask-d5a45eb7a122c9aa.svg");

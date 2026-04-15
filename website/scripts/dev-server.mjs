@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { localizeNavHtml, resolvePageLang } from "./nav-i18n.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -80,7 +81,7 @@ const server = createServer(async (req, res) => {
 		let html = body.toString("utf8");
 		if (html.includes("<!--NAV-->")) {
 			const nav = await loadNav();
-			html = html.replace("<!--NAV-->", nav);
+			html = html.replace("<!--NAV-->", localizeNavHtml(nav, resolvePageLang(html)));
 		}
 		body = html;
 	}

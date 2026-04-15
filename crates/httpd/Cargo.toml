@@ -18,6 +18,7 @@ chrono-tz             = { workspace = true }
 dashmap               = { workspace = true }
 futures               = { workspace = true }
 hostname              = { workspace = true }
+ipnet                 = { workspace = true }
 moltis-agents         = { workspace = true }
 moltis-auth           = { workspace = true }
 moltis-browser        = { workspace = true }
@@ -38,6 +39,7 @@ moltis-slack          = { optional = true, workspace = true }
 moltis-tls            = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-vault          = { optional = true, workspace = true }
+moltis-webhooks       = { workspace = true }
 ngrok                 = { optional = true, workspace = true }
 rand                  = { workspace = true }
 reqwest               = { workspace = true }
@@ -47,6 +49,7 @@ serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sysinfo               = { workspace = true }
 tempfile              = { workspace = true }
+time                  = { workspace = true }
 tokio                 = { workspace = true }
 tokio-tungstenite     = { workspace = true }
 tokio-util            = { workspace = true }
@@ -64,6 +67,7 @@ default = [
   "matrix",
   "mdns",
   "metrics",
+  "nostr",
   "prometheus",
   "push-notifications",
   "slack",
@@ -83,6 +87,7 @@ matrix = ["dep:moltis-matrix", "moltis-gateway/matrix"]
 mdns = ["moltis-gateway/mdns"]
 metrics = ["dep:moltis-metrics", "moltis-gateway/metrics"]
 ngrok = ["dep:ngrok"]
+nostr = ["moltis-gateway/nostr"]
 prometheus = ["metrics", "moltis-gateway/prometheus"]
 push-notifications = ["dep:chrono", "moltis-gateway/push-notifications"]
 slack = ["dep:moltis-slack", "moltis-gateway/slack"]

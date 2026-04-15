@@ -104,9 +104,9 @@ function loadJobs() {
 }
 
 function formatSchedule(sched) {
-	if (sched.kind === "at") return `At ${new Date(sched.atMs).toLocaleString()}`;
+	if (sched.kind === "at") return `At ${new Date(sched.at_ms).toLocaleString()}`;
 	if (sched.kind === "every") {
-		var ms = sched.everyMs;
+		var ms = sched.every_ms;
 		if (ms >= 3600000) return `Every ${ms / 3600000}h`;
 		if (ms >= 60000) return `Every ${ms / 60000}m`;
 		return `Every ${ms / 1000}s`;
@@ -579,34 +579,23 @@ function RunHistoryPanel() {
   </div>`;
 }
 
-function parseScheduleFromForm(form, kind) {
+function parseScheduleFromForm(kind, signals) {
 	if (kind === "at") {
-		var ts = new Date(form.querySelector("[data-field=at]").value).getTime();
+		var ts = new Date(signals.schedAtTimestamp).getTime();
 		if (Number.isNaN(ts)) return { error: "at" };
-		return { schedule: { kind: "at", atMs: ts } };
+		return { schedule: { kind: "at", at_ms: ts } };
 	}
 	if (kind === "every") {
-		var secs = parseInt(form.querySelector("[data-field=every]").value, 10);
+		var secs = parseInt(signals.schedEverySecs, 10);
 		if (Number.isNaN(secs) || secs <= 0) return { error: "every" };
-		return { schedule: { kind: "every", everyMs: secs * 1000 } };
+		return { schedule: { kind: "every", every_ms: secs * 1000 } };
 	}
-	var expr = form.querySelector("[data-field=cron]").value.trim();
+	var expr = signals.schedCronExpr.trim();
 	if (!expr) return { error: "cron" };
 	var schedule = { kind: "cron", expr: expr };
-	var tz = form.querySelector("[data-field=tz]").value.trim();
+	var tz = signals.schedCronTz.trim();
 	if (tz) schedule.tz = tz;
 	return { schedule: schedule };
-}
-
-function schedDefault(kind, job) {
-	if (!job) return "";
-	if (kind === "at" && job.schedule.kind === "at" && job.schedule.atMs) {
-		return new Date(job.schedule.atMs).toISOString().slice(0, 16);
-	}
-	if (kind === "every" && job.schedule.kind === "every" && job.schedule.everyMs) {
-		return Math.round(job.schedule.everyMs / 1000);
-	}
-	return "";
 }
 
 function CronModal() {
@@ -627,6 +616,10 @@ function CronModal() {
 	var deliverToChannel = useSignal(false);
 	var deliverChannel = useSignal("");
 	var deliverTo = useSignal("");
+	var schedCronExpr = useSignal("");
+	var schedCronTz = useSignal("");
+	var schedEverySecs = useSignal("");
+	var schedAtTimestamp = useSignal("");
 
 	// Sync signal values when the edited job changes (useSignal only
 	// uses the initial value on first mount, so we must update manually).
@@ -648,6 +641,10 @@ function CronModal() {
 			deliverToChannel.value = j.payload?.deliver === true;
 			deliverChannel.value = j.payload?.channel || "";
 			deliverTo.value = j.payload?.to || "";
+			schedCronExpr.value = j.schedule.kind === "cron" ? j.schedule.expr || "" : "";
+			schedCronTz.value = j.schedule.kind === "cron" ? j.schedule.tz || "" : "";
+			schedEverySecs.value = j.schedule.kind === "every" ? Math.round(j.schedule.every_ms / 1000) : "";
+			schedAtTimestamp.value = j.schedule.kind === "at" ? new Date(j.schedule.at_ms).toISOString().slice(0, 16) : "";
 		} else {
 			saving.value = false;
 			errorField.value = null;
@@ -664,6 +661,10 @@ function CronModal() {
 			deliverToChannel.value = false;
 			deliverChannel.value = "";
 			deliverTo.value = "";
+			schedCronExpr.value = "";
+			schedCronTz.value = "";
+			schedEverySecs.value = "";
+			schedAtTimestamp.value = "";
 		}
 	}, [editingJob.value]);
 
@@ -690,13 +691,17 @@ function CronModal() {
 
 	function onSave(e) {
 		e.preventDefault();
-		var form = e.target.closest(".provider-key-form");
 		var name = jobName.value.trim();
 		if (!name) {
 			errorField.value = "name";
 			return;
 		}
-		var parsed = parseScheduleFromForm(form, schedKind.value);
+		var parsed = parseScheduleFromForm(schedKind.value, {
+			schedCronExpr: schedCronExpr.value,
+			schedCronTz: schedCronTz.value,
+			schedEverySecs: schedEverySecs.value,
+			schedAtTimestamp: schedAtTimestamp.value,
+		});
 		if (parsed.error) {
 			errorField.value = parsed.error;
 			return;
@@ -744,24 +749,38 @@ function CronModal() {
 				editingJob.value = null;
 				loadJobs();
 				loadStatus();
+			} else {
+				console.error("cron save failed:", rpcMethod, JSON.stringify(res));
 			}
 		});
 	}
 
 	function schedParams() {
 		if (schedKind.value === "at") {
-			return html`<input data-field="at" class="provider-key-input" type="datetime-local"
-        value=${schedDefault("at", job)} />`;
+			return html`<input data-field="at" class="provider-key-input ${errorField.value === "at" ? "field-error" : ""}" type="datetime-local"
+        value=${schedAtTimestamp.value}
+        onInput=${(e) => {
+					schedAtTimestamp.value = e.target.value;
+				}} />`;
 		}
 		if (schedKind.value === "every") {
-			return html`<input data-field="every" class="provider-key-input" type="number" placeholder="Interval in seconds" min="1"
-        value=${schedDefault("every", job)} />`;
+			return html`<input data-field="every" class="provider-key-input ${errorField.value === "every" ? "field-error" : ""}" type="number" placeholder="Interval in seconds" min="1"
+        value=${schedEverySecs.value}
+        onInput=${(e) => {
+					schedEverySecs.value = e.target.value;
+				}} />`;
 		}
 		return html`
-      <input data-field="cron" class="provider-key-input" placeholder="*/5 * * * *"
-        value=${isEdit && job.schedule.kind === "cron" ? job.schedule.expr || "" : ""} />
+      <input data-field="cron" class="provider-key-input ${errorField.value === "cron" ? "field-error" : ""}" placeholder="*/5 * * * *"
+        value=${schedCronExpr.value}
+        onInput=${(e) => {
+					schedCronExpr.value = e.target.value;
+				}} />
       <input data-field="tz" class="provider-key-input" placeholder="Timezone (optional, e.g. Europe/Paris)"
-        value=${isEdit && job.schedule.kind === "cron" ? job.schedule.tz || "" : ""} />
+        value=${schedCronTz.value}
+        onInput=${(e) => {
+					schedCronTz.value = e.target.value;
+				}} />
       <p class="text-xs text-[var(--muted)] mt-1">${cronTimezoneHelpText()}</p>
     `;
 	}

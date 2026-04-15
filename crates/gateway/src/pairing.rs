@@ -734,7 +734,7 @@ impl PairingState {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 fn generate_token() -> String {
-    use {base64::Engine, rand::RngCore};
+    use {base64::Engine, rand::Rng};
 
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);

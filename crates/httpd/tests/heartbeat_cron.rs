@@ -398,6 +398,7 @@ async fn heartbeat_update_updates_existing_job() {
         sandbox: moltis_cron::types::CronSandboxConfig {
             enabled: false,
             image: None,
+            auto_prune_container: None,
         },
         wake_mode: moltis_cron::types::CronWakeMode::NextHeartbeat,
     };

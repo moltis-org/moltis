@@ -8,7 +8,45 @@
 //! crate can later retrieve the URL via [`upstream_proxy_url`] without
 //! needing it threaded through every constructor.
 
+use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
+
+const FALLBACK_USER_AGENT: &str = "Moltis/unknown";
+
 static UPSTREAM_PROXY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Default User-Agent header value for outgoing HTTP requests.
+///
+/// Returns `"Moltis/<version>"` where `<version>` is sourced from
+/// `MOLTIS_VERSION` (when injected at compile time by CI) and otherwise
+/// falls back to `CARGO_PKG_VERSION` for local development builds.
+pub fn default_user_agent() -> String {
+    let version = option_env!("MOLTIS_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    format!("Moltis/{version}")
+}
+
+/// Build the default header map applied to all requests.
+///
+/// Returns a [`HeaderMap`] containing the default [`USER_AGENT`].
+/// These headers have lower priority than per-request headers —
+/// reqwest only inserts them when the per-request headers do not
+/// already contain the same key.
+pub fn build_default_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    match HeaderValue::from_str(&default_user_agent()) {
+        Ok(ua) => {
+            headers.insert(USER_AGENT, ua);
+        },
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                fallback = FALLBACK_USER_AGENT,
+                "failed to build default User-Agent header; using fallback"
+            );
+            headers.insert(USER_AGENT, HeaderValue::from_static(FALLBACK_USER_AGENT));
+        },
+    }
+    headers
+}
 
 /// Store the user-configured upstream proxy URL (call once at startup).
 pub fn set_upstream_proxy(url: &str) {
@@ -29,6 +67,10 @@ pub fn upstream_proxy_url() -> Option<&'static str> {
 /// Supports `http://`, `https://`, `socks5://`, and `socks5h://` schemes.
 pub fn build_http_client(proxy_url: Option<&str>) -> reqwest::Client {
     let mut builder = reqwest::Client::builder();
+    // Set default User-Agent header. Per-request overrides (e.g., GitHub
+    // Copilot's spoofed VS Code UA) will take precedence because
+    // `default_headers` has lower priority than headers set on individual requests.
+    builder = builder.default_headers(build_default_headers());
     if let Some(url) = proxy_url {
         match reqwest::Proxy::all(url) {
             Ok(proxy) => {
@@ -44,7 +86,22 @@ pub fn build_http_client(proxy_url: Option<&str>) -> reqwest::Client {
             },
         }
     }
-    builder.build().unwrap_or_else(|_| reqwest::Client::new())
+    builder.build().unwrap_or_else(|e| {
+        tracing::warn!(
+            error = %e,
+            "reqwest ClientBuilder::build() failed; retrying with default headers only"
+        );
+        reqwest::Client::builder()
+            .default_headers(build_default_headers())
+            .build()
+            .unwrap_or_else(|e2| {
+                tracing::error!(
+                    error = %e2,
+                    "all ClientBuilder attempts failed; using bare Client::new() without custom User-Agent"
+                );
+                reqwest::Client::new()
+            })
+    })
 }
 
 /// Build a [`reqwest::Client`] using the globally configured upstream proxy.
@@ -59,6 +116,9 @@ pub fn build_default_http_client() -> reqwest::Client {
 /// Useful when callers need additional builder options (timeout, redirect
 /// policy, etc.) but still want the global proxy applied.
 pub fn apply_proxy(mut builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    // Keep header behavior consistent with `build_http_client`.
+    builder = builder.default_headers(build_default_headers());
+
     if let Some(url) = upstream_proxy_url()
         && let Ok(proxy) = reqwest::Proxy::all(url)
     {
@@ -168,6 +228,39 @@ mod tests {
         assert_eq!(
             redact_proxy_url("http://user:p@ss@proxy:8080"),
             "http://***@proxy:8080"
+        );
+    }
+
+    #[test]
+    fn default_user_agent_format() {
+        let ua = default_user_agent();
+        assert!(
+            ua.starts_with("Moltis/"),
+            "User-Agent should start with 'Moltis/', got: {ua}"
+        );
+        assert!(
+            ua.len() > "Moltis/".len(),
+            "User-Agent should include a version number, got: {ua}"
+        );
+    }
+
+    #[test]
+    fn build_default_headers_contains_user_agent() {
+        let headers = build_default_headers();
+        let ua = headers
+            .get(USER_AGENT)
+            .unwrap_or_else(|| panic!("default headers should include User-Agent"));
+        let ua_str = ua.to_str().unwrap_or("<non-utf-8>");
+        assert_eq!(ua_str, default_user_agent());
+    }
+
+    #[test]
+    fn build_default_headers_only_contains_user_agent() {
+        let headers = build_default_headers();
+        assert_eq!(
+            headers.len(),
+            1,
+            "default headers should contain exactly one header (User-Agent)"
         );
     }
 }

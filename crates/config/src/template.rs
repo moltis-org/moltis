@@ -25,6 +25,11 @@ bind = "127.0.0.1"                # Address to bind to ("0.0.0.0" for all interf
 port = {port}                           # Port number (auto-generated for this installation)
 http_request_logs = false              # Enable verbose Axum HTTP request/response logs (debugging)
 ws_request_logs = false                # Enable WebSocket RPC request/response logs (debugging)
+terminal_enabled = true                   # Enable interactive host terminal in Settings > Terminal
+                                          # Set to false to disable the unsandboxed shell in the web UI.
+                                          # NOTE: this can be re-enabled via the web UI config editor.
+                                          # For hard lockdown, set MOLTIS_TERMINAL_DISABLED=1 (env var
+                                          # takes precedence and cannot be changed from the web UI).
 update_releases_url = "https://www.moltis.org/releases.json"    # Releases manifest URL for update checks (override to use a custom URL)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -100,14 +105,16 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   fetch_models - Discover models from provider API when available (default: true)
 #   stream_transport - Streaming transport: "sse", "websocket", or "auto" (default: "sse")
 #   alias     - Custom name for metrics labels (useful for multiple instances)
+#   strict_tools - Force strict/non-strict tool schemas (default: auto-detect per provider)
+#   policy    - Per-provider tool policy override (allow/deny lists)
 
 [providers]
-offered = ["local-llm", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
+offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # show_legacy_models = true  # Show models older than 1 year in the chat model selector (they always appear in Settings)
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "fireworks", "mistral", "openrouter", "cerebras", "minimax",
-#   "moonshot", "zai", "zai-code", "venice", "ollama", "local-llm", "openai-codex",
+#   "moonshot", "zai", "zai-code", "venice", "ollama", "lmstudio", "local-llm", "openai-codex",
 #   "github-copilot", "kimi-code"
 
 # ── Anthropic (Claude) ────────────────────────────────────────
@@ -119,6 +126,8 @@ offered = ["local-llm", "github-copilot", "openai-codex", "openai", "anthropic",
 # base_url = "https://api.anthropic.com"     # API endpoint
 # alias = "anthropic"                         # Custom name for metrics
 # cache_retention = "short"                    # Prompt caching: "none" | "short" | "long"
+# policy.deny = ["exec"]                       # Deny specific tools when using this provider
+# policy.allow = []                            # Restrict to only these tools (empty = all allowed)
 
 # ── OpenAI ────────────────────────────────────────────────────
 [providers.openai]
@@ -201,16 +210,92 @@ message_queue_mode = "followup"   # Default: process queued messages one-by-one 
                                   # How to handle messages during an active agent run:
                                   #   "followup" - Queue messages, replay one-by-one after run
                                   #   "collect"  - Buffer messages, concatenate as single message
+# prompt_memory_mode = "live-reload"  # How MEMORY.md reaches the prompt:
+                                      #   "live-reload"            - Re-read MEMORY.md before each turn
+                                      #   "frozen-at-session-start" - Freeze the first MEMORY.md snapshot per session
+# workspace_file_max_chars = 32000  # Optional: per-file prompt cap for AGENTS.md / TOOLS.md before truncation.
 # priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors
 # allowed_models = ["gpt 5.2"]  # Legacy field (currently ignored).
 
+# ── Compaction ─────────────────────────────────────────────────────────────
+# Strategy used to shrink a session when its context window fills up, or when
+# a user invokes `/compact`. Four modes are available — pick the one that
+# matches your cost/fidelity trade-off. See docs/src/compaction.md for a full
+# comparison table and picking guide.
+#
+# Modes:
+#   "deterministic"        (default) Zero LLM calls. Replaces the entire
+#                          history with a single extracted summary message
+#                          (counts, tool names, file paths, recent user
+#                          requests, head+tail timeline). Fast, free, offline,
+#                          low fidelity. Best for short chat channels and
+#                          cost-sensitive deployments.
+#
+#   "recency_preserving"   Zero LLM calls. Keeps head (system prompt +
+#                          first exchange) and recent tail verbatim (sized
+#                          by token budget). Collapses the middle into a
+#                          short marker message and replaces any bulky
+#                          tool-result content in the retained slice with a
+#                          placeholder. Repairs orphaned tool_use /
+#                          tool_result pairs so strict providers accept the
+#                          retry. Mid fidelity, free.
+#
+#   "structured"           Head + LLM structured summary + tail. Same
+#                          boundary logic as recency_preserving, but the
+#                          middle is summarised with a single LLM call
+#                          using a Goal / Progress / Decisions / Files /
+#                          Next Steps template (same convention as
+#                          hermes-agent and openclaw safeguard). Iterative
+#                          re-compaction preserves prior summary sections.
+#                          Highest fidelity, costs a summary LLM call per
+#                          compaction. Falls back to recency_preserving on
+#                          LLM failure or empty summary.
+#
+#   "llm_replace"          Replaces the entire history with a single
+#                          LLM-generated summary. Pre-PR-#653 behaviour.
+#                          Best for maximum token reduction when the session
+#                          provider is cheap and the tail isn't worth
+#                          preserving.
+#
+[chat.compaction]
+mode = "deterministic"              # "deterministic" | "recency_preserving" | "structured" | "llm_replace"
+# threshold_percent = 0.95          # Fires auto-compaction when the next request is estimated to exceed
+                                    # this fraction of the model context window. Also multiplied into
+                                    # the verbatim tail budget for recency_preserving / structured modes.
+                                    # Default matches the pre-PR-#653 hardcoded trigger so upgrades are
+                                    # behaviour-neutral. Range: 0.10–0.95. Lower = more aggressive compaction.
+# protect_head = 3                  # Number of leading messages kept verbatim by recency/structured modes.
+# protect_tail_min = 20             # Floor for tail messages kept verbatim (recency/structured modes).
+# tail_budget_ratio = 0.20          # Size of the verbatim tail as a fraction of threshold_percent × context_window.
+                                    # Example (defaults): 200K context × 0.95 × 0.20 = 38K tokens of tail preserved.
+# tool_prune_char_threshold = 200   # Tool-result content longer than this is replaced with a placeholder
+                                    # when recency/structured modes prune the middle region.
+# summary_model = "openrouter/google/gemini-2.5-flash"  # RESERVED — auxiliary-model subsystem not yet wired
+                                                         # (tracked by beads issue moltis-8me). Setting this
+                                                         # today emits a one-shot runtime WARN and has no
+                                                         # effect on the structured / llm_replace strategies,
+                                                         # which still use the session's primary provider.
+# max_summary_tokens = 4096         # RESERVED — see summary_model above. Default is 4096 but the value
+                                    # is not yet applied to the streaming summary call.
+# show_settings_hint = true         # Append "Change chat.compaction.mode in moltis.toml…" to every
+                                    # compaction notice (web UI card + channel messages). Default: true.
+                                    # Set to false once you know the setting exists to hide the repetitive
+                                    # footer without losing the mode + token metadata.
+
 # ══════════════════════════════════════════════════════════════════════════════
-# SPAWN PRESETS (OPTIONAL)
+# SUB-AGENT SPAWN PRESETS (OPTIONAL)
 # ══════════════════════════════════════════════════════════════════════════════
-# Configure reusable presets for the `spawn_agent` tool.
+# Configure reusable presets for sub-agents spawned via the `spawn_agent` tool.
+#
+# ⚠️  SCOPE: `[agents.presets.*]` applies ONLY to sub-agents spawned via the
+# `spawn_agent` tool. The `tools.allow` / `tools.deny` fields under a preset
+# do NOT filter tools for the main agent session. To allow/deny tools for the
+# main session, use the `[tools.policy]` section further down this file.
+# `[agents] default_preset` likewise only selects the sub-agent preset used
+# when `spawn_agent.preset` is omitted — it does not apply to the main session.
 #
 # [agents]
-# default_preset = "research"      # Optional: used when spawn_agent.preset is omitted
+# default_preset = "research"      # Sub-agent preset used when spawn_agent.preset is omitted
 #
 # [agents.presets.research]
 # model = "openai/gpt-5.2"
@@ -226,8 +311,12 @@ message_queue_mode = "followup"   # Default: process queued messages one-by-one 
 [tools]
 agent_timeout_secs = 600          # Max seconds for an agent run (0 = no timeout)
 agent_max_iterations = 25         # Max LLM/tool loop iterations before stopping
+agent_max_auto_continues = 2      # Auto-continue nudges when model stops mid-task (0 = off)
+agent_auto_continue_min_tool_calls = 3  # Min tool calls before auto-continue can trigger
 max_tool_result_bytes = 50000     # Max bytes per tool result before truncation (50KB)
 # registry_mode = "full"          # "full" = all schemas every turn, "lazy" = tool_search discovery
+agent_loop_detector_window = 3    # Fire intervention after N identical failing tool calls in a row (0 = disable)
+agent_loop_detector_strip_tools_on_second_fire = true  # On second consecutive fire, strip tool schemas for one turn to force a text response
 
 # ── Maps ─────────────────────────────────────────────────────────────────────
 
@@ -237,6 +326,61 @@ provider = "google_maps"          # Map provider used by show_map:
                                   #   "apple_maps"
                                   #   "openstreetmap"
 
+# ── Native filesystem tools (Read/Write/Edit/MultiEdit/Glob/Grep) ─────────────
+# All fields are optional. Defaults are conservative — the fs tools work
+# out of the box with no configuration.
+
+[tools.fs]
+# workspace_root = "/home/user/projects/my-app"
+                                  # Absolute path used as the default search root
+                                  # for Glob/Grep when the LLM call omits `path`.
+                                  # Unset → calls without an explicit `path` are
+                                  # rejected with a clear error.
+allow_paths = []                  # Absolute path globs the fs tools are allowed
+                                  # to access. Empty = no allowlist (all paths OK).
+                                  # Evaluated after canonicalization so symlinks
+                                  # can't escape the list.
+                                  # Example: ["/data/home/*", "/srv/workspace/**"]
+deny_paths = []                   # Absolute path globs the fs tools must refuse.
+                                  # Deny wins over allow. Also evaluated after
+                                  # canonicalization. Example:
+                                  #   ["/data/secrets/**", "**/.env*", "/etc/**"]
+track_reads = false               # Record per-session Read history for loop
+                                  # detection and the must_read_before_write
+                                  # invariant. Cheap in-memory map keyed by
+                                  # session_key.
+must_read_before_write = false    # Refuse Write/Edit/MultiEdit calls targeting
+                                  # files the session has not previously Read.
+                                  # Requires track_reads = true. Returns a typed
+                                  # must_read_before_write payload the LLM can
+                                  # branch on.
+require_approval = true           # When true, Write/Edit/MultiEdit pause for
+                                  # explicit operator approval before mutating.
+                                  # Uses the existing approval queue and will
+                                  # time out if nobody approves the request.
+max_read_bytes = 10485760         # Maximum bytes a single Read can return before
+                                  # the file is rejected with a typed "too_large"
+                                  # payload (10 MB).
+binary_policy = "reject"          # How to handle binary files in Read:
+                                  #   "reject" — return typed binary marker (default)
+                                  #   "base64" — return base64-encoded bytes in the
+                                  #              payload (still capped by max_read_bytes)
+respect_gitignore = true          # When true (default), Glob and Grep skip files
+                                  # ignored by .gitignore / .ignore / .git/info/exclude
+                                  # while walking. Set false to include ignored files.
+checkpoint_before_mutation = false  # When true, Write/Edit/MultiEdit call the
+                                  # existing CheckpointManager to snapshot the target
+                                  # file before mutating, so the LLM (or operator) can
+                                  # restore it later via `checkpoint_restore`. Default
+                                  # off because checkpoints grow with activity and
+                                  # size scales with file size.
+# context_window_tokens = 200000    # Model context window in tokens. When set, Read's
+                                  # per-call byte cap scales adaptively so a single
+                                  # Read uses at most ~20% of the model's working set
+                                  # (clamped to [50 KB, 512 KB]). Unset → fixed 256 KB.
+                                  # Typical values: 200000 for Claude Sonnet, 1000000
+                                  # for Claude Opus 4.6 1M, 128000 for GPT-4 Turbo.
+
 # ── Command Execution ─────────────────────────────────────────────────────────
 
 [tools.exec]
@@ -245,12 +389,15 @@ max_output_bytes = 204800         # Max command output bytes (200KB)
 approval_mode = "on-miss"         # When to require approval:
                                   #   "always"  - Always ask before running
                                   #   "on-miss" - Ask if not in allowlist
-                                  #   "never"   - Never ask (dangerous)
+                                  #   "never"   - Never ask (for headless deployments)
 security_level = "allowlist"      # Security mode:
                                   #   "permissive" - Allow most commands
                                   #   "allowlist"  - Only allow listed commands
                                   #   "strict"     - Very restrictive
-allowlist = []                    # Command patterns to allow (when security_level = "allowlist")
+allowlist = []                    # Command patterns to allow (when security_level = "allowlist").
+                                  # With approval_mode = "never", a non-empty allowlist is enforced:
+                                  # commands that don't match are denied (safe bins still allowed).
+                                  # An empty allowlist in "never" mode is unrestricted.
                                   # Example: ["git *", "npm *", "cargo *"]
 host = "local"                    # Where to run commands:
                                   #   "local" - Run on this machine (default)
@@ -272,7 +419,7 @@ scope = "session"                 # Container lifecycle:
                                   #   "session" - Container per session (recommended)
                                   #   "global"  - Single shared container
 workspace_mount = "ro"            # How to mount workspace in sandbox:
-                                  #   "ro"   - Read-only (safe)
+                                  #   "ro"   - Read-only (safe; sandbox commands can read mounted files but cannot modify them)
                                   #   "rw"   - Read-write (can modify files)
                                   #   "none" - No mount
 # host_data_dir = "/host/path/data"  # Optional override if auto-detection cannot resolve the host-visible data dir
@@ -381,8 +528,25 @@ packages = [
 # cpu_quota = 0.5                 # CPU quota as fraction (0.5 = half a core, 2.0 = two cores)
 # pids_max = 100                  # Maximum number of processes
 
+# Tool policy overrides applied when commands run inside the sandbox (layer 6).
+# These narrow the effective policy for sandboxed execution only.
+# [tools.exec.sandbox.tools_policy]
+# allow = ["exec"]                # Only allow exec tool inside sandbox
+# deny = ["browser"]              # Deny browser tool inside sandbox
+
 # ── Tool Policy ───────────────────────────────────────────────────────────────
-# Control which tools agents can use.
+# Control which tools the agent can use. Policies are layered (later wins for
+# allow, deny always accumulates across layers):
+#
+#   1. Global        — this section ([tools.policy])
+#   2. Per-provider  — [providers.<name>.policy]
+#   3. Per-agent     — [agents.presets.<id>.tools]
+#   4. Per-channel   — [channels.<type>.<account>.tools.groups.<chat_type>]
+#   5. Per-sender    — [...groups.<chat_type>.by_sender.<sender_id>]
+#   6. Sandbox       — [tools.exec.sandbox.tools_policy] (only when sandboxed)
+#
+# This is the base policy for all sessions. Provider and channel layers
+# narrow it further based on runtime context.
 
 [tools.policy]
 allow = []                        # Tools to always allow (e.g., ["exec", "web_fetch"])
@@ -448,6 +612,7 @@ navigation_timeout_ms = 30000     # Page load timeout in milliseconds (30 sec)
 sandbox = false                   # Run browser in Docker/Apple Container for isolation
 # container_host = "127.0.0.1"   # Host/IP to reach browser container (default: localhost)
                                   # Set to "host.docker.internal" when Moltis runs inside Docker
+# browserless_api_version = "v1" # Browserless compatibility mode: "v1" (default) or "v2"
 # chrome_path = "/path/to/chrome" # Custom Chrome/Chromium binary path (auto-detected)
 # user_agent = "Custom UA"        # Custom user agent string
 # chrome_args = []                # Extra Chrome command-line arguments
@@ -536,6 +701,17 @@ prometheus_endpoint = true        # Expose /metrics endpoint for Prometheus scra
                                   # Additional labels to add to all metrics
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CRON
+# ══════════════════════════════════════════════════════════════════════════════
+# Settings for the cron scheduler.
+
+# [cron]
+# rate_limit_max = 10                # Max jobs created per rate limit window
+# rate_limit_window_secs = 60        # Rate limit window in seconds
+# session_retention_days = 7         # Auto-clean cron sessions older than N days (0 or omit to disable)
+# auto_prune_cron_containers = true  # Auto-remove sandbox containers after cron job completion
+
+# ══════════════════════════════════════════════════════════════════════════════
 # HEARTBEAT
 # ══════════════════════════════════════════════════════════════════════════════
 # Periodic health-check agent turns to keep the agent "alive" and responsive.
@@ -592,8 +768,13 @@ providers = ["whisper", "mistral", "elevenlabs"] # UI allowlist (empty = show al
 
 # No api_key needed for OpenAI TTS/Whisper when OpenAI is configured as an LLM provider.
 # [voice.tts.openai]
+# base_url = "https://api.openai.com/v1"     # API endpoint (change for Chatterbox, etc.)
 # voice = "alloy"                 # alloy, echo, fable, onyx, nova, shimmer
 # model = "tts-1"                 # tts-1 or tts-1-hd
+
+# [voice.stt.whisper]
+# model = "whisper-1"             # default; override when using an OpenAI-compatible proxy
+# language = "en"                 # Optional ISO 639-1 hint; omit for auto-detect
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NGROK
@@ -624,16 +805,42 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # Configure the embedding provider for memory/RAG features.
 
 [memory]
-# provider = "local"              # Embedding provider:
+# style = "hybrid"               # High-level memory behavior (default = "hybrid"):
+                                  #   "hybrid"      - Prompt MEMORY.md + memory_search/memory_get/memory_save
+                                  #   "prompt-only" - Prompt MEMORY.md only, no memory tools
+                                  #   "search-only" - Memory tools only, no prompt MEMORY.md injection
+                                  #   "off"         - Disable prompt memory injection and memory tools
+#                                  # Prompt freshness is configured separately in [chat].prompt_memory_mode
+# agent_write_mode = "hybrid"    # Where agent-authored memory writes can land (default = "hybrid"):
+                                  #   "hybrid"      - Allow MEMORY.md and memory/<name>.md
+                                  #   "prompt-only" - Allow MEMORY.md only
+                                  #   "search-only" - Allow memory/<name>.md only
+                                  #   "off"         - Disable agent-authored memory writes
+# user_profile_write_mode = "explicit-and-auto"  # How Moltis writes USER.md (default = "explicit-and-auto"):
+                                  #   "explicit-and-auto" - Settings saves plus silent timezone/location capture
+                                  #   "explicit-only"     - Settings saves only, no silent timezone/location capture
+                                  #   "off"               - Do not write USER.md, keep profile in moltis.toml only
+# backend = "builtin"            # Memory backend (default = "builtin"):
+                                  #   "builtin" - Built-in SQLite indexer and retriever
+                                  #   "qmd"     - External QMD CLI backend
+# provider = "auto"               # Embedding provider for the built-in backend (default = auto-detect):
                                   #   "local"   - Built-in local embeddings
                                   #   "ollama"  - Ollama server
                                   #   "openai"  - OpenAI API
                                   #   "custom"  - Custom endpoint
                                   #   (none)    - Auto-detect from available providers
-# disable_rag = false             # true => keyword-only search (no embeddings)
-# base_url = "http://localhost:11434/v1"  # Embedding API base (host, /v1, or /embeddings)
-# model = "nomic-embed-text"      # Embedding model name
-# api_key = "..."                 # API key (optional for local endpoints like Ollama)
+                                  # Ignored while backend = "qmd"
+# disable_rag = false             # true => keyword-only search, disables embedding retrieval
+# citations = "auto"              # Citation mode (default = "auto"): "on", "off", or "auto"
+# llm_reranking = false           # Use the LLM to rerank search results (only meaningful when RAG is enabled)
+# search_merge_strategy = "rrf"   # Merge strategy (default = "rrf"): "rrf" or "linear"
+# session_export = "on-new-or-reset"  # Session transcript export policy (default = "on-new-or-reset"):
+                                  #   "on-new-or-reset" - Export transcripts on /new and /reset
+                                  #   "off"             - Disable session transcript export
+#                                  # Exported transcripts become searchable memory, not prompt memory
+# base_url = "http://localhost:11434/v1"  # Builtin backend only: embedding API base (host, /v1, or /embeddings)
+# model = "nomic-embed-text"      # Builtin backend only: embedding model name
+# api_key = "..."                 # Builtin backend only: API key (optional for local endpoints like Ollama)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # EXTERNAL AGENTS
@@ -672,18 +879,23 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 
 [channels]
 # Which channel types appear in the web UI's "+ Add Channel" menu.
-# Default: ["telegram", "discord", "slack"]
-# Add "matrix", "whatsapp", or "msteams" to enable them in the UI.
-# offered = ["telegram", "discord", "slack", "matrix", "whatsapp"]
+# Default: ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr"]
+# offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr"]
 
 # WhatsApp linked-device accounts
 # [channels.whatsapp.my-bot]
 # dm_policy = "open"              # "open", "allowlist", or "disabled"
 # group_policy = "disabled"       # "open", "allowlist", or "disabled"
+# mention_mode = "always"         # "always", "mention", or "none"
 # model = "anthropic/claude-sonnet-4-20250514"
 # model_provider = "anthropic"
+# agent_id = "support"            # Default agent for this account
 # otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
 # otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
+# [channels.whatsapp.my-bot.channel_overrides."120363456789@g.us"]
+# agent_id = "triage"
+# [channels.whatsapp.my-bot.user_overrides."15551234567@s.whatsapp.net"]
+# agent_id = "research"
 
 # Telegram bots
 # [channels.telegram.my-bot]
@@ -694,17 +906,44 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # allowlist = []                  # Telegram user IDs or usernames (strings)
 # group_allowlist = []            # Telegram group/chat IDs (strings)
 # reply_to_message = false        # Send responses as Telegram replies
+# agent_id = "research"           # Default agent for this bot
 # otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
 # otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
 # stream_mode = "edit_in_place"   # "edit_in_place" or "off"
 # edit_throttle_ms = 300          # Min ms between streaming edits
+# [channels.telegram.my-bot.channel_overrides."-1001234567890"]
+# agent_id = "triage"
+# [channels.telegram.my-bot.user_overrides."123456789"]
+# agent_id = "research"
+#
+# Per-channel tool policy (restrict tools by chat type and sender):
+# [channels.telegram.my-bot.tools.groups.group]
+# deny = ["exec", "browser"]      # Deny dangerous tools in group chats
+# [channels.telegram.my-bot.tools.groups.group.by_sender."123456"]
+# allow = ["*"]                    # Override: trusted sender gets all tools
+# [channels.telegram.my-bot.tools.groups.private]
+# allow = []                       # DMs: allow all tools (default)
 
 # Microsoft Teams bots
 # [channels.msteams.my-bot]
 # app_id = "..."                  # Azure Bot App ID
 # app_password = "..."            # Azure Bot App Password (client secret)
+# tenant_id = "botframework.com"  # Azure AD tenant ID (for JWT validation)
 # webhook_secret = "..."          # Optional query secret for webhook URL (?secret=...)
 # allowlist = []                  # User IDs allowed to DM (empty = all unless dm_policy=allowlist)
+# dm_policy = "allowlist"         # "open", "allowlist", or "disabled"
+# group_policy = "open"           # "open", "allowlist", or "disabled"
+# mention_mode = "mention"        # "mention", "always", or "none"
+# stream_mode = "edit_in_place"   # "edit_in_place" or "off"
+# edit_throttle_ms = 1500         # Min ms between streaming edits
+# text_chunk_limit = 4000         # Max chars per message chunk
+# reply_style = "top_level"       # "top_level" or "thread"
+# welcome_card = true             # Show welcome card in DMs
+# group_welcome_card = false      # Show welcome text in group chats
+# bot_name = "Moltis"             # Bot display name for welcome cards
+# prompt_starters = []            # Prompt starter buttons on welcome card
+# max_retries = 3                 # Max retry attempts for failed sends
+# history_limit = 50              # Max messages for thread context (Graph API)
 
 # Discord bots
 # [channels.discord.my-bot]
@@ -714,6 +953,7 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # mention_mode = "mention"        # "mention", "always", or "none"
 # allowlist = []                  # Discord user IDs allowed to DM
 # guild_allowlist = []            # Discord guild/server IDs (empty = all)
+# agent_id = "research"           # Default agent for this bot
 # reply_to_message = false        # Send responses as Discord replies
 # ack_reaction = "👀"             # Emoji reaction while processing (omit to disable)
 # activity = "with AI"            # Bot activity status text
@@ -767,6 +1007,20 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # ack_reaction = "👀"             # Emoji reaction while processing (omit to disable)
 # otp_self_approval = true        # OTP self-approval for non-allowlisted DM users
 # otp_cooldown_secs = 300         # Cooldown after 3 failed OTP attempts
+
+# Nostr DM bots (NIP-04 encrypted direct messages)
+# [channels.nostr.my-bot]
+# secret_key = "nsec1..."          # Secret key (nsec1 bech32 or 64-char hex)
+# relays = ["wss://relay.damus.io", "wss://relay.nostr.band", "wss://nos.lol"]
+# dm_policy = "allowlist"          # "open", "allowlist", or "disabled"
+# allowed_pubkeys = []             # Allowed sender public keys (npub1 or hex)
+# model = "anthropic/claude-sonnet-4-20250514"
+# model_provider = "anthropic"
+# otp_self_approval = true         # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300          # Cooldown after 3 failed OTP attempts
+# [channels.nostr.my-bot.profile]  # NIP-01 profile metadata (optional)
+# name = "Moltis Bot"
+# about = "AI assistant on Nostr"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS

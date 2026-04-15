@@ -95,6 +95,7 @@ struct ChannelSettingsPatch {
     mention_mode: Option<MentionMode>,
     model: Option<Option<String>>,
     model_provider: Option<Option<String>>,
+    agent_id: Option<Option<String>>,
     otp_self_approval: Option<bool>,
     otp_cooldown_secs: Option<u64>,
     reply_to_message: Option<bool>,
@@ -115,6 +116,8 @@ struct ModelOverridePatch {
     model: Option<Option<String>>,
     #[serde(default)]
     model_provider: Option<Option<String>>,
+    #[serde(default)]
+    agent_id: Option<Option<String>>,
     #[serde(default)]
     clear: bool,
 }
@@ -165,7 +168,7 @@ impl AgentTool for UpdateChannelSettingsTool {
     }
 
     fn description(&self) -> &str {
-        "Safely update non-secret settings for a configured channel account after the user explicitly asks for a channel config change. Supports access policies, allowlists, default model routing, and selected per-channel overrides. Do not use this for tokens, secrets, or arbitrary config edits."
+        "Safely update non-secret settings for a configured channel account after the user explicitly asks for a channel config change. Supports access policies, allowlists, default model and agent routing, and selected per-channel overrides. Do not use this for tokens, secrets, or arbitrary config edits."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -197,7 +200,7 @@ impl AgentTool for UpdateChannelSettingsTool {
                         "mention_mode": {
                             "type": "string",
                             "enum": ["mention", "always", "none"],
-                            "description": "Supported by Telegram, Discord, Slack, and Microsoft Teams."
+                            "description": "Supported by Telegram, Discord, Slack, Microsoft Teams, and WhatsApp."
                         },
                         "model": {
                             "type": ["string", "null"],
@@ -206,6 +209,10 @@ impl AgentTool for UpdateChannelSettingsTool {
                         "model_provider": {
                             "type": ["string", "null"],
                             "description": "Set the provider name paired with `model`, or null to clear it."
+                        },
+                        "agent_id": {
+                            "type": ["string", "null"],
+                            "description": "Set the default agent id for this account, or null to clear it."
                         },
                         "allowlist_add": {
                             "type": "array",
@@ -251,23 +258,25 @@ impl AgentTool for UpdateChannelSettingsTool {
                         },
                         "channel_override": {
                             "type": "object",
-                            "description": "Set or clear a model override for a specific Telegram/Discord/Slack channel id.",
+                            "description": "Set or clear model, provider, or agent overrides for a specific Telegram/Discord/Slack/WhatsApp channel or chat id.",
                             "required": ["target_id"],
                             "properties": {
                                 "target_id": { "type": "string" },
                                 "model": { "type": ["string", "null"] },
                                 "model_provider": { "type": ["string", "null"] },
+                                "agent_id": { "type": ["string", "null"] },
                                 "clear": { "type": "boolean", "default": false }
                             }
                         },
                         "user_override": {
                             "type": "object",
-                            "description": "Set or clear a model override for a specific Telegram/Discord/Slack user id.",
+                            "description": "Set or clear model, provider, or agent overrides for a specific Telegram/Discord/Slack/WhatsApp user id.",
                             "required": ["target_id"],
                             "properties": {
                                 "target_id": { "type": "string" },
                                 "model": { "type": ["string", "null"] },
                                 "model_provider": { "type": ["string", "null"] },
+                                "agent_id": { "type": ["string", "null"] },
                                 "clear": { "type": "boolean", "default": false }
                             }
                         }
@@ -405,6 +414,10 @@ fn apply_channel_settings_patch(
         set_optional_string(config, "model_provider", model_provider);
         changes.push("model_provider".to_string());
     }
+    if let Some(agent_id) = &patch.agent_id {
+        set_optional_string(config, "agent_id", agent_id);
+        changes.push("agent_id".to_string());
+    }
     if let Some(enabled) = patch.otp_self_approval {
         ensure_supported(
             channel_type,
@@ -500,7 +513,14 @@ fn ensure_supported(channel_type: ChannelType, field: &str, supported: bool) -> 
 }
 
 fn supports_mention_mode(channel_type: ChannelType) -> bool {
-    !matches!(channel_type, ChannelType::Whatsapp)
+    matches!(
+        channel_type,
+        ChannelType::Telegram
+            | ChannelType::Discord
+            | ChannelType::Slack
+            | ChannelType::MsTeams
+            | ChannelType::Whatsapp
+    )
 }
 
 fn supports_otp_settings(channel_type: ChannelType) -> bool {
@@ -521,7 +541,7 @@ fn supports_thread_replies(channel_type: ChannelType) -> bool {
 fn supports_model_overrides(channel_type: ChannelType) -> bool {
     matches!(
         channel_type,
-        ChannelType::Telegram | ChannelType::Discord | ChannelType::Slack
+        ChannelType::Telegram | ChannelType::Discord | ChannelType::Slack | ChannelType::Whatsapp
     )
 }
 
@@ -647,9 +667,9 @@ fn apply_model_override_patch(
         return Ok(());
     }
 
-    if patch.model.is_none() && patch.model_provider.is_none() {
+    if patch.model.is_none() && patch.model_provider.is_none() && patch.agent_id.is_none() {
         return Err(anyhow!(
-            "'{key}' for '{}' must set 'model' or 'model_provider', or use clear=true",
+            "'{key}' for '{}' must set 'model', 'model_provider', or 'agent_id', or use clear=true",
             patch.target_id
         ));
     }
@@ -667,6 +687,9 @@ fn apply_model_override_patch(
     }
     if let Some(model_provider) = &patch.model_provider {
         set_optional_string(&mut override_value, "model_provider", model_provider);
+    }
+    if let Some(agent_id) = &patch.agent_id {
+        set_optional_string(&mut override_value, "agent_id", agent_id);
     }
 
     if override_value.is_empty() {
@@ -952,32 +975,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_channel_settings_rejects_unsupported_fields() {
+    async fn update_channel_settings_updates_whatsapp_mentions_and_agent() {
         let service = Arc::new(RecordingChannelService::new());
         let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
             "wa-main",
             "whatsapp",
             json!({
                 "paired": true,
+                "mention_mode": "always",
                 "allowlist": [],
                 "group_allowlist": []
             }),
         )]));
         let tool = UpdateChannelSettingsTool::new(
-            service as Arc<dyn ChannelService>,
+            service.clone() as Arc<dyn ChannelService>,
             Some(store as Arc<dyn ChannelStore>),
         );
 
-        let err = tool
-            .execute(json!({
-                "account_id": "wa-main",
-                "settings": {
-                    "mention_mode": "always"
-                }
-            }))
+        tool.execute(json!({
+            "account_id": "wa-main",
+            "settings": {
+                "mention_mode": "mention",
+                "agent_id": "triage"
+            }
+        }))
+        .await
+        .expect("whatsapp mention_mode should be supported");
+
+        let updated = service
+            .updated
+            .lock()
             .await
-            .expect_err("mention_mode should be rejected for WhatsApp");
-        assert!(err.to_string().contains("not supported"));
+            .clone()
+            .expect("captured update payload");
+        assert_eq!(updated["config"]["mention_mode"], "mention");
+        assert_eq!(updated["config"]["agent_id"], "triage");
     }
 
     #[tokio::test]
@@ -1028,6 +1060,57 @@ mod tests {
         assert_eq!(
             updated["config"]["channel_overrides"]["chan-1"]["model_provider"],
             "anthropic"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_merges_agent_override() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "telegram-main",
+            "telegram",
+            json!({
+                "token": "telegram-secret",
+                "allowlist": [],
+                "group_allowlist": [],
+                "channel_overrides": {
+                    "chat-1": {
+                        "model": "old-model",
+                        "agent_id": "old-agent"
+                    }
+                }
+            }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service.clone() as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        tool.execute(json!({
+            "account_id": "telegram-main",
+            "settings": {
+                "channel_override": {
+                    "target_id": "chat-1",
+                    "agent_id": "new-agent"
+                }
+            }
+        }))
+        .await
+        .expect("channel override agent update");
+
+        let updated = service
+            .updated
+            .lock()
+            .await
+            .clone()
+            .expect("captured update payload");
+        assert_eq!(
+            updated["config"]["channel_overrides"]["chat-1"]["model"],
+            "old-model"
+        );
+        assert_eq!(
+            updated["config"]["channel_overrides"]["chat-1"]["agent_id"],
+            "new-agent"
         );
     }
 

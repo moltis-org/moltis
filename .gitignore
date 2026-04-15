@@ -35,3 +35,4 @@ crates/gateway/ui/test-results/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+.codesight/

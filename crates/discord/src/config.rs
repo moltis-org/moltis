@@ -17,6 +17,8 @@ pub struct ChannelOverride {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 /// Per-user model/provider override.
@@ -26,6 +28,8 @@ pub struct UserOverride {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 /// Discord bot activity type for presence display.
@@ -82,6 +86,10 @@ pub struct DiscordAccountConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
 
+    /// Default agent ID for this channel account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
     /// Send bot responses as Discord replies to the user's message.
     /// When false (default), responses are sent as standalone messages.
     pub reply_to_message: bool,
@@ -132,6 +140,7 @@ impl std::fmt::Debug for DiscordAccountConfig {
             .field("guild_allowlist", &self.guild_allowlist)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
+            .field("agent_id", &self.agent_id)
             .field("reply_to_message", &self.reply_to_message)
             .field("ack_reaction", &self.ack_reaction)
             .field("activity", &self.activity)
@@ -170,6 +179,10 @@ impl ChannelConfigView for DiscordAccountConfig {
         self.model_provider.as_deref()
     }
 
+    fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
+    }
+
     fn channel_model(&self, channel_id: &str) -> Option<&str> {
         self.channel_overrides
             .get(channel_id)
@@ -182,6 +195,12 @@ impl ChannelConfigView for DiscordAccountConfig {
             .and_then(|o| o.model_provider.as_deref())
     }
 
+    fn channel_agent_id(&self, channel_id: &str) -> Option<&str> {
+        self.channel_overrides
+            .get(channel_id)
+            .and_then(|o| o.agent_id.as_deref())
+    }
+
     fn user_model(&self, user_id: &str) -> Option<&str> {
         self.user_overrides
             .get(user_id)
@@ -192,6 +211,12 @@ impl ChannelConfigView for DiscordAccountConfig {
         self.user_overrides
             .get(user_id)
             .and_then(|o| o.model_provider.as_deref())
+    }
+
+    fn user_agent_id(&self, user_id: &str) -> Option<&str> {
+        self.user_overrides
+            .get(user_id)
+            .and_then(|o| o.agent_id.as_deref())
     }
 }
 
@@ -206,6 +231,7 @@ impl Default for DiscordAccountConfig {
             guild_allowlist: Vec::new(),
             model: None,
             model_provider: None,
+            agent_id: None,
             reply_to_message: false,
             ack_reaction: None,
             activity: None,
@@ -228,6 +254,7 @@ impl Serialize for RedactedConfig<'_> {
         let mut count = 9; // always-present fields
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
+        count += c.agent_id.is_some() as usize;
         count += c.ack_reaction.is_some() as usize;
         count += c.activity.is_some() as usize;
         count += c.activity_type.is_some() as usize;
@@ -246,6 +273,9 @@ impl Serialize for RedactedConfig<'_> {
         }
         if c.model_provider.is_some() {
             s.serialize_field("model_provider", &c.model_provider)?;
+        }
+        if c.agent_id.is_some() {
+            s.serialize_field("agent_id", &c.agent_id)?;
         }
         s.serialize_field("reply_to_message", &c.reply_to_message)?;
         if c.ack_reaction.is_some() {
@@ -312,6 +342,7 @@ mod tests {
         assert!(cfg.allowlist.is_empty());
         assert!(cfg.guild_allowlist.is_empty());
         assert!(cfg.model.is_none());
+        assert!(cfg.agent_id.is_none());
         assert!(!cfg.reply_to_message);
         assert!(cfg.ack_reaction.is_none());
         assert!(cfg.activity.is_none());
@@ -546,15 +577,18 @@ mod tests {
     fn resolve_model_user_overrides_channel() {
         let mut cfg = DiscordAccountConfig {
             model: Some("default-model".into()),
+            agent_id: Some("default-agent".into()),
             ..Default::default()
         };
         cfg.channel_overrides
             .insert("C123".into(), ChannelOverride {
                 model: Some("channel-model".into()),
+                agent_id: Some("channel-agent".into()),
                 ..Default::default()
             });
         cfg.user_overrides.insert("U456".into(), UserOverride {
             model: Some("user-model".into()),
+            agent_id: Some("user-agent".into()),
             ..Default::default()
         });
 
@@ -564,6 +598,9 @@ mod tests {
         assert_eq!(cfg.resolve_model("C123", "U999"), Some("channel-model"));
         // Account default when no overrides
         assert_eq!(cfg.resolve_model("C999", "U999"), Some("default-model"));
+        assert_eq!(cfg.resolve_agent_id("C123", "U456"), Some("user-agent"));
+        assert_eq!(cfg.resolve_agent_id("C123", "U999"), Some("channel-agent"));
+        assert_eq!(cfg.resolve_agent_id("C999", "U999"), Some("default-agent"));
     }
 
     #[test]
@@ -571,18 +608,20 @@ mod tests {
         let json = serde_json::json!({
             "token": "Bot test",
             "channel_overrides": {
-                "C123": { "model": "gpt-4" }
+                "C123": { "model": "gpt-4", "agent_id": "channel-agent" }
             },
             "user_overrides": {
-                "U456": { "model": "claude-sonnet", "model_provider": "anthropic" }
+                "U456": { "model": "claude-sonnet", "model_provider": "anthropic", "agent_id": "user-agent" }
             }
         });
         let cfg: DiscordAccountConfig =
             serde_json::from_value(json).unwrap_or_else(|e| panic!("parse failed: {e}"));
         assert_eq!(cfg.channel_model("C123"), Some("gpt-4"));
         assert!(cfg.channel_model_provider("C123").is_none());
+        assert_eq!(cfg.channel_agent_id("C123"), Some("channel-agent"));
         assert_eq!(cfg.user_model("U456"), Some("claude-sonnet"));
         assert_eq!(cfg.user_model_provider("U456"), Some("anthropic"));
+        assert_eq!(cfg.user_agent_id("U456"), Some("user-agent"));
 
         // Round-trip preserves overrides
         let value = serde_json::to_value(&cfg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
@@ -590,6 +629,8 @@ mod tests {
             serde_json::from_value(value).unwrap_or_else(|e| panic!("re-parse failed: {e}"));
         assert_eq!(cfg2.channel_model("C123"), Some("gpt-4"));
         assert_eq!(cfg2.user_model("U456"), Some("claude-sonnet"));
+        assert_eq!(cfg2.channel_agent_id("C123"), Some("channel-agent"));
+        assert_eq!(cfg2.user_agent_id("U456"), Some("user-agent"));
     }
 
     #[test]
@@ -597,6 +638,7 @@ mod tests {
         let cfg = DiscordAccountConfig {
             token: Secret::new("super-secret-bot-token".into()),
             model: Some("gpt-4o".into()),
+            agent_id: Some("research".into()),
             ..Default::default()
         };
         let redacted = serde_json::to_value(RedactedConfig(&cfg))
@@ -604,6 +646,7 @@ mod tests {
         assert_eq!(redacted["token"], "[REDACTED]");
         // Non-secret fields preserved
         assert_eq!(redacted["model"], "gpt-4o");
+        assert_eq!(redacted["agent_id"], "research");
         assert_eq!(
             redacted["dm_policy"],
             serde_json::to_value(&cfg.dm_policy)

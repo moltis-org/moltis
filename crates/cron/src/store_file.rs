@@ -149,6 +149,66 @@ impl CronStore for FileStore {
         let start = all.len().saturating_sub(limit);
         Ok(all[start..].to_vec())
     }
+
+    async fn prune_runs_before(&self, before_ms: u64) -> Result<u64> {
+        let mut pruned = 0u64;
+        let mut dir = fs::read_dir(&self.runs_dir).await?;
+        while let Some(entry) = dir.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let data = fs::read_to_string(&path).await?;
+            let mut kept = Vec::new();
+            for line in data.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Ok(rec) = serde_json::from_str::<CronRunRecord>(line) {
+                    if rec.started_at_ms < before_ms {
+                        pruned += 1;
+                    } else {
+                        kept.push(line.to_string());
+                    }
+                } else {
+                    kept.push(line.to_string());
+                }
+            }
+            if kept.is_empty() {
+                fs::remove_file(&path).await?;
+            } else {
+                let mut content = kept.join("\n");
+                content.push('\n');
+                fs::write(&path, content.as_bytes()).await?;
+            }
+        }
+        Ok(pruned)
+    }
+
+    async fn list_session_keys_before(&self, before_ms: u64) -> Result<Vec<String>> {
+        let mut keys = Vec::new();
+        let mut dir = fs::read_dir(&self.runs_dir).await?;
+        while let Some(entry) = dir.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let data = fs::read_to_string(&path).await?;
+            for line in data.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Ok(rec) = serde_json::from_str::<CronRunRecord>(line)
+                    && rec.started_at_ms < before_ms
+                    && let Some(key) = rec.session_key
+                    && !keys.contains(&key)
+                {
+                    keys.push(key);
+                }
+            }
+        }
+        Ok(keys)
+    }
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -227,6 +287,7 @@ mod tests {
             output: None,
             input_tokens: None,
             output_tokens: None,
+            session_key: None,
         };
         store.append_run("j1", &run).await.unwrap();
         store.append_run("j1", &run).await.unwrap();

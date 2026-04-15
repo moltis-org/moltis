@@ -23,7 +23,7 @@ settings:
 packages:
   Apollo:
     url: https://github.com/apollographql/apollo-ios.git
-    from: 2.0.6
+    from: 2.1.0
 
 targets:
   Moltis:

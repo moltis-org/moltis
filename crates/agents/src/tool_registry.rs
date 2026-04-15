@@ -5,6 +5,7 @@ use {
         collections::HashMap,
         sync::{Arc, Mutex},
     },
+    tracing::warn,
 };
 
 /// Agent-callable tool.
@@ -69,30 +70,57 @@ impl ToolRegistry {
         }
     }
 
-    /// Register a built-in tool.
+    /// Register a built-in tool. Warns (and overwrites) on name collision.
     pub fn register(&mut self, tool: Box<dyn AgentTool>) {
         let name = tool.name().to_string();
+        let new_source = ToolSource::Builtin;
+        if let Some(existing) = self.tools.get(&name) {
+            warn!(
+                tool = %name,
+                old_source = ?existing.source,
+                new_source = ?new_source,
+                "tool name collision — new registration overwrites existing entry"
+            );
+        }
         self.tools.insert(name, ToolEntry {
             tool: Arc::from(tool),
-            source: ToolSource::Builtin,
+            source: new_source,
         });
     }
 
-    /// Register a tool from an MCP server.
+    /// Register a tool from an MCP server. Warns (and overwrites) on name collision.
     pub fn register_mcp(&mut self, tool: Box<dyn AgentTool>, server: String) {
         let name = tool.name().to_string();
+        let new_source = ToolSource::Mcp { server };
+        if let Some(existing) = self.tools.get(&name) {
+            warn!(
+                tool = %name,
+                old_source = ?existing.source,
+                new_source = ?new_source,
+                "tool name collision — new registration overwrites existing entry"
+            );
+        }
         self.tools.insert(name, ToolEntry {
             tool: Arc::from(tool),
-            source: ToolSource::Mcp { server },
+            source: new_source,
         });
     }
 
-    /// Register a tool from a WASM component.
+    /// Register a tool from a WASM component. Warns (and overwrites) on name collision.
     pub fn register_wasm(&mut self, tool: Box<dyn AgentTool>, component_hash: [u8; 32]) {
         let name = tool.name().to_string();
+        let new_source = ToolSource::Wasm { component_hash };
+        if let Some(existing) = self.tools.get(&name) {
+            warn!(
+                tool = %name,
+                old_source = ?existing.source,
+                new_source = ?new_source,
+                "tool name collision — new registration overwrites existing entry"
+            );
+        }
         self.tools.insert(name, ToolEntry {
             tool: Arc::from(tool),
-            source: ToolSource::Wasm { component_hash },
+            source: new_source,
         });
     }
 
@@ -140,12 +168,16 @@ impl ToolRegistry {
     }
 
     pub fn list_schemas(&self) -> Vec<serde_json::Value> {
-        let mut schemas: Vec<serde_json::Value> =
-            self.tools.values().map(entry_to_schema).collect();
+        let mut schemas: Vec<serde_json::Value> = self
+            .tools
+            .iter()
+            .filter(|(name, _)| is_public_tool_name(name))
+            .map(|(_, entry)| entry_to_schema(entry))
+            .collect();
 
         let activated = self.activated.lock().unwrap_or_else(|e| e.into_inner());
         for (name, entry) in activated.iter() {
-            if !self.tools.contains_key(name) {
+            if !self.tools.contains_key(name) && is_public_tool_name(name) {
                 schemas.push(entry_to_schema(entry));
             }
         }
@@ -165,10 +197,15 @@ impl ToolRegistry {
 
     /// List registered tool names (static + activated).
     pub fn list_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.tools.keys().cloned().collect();
+        let mut names: Vec<String> = self
+            .tools
+            .keys()
+            .filter(|name| is_public_tool_name(name))
+            .cloned()
+            .collect();
         let activated = self.activated.lock().unwrap_or_else(|e| e.into_inner());
         for name in activated.keys() {
-            if !self.tools.contains_key(name) {
+            if !self.tools.contains_key(name) && is_public_tool_name(name) {
                 names.push(name.clone());
             }
         }
@@ -256,6 +293,10 @@ impl ToolRegistry {
             activated: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+}
+
+fn is_public_tool_name(name: &str) -> bool {
+    !name.ends_with("_wasm")
 }
 
 fn entry_to_schema(e: &ToolEntry) -> serde_json::Value {
@@ -439,16 +480,6 @@ mod tests {
             .expect("mcp tool should exist");
         assert_eq!(mcp["source"], "mcp");
         assert_eq!(mcp["mcpServer"], "github");
-
-        let wasm = schemas
-            .iter()
-            .find(|s| s["name"] == "calc_wasm")
-            .expect("wasm tool should exist");
-        assert_eq!(wasm["source"], "wasm");
-        assert_eq!(
-            wasm["componentHash"],
-            "abababababababababababababababababababababababababababababababab"
-        );
     }
 
     #[test]
@@ -463,6 +494,30 @@ mod tests {
 
         let names = registry.list_names();
         assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
+    }
+
+    #[test]
+    fn test_wasm_suffix_tools_are_hidden_from_public_lists() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+        registry.register_wasm(
+            Box::new(DummyTool {
+                name: "web_search_wasm".to_string(),
+            }),
+            [0xAB; 32],
+        );
+
+        assert_eq!(registry.list_names(), vec!["exec".to_string()]);
+        assert!(registry.get("web_search_wasm").is_some());
+
+        let schemas = registry.list_schemas();
+        assert!(
+            schemas
+                .iter()
+                .all(|schema| schema["name"] != "web_search_wasm")
+        );
     }
 
     #[test]
@@ -500,6 +555,38 @@ mod tests {
         }));
         assert!(registry.get("exec").is_some());
         assert!(registry.get("missing").is_none());
+    }
+
+    #[test]
+    fn test_register_collision_overwrites_with_warning() {
+        // The warn! output is emitted via tracing; we assert the overwrite
+        // semantics and trust the log at runtime.
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "Read".to_string(),
+        }));
+        // Same name again — should overwrite, warn logged.
+        registry.register(Box::new(DummyTool {
+            name: "Read".to_string(),
+        }));
+        assert_eq!(registry.list_names(), vec!["Read".to_string()]);
+    }
+
+    #[test]
+    fn test_register_mcp_overwriting_builtin_warns() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "Read".to_string(),
+        }));
+        registry.register_mcp(
+            Box::new(DummyTool {
+                name: "Read".to_string(),
+            }),
+            "filesystem".to_string(),
+        );
+        // Source should now be Mcp even though the builtin was registered first.
+        let src = registry.get_source("Read").unwrap();
+        assert!(matches!(src, ToolSource::Mcp { .. }));
     }
 
     #[test]

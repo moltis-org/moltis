@@ -1,28 +1,32 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 
 use {
     async_trait::async_trait,
     secrecy::ExposeSecret,
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 use moltis_channels::{
     ChannelConfigView, ChannelEvent, ChannelEventSink, Error as ChannelError,
     Result as ChannelResult,
-    gating::{DmPolicy, GroupPolicy, MentionMode, is_allowed},
+    gating::{DmPolicy, GroupPolicy, is_allowed},
     message_log::{MessageLog, MessageLogEntry},
     plugin::{
-        ChannelHealthSnapshot, ChannelMessageKind, ChannelMessageMeta, ChannelOutbound,
-        ChannelPlugin, ChannelReplyTarget, ChannelStatus, ChannelStreamOutbound, ChannelType,
+        ChannelAttachment, ChannelHealthSnapshot, ChannelMessageKind, ChannelMessageMeta,
+        ChannelOutbound, ChannelPlugin, ChannelReplyTarget, ChannelStatus, ChannelStreamOutbound,
+        ChannelThreadContext, ChannelType, ThreadMessage,
     },
 };
 
 use crate::{
     activity::TeamsActivity,
-    config::MsTeamsAccountConfig,
+    auth::get_access_token,
+    cards,
+    config::{MsTeamsAccountConfig, resolve_mention_mode},
+    jwt::BotFrameworkJwtValidator,
     outbound::MsTeamsOutbound,
     state::{AccountState, AccountStateMap},
 };
@@ -110,6 +114,62 @@ impl MsTeamsPlugin {
         }
     }
 
+    /// Acquire an authenticated token for Graph API calls on behalf of the given account.
+    ///
+    /// Uses the `https://graph.microsoft.com/.default` scope (separate from the
+    /// Bot Framework token which is scoped to `api.botframework.com`).
+    pub async fn graph_client(
+        &self,
+        account_id: &str,
+    ) -> anyhow::Result<(reqwest::Client, secrecy::Secret<String>)> {
+        let (http, config, graph_cache) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let state = accounts
+                .get(account_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown Teams account: {account_id}"))?;
+            (
+                state.http.clone(),
+                state.config.clone(),
+                Arc::clone(&state.graph_token_cache),
+            )
+        };
+        let token = crate::auth::get_graph_token(&http, &config, &graph_cache).await?;
+        Ok((http, token))
+    }
+
+    /// Edit the text of an existing bot message by activity ID.
+    pub async fn edit_message(
+        &self,
+        account_id: &str,
+        conversation_id: &str,
+        activity_id: &str,
+        new_text: &str,
+    ) -> ChannelResult<()> {
+        self.outbound
+            .edit_message(account_id, conversation_id, activity_id, new_text)
+            .await
+    }
+
+    /// Delete a bot message by activity ID.
+    pub async fn delete_message(
+        &self,
+        account_id: &str,
+        conversation_id: &str,
+        activity_id: &str,
+    ) -> ChannelResult<()> {
+        self.outbound
+            .delete_activity(account_id, conversation_id, activity_id)
+            .await
+    }
+
+    /// Get the JWT validator for an account (if JWT auth is configured).
+    pub fn jwt_validator(&self, account_id: &str) -> Option<Arc<BotFrameworkJwtValidator>> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .and_then(|s| s.jwt_validator.clone())
+    }
+
     pub async fn ingest_activity(
         &self,
         account_id: &str,
@@ -172,7 +232,7 @@ impl MsTeamsPlugin {
         account_id: &str,
         activity: TeamsActivity,
     ) -> anyhow::Result<()> {
-        let (config, event_sink, message_log, service_urls) = {
+        let (config, event_sink, message_log, service_urls, welcomed) = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             let state = accounts
                 .get(account_id)
@@ -182,9 +242,11 @@ impl MsTeamsPlugin {
                 state.event_sink.clone(),
                 state.message_log.clone(),
                 Arc::clone(&state.service_urls),
+                Arc::clone(&state.welcomed_conversations),
             )
         };
 
+        // Cache service URL for outbound routing.
         if let (Some(conversation_id), Some(service_url)) =
             (activity.conversation_id(), activity.service_url.as_deref())
         {
@@ -192,13 +254,25 @@ impl MsTeamsPlugin {
             map.insert(conversation_id.to_string(), service_url.to_string());
         }
 
+        // Handle conversationUpdate: welcome cards when bot is added.
+        if activity.activity_type == "conversationUpdate" {
+            return self
+                .handle_conversation_update(account_id, &activity, &config, &welcomed)
+                .await;
+        }
+
+        // Handle messageReaction activities.
+        if activity.activity_type == "messageReaction" {
+            debug!(account_id, "Teams messageReaction activity (logged)");
+            return Ok(());
+        }
+
+        // Only process message activities from here.
         if activity.activity_type != "message" {
             return Ok(());
         }
 
-        let Some(text) = activity.cleaned_text() else {
-            return Ok(());
-        };
+        let text = activity.cleaned_text();
         let chat_id = activity
             .conversation_id()
             .ok_or_else(|| anyhow::anyhow!("missing conversation ID in Teams activity"))?
@@ -208,6 +282,12 @@ impl MsTeamsPlugin {
             .unwrap_or_else(|| "unknown".to_string());
         let sender_name = activity.sender_name();
         let is_group = activity.is_group_chat();
+        let team_id = activity.team_id().map(String::from);
+        let channel_id = activity.channel_id().map(String::from);
+
+        // Resolve mention mode with per-team/channel overrides.
+        let effective_mention_mode =
+            resolve_mention_mode(&config, team_id.as_deref(), channel_id.as_deref());
 
         let policy_allowed = if is_group {
             match config.group_policy {
@@ -223,15 +303,18 @@ impl MsTeamsPlugin {
             }
         };
         let mention_allowed = if is_group {
-            match config.mention_mode {
-                MentionMode::Always => true,
-                MentionMode::Mention => activity.bot_is_mentioned(),
-                MentionMode::None => false,
+            match effective_mention_mode {
+                moltis_channels::gating::MentionMode::Always => true,
+                moltis_channels::gating::MentionMode::Mention => activity.bot_is_mentioned(),
+                moltis_channels::gating::MentionMode::None => false,
             }
         } else {
             true
         };
         let access_granted = policy_allowed && mention_allowed;
+
+        // Log inbound message text (or empty if attachment-only).
+        let log_text = text.clone().unwrap_or_default();
 
         if let Some(log) = message_log {
             let _ = log
@@ -248,7 +331,7 @@ impl MsTeamsPlugin {
                     } else {
                         "private".into()
                     },
-                    body: text.clone(),
+                    body: log_text.clone(),
                     access_granted,
                     created_at: unix_now(),
                 })
@@ -272,11 +355,35 @@ impl MsTeamsPlugin {
             return Ok(());
         }
 
+        // Send welcome card for first DM if enabled.
+        if !is_group && config.welcome_card {
+            let is_new = {
+                let mut set = welcomed.write().unwrap_or_else(|e| e.into_inner());
+                set.insert(chat_id.clone())
+            };
+            if is_new {
+                let bot_name = config.bot_name.as_deref().unwrap_or("Moltis");
+                let card = cards::build_welcome_card(bot_name, &config.prompt_starters);
+                let card_activity = cards::card_activity(card, None);
+                if let Err(e) = self
+                    .outbound
+                    .send_activity_with_retry(account_id, &chat_id, card_activity)
+                    .await
+                {
+                    debug!(
+                        account_id,
+                        chat_id, "failed to send Teams welcome card: {e}"
+                    );
+                }
+            }
+        }
+
+        let message_id = activity.id.clone();
         let reply_to = ChannelReplyTarget {
             channel_type: ChannelType::MsTeams,
             account_id: account_id.to_string(),
             chat_id: chat_id.clone(),
-            message_id: activity.id,
+            message_id,
             thread_id: None,
         };
 
@@ -288,9 +395,19 @@ impl MsTeamsPlugin {
             return Ok(());
         };
 
-        if let Some(command) = text.strip_prefix('/') {
+        // Download attachments if present.
+        let downloaded_attachments = if activity.has_downloadable_attachments() {
+            self.download_activity_attachments(account_id, &activity)
+                .await
+        } else {
+            Vec::new()
+        };
+
+        // Handle slash commands.
+        let dispatch_text = text.as_deref().unwrap_or("");
+        if let Some(command) = dispatch_text.strip_prefix('/') {
             match sink
-                .dispatch_command(command.trim(), reply_to.clone())
+                .dispatch_command(command.trim(), reply_to.clone(), Some(&peer_id))
                 .await
             {
                 Ok(response) => {
@@ -311,7 +428,7 @@ impl MsTeamsPlugin {
                     }
                 },
                 Err(e) => {
-                    let message = format!("⚠️ Command failed: {e}");
+                    let message = format!("Command failed: {e}");
                     if let Err(send_err) = self
                         .outbound
                         .send_text(
@@ -332,6 +449,11 @@ impl MsTeamsPlugin {
             return Ok(());
         }
 
+        // No text and no attachments — nothing to dispatch.
+        if dispatch_text.is_empty() && downloaded_attachments.is_empty() {
+            return Ok(());
+        }
+
         #[cfg(feature = "metrics")]
         moltis_metrics::counter!(
             moltis_metrics::channels::MESSAGES_RECEIVED_TOTAL,
@@ -339,16 +461,134 @@ impl MsTeamsPlugin {
         )
         .increment(1);
 
-        sink.dispatch_to_chat(&text, reply_to, ChannelMessageMeta {
+        let meta = ChannelMessageMeta {
             channel_type: ChannelType::MsTeams,
             sender_name,
             username: None,
-            message_kind: Some(ChannelMessageKind::Text),
-            model: config.model.clone(),
+            sender_id: Some(peer_id.clone()),
+            message_kind: Some(if !downloaded_attachments.is_empty() {
+                ChannelMessageKind::Photo
+            } else {
+                ChannelMessageKind::Text
+            }),
+            model: config.resolve_model(&chat_id, &peer_id).map(String::from),
+            agent_id: config
+                .resolve_agent_id(&chat_id, &peer_id)
+                .map(String::from),
             audio_filename: None,
-        })
-        .await;
+            documents: None,
+        };
+
+        if !downloaded_attachments.is_empty() {
+            sink.dispatch_to_chat_with_attachments(
+                dispatch_text,
+                downloaded_attachments,
+                reply_to,
+                meta,
+            )
+            .await;
+        } else {
+            sink.dispatch_to_chat(dispatch_text, reply_to, meta).await;
+        }
         Ok(())
+    }
+
+    /// Handle conversationUpdate activities (welcome cards).
+    async fn handle_conversation_update(
+        &self,
+        account_id: &str,
+        activity: &TeamsActivity,
+        config: &MsTeamsAccountConfig,
+        welcomed: &Arc<RwLock<HashSet<String>>>,
+    ) -> anyhow::Result<()> {
+        if !activity.bot_was_added() {
+            return Ok(());
+        }
+
+        let Some(chat_id) = activity.conversation_id() else {
+            return Ok(());
+        };
+
+        let is_group = activity.is_group_chat();
+
+        // Send welcome card/text.
+        if is_group && config.group_welcome_card {
+            let bot_name = config.bot_name.as_deref().unwrap_or("Moltis");
+            let text = cards::build_group_welcome_text(bot_name);
+            if let Err(e) = self
+                .outbound
+                .send_text(account_id, chat_id, &text, None)
+                .await
+            {
+                debug!(account_id, chat_id, "failed to send group welcome: {e}");
+            }
+        } else if !is_group && config.welcome_card {
+            let is_new = {
+                let mut set = welcomed.write().unwrap_or_else(|e| e.into_inner());
+                set.insert(chat_id.to_string())
+            };
+            if is_new {
+                let bot_name = config.bot_name.as_deref().unwrap_or("Moltis");
+                let card = cards::build_welcome_card(bot_name, &config.prompt_starters);
+                let card_activity = cards::card_activity(card, None);
+                if let Err(e) = self
+                    .outbound
+                    .send_activity_with_retry(account_id, chat_id, card_activity)
+                    .await
+                {
+                    debug!(account_id, chat_id, "failed to send welcome card: {e}");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Download attachments from an inbound activity.
+    async fn download_activity_attachments(
+        &self,
+        account_id: &str,
+        activity: &TeamsActivity,
+    ) -> Vec<ChannelAttachment> {
+        let (http, config, token_cache) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            match accounts.get(account_id) {
+                Some(state) => (
+                    state.http.clone(),
+                    state.config.clone(),
+                    Arc::clone(&state.token_cache),
+                ),
+                None => return Vec::new(),
+            }
+        };
+
+        let token = match get_access_token(&http, &config, &token_cache).await {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(
+                    account_id,
+                    "failed to get token for attachment download: {e}"
+                );
+                return Vec::new();
+            },
+        };
+
+        let mut result = Vec::new();
+        for att in &activity.attachments {
+            match crate::attachments::download_attachment(&http, &token, att).await {
+                Ok(Some(downloaded)) => {
+                    result.push(ChannelAttachment {
+                        media_type: downloaded.media_type,
+                        data: downloaded.data,
+                    });
+                },
+                Ok(None) => {}, // Non-downloadable (card, etc.)
+                Err(e) => {
+                    warn!(account_id, "attachment download failed: {e}");
+                },
+            }
+        }
+        result
     }
 }
 
@@ -383,6 +623,24 @@ impl ChannelPlugin for MsTeamsPlugin {
             ));
         }
 
+        let http = moltis_common::http_client::build_default_http_client();
+
+        // Create JWT validator if tenant_id is configured.
+        let jwt_validator = if !cfg.app_id.is_empty() {
+            let tenant = if cfg.tenant_id == "botframework.com" {
+                None
+            } else {
+                Some(cfg.tenant_id.clone())
+            };
+            Some(Arc::new(BotFrameworkJwtValidator::new(
+                cfg.app_id.clone(),
+                tenant,
+                http.clone(),
+            )))
+        } else {
+            None
+        };
+
         info!(account_id, "starting microsoft teams account");
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         accounts.insert(account_id.to_string(), AccountState {
@@ -390,9 +648,12 @@ impl ChannelPlugin for MsTeamsPlugin {
             config: cfg,
             message_log: self.message_log.clone(),
             event_sink: self.event_sink.clone(),
-            http: moltis_common::http_client::build_default_http_client(),
+            http,
             token_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            graph_token_cache: Arc::new(tokio::sync::Mutex::new(None)),
             service_urls: Arc::new(RwLock::new(HashMap::new())),
+            jwt_validator,
+            welcomed_conversations: Arc::new(RwLock::new(HashSet::new())),
         });
         Ok(())
     }
@@ -477,6 +738,63 @@ impl ChannelPlugin for MsTeamsPlugin {
             ),
         ))
     }
+
+    fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl ChannelThreadContext for MsTeamsPlugin {
+    async fn fetch_thread_messages(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        _thread_id: &str,
+        limit: usize,
+    ) -> ChannelResult<Vec<ThreadMessage>> {
+        let (http, config, graph_cache) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let state = accounts
+                .get(account_id)
+                .ok_or_else(|| ChannelError::unknown_account(account_id))?;
+            (
+                state.http.clone(),
+                state.config.clone(),
+                Arc::clone(&state.graph_token_cache),
+            )
+        };
+
+        let token = crate::auth::get_graph_token(&http, &config, &graph_cache)
+            .await
+            .map_err(|e| ChannelError::unavailable(format!("Teams Graph token: {e}")))?;
+
+        let effective_limit = if limit == 0 {
+            config.history_limit
+        } else {
+            limit.min(config.history_limit)
+        };
+
+        let messages =
+            crate::graph::fetch_chat_messages(&http, &token, channel_id, effective_limit)
+                .await
+                .map_err(|e| {
+                    ChannelError::external(
+                        "Teams Graph fetch messages",
+                        std::io::Error::other(e.to_string()),
+                    )
+                })?;
+
+        Ok(messages
+            .into_iter()
+            .map(|m| ThreadMessage {
+                sender_id: m.from_user_id.unwrap_or_default(),
+                is_bot: m.is_bot,
+                text: m.body_content.unwrap_or_default(),
+                timestamp: m.created_at.unwrap_or_default(),
+            })
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -531,8 +849,7 @@ mod tests {
         assert!(!desc.capabilities.supports_otp);
         assert!(plugin.as_otp_provider().is_none());
 
-        // Threads: MsTeams does NOT implement ChannelThreadContext
-        assert!(!desc.capabilities.supports_threads);
-        assert!(plugin.thread_context().is_none());
+        // Threads: MsTeams now implements ChannelThreadContext
+        assert!(plugin.thread_context().is_some());
     }
 }

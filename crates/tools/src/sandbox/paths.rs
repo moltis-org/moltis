@@ -11,7 +11,9 @@ use tracing::{debug, warn};
 use {
     super::{
         containers::{is_cli_available, is_docker_daemon_available, should_use_docker_backend},
-        types::{HomePersistence, SandboxConfig, SandboxId, sanitize_path_component},
+        types::{
+            HomePersistence, SandboxConfig, SandboxId, WorkspaceMount, sanitize_path_component,
+        },
     },
     crate::error::Result,
 };
@@ -289,6 +291,24 @@ pub(crate) fn host_visible_path(
     }
 }
 
+pub(crate) fn resolve_workspace_guest_path_on_host(
+    config: &SandboxConfig,
+    cli: Option<&str>,
+    guest_path: &FsPath,
+) -> Option<PathBuf> {
+    if config.workspace_mount == WorkspaceMount::None {
+        return None;
+    }
+    let guest_workspace_dir = moltis_config::data_dir();
+    let relative_path = guest_path.strip_prefix(&guest_workspace_dir).ok()?;
+    let host_workspace_dir = host_visible_data_dir(config, cli);
+    Some(if relative_path.as_os_str().is_empty() {
+        host_workspace_dir
+    } else {
+        host_workspace_dir.join(relative_path)
+    })
+}
+
 pub(crate) fn sandbox_home_persistence_base_dir(
     config: &SandboxConfig,
     cli: Option<&str>,
@@ -336,6 +356,22 @@ pub(crate) fn sandbox_home_persistence_host_dir(
             Some(base.join("session").join(sanitize_path_component(&id.key)))
         },
     }
+}
+
+pub(crate) fn resolve_home_persistence_guest_path_on_host(
+    config: &SandboxConfig,
+    cli: Option<&str>,
+    id: &SandboxId,
+    guest_path: &FsPath,
+) -> Option<PathBuf> {
+    let guest_home_dir = guest_visible_sandbox_home_persistence_host_dir(config, id)?;
+    let relative_path = guest_path.strip_prefix(&guest_home_dir).ok()?;
+    let host_home_dir = sandbox_home_persistence_host_dir(config, cli, id)?;
+    Some(if relative_path.as_os_str().is_empty() {
+        host_home_dir
+    } else {
+        host_home_dir.join(relative_path)
+    })
 }
 
 pub(crate) fn guest_visible_sandbox_home_persistence_host_dir(

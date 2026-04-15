@@ -264,6 +264,17 @@ export function formatTokens(n) {
 	return String(n);
 }
 
+export function formatAssistantTokenUsage(inputTokens, outputTokens, cacheReadTokens) {
+	var input = Number(inputTokens || 0);
+	var output = Number(outputTokens || 0);
+	var cached = Number(cacheReadTokens || 0);
+	var inputText = `${formatTokens(input)} in`;
+	if (cached > 0) {
+		inputText += ` (${formatTokens(cached)} cached)`;
+	}
+	return `${inputText} / ${formatTokens(output)} out`;
+}
+
 var TOKEN_SPEED_SLOW_TPS = 10;
 var TOKEN_SPEED_FAST_TPS = 25;
 

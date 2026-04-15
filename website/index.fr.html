@@ -12,25 +12,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light dark">
-    <title>Moltis — Un assistant IA Rust-natif de confiance</title>
+    <title>Moltis — Un serveur d'agent personnel sécurisé et persistant en Rust</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <meta name="description" content="Un assistant IA Rust-natif de confiance. Un seul binaire, exécution sandboxée, LLMs multi-fournisseurs, voix, mémoire, Telegram, WhatsApp, Discord, Teams et outils MCP. Sécurisé par conception, tourne sur votre matériel.">
-    <meta property="og:title" content="Moltis — Un assistant IA Rust-natif de confiance">
-    <meta property="og:description" content="Un assistant IA Rust-natif de confiance. Un seul binaire, exécution sandboxée, LLMs multi-fournisseurs, voix, mémoire, Telegram, WhatsApp, Discord, Teams et outils MCP. Sécurisé par conception, tourne sur votre matériel.">
+    <meta name="description" content="Un serveur d'agent personnel sécurisé et persistant en Rust. Un seul binaire, exécution en sandbox, LLM multi-fournisseurs, voix, mémoire, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams et outils MCP. Sécurisé par conception, fonctionne sur votre matériel.">
+    <meta property="og:title" content="Moltis — Un serveur d'agent personnel sécurisé et persistant en Rust">
+    <meta property="og:description" content="Un serveur d'agent personnel sécurisé et persistant en Rust. Un seul binaire, exécution en sandbox, LLM multi-fournisseurs, voix, mémoire, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams et outils MCP. Sécurisé par conception, fonctionne sur votre matériel.">
     <meta property="og:site_name" content="Moltis">
     <meta property="og:locale" content="fr_FR">
-    <meta property="og:image" content="https://moltis.org/og-social.png?v=8">
-    <meta property="og:image:secure_url" content="https://moltis.org/og-social.png?v=8">
+    <meta property="og:image" content="https://moltis.org/og-social.png?v=9">
+    <meta property="og:image:secure_url" content="https://moltis.org/og-social.png?v=9">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="Moltis — Un assistant IA Rust-natif de confiance">
+    <meta property="og:image:alt" content="Moltis — Un serveur d'agent personnel sécurisé et persistant en Rust">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://moltis.org">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:image" content="https://moltis.org/og-social.png?v=8">
-    <meta name="twitter:image:alt" content="Moltis — Un assistant IA Rust-natif de confiance">
-    <meta name="twitter:title" content="Moltis — Un assistant IA Rust-natif de confiance">
-    <meta name="twitter:description" content="Un assistant IA Rust-natif de confiance. Un seul binaire, exécution sandboxée, LLMs multi-fournisseurs, voix, mémoire, Telegram, WhatsApp, Discord, Teams et outils MCP. Sécurisé par conception, tourne sur votre matériel.">
+    <meta name="twitter:image" content="https://moltis.org/og-social.png?v=9">
+    <meta name="twitter:image:alt" content="Moltis — Un serveur d'agent personnel sécurisé et persistant en Rust">
+    <meta name="twitter:title" content="Moltis — Un serveur d'agent personnel sécurisé et persistant en Rust">
+    <meta name="twitter:description" content="Un serveur d'agent personnel sécurisé et persistant en Rust. Un seul binaire, exécution en sandbox, LLM multi-fournisseurs, voix, mémoire, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams et outils MCP. Sécurisé par conception, fonctionne sur votre matériel.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400&family=Outfit:wght@700&display=swap" rel="stylesheet">
@@ -60,17 +60,7 @@
             if ((localStorage.getItem('theme') || 'system') === 'system') applyTheme('system');
         });
     </script>
-    <style>
-        @keyframes pulse-slow {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 0.7; }
-        }
-        .animate-pulse-slow { animation: pulse-slow 4s ease-in-out infinite; }
-        .animation-delay-2s { animation-delay: 2s; }
-        .font-outfit { font-family: 'Outfit', sans-serif; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-white dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen relative transition-colors duration-300 overflow-x-hidden w-full">
     <!-- Toast notification -->
@@ -84,70 +74,7 @@
         <div class="absolute bottom-1/4 right-1/4 w-64 h-64 sm:w-96 sm:h-96 bg-red-300/20 dark:bg-red-600/15 rounded-full blur-3xl animate-pulse-slow animation-delay-2s"></div>
     </div>
 
-    <!-- Sticky Navigation Bar -->
-    <nav class="sticky top-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md border-b border-gray-200/50 dark:border-gray-800/50">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6">
-            <div class="flex items-center justify-between h-14 gap-4">
-                <!-- Logo -->
-                <a href="#home" class="flex items-center gap-2 shrink-0" onclick="navigateTo('home')">
-                    <img src="favicon.svg" alt="Moltis" width="32" height="26">
-                    <span class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-orange-500 to-red-500 dark:from-orange-400 dark:to-red-400 bg-clip-text text-transparent font-outfit">Moltis</span>
-                </a>
-
-                <!-- Nav tabs (desktop) -->
-                <div class="hidden sm:flex items-center gap-1" id="nav-tabs">
-                    <a href="#home" data-page="home" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Accueil</a>
-                    <a href="#install" data-page="install" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Installer</a>
-                    <a href="#features" data-page="features" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Fonctions</a>
-                    <a href="#security" data-page="security" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Sécurité</a>
-                    <a href="#compare" data-page="compare" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Comparer</a>
-                </div>
-
-                <!-- Right side: theme toggle + GitHub stars -->
-                <div class="flex items-center gap-1 shrink-0">
-                    <!-- Theme cycle button -->
-                    <button id="theme-toggle" title="Toggle theme" class="p-1.5 rounded-md text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-                        <svg id="theme-icon-light" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-                        <svg id="theme-icon-system" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                        <svg id="theme-icon-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-                    </button>
-                    <!-- Language selector -->
-                    <div class="relative" id="lang-switcher">
-                        <button onclick="this.nextElementSibling.classList.toggle('hidden')" class="flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-semibold text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Changer de langue">
-                            FR
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
-                        </button>
-                        <div class="hidden absolute right-0 mt-1 min-w-[8rem] bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50">
-                            <button onclick="setLang('en')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">English</button>
-                            <button onclick="setLang('fr')" class="w-full text-left px-3 py-1.5 text-xs font-semibold text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-700">Fran&#231;ais</button>
-                            <button onclick="setLang('zh')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#20013;&#25991;</button>
-                            <button onclick="setLang('es')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Espa&#241;ol</button>
-                            <button onclick="setLang('de')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Deutsch</button>
-                            <button onclick="setLang('it')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Italiano</button>
-                            <button onclick="setLang('pt')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Portugu&#234;s</button>
-                            <button onclick="setLang('ja')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#26085;&#26412;&#35486;</button>
-                            <button onclick="setLang('ko')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#54620;&#44397;&#50612;</button>
-                            <button onclick="setLang('ru')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#1056;&#1091;&#1089;&#1089;&#1082;&#1080;&#1081;</button>
-                        </div>
-                    </div>
-                    <!-- GitHub stars -->
-                    <a href="https://github.com/moltis-org/moltis" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:text-gray-700 dark:hover:text-gray-300 transition-colors" id="github-stars-link">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-                        <span id="github-stars"></span>
-                    </a>
-                </div>
-            </div>
-
-            <!-- Mobile nav tabs -->
-            <div class="flex sm:hidden items-center gap-1 pb-2 overflow-x-auto hide-scrollbar -mx-1 px-1" id="nav-tabs-mobile">
-                <a href="#home" data-page="home" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Accueil</a>
-                <a href="#install" data-page="install" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Installer</a>
-                <a href="#features" data-page="features" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Fonctions</a>
-                <a href="#security" data-page="security" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Sécurité</a>
-                <a href="#compare" data-page="compare" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Comparer</a>
-            </div>
-        </div>
-    </nav>
+    <!--NAV-->
 
     <!-- Lightbox overlay -->
     <div id="lightbox" class="hidden fixed inset-0 z-50 bg-black/90 flex items-center justify-center" onclick="if(event.target===this)closeLightbox()">
@@ -167,22 +94,29 @@
     <!-- PAGE: Home -->
     <!-- ============================================================ -->
     <div id="page-home" class="page-content">
-        <div class="relative z-10 text-center px-4 sm:px-6 w-full max-w-2xl mx-auto pt-12 pb-8">
+        <div class="relative z-10 text-center px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
             <!-- Announcement banner -->
             <a href="#features" onclick="navigateTo('features')" class="group inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 hover:border-orange-400 dark:hover:border-orange-500 transition-all hover:shadow-md">
                 <span class="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-bold uppercase tracking-wide">Nouveau</span>
-                <span class="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200">Import complet OpenClaw — changez en un clic</span>
+                <span class="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200">Import complet d'OpenClaw — basculez en un clic</span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-orange-500 dark:text-orange-400 group-hover:translate-x-0.5 transition-transform"><polyline points="9 18 15 12 9 6"/></svg>
             </a>
 
-            <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-2 text-gray-800 dark:text-gray-100">Un assistant IA Rust-natif de confiance</h1>
-            <p class="text-sm sm:text-base text-gray-400 dark:text-gray-500 mb-6">Un seul binaire — sandboxé, sécurisé, le vôtre.</p>
+            <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-2 text-gray-800 dark:text-gray-100">Un serveur d'agent personnel sécurisé et persistant</h1>
+            <p class="text-sm sm:text-base text-gray-400 dark:text-gray-500 mb-4">Un seul binaire — sandboxé, écrit en Rust, le vôtre.</p>
+
+            <!-- Positioning -->
+            <p class="text-sm sm:text-base text-gray-600 dark:text-gray-400 max-w-xl mx-auto mb-6 leading-relaxed">
+                Pas un wrapper de chatbot. Pas un service cloud lié à un seul fournisseur.
+                Un vrai serveur d'agent qui fonctionne sur votre matériel, se souvient entre les sessions,
+                et vous rejoint sur tous les canaux que vous utilisez.
+            </p>
 
             <!-- CTA buttons -->
             <div class="flex items-center justify-center gap-3 mb-6">
                 <a href="#install" onclick="navigateTo('install')" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gradient-to-r from-orange-500 to-red-500 text-white hover:from-orange-600 hover:to-red-600 transition-all text-sm font-medium shadow-md hover:shadow-lg">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
-                    Démarrer
+                    Get Started
                 </a>
                 <a href="https://docs.moltis.org" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:border-orange-400 dark:hover:border-orange-500 hover:text-orange-600 dark:hover:text-orange-400 transition-colors text-sm font-medium">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
@@ -197,11 +131,57 @@
                 <div class="flex overflow-x-auto gap-3 hide-scrollbar px-6 sm:px-10">
                     <img src="screenshots/thumbs/1.png" alt="Onboarding — secure your instance with passkey or password" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(0)">
                     <img src="screenshots/thumbs/2.png" alt="Onboarding — setup summary with identity, LLM and channel config" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(1)">
-                    <img src="screenshots/thumbs/3.png" alt="Voice settings — speech-to-text and text-to-speech providers" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(2)">
+                    <img src="screenshots/thumbs/3.png" alt="Voix settings — speech-to-text and text-to-speech providers" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(2)">
                     <img src="screenshots/thumbs/4.png" alt="Chat with voice, map and tool use" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(3)">
                     <img src="screenshots/thumbs/5.png" alt="Sandboxed shell execution in Docker container" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(4)">
                     <img src="screenshots/thumbs/6.png" alt="Telegram bot channel with voice and events" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(5)">
                     <img src="screenshots/thumbs/7.png" alt="Web UI showing Telegram channel messages" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(6)">
+                </div>
+            </div>
+
+            <!-- How it works -->
+            <div class="max-w-3xl mx-auto mb-8 text-left">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1 text-center">Opérationnel en 60 secondes</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6 text-center">Trois étapes. Aucune dépendance.</p>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <!-- Step 1: Install -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">1</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Installer</h3>
+                        </div>
+                        <div class="rounded-md bg-gray-900 dark:bg-gray-800 p-3 font-mono text-[11px] text-gray-300 leading-relaxed overflow-x-auto">
+                            <span class="text-gray-500">$</span> curl -fsSL moltis.org/install.sh | sh
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Configure -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">2</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Configurer</h3>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Open <span class="font-mono text-orange-500 dark:text-orange-400">localhost:13131</span>, collez votre clé fournisseur, choisissez un modèle. Les fournisseurs OAuth comme GitHub Copilot fonctionnent sans configuration.</p>
+                    </div>
+
+                    <!-- Step 3: Chat from anywhere -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">3</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Discutez de partout</h3>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5">
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/globe.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Web UI</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/telegram.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Telegram</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/whatsapp.svg" alt="" width="12" height="12" class="dark:invert opacity-60">WhatsApp</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/discord.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Discord</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/slack.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Slack</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/matrix.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Matrix</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/nostr.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Nostr</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/teams.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Teams</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -214,7 +194,7 @@
                         </span>
                         <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">Sécurisé par conception</h3>
                     </div>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Vos clés et données privées ne quittent jamais votre machine. Sandboxé par défaut — votre IA ne touche pas votre système de fichiers sans votre accord.</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Vos clés et données privées ne quittent jamais votre machine. Sandboxé par défaut — votre IA ne peut pas toucher votre système de fichiers sauf autorisation.</p>
                 </a>
                 <a href="#install" onclick="navigateTo('install')" class="group p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 hover:border-orange-400 dark:hover:border-orange-500 transition-all hover:shadow-md">
                     <div class="flex items-center gap-2 mb-2">
@@ -223,7 +203,7 @@
                         </span>
                         <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">Votre matériel</h3>
                     </div>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Tourne sur un <img src="images/apple.svg" alt="" width="11" height="11" class="inline -mt-0.5 dark:invert opacity-60">&nbsp;Mac Mini, un Raspberry Pi ou n'importe quel serveur. Toujours allumé, toujours local — un elfe de maison pour votre vie numérique.</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Runs on a <img src="images/apple.svg" alt="" width="11" height="11" class="inline -mt-0.5 dark:invert opacity-60">&nbsp;Mac Mini, un Raspberry Pi ou tout serveur que vous possédez. Toujours actif, toujours local — comme un elfe de maison pour votre vie numérique.</p>
                     <div class="flex items-center gap-3 mt-2">
                         <span class="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500"><img src="images/apple.svg" alt="" width="12" height="12" class="dark:invert opacity-50">macOS</span>
                         <span class="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500"><img src="images/linux.svg" alt="" width="12" height="12" class="dark:invert opacity-50">Linux</span>
@@ -235,12 +215,173 @@
                         <span class="text-orange-500 dark:text-orange-400">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                         </span>
-                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">Tout intégré</h3>
+                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">Complet</h3>
                     </div>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Telegram, WhatsApp, Discord, Teams, voix, mémoire, planification, outils — tout est inclus. Pas de marketplace de plugins vulnérable aux attaques supply-chain.</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams, voix, mémoire, planification, outils — tout intégré. Pas de marketplace de plugins à compromettre.</p>
                 </a>
             </div>
 
+            <!-- Ce que votre agent fait vraiment -->
+            <div class="max-w-3xl mx-auto mb-8 text-center">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Ce que votre agent fait vraiment</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6">Pas une démo. Ça fonctionne aujourd'hui.</p>
+
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Planifie des tâches</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Tâches cron récurrentes en langage naturel</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Exécute du code en sécurité</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Shell sandboxé dans Docker ou Apple Containers</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Navigue sur le web</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Récupère, résume, et protégé contre le SSRF</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Gère votre calendrier</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Intégration CalDAV pour les événements et rappels</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Messagerie partout</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Se souvient du contexte</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Mémoire persistante avec recherche vectorielle + texte intégral</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Parle et écoute</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Entrée et sortie vocales avec fournisseurs cloud et locaux</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">S'étend lui-même</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Crée ses propres compétences, hooks et outils MCP à l'exécution</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Community quotes (horizontal scroll) -->
+            <div class="max-w-3xl mx-auto mb-8 overflow-x-auto hide-scrollbar">
+                <div class="flex gap-4 px-1 pb-2 snap-x snap-mandatory" style="min-width: min-content">
+                    <div class="w-72 sm:w-80 flex-shrink-0 snap-start p-5 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 text-left">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" class="text-orange-300 dark:text-orange-700 mb-2"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983z"/></svg>
+                        <blockquote class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed mb-2">
+                            Moltis worked in 1 command. I found several AI guardrails missing or turned off in OpenClaw which are working out of the box here. Moltis is way more performant and stable.
+                        </blockquote>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                            <img src="images/icons/discord.svg" alt="" width="14" height="14" class="opacity-60">
+                            <span class="font-medium">Noita</span> sur Discord
+                            <a href="https://discord.com/channels/1469505370169933837/1469505371398996115/1488503462487654500" class="text-orange-500 dark:text-orange-400 hover:underline ml-1">#1</a>
+                            <a href="https://discord.com/channels/1469505370169933837/1469505371398996115/1488498690376204379" class="text-orange-500 dark:text-orange-400 hover:underline">#2</a>
+                        </p>
+                    </div>
+                    <div class="w-72 sm:w-80 flex-shrink-0 snap-start p-5 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 text-left">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" class="text-orange-300 dark:text-orange-700 mb-2"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983z"/></svg>
+                        <blockquote class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed mb-2">
+                            I've found the project incredibly useful. In fact I do my Moltis contributions in Moltis.
+                        </blockquote>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                            <img src="images/icons/github.svg" alt="" width="14" height="14" class="opacity-60">
+                            <span class="font-medium">Cstewart-HC</span> on GitHub
+                            <a href="https://github.com/moltis-org/moltis/discussions/680" class="text-orange-500 dark:text-orange-400 hover:underline ml-1">discussion</a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compatible avec votre stack -->
+            <div class="max-w-3xl mx-auto mb-10 text-center">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Compatible avec votre stack</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6">20+ fournisseurs, modèles locaux et tous les canaux majeurs — tout intégré.</p>
+
+                <div class="space-y-6">
+                    <!-- Fournisseurs cloud -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">Fournisseurs cloud</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/anthropic.svg" alt="" class="pill-icon">Anthropic</span>
+                            <span class="pill"><img src="images/icons/openai.svg" alt="" class="pill-icon">OpenAI</span>
+                            <span class="pill"><img src="images/icons/gemini.svg" alt="" class="pill-icon">Google Gemini</span>
+                            <span class="pill"><img src="images/icons/mistral.svg" alt="" class="pill-icon">Mistral</span>
+                            <span class="pill"><img src="images/icons/deepseek.svg" alt="" class="pill-icon">DeepSeek</span>
+                            <span class="pill"><img src="images/icons/fireworks.svg" alt="" class="pill-icon">Fireworks</span>
+                            <span class="pill"><img src="images/icons/cerebras.svg" alt="" class="pill-icon">Cerebras</span>
+                            <span class="pill"><img src="images/icons/minimax.png" alt="" class="pill-icon pill-icon-color">MiniMax</span>
+                            <span class="pill"><img src="images/icons/moonshot.svg" alt="" class="pill-icon">Moonshot</span>
+                            <span class="pill"><img src="images/icons/zai.svg" alt="" class="pill-icon">Z.AI</span>
+                            <span class="pill"><img src="images/icons/globe.svg" alt="" class="pill-icon">Venice</span>
+                        </div>
+                    </div>
+
+                    <!-- Local & BYOM -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">Local et BYOM</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/ollama.svg" alt="" class="pill-icon">Ollama</span>
+                            <span class="pill"><img src="images/icons/lmstudio.webp" alt="" class="pill-icon pill-icon-color">LM Studio</span>
+                            <span class="pill">Local GGUF <span class="pill-badge bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-300">CPU/GPU</span></span>
+                            <span class="pill"><img src="images/apple.svg" alt="" class="pill-icon">MLX <span class="pill-badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">Apple Silicon</span></span>
+                            <span class="pill"><img src="images/icons/huggingface.svg" alt="" class="pill-icon">Hugging Face</span>
+                            <span class="pill"><img src="images/icons/openrouter.svg" alt="" class="pill-icon">OpenRouter</span>
+                            <span class="pill"><img src="images/icons/openai-compat.svg" alt="" class="pill-icon">Any OpenAI-compatible</span>
+                        </div>
+                    </div>
+
+                    <!-- OAuth / Zero-Config -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">OAuth &mdash; Zéro config</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/github.svg" alt="" class="pill-icon">GitHub Copilot</span>
+                            <span class="pill"><img src="images/icons/openai.svg" alt="" class="pill-icon">OpenAI Codex</span>
+                            <span class="pill"><img src="images/icons/moonshot.svg" alt="" class="pill-icon">Kimi Code</span>
+                        </div>
+                    </div>
+
+                    <!-- Canaux -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">Canaux</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/globe.svg" alt="" class="pill-icon">Web UI</span>
+                            <span class="pill"><img src="images/icons/telegram.svg" alt="" class="pill-icon">Telegram</span>
+                            <span class="pill"><img src="images/icons/whatsapp.svg" alt="" class="pill-icon">WhatsApp</span>
+                            <span class="pill"><img src="images/icons/discord.svg" alt="" class="pill-icon">Discord</span>
+                            <span class="pill"><img src="images/icons/slack.svg" alt="" class="pill-icon">Slack</span>
+                            <span class="pill"><img src="images/icons/matrix.svg" alt="" class="pill-icon">Matrix</span>
+                            <span class="pill"><img src="images/icons/nostr.svg" alt="" class="pill-icon">Nostr</span>
+                            <span class="pill"><img src="images/icons/teams.svg" alt="" class="pill-icon">Microsoft Teams</span>
+                            <span class="pill"><img src="images/apple.svg" alt="" class="pill-icon">iOS <span class="pill-badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">Soon</span></span>
+                            <span class="pill"><img src="images/icons/graphql.svg" alt="" class="pill-icon">GraphQL API</span>
+                            <span class="pill"><img src="images/icons/code.svg" alt="" class="pill-icon">JSON-RPC</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
         </div>
     </div>
@@ -250,8 +391,8 @@
     <!-- ============================================================ -->
     <div id="page-install" class="page-content hidden">
         <div class="relative z-10 px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
-            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Démarrage</h1>
-            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-8 text-center">Installez Moltis et lancez votre assistant IA en quelques minutes</p>
+            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Démarrer</h1>
+            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-8 text-center">Install Moltis and start your AI assistant in minutes</p>
 
             <!-- Installation tabs -->
             <div class="text-left mb-8">
@@ -277,21 +418,21 @@
                             <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">brew install moltis-org/tap/moltis</span></p>
                         </div>
                         <div id="tab-docker" class="install-content hidden">
-                            <p class="text-gray-500 dark:text-gray-500 mb-1"># Multi-arch : amd64/arm64</p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-1"># Multi-arch: amd64/arm64</p>
                             <p class="text-gray-500 dark:text-gray-500 mb-1">$ <span class="text-gray-700 dark:text-gray-300">docker run -d \</span></p>
                             <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">--name moltis -p 13131:13131 -p 1455:1455 \</span></p>
                             <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">-v moltis-config:/home/moltis/.config/moltis \</span></p>
                             <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">-v moltis-data:/home/moltis/.moltis \</span></p>
                             <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">-v /var/run/docker.sock:/var/run/docker.sock \</span></p>
                             <p class="text-gray-500 dark:text-gray-500 mb-3">    <span class="text-gray-700 dark:text-gray-300">ghcr.io/moltis-org/moltis:latest</span></p>
-                            <p class="text-gray-500 dark:text-gray-500"># Ouvrir <span class="text-gray-700 dark:text-gray-300">http://localhost:13131</span> et terminer la configuration</p>
+                            <p class="text-gray-500 dark:text-gray-500"># Open <span class="text-gray-700 dark:text-gray-300">http://localhost:13131</span> and complete the setup</p>
                         </div>
                         <div id="tab-source" class="install-content hidden">
-                            <p class="text-gray-500 dark:text-gray-500 mb-1"># Compiler depuis les sources</p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-1"># Build from source</p>
                             <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">cargo install moltis --git https://github.com/moltis-org/moltis</span></p>
                         </div>
                         <div id="tab-others" class="install-content hidden">
-                            <p class="text-gray-500 dark:text-gray-500 mb-3"># Télécharger les paquets depuis <a href="https://github.com/moltis-org/moltis/releases" class="text-orange-500 hover:text-orange-600 dark:text-orange-400 dark:hover:text-orange-300 underline">GitHub Releases</a></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-3"># Download packages from <a href="https://github.com/moltis-org/moltis/releases" class="text-orange-500 hover:text-orange-600 dark:text-orange-400 dark:hover:text-orange-300 underline">GitHub Releases</a></p>
                             <p class="text-gray-500 dark:text-gray-500 mb-2"># Debian/Ubuntu (.deb)</p>
                             <p class="text-gray-500 dark:text-gray-500 mb-3">$ <span class="text-gray-700 dark:text-gray-300">sudo dpkg -i moltis_*_amd64.deb</span></p>
                             <p class="text-gray-500 dark:text-gray-500 mb-2"># Fedora/RHEL (.rpm)</p>
@@ -310,8 +451,8 @@
             <!-- Supported platforms -->
             <div class="mb-8 text-left">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-                    <h2 class="text-lg sm:text-xl font-semibold text-gray-800 dark:text-gray-100">Plateformes supportées</h2>
-                    <span class="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 px-2.5 py-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">Binaires pré-compilés</span>
+                    <h2 class="text-lg sm:text-xl font-semibold text-gray-800 dark:text-gray-100">Supported Platforms</h2>
+                    <span class="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 px-2.5 py-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">Pre-built releases</span>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                     <a href="https://github.com/moltis-org/moltis/releases" target="_blank" rel="noopener" class="group relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-gradient-to-br from-gray-50 to-white dark:from-gray-900 dark:to-gray-950 p-4 sm:p-5 transition-all hover:-translate-y-0.5 hover:border-orange-300 dark:hover:border-orange-700 hover:shadow-lg">
@@ -351,7 +492,7 @@
                         </div>
                     </a>
                 </div>
-                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">Installez en une commande, ou téléchargez un binaire pour votre plateforme depuis <a href="https://github.com/moltis-org/moltis/releases" target="_blank" rel="noopener" class="text-orange-500 hover:text-orange-600 dark:text-orange-400 dark:hover:text-orange-300 underline">GitHub Releases</a>.</p>
+                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">Install with one command, or pick a release artifact for your platform from <a href="https://github.com/moltis-org/moltis/releases" target="_blank" rel="noopener" class="text-orange-500 hover:text-orange-600 dark:text-orange-400 dark:hover:text-orange-300 underline">GitHub Releases</a>.</p>
             </div>
 
             <!-- Cloud deploy section -->
@@ -362,11 +503,11 @@
                             <span class="text-orange-500 dark:text-orange-400">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/><path d="m8 17 4 4 4-4"/><path d="M12 12v9"/></svg>
                             </span>
-                            <h2 class="text-sm sm:text-base font-semibold text-gray-700 dark:text-gray-200">Essayer dans le cloud</h2>
+                            <h2 class="text-sm sm:text-base font-semibold text-gray-700 dark:text-gray-200">Try it in the cloud</h2>
                         </div>
-                        <span class="inline-flex items-center rounded-full bg-orange-100 dark:bg-orange-900/40 border border-orange-200 dark:border-orange-800 px-2 py-0.5 text-[10px] sm:text-[11px] font-semibold text-orange-700 dark:text-orange-300">Prêt en moins d'une minute</span>
+                        <span class="inline-flex items-center rounded-full bg-orange-100 dark:bg-orange-900/40 border border-orange-200 dark:border-orange-800 px-2 py-0.5 text-[10px] sm:text-[11px] font-semibold text-orange-700 dark:text-orange-300">Ready in under a minute</span>
                     </div>
-                    <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-4">Le cloud est idéal pour essayer Moltis. Pour l'expérience complète, installez-le sur votre Mac, une VM ou tout serveur dédié.</p>
+                    <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-4">Cloud is a great way to try Moltis. For the full experience, run it on your Mac, a VM, or any dedicated host.</p>
                     <div class="flex flex-wrap items-center gap-2 mb-4">
                         <a href="https://cloud.digitalocean.com/apps/new?repo=https://github.com/moltis-org/moltis/tree/main" target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-sky-200 dark:border-sky-900/70 bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300 hover:border-sky-400 dark:hover:border-sky-600 transition-colors text-[11px] sm:text-xs font-medium" aria-label="Deploy Moltis to DigitalOcean">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -374,7 +515,7 @@
                                 <rect x="10" y="5" width="4" height="14" fill="white"/>
                                 <rect x="5" y="10" width="14" height="4" fill="white"/>
                             </svg>
-                            Déployer sur DigitalOcean
+                            Deploy on DigitalOcean
                         </a>
                     </div>
                     <div id="fly-command" class="mb-1 flex w-full flex-col gap-2 px-3 py-2 rounded-md bg-orange-50 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-800 cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-950/60 transition-colors" title="Click to copy">
@@ -384,7 +525,7 @@
                         </div>
                         <code id="fly-logs-hint" class="font-mono text-[11px] sm:text-xs text-orange-600/70 dark:text-orange-300/50"></code>
                     </div>
-                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Besoin d'aide pour la configuration ? Consultez la <a href="https://docs.moltis.org/cloud-deploy.html" class="text-orange-500 dark:text-orange-400 hover:text-orange-600 dark:hover:text-orange-300 underline">documentation Cloud Deploy</a>.</p>
+                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Need setup details? See <a href="https://docs.moltis.org/cloud-deploy.html" class="text-orange-500 dark:text-orange-400 hover:text-orange-600 dark:hover:text-orange-300 underline">Cloud Deploy docs</a>.</p>
                 </div>
             </div>
         </div>
@@ -396,7 +537,7 @@
     <div id="page-features" class="page-content hidden">
         <div class="relative z-10 px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
             <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Fonctionnalités</h1>
-            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-8 text-center">Tout ce qu'il vous faut dans un seul binaire</p>
+            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-8 text-center">Tout ce dont vous avez besoin in one binary</p>
 
             <!-- Feature highlights (12 cards) -->
             <div class="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 mb-10 text-left">
@@ -405,54 +546,54 @@
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Binaire unique</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Single Binary</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Un seul binaire autonome. Aucune dépendance, téléchargez et lancez.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">One self-contained binary. No runtime dependencies, just download and run.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">LLMs locaux</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Local LLMs</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Exécutez vos propres modèles en local. Téléchargement et configuration automatiques.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Run your own models locally. Automatic download and setup included.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Authentification</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Authentication</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">HTTPS par défaut. Accès par mot de passe, token et passkeys.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">HTTPS by default. Password, token, and passkeys access.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 20h8"/><path d="M12 18v2"/><path d="M7 9h10"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Navigation sandboxée</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Sandboxed Browsing</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Sessions navigateur dans des conteneurs Docker isolés pour une automatisation plus sûre.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Run browser sessions in isolated Docker containers for safer automation.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Protection SSRF</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">SSRF Protected</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Bloque les IPs loopback, privées et link-local lors des requêtes LLM.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Blocks loopback, private, and link-local IPs from LLM fetch.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Streaming natif</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Streaming-first</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Le premier token apparaît instantanément. Réponses fluides, même lors de longues exécutions.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">First token appears instantly. Smooth replies, even during long runs.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
@@ -461,43 +602,43 @@
                         </span>
                         <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Skills, Hooks & MCP</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Plugins, hooks, serveurs d'outils MCP avec OAuth 2.1. Stdio ou HTTP/SSE, redémarrage auto.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Plugins, hooks, MCP tool servers with OAuth 2.1. Stdio or HTTP/SSE, auto-restart.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">FS ou Sandbox</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">FS or Sandbox</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Système de fichiers complet ou isolation par session Docker, Podman, Apple Container ou WASM.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Full filesystem or per-session Docker, Podman, Apple Container, or WASM isolation.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Mémoire long terme</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Long-term Memory</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Recherche hybride vectorielle + plein texte. Votre agent se souvient du contexte.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Hybrid vector + full-text search. Your agent remembers context.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Auto-extension inspirée Pi</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Pi-Inspired Self-Extension</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Auto-extension inspirée de Pi : crée ses propres skills à l'exécution. Branchement de session, hot-reload.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Pi-inspired self-extension: creates its own skills at runtime. Session branching, hot-reload.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Multi-canal</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Multi-Channel</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Web UI, Telegram, WhatsApp, Discord, Teams ou API. Un seul agent, tous les frontends.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Web UI, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams, or API. One agent, every frontend.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
@@ -506,7 +647,7 @@
                         </span>
                         <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Voix</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Parlez à votre assistant avec de nombreux fournisseurs TTS/STT cloud et locaux.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Talk to your assistant with multiple cloud and local TTS/STT providers.</p>
                 </div>
             </div>
 
@@ -517,139 +658,153 @@
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Import OpenClaw</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">OpenClaw Import</p>
                         <span class="px-1.5 py-0.5 rounded-full bg-orange-500 text-white text-[9px] font-bold uppercase">Nouveau</span>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Import complet en lecture seule de votre workspace OpenClaw — conversations, skills et paramètres. Changez en un clic.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Full read-only import of your OpenClaw workspace — conversations, skills, and settings. Switch in one click.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Personas multi-agents</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Multi-Agent Personas</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Créez plusieurs personas avec des personnalités et capacités distinctes. Interface de gestion complète.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Create multiple agent personas with distinct personalities and capabilities. Full CRUD management UI.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Coffre-fort chiffré</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Encryption Vault</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Coffre-fort chiffré au repos pour clés API et secrets. Vos identifiants sont chiffrés sur disque, pas seulement en mémoire.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Encryption-at-rest vault for API keys and secrets. Your credentials are encrypted on disk, not just in memory.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Compagnon iOS</p>
-                        <span class="px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-[9px] font-bold uppercase">Bientôt</span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">iOS Companion</p>
+                        <span class="px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-[9px] font-bold uppercase">Soon</span>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">App iOS native avec notifications push via relais APNS. Bientôt sur l'App Store.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Native iOS app with push notifications via APNS relay. Coming soon to the App Store.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">API GraphQL</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">GraphQL API</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">API GraphQL complète exposant toutes les méthodes RPC. Créez vos propres intégrations et frontends.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Full GraphQL API exposing all RPC methods. Build your own integrations and frontends.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
                         <span class="text-orange-500 dark:text-orange-400 shrink-0">
                             <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                         </span>
-                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Internationalisation</p>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Internationalization</p>
                     </div>
                     <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Support i18n complet. Dix langues sont intégrées aujourd'hui.</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 0 0 8.7-6.7M12 21a9 9 0 0 1-8.7-6.7M12 21c2.5 0 4.5-4 4.5-9S14.5 3 12 3m0 18c-2.5 0-4.5-4-4.5-9S9.5 3 12 3m0 0a9 9 0 0 1 7.8 4.6M12 3a9 9 0 0 0-7.8 4.6m15.6 0A12 12 0 0 1 12 10.5 12 12 0 0 1 4.2 7.6m15.6 0A9 9 0 0 1 21 12c0 .8-.1 1.5-.3 2.3m0 0A18 18 0 0 1 12 16.5a18 18 0 0 1-8.7-2.2m0 0A9 9 0 0 1 3 12c0-1.3.3-2.5.7-3.6"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Webhooks</p>
+                        <span class="px-1.5 py-0.5 rounded-full bg-orange-500 text-white text-[9px] font-bold uppercase">Nouveau</span>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Run AI agents on GitHub PRs, Stripe payments, or any webhook. Review code, triage issues, handle payments &mdash; automatically.</p>
                 </div>
             </div>
 
             <!-- Extended features checklist -->
             <div class="mb-8 text-left">
-                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">Et bien plus encore...</h2>
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">And much more...</h2>
                 <div class="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
                     <!-- Security -->
                     <div>
                         <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Sécurité</h3>
                         <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Passkeys (WebAuthn)</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Clés API à portée limitée</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Coffre-fort chiffré au repos</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Secrets effacés après usage</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Approbation humaine requise</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Validation d'origine (CSWSH)</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Zéro code unsafe</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Scoped API keys</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Encryption-at-rest vault</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Secrets zeroed on drop</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Human-in-the-loop approval</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Origin validation (CSWSH)</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> No unsafe code</li>
                         </ul>
                     </div>
                     <!-- LLM Providers -->
                     <div>
-                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Fournisseurs LLM</h3>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">LLM Providers</h3>
                         <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Anthropic, OpenAI, Gemini</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> DeepSeek, Mistral, Groq, xAI</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> OpenRouter, Ollama, LLM local</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Endpoints compatibles OpenAI</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Chaînes de fallback fournisseur</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Métriques par fournisseur</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> OpenRouter, Ollama, Local LLM</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Custom OpenAI-compatible endpoints</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Provider fallback chains</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Per-provider metrics</li>
                         </ul>
                     </div>
                     <!-- Memory -->
                     <div>
-                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Mémoire</h3>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Memory</h3>
                         <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Recherche hybride (vecteur + FTS)</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Embeddings locaux (GGUF)</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> OpenAI batch API (-50%)</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Cache d'embeddings</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Surveillance de fichiers / sync live</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Export de session</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Hybrid search (vector + FTS)</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Local embeddings (GGUF)</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> OpenAI batch API (50% off)</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Embedding cache</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> File watching / live sync</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Session export</li>
                         </ul>
                     </div>
                     <!-- Extensibility -->
                     <div>
-                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Extensibilité</h3>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Extensibility</h3>
                         <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Support serveur MCP</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> API GraphQL</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Intégration calendrier CalDAV</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Système de hooks (cycle de vie)</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Planification cron</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> MCP server support</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> GraphQL API</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> CalDAV calendar integration</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Hook system (lifecycle)</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Cron job scheduling</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> <a href="https://docs.moltis.org/webhooks.html" class="hover:text-orange-500 transition-colors">Webhook triggers</a></li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> i18n (10 langues)</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> <a href="https://docs.moltis.org/openclaw-import.html" class="hover:text-orange-500 transition-colors">Import OpenClaw</a></li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Configuration TOML</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> TOML configuration</li>
                         </ul>
                     </div>
-                    <!-- Channels -->
+                    <!-- Canaux -->
                     <div>
                         <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Canaux</h3>
                         <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Interface web</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Bot Telegram</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Web UI</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Telegram bot</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> WhatsApp</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Discord</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Slack</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Matrix</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Nostr</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Microsoft Teams</li>
-                            <li class="flex items-center gap-2"><span class="text-gray-400 dark:text-gray-500">&#9675;</span> <span class="text-gray-400 dark:text-gray-500">App compagnon iOS (bientôt)</span></li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> API JSON-RPC + GraphQL</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Notifications push</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Sync multi-appareils</li>
+                            <li class="flex items-center gap-2"><span class="text-gray-400 dark:text-gray-500">&#9675;</span> <span class="text-gray-400 dark:text-gray-500">iOS companion app (coming soon)</span></li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> JSON-RPC + GraphQL API</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Push notifications</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Multi-device sync</li>
                         </ul>
                     </div>
                     <!-- Observability -->
                     <div>
-                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Observabilité</h3>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">Observability</h3>
                         <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Métriques Prometheus</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Tracing OpenTelemetry</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Logs structurés</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Graphiques par fournisseur</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Persistance SQLite</li>
-                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> WebSocket temps réel</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Prometheus metrics</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> OpenTelemetry tracing</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Structured logging</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Per-provider charts</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> SQLite persistence</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Real-time WebSocket</li>
                         </ul>
                     </div>
                 </div>
@@ -663,7 +818,7 @@
     <!-- ============================================================ -->
     <div id="page-security" class="page-content hidden">
         <div class="relative z-10 px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
-            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Sécurité avant tout</h1>
+            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Sécurité d'abord</h1>
             <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-10 text-center">Un assistant IA de confiance sur votre machine</p>
 
             <!-- Why Rust -->
@@ -676,13 +831,13 @@
                 </h2>
                 <div class="space-y-3">
                     <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                        Moltis est un seul fichier. Vous le téléchargez, vous le lancez, c'est tout. Pas de magasin de plugins, pas de gestionnaire de paquets, pas de runtime qui pourrait être compromis. L'application entière est un binaire unique que vous pouvez vérifier.
+                        Moltis est un seul fichier. Vous le téléchargez, vous l'exécutez, c'est fait. Pas de store de plugins, pas de gestionnaire de paquets, pas de runtime compromettable. L'application entière est un seul binaire vérifiable.
                     </p>
                     <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                        Votre IA tourne dans un sandbox par défaut. Elle ne peut ni lire vos fichiers, ni exécuter de commandes, ni naviguer sur le web sans votre autorisation explicite. Chaque action d'outil peut nécessiter votre approbation — ou vous pouvez pré-approuver celles de confiance.
+                        Votre IA s'exécute dans un sandbox par défaut. Elle ne peut pas lire vos fichiers, exécuter des commandes ou naviguer sur le web sauf autorisation explicite. Chaque action d'outil peut nécessiter votre approbation — ou vous pouvez pré-approuver celles en lesquelles vous avez confiance.
                     </p>
                     <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                        Vos mots de passe et clés API sont encapsulés pour ne jamais être journalisés accidentellement, et la mémoire est effacée dès qu'ils ne sont plus nécessaires. Le langage de développement (Rust) rend des classes entières de bugs de sécurité impossibles au niveau du compilateur.
+                        Vos mots de passe et clés API sont encapsulés pour ne jamais être journalisés accidentellement, et la mémoire est mise à zéro dès qu'ils ne sont plus nécessaires. Le langage dans lequel il est construit (Rust) rend des classes entières de bugs de sécurité impossibles au niveau du compilateur.
                     </p>
                     <div class="mt-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                         <p class="text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">Ce que vous ne trouverez pas ici</p>
@@ -713,12 +868,12 @@
                                 <td class="px-4 py-3">Mot de passe ou passkey requis dès le premier lancement, HTTPS automatique, limitation de débit</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
-                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">L'IA essaie d'exécuter du code dangereux</td>
-                                <td class="px-4 py-3">Tout s'exécute dans un sandbox (Docker ou Apple Container). Chaque action nécessite votre approbation</td>
+                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">L'IA tente d'exécuter du code dangereux</td>
+                                <td class="px-4 py-3">Tout s'exécute dans un sandbox (Docker ou Apple Container). Chaque action nécessite d'abord votre approbation</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">Une dépendance est compromise</td>
-                                <td class="px-4 py-3">Aucun paquet npm/pip à compromettre. Un binaire, des dépendances auditables. Les intégrations comme Telegram sont du code intégré et testé</td>
+                                <td class="px-4 py-3">Pas de paquets npm/pip à compromettre. Un seul binaire, dépendances auditables. Les intégrations comme Telegram sont du code intégré et testé</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">L'IA accède à votre réseau interne</td>
@@ -726,7 +881,7 @@
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">Quelqu'un tente de voler vos clés</td>
-                                <td class="px-4 py-3">Les clés API et mots de passe sont masqués des logs et effacés de la mémoire après usage</td>
+                                <td class="px-4 py-3">Les clés API et mots de passe sont masqués dans les journaux et mis à zéro en mémoire après utilisation</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">La session est détournée</td>
@@ -734,7 +889,7 @@
                             </tr>
                             <tr>
                                 <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">Accès non autorisé</td>
-                                <td class="px-4 py-3">Passkeys, clés API à portée limitée, politiques de permissions par outil</td>
+                                <td class="px-4 py-3">Passkeys, clés API avec portée limitée, politiques de permissions par outil</td>
                             </tr>
                         </tbody>
                     </table>
@@ -747,7 +902,7 @@
                     <span class="text-orange-500 dark:text-orange-400">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
                     </span>
-                    Exécution sandboxée
+                    Exécution en sandbox
                 </h2>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
@@ -755,23 +910,23 @@
                             <img src="images/docker.svg" alt="Docker" width="20" height="20">
                             <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Docker & Podman</h3>
                         </div>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Chaque conversation a son propre conteneur isolé. Les commandes shell et la navigation web s'exécutent dans le sandbox, pas sur votre système réel.</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Chaque conversation a son propre conteneur isolé. Les commandes shell et la navigation web se passent dans le sandbox, pas sur votre vrai système.</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                         <div class="flex items-center gap-2 mb-2">
                             <img src="images/apple.svg" alt="Apple" width="20" height="20" class="dark:invert opacity-60">
                             <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Apple Containers</h3>
                         </div>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Sur Mac, utilise la virtualisation intégrée d'Apple pour une isolation légère — pas besoin de Docker.</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Sur Mac, utilise la virtualisation intégrée d'Apple pour un isolement léger — pas besoin de Docker.</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                         <div class="flex items-center gap-2 mb-2">
                             <span class="text-orange-500 dark:text-orange-400">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
                             </span>
-                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">WASM sandbox</h3>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Sandbox WASM</h3>
                         </div>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Sandbox basé sur Wasmtime avec failover générique. Isolation légère sans conteneurs.</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Sandbox basé sur Wasmtime avec failover générique. Isolement léger sans conteneurs.</p>
                     </div>
                 </div>
             </div>
@@ -787,18 +942,18 @@
                 <div class="grid grid-cols-3 gap-3">
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
                         <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">0</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">unsafe dans le core*</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">unsafe dans le cœur*</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
                         <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">0</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400">dépendances npm</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~5K</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">lignes agent core</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~11K</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">LdC cœur de l'agent</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~150K</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~216K</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400">lignes de Rust (total)</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
@@ -810,7 +965,7 @@
                         <p class="text-xs text-gray-500 dark:text-gray-400">licence</p>
                     </div>
                 </div>
-                <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">*2 <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">unsafe impl Send/Sync</code> existent pour le wrapper FFI llama.cpp, compilés uniquement avec la feature optionnelle <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">local-llm</code>.</p>
+                <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">*2 <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">unsafe impl Send/Sync</code> exist for the llama.cpp FFI wrapper, only compiled with the optional <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">local-llm</code> feature.</p>
             </div>
         </div>
     </div>
@@ -820,8 +975,8 @@
     <!-- ============================================================ -->
     <div id="page-compare" class="page-content hidden">
         <div class="relative z-10 px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
-            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Moltis face à la concurrence</h1>
-            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-10 text-center">Assistants IA open source auto-hébergés</p>
+            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Comment Moltis se compare</h1>
+            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-10 text-center">Assistants IA open-source auto-hébergeables</p>
 
             <!-- Feature comparison -->
             <div class="mb-10 text-left">
@@ -854,29 +1009,29 @@
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">Runtime</td>
                                 <td class="px-3 py-2">Node.js + npm</td>
                                 <td class="px-3 py-2">Node.js</td>
-                                <td class="px-3 py-2">Binaire unique</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Binaire unique</td>
+                                <td class="px-3 py-2">Single binary</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Single binary</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Sandbox</td>
-                                <td class="px-3 py-2">Niveau application</td>
+                                <td class="px-3 py-2">App-level</td>
                                 <td class="px-3 py-2">Docker</td>
                                 <td class="px-3 py-2">Docker</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Docker/Podman + Apple + WASM</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">Authentification</td>
-                                <td class="px-3 py-2">Mot de passe simple</td>
-                                <td class="px-3 py-2">Aucune</td>
-                                <td class="px-3 py-2">Token + OAuthentification</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Mot de passe + Passkey + Clés API</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">Auth</td>
+                                <td class="px-3 py-2">Basic password</td>
+                                <td class="px-3 py-2">None</td>
+                                <td class="px-3 py-2">Token + OAuth</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Password + Passkey + API keys</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Voix</td>
                                 <td class="px-3 py-2">Plugin</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Intégré (15+ fournisseurs)</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Built-in (15+ providers)</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">MCP</td>
@@ -888,23 +1043,23 @@
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Mémoire / RAG</td>
                                 <td class="px-3 py-2">Plugin</td>
-                                <td class="px-3 py-2">Fichiers par groupe</td>
+                                <td class="px-3 py-2">Per-group files</td>
                                 <td class="px-3 py-2">SQLite + FTS</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">SQLite + FTS + vector</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Hooks</td>
-                                <td class="px-3 py-2">Limité</td>
+                                <td class="px-3 py-2">Limited</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">15 types d'événements</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">15 event types</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">Canaux</td>
                                 <td class="px-3 py-2">Web, Telegram</td>
                                 <td class="px-3 py-2">Web, Telegram</td>
                                 <td class="px-3 py-2">Web, Discord</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Web, Telegram, WhatsApp, Discord, Teams</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Web, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">API</td>
@@ -918,20 +1073,20 @@
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Complet (lecture seule, sûr)</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Full (read-only, safe)</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            <!-- Security comparison -->
+            <!-- Comparaison de sécurité -->
             <div class="mb-10 text-left">
                 <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
                     <span class="text-orange-500 dark:text-orange-400">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                     </span>
-                    Comparaison sécurité
+                    Comparaison de sécurité
                 </h2>
                 <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
                     <table class="w-full text-[11px] sm:text-xs text-left whitespace-nowrap">
@@ -946,18 +1101,18 @@
                         </thead>
                         <tbody class="text-gray-600 dark:text-gray-400">
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Sandbox code</td>
-                                <td class="px-3 py-2">Niveau application</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Sandbox de code</td>
+                                <td class="px-3 py-2">App-level</td>
                                 <td class="px-3 py-2">Docker</td>
                                 <td class="px-3 py-2">Docker</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Docker/Podman + Apple + WASM</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">Gestion des secrets</td>
-                                <td class="px-3 py-2">Variables d'env</td>
-                                <td class="px-3 py-2">Variables d'env</td>
+                                <td class="px-3 py-2">Variables d'environnement</td>
+                                <td class="px-3 py-2">Variables d'environnement</td>
                                 <td class="px-3 py-2">Profils chiffrés</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Coffre-fort chiffré, masqué, effacé</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Coffre chiffré, expurgé, mis à zéro</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Protection SSRF</td>
@@ -977,7 +1132,7 @@
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Contrôle des hooks</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2">Basé sur skills</td>
+                                <td class="px-3 py-2">Basé sur les compétences</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Inspecter / modifier / bloquer</td>
                             </tr>
                             <tr>
@@ -998,7 +1153,7 @@
                     <span class="text-orange-500 dark:text-orange-400">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                     </span>
-                    Performances
+                    Performance
                 </h2>
                 <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
                     <table class="w-full text-[11px] sm:text-xs text-left whitespace-nowrap">
@@ -1015,38 +1170,38 @@
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Taille dist</td>
                                 <td class="px-3 py-2">~28 MB (node_modules)</td>
-                                <td class="px-3 py-2">Petit</td>
+                                <td class="px-3 py-2">Small</td>
                                 <td class="px-3 py-2">3.4 MB</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">44 MB</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">Démarrage à froid</td>
                                 <td class="px-3 py-2">&gt;30s</td>
-                                <td class="px-3 py-2">Rapide</td>
+                                <td class="px-3 py-2">Fast</td>
                                 <td class="px-3 py-2">&lt;10ms</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">~1s</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">RAM (repos)</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">RAM (inactif)</td>
                                 <td class="px-3 py-2">&gt;100 MB</td>
-                                <td class="px-3 py-2">Faible</td>
+                                <td class="px-3 py-2">Low</td>
                                 <td class="px-3 py-2">&lt;5 MB</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">~30 MB</td>
                             </tr>
                             <tr>
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Matériel min</td>
-                                <td class="px-3 py-2">PC moderne</td>
-                                <td class="px-3 py-2">Tout</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Matériel minimum</td>
+                                <td class="px-3 py-2">Ordinateur moderne</td>
+                                <td class="px-3 py-2">Any</td>
                                 <td class="px-3 py-2">$10 SBC</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Raspberry Pi 4+</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Moltis est plus gros car il intègre une interface web, un moteur vocal, l'automatisation navigateur et le runtime MCP. ZeroClaw est plus léger mais ne propose pas ces fonctionnalités.</p>
+                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Moltis est plus volumineux car il embarque une interface web, un moteur vocal, l'automatisation du navigateur et un runtime MCP. ZeroClaw est plus petit mais manque de ces fonctionnalités.</p>
             </div>
 
-            <p class="text-[10px] text-gray-400 dark:text-gray-500 text-center">Basé sur les informations publiques disponibles. Les projets évoluent vite — vérifiez chaque dépôt pour les dernières infos. <a href="https://docs.moltis.org/comparison.html" class="text-orange-500 dark:text-orange-400 hover:underline">Comparaison complète dans la doc</a>.</p>
+            <p class="text-[10px] text-gray-400 dark:text-gray-500 text-center">Basé sur des informations publiques. Les projets évoluent vite — consultez chaque dépôt pour les dernières infos. <a href="https://docs.moltis.org/comparison.html" class="text-orange-500 dark:text-orange-400 hover:underline">Comparaison complète dans la documentation</a>.</p>
         </div>
     </div>
 
@@ -1055,7 +1210,7 @@
     <!-- ============================================================ -->
     <footer class="relative z-10 text-center px-4 pb-8 pt-4">
         <p class="max-w-2xl mx-auto mb-4 text-xs sm:text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
-            Les assistants IA locaux sont encore des logiciels en phase initiale. Considérez Moltis comme alpha : utilisez-le avec prudence, vérifiez les permissions des outils, et évitez d'accorder un accès système large dont vous n'avez pas besoin. Utilisez de manière responsable.
+            Les assistants IA locaux sont encore des logiciels jeunes. Traitez Moltis comme une version alpha : utilisez-le avec précaution, vérifiez les permissions des outils et évitez d'accorder un accès système large dont vous n'avez pas besoin. Utilisez de manière responsable.
         </p>
         <p class="inline-flex items-center gap-3 text-xs text-gray-400 dark:text-gray-600">
             <span class="inline-flex items-center gap-1.5">
@@ -1072,13 +1227,13 @@
             </a>
         </p>
         <p class="text-xs text-gray-400 dark:text-gray-600 mt-2">
-            fait avec amour &#10084;&#65039; par <a href="https://pen.so" class="underline hover:text-orange-500 dark:hover:text-orange-400 transition-colors">Fabien Penso</a>
+            fait avec amour &#10084;&#65039; by <a href="https://pen.so" class="underline hover:text-orange-500 dark:hover:text-orange-400 transition-colors">Fabien Penso</a>
         </p>
     </footer>
 
     <script>
         // ============================================================
-        // Language switcher
+        // Langage switcher
         // ============================================================
         function setLang(lang) {
             document.cookie = 'lang=' + lang + ';path=/;max-age=31536000;SameSite=Lax';
@@ -1147,44 +1302,14 @@
         // Intercept nav tab clicks to prevent default hash jump
         document.querySelectorAll('.nav-tab').forEach(function(tab) {
             tab.addEventListener('click', function(e) {
+                var href = tab.getAttribute('href') || '';
+                if (!tab.dataset.page || !href.startsWith('#') && !href.startsWith('/#')) return;
                 e.preventDefault();
                 navigateTo(tab.dataset.page);
             });
         });
 
-        // ============================================================
-        // GitHub stars
-        // ============================================================
-        (function() {
-            fetch('https://api.github.com/repos/moltis-org/moltis')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.stargazers_count != null) {
-                        var count = data.stargazers_count;
-                        var formatted;
-                        if (count >= 1000) {
-                            formatted = (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-                        } else {
-                            formatted = String(count);
-                        }
-                        var el = document.getElementById('github-stars');
-                        // Build star icon + count using safe DOM methods
-                        el.textContent = '';
-                        var star = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                        star.setAttribute('width', '12');
-                        star.setAttribute('height', '12');
-                        star.setAttribute('viewBox', '0 0 24 24');
-                        star.setAttribute('fill', 'currentColor');
-                        star.setAttribute('class', 'text-amber-400 inline');
-                        var polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                        polygon.setAttribute('points', '12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2');
-                        star.appendChild(polygon);
-                        el.appendChild(star);
-                        el.appendChild(document.createTextNode(' ' + formatted));
-                    }
-                })
-                .catch(function() {});
-        })();
+        // GitHub stars are fetched by the shared nav partial script.
 
         // ============================================================
         // Installation tabs
@@ -1226,7 +1351,7 @@
             document.getElementById('theme-icon-light').classList.toggle('hidden', mode !== 'light');
             document.getElementById('theme-icon-system').classList.toggle('hidden', mode !== 'system');
             document.getElementById('theme-icon-dark').classList.toggle('hidden', mode !== 'dark');
-            var titles = { light: 'Thème : Clair', system: 'Thème : Système', dark: 'Thème : Sombre' };
+            var titles = { light: 'Theme: Light', system: 'Theme: System', dark: 'Theme: Dark' };
             if (themeToggle) themeToggle.title = titles[mode] || 'Toggle theme';
         }
         updateThemeIcon(savedTheme);
@@ -1294,6 +1419,19 @@
                 });
             });
         }
+        // Scroll-reveal for pill groups
+        var revealObserver = new IntersectionObserver(function(entries) {
+            var idx = 0;
+            entries.forEach(function(entry) {
+                if (!entry.isIntersecting) return;
+                setTimeout(function() { entry.target.classList.add('revealed'); }, idx * 100);
+                idx++;
+                revealObserver.unobserve(entry.target);
+            });
+        }, { threshold: 0.15 });
+        document.querySelectorAll('[data-reveal]').forEach(function(el) {
+            revealObserver.observe(el);
+        });
     </script>
 </body>
 </html>

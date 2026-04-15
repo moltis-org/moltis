@@ -64,7 +64,8 @@ pub async fn run_onboarding() -> Result<()> {
     let path = save_config(&config).context("failed to save onboarding config")?;
     moltis_config::save_identity_for_agent("main", &config.identity)
         .context("failed to save identity")?;
-    moltis_config::save_user(&config.user).context("failed to save user")?;
+    moltis_config::save_user_with_mode(&config.user, config.memory.user_profile_write_mode)
+        .context("failed to save user")?;
     println!("Config saved to {}", path.display());
     println!("Onboarding complete!");
     Ok(())

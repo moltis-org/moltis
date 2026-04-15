@@ -23,7 +23,7 @@ import { clearSessionHistoryCache, fetchSessions, refreshWelcomeCardIfNeeded, re
 import * as S from "./state.js";
 import { modelStore } from "./stores/model-store.js";
 import { projectStore } from "./stores/project-store.js";
-import { sessionStore } from "./stores/session-store.js";
+import { insertSessionInOrder, sessionStore } from "./stores/session-store.js";
 import { initTheme, injectMarkdownStyles } from "./theme.js";
 import { connect } from "./websocket.js";
 
@@ -114,12 +114,11 @@ function upsertSessionFromEvent(entry) {
 	sessionStore.upsert(entry);
 	var legacy = S.sessions.slice();
 	var idx = legacy.findIndex((session) => session.key === entry.key);
+	var nextEntry = { ...entry };
 	if (idx >= 0) {
-		legacy[idx] = { ...legacy[idx], ...entry };
-	} else {
-		legacy.push({ ...entry });
+		nextEntry = { ...legacy[idx], ...entry };
 	}
-	S.setSessions(legacy);
+	S.setSessions(insertSessionInOrder(legacy, nextEntry));
 	renderSessionList();
 	return true;
 }
@@ -524,11 +523,15 @@ function initSessionTabBar() {
 	var bar = S.$("sessionTabBar");
 	if (!bar) return;
 	var buttons = bar.querySelectorAll(".session-tab");
+	var archivedRow = S.$("archivedSessionsRow");
 
 	function updateActive() {
 		var current = sessionStore.sessionListTab.value;
 		for (var btn of buttons) {
 			btn.classList.toggle("active", btn.dataset.tab === current);
+		}
+		if (archivedRow) {
+			archivedRow.classList.toggle("hidden", current !== "sessions");
 		}
 	}
 
@@ -541,11 +544,21 @@ function initSessionTabBar() {
 	updateActive();
 }
 
+function initArchivedSessionsToggle() {
+	var checkbox = S.$("showArchivedSessions");
+	if (!checkbox) return;
+	checkbox.checked = sessionStore.showArchivedSessions.value;
+	checkbox.addEventListener("change", function () {
+		sessionStore.setShowArchivedSessions(this.checked);
+	});
+}
+
 function startApp() {
 	// Mount the reactive SessionList once — signals drive all re-renders.
 	var sessionListEl = S.$("sessionList");
 	if (sessionListEl) render(html`<${SessionList} />`, sessionListEl);
 	initSessionTabBar();
+	initArchivedSessionsToggle();
 
 	var path = location.pathname;
 	if (path === "/") {

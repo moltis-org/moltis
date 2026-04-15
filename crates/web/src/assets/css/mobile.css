@@ -351,9 +351,24 @@ body {
     justify-content: space-between;
   }
 
+  .chat-toolbar #promptMemoryToolbar {
+    min-width: 0;
+  }
+
+  .chat-toolbar #promptMemoryStatusBtn,
+  .chat-toolbar #promptMemoryRefreshBtn {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .chat-toolbar #promptMemoryStatusLabel {
+    display: none;
+  }
+
   .chat-input-row {
     padding-left: calc(6px + var(--safe-left)) !important;
     padding-right: calc(6px + var(--safe-right)) !important;
+    padding-bottom: calc(8px + var(--safe-bottom)) !important;
     border-radius: 0 !important;
   }
 
@@ -637,8 +652,19 @@ body {
 
 /* ── PWA Standalone Mode Adjustments ── */
 
+html.pwa-standalone body {
+  padding-top: 0;
+}
+
+html.pwa-standalone header {
+  padding-top: calc(8px + var(--safe-top));
+}
+
 @media (display-mode: standalone) {
-  /* Extra top padding when in standalone PWA mode */
+  body {
+    padding-top: 0;
+  }
+
   header {
     padding-top: calc(8px + var(--safe-top));
   }

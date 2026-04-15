@@ -50,7 +50,7 @@ pub fn derive_key(
 
 /// Generate a random 16-byte salt and return it as base64.
 pub fn generate_salt() -> String {
-    use {base64::Engine, rand::RngCore};
+    use {base64::Engine, rand::Rng};
 
     let mut salt = [0u8; 16];
     rand::rng().fill_bytes(&mut salt);

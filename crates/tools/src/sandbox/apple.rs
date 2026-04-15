@@ -20,7 +20,9 @@ use super::containers::{
 #[cfg(target_os = "macos")]
 use super::host::provision_packages;
 #[cfg(target_os = "macos")]
-use super::paths::ensure_sandbox_home_persistence_host_dir;
+use super::paths::{
+    ensure_sandbox_home_persistence_host_dir, resolve_home_persistence_guest_path_on_host,
+};
 #[cfg(target_os = "macos")]
 use super::types::{
     BuildImageResult, DEFAULT_SANDBOX_IMAGE, NetworkPolicy, SANDBOX_HOME_DIR, Sandbox,
@@ -30,6 +32,12 @@ use super::types::{
 use crate::error::{Error, Result};
 #[cfg(target_os = "macos")]
 use crate::exec::{ExecOpts, ExecResult};
+#[cfg(target_os = "macos")]
+use crate::sandbox::file_system::{
+    SandboxListFilesResult, SandboxReadResult, command_list_files, command_read_file,
+    command_write_file, native_host_list_files, native_host_read_file, native_host_write_file,
+    remap_host_list_result_to_guest,
+};
 
 /// Apple Container sandbox using the `container` CLI (macOS 26+, Apple Silicon).
 #[cfg(target_os = "macos")]
@@ -157,6 +165,15 @@ impl AppleContainerSandbox {
             return Ok(None);
         };
         Ok(Some(format!("{}:{SANDBOX_HOME_DIR}", host_dir.display())))
+    }
+
+    fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<std::path::PathBuf> {
+        resolve_home_persistence_guest_path_on_host(
+            &self.config,
+            Some("container"),
+            id,
+            std::path::Path::new(guest_path),
+        )
     }
 
     async fn resolve_local_image(&self, requested_image: &str) -> Result<String> {
@@ -1041,6 +1058,58 @@ impl Sandbox for AppleContainerSandbox {
                 )));
             },
         }
+    }
+
+    async fn read_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        if let Some(host_path) = self.mounted_host_path(id, file_path) {
+            return native_host_read_file(
+                host_path
+                    .to_str()
+                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
+                max_bytes,
+            )
+            .await;
+        }
+
+        command_read_file(self, id, file_path, max_bytes).await
+    }
+
+    async fn write_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        if let Some(host_path) = self.mounted_host_path(id, file_path) {
+            return native_host_write_file(
+                host_path
+                    .to_str()
+                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
+                content,
+            )
+            .await;
+        }
+
+        command_write_file(self, id, file_path, content).await
+    }
+
+    async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        if let Some(host_path) = self.mounted_host_path(id, root) {
+            let host_files = native_host_list_files(
+                host_path
+                    .to_str()
+                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
+            )
+            .await?;
+            return remap_host_list_result_to_guest(root, &host_path, host_files);
+        }
+
+        command_list_files(self, id, root).await
     }
 
     async fn build_image(

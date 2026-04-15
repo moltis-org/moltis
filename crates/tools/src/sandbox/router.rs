@@ -539,6 +539,7 @@ impl SandboxRouter {
         let id = self.sandbox_id_for(session_key);
         self.backend.cleanup(&id).await?;
         self.remove_override(session_key).await;
+        self.remove_image_override(session_key).await;
         self.clear_prepared_session(session_key).await;
         Ok(())
     }

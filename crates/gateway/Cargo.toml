@@ -31,11 +31,13 @@ moltis-cron            = { workspace = true }
 moltis-discord         = { workspace = true }
 moltis-matrix          = { optional = true, workspace = true }
 moltis-mcp             = { workspace = true }
+moltis-mcp-agent-bridge = { workspace = true }
 moltis-media           = { workspace = true }
 moltis-memory          = { workspace = true }
 moltis-metrics         = { optional = true, workspace = true }
 moltis-msteams         = { workspace = true }
 moltis-network-filter  = { features = ["proxy", "service"], optional = true, workspace = true }
+moltis-nostr           = { optional = true, workspace = true }
 moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
@@ -56,6 +58,7 @@ moltis-telegram        = { workspace = true }
 moltis-tools           = { workspace = true }
 moltis-vault           = { optional = true, workspace = true }
 moltis-voice           = { optional = true, workspace = true }
+moltis-webhooks        = { workspace = true }
 moltis-whatsapp        = { optional = true, workspace = true }
 p256                   = { features = ["ecdsa"], optional = true, workspace = true }
 portable-pty           = { optional = true, workspace = true }
@@ -93,12 +96,14 @@ default = [
   "caldav",
   "file-watcher",
   "firecrawl",
+  "fs-tools",
   "graphql",
   "local-llm",
   "local-llm-metal",
   "matrix",
   "mdns",
   "metrics",
+  "nostr",
   "openclaw-import",
   "prometheus",
   "push-notifications",
@@ -119,7 +124,9 @@ file-watcher = [
   "moltis-skills/file-watcher",
 ]
 firecrawl = ["moltis-tools/firecrawl"]
+fs-tools = ["moltis-tools/fs-tools"]
 graphql = []
+llm-compaction = ["moltis-chat/llm-compaction"]
 local-embeddings = ["moltis-memory/local-embeddings"]
 local-llm = [
   "moltis-chat/local-llm",
@@ -138,7 +145,9 @@ metrics = [
   "moltis-matrix/metrics",
   "moltis-metrics/sqlite",
   "moltis-msteams/metrics",
+  "moltis-nostr?/metrics",
 ]
+nostr = ["dep:moltis-nostr"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]

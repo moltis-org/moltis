@@ -11,6 +11,7 @@ use {
 use moltis_channels::{
     ChannelAttachment, ChannelEvent, ChannelMessageKind, ChannelMessageMeta, ChannelReplyTarget,
     ChannelType,
+    config_view::ChannelConfigView,
     message_log::MessageLogEntry,
     otp::{approve_sender_via_otp, emit_otp_challenge, emit_otp_resolution},
 };
@@ -86,6 +87,14 @@ pub async fn handle_event(
             }
             mirror_latest_qr(&accounts, &state.account_id, None);
 
+            // Auto-approve the owner's phone number so they don't need to
+            // manually add themselves to the allowlist.  Only the PN JID is
+            // needed — incoming messages always use the PN format.
+            {
+                let own_pn = state.client.get_pn().await;
+                auto_approve_owner_jid(&accounts, &state.account_id, own_pn.as_ref());
+            }
+
             let display_name = state.client.get_push_name().await;
             let display = if display_name.is_empty() {
                 None
@@ -98,6 +107,26 @@ pub async fn handle_event(
                     channel_type: ChannelType::Whatsapp,
                     account_id: state.account_id.clone(),
                     display_name: display,
+                })
+                .await;
+            }
+        },
+        Event::PairSuccess(ref pair) => {
+            info!(account_id = %state.account_id, jid = %pair.id, "WhatsApp pairing succeeded");
+
+            // Clear QR immediately so the UI stops showing it.
+            if let Ok(mut qr) = state.latest_qr.write() {
+                *qr = None;
+            }
+            mirror_latest_qr(&accounts, &state.account_id, None);
+
+            // Emit PairingComplete now — don't wait for the reconnect cycle.
+            // The UI will transition from QR → success immediately.
+            if let Some(ref sink) = state.event_sink {
+                sink.emit(ChannelEvent::PairingComplete {
+                    channel_type: ChannelType::Whatsapp,
+                    account_id: state.account_id.clone(),
+                    display_name: None,
                 })
                 .await;
             }
@@ -159,12 +188,24 @@ async fn handle_message(
 
     let peer_id = sender_jid.to_string();
     let chat_id = chat_jid.to_string();
-    let username = sender_jid.user.clone();
+    // Use the sender's user part as display username.  Resolved later for
+    // self-chat so the phone number appears instead of the opaque LID.
+    let mut username = sender_jid.user.clone();
     let sender_name = if info.push_name.is_empty() {
         None
     } else {
         Some(info.push_name.clone())
     };
+
+    if should_ignore_inbound_chat(&info.source) {
+        debug!(
+            account_id = %state.account_id,
+            chat = %chat_jid,
+            sender = %sender_jid,
+            "ignoring WhatsApp status/broadcast traffic"
+        );
+        return;
+    }
 
     // Self-chat detection:
     // - Primary path: `is_from_me` (message sent from another device on our own account).
@@ -180,6 +221,18 @@ async fn handle_message(
     let own_lid = state.client.get_lid().await;
     let is_self_chat = is_owner_user(chat_jid, own_pn.as_ref(), own_lid.as_ref());
     let sender_is_owner = is_owner_user(sender_jid, own_pn.as_ref(), own_lid.as_ref());
+
+    debug!(
+        account_id = %state.account_id,
+        sender = %sender_jid,
+        chat = %chat_jid,
+        own_pn = ?own_pn.as_ref().map(|j| j.to_string()),
+        own_lid = ?own_lid.as_ref().map(|j| j.to_string()),
+        is_from_me = info.source.is_from_me,
+        is_self_chat,
+        sender_is_owner,
+        "inbound message owner detection"
+    );
 
     if info.source.is_from_me || (is_self_chat && sender_is_owner) {
         // Check text for bot watermark as secondary loop detection.
@@ -212,6 +265,21 @@ async fn handle_message(
         is_owner_self_chat = true;
     }
 
+    // For self-chat, the chat JID is the LID which doesn't work as a reply
+    // target and shows an opaque ID in the UI.  Use just the phone number
+    // as the chat_id — it's human-readable, URL-safe (no dots), and the
+    // outbound layer resolves it to a full PN JID before sending.
+    let chat_id = if is_owner_self_chat {
+        if let Some(ref pn) = own_pn {
+            username = pn.user.clone();
+            pn.user.clone()
+        } else {
+            chat_id
+        }
+    } else {
+        chat_id
+    };
+
     // Extract text from the message.
     let text = msg
         .conversation
@@ -234,6 +302,11 @@ async fn handle_message(
     } else {
         None
     };
+    let bot_mentioned = if is_group {
+        message_mentions_owner(&msg, own_pn.as_ref(), own_lid.as_ref())
+    } else {
+        false
+    };
     let access_result = if is_owner_self_chat {
         Ok(())
     } else {
@@ -243,6 +316,7 @@ async fn handle_message(
             &peer_id,
             Some(&username),
             group_id,
+            bot_mentioned,
         )
     };
     let access_granted = access_result.is_ok();
@@ -328,7 +402,7 @@ async fn handle_message(
             thread_id: None,
         };
         if let Some(ref sink) = state.event_sink {
-            match sink.dispatch_command(cmd, reply_to).await {
+            match sink.dispatch_command(cmd, reply_to, Some(&peer_id)).await {
                 Ok(response) => {
                     let outbound_msg = wa::Message {
                         conversation: Some(response),
@@ -362,9 +436,16 @@ async fn handle_message(
         channel_type: ChannelType::Whatsapp,
         sender_name,
         username: Some(username),
+        sender_id: Some(peer_id.clone()),
         message_kind: Some(message_kind),
-        model: effective_config.model.clone(),
+        model: effective_config
+            .resolve_model(&chat_id, &peer_id)
+            .map(String::from),
+        agent_id: effective_config
+            .resolve_agent_id(&chat_id, &peer_id)
+            .map(String::from),
         audio_filename: None,
+        documents: None,
     };
 
     // Dispatch based on message kind.
@@ -400,6 +481,15 @@ async fn handle_message(
             handle_location(&msg, account_id, reply_to, meta, chat_jid, state).await;
         },
         ChannelMessageKind::Other => {
+            if is_owner_self_chat && is_benign_self_chat_protocol_message(&msg) {
+                debug!(
+                    account_id = %state.account_id,
+                    chat = %chat_jid,
+                    "ignoring benign WhatsApp self-chat protocol message: {}",
+                    describe_message_fields(&msg),
+                );
+                return;
+            }
             info!(
                 account_id = %state.account_id,
                 chat = %chat_jid,
@@ -728,6 +818,97 @@ fn is_owner_user(jid: &Jid, own_pn: Option<&Jid>, own_lid: Option<&Jid>) -> bool
         || own_lid.is_some_and(|lid| lid.is_same_user_as(jid))
 }
 
+fn context_info_mentions_owner(
+    context: Option<&wa::ContextInfo>,
+    own_pn: Option<&Jid>,
+    own_lid: Option<&Jid>,
+) -> bool {
+    context.is_some_and(|context| {
+        context.mentioned_jid.iter().any(|mentioned| {
+            mentioned
+                .parse::<Jid>()
+                .ok()
+                .is_some_and(|jid| is_owner_user(&jid, own_pn, own_lid))
+        })
+    })
+}
+
+fn message_mentions_owner(msg: &wa::Message, own_pn: Option<&Jid>, own_lid: Option<&Jid>) -> bool {
+    context_info_mentions_owner(
+        msg.extended_text_message
+            .as_ref()
+            .and_then(|message| message.context_info.as_deref()),
+        own_pn,
+        own_lid,
+    ) || context_info_mentions_owner(
+        msg.image_message
+            .as_ref()
+            .and_then(|message| message.context_info.as_deref()),
+        own_pn,
+        own_lid,
+    ) || context_info_mentions_owner(
+        msg.audio_message
+            .as_ref()
+            .and_then(|message| message.context_info.as_deref()),
+        own_pn,
+        own_lid,
+    ) || context_info_mentions_owner(
+        msg.video_message
+            .as_ref()
+            .and_then(|message| message.context_info.as_deref()),
+        own_pn,
+        own_lid,
+    ) || context_info_mentions_owner(
+        msg.document_message
+            .as_ref()
+            .and_then(|message| message.context_info.as_deref()),
+        own_pn,
+        own_lid,
+    )
+}
+
+/// Auto-add the owner's phone and LID JIDs to the allowlist so they're
+/// always approved without manual configuration or OTP.
+fn auto_approve_owner_jid(accounts: &AccountStateMap, account_id: &str, own_pn: Option<&Jid>) {
+    let Some(jid) = own_pn else {
+        return;
+    };
+    let mut map = accounts.write().unwrap_or_else(|e| e.into_inner());
+    let Some(state) = map.get_mut(account_id) else {
+        return;
+    };
+
+    // Use "user@server" without the device suffix — incoming messages
+    // arrive as e.g. "15551234567@s.whatsapp.net" (no ":35" device).
+    let canonical = format!("{}@{}", jid.user, jid.server);
+    let user = &jid.user;
+    let already = state
+        .config
+        .allowlist
+        .iter()
+        .any(|entry| entry == user || entry == &canonical);
+    if !already {
+        info!(
+            account_id,
+            jid = %canonical,
+            "auto-adding owner JID to allowlist"
+        );
+        state.config.allowlist.push(canonical);
+    }
+}
+
+fn should_ignore_inbound_chat(source: &wacore::types::message::MessageSource) -> bool {
+    source.chat.is_status_broadcast() || source.is_incoming_broadcast()
+}
+
+fn is_benign_self_chat_protocol_message(msg: &wa::Message) -> bool {
+    msg.sender_key_distribution_message.is_some()
+        || msg.protocol_message.is_some()
+        || msg.reaction_message.is_some()
+        || msg.edited_message.is_some()
+        || msg.event_message.is_some()
+}
+
 /// List which `Option` fields on `wa::Message` are `Some`, giving operators a
 /// concrete clue about the unhandled message type (e.g. "sticker_message, reaction_message").
 ///
@@ -975,7 +1156,7 @@ async fn handle_otp_flow(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
+    use {super::*, wacore::types::message::MessageSource};
 
     #[test]
     fn owner_self_chat_detected_without_is_from_me_when_sender_and_chat_are_owner() {
@@ -1010,6 +1191,64 @@ mod tests {
 
         assert!(is_self_chat);
         assert!(!sender_is_owner);
+    }
+
+    #[test]
+    fn status_broadcast_chat_is_ignored_before_routing() {
+        let source = MessageSource {
+            chat: "status@broadcast".parse().unwrap(),
+            sender: "11111111111@s.whatsapp.net".parse().unwrap(),
+            ..Default::default()
+        };
+
+        assert!(should_ignore_inbound_chat(&source));
+    }
+
+    #[test]
+    fn incoming_broadcast_list_is_ignored_before_routing() {
+        let source = MessageSource {
+            chat: "120363456789@broadcast".parse().unwrap(),
+            sender: "11111111111@s.whatsapp.net".parse().unwrap(),
+            is_from_me: false,
+            ..Default::default()
+        };
+
+        assert!(should_ignore_inbound_chat(&source));
+    }
+
+    #[test]
+    fn ordinary_direct_chat_is_not_ignored() {
+        let source = MessageSource {
+            chat: "11111111111@s.whatsapp.net".parse().unwrap(),
+            sender: "11111111111@s.whatsapp.net".parse().unwrap(),
+            ..Default::default()
+        };
+
+        assert!(!should_ignore_inbound_chat(&source));
+    }
+
+    #[test]
+    fn benign_self_chat_protocol_messages_are_suppressed() {
+        let msg = wa::Message {
+            protocol_message: Some(Default::default()),
+            ..Default::default()
+        };
+
+        assert!(is_benign_self_chat_protocol_message(&msg));
+    }
+
+    #[test]
+    fn unsupported_user_content_still_surfaces_as_other() {
+        let msg = wa::Message {
+            sticker_message: Some(Default::default()),
+            ..Default::default()
+        };
+
+        assert!(!is_benign_self_chat_protocol_message(&msg));
+        assert!(matches!(
+            classify_message(&msg, ""),
+            ChannelMessageKind::Other
+        ));
     }
 
     #[test]

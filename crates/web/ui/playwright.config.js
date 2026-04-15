@@ -42,10 +42,144 @@ const oauthBaseURL = `http://127.0.0.1:${oauthPort}`;
 const onboardingAnthropicPort = resolvePort("MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT", usedPorts);
 const onboardingAnthropicBaseURL =
 	process.env.MOLTIS_E2E_ONBOARDING_ANTHROPIC_BASE_URL || `http://127.0.0.1:${onboardingAnthropicPort}`;
+const openaiLivePort = resolvePort("MOLTIS_E2E_OPENAI_LIVE_PORT", usedPorts);
+const openaiLiveBaseURL = process.env.MOLTIS_E2E_OPENAI_LIVE_BASE_URL || `http://127.0.0.1:${openaiLivePort}`;
+const openAiLiveKey = process.env.MOLTIS_E2E_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "";
+const enableOpenAiLiveProject = openAiLiveKey !== "";
 // Reliability first: fresh local gateway instances by default avoid
 // hidden cross-run state leaks. Set MOLTIS_E2E_REUSE_SERVER=1 to trade
 // determinism for faster startup in ad-hoc local runs.
 const reuseExistingServer = !process.env.CI && process.env.MOLTIS_E2E_REUSE_SERVER === "1";
+const projects = [
+	{
+		name: "default",
+		testIgnore: [
+			/auth\.spec/,
+			/onboarding\.spec/,
+			/onboarding-openai\.spec/,
+			/onboarding-auth\.spec/,
+			/onboarding-anthropic\.spec/,
+			/openai-live\.spec/,
+			/oauth\.spec/,
+		],
+	},
+	{
+		name: "auth",
+		testMatch: /\/auth\.spec/,
+		dependencies: ["default"],
+	},
+	{
+		name: "onboarding",
+		testMatch: /onboarding(?:-openai)?\.spec/,
+		use: {
+			baseURL: onboardingBaseURL,
+		},
+	},
+	{
+		name: "onboarding-auth",
+		testMatch: /onboarding-auth\.spec/,
+		use: {
+			baseURL: onboardingAuthBaseURL,
+		},
+	},
+	{
+		name: "oauth",
+		testMatch: /oauth\.spec/,
+		use: {
+			baseURL: oauthBaseURL,
+		},
+	},
+	{
+		name: "onboarding-anthropic",
+		testMatch: /onboarding-anthropic\.spec/,
+		use: {
+			baseURL: onboardingAnthropicBaseURL,
+		},
+	},
+];
+
+if (enableOpenAiLiveProject) {
+	projects.push({
+		name: "openai-live",
+		testMatch: /openai-live\.spec/,
+		use: {
+			baseURL: openaiLiveBaseURL,
+		},
+	});
+}
+
+const webServer = [
+	{
+		command: "./e2e/start-gateway.sh",
+		cwd: __dirname,
+		url: `${baseURL}/health`,
+		reuseExistingServer: reuseExistingServer,
+		timeout: 300_000,
+		env: {
+			...process.env,
+			MOLTIS_E2E_PORT: port,
+		},
+	},
+	{
+		command: "./e2e/start-gateway-onboarding.sh",
+		cwd: __dirname,
+		url: `${onboardingBaseURL}/health`,
+		reuseExistingServer: reuseExistingServer,
+		timeout: 300_000,
+		env: {
+			...process.env,
+			MOLTIS_E2E_ONBOARDING_PORT: onboardingPort,
+		},
+	},
+	{
+		command: "./e2e/start-gateway-onboarding-auth.sh",
+		cwd: __dirname,
+		url: `${onboardingAuthBaseURL}/health`,
+		reuseExistingServer: reuseExistingServer,
+		timeout: 300_000,
+		env: {
+			...process.env,
+			MOLTIS_E2E_ONBOARDING_AUTH_PORT: onboardingAuthPort,
+		},
+	},
+	{
+		command: "./e2e/start-gateway-oauth.sh",
+		cwd: __dirname,
+		url: `${oauthBaseURL}/health`,
+		reuseExistingServer: reuseExistingServer,
+		timeout: 300_000,
+		env: {
+			...process.env,
+			MOLTIS_E2E_OAUTH_PORT: oauthPort,
+		},
+	},
+	{
+		command: "./e2e/start-gateway-onboarding-anthropic.sh",
+		cwd: __dirname,
+		url: `${onboardingAnthropicBaseURL}/health`,
+		reuseExistingServer: reuseExistingServer,
+		timeout: 300_000,
+		env: {
+			...process.env,
+			MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT: onboardingAnthropicPort,
+		},
+	},
+];
+
+if (enableOpenAiLiveProject) {
+	webServer.push({
+		command: "./e2e/start-gateway-openai-live.sh",
+		cwd: __dirname,
+		url: `${openaiLiveBaseURL}/health`,
+		reuseExistingServer: reuseExistingServer,
+		timeout: 300_000,
+		env: {
+			...process.env,
+			MOLTIS_E2E_OPENAI_LIVE_PORT: openaiLivePort,
+		},
+	});
+}
+
 module.exports = defineConfig({
 	testDir: "./e2e/specs",
 	timeout: 45_000,
@@ -64,107 +198,6 @@ module.exports = defineConfig({
 		screenshot: "only-on-failure",
 		video: "retain-on-failure",
 	},
-	projects: [
-		{
-			name: "default",
-			testIgnore: [
-				/auth\.spec/,
-				/onboarding\.spec/,
-				/onboarding-openai\.spec/,
-				/onboarding-auth\.spec/,
-				/onboarding-anthropic\.spec/,
-				/oauth\.spec/,
-			],
-		},
-		{
-			name: "auth",
-			testMatch: /\/auth\.spec/,
-			dependencies: ["default"],
-		},
-		{
-			name: "onboarding",
-			testMatch: /onboarding(?:-openai)?\.spec/,
-			use: {
-				baseURL: onboardingBaseURL,
-			},
-		},
-		{
-			name: "onboarding-auth",
-			testMatch: /onboarding-auth\.spec/,
-			use: {
-				baseURL: onboardingAuthBaseURL,
-			},
-		},
-		{
-			name: "oauth",
-			testMatch: /oauth\.spec/,
-			use: {
-				baseURL: oauthBaseURL,
-			},
-		},
-		{
-			name: "onboarding-anthropic",
-			testMatch: /onboarding-anthropic\.spec/,
-			use: {
-				baseURL: onboardingAnthropicBaseURL,
-			},
-		},
-	],
-	webServer: [
-		{
-			command: "./e2e/start-gateway.sh",
-			cwd: __dirname,
-			url: `${baseURL}/health`,
-			reuseExistingServer: reuseExistingServer,
-			timeout: 300_000,
-			env: {
-				...process.env,
-				MOLTIS_E2E_PORT: port,
-			},
-		},
-		{
-			command: "./e2e/start-gateway-onboarding.sh",
-			cwd: __dirname,
-			url: `${onboardingBaseURL}/health`,
-			reuseExistingServer: reuseExistingServer,
-			timeout: 300_000,
-			env: {
-				...process.env,
-				MOLTIS_E2E_ONBOARDING_PORT: onboardingPort,
-			},
-		},
-		{
-			command: "./e2e/start-gateway-onboarding-auth.sh",
-			cwd: __dirname,
-			url: `${onboardingAuthBaseURL}/health`,
-			reuseExistingServer: reuseExistingServer,
-			timeout: 300_000,
-			env: {
-				...process.env,
-				MOLTIS_E2E_ONBOARDING_AUTH_PORT: onboardingAuthPort,
-			},
-		},
-		{
-			command: "./e2e/start-gateway-oauth.sh",
-			cwd: __dirname,
-			url: `${oauthBaseURL}/health`,
-			reuseExistingServer: reuseExistingServer,
-			timeout: 300_000,
-			env: {
-				...process.env,
-				MOLTIS_E2E_OAUTH_PORT: oauthPort,
-			},
-		},
-		{
-			command: "./e2e/start-gateway-onboarding-anthropic.sh",
-			cwd: __dirname,
-			url: `${onboardingAnthropicBaseURL}/health`,
-			reuseExistingServer: reuseExistingServer,
-			timeout: 300_000,
-			env: {
-				...process.env,
-				MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT: onboardingAnthropicPort,
-			},
-		},
-	],
+	projects,
+	webServer,
 });

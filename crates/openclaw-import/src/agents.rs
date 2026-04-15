@@ -14,7 +14,11 @@ use {
     tracing::{debug, info},
 };
 
-use crate::{detect::OpenClawDetection, identity, types::OpenClawConfig};
+use crate::{
+    detect::OpenClawDetection,
+    identity,
+    types::{OpenClawAgentModelConfig, OpenClawConfig},
+};
 
 /// Per-agent data extracted from OpenClaw, to be consumed by the gateway.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -28,6 +32,8 @@ pub struct ImportedAgent {
     pub theme: Option<String>,
     /// Resolved source workspace directory for this agent.
     pub source_workspace: Option<PathBuf>,
+    /// Model override extracted from the agent entry (e.g. `"anthropic/claude-opus-4-6"`).
+    pub model: Option<String>,
 }
 
 /// Collection of all agents extracted from an OpenClaw installation.
@@ -124,6 +130,46 @@ pub fn import_agents(detection: &OpenClawDetection) -> ImportedAgents {
     ImportedAgents { agents }
 }
 
+/// Convert non-default imported agents into Moltis [`AgentPreset`] entries.
+///
+/// Each non-default agent becomes a named preset keyed by `moltis_id`,
+/// with identity, model, and a system prompt suffix pointing to the
+/// agent's workspace files if they exist.
+pub fn agents_to_presets(
+    agents: &ImportedAgents,
+) -> std::collections::HashMap<String, moltis_config::schema::AgentPreset> {
+    let mut presets = std::collections::HashMap::new();
+
+    for agent in &agents.agents {
+        if agent.is_default {
+            continue;
+        }
+
+        let identity = moltis_config::schema::AgentIdentity {
+            name: agent.name.clone(),
+            emoji: None,
+            theme: agent.theme.clone(),
+        };
+
+        let preset = moltis_config::schema::AgentPreset {
+            identity,
+            model: agent.model.clone(),
+            ..Default::default()
+        };
+
+        debug!(
+            moltis_id = %agent.moltis_id,
+            name = ?agent.name,
+            model = ?agent.model,
+            "openclaw agents: created preset from imported agent"
+        );
+
+        presets.insert(agent.moltis_id.clone(), preset);
+    }
+
+    presets
+}
+
 /// Build `ImportedAgent` entries from the `agents.list` array in config.
 fn extract_from_config_list(
     config: &OpenClawConfig,
@@ -150,12 +196,18 @@ fn extract_from_config_list(
 
         let theme = extract_agent_identity(&source_workspace, config);
 
+        let model = entry.model.as_ref().map(|m| match m {
+            OpenClawAgentModelConfig::Simple(s) => s.clone(),
+            OpenClawAgentModelConfig::Full(full) => full.primary.clone().unwrap_or_default(),
+        });
+
         debug!(
             openclaw_id = %entry.id,
             moltis_id = %moltis_id,
             is_default,
             name = ?entry.name,
             theme = ?theme,
+            model = ?model,
             workspace = ?source_workspace,
             "openclaw agents: extracted agent"
         );
@@ -167,6 +219,7 @@ fn extract_from_config_list(
             name: entry.name.clone(),
             theme,
             source_workspace,
+            model,
         });
     }
 
@@ -211,6 +264,7 @@ fn synthesize_from_detection(
             name: None,
             theme: None,
             source_workspace,
+            model: None,
         });
     }
 
@@ -540,5 +594,80 @@ mod tests {
 
         let result = import_agents(&detection);
         assert!(result.agents.is_empty());
+    }
+
+    #[test]
+    fn import_agents_extracts_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+
+        std::fs::write(
+            home.join("openclaw.json"),
+            r#"{"agents":{"list":[
+                {"id":"main","default":true,"name":"Claude"},
+                {"id":"fast","name":"Quick","model":"anthropic/claude-haiku-3-5-20241022"}
+            ]}}"#,
+        )
+        .unwrap();
+
+        let detection = OpenClawDetection {
+            home_dir: home.to_path_buf(),
+            has_config: true,
+            has_credentials: false,
+            has_mcp_servers: false,
+            workspace_dir: home.join("workspace"),
+            has_memory: false,
+            has_skills: false,
+            agent_ids: vec!["main".to_string(), "fast".to_string()],
+            session_count: 0,
+            unsupported_channels: Vec::new(),
+            has_workspace_files: false,
+            workspace_files_found: Vec::new(),
+        };
+
+        let result = import_agents(&detection);
+        assert_eq!(result.agents.len(), 2);
+        assert!(result.agents[0].model.is_none()); // main has no model override
+        assert_eq!(
+            result.agents[1].model.as_deref(),
+            Some("anthropic/claude-haiku-3-5-20241022")
+        );
+    }
+
+    #[test]
+    fn agents_to_presets_skips_default() {
+        let agents = ImportedAgents {
+            agents: vec![
+                ImportedAgent {
+                    openclaw_id: "main".to_string(),
+                    moltis_id: "main".to_string(),
+                    is_default: true,
+                    name: Some("Claude".to_string()),
+                    theme: Some("wise owl".to_string()),
+                    ..Default::default()
+                },
+                ImportedAgent {
+                    openclaw_id: "researcher".to_string(),
+                    moltis_id: "researcher".to_string(),
+                    is_default: false,
+                    name: Some("Scout".to_string()),
+                    theme: Some("curious fox".to_string()),
+                    model: Some("anthropic/claude-haiku-3-5-20241022".to_string()),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        let presets = agents_to_presets(&agents);
+        assert_eq!(presets.len(), 1);
+        assert!(!presets.contains_key("main"));
+
+        let researcher = presets.get("researcher").unwrap();
+        assert_eq!(researcher.identity.name.as_deref(), Some("Scout"));
+        assert_eq!(researcher.identity.theme.as_deref(), Some("curious fox"));
+        assert_eq!(
+            researcher.model.as_deref(),
+            Some("anthropic/claude-haiku-3-5-20241022")
+        );
     }
 }

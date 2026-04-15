@@ -64,7 +64,7 @@ navigation_timeout_ms = 30000  # Page load timeout
 # chrome_args = ["--disable-extensions"]  # Extra args
 
 # Sandbox image (browser sandbox mode follows session sandbox mode)
-sandbox_image = "browserless/chrome"  # Container image for sandboxed sessions
+sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
 # allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
 
 # Container connectivity (for Moltis-in-Docker setups)
@@ -297,7 +297,7 @@ When the session is sandboxed, Chrome runs inside a Docker container with:
 
 ```toml
 [tools.browser]
-sandbox_image = "browserless/chrome"  # Container image for sandboxed sessions
+sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
 ```
 
 Requirements:

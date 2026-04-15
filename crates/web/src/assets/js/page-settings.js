@@ -12,7 +12,6 @@ import { localizedApiErrorMessage, sendRpc } from "./helpers.js";
 import { setLocale } from "./i18n.js";
 import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { initAgents, teardownAgents } from "./page-agents.js";
-// Moved page init/teardown imports
 import { initChannels, teardownChannels } from "./page-channels.js";
 import { initCrons, teardownCrons } from "./page-crons.js";
 import { initHooks, teardownHooks } from "./page-hooks.js";
@@ -22,9 +21,11 @@ import { initMcp, teardownMcp } from "./page-mcp.js";
 import { initMonitoring, teardownMonitoring } from "./page-metrics.js";
 import { initNetworkAudit, teardownNetworkAudit } from "./page-network-audit.js";
 import { initNodes, teardownNodes } from "./page-nodes.js";
+import { initProjects, teardownProjects } from "./page-projects.js";
 import { initProviders, teardownProviders } from "./page-providers.js";
 import { initSkills, teardownSkills } from "./page-skills.js";
 import { initTerminal, teardownTerminal } from "./page-terminal.js";
+import { initWebhooks, teardownWebhooks } from "./page-webhooks.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import * as push from "./push.js";
 import { isStandalone } from "./pwa.js";
@@ -38,6 +39,7 @@ import {
 	decodeBase64Safe,
 	fetchVoiceProviders,
 	saveVoiceKey,
+	saveVoiceSettings,
 	testTts,
 	toggleVoiceProvider,
 	transcribeAudio,
@@ -120,6 +122,12 @@ var sections = [
 		page: true,
 	},
 	{
+		id: "projects",
+		label: "Projects",
+		icon: html`<span class="icon icon-folder"></span>`,
+		page: true,
+	},
+	{
 		id: "environment",
 		label: "Environment",
 		icon: html`<span class="icon icon-terminal"></span>`,
@@ -138,6 +146,12 @@ var sections = [
 		id: "crons",
 		label: "Crons",
 		icon: html`<span class="icon icon-cron"></span>`,
+		page: true,
+	},
+	{
+		id: "webhooks",
+		label: "Webhooks",
+		icon: html`<span class="icon icon-webhooks"></span>`,
 		page: true,
 	},
 	{
@@ -590,7 +604,9 @@ function IdentitySection() {
 			<!-- User section -->
 			<div>
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">User</h3>
-				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Saved to <code>USER.md</code> in your workspace root.</p>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+					Saved to your user profile. Depending on memory settings, Moltis may also mirror it to <code>USER.md</code>.
+				</p>
 					<div>
 						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Your name *</div>
 						<input type="text" class="provider-key-input" style="width:100%;max-width:280px;"
@@ -1015,8 +1031,8 @@ function SecuritySection() {
 		e.preventDefault();
 		setPwErr(null);
 		setPwMsg(null);
-		if (newPw.length < 8) {
-			setPwErr("New password must be at least 8 characters.");
+		if (newPw.length < 12) {
+			setPwErr("New password must be at least 12 characters.");
 			return;
 		}
 		if (newPw !== confirmPw) {
@@ -1352,7 +1368,7 @@ function SecuritySection() {
 					<div>
 						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">${hasPassword ? "New password" : "Password"}</div>
 						<input type="password" class="provider-key-input" style="width:100%;" value=${newPw}
-							onInput=${(e) => setNewPw(e.target.value)} placeholder="At least 8 characters" />
+							onInput=${(e) => setNewPw(e.target.value)} placeholder="At least 12 characters" />
 					</div>
 					<div>
 						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Confirm ${hasPassword ? "new " : ""}password</div>
@@ -4474,6 +4490,7 @@ function LocalProviderInstructions({ providerId, voxtralReqs }) {
 // Add Voice Provider Modal
 function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) {
 	var [apiKey, setApiKey] = useState("");
+	var [baseUrlValue, setBaseUrlValue] = useState("");
 	var [voiceValue, setVoiceValue] = useState("");
 	var [modelValue, setModelValue] = useState("");
 	var [languageCodeValue, setLanguageCodeValue] = useState("");
@@ -4488,12 +4505,14 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 		: null;
 	var isElevenLabsProvider = selectedProvider === "elevenlabs" || selectedProvider === "elevenlabs-stt";
 	var supportsTtsVoiceSettings = providerMeta?.type === "tts";
+	var supportsBaseUrl = providerMeta?.capabilities?.baseUrl === true;
 
 	function onClose() {
 		voiceShowAddModal.value = false;
 		voiceSelectedProvider.value = null;
 		voiceSelectedProviderData.value = null;
 		setApiKey("");
+		setBaseUrlValue("");
 		setVoiceValue("");
 		setModelValue("");
 		setLanguageCodeValue("");
@@ -4502,30 +4521,28 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 
 	function onSaveKey() {
 		var hasApiKey = apiKey.trim().length > 0;
-		var hasSettings = supportsTtsVoiceSettings && (voiceValue.trim() || modelValue.trim() || languageCodeValue.trim());
+		var trimmedBaseUrl = baseUrlValue.trim();
+		var hadBaseUrl =
+			typeof providerMeta?.settings?.baseUrl === "string" && providerMeta.settings.baseUrl.trim().length > 0;
+		var hasBaseUrl = supportsBaseUrl && (trimmedBaseUrl.length > 0 || hadBaseUrl);
+		var hasSettings =
+			(supportsTtsVoiceSettings && (voiceValue.trim() || modelValue.trim() || languageCodeValue.trim())) || hasBaseUrl;
 		if (!(hasApiKey || hasSettings)) {
-			setError("Provide an API key or at least one voice setting.");
+			setError("Provide an API key, base URL, or at least one provider setting.");
 			return;
 		}
 		setError("");
 		setSaving(true);
 
-		var voiceOpts = supportsTtsVoiceSettings
-			? {
-					voice: voiceValue.trim() || undefined,
-					model: modelValue.trim() || undefined,
-					languageCode: languageCodeValue.trim() || undefined,
-				}
-			: undefined;
+		var voiceOpts = {
+			baseUrl: hasBaseUrl ? trimmedBaseUrl : undefined,
+			voice: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
+			model: supportsTtsVoiceSettings ? modelValue.trim() || undefined : undefined,
+			languageCode: supportsTtsVoiceSettings ? languageCodeValue.trim() || undefined : undefined,
+		};
 		var req = hasApiKey
 			? saveVoiceKey(selectedProvider, apiKey.trim(), voiceOpts)
-			: sendRpc("voice.config.save_settings", {
-					provider: selectedProvider,
-					voice: voiceOpts?.voice,
-					voiceId: voiceOpts?.voice,
-					model: voiceOpts?.model,
-					languageCode: voiceOpts?.languageCode,
-				});
+			: saveVoiceSettings(selectedProvider, voiceOpts);
 		req
 			.then((res) => {
 				setSaving(false);
@@ -4546,6 +4563,7 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 		voiceSelectedProvider.value = providerId;
 		voiceSelectedProviderData.value = null;
 		setApiKey("");
+		setBaseUrlValue("");
 		setVoiceValue("");
 		setModelValue("");
 		setLanguageCodeValue("");
@@ -4555,6 +4573,7 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 	useEffect(() => {
 		var settings = voiceSelectedProviderData.value?.settings;
 		if (!settings) return;
+		setBaseUrlValue(settings.baseUrl || "");
 		setVoiceValue(settings.voiceId || settings.voice || "");
 		setModelValue(settings.model || "");
 		setLanguageCodeValue(settings.languageCode || "");
@@ -4597,15 +4616,34 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 			return html`<${Modal} show=${voiceShowAddModal.value} onClose=${onClose} title="Add ${providerMeta.name}">
 				<div class="channel-form">
 					<div class="text-sm text-[var(--text-strong)]">${providerMeta.name}</div>
-					<div class="text-xs text-[var(--muted)]" style="margin-bottom:12px;">${providerMeta.description}</div>
+					<div class="mb-3 text-xs text-[var(--muted)]">${providerMeta.description}</div>
 
 					<label class="text-xs text-[var(--muted)]">API Key</label>
-					<input type="password" class="provider-key-input" style="width:100%;"
+					<input type="password" class="provider-key-input w-full"
 						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
 						placeholder=${providerMeta.keyPlaceholder || "Leave blank to keep existing key"} />
-					<div class="text-xs text-[var(--muted)]">
+					${
+						providerMeta.keyUrl
+							? html`<div class="text-xs text-[var(--muted)]">
 						Get your API key at <a href=${providerMeta.keyUrl} target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">${providerMeta.keyUrlLabel}</a>
+					</div>`
+							: null
+					}
+
+					${
+						supportsBaseUrl
+							? html`<div class="mt-2 flex flex-col gap-2">
+					<label class="text-xs text-[var(--muted)]">Base URL</label>
+					<input type="text" class="provider-key-input w-full"
+						data-field="baseUrl"
+						value=${baseUrlValue} onInput=${(e) => setBaseUrlValue(e.target.value)}
+						placeholder="http://localhost:8000/v1" />
+					<div class="text-xs text-[var(--muted)]">
+						Use this for a local or OpenAI-compatible server. Leave the API key blank if your endpoint does not require one.
 					</div>
+				</div>`
+							: null
+					}
 
 					${
 						supportsTtsVoiceSettings
@@ -4615,13 +4653,13 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 					${isElevenLabsProvider && elevenlabsCatalog.warning ? html`<div class="text-xs text-[var(--muted)]">${elevenlabsCatalog.warning}</div>` : null}
 					${
 						isElevenLabsProvider && elevenlabsCatalog.voices.length > 0
-							? html`<select class="provider-key-input" style="width:100%;" onChange=${(e) => setVoiceValue(e.target.value)}>
+							? html`<select class="provider-key-input w-full" onChange=${(e) => setVoiceValue(e.target.value)}>
 						<option value="">Pick a voice from your account...</option>
 						${elevenlabsCatalog.voices.map((v) => html`<option value=${v.id}>${v.name} (${v.id})</option>`)}
 					</select>`
 							: null
 					}
-					<input type="text" class="provider-key-input" style="width:100%;"
+					<input type="text" class="provider-key-input w-full"
 						value=${voiceValue} onInput=${(e) => setVoiceValue(e.target.value)}
 						list=${isElevenLabsProvider ? "elevenlabs-voice-options" : undefined}
 						placeholder="voice id / name (optional)" />
@@ -4636,13 +4674,13 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 					<label class="text-xs text-[var(--muted)]">Model</label>
 					${
 						isElevenLabsProvider && elevenlabsCatalog.models.length > 0
-							? html`<select class="provider-key-input" style="width:100%;" onChange=${(e) => setModelValue(e.target.value)}>
+							? html`<select class="provider-key-input w-full" onChange=${(e) => setModelValue(e.target.value)}>
 						<option value="">Pick a model...</option>
 						${elevenlabsCatalog.models.map((m) => html`<option value=${m.id}>${m.name} (${m.id})</option>`)}
 					</select>`
 							: null
 					}
-					<input type="text" class="provider-key-input" style="width:100%;"
+					<input type="text" class="provider-key-input w-full"
 						value=${modelValue} onInput=${(e) => setModelValue(e.target.value)}
 						list=${isElevenLabsProvider ? "elevenlabs-model-options" : undefined}
 						placeholder="model (optional)" />
@@ -4658,7 +4696,7 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 						selectedProvider === "google" || selectedProvider === "google-tts"
 							? html`<div class="flex flex-col gap-2">
 							<label class="text-xs text-[var(--muted)]">Language Code</label>
-							<input type="text" class="provider-key-input" style="width:100%;"
+							<input type="text" class="provider-key-input w-full"
 								value=${languageCodeValue} onInput=${(e) => setLanguageCodeValue(e.target.value)}
 								placeholder="en-US (optional)" />
 						</div>`
@@ -4810,10 +4848,16 @@ function MemorySection() {
 	var [error, setError] = useState(null);
 
 	// Form state
+	var [style, setStyle] = useState("hybrid");
+	var [agentWriteMode, setAgentWriteMode] = useState("hybrid");
+	var [userProfileWriteMode, setUserProfileWriteMode] = useState("explicit-and-auto");
 	var [backend, setBackend] = useState("builtin");
+	var [provider, setProvider] = useState("auto");
 	var [citations, setCitations] = useState("auto");
 	var [llmReranking, setLlmReranking] = useState(false);
-	var [sessionExport, setSessionExport] = useState(false);
+	var [searchMergeStrategy, setSearchMergeStrategy] = useState("rrf");
+	var [sessionExport, setSessionExport] = useState("on-new-or-reset");
+	var [promptMemoryMode, setPromptMemoryMode] = useState("live-reload");
 
 	useEffect(() => {
 		// Fetch memory status, config, and QMD status
@@ -4825,10 +4869,16 @@ function MemorySection() {
 				if (configRes?.ok) {
 					var cfg = configRes.payload;
 					setMemConfig(cfg);
+					setStyle(cfg.style || "hybrid");
+					setAgentWriteMode(cfg.agent_write_mode || "hybrid");
+					setUserProfileWriteMode(cfg.user_profile_write_mode || "explicit-and-auto");
 					setBackend(cfg.backend || "builtin");
+					setProvider(cfg.provider || "auto");
 					setCitations(cfg.citations || "auto");
 					setLlmReranking(cfg.llm_reranking ?? false);
-					setSessionExport(cfg.session_export ?? false);
+					setSearchMergeStrategy(cfg.search_merge_strategy || "rrf");
+					setSessionExport(cfg.session_export || "on-new-or-reset");
+					setPromptMemoryMode(cfg.prompt_memory_mode || "live-reload");
 				}
 				if (qmdRes?.ok) {
 					setQmdStatus(qmdRes.payload);
@@ -4849,10 +4899,16 @@ function MemorySection() {
 		setSaved(false);
 
 		sendRpc("memory.config.update", {
+			style,
+			agent_write_mode: agentWriteMode,
+			user_profile_write_mode: userProfileWriteMode,
 			backend,
+			provider,
 			citations,
 			llm_reranking: llmReranking,
+			search_merge_strategy: searchMergeStrategy,
 			session_export: sessionExport,
+			prompt_memory_mode: promptMemoryMode,
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
@@ -4916,9 +4972,26 @@ function MemorySection() {
 		}
 
 		<!-- Configuration -->
-		<form onSubmit=${onSave} style="max-width:600px;display:flex;flex-direction:column;gap:16px;">
-			<!-- Backend selection -->
-			<div>
+			<form onSubmit=${onSave} style="max-width:600px;display:flex;flex-direction:column;gap:16px;">
+				<div>
+					<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Memory Style</h3>
+					<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+						Choose the high-level orchestration model. This controls whether prompt-visible <code>MEMORY.md</code> and memory tools are both active, one is active, or both are off.
+					</p>
+					<select class="provider-key-input" style="width:auto;min-width:240px;"
+						value=${style} onChange=${(e) => {
+							setStyle(e.target.value);
+							rerender();
+						}}>
+						<option value="hybrid">Hybrid</option>
+						<option value="prompt-only">Prompt-only</option>
+						<option value="search-only">Search-only</option>
+						<option value="off">Off</option>
+					</select>
+				</div>
+
+				<!-- Backend selection -->
+				<div>
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Backend</h3>
 
 				<!-- Comparison table -->
@@ -5023,8 +5096,8 @@ function MemorySection() {
 									<span style="margin:0 4px;">or</span>
 									<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">bun install -g @tobilu/qmd</code>
 								<br/><br/>
-								Then start the QMD daemon:
-								<code style="display:block;margin-top:4px;font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">qmd daemon</code>
+								Verify the CLI is available:
+								<code style="display:block;margin-top:4px;font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">qmd --version</code>
 								<br/>
 									<a href="https://github.com/tobi/qmd" target="_blank" rel="noopener"
 										style="color:var(--accent);">View documentation \u2192</a>
@@ -5037,7 +5110,95 @@ function MemorySection() {
 				}
 			</div>
 
+				<div>
+					<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Prompt Memory Mode</h3>
+					<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+						When prompt memory is enabled, choose whether <code>MEMORY.md</code> is reread on every turn or frozen when the session starts.
+					</p>
+					<select class="provider-key-input" style="width:auto;min-width:260px;"
+						value=${promptMemoryMode}
+						disabled=${style === "search-only" || style === "off"}
+						onChange=${(e) => {
+							setPromptMemoryMode(e.target.value);
+							rerender();
+						}}>
+						<option value="live-reload">Live reload</option>
+						<option value="frozen-at-session-start">Frozen at session start</option>
+					</select>
+					${
+						style === "search-only" || style === "off"
+							? html`
+						<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">
+							Prompt memory is disabled by the current memory style, so this setting will only matter after you re-enable prompt memory.
+						</div>
+					`
+							: null
+					}
+				</div>
+
+				<div>
+					<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Agent Memory Writes</h3>
+					<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+						Control where agent-authored memory writes can land. This affects <code>memory_save</code> and silent compaction memory flushes.
+				</p>
+				<select class="provider-key-input" style="width:auto;min-width:220px;"
+					value=${agentWriteMode} onChange=${(e) => {
+						setAgentWriteMode(e.target.value);
+						rerender();
+					}}>
+					<option value="hybrid">Hybrid (MEMORY.md and memory/*.md)</option>
+					<option value="prompt-only">Prompt-only (MEMORY.md only)</option>
+					<option value="search-only">Search-only (memory/*.md only)</option>
+					<option value="off">Off</option>
+				</select>
+			</div>
+
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">USER.md Writes</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+					Control whether Moltis mirrors your profile into <code>USER.md</code>, and whether browser or channel timezone/location signals can update it silently.
+				</p>
+				<select class="provider-key-input" style="width:auto;min-width:250px;"
+					value=${userProfileWriteMode} onChange=${(e) => {
+						setUserProfileWriteMode(e.target.value);
+						rerender();
+					}}>
+					<option value="explicit-and-auto">Explicit and auto</option>
+					<option value="explicit-only">Explicit only</option>
+					<option value="off">Off (moltis.toml only)</option>
+				</select>
+			</div>
+
 			<!-- Citations -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Embedding Provider</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+					Select which embedding provider the built-in memory backend should use for RAG. QMD manages retrieval separately, so this setting is ignored while the QMD backend is active.
+				</p>
+				<select class="provider-key-input" style="width:auto;min-width:220px;"
+					value=${provider}
+					disabled=${backend === "qmd"}
+					onChange=${(e) => {
+						setProvider(e.target.value);
+						rerender();
+					}}>
+					<option value="auto">Auto-detect</option>
+					<option value="local">Local GGUF</option>
+					<option value="ollama">Ollama</option>
+					<option value="openai">OpenAI</option>
+					<option value="custom">Custom OpenAI-compatible</option>
+				</select>
+				${
+					backend === "qmd"
+						? html`
+					<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">
+						This setting is kept for when you switch back to the built-in backend.
+					</div>
+				`
+						: null
+				}
+			</div>
+
 			<div>
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Citations</h3>
 				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
@@ -5051,6 +5212,21 @@ function MemorySection() {
 					<option value="auto">Auto (multi-file only)</option>
 					<option value="on">Always</option>
 					<option value="off">Never</option>
+				</select>
+			</div>
+
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Search Merge Strategy</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+					Choose how Moltis blends vector and keyword memory hits before optional reranking.
+				</p>
+				<select class="provider-key-input" style="width:auto;min-width:180px;"
+					value=${searchMergeStrategy} onChange=${(e) => {
+						setSearchMergeStrategy(e.target.value);
+						rerender();
+					}}>
+					<option value="rrf">RRF</option>
+					<option value="linear">Linear</option>
 				</select>
 			</div>
 
@@ -5073,19 +5249,18 @@ function MemorySection() {
 
 			<!-- Session Export -->
 			<div>
-				<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-					<input type="checkbox" checked=${sessionExport}
-						onChange=${(e) => {
-							setSessionExport(e.target.checked);
-							rerender();
-						}} />
-					<div>
-						<span class="text-sm font-medium text-[var(--text-strong)]">Session Export</span>
-						<p class="text-xs text-[var(--muted)]" style="margin:2px 0 0;">
-							Export session transcripts to memory for cross-run recall of past conversations.
-						</p>
-					</div>
-				</label>
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Session Export</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+					Export session transcripts into searchable memory when a session is rolled over.
+				</p>
+				<select class="provider-key-input" style="width:auto;min-width:220px;"
+					value=${sessionExport} onChange=${(e) => {
+						setSessionExport(e.target.value);
+						rerender();
+					}}>
+					<option value="on-new-or-reset">On /new and /reset</option>
+					<option value="off">Off</option>
+				</select>
 			</div>
 
 			<div style="display:flex;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--border);">
@@ -5322,10 +5497,12 @@ var pageSectionHandlers = {
 		init: (container) => initCrons(container, "heartbeat"),
 		teardown: teardownCrons,
 	},
+	webhooks: { init: initWebhooks, teardown: teardownWebhooks },
 	providers: { init: initProviders, teardown: teardownProviders },
 	channels: { init: initChannels, teardown: teardownChannels },
 	mcp: { init: initMcp, teardown: teardownMcp },
 	nodes: { init: initNodes, teardown: teardownNodes },
+	projects: { init: initProjects, teardown: teardownProjects },
 	hooks: { init: initHooks, teardown: teardownHooks },
 	skills: { init: initSkills, teardown: teardownSkills },
 	agents: { init: initAgents, teardown: teardownAgents },
@@ -5401,7 +5578,16 @@ function SettingsPage() {
 					}
 					${
 						ps
-							? html`<${PageSection} key=${`${section}:${subPath}`} initFn=${ps.init} teardownFn=${ps.teardown} subPath=${subPath} />`
+							? section === "terminal" && gon.get("terminal_enabled") !== true
+								? html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-3 overflow-y-auto">
+									<h2 class="text-base font-medium text-[var(--text-strong)]">Terminal</h2>
+									<div class="text-xs text-[var(--muted)] max-w-form">
+										The host terminal has been disabled by the server administrator.
+										To re-enable it, set <code>terminal_enabled = true</code> under <code>[server]</code> in the configuration file,
+										or remove the <code>MOLTIS_TERMINAL_DISABLED</code> environment variable if it is set.
+									</div>
+								</div>`
+								: html`<${PageSection} key=${`${section}:${subPath}`} initFn=${ps.init} teardownFn=${ps.teardown} subPath=${subPath} />`
 							: null
 					}
 					${section === "identity" ? html`<${IdentitySection} />` : null}

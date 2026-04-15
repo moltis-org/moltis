@@ -84,6 +84,7 @@ offered = ["telegram", "discord"]
 | `guild_allowlist` | no | `[]` | Guild (server) IDs allowed to interact with the bot |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
+| `agent_id` | no | — | Default agent ID for this Discord bot |
 | `reply_to_message` | no | `false` | Send bot responses as Discord replies to the user's message |
 | `ack_reaction` | no | — | Emoji reaction added while processing (e.g. `"👀"`); omit to disable |
 | `activity` | no | — | Bot activity status text (e.g. `"with AI"`) |
@@ -109,6 +110,7 @@ reply_to_message = true
 ack_reaction = "👀"
 model = "gpt-4o"
 model_provider = "openai"
+agent_id = "research"
 activity = "with AI"
 activity_type = "custom"
 status = "online"

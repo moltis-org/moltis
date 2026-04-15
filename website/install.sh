@@ -77,7 +77,7 @@ Usage:
 
 Options:
     --no-homebrew       Skip Homebrew even if available (macOS)
-    --method=METHOD     Force installation method: homebrew, binary, deb, rpm, arch, snap, source
+    --method=METHOD     Force installation method: homebrew, binary, deb, rpm, arch, appimage, snap, source
     --version=VERSION   Install a specific version (default: latest)
     -h, --help          Show this help message
 
@@ -415,6 +415,51 @@ install_arch() {
     success "Moltis installed via Arch package"
 }
 
+install_appimage() {
+    os="$1"
+    arch="$2"
+    version="$3"
+
+    if [ "$os" != "linux" ]; then
+        error "AppImage installation is only supported on Linux"
+    fi
+
+    case "$arch" in
+        x86_64|aarch64)
+            ;;
+        *)
+            error "Unsupported architecture for AppImage: $arch"
+            ;;
+    esac
+
+    tag=$(release_tag "$version")
+    appimage_file="moltis-${version}-${arch}.AppImage"
+    url="https://github.com/${GITHUB_REPO}/releases/download/${tag}/${appimage_file}"
+    checksum_url="${url}.sha256"
+
+    info "Downloading ${appimage_file}..."
+
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
+
+    download "$url" "$tmpdir/$appimage_file" || error "Failed to download $appimage_file"
+
+    if download "$checksum_url" "$tmpdir/checksum.sha256" 2>/dev/null; then
+        expected_sha=$(cut -d' ' -f1 "$tmpdir/checksum.sha256")
+        verify_checksum "$tmpdir/$appimage_file" "$expected_sha"
+        info "Checksum verified"
+    else
+        warn "Could not download checksum file, skipping verification"
+    fi
+
+    ensure_install_dir
+    mv "$tmpdir/$appimage_file" "$INSTALL_DIR/$BINARY_NAME"
+    chmod +x "$INSTALL_DIR/$BINARY_NAME"
+
+    success "Moltis AppImage installed to $INSTALL_DIR/$BINARY_NAME"
+    add_to_path_instructions
+}
+
 install_snap() {
     info "Installing via Snap..."
 
@@ -527,6 +572,9 @@ main() {
                 ;;
             arch)
                 install_arch "$ARCH" "$VERSION"
+                ;;
+            appimage)
+                install_appimage "$OS" "$ARCH" "$VERSION"
                 ;;
             snap)
                 install_snap

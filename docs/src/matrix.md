@@ -237,6 +237,9 @@ To show Matrix in the channel picker, include `"matrix"` in `channels.offered`:
 offered = ["telegram", "discord", "slack", "matrix"]
 ```
 
+After editing `channels.offered`, reload the web UI so it fetches the latest
+picker list from `moltis.toml`.
+
 ### Configuration Fields
 
 | Field | Required | Default | Description |

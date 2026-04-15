@@ -339,6 +339,33 @@ pub(super) struct VoiceProvidersResponse {
     stt: Vec<VoiceProviderInfo>,
 }
 
+fn openai_provider_base_url(config: &moltis_config::MoltisConfig) -> Option<&str> {
+    config
+        .providers
+        .get("openai")
+        .and_then(|provider| provider.base_url.as_deref())
+}
+
+fn openai_tts_base_url(config: &moltis_config::MoltisConfig) -> Option<&str> {
+    config
+        .voice
+        .tts
+        .openai
+        .base_url
+        .as_deref()
+        .or_else(|| openai_provider_base_url(config))
+}
+
+fn whisper_base_url(config: &moltis_config::MoltisConfig) -> Option<&str> {
+    config
+        .voice
+        .stt
+        .whisper
+        .base_url
+        .as_deref()
+        .or_else(|| openai_provider_base_url(config))
+}
+
 /// Detect all available voice providers with their availability status.
 pub(super) async fn detect_voice_providers(
     config: &moltis_config::MoltisConfig,
@@ -361,6 +388,7 @@ pub(super) async fn detect_voice_providers(
         .get("openai")
         .and_then(|p| p.api_key.as_ref())
         .map(|k| k.expose_secret().to_string());
+    let llm_openai_base_url = openai_provider_base_url(config);
     let llm_groq_key = config
         .providers
         .get("groq")
@@ -404,13 +432,16 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "cloud",
             config.voice.tts.openai.api_key.is_some()
+                || config.voice.tts.openai.base_url.is_some()
                 || env_openai_key.is_some()
-                || llm_openai_key.is_some(),
+                || llm_openai_key.is_some()
+                || llm_openai_base_url.is_some(),
             config.voice.tts.provider == "openai" && config.voice.tts.enabled,
             key_source(
-                config.voice.tts.openai.api_key.is_some(),
+                config.voice.tts.openai.api_key.is_some()
+                    || config.voice.tts.openai.base_url.is_some(),
                 env_openai_key.is_some(),
-                llm_openai_key.is_some(),
+                llm_openai_key.is_some() || llm_openai_base_url.is_some(),
             ),
             None,
             None,
@@ -479,14 +510,17 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "cloud",
             config.voice.stt.whisper.api_key.is_some()
+                || config.voice.stt.whisper.base_url.is_some()
                 || env_openai_key.is_some()
-                || llm_openai_key.is_some(),
+                || llm_openai_key.is_some()
+                || llm_openai_base_url.is_some(),
             config.voice.stt.provider == Some(VoiceSttProvider::Whisper)
                 && config.voice.stt.enabled,
             key_source(
-                config.voice.stt.whisper.api_key.is_some(),
+                config.voice.stt.whisper.api_key.is_some()
+                    || config.voice.stt.whisper.base_url.is_some(),
                 env_openai_key.is_some(),
-                llm_openai_key.is_some(),
+                llm_openai_key.is_some() || llm_openai_base_url.is_some(),
             ),
             None,
             None,
@@ -689,10 +723,12 @@ fn enrich_voice_provider(
             serde_json::json!({
                 "voiceChoices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
                 "modelChoices": ["tts-1", "tts-1-hd"],
+                "baseUrl": true,
                 "customVoice": true,
                 "customModel": true,
             }),
             serde_json::json!({
+                "baseUrl": openai_tts_base_url(config),
                 "voice": config.voice.tts.openai.voice,
                 "model": config.voice.tts.openai.model,
             }),
@@ -700,6 +736,15 @@ fn enrich_voice_provider(
                 config.voice.tts.openai.voice.clone(),
                 config.voice.tts.openai.model.clone(),
             ),
+        ),
+        VoiceProviderId::Whisper => (
+            serde_json::json!({
+                "baseUrl": true,
+            }),
+            serde_json::json!({
+                "baseUrl": whisper_base_url(config),
+            }),
+            None,
         ),
         VoiceProviderId::Elevenlabs => (
             serde_json::json!({
@@ -946,6 +991,16 @@ pub(super) fn apply_voice_provider_settings(
     provider: &str,
     params: &serde_json::Value,
 ) {
+    let get_nullable_string = |key: &str| -> Option<Option<String>> {
+        params.get(key).map(|value| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned)
+        })
+    };
+
     let get_string = |key: &str| -> Option<String> {
         params
             .get(key)
@@ -957,11 +1012,23 @@ pub(super) fn apply_voice_provider_settings(
 
     match provider {
         "openai" | "openai-tts" => {
+            if let Some(base_url) = get_nullable_string("baseUrl") {
+                cfg.voice.tts.openai.base_url = base_url;
+            }
             if let Some(voice) = get_string("voice") {
                 cfg.voice.tts.openai.voice = Some(voice);
             }
             if let Some(model) = get_string("model") {
                 cfg.voice.tts.openai.model = Some(model);
+            }
+        },
+        "whisper" => {
+            if let Some(base_url) = get_nullable_string("baseUrl") {
+                cfg.voice.stt.whisper.base_url = base_url;
+                if cfg.voice.stt.whisper.base_url.is_some() {
+                    cfg.voice.stt.provider = Some(VoiceSttProvider::Whisper);
+                    cfg.voice.stt.enabled = true;
+                }
             }
         },
         "elevenlabs" => {
@@ -1210,5 +1277,82 @@ mod tests {
             .count();
 
         assert_eq!(enabled_count, 0);
+    }
+
+    #[test]
+    fn apply_voice_provider_settings_stores_base_urls() {
+        let mut config = moltis_config::MoltisConfig::default();
+
+        apply_voice_provider_settings(
+            &mut config,
+            "openai",
+            &serde_json::json!({
+                "baseUrl": "http://127.0.0.1:8003/v1",
+            }),
+        );
+        apply_voice_provider_settings(
+            &mut config,
+            "whisper",
+            &serde_json::json!({
+                "baseUrl": "http://127.0.0.1:8001/v1",
+            }),
+        );
+
+        assert_eq!(
+            config.voice.tts.openai.base_url.as_deref(),
+            Some("http://127.0.0.1:8003/v1")
+        );
+        assert_eq!(
+            config.voice.stt.whisper.base_url.as_deref(),
+            Some("http://127.0.0.1:8001/v1")
+        );
+        assert_eq!(config.voice.stt.provider, Some(VoiceSttProvider::Whisper));
+        assert!(config.voice.stt.enabled);
+    }
+
+    #[test]
+    fn apply_voice_provider_settings_clears_base_urls_when_requested() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.voice.tts.openai.base_url = Some("http://127.0.0.1:8003/v1".to_string());
+        config.voice.stt.whisper.base_url = Some("http://127.0.0.1:8001/v1".to_string());
+
+        apply_voice_provider_settings(
+            &mut config,
+            "openai",
+            &serde_json::json!({
+                "baseUrl": "",
+            }),
+        );
+        apply_voice_provider_settings(
+            &mut config,
+            "whisper",
+            &serde_json::json!({
+                "baseUrl": "",
+            }),
+        );
+
+        assert_eq!(config.voice.tts.openai.base_url, None);
+        assert_eq!(config.voice.stt.whisper.base_url, None);
+    }
+
+    #[tokio::test]
+    async fn detect_voice_providers_marks_whisper_available_when_base_url_configured() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.voice.stt.whisper.base_url = Some("http://127.0.0.1:8001/v1".to_string());
+
+        let detected = detect_voice_providers(&config).await;
+        let Some(stt) = detected["stt"].as_array() else {
+            panic!("stt list missing");
+        };
+        let Some(whisper) = stt.iter().find(|provider| provider["id"] == "whisper") else {
+            panic!("whisper provider missing");
+        };
+
+        assert_eq!(whisper["available"], serde_json::json!(true));
+        assert_eq!(whisper["keySource"], serde_json::json!("config"));
+        assert_eq!(
+            whisper["settings"]["baseUrl"],
+            serde_json::json!("http://127.0.0.1:8001/v1")
+        );
     }
 }

@@ -22,34 +22,27 @@ brew install moltis-org/tap/moltis
 
 ## Linux Packages
 
+Package filenames are versioned on every release. Use the installer script below instead of hardcoding GitHub release asset names.
+
 ### Debian / Ubuntu (.deb)
 
 ```bash
-# Download the latest .deb package
-curl -LO https://github.com/moltis-org/moltis/releases/latest/download/moltis_amd64.deb
-
-# Install
-sudo dpkg -i moltis_amd64.deb
+# Install the latest .deb package
+curl -fsSL https://www.moltis.org/install.sh | sh -s -- --method=deb
 ```
 
 ### Fedora / RHEL (.rpm)
 
 ```bash
-# Download the latest .rpm package
-curl -LO https://github.com/moltis-org/moltis/releases/latest/download/moltis.x86_64.rpm
-
-# Install
-sudo rpm -i moltis.x86_64.rpm
+# Install the latest .rpm package
+curl -fsSL https://www.moltis.org/install.sh | sh -s -- --method=rpm
 ```
 
 ### Arch Linux (.pkg.tar.zst)
 
 ```bash
-# Download the latest package
-curl -LO https://github.com/moltis-org/moltis/releases/latest/download/moltis.pkg.tar.zst
-
-# Install
-sudo pacman -U moltis.pkg.tar.zst
+# Install the latest package
+curl -fsSL https://www.moltis.org/install.sh | sh -s -- --method=arch
 ```
 
 ### Snap
@@ -61,12 +54,8 @@ sudo snap install moltis
 ### AppImage
 
 ```bash
-# Download
-curl -LO https://github.com/moltis-org/moltis/releases/latest/download/moltis.AppImage
-chmod +x moltis.AppImage
-
-# Run
-./moltis.AppImage
+# Install the latest AppImage
+curl -fsSL https://www.moltis.org/install.sh | sh -s -- --method=appimage
 ```
 
 ## Docker

@@ -1,5 +1,9 @@
-const SUPPORTED = ['en', 'fr', 'zh', 'es', 'de', 'it', 'pt', 'ja', 'ko', 'ru'];
-const DEFAULT_LANG = 'en';
+import {
+	DEFAULT_LANG,
+	SUPPORTED,
+	localizeNavHtml,
+	resolvePageLang,
+} from "./scripts/nav-i18n.mjs";
 
 function detectLang(acceptLanguage) {
   if (!acceptLanguage) return DEFAULT_LANG;
@@ -28,8 +32,9 @@ async function injectPartials(response, env) {
   const navUrl = new URL('/_partials/nav.html', 'http://localhost');
   const navResponse = await env.ASSETS.fetch(navUrl);
   const navHtml = navResponse.ok ? await navResponse.text() : '';
+  const localizedNavHtml = localizeNavHtml(navHtml, resolvePageLang(html));
 
-  const injected = html.replace('<!--NAV-->', navHtml);
+  const injected = html.replace('<!--NAV-->', localizedNavHtml);
   return new Response(injected, {
     status: response.status,
     headers: response.headers,

@@ -155,6 +155,16 @@ impl ChannelPlugin for WhatsAppPlugin {
         account_id: &str,
         config: serde_json::Value,
     ) -> ChannelResult<()> {
+        // If the account is already running (e.g. started from stored channels
+        // on boot), skip re-starting to avoid sled lock conflicts.
+        if self.has_account(account_id) {
+            info!(
+                account_id,
+                "WhatsApp account already running, skipping start"
+            );
+            return Ok(());
+        }
+
         let wa_config: WhatsAppAccountConfig = serde_json::from_value(config)?;
 
         info!(account_id, "starting WhatsApp account");
@@ -298,6 +308,12 @@ impl ChannelStatus for WhatsAppPlugin {
             match accounts.get(account_id) {
                 Some(state) => {
                     let connected = state.connected.load(Ordering::Relaxed);
+                    let has_qr = state
+                        .latest_qr
+                        .read()
+                        .ok()
+                        .and_then(|q| q.clone())
+                        .is_some();
                     let details = if connected {
                         state
                             .config
@@ -305,22 +321,33 @@ impl ChannelStatus for WhatsAppPlugin {
                             .as_ref()
                             .map(|n| format!("WhatsApp: {n}"))
                             .or_else(|| Some("WhatsApp: connected".into()))
-                    } else if state
+                    } else if has_qr {
+                        Some("waiting for QR scan".into())
+                    } else {
+                        Some("connecting...".into())
+                    };
+                    let extra = state
                         .latest_qr
                         .read()
                         .ok()
                         .and_then(|q| q.clone())
-                        .is_some()
-                    {
-                        Some("waiting for QR scan".into())
-                    } else {
-                        Some("disconnected".into())
-                    };
+                        .map(|qr| {
+                            let mut obj = serde_json::json!({ "qr_data": &qr });
+                            if let Ok(code) = qrcode::QrCode::new(&qr) {
+                                let svg = code
+                                    .render::<qrcode::render::svg::Color>()
+                                    .min_dimensions(200, 200)
+                                    .quiet_zone(true)
+                                    .build();
+                                obj["qr_svg"] = serde_json::Value::String(svg);
+                            }
+                            obj
+                        });
                     ChannelHealthSnapshot {
                         connected,
                         account_id: account_id.to_string(),
                         details,
-                        extra: None,
+                        extra,
                     }
                 },
                 None => ChannelHealthSnapshot {
@@ -390,5 +417,11 @@ mod tests {
         // Threads: WhatsApp does NOT implement ChannelThreadContext
         assert!(!desc.capabilities.supports_threads);
         assert!(plugin.thread_context().is_none());
+    }
+
+    #[test]
+    fn has_account_returns_false_when_empty() {
+        let plugin = WhatsAppPlugin::new(PathBuf::from("/tmp/test"));
+        assert!(!plugin.has_account("main"));
     }
 }

@@ -130,8 +130,10 @@ Each WhatsApp account is a named entry under `[channels.whatsapp]`:
 | `store_path` | string | — | Custom path to sled store; defaults to `~/.moltis/whatsapp/<account_id>/` |
 | `model` | string | — | Default LLM model ID for this account |
 | `model_provider` | string | — | Provider name for the model |
+| `agent_id` | string | — | Default agent ID for this account |
 | `dm_policy` | string | `"open"` | DM access policy: `"open"`, `"allowlist"`, or `"disabled"` |
 | `group_policy` | string | `"open"` | Group access policy: `"open"`, `"allowlist"`, or `"disabled"` |
+| `mention_mode` | string | `"always"` | Group reply mode: `"always"`, `"mention"`, or `"none"` |
 | `allowlist` | array | `[]` | Users allowed to DM (usernames or phone numbers) |
 | `group_allowlist` | array | `[]` | Group JIDs allowed for bot responses |
 | `otp_self_approval` | bool | `true` | Allow non-allowlisted users to self-approve via OTP |
@@ -146,6 +148,7 @@ display_name = "John's iPhone"
 phone_number = "+15551234567"
 model = "anthropic/claude-sonnet-4-20250514"
 model_provider = "anthropic"
+agent_id = "personal"
 dm_policy = "allowlist"
 allowlist = ["alice", "bob", "+15559876543"]
 group_policy = "disabled"
@@ -159,6 +162,26 @@ group_policy = "allowlist"
 group_allowlist = ["120363456789@g.us"]
 model = "openai/gpt-4.1"
 model_provider = "openai"
+mention_mode = "mention"
+```
+
+### Per-Chat and Per-User Overrides
+
+WhatsApp also supports optional per-chat and per-user overrides for models and
+agents:
+
+```toml
+[channels.whatsapp."work-bot"]
+paired = true
+model = "openai/gpt-4.1"
+agent_id = "support"
+
+[channels.whatsapp."work-bot.channel_overrides"."120363456789@g.us"]
+agent_id = "triage"
+
+[channels.whatsapp."work-bot.user_overrides"."15551234567@s.whatsapp.net"]
+model = "anthropic/claude-sonnet-4-20250514"
+agent_id = "research"
 ```
 
 ## Access Control
@@ -177,9 +200,17 @@ WhatsApp uses the same access control model as Telegram channels.
 
 | Policy | Behavior |
 |--------|----------|
-| `open` | Bot responds in all groups it's part of |
-| `allowlist` | Bot only responds in groups on the `group_allowlist` |
+| `open` | Bot responds in all groups it's part of, subject to `mention_mode` |
+| `allowlist` | Bot only responds in groups on the `group_allowlist`, subject to `mention_mode` |
 | `disabled` | Bot ignores all group messages |
+
+### Mention Mode
+
+| Mode | Behavior |
+|------|----------|
+| `always` | Bot may respond to allowed group messages without an @mention |
+| `mention` | Bot only responds in allowed groups when the account is @mentioned |
+| `none` | Bot never responds in groups |
 
 ### OTP Self-Approval
 

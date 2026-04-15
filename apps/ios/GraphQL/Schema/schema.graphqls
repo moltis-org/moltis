@@ -99,23 +99,23 @@ type ChatMutation {
 	"""
 	Send a chat message.
 	"""
-	send(message: String!, sessionKey: String, model: String): BoolResult!
+	send(message: String!, sessionKey: String!, model: String): BoolResult!
 	"""
 	Abort active chat response.
 	"""
-	abort(sessionKey: String): BoolResult!
+	abort(sessionKey: String!): BoolResult!
 	"""
 	Cancel queued chat messages.
 	"""
-	cancelQueued(sessionKey: String): BoolResult!
+	cancelQueued(sessionKey: String!): BoolResult!
 	"""
 	Clear chat history for session.
 	"""
-	clear(sessionKey: String): BoolResult!
+	clear(sessionKey: String!): BoolResult!
 	"""
 	Compact chat messages.
 	"""
-	compact(sessionKey: String): BoolResult!
+	compact(sessionKey: String!): BoolResult!
 	"""
 	Inject a message into chat history.
 	"""
@@ -126,19 +126,19 @@ type ChatQuery {
 	"""
 	Get chat history for a session.
 	"""
-	history(sessionKey: String): JSON!
+	history(sessionKey: String!): JSON!
 	"""
 	Get chat context data.
 	"""
-	context(sessionKey: String): JSON!
+	context(sessionKey: String!): JSON!
 	"""
 	Get rendered system prompt.
 	"""
-	rawPrompt(sessionKey: String): ChatRawPrompt!
+	rawPrompt(sessionKey: String!): ChatRawPrompt!
 	"""
 	Get full context with rendering (OpenAI messages format).
 	"""
-	fullContext(sessionKey: String): JSON!
+	fullContext(sessionKey: String!): JSON!
 }
 
 type ChatRawPrompt {
@@ -520,11 +520,17 @@ type McpTool {
 }
 
 type MemoryConfig {
+	style: String
+	agentWriteMode: String
+	userProfileWriteMode: String
 	backend: String
+	provider: String
 	citations: String
 	disableRag: Boolean
 	llmReranking: Boolean
-	sessionExport: Boolean
+	searchMergeStrategy: String
+	sessionExport: String
+	promptMemoryMode: String
 	qmdFeatureEnabled: Boolean
 }
 
@@ -583,6 +589,7 @@ type ModelInfo {
 	enabled: Boolean
 	supportsTools: Boolean
 	supportsVision: Boolean
+	supportsReasoning: Boolean
 	supportsStreaming: Boolean
 	contextWindow: Int
 	maxOutputTokens: Int
@@ -1134,7 +1141,7 @@ type SubscriptionRoot {
 	"""
 	Chat events (streaming tokens, completion, abort).
 	"""
-	chatEvent(sessionKey: String): GenericEvent!
+	chatEvent(sessionKey: String!): GenericEvent!
 	"""
 	Session change events (patch, switch, delete).
 	"""

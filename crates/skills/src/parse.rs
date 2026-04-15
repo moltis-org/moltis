@@ -281,12 +281,67 @@ fn split_frontmatter(content: &str) -> anyhow::Result<(String, String)> {
     Ok((frontmatter, body))
 }
 
+/// Tolerant variant of [`split_frontmatter`]: returns only the body after an
+/// optional YAML frontmatter block. If the content doesn't start with a
+/// `---` fence or the closing `---` is missing, returns the original content
+/// unchanged.
+///
+/// Unlike `parse_skill`, this helper never errors and never validates the
+/// frontmatter's schema — it's intended for consumers that just want a clean
+/// markdown body without a full schema check (e.g. reading plugin-backed
+/// skills whose frontmatter may follow a non-SKILL.md convention).
+#[must_use]
+pub fn strip_optional_frontmatter(content: &str) -> &str {
+    let trimmed_start = content.trim_start();
+    let Some(after_open) = trimmed_start.strip_prefix("---") else {
+        return content;
+    };
+    let Some(close_pos) = after_open.find("\n---") else {
+        return content;
+    };
+    // Advance past "\n---" and any trailing newline so the caller sees
+    // clean markdown starting at the first real content line.
+    let rest = &after_open[close_pos + 4..];
+    rest.trim_start_matches(['\r', '\n'])
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use rstest::rstest;
+
+    #[test]
+    fn strip_optional_frontmatter_removes_yaml_block() {
+        let input = "---\nname: foo\ndescription: bar\n---\n\n# Body\n\nHello.\n";
+        assert_eq!(strip_optional_frontmatter(input), "# Body\n\nHello.\n");
+    }
+
+    #[test]
+    fn strip_optional_frontmatter_passes_through_plain_markdown() {
+        let input = "# No frontmatter here\n\nJust body.\n";
+        assert_eq!(strip_optional_frontmatter(input), input);
+    }
+
+    #[test]
+    fn strip_optional_frontmatter_passes_through_unterminated_fence() {
+        // Missing closing fence — don't eat the body silently, return as-is.
+        let input = "---\nname: broken\nno closing fence here\n\n# Body that survives\n";
+        assert_eq!(strip_optional_frontmatter(input), input);
+    }
+
+    #[test]
+    fn strip_optional_frontmatter_handles_leading_whitespace() {
+        let input = "\n\n---\nname: foo\n---\n# Body\n";
+        assert_eq!(strip_optional_frontmatter(input), "# Body\n");
+    }
+
+    #[test]
+    fn strip_optional_frontmatter_handles_empty_body() {
+        let input = "---\nname: foo\n---\n";
+        assert_eq!(strip_optional_frontmatter(input), "");
+    }
 
     #[rstest]
     #[case("my-skill", true)]

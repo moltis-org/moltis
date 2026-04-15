@@ -27,6 +27,21 @@ function nodeMetaLabel(node) {
 	return isSshTargetNode(node) ? "OpenSSH target" : node.platform;
 }
 
+function fallbackNodeFromId(nodeId) {
+	if (!nodeId) return null;
+	return isSshTargetNode({ nodeId: nodeId }) ? { nodeId: nodeId, platform: "ssh" } : { nodeId: nodeId };
+}
+
+function getNodeByIdOrFallback(nodeId) {
+	return nodeStore.getById(nodeId) || fallbackNodeFromId(nodeId);
+}
+
+function getSelectedNodeForDisplay() {
+	var selectedId = nodeStore.selectedNodeId.value;
+	if (!selectedId) return null;
+	return nodeStore.selectedNode.value || fallbackNodeFromId(selectedId);
+}
+
 function setSessionNode(sessionKey, nodeId) {
 	sendRpc("nodes.set_session", { session_key: sessionKey, node_id: nodeId || null });
 }
@@ -47,22 +62,23 @@ function updateNodeComboLabel(node) {
 export function fetchNodes() {
 	return nodeStore.fetch().then(() => {
 		var allNodes = nodeStore.nodes.value;
+		var selectedId = nodeStore.selectedNodeId.value;
 		// Show or hide the node selector depending on whether nodes are connected.
 		if (S.nodeCombo) {
-			if (allNodes.length > 0) {
+			if (allNodes.length > 0 || selectedId) {
 				S.nodeCombo.classList.remove("hidden");
 			} else {
 				S.nodeCombo.classList.add("hidden");
 			}
 		}
-		var selected = nodeStore.selectedNode.value;
+		var selected = getSelectedNodeForDisplay();
 		updateNodeComboLabel(selected);
 	});
 }
 
 export function selectNode(nodeId) {
 	nodeStore.select(nodeId);
-	var node = nodeId ? nodeStore.getById(nodeId) : null;
+	var node = nodeId ? getNodeByIdOrFallback(nodeId) : null;
 	updateNodeComboLabel(node);
 	setSessionNode(S.activeSessionKey, nodeId);
 	closeNodeDropdown();
@@ -114,18 +130,26 @@ export function renderNodeList() {
 	S.nodeDropdownList.textContent = "";
 	var currentId = nodeStore.selectedNodeId.value;
 	var allNodes = nodeStore.nodes.value;
+	var remoteEntries = [];
 
 	// "Local" as first item
 	S.nodeDropdownList.appendChild(buildNodeItem(null, currentId));
 
-	if (allNodes.length > 0) {
+	if (currentId && !allNodes.some((node) => node.nodeId === currentId)) {
+		remoteEntries.push(getNodeByIdOrFallback(currentId));
+	}
+	for (var n of allNodes) {
+		remoteEntries.push(n);
+	}
+
+	if (remoteEntries.length > 0) {
 		var divider = document.createElement("div");
 		divider.className = "model-dropdown-divider";
 		S.nodeDropdownList.appendChild(divider);
 	}
 
-	for (var n of allNodes) {
-		S.nodeDropdownList.appendChild(buildNodeItem(n, currentId));
+	for (var entry of remoteEntries) {
+		S.nodeDropdownList.appendChild(buildNodeItem(entry, currentId));
 	}
 }
 
@@ -189,6 +213,6 @@ document.addEventListener("click", (e) => {
 /** Restore node selection from session metadata (called on session switch). */
 export function restoreNodeSelection(nodeId) {
 	nodeStore.select(nodeId || null);
-	var node = nodeId ? nodeStore.getById(nodeId) : null;
+	var node = nodeId ? getNodeByIdOrFallback(nodeId) : null;
 	updateNodeComboLabel(node);
 }

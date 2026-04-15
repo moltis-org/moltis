@@ -53,8 +53,7 @@ var OPENAI_COMPATIBLE_PROVIDERS = [
 ];
 
 var BYOM_PROVIDERS = ["venice"];
-var VALIDATION_HINT_TEXT = "Validation can take up to 20 seconds for some providers.";
-var VALIDATION_HINT_RUNNING_TEXT = "Validating models... this can take up to 20 seconds.";
+var VALIDATION_HINT_TEXT = "";
 var VALIDATION_PROGRESS_EVENT = "providers.validate.progress";
 var oauthStatusTimer = null;
 
@@ -395,7 +394,7 @@ function showCustomProviderForm() {
 		}
 
 		saveBtn.disabled = true;
-		saveBtn.textContent = "Adding & Validating...";
+		saveBtn.textContent = "Adding...";
 		setValidationProgress(validationProgress, 8, "Saving provider settings...");
 		setFormError(errorPanel, null);
 
@@ -412,7 +411,7 @@ function showCustomProviderForm() {
 				var providerName = result.providerName;
 				var displayName = result.displayName;
 				var requestId = createValidationRequestId();
-				setValidationProgress(validationProgress, 12, VALIDATION_HINT_RUNNING_TEXT);
+				setValidationProgress(validationProgress, 12, "Discovering models...");
 				var stopProgressEvents = bindValidationProgressEvents(validationProgress, requestId);
 
 				// Validate the provider to discover models
@@ -427,7 +426,7 @@ function showCustomProviderForm() {
 						}
 
 						if (valResult.models && valResult.models.length > 0) {
-							completeValidationProgress(validationProgress, "Validation complete.");
+							completeValidationProgress(validationProgress, "Done.");
 							// Show model selector
 							var customProvider = {
 								name: providerName,
@@ -440,7 +439,7 @@ function showCustomProviderForm() {
 						} else if (model) {
 							// Model specified manually — save it and finish
 							sendRpc("providers.save_model", { provider: providerName, model: model }).then(() => {
-								completeValidationProgress(validationProgress, "Validation complete.");
+								completeValidationProgress(validationProgress, "Done.");
 								fetchModels();
 								if (S.refreshProvidersPage) S.refreshProvidersPage();
 								m.body.textContent = "";
@@ -580,7 +579,7 @@ export function showApiKeyForm(provider) {
 
 	var saveBtn = document.createElement("button");
 	saveBtn.className = "provider-btn";
-	saveBtn.textContent = "Save & Validate";
+	saveBtn.textContent = "Save";
 	saveBtn.addEventListener("click", () => {
 		var key = keyInp.value.trim();
 		if (!(key || provider.keyOptional)) {
@@ -595,8 +594,8 @@ export function showApiKeyForm(provider) {
 		}
 
 		saveBtn.disabled = true;
-		saveBtn.textContent = "Validating...";
-		setValidationProgress(validationProgress, 10, VALIDATION_HINT_RUNNING_TEXT);
+		saveBtn.textContent = "Saving...";
+		setValidationProgress(validationProgress, 10, "Discovering models...");
 		setFormError(errorPanel, null);
 
 		var keyVal = key || provider.name;
@@ -609,29 +608,29 @@ export function showApiKeyForm(provider) {
 			.then((result) => {
 				if (!result.valid) {
 					saveBtn.disabled = false;
-					saveBtn.textContent = "Save & Validate";
+					saveBtn.textContent = "Save";
 					resetValidationProgress(validationProgress);
-					setFormError(errorPanel, result.error || "Validation failed. Please check your credentials.");
+					setFormError(errorPanel, result.error || "Failed to connect. Please check your credentials.");
 					return;
 				}
 
 				// BYOM providers already tested the specific model — save directly.
 				if (needsModel) {
-					completeValidationProgress(validationProgress, "Validation complete.");
+					completeValidationProgress(validationProgress, "Done.");
 					saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, null, false);
 					return;
 				}
 
 				// Regular providers — show model selector.
 				var models = result.models || [];
-				completeValidationProgress(validationProgress, "Validation complete.");
+				completeValidationProgress(validationProgress, "Done.");
 				showModelSelector(provider, models, keyVal, endpointVal, modelVal);
 			})
 			.catch((err) => {
 				saveBtn.disabled = false;
-				saveBtn.textContent = "Save & Validate";
+				saveBtn.textContent = "Save";
 				resetValidationProgress(validationProgress);
-				setFormError(errorPanel, err?.message || "Validation failed.");
+				setFormError(errorPanel, err?.message || "Failed to connect.");
 			})
 			.finally(() => {
 				stopProgressEvents();
@@ -1120,12 +1119,6 @@ function showOAuthModelSelector(provider) {
 			}));
 			showModelSelector(provider, mapped, null, null, null, true);
 		} else {
-			// No models found yet — trigger detection in background and show success.
-			sendRpc("models.detect_supported", {
-				background: true,
-				reason: "provider_connected",
-				provider: provider.name,
-			});
 			fetchModels();
 			if (S.refreshProvidersPage) S.refreshProvidersPage();
 			var modal = els();

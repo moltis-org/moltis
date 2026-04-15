@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, sync::Mutex};
 
-use {async_trait::async_trait, tracing::warn};
+use {async_trait::async_trait, time::OffsetDateTime, tracing::warn};
 
 use moltis_common::{
     Result,
@@ -43,6 +43,15 @@ impl CommandLoggerHook {
         }
         Ok(())
     }
+
+    fn log_entry(session_key: &str, action: &str, sender_id: &Option<String>) -> serde_json::Value {
+        serde_json::json!({
+            "ts": OffsetDateTime::now_utc().unix_timestamp(),
+            "session_key": session_key,
+            "action": action,
+            "sender_id": sender_id,
+        })
+    }
 }
 
 #[async_trait]
@@ -67,15 +76,7 @@ impl HookHandler for CommandLoggerHook {
                 return Ok(HookAction::Continue);
             }
 
-            let entry = serde_json::json!({
-                "ts": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                "session_key": session_key,
-                "action": action,
-                "sender_id": sender_id,
-            });
+            let entry = Self::log_entry(session_key, action, sender_id);
 
             use std::io::Write;
             let mut guard = self.file.lock().unwrap_or_else(|e| e.into_inner());
@@ -97,15 +98,7 @@ impl HookHandler for CommandLoggerHook {
         } = payload
             && self.ensure_file().is_ok()
         {
-            let entry = serde_json::json!({
-                "ts": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                "session_key": session_key,
-                "action": action,
-                "sender_id": sender_id,
-            });
+            let entry = Self::log_entry(session_key, action, sender_id);
             use std::io::Write;
             let mut guard = self.file.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(ref mut f) = *guard {
@@ -140,6 +133,7 @@ mod tests {
         assert_eq!(lines.len(), 2);
 
         let entry: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert!(entry["ts"].as_i64().is_some_and(|ts| ts > 0));
         assert_eq!(entry["action"], "new");
         assert_eq!(entry["session_key"], "sess-1");
     }
@@ -152,6 +146,7 @@ mod tests {
 
         let payload = HookPayload::SessionStart {
             session_key: "test".into(),
+            channel: None,
         };
         hook.handle(HookEvent::Command, &payload).await.unwrap();
         // File shouldn't even be created

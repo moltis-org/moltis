@@ -45,6 +45,7 @@ var slashMenuIdx = 0;
 var slashMenuItems = [];
 var chatMoreModalKeydownHandler = null;
 var disposeSessionControlsVisibility = null;
+var promptMemoryToolbarRequestId = 0;
 
 function slashInjectStyles() {
 	if (document.getElementById("slashMenuStyles")) return;
@@ -237,6 +238,116 @@ function ctxSection(title) {
 	return sec;
 }
 
+function formatPromptMemoryMode(mode) {
+	if (mode === "frozen-at-session-start") return "Frozen at session start";
+	if (mode === "live-reload") return "Live reload";
+	return mode || "unknown";
+}
+
+function formatPromptMemorySource(source) {
+	if (source === "agent_workspace") return "Agent workspace";
+	if (source === "root_workspace") return "Root workspace";
+	return source || "unknown";
+}
+
+function buildPromptMemorySummary(promptMemory) {
+	if (!promptMemory) return "Unavailable";
+	var parts = [formatPromptMemoryMode(promptMemory.mode)];
+	if (promptMemory.snapshotActive) {
+		parts.push("snapshot active");
+	}
+	parts.push(promptMemory.present ? `${Number(promptMemory.chars || 0).toLocaleString()} chars` : "empty");
+	return parts.join(" · ");
+}
+
+function promptMemoryDetailParts(promptMemory) {
+	if (!promptMemory) return [];
+	var parts = [];
+	if (promptMemory.fileSource) parts.push(`source ${formatPromptMemorySource(promptMemory.fileSource)}`);
+	if (promptMemory.path) parts.push(promptMemory.path);
+	return parts;
+}
+
+function promptMemoryToolbarTitle(promptMemory) {
+	if (!promptMemory) return "Prompt memory unavailable";
+	var parts = [`Prompt memory: ${buildPromptMemorySummary(promptMemory)}`];
+	var detailParts = promptMemoryDetailParts(promptMemory);
+	if (detailParts.length > 0) parts.push(detailParts.join(" · "));
+	return parts.join("\n");
+}
+
+function promptMemoryToolbarLabel(promptMemory) {
+	if (!promptMemory) return "Memory";
+	if (promptMemory.mode === "frozen-at-session-start") return "Memory frozen";
+	if (promptMemory.mode === "live-reload") return "Memory live";
+	return "Memory";
+}
+
+function setPromptMemoryToolbarState(promptMemory, loading, refreshing) {
+	var toolbar = S.$("promptMemoryToolbar");
+	var statusBtn = S.$("promptMemoryStatusBtn");
+	var statusLabel = S.$("promptMemoryStatusLabel");
+	var refreshBtn = S.$("promptMemoryRefreshBtn");
+	if (!(toolbar && statusBtn && statusLabel && refreshBtn)) return;
+	toolbar.classList.remove("hidden");
+	toolbar.classList.add("inline-flex");
+	statusBtn.disabled = !!loading;
+	refreshBtn.disabled = !!refreshing;
+	if (loading) {
+		statusLabel.textContent = "Memory…";
+		statusBtn.title = "Loading prompt memory status";
+		refreshBtn.classList.add("hidden");
+		return;
+	}
+	statusLabel.textContent = promptMemoryToolbarLabel(promptMemory);
+	statusBtn.title = promptMemoryToolbarTitle(promptMemory);
+	refreshBtn.classList.toggle("hidden", promptMemory?.mode !== "frozen-at-session-start");
+	refreshBtn.title =
+		promptMemory?.mode === "frozen-at-session-start" ? "Refresh frozen prompt memory" : "Refresh unavailable";
+}
+
+function refreshPromptMemoryToolbarFromPayload(promptMemory) {
+	setPromptMemoryToolbarState(promptMemory || null, false, false);
+}
+
+function refreshPromptMemoryToolbar() {
+	if (!S.connected) {
+		setPromptMemoryToolbarState(null, false, false);
+		return Promise.resolve(null);
+	}
+	var requestId = ++promptMemoryToolbarRequestId;
+	setPromptMemoryToolbarState(null, true, false);
+	return sendRpc("chat.context", {}).then((res) => {
+		if (requestId !== promptMemoryToolbarRequestId) return null;
+		if (res?.ok && res.payload) {
+			var promptMemory = res.payload.promptMemory || null;
+			refreshPromptMemoryToolbarFromPayload(promptMemory);
+			return promptMemory;
+		}
+		setPromptMemoryToolbarState(null, false, false);
+		return null;
+	});
+}
+
+function refreshPromptMemoryToolbarSnapshot() {
+	setPromptMemoryToolbarState(null, false, true);
+	return sendRpc("chat.prompt_memory.refresh", {})
+		.then((res) => {
+			if (!(res?.ok && res.payload)) {
+				throw new Error(res?.error?.message || "Failed to refresh prompt memory");
+			}
+			var promptMemory = res.payload.promptMemory || null;
+			refreshPromptMemoryToolbarFromPayload(promptMemory);
+			maybeRefreshFullContext();
+			return promptMemory;
+		})
+		.catch((error) => {
+			refreshPromptMemoryToolbar();
+			chatAddMsg("error", error?.message || "Failed to refresh prompt memory");
+			return null;
+		});
+}
+
 // ── Context card per-section renderers ───────────────────
 function renderContextSessionSection(card, data) {
 	var sess = data.session || {};
@@ -359,20 +470,18 @@ function renderContextSandboxSection(card, data) {
 	var exec = data.execution || {};
 	var sandboxSection = ctxSection("Sandbox");
 	sandboxSection.appendChild(ctxRow("Enabled", sb.enabled ? "yes" : "no", true));
-	if (exec.mode) {
-		var execLabel = exec.mode === "sandbox" ? "sandboxed" : "host";
-		if (exec.promptSymbol) {
-			execLabel += ` (${exec.promptSymbol})`;
-		}
-		sandboxSection.appendChild(ctxRow("Command route", execLabel, true));
-	}
-	if (sb.backend) {
-		sandboxSection.appendChild(ctxRow("Backend", sb.backend));
-		if (sb.mode) sandboxSection.appendChild(ctxRow("Mode", sb.mode));
-		if (sb.scope) sandboxSection.appendChild(ctxRow("Scope", sb.scope));
-		if (sb.workspaceMount) sandboxSection.appendChild(ctxRow("Workspace Mount", sb.workspaceMount));
-		if (sb.image) sandboxSection.appendChild(ctxRow("Image", sb.image, true));
-		if (sb.containerName) sandboxSection.appendChild(ctxRow("Container", sb.containerName));
+	var execLabel = exec.mode ? (exec.mode === "sandbox" ? "sandboxed" : "host") : "";
+	if (execLabel && exec.promptSymbol) execLabel += ` (${exec.promptSymbol})`;
+	if (execLabel) sandboxSection.appendChild(ctxRow("Command route", execLabel, true));
+	for (var [label, value, mono] of [
+		["Backend", sb.backend, false],
+		["Mode", sb.mode, false],
+		["Scope", sb.scope, false],
+		["Workspace Mount", sb.workspaceMount, false],
+		["Image", sb.image, true],
+		["Container", sb.containerName, false],
+	]) {
+		if (value) sandboxSection.appendChild(ctxRow(label, value, mono));
 	}
 	card.appendChild(sandboxSection);
 }
@@ -381,17 +490,33 @@ function renderContextTokensSection(card, data) {
 	var tu = data.tokenUsage || {};
 	var sessionInput = tu.inputTokens || 0;
 	var sessionOutput = tu.outputTokens || 0;
+	var sessionCacheRead = tu.cacheReadTokens || 0;
+	var sessionCacheWrite = tu.cacheWriteTokens || 0;
 	var sessionTotal = tu.total || 0;
 	var currentInput = tu.currentInputTokens || sessionInput;
 	var currentOutput = tu.currentOutputTokens || 0;
+	var currentCacheRead = tu.currentCacheReadTokens || 0;
+	var currentCacheWrite = tu.currentCacheWriteTokens || 0;
 	var currentTotal = tu.currentTotal || currentInput + currentOutput;
 	var estimatedNextInput = tu.estimatedNextInputTokens || currentInput;
 	var tokenSection = ctxSection("Token Usage");
 	tokenSection.appendChild(ctxRow("Session input", formatTokens(sessionInput), true));
 	tokenSection.appendChild(ctxRow("Session output", formatTokens(sessionOutput), true));
+	if (sessionCacheRead > 0) {
+		tokenSection.appendChild(ctxRow("Session cached input", formatTokens(sessionCacheRead), true));
+	}
+	if (sessionCacheWrite > 0) {
+		tokenSection.appendChild(ctxRow("Session cache writes", formatTokens(sessionCacheWrite), true));
+	}
 	tokenSection.appendChild(ctxRow("Session total", formatTokens(sessionTotal), true));
 	tokenSection.appendChild(ctxRow("Current input", formatTokens(currentInput), true));
 	tokenSection.appendChild(ctxRow("Current output", formatTokens(currentOutput), true));
+	if (currentCacheRead > 0) {
+		tokenSection.appendChild(ctxRow("Current cached input", formatTokens(currentCacheRead), true));
+	}
+	if (currentCacheWrite > 0) {
+		tokenSection.appendChild(ctxRow("Current cache writes", formatTokens(currentCacheWrite), true));
+	}
 	tokenSection.appendChild(ctxRow("Current total", formatTokens(currentTotal), true));
 	tokenSection.appendChild(ctxRow("Estimated next input", formatTokens(estimatedNextInput), true));
 	if (tu.contextWindow > 0) {
@@ -399,6 +524,24 @@ function renderContextTokensSection(card, data) {
 		tokenSection.appendChild(ctxRow("Context left", `${pct}% of ${formatTokens(tu.contextWindow)}`, true));
 	}
 	card.appendChild(tokenSection);
+}
+
+function renderContextPromptMemorySection(card, data) {
+	var promptMemory = data.promptMemory || null;
+	var section = ctxSection("Prompt Memory");
+	section.appendChild(ctxRow("Status", buildPromptMemorySummary(promptMemory)));
+	if (promptMemory) {
+		section.appendChild(ctxRow("Mode", formatPromptMemoryMode(promptMemory.mode)));
+		section.appendChild(ctxRow("Present", promptMemory.present ? "yes" : "no"));
+		section.appendChild(ctxRow("Chars", Number(promptMemory.chars || 0).toLocaleString(), true));
+		if (promptMemory.fileSource) {
+			section.appendChild(ctxRow("Source", formatPromptMemorySource(promptMemory.fileSource)));
+		}
+		if (promptMemory.path) {
+			section.appendChild(ctxRow("Path", promptMemory.path, true));
+		}
+	}
+	card.appendChild(section);
 }
 
 function renderContextCard(data) {
@@ -434,10 +577,27 @@ function renderContextCard(data) {
 	renderContextMcpSection(card, data);
 	renderContextToolsSection(card, data);
 	renderContextSandboxSection(card, data);
+	renderContextPromptMemorySection(card, data);
 	renderContextTokensSection(card, data);
 
 	S.chatMsgBox.appendChild(card);
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+}
+
+// Human-readable labels for each CompactionMode variant. Keep the keys in
+// sync with `compaction_run::compaction_mode_key` in the Rust backend —
+// those snake_case keys are what ship in the `mode` field of the
+// auto_compact / compact broadcast events.
+var COMPACTION_MODE_LABELS = {
+	deterministic: "Deterministic",
+	recency_preserving: "Recency preserving",
+	structured: "Structured",
+	llm_replace: "LLM replace",
+};
+
+function compactionModeLabel(mode) {
+	if (!mode) return "Unknown";
+	return COMPACTION_MODE_LABELS[mode] || mode;
 }
 
 export function renderCompactCard(data) {
@@ -453,9 +613,34 @@ export function renderCompactCard(data) {
 	header.appendChild(ctxEl("span", "ctx-header-title", "Conversation compacted"));
 	card.appendChild(header);
 
+	// Strategy section — surfaces the mode that actually ran and the LLM
+	// token spend so users can see why compaction was fast/slow and what
+	// it cost. Fields come from CompactionOutcome::broadcast_metadata()
+	// on the Rust side.
+	if (data.mode) {
+		var strategySection = ctxSection("Strategy");
+		strategySection.appendChild(ctxRow("Mode", compactionModeLabel(data.mode)));
+		var totalTokens = Number(data.compactionTotalTokens || 0);
+		if (totalTokens > 0) {
+			var inputTokens = Number(data.compactionInputTokens || 0);
+			var outputTokens = Number(data.compactionOutputTokens || 0);
+			strategySection.appendChild(
+				ctxRow(
+					"Tokens used",
+					`${formatTokens(totalTokens)} (${formatTokens(inputTokens)} in + ${formatTokens(outputTokens)} out)`,
+				),
+			);
+		} else {
+			strategySection.appendChild(ctxRow("Tokens used", "0 (no LLM call)"));
+		}
+		card.appendChild(strategySection);
+	}
+
 	var statsSection = ctxSection("Before compact");
 	statsSection.appendChild(ctxRow("Messages", String(data.messageCount || 0)));
-	statsSection.appendChild(ctxRow("Total tokens", formatTokens(data.totalTokens || 0)));
+	if (data.totalTokens) {
+		statsSection.appendChild(ctxRow("Total tokens", formatTokens(data.totalTokens || 0)));
+	}
 	if (data.estimatedNextInputTokens) {
 		statsSection.appendChild(ctxRow("Estimated next input", formatTokens(data.estimatedNextInputTokens), true));
 	}
@@ -466,10 +651,32 @@ export function renderCompactCard(data) {
 	}
 	card.appendChild(statsSection);
 
+	// "After compact" messaging depends on the mode: deterministic /
+	// llm_replace collapse to a single summary message, while
+	// recency_preserving / structured splice the summary between head
+	// and tail so multiple messages survive.
 	var afterSection = ctxSection("After compact");
-	afterSection.appendChild(ctxRow("Messages", "1 (summary)"));
-	afterSection.appendChild(ctxRow("Status", "Conversation history replaced with a summary"));
+	var replacesAll = data.mode === "deterministic" || data.mode === "llm_replace" || !data.mode;
+	if (replacesAll) {
+		afterSection.appendChild(ctxRow("Messages", "1 (summary)"));
+		afterSection.appendChild(ctxRow("Status", "Conversation history replaced with a summary"));
+	} else {
+		afterSection.appendChild(ctxRow("Status", "Head + tail preserved verbatim; middle summarised"));
+	}
 	card.appendChild(afterSection);
+
+	// Settings hint — only rendered when the backend supplies one, so
+	// an older backend or a mode that doesn't emit it doesn't leave an
+	// empty row behind. The hint spans the full card width (not the
+	// two-column label/value ctx-row layout) so it reads like a
+	// tooltip/footnote.
+	if (data.settingsHint) {
+		var hintSection = ctxSection("Configure");
+		var hintRow = ctxEl("div", "ctx-value");
+		hintRow.textContent = data.settingsHint;
+		hintSection.appendChild(hintRow);
+		card.appendChild(hintSection);
+	}
 
 	S.chatMsgBox.appendChild(card);
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
@@ -513,7 +720,9 @@ function refreshDebugPanel() {
 		renderContextMcpSection(panel, res.payload);
 		renderContextToolsSection(panel, res.payload);
 		renderContextSandboxSection(panel, res.payload);
+		renderContextPromptMemorySection(panel, res.payload);
 		renderContextTokensSection(panel, res.payload);
+		refreshPromptMemoryToolbarFromPayload(res.payload.promptMemory || null);
 	});
 }
 
@@ -620,6 +829,151 @@ function renderContextMessage(msg, index) {
 	return wrapper;
 }
 
+function buildFullContextPromptMemoryBox(promptMemory) {
+	if (!promptMemory) return null;
+	var box = ctxEl(
+		"div",
+		"text-xs mb-3 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--text)]",
+	);
+	var summaryLine = ctxEl("div", "font-semibold");
+	summaryLine.textContent = `Prompt memory: ${buildPromptMemorySummary(promptMemory)}`;
+	box.appendChild(summaryLine);
+	var detailParts = promptMemoryDetailParts(promptMemory);
+	if (detailParts.length > 0) {
+		box.appendChild(ctxEl("div", "mt-1 text-[var(--muted)]", detailParts.join(" · ")));
+	}
+	return box;
+}
+
+function appendFullContextWorkspaceWarnings(panel, payload) {
+	var workspaceFiles = Array.isArray(payload.workspaceFiles) ? payload.workspaceFiles : [];
+	if (!payload.truncated || workspaceFiles.length === 0) return;
+	var truncatedFiles = workspaceFiles.filter((file) => file?.truncated);
+	if (truncatedFiles.length === 0) return;
+	var warning = ctxEl(
+		"div",
+		"text-xs mb-3 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--text)]",
+	);
+	warning.textContent = truncatedFiles
+		.map((file) => {
+			var name = typeof file.name === "string" ? file.name : "workspace file";
+			var charCount = Number(file.original_chars || 0).toLocaleString();
+			var limitChars = Number(file.limit_chars || 0).toLocaleString();
+			var truncatedChars = Number(file.truncated_chars || 0).toLocaleString();
+			return `${name}: ${charCount} chars, limit ${limitChars}, truncated by ${truncatedChars}`;
+		})
+		.join(" | ");
+	panel.appendChild(warning);
+}
+
+function buildFullContextHeaderRow(payload, onRefresh) {
+	var headerRow = ctxEl("div", "flex items-center gap-3 mb-3");
+	var headerText = ctxEl("span", "text-xs text-[var(--muted)]");
+	headerText.textContent =
+		`${payload.messageCount} messages · ` +
+		`system prompt ${payload.systemPromptChars.toLocaleString()} chars · ` +
+		`total ${payload.totalChars.toLocaleString()} chars`;
+	headerRow.appendChild(headerText);
+	var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+	copyBtn.textContent = "Copy";
+	var downloadBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+	downloadBtn.textContent = "Download";
+	var llmOutputBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+	llmOutputBtn.textContent = "LLM output";
+	headerRow.appendChild(copyBtn);
+	headerRow.appendChild(downloadBtn);
+	headerRow.appendChild(llmOutputBtn);
+	var promptMemory = payload.promptMemory || null;
+	if (promptMemory?.mode === "frozen-at-session-start") {
+		var refreshBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+		refreshBtn.textContent = "Refresh memory";
+		refreshBtn.addEventListener("click", () => onRefresh(refreshBtn));
+		headerRow.appendChild(refreshBtn);
+	}
+	return { headerRow: headerRow, copyBtn: copyBtn, downloadBtn: downloadBtn, llmOutputBtn: llmOutputBtn };
+}
+
+function wireFullContextCopyButton(copyBtn, messages, llmOutputs, llmOutputPanel) {
+	copyBtn.addEventListener("click", () => {
+		var lines = messages.map((m) => {
+			var content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+			var parts = [content];
+			for (var tc of m.tool_calls || []) {
+				parts.push(`[tool_call: ${tc.function?.name || "?"} ${tc.function?.arguments || ""}]`);
+			}
+			return `[${m.role}] ${parts.join("\n")}`;
+		});
+		var contextText = lines.join("\n");
+		var copyText = contextText;
+		var llmOutputVisible = llmOutputPanel && !llmOutputPanel.classList.contains("hidden");
+		if (llmOutputVisible) {
+			copyText = `LLM output:
+${JSON.stringify(llmOutputs, null, 2)}
+
+Context:
+${contextText}`;
+		}
+		navigator.clipboard.writeText(copyText).then(() => {
+			copyBtn.textContent = "Copied!";
+			setTimeout(() => {
+				copyBtn.textContent = "Copy";
+			}, 1500);
+		});
+	});
+}
+
+function wireFullContextDownloadButton(downloadBtn, messages) {
+	downloadBtn.addEventListener("click", () => {
+		var lines = [];
+		for (var m of messages) {
+			lines.push(JSON.stringify(m));
+		}
+		var blob = new Blob([`${lines.join("\n")}\n`], { type: "application/x-jsonlines" });
+		var url = URL.createObjectURL(blob);
+		var a = document.createElement("a");
+		a.href = url;
+		a.download = `context-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.jsonl`;
+		a.click();
+		URL.revokeObjectURL(url);
+	});
+}
+
+function buildFullContextLlmOutputPanel(llmOutputs) {
+	var panel = ctxEl("div", "hidden mb-3");
+	var meta = ctxEl(
+		"div",
+		"text-xs text-[var(--muted)] mb-1",
+		`${llmOutputs.length} assistant output${llmOutputs.length === 1 ? "" : "s"}`,
+	);
+	panel.appendChild(meta);
+	var pre = ctxEl(
+		"pre",
+		"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]",
+	);
+	pre.id = "fullContextLlmOutput";
+	pre.textContent = JSON.stringify(llmOutputs, null, 2);
+	panel.appendChild(pre);
+	return panel;
+}
+
+function wireFullContextLlmOutputToggle(button, panel) {
+	button.addEventListener("click", () => {
+		var hidden = panel.classList.contains("hidden");
+		panel.classList.toggle("hidden", !hidden);
+		button.textContent = hidden ? "Hide LLM output" : "LLM output";
+	});
+}
+
+function refreshFullContextMemory(refreshBtn) {
+	refreshBtn.disabled = true;
+	refreshBtn.textContent = "Refreshing…";
+	refreshPromptMemoryToolbarSnapshot().then((promptMemory) => {
+		refreshBtn.disabled = false;
+		refreshBtn.textContent = "Refresh memory";
+		if (promptMemory) return;
+	});
+}
+
 function refreshFullContextPanel() {
 	var panel = S.$("fullContextPanel");
 	if (!panel) return;
@@ -632,91 +986,21 @@ function refreshFullContextPanel() {
 			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build context"));
 			return;
 		}
-		var headerRow = ctxEl("div", "flex items-center gap-3 mb-3");
-		var headerText = ctxEl("span", "text-xs text-[var(--muted)]");
-		headerText.textContent =
-			`${res.payload.messageCount} messages \xb7 ` +
-			`system prompt ${res.payload.systemPromptChars.toLocaleString()} chars \xb7 ` +
-			`total ${res.payload.totalChars.toLocaleString()} chars`;
-		headerRow.appendChild(headerText);
-
+		var promptMemory = res.payload.promptMemory || null;
+		refreshPromptMemoryToolbarFromPayload(promptMemory);
+		var promptMemoryBox = buildFullContextPromptMemoryBox(promptMemory);
+		if (promptMemoryBox) panel.appendChild(promptMemoryBox);
+		appendFullContextWorkspaceWarnings(panel, res.payload);
 		var messages = res.payload.messages || [];
 		var llmOutputs = res.payload.llmOutputs || [];
-		var llmOutputPanel = null;
-
-		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
-		copyBtn.textContent = "Copy";
-		copyBtn.addEventListener("click", () => {
-			var lines = messages.map((m) => {
-				var content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-				var parts = [content];
-				for (var tc of m.tool_calls || []) {
-					parts.push(`[tool_call: ${tc.function?.name || "?"} ${tc.function?.arguments || ""}]`);
-				}
-				return `[${m.role}] ${parts.join("\n")}`;
-			});
-			var contextText = lines.join("\n");
-			var copyText = contextText;
-			var llmOutputVisible = llmOutputPanel && !llmOutputPanel.classList.contains("hidden");
-			if (llmOutputVisible) {
-				copyText = `LLM output:
-${JSON.stringify(llmOutputs, null, 2)}
-
-Context:
-${contextText}`;
-			}
-			navigator.clipboard.writeText(copyText).then(() => {
-				copyBtn.textContent = "Copied!";
-				setTimeout(() => {
-					copyBtn.textContent = "Copy";
-				}, 1500);
-			});
-		});
-		headerRow.appendChild(copyBtn);
-
-		var downloadBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
-		downloadBtn.textContent = "Download";
-		downloadBtn.addEventListener("click", () => {
-			var lines = [];
-			for (var m of messages) {
-				lines.push(JSON.stringify(m));
-			}
-			var blob = new Blob([`${lines.join("\n")}\n`], { type: "application/x-jsonlines" });
-			var url = URL.createObjectURL(blob);
-			var a = document.createElement("a");
-			a.href = url;
-			a.download = `context-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.jsonl`;
-			a.click();
-			URL.revokeObjectURL(url);
-		});
-		headerRow.appendChild(downloadBtn);
-
-		var llmOutputBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
-		llmOutputBtn.textContent = "LLM output";
-		headerRow.appendChild(llmOutputBtn);
+		var llmOutputPanel = buildFullContextLlmOutputPanel(llmOutputs);
+		var header = buildFullContextHeaderRow(res.payload, refreshFullContextMemory);
+		wireFullContextCopyButton(header.copyBtn, messages, llmOutputs, llmOutputPanel);
+		wireFullContextDownloadButton(header.downloadBtn, messages);
+		wireFullContextLlmOutputToggle(header.llmOutputBtn, llmOutputPanel);
+		var headerRow = header.headerRow;
 		panel.appendChild(headerRow);
-
-		llmOutputPanel = ctxEl("div", "hidden mb-3");
-		var llmOutputMeta = ctxEl(
-			"div",
-			"text-xs text-[var(--muted)] mb-1",
-			`${llmOutputs.length} assistant output${llmOutputs.length === 1 ? "" : "s"}`,
-		);
-		llmOutputPanel.appendChild(llmOutputMeta);
-		var llmOutputPre = ctxEl(
-			"pre",
-			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]",
-		);
-		llmOutputPre.id = "fullContextLlmOutput";
-		llmOutputPre.textContent = JSON.stringify(llmOutputs, null, 2);
-		llmOutputPanel.appendChild(llmOutputPre);
 		panel.appendChild(llmOutputPanel);
-
-		llmOutputBtn.addEventListener("click", () => {
-			var hidden = llmOutputPanel.classList.contains("hidden");
-			llmOutputPanel.classList.toggle("hidden", !hidden);
-			llmOutputBtn.textContent = hidden ? "Hide LLM output" : "LLM output";
-		});
 
 		for (var i = 0; i < messages.length; i++) {
 			panel.appendChild(renderContextMessage(messages[i], i));
@@ -839,6 +1123,59 @@ function handleSlashCommand(cmdName, cmdArgs) {
 	}
 }
 
+function tryHandleLocalSlashCommand(text, hasImages) {
+	if (text.charAt(0) !== "/" || hasImages) return false;
+	var slash = parseSlashCommand(text);
+	if (!(slash && shouldHandleSlashLocally(slash.name, slash.args))) return false;
+	S.chatInput.value = "";
+	chatAutoResize();
+	slashHideMenu();
+	handleSlashCommand(slash.name, slash.args);
+	return true;
+}
+
+function rememberChatHistory(text) {
+	if (!text) return;
+	S.chatHistory.push(text);
+	if (S.chatHistory.length > 200) S.setChatHistory(S.chatHistory.slice(-200));
+	localStorage.setItem("moltis-chat-history", JSON.stringify(S.chatHistory));
+}
+
+function resetComposerAfterSend() {
+	S.setChatHistoryIdx(-1);
+	S.setChatHistoryDraft("");
+	S.chatInput.value = "";
+	chatAutoResize();
+	if (window.innerWidth < 768) S.chatInput.blur();
+}
+
+function normalizeOutgoingText(text, hasImages) {
+	if (!(S.commandModeEnabled && text && !hasImages)) return text;
+	var parsed = parseSlashCommand(text);
+	if (parsed && parsed.name === "sh") return text;
+	return `/sh ${text}`;
+}
+
+function applySelectedModelToChatParams(chatParams) {
+	var selectedModel = S.selectedModelId;
+	if (!selectedModel) return;
+	chatParams.model = selectedModel;
+	setSessionModel(S.activeSessionKey, selectedModel);
+}
+
+function handleChatSendRpcResponse(res, userEl) {
+	if (res?.ok && res.payload?.runId) {
+		setSessionActiveRunId(S.activeSessionKey, res.payload.runId);
+	}
+	if (res?.payload?.queued) {
+		markMessageQueued(userEl, S.activeSessionKey);
+		return;
+	}
+	if (res && !res.ok && res.error) {
+		chatAddMsg("error", res.error.message || "Request failed");
+	}
+}
+
 // ── Build chat params (text-only or multimodal) ─────────
 function buildChatMessage(text, seq, displayText) {
 	var userText = displayText !== undefined ? displayText : text;
@@ -869,37 +1206,10 @@ function sendChat() {
 	// Unlock audio playback while we still have user-gesture context.
 	warmAudioPlayback();
 
-	if (text.charAt(0) === "/" && !hasImages) {
-		var slash = parseSlashCommand(text);
-		if (slash && shouldHandleSlashLocally(slash.name, slash.args)) {
-			S.chatInput.value = "";
-			chatAutoResize();
-			slashHideMenu();
-			handleSlashCommand(slash.name, slash.args);
-			return;
-		}
-	}
-
-	if (text) {
-		S.chatHistory.push(text);
-		if (S.chatHistory.length > 200) S.setChatHistory(S.chatHistory.slice(-200));
-		localStorage.setItem("moltis-chat-history", JSON.stringify(S.chatHistory));
-	}
-	S.setChatHistoryIdx(-1);
-	S.setChatHistoryDraft("");
-	S.chatInput.value = "";
-	chatAutoResize();
-	if (window.innerWidth < 768) {
-		S.chatInput.blur();
-	}
-
-	var outgoingText = text;
-	if (S.commandModeEnabled && text && !hasImages) {
-		var parsed = parseSlashCommand(text);
-		if (!(parsed && parsed.name === "sh")) {
-			outgoingText = `/sh ${text}`;
-		}
-	}
+	if (tryHandleLocalSlashCommand(text, hasImages)) return;
+	rememberChatHistory(text);
+	resetComposerAfterSend();
+	var outgoingText = normalizeOutgoingText(text, hasImages);
 
 	S.setChatSeq(S.chatSeq + 1);
 	var msg = buildChatMessage(outgoingText, S.chatSeq, text);
@@ -908,25 +1218,12 @@ function sendChat() {
 	// Highlight code blocks in the user message (if any).
 	if (userEl) highlightCodeBlocks(userEl);
 
-	var selectedModel = S.selectedModelId;
-	if (selectedModel) {
-		chatParams.model = selectedModel;
-		setSessionModel(S.activeSessionKey, selectedModel);
-	}
+	applySelectedModelToChatParams(chatParams);
 	bumpSessionCount(S.activeSessionKey, 1);
 	cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
 	seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
 	setSessionReplying(S.activeSessionKey, true);
-	sendRpc("chat.send", chatParams).then((res) => {
-		if (res?.ok && res.payload?.runId) {
-			setSessionActiveRunId(S.activeSessionKey, res.payload.runId);
-		}
-		if (res?.payload?.queued) {
-			markMessageQueued(userEl, S.activeSessionKey);
-		} else if (res && !res.ok && res.error) {
-			chatAddMsg("error", res.error.message || "Request failed");
-		}
-	});
+	sendRpc("chat.send", chatParams).then((res) => handleChatSendRpcResponse(res, userEl));
 	maybeRefreshFullContext();
 }
 
@@ -1122,6 +1419,255 @@ function handleChatCopy(e) {
 	}
 }
 
+function mountSessionHeaderControls(closeChatMore) {
+	var headerToolbarMount = S.$("sessionHeaderToolbarMount");
+	if (headerToolbarMount) {
+		render(
+			html`<${SessionHeader}
+					showName=${false}
+					showShare=${false}
+					showFork=${false}
+					showClear=${false}
+					showDelete=${false}
+					showArchive=${false}
+				/>`,
+			headerToolbarMount,
+		);
+	}
+	var headerModalMount = S.$("sessionHeaderModalMount");
+	if (headerModalMount) {
+		render(
+			html`<${SessionHeader}
+					showSelectors=${false}
+					showStop=${false}
+					showFork=${false}
+					showShare=${false}
+					showDelete=${false}
+					showArchive=${false}
+					nameOwnLine=${true}
+					showRenameButton=${true}
+				/>`,
+			headerModalMount,
+		);
+	}
+	var headerModalTopMount = S.$("sessionHeaderModalTopMount");
+	if (headerModalTopMount) {
+		render(
+			html`<${SessionHeader}
+					showSelectors=${false}
+					showName=${false}
+					showStop=${false}
+					actionButtonClass=${"provider-btn provider-btn-secondary provider-btn-sm"}
+					onBeforeShare=${() => closeChatMore?.()}
+					onBeforeArchive=${() => closeChatMore?.()}
+					onBeforeDelete=${() => closeChatMore?.()}
+				/>`,
+			headerModalTopMount,
+		);
+	}
+}
+
+function bindSessionControlsVisibility() {
+	var sessionControlsSection = S.$("sessionControlsSection");
+	if (!sessionControlsSection) return;
+	disposeSessionControlsVisibility?.();
+	disposeSessionControlsVisibility = effect(() => {
+		var isMainSession = (sessionStore.activeSessionKey.value || "main") === "main";
+		sessionControlsSection.classList.toggle("hidden", isMainSession);
+	});
+}
+
+function bindChatMoreModal(debugModal, fullContextModal, closeDebugModal, closeFullContextModal) {
+	var chatMoreModal = S.$("chatMoreModal");
+	var chatMoreBtn = S.$("chatMoreBtn");
+	if (!(chatMoreModal && chatMoreBtn)) return null;
+	var closeChatMore = () => {
+		chatMoreModal.classList.add("hidden");
+		chatMoreBtn.classList.remove("active");
+		if (S.sandboxImageDropdown) {
+			S.sandboxImageDropdown.classList.add("hidden");
+		}
+	};
+	var openChatMore = () => {
+		setDebugModalOpen(false);
+		setFullContextModalOpen(false);
+		chatMoreModal.classList.remove("hidden");
+		chatMoreBtn.classList.add("active");
+	};
+	chatMoreBtn.addEventListener("click", openChatMore);
+	chatMoreModal.addEventListener("click", (e) => {
+		if (e.target === chatMoreModal) closeChatMore();
+	});
+	for (var closeAfterToggleId of ["debugPanelBtn", "fullContextBtn"]) {
+		var closeAfterToggleBtn = S.$(closeAfterToggleId);
+		if (closeAfterToggleBtn) closeAfterToggleBtn.addEventListener("click", closeChatMore);
+	}
+	chatMoreModalKeydownHandler = (e) => {
+		if (e.key !== "Escape") return;
+		if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
+			closeFullContextModal?.();
+			return;
+		}
+		if (debugModal && !debugModal.classList.contains("hidden")) {
+			closeDebugModal?.();
+			return;
+		}
+		closeChatMore();
+	};
+	document.addEventListener("keydown", chatMoreModalKeydownHandler);
+	return closeChatMore;
+}
+
+function bindDeleteAllSessions(closeChatMore) {
+	var chatMoreDeleteAllBtn = S.$("chatMoreDeleteAllBtn");
+	if (!chatMoreDeleteAllBtn) return;
+	var chatMoreDeleteAllLabel = S.$("chatMoreDeleteAllLabel");
+	var deleteAllInFlight = false;
+	chatMoreDeleteAllBtn.addEventListener("click", () => {
+		if (deleteAllInFlight) return;
+		deleteAllInFlight = true;
+		chatMoreDeleteAllBtn.disabled = true;
+		if (chatMoreDeleteAllLabel) {
+			chatMoreDeleteAllLabel.textContent = "Deleting…";
+		}
+		closeChatMore?.();
+		clearAllSessions()
+			.then((res) => {
+				if (res?.ok && !res?.skipped) return;
+				if (res?.cancelled || res?.skipped) return;
+				chatAddMsg("error", res?.error?.message || "Failed to clear sessions");
+			})
+			.finally(() => {
+				deleteAllInFlight = false;
+				chatMoreDeleteAllBtn.disabled = false;
+				if (chatMoreDeleteAllLabel) {
+					chatMoreDeleteAllLabel.textContent = "Delete all sessions";
+				}
+			});
+	});
+}
+
+function bindChatComposer() {
+	S.chatInput.addEventListener("input", () => {
+		chatAutoResize();
+		slashHandleInput();
+	});
+	S.chatInput.addEventListener("keydown", (e) => {
+		if (slashHandleKeydown(e)) return;
+		if (e.key === "Escape" && S.commandModeEnabled && !S.chatInput.value.trim()) {
+			e.preventDefault();
+			setCommandMode(false);
+			return;
+		}
+		if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+			e.preventDefault();
+			sendChat();
+			return;
+		}
+		if (e.key === "ArrowUp" && S.chatInput.selectionStart === 0 && !e.shiftKey) {
+			e.preventDefault();
+			handleHistoryUp();
+			return;
+		}
+		if (e.key === "ArrowDown" && S.chatInput.selectionStart === S.chatInput.value.length && !e.shiftKey) {
+			e.preventDefault();
+			handleHistoryDown();
+		}
+	});
+	S.chatSendBtn.addEventListener("click", sendChat);
+}
+
+function initializeChatControls() {
+	S.setModelCombo(S.$("modelCombo"));
+	S.setModelComboBtn(S.$("modelComboBtn"));
+	S.setModelComboLabel(S.$("modelComboLabel"));
+	S.setModelDropdown(S.$("modelDropdown"));
+	S.setModelSearchInput(S.$("modelSearchInput"));
+	S.setModelDropdownList(S.$("modelDropdownList"));
+	bindModelComboEvents();
+
+	S.setNodeCombo(S.$("nodeCombo"));
+	S.setNodeComboBtn(S.$("nodeComboBtn"));
+	S.setNodeComboLabel(S.$("nodeComboLabel"));
+	S.setNodeDropdown(S.$("nodeDropdown"));
+	S.setNodeDropdownList(S.$("nodeDropdownList"));
+	bindNodeComboEvents();
+	fetchNodes();
+
+	S.setSandboxToggleBtn(S.$("sandboxToggle"));
+	S.setSandboxLabel(S.$("sandboxLabel"));
+	bindSandboxToggleEvents();
+	updateSandboxUI(true);
+
+	S.setSandboxImageBtn(S.$("sandboxImageBtn"));
+	S.setSandboxImageLabel(S.$("sandboxImageLabel"));
+	S.setSandboxImageDropdown(S.$("sandboxImageDropdown"));
+	bindSandboxImageEvents();
+	updateSandboxImageUI(null);
+}
+
+function bindContextModals() {
+	var debugModal = S.$("debugModal");
+	var debugModalCloseBtn = S.$("debugModalCloseBtn");
+	var closeDebugModal = null;
+	if (debugModal) {
+		closeDebugModal = () => setDebugModalOpen(false);
+		if (debugModalCloseBtn) debugModalCloseBtn.addEventListener("click", closeDebugModal);
+		debugModal.addEventListener("click", (e) => {
+			if (e.target === debugModal) closeDebugModal();
+		});
+	}
+
+	var fullContextModal = S.$("fullContextModal");
+	var fullContextModalCloseBtn = S.$("fullContextModalCloseBtn");
+	var closeFullContextModal = null;
+	if (fullContextModal) {
+		closeFullContextModal = () => setFullContextModalOpen(false);
+		if (fullContextModalCloseBtn) fullContextModalCloseBtn.addEventListener("click", closeFullContextModal);
+		fullContextModal.addEventListener("click", (e) => {
+			if (e.target === fullContextModal) closeFullContextModal();
+		});
+	}
+
+	return {
+		debugModal: debugModal,
+		fullContextModal: fullContextModal,
+		closeDebugModal: closeDebugModal,
+		closeFullContextModal: closeFullContextModal,
+	};
+}
+
+function syncModelComboLabel() {
+	if (!(S.models.length > 0 && S.modelComboLabel)) return;
+	var found = S.models.find((m) => m.id === S.selectedModelId);
+	if (found) {
+		S.modelComboLabel.textContent = found.displayName || found.id;
+		return;
+	}
+	if (S.models[0]) {
+		S.modelComboLabel.textContent = S.models[0].displayName || S.models[0].id;
+	}
+}
+
+function resolveInitialSessionKey(sessionKeyFromUrl) {
+	if (sessionKeyFromUrl) return sessionKeyFromUrl;
+	var sessionKey = localStorage.getItem("moltis-session") || "main";
+	history.replaceState(null, "", sessionPath(sessionKey));
+	return sessionKey;
+}
+
+function startInitialChatSession(sessionKey) {
+	if (!S.connected) return;
+	S.chatSendBtn.disabled = false;
+	switchSession(sessionKey);
+}
+
+function initializeChatMediaDrop() {
+	if (window.innerWidth < 768) return;
+	var inputArea = S.chatInput?.closest(".px-4.py-3");
+	initMediaDrop(S.chatMsgBox, inputArea);
+}
+
 registerPrefix(
 	routes.chats,
 	function initChat(container, sessionKeyFromUrl) {
@@ -1134,248 +1680,42 @@ registerPrefix(
 		S.setChatInput(S.$("chatInput"));
 		S.setChatSendBtn(S.$("sendBtn"));
 		updateCommandInputUI();
-
-		S.setModelCombo(S.$("modelCombo"));
-		S.setModelComboBtn(S.$("modelComboBtn"));
-		S.setModelComboLabel(S.$("modelComboLabel"));
-		S.setModelDropdown(S.$("modelDropdown"));
-		S.setModelSearchInput(S.$("modelSearchInput"));
-		S.setModelDropdownList(S.$("modelDropdownList"));
-		bindModelComboEvents();
-
-		S.setNodeCombo(S.$("nodeCombo"));
-		S.setNodeComboBtn(S.$("nodeComboBtn"));
-		S.setNodeComboLabel(S.$("nodeComboLabel"));
-		S.setNodeDropdown(S.$("nodeDropdown"));
-		S.setNodeDropdownList(S.$("nodeDropdownList"));
-		bindNodeComboEvents();
-		fetchNodes();
-
-		S.setSandboxToggleBtn(S.$("sandboxToggle"));
-		S.setSandboxLabel(S.$("sandboxLabel"));
-		bindSandboxToggleEvents();
-		updateSandboxUI(true);
-
-		S.setSandboxImageBtn(S.$("sandboxImageBtn"));
-		S.setSandboxImageLabel(S.$("sandboxImageLabel"));
-		S.setSandboxImageDropdown(S.$("sandboxImageDropdown"));
-		bindSandboxImageEvents();
-		updateSandboxImageUI(null);
+		initializeChatControls();
 
 		var closeChatMore = null;
-		var closeDebugModal = null;
-		var closeFullContextModal = null;
-
-		// Mount compact controls in toolbar and full session controls in modal.
-		var headerToolbarMount = S.$("sessionHeaderToolbarMount");
-		if (headerToolbarMount) {
-			render(
-				html`<${SessionHeader}
-						showName=${false}
-						showShare=${false}
-						showFork=${false}
-						showClear=${false}
-						showDelete=${false}
-					/>`,
-				headerToolbarMount,
-			);
-		}
-		var headerModalMount = S.$("sessionHeaderModalMount");
-		if (headerModalMount) {
-			render(
-				html`<${SessionHeader}
-						showSelectors=${false}
-						showStop=${false}
-						showFork=${false}
-						showShare=${false}
-						showDelete=${false}
-						nameOwnLine=${true}
-						showRenameButton=${true}
-					/>`,
-				headerModalMount,
-			);
-		}
-		var sessionControlsSection = S.$("sessionControlsSection");
-		if (sessionControlsSection) {
-			disposeSessionControlsVisibility?.();
-			disposeSessionControlsVisibility = effect(() => {
-				var isMainSession = (sessionStore.activeSessionKey.value || "main") === "main";
-				sessionControlsSection.classList.toggle("hidden", isMainSession);
-			});
-		}
-		var headerModalTopMount = S.$("sessionHeaderModalTopMount");
-		if (headerModalTopMount) {
-			render(
-				html`<${SessionHeader}
-						showSelectors=${false}
-						showName=${false}
-						showStop=${false}
-						showClear=${false}
-						actionButtonClass=${"provider-btn provider-btn-secondary provider-btn-sm"}
-						onBeforeShare=${() => closeChatMore?.()}
-						onBeforeDelete=${() => closeChatMore?.()}
-					/>`,
-				headerModalTopMount,
-			);
-		}
+		mountSessionHeaderControls(() => closeChatMore?.());
+		bindSessionControlsVisibility();
 
 		var mcpToggle = S.$("mcpToggleBtn");
 		if (mcpToggle) mcpToggle.addEventListener("click", toggleMcp);
 		updateMcpToggleUI(true); // default: MCP enabled
 
-		var debugModal = S.$("debugModal");
-		var debugModalCloseBtn = S.$("debugModalCloseBtn");
-		if (debugModal) {
-			closeDebugModal = () => setDebugModalOpen(false);
-			if (debugModalCloseBtn) debugModalCloseBtn.addEventListener("click", closeDebugModal);
-			debugModal.addEventListener("click", (e) => {
-				if (e.target === debugModal) closeDebugModal();
-			});
-		}
-
-		var fullContextModal = S.$("fullContextModal");
-		var fullContextModalCloseBtn = S.$("fullContextModalCloseBtn");
-		if (fullContextModal) {
-			closeFullContextModal = () => setFullContextModalOpen(false);
-			if (fullContextModalCloseBtn) fullContextModalCloseBtn.addEventListener("click", closeFullContextModal);
-			fullContextModal.addEventListener("click", (e) => {
-				if (e.target === fullContextModal) closeFullContextModal();
-			});
-		}
-
-		var chatMoreModal = S.$("chatMoreModal");
-		var chatMoreBtn = S.$("chatMoreBtn");
-		if (chatMoreModal && chatMoreBtn) {
-			closeChatMore = () => {
-				chatMoreModal.classList.add("hidden");
-				chatMoreBtn.classList.remove("active");
-				if (S.sandboxImageDropdown) {
-					S.sandboxImageDropdown.classList.add("hidden");
-				}
-			};
-			var openChatMore = () => {
-				setDebugModalOpen(false);
-				setFullContextModalOpen(false);
-				chatMoreModal.classList.remove("hidden");
-				chatMoreBtn.classList.add("active");
-			};
-			chatMoreBtn.addEventListener("click", openChatMore);
-			chatMoreModal.addEventListener("click", (e) => {
-				if (e.target === chatMoreModal) closeChatMore();
-			});
-			for (var closeAfterToggleId of ["debugPanelBtn", "fullContextBtn"]) {
-				var closeAfterToggleBtn = S.$(closeAfterToggleId);
-				if (closeAfterToggleBtn) closeAfterToggleBtn.addEventListener("click", closeChatMore);
-			}
-			chatMoreModalKeydownHandler = (e) => {
-				if (e.key !== "Escape") return;
-				if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
-					closeFullContextModal?.();
-					return;
-				}
-				if (debugModal && !debugModal.classList.contains("hidden")) {
-					closeDebugModal?.();
-					return;
-				}
-				closeChatMore();
-			};
-			document.addEventListener("keydown", chatMoreModalKeydownHandler);
-		}
-		var chatMoreDeleteAllBtn = S.$("chatMoreDeleteAllBtn");
-		if (chatMoreDeleteAllBtn) {
-			var chatMoreDeleteAllLabel = S.$("chatMoreDeleteAllLabel");
-			var deleteAllInFlight = false;
-			chatMoreDeleteAllBtn.addEventListener("click", () => {
-				if (deleteAllInFlight) return;
-				deleteAllInFlight = true;
-				chatMoreDeleteAllBtn.disabled = true;
-				if (chatMoreDeleteAllLabel) {
-					chatMoreDeleteAllLabel.textContent = "Deleting\u2026";
-				}
-				closeChatMore?.();
-				clearAllSessions()
-					.then((res) => {
-						if (res?.ok && !res?.skipped) return;
-						if (res?.cancelled || res?.skipped) return;
-						chatAddMsg("error", res?.error?.message || "Failed to clear sessions");
-					})
-					.finally(() => {
-						deleteAllInFlight = false;
-						chatMoreDeleteAllBtn.disabled = false;
-						if (chatMoreDeleteAllLabel) {
-							chatMoreDeleteAllLabel.textContent = "Delete all sessions";
-						}
-					});
-			});
-		}
+		var modalBindings = bindContextModals();
+		closeChatMore = bindChatMoreModal(
+			modalBindings.debugModal,
+			modalBindings.fullContextModal,
+			modalBindings.closeDebugModal,
+			modalBindings.closeFullContextModal,
+		);
+		bindDeleteAllSessions(closeChatMore);
 
 		var debugBtn = S.$("debugPanelBtn");
 		if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
 
 		S.$("fullContextBtn")?.addEventListener("click", toggleFullContextPanel);
 
-		if (S.models.length > 0 && S.modelComboLabel) {
-			var found = S.models.find((m) => m.id === S.selectedModelId);
-			if (found) {
-				S.modelComboLabel.textContent = found.displayName || found.id;
-			} else if (S.models[0]) {
-				S.modelComboLabel.textContent = S.models[0].displayName || S.models[0].id;
-			}
-		}
+		syncModelComboLabel();
+		var sessionKey = resolveInitialSessionKey(sessionKeyFromUrl);
+		startInitialChatSession(sessionKey);
 
-		// Determine session key from URL or localStorage
-		var sessionKey;
-		if (sessionKeyFromUrl) {
-			sessionKey = sessionKeyFromUrl;
-		} else {
-			sessionKey = localStorage.getItem("moltis-session") || "main";
-			history.replaceState(null, "", sessionPath(sessionKey));
-		}
-
-		if (S.connected) {
-			S.chatSendBtn.disabled = false;
-			switchSession(sessionKey);
-		}
-
-		S.chatInput.addEventListener("input", () => {
-			chatAutoResize();
-			slashHandleInput();
-		});
-		S.chatInput.addEventListener("keydown", (e) => {
-			if (slashHandleKeydown(e)) return;
-			if (e.key === "Escape" && S.commandModeEnabled && !S.chatInput.value.trim()) {
-				e.preventDefault();
-				setCommandMode(false);
-				return;
-			}
-			if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-				e.preventDefault();
-				sendChat();
-				return;
-			}
-			if (e.key === "ArrowUp" && S.chatInput.selectionStart === 0 && !e.shiftKey) {
-				e.preventDefault();
-				handleHistoryUp();
-				return;
-			}
-			if (e.key === "ArrowDown" && S.chatInput.selectionStart === S.chatInput.value.length && !e.shiftKey) {
-				e.preventDefault();
-				handleHistoryDown();
-				return;
-			}
-		});
-		S.chatSendBtn.addEventListener("click", sendChat);
+		bindChatComposer();
 
 		S.chatMsgBox.addEventListener("copy", handleChatCopy);
 
 		// Initialize voice input
 		initVoiceInput(S.$("micBtn"));
 
-		// Desktop only: mobile keeps chat focused and avoids drag/drop chrome.
-		if (window.innerWidth >= 768) {
-			var inputArea = S.chatInput?.closest(".px-4.py-3");
-			initMediaDrop(S.chatMsgBox, inputArea);
-		}
+		initializeChatMediaDrop();
 
 		S.chatInput.focus();
 	},

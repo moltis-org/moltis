@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{path::Path, pin::Pin, sync::Arc, time::Duration};
 
 use {async_trait::async_trait, futures::StreamExt, tokio_stream::Stream};
 
@@ -8,6 +8,33 @@ use crate::multimodal::parse_data_uri;
 
 /// Re-export from config so downstream crates can use `moltis_agents::model::ReasoningEffort`.
 pub use moltis_config::schema::ReasoningEffort;
+
+fn document_absolute_path_from_media_ref(media_ref: &str) -> String {
+    if Path::new(media_ref).is_absolute() {
+        return media_ref.to_string();
+    }
+
+    moltis_config::data_dir()
+        .join("sessions")
+        .join(media_ref)
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Decode tool-call arguments from provider or persisted JSON.
+///
+/// OpenAI-style APIs typically encode `arguments` as a JSON string, while some
+/// compatible backends return native JSON directly. Preserve the native shape
+/// when it is already structured and only parse when the payload is a string.
+#[must_use]
+pub fn decode_tool_call_arguments(arguments: Option<&serde_json::Value>) -> serde_json::Value {
+    match arguments {
+        Some(serde_json::Value::String(raw)) => serde_json::from_str(raw)
+            .unwrap_or_else(|_| serde_json::Value::Object(Default::default())),
+        Some(serde_json::Value::Null) | None => serde_json::Value::Object(Default::default()),
+        Some(value) => value.clone(),
+    }
+}
 
 // ── Typed chat messages ─────────────────────────────────────────────────────
 
@@ -23,6 +50,8 @@ pub enum ChatMessage {
     },
     User {
         content: UserContent,
+        /// Optional sender name for channel messages (Telegram, Discord, etc.).
+        name: Option<String>,
     },
     Assistant {
         content: Option<String>,
@@ -67,6 +96,15 @@ impl ChatMessage {
     pub fn user(content: impl Into<String>) -> Self {
         Self::User {
             content: UserContent::Text(content.into()),
+            name: None,
+        }
+    }
+
+    /// Create a user message with plain text and a sender name.
+    pub fn user_named(content: impl Into<String>, name: impl Into<String>) -> Self {
+        Self::User {
+            content: UserContent::Text(content.into()),
+            name: Some(name.into()),
         }
     }
 
@@ -74,6 +112,15 @@ impl ChatMessage {
     pub fn user_multimodal(parts: Vec<ContentPart>) -> Self {
         Self::User {
             content: UserContent::Multimodal(parts),
+            name: None,
+        }
+    }
+
+    /// Create a user message with multimodal content and a sender name.
+    pub fn user_multimodal_named(parts: Vec<ContentPart>, name: impl Into<String>) -> Self {
+        Self::User {
+            content: UserContent::Multimodal(parts),
+            name: Some(name.into()),
         }
     }
 
@@ -111,28 +158,34 @@ impl ChatMessage {
             ChatMessage::System { content } => {
                 serde_json::json!({ "role": "system", "content": content })
             },
-            ChatMessage::User { content } => match content {
-                UserContent::Text(text) => {
-                    serde_json::json!({ "role": "user", "content": text })
-                },
-                UserContent::Multimodal(parts) => {
-                    let blocks: Vec<serde_json::Value> = parts
-                        .iter()
-                        .map(|part| match part {
-                            ContentPart::Text(text) => {
-                                serde_json::json!({ "type": "text", "text": text })
-                            },
-                            ContentPart::Image { media_type, data } => {
-                                let data_uri = format!("data:{media_type};base64,{data}");
-                                serde_json::json!({
-                                    "type": "image_url",
-                                    "image_url": { "url": data_uri }
-                                })
-                            },
-                        })
-                        .collect();
-                    serde_json::json!({ "role": "user", "content": blocks })
-                },
+            ChatMessage::User { content, name } => {
+                let mut msg = match content {
+                    UserContent::Text(text) => {
+                        serde_json::json!({ "role": "user", "content": text })
+                    },
+                    UserContent::Multimodal(parts) => {
+                        let blocks: Vec<serde_json::Value> = parts
+                            .iter()
+                            .map(|part| match part {
+                                ContentPart::Text(text) => {
+                                    serde_json::json!({ "type": "text", "text": text })
+                                },
+                                ContentPart::Image { media_type, data } => {
+                                    let data_uri = format!("data:{media_type};base64,{data}");
+                                    serde_json::json!({
+                                        "type": "image_url",
+                                        "image_url": { "url": data_uri }
+                                    })
+                                },
+                            })
+                            .collect();
+                        serde_json::json!({ "role": "user", "content": blocks })
+                    },
+                };
+                if let Some(n) = name {
+                    msg["name"] = serde_json::Value::String(n.clone());
+                }
+                msg
             },
             ChatMessage::Assistant {
                 content,
@@ -206,11 +259,59 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                 messages.push(ChatMessage::system(content));
             },
             "user" => {
+                // Extract sender name from persisted channel metadata.
+                let sender_name = val
+                    .get("channel")
+                    .and_then(|ch| {
+                        ch["sender_name"]
+                            .as_str()
+                            .or_else(|| ch["username"].as_str())
+                    })
+                    .map(|s| s.to_string());
+
+                let document_context = val["documents"].as_array().and_then(|documents| {
+                    let mut sections = Vec::new();
+                    for document in documents {
+                        let Some(display_name) = document["display_name"].as_str() else {
+                            continue;
+                        };
+                        let Some(mime_type) = document["mime_type"].as_str() else {
+                            continue;
+                        };
+                        let Some(media_ref) = document["media_ref"].as_str() else {
+                            continue;
+                        };
+                        let absolute_path = document_absolute_path_from_media_ref(media_ref);
+                        sections.push(format!(
+                            "filename: {display_name}\nmime_type: {mime_type}\nlocal_path: {absolute_path}\nmedia_ref: {media_ref}"
+                        ));
+                    }
+                    if sections.is_empty() {
+                        None
+                    } else {
+                        let mut rendered = vec!["[Inbound documents available]".to_string()];
+                        rendered.extend(sections);
+                        Some(rendered.join("\n\n"))
+                    }
+                });
+
                 // Content can be a string or an array (multimodal).
                 if let Some(text) = val["content"].as_str() {
-                    messages.push(ChatMessage::user(text));
+                    let content = if let Some(ref document_context) = document_context {
+                        if text.trim().is_empty() {
+                            document_context.clone()
+                        } else {
+                            format!("{text}\n\n{document_context}")
+                        }
+                    } else {
+                        text.to_string()
+                    };
+                    messages.push(ChatMessage::User {
+                        content: UserContent::Text(content),
+                        name: sender_name,
+                    });
                 } else if let Some(arr) = val["content"].as_array() {
-                    let parts: Vec<ContentPart> = arr
+                    let mut parts: Vec<ContentPart> = arr
                         .iter()
                         .filter_map(|block| {
                             let block_type = block["type"].as_str()?;
@@ -231,9 +332,28 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                             }
                         })
                         .collect();
-                    messages.push(ChatMessage::user_multimodal(parts));
+                    if let Some(document_context) = document_context {
+                        if let Some(ContentPart::Text(text)) = parts
+                            .iter_mut()
+                            .find(|part| matches!(part, ContentPart::Text(_)))
+                        {
+                            if !text.trim().is_empty() {
+                                text.push_str("\n\n");
+                            }
+                            text.push_str(&document_context);
+                        } else {
+                            parts.insert(0, ContentPart::Text(document_context));
+                        }
+                    }
+                    messages.push(ChatMessage::User {
+                        content: UserContent::Multimodal(parts),
+                        name: sender_name,
+                    });
                 } else {
-                    messages.push(ChatMessage::user(""));
+                    messages.push(ChatMessage::User {
+                        content: UserContent::Text(document_context.unwrap_or_default()),
+                        name: sender_name,
+                    });
                 }
             },
             "assistant" => {
@@ -245,9 +365,8 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                             .filter_map(|tc| {
                                 let id = tc["id"].as_str()?.to_string();
                                 let name = tc["function"]["name"].as_str()?.to_string();
-                                let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
                                 let arguments =
-                                    serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                                    decode_tool_call_arguments(tc["function"].get("arguments"));
                                 Some(ToolCall {
                                     id,
                                     name,
@@ -485,6 +604,8 @@ pub struct CompletionResponse {
     pub usage: Usage,
 }
 
+pub const MAX_CAPTURED_PROVIDER_RAW_EVENTS: usize = 256;
+
 #[derive(Debug, Clone)]
 pub struct ToolCall {
     pub id: String,
@@ -498,6 +619,35 @@ pub struct Usage {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_write_tokens: u32,
+}
+
+impl Usage {
+    #[must_use]
+    pub fn saturating_add(&self, other: &Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens.saturating_add(other.input_tokens),
+            output_tokens: self.output_tokens.saturating_add(other.output_tokens),
+            cache_read_tokens: self
+                .cache_read_tokens
+                .saturating_add(other.cache_read_tokens),
+            cache_write_tokens: self
+                .cache_write_tokens
+                .saturating_add(other.cache_write_tokens),
+        }
+    }
+
+    pub fn saturating_add_assign(&mut self, other: &Self) {
+        *self = self.saturating_add(other);
+    }
+}
+
+pub fn push_capped_provider_raw_event(
+    raw_events: &mut Vec<serde_json::Value>,
+    raw_event: serde_json::Value,
+) {
+    if raw_events.len() < MAX_CAPTURED_PROVIDER_RAW_EVENTS {
+        raw_events.push(raw_event);
+    }
 }
 
 /// Runtime model metadata fetched from provider APIs.
@@ -523,7 +673,9 @@ mod tests {
     #[test]
     fn user_message_text() {
         let msg = ChatMessage::user("Hello");
-        assert!(matches!(msg, ChatMessage::User { content: UserContent::Text(t) } if t == "Hello"));
+        assert!(
+            matches!(msg, ChatMessage::User { content: UserContent::Text(t), .. } if t == "Hello")
+        );
     }
 
     #[test]
@@ -540,6 +692,46 @@ mod tests {
         assert!(
             matches!(msg, ChatMessage::Tool { tool_call_id, content } if tool_call_id == "call_1" && content == "result")
         );
+    }
+
+    #[test]
+    fn decode_tool_call_arguments_parses_json_string() {
+        let arguments = serde_json::json!("{\"cmd\":\"ls\"}");
+
+        let decoded = decode_tool_call_arguments(Some(&arguments));
+
+        assert_eq!(decoded, serde_json::json!({"cmd": "ls"}));
+    }
+
+    #[test]
+    fn decode_tool_call_arguments_preserves_native_json() {
+        let arguments = serde_json::json!({"cmd": "ls"});
+
+        let decoded = decode_tool_call_arguments(Some(&arguments));
+
+        assert_eq!(decoded, arguments);
+    }
+
+    #[test]
+    fn usage_saturating_add_assign_preserves_all_fields() {
+        let mut total = Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 30,
+            cache_write_tokens: 40,
+        };
+
+        total.saturating_add_assign(&Usage {
+            input_tokens: 1,
+            output_tokens: 2,
+            cache_read_tokens: 3,
+            cache_write_tokens: 4,
+        });
+
+        assert_eq!(total.input_tokens, 11);
+        assert_eq!(total.output_tokens, 22);
+        assert_eq!(total.cache_read_tokens, 33);
+        assert_eq!(total.cache_write_tokens, 44);
     }
 
     // ── to_openai_value ──────────────────────────────────────────────
@@ -626,7 +818,7 @@ mod tests {
         assert_eq!(msgs.len(), 3);
         assert!(matches!(&msgs[0], ChatMessage::System { content } if content == "sys"));
         assert!(
-            matches!(&msgs[1], ChatMessage::User { content: UserContent::Text(t) } if t == "hi")
+            matches!(&msgs[1], ChatMessage::User { content: UserContent::Text(t), .. } if t == "hi")
         );
         assert!(
             matches!(&msgs[2], ChatMessage::Assistant { content: Some(t), .. } if t == "hello")
@@ -658,6 +850,70 @@ mod tests {
     }
 
     #[test]
+    fn convert_user_message_appends_document_context() {
+        let expected_path = document_absolute_path_from_media_ref("media/session_abc/report.pdf");
+        let values = vec![serde_json::json!({
+            "role": "user",
+            "content": "review this",
+            "documents": [{
+                "display_name": "report.pdf",
+                "mime_type": "application/pdf",
+                "absolute_path": "/stale/path/report.pdf",
+                "media_ref": "media/session_abc/report.pdf"
+            }]
+        })];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 1);
+        match &msgs[0] {
+            ChatMessage::User {
+                content: UserContent::Text(text),
+                ..
+            } => {
+                assert!(text.contains("review this"));
+                assert!(text.contains("[Inbound documents available]"));
+                assert!(text.contains("filename: report.pdf"));
+                assert!(text.contains(&format!("local_path: {expected_path}")));
+                assert!(!text.contains("/stale/path/report.pdf"));
+            },
+            _ => panic!("expected user text message"),
+        }
+    }
+
+    #[test]
+    fn convert_user_message_skips_malformed_documents_individually() {
+        let expected_path =
+            document_absolute_path_from_media_ref("media/session_abc/valid-report.pdf");
+        let values = vec![serde_json::json!({
+            "role": "user",
+            "content": "review these",
+            "documents": [
+                {
+                    "display_name": "broken.pdf",
+                    "mime_type": "application/pdf"
+                },
+                {
+                    "display_name": "valid-report.pdf",
+                    "mime_type": "application/pdf",
+                    "media_ref": "media/session_abc/valid-report.pdf"
+                }
+            ]
+        })];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 1);
+        match &msgs[0] {
+            ChatMessage::User {
+                content: UserContent::Text(text),
+                ..
+            } => {
+                assert!(text.contains("filename: valid-report.pdf"));
+                assert!(text.contains(&format!("local_path: {expected_path}")));
+                assert!(!text.contains("filename: broken.pdf"));
+            },
+            _ => panic!("expected user text message"),
+        }
+    }
+
+    #[test]
     fn convert_assistant_with_tool_calls() {
         let values = vec![serde_json::json!({
             "role": "assistant",
@@ -682,6 +938,37 @@ mod tests {
                 assert_eq!(tool_calls.len(), 1);
                 assert_eq!(tool_calls[0].name, "exec");
                 assert_eq!(tool_calls[0].arguments["cmd"], "ls");
+            },
+            _ => panic!("expected assistant message"),
+        }
+    }
+
+    #[test]
+    fn convert_assistant_with_native_tool_arguments_preserves_falsy_types() {
+        let values = vec![serde_json::json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "grep",
+                    "arguments": {
+                        "offset": 0,
+                        "multiline": false,
+                        "type": null
+                    }
+                }
+            }]
+        })];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 1);
+        match &msgs[0] {
+            ChatMessage::Assistant { tool_calls, .. } => {
+                assert_eq!(tool_calls.len(), 1);
+                assert_eq!(tool_calls[0].arguments["offset"], 0);
+                assert_eq!(tool_calls[0].arguments["multiline"], false);
+                assert!(tool_calls[0].arguments["type"].is_null());
             },
             _ => panic!("expected assistant message"),
         }
@@ -742,6 +1029,32 @@ mod tests {
         assert_eq!(roundtripped.len(), 4);
     }
 
+    #[test]
+    fn roundtrip_to_openai_and_back_preserves_falsy_tool_argument_types() {
+        let original = [ChatMessage::Assistant {
+            content: None,
+            tool_calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "grep".to_string(),
+                arguments: serde_json::json!({
+                    "offset": 0,
+                    "multiline": false,
+                    "type": null
+                }),
+            }],
+        }];
+        let values: Vec<serde_json::Value> = original.iter().map(|m| m.to_openai_value()).collect();
+        let roundtripped = values_to_chat_messages(&values);
+        match &roundtripped[0] {
+            ChatMessage::Assistant { tool_calls, .. } => {
+                assert_eq!(tool_calls[0].arguments["offset"], 0);
+                assert_eq!(tool_calls[0].arguments["multiline"], false);
+                assert!(tool_calls[0].arguments["type"].is_null());
+            },
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
     /// Verify that user content containing role-like prefixes (e.g. injected
     /// `\nassistant:` lines) remains inside a User message and does NOT produce
     /// a separate Assistant turn. This is the structural defence against the
@@ -760,6 +1073,7 @@ mod tests {
         match &msgs[0] {
             ChatMessage::User {
                 content: UserContent::Text(t),
+                ..
             } => {
                 assert_eq!(t, injected_content);
             },
@@ -940,5 +1254,111 @@ mod tests {
         let meta = provider.model_metadata().await.unwrap();
         assert_eq!(meta.id, "stub-model");
         assert_eq!(meta.context_length, 42_000);
+    }
+
+    // ── Sender name tests ─────────────────────────────────────────────
+
+    #[test]
+    fn user_named_constructor() {
+        let msg = ChatMessage::user_named("hello", "Alice");
+        match msg {
+            ChatMessage::User {
+                content: UserContent::Text(t),
+                name,
+            } => {
+                assert_eq!(t, "hello");
+                assert_eq!(name.as_deref(), Some("Alice"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
+    fn user_multimodal_named_constructor() {
+        let msg = ChatMessage::user_multimodal_named(vec![ContentPart::Text("hi".into())], "Bob");
+        match msg {
+            ChatMessage::User {
+                content: UserContent::Multimodal(_),
+                name,
+            } => {
+                assert_eq!(name.as_deref(), Some("Bob"));
+            },
+            _ => panic!("expected multimodal User message"),
+        }
+    }
+
+    #[test]
+    fn to_openai_value_includes_name_when_present() {
+        let msg = ChatMessage::user_named("hi", "Alice");
+        let val = msg.to_openai_value();
+        assert_eq!(val["role"], "user");
+        assert_eq!(val["content"], "hi");
+        assert_eq!(val["name"], "Alice");
+    }
+
+    #[test]
+    fn to_openai_value_omits_name_when_none() {
+        let msg = ChatMessage::user("hi");
+        let val = msg.to_openai_value();
+        assert_eq!(val["role"], "user");
+        assert_eq!(val["content"], "hi");
+        assert!(val.get("name").is_none());
+    }
+
+    #[test]
+    fn values_to_chat_messages_extracts_sender_name_from_channel() {
+        let values = vec![serde_json::json!({
+            "role": "user",
+            "content": "hello from telegram",
+            "channel": {
+                "sender_name": "Alice",
+                "username": "alice42",
+                "channel_type": "telegram"
+            }
+        })];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 1);
+        match &msgs[0] {
+            ChatMessage::User { name, .. } => {
+                assert_eq!(name.as_deref(), Some("Alice"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
+    fn values_to_chat_messages_falls_back_to_username() {
+        let values = vec![serde_json::json!({
+            "role": "user",
+            "content": "hello",
+            "channel": {
+                "username": "bob99",
+                "channel_type": "discord"
+            }
+        })];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 1);
+        match &msgs[0] {
+            ChatMessage::User { name, .. } => {
+                assert_eq!(name.as_deref(), Some("bob99"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
+    fn values_to_chat_messages_no_channel_means_no_name() {
+        let values = vec![serde_json::json!({
+            "role": "user",
+            "content": "web message"
+        })];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 1);
+        match &msgs[0] {
+            ChatMessage::User { name, .. } => {
+                assert!(name.is_none());
+            },
+            _ => panic!("expected User message"),
+        }
     }
 }

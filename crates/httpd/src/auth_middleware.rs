@@ -14,12 +14,13 @@ use axum::{
 #[cfg(feature = "web-ui")]
 use tracing::{debug, warn};
 
-use moltis_gateway::{
-    auth::{AuthIdentity, AuthMethod, CredentialStore},
-    state::GatewayState,
+use {
+    moltis_auth::locality::is_local_connection,
+    moltis_gateway::{
+        auth::{AuthIdentity, AuthMethod, CredentialStore},
+        state::GatewayState,
+    },
 };
-
-use crate::server::is_local_connection;
 
 /// Session cookie name.
 pub const SESSION_COOKIE: &str = "moltis_session";
@@ -56,6 +57,7 @@ pub async fn check_auth(
         return if is_local {
             AuthResult::Allowed(AuthIdentity {
                 method: AuthMethod::Loopback,
+                scopes: Vec::new(),
             })
         } else {
             AuthResult::SetupRequired
@@ -66,6 +68,7 @@ pub async fn check_auth(
         return if is_local {
             AuthResult::Allowed(AuthIdentity {
                 method: AuthMethod::Loopback,
+                scopes: Vec::new(),
             })
         } else {
             AuthResult::SetupRequired
@@ -78,15 +81,17 @@ pub async fn check_auth(
     {
         return AuthResult::Allowed(AuthIdentity {
             method: AuthMethod::Password,
+            scopes: Vec::new(),
         });
     }
 
     // Check Bearer API key.
     if let Some(key) = bearer_token(headers)
-        && store.verify_api_key(key).await.ok().flatten().is_some()
+        && let Some(verification) = store.verify_api_key(key).await.ok().flatten()
     {
         return AuthResult::Allowed(AuthIdentity {
             method: AuthMethod::ApiKey,
+            scopes: verification.scopes,
         });
     }
 
@@ -151,14 +156,21 @@ pub async fn auth_gate(
                 // render without full auth (#310, #350).
                 request.extensions_mut().insert(AuthIdentity {
                     method: AuthMethod::Loopback,
+                    scopes: Vec::new(),
                 });
                 next.run(request).await
             } else {
                 // Remote connections to other pages when auth is not
-                // configured yet: redirect to a static "setup required"
-                // page instead of passing through, which would cause a
-                // redirect loop between `/` and `/onboarding` (#350).
-                Redirect::to("/setup-required").into_response()
+                // configured yet: send them to /onboarding so they can
+                // complete first-time setup via the setup-code flow
+                // (#350, #646).  The original redirect loop between `/`
+                // and `/onboarding` was fixed separately at the SPA
+                // template layer via `should_redirect_from_onboarding`,
+                // which keeps remote visitors on /onboarding while auth
+                // setup is pending.  The setup code (printed to stdout)
+                // still prevents an unauthorized remote visitor from
+                // claiming the instance.
+                Redirect::to("/onboarding").into_response()
             }
         },
         AuthResult::Unauthorized => {
@@ -179,6 +191,7 @@ pub async fn auth_gate(
                     debug!(path, remote = %addr, "auth bypass: local request during onboarding");
                     request.extensions_mut().insert(AuthIdentity {
                         method: AuthMethod::Loopback,
+                        scopes: Vec::new(),
                     });
                     return next.run(request).await;
                 }
@@ -228,6 +241,7 @@ fn is_public_path(path: &str) -> bool {
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/api/public/")
         || path.starts_with("/api/channels/msteams/")
+        || path.starts_with("/api/webhooks/ingest/")
         || path.starts_with("/assets/")
         || path.starts_with("/share/")
 }
@@ -337,6 +351,36 @@ where
     }
 }
 
+// ── RequireAdmin extractor ───────────────────────────────────────────────────
+
+/// Axum extractor that requires the `operator.admin` scope.
+///
+/// Use on routes that modify server configuration, restart the process,
+/// or manage credentials. Returns 403 if the authenticated identity lacks
+/// the required scope.
+pub struct RequireAdmin(pub AuthIdentity);
+
+impl<S> FromRequestParts<S> for RequireAdmin
+where
+    S: Send + Sync,
+    Arc<CredentialStore>: FromRef<S>,
+    Arc<GatewayState>: FromRef<S>,
+{
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let AuthSession(identity) = AuthSession::from_request_parts(parts, state).await?;
+        if identity.has_scope("operator.admin") {
+            Ok(RequireAdmin(identity))
+        } else {
+            Err((
+                StatusCode::FORBIDDEN,
+                "insufficient scope: operator.admin required",
+            ))
+        }
+    }
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Extract the Cookie header value.
@@ -421,6 +465,7 @@ mod tests {
             check_auth(&store, &headers, true).await,
             AuthResult::Allowed(AuthIdentity {
                 method: AuthMethod::Loopback,
+                ..
             })
         ));
         assert!(matches!(

@@ -47,6 +47,12 @@ export function humanizeProbeError(error) {
 	if (lower.includes("dns") || lower.includes("getaddrinfo") || lower.includes("name or service not known")) {
 		return "Could not resolve the endpoint address. Check the URL and try again.";
 	}
+	if (lower.includes("ollama pull")) {
+		return error;
+	}
+	if (lower.includes("404") || lower.includes("not found")) {
+		return "Model not found at this endpoint. Make sure it is installed and try again.";
+	}
 
 	return error;
 }

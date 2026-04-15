@@ -165,9 +165,11 @@ pub async fn run_silent_memory_turn(
             ChatMessage::System { content } => ("system", content.as_str()),
             ChatMessage::User {
                 content: crate::model::UserContent::Text(t),
+                ..
             } => ("user", t.as_str()),
             ChatMessage::User {
                 content: crate::model::UserContent::Multimodal(_),
+                ..
             } => ("user", "[multimodal content]"),
             ChatMessage::Assistant { content, .. } => {
                 ("assistant", content.as_deref().unwrap_or(""))

@@ -17,4 +17,6 @@ pub mod provider_chain;
 pub mod response_sanitizer;
 pub mod silent_turn;
 pub mod skills;
+pub mod tool_arg_validator;
+pub mod tool_loop_detector;
 pub mod tool_registry;

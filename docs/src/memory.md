@@ -2,6 +2,10 @@
 
 Moltis provides a powerful memory system that enables the agent to recall past conversations, notes, and context across sessions. This document explains the available backends, features, and configuration options.
 
+If you are trying to understand the difference between short-term session
+state, long-term memory files, and sandbox persistence, start with
+[Memory Surfaces](memory-surfaces.md).
+
 ## Backends
 
 Moltis supports two memory backends:
@@ -37,7 +41,7 @@ QMD is an optional external sidecar that provides enhanced search capabilities:
 - **Hybrid search with LLM reranking**: Combines both methods with an LLM pass for optimal relevance
 
 To use QMD:
-1. Install the QMD CLI from [github.com/tobi/qmd](https://github.com/tobi/qmd): `npm install -g --ignore-scripts @tobilu/qmd` or `bun add -g @tobilu/qmd`
+1. Install the QMD CLI from [github.com/tobi/qmd](https://github.com/tobi/qmd): `npm install -g @tobilu/qmd` or `bun install -g @tobilu/qmd`
 2. Verify the binary is on your `PATH`: `qmd --version`
 3. Enable it in Settings > Memory > Backend
 
@@ -63,7 +67,9 @@ Source: memory/notes.md#42
 
 ### Session Export
 
-When enabled, session transcripts are automatically exported to the memory system for cross-run recall. This allows the agent to remember past conversations even after restarts.
+Session transcripts can be exported into searchable memory on `/new` and
+`/reset`. This allows the agent to remember past conversations even after
+restarts.
 
 Exported sessions are:
 - Stored in `memory/sessions/` as markdown files
@@ -85,11 +91,22 @@ Memory settings can be configured in `moltis.toml`:
 
 ```toml
 [memory]
+# Orchestration style: "hybrid", "prompt-only", "search-only", or "off"
+style = "hybrid"
+
+# Agent-authored write target policy: "hybrid", "prompt-only", "search-only", or "off"
+agent_write_mode = "hybrid"
+
+# Managed USER.md write policy: "explicit-and-auto", "explicit-only", or "off"
+user_profile_write_mode = "explicit-and-auto"
+
 # Backend: "builtin" (default) or "qmd"
 backend = "builtin"
 
-# Embedding provider: "local", "ollama", "openai", "custom", or auto-detect
-provider = "local"
+# Embedding provider for the built-in backend: "local", "ollama", "openai", "custom", or auto-detect
+# Ignored while backend = "qmd", but preserved for switching back later
+# Omit this field for the real default, which is auto-detect
+provider = "auto"
 
 # Disable RAG embeddings and force keyword-only search
 disable_rag = false
@@ -103,8 +120,11 @@ citations = "auto"
 # Enable LLM reranking for hybrid search
 llm_reranking = false
 
-# Export sessions to memory for cross-run recall
-session_export = true
+# Merge vector and keyword results with "rrf" or "linear"
+search_merge_strategy = "rrf"
+
+# Export sessions to memory for cross-run recall: "on-new-or-reset" or "off"
+session_export = "on-new-or-reset"
 
 # QMD-specific settings (only used when backend = "qmd")
 [memory.qmd]
@@ -113,7 +133,79 @@ max_results = 10
 timeout_ms = 30000
 ```
 
+Real defaults, if you leave the fields unset:
+
+- `style = "hybrid"`
+- `agent_write_mode = "hybrid"`
+- `user_profile_write_mode = "explicit-and-auto"`
+- `backend = "builtin"`
+- `provider = auto-detect` (unset, not hardcoded `local`)
+- `disable_rag = false`
+- `citations = "auto"`
+- `llm_reranking = false`
+- `search_merge_strategy = "rrf"`
+- `session_export = "on-new-or-reset"`
+- `[chat].prompt_memory_mode = "live-reload"`
+
+`style` is separate from `[chat].prompt_memory_mode`. Style controls whether
+`MEMORY.md` is injected and whether memory tools are exposed. Prompt memory
+mode controls whether prompt-visible `MEMORY.md` is live-reloaded or frozen
+per session.
+
+The web settings page exposes both knobs in the Memory section so you can
+experiment without hand-editing `moltis.toml`.
+
+`agent_write_mode` is a separate axis again. It controls where agent-authored
+memory writes may land:
+
+- `hybrid` allows both `MEMORY.md` and `memory/*.md`
+- `prompt-only` allows only `MEMORY.md`
+- `search-only` allows only `memory/*.md`
+- `off` disables agent-authored memory writes, including `memory_save` and the
+  silent pre-compaction memory flush
+
+`user_profile_write_mode` is about the managed `USER.md` surface, not agent
+memory files:
+
+- `explicit-and-auto` mirrors explicit settings saves to `USER.md` and also
+  allows silent browser/channel timezone or location capture
+- `explicit-only` mirrors explicit settings saves to `USER.md`, but disables
+  silent browser/channel capture
+- `off` stops Moltis from writing `USER.md`; the canonical user profile remains
+  in `moltis.toml [user]`
+
+`citations` and `search_merge_strategy` are typed config enums too:
+
+- `citations = "auto" | "on" | "off"`
+- `search_merge_strategy = "rrf" | "linear"`
+
+Interaction rules that matter in practice:
+
+- `provider`, `base_url`, `model`, and `api_key` only apply to
+  `backend = "builtin"`. QMD ignores them.
+- `[chat].prompt_memory_mode` only matters when `style` still allows prompt
+  memory, `hybrid` or `prompt-only`.
+- `llm_reranking` is only meaningful when RAG is enabled. If
+  `disable_rag = true`, memory falls back to keyword search.
+- `session_export` exports transcripts into searchable memory files. It does
+  not inject those transcripts into the prompt directly.
+
 Or via the web UI: **Settings > Memory**
+
+## Recipes
+
+Common combinations:
+
+| Goal | Settings |
+|------|----------|
+| Default everyday setup | `style = "hybrid"`, `backend = "builtin"`, `prompt_memory_mode = "live-reload"` |
+| Deterministic prompt memory | `style = "hybrid"`, `prompt_memory_mode = "frozen-at-session-start"` |
+| Search-only long-term memory | `style = "search-only"` |
+| Prompt-only memory, no recall tools | `style = "prompt-only"` |
+| Disable agent memory writes | `agent_write_mode = "off"` |
+| Keep `USER.md` from silent enrichment | `user_profile_write_mode = "explicit-only"` |
+| Keep user profile only in config | `user_profile_write_mode = "off"` |
+| QMD backend experiment | `backend = "qmd"` |
 
 ## Embedding Providers
 
@@ -138,6 +230,16 @@ By default, moltis indexes markdown files from:
 - `~/.moltis/MEMORY.md` - Main long-term memory file
 - `~/.moltis/memory/*.md` - Additional memory files
 - `~/.moltis/memory/sessions/*.md` - Exported session transcripts
+
+Prompt injection from `MEMORY.md` is controlled separately via
+`[chat].prompt_memory_mode`. Use `live-reload` to reread `MEMORY.md` before
+each turn, or `frozen-at-session-start` to keep a stable prompt-memory
+snapshot for the lifetime of a session.
+
+If sandboxing is enabled with the default `workspace_mount = "ro"`, sandboxed
+commands may still read mounted memory files, but they cannot modify them
+directly. Durable memory writes should use `memory_save` rather than shell
+redirection or direct file editing inside the sandbox.
 
 ## Tools
 
@@ -170,7 +272,9 @@ result found via `memory_search`.
 
 Save content to long-term memory files. The agent uses this tool when you ask
 it to remember something ("remember that I prefer dark mode") or when it
-decides certain information is worth persisting.
+decides certain information is worth persisting. This is the preferred
+long-term write path even when memory files are visible through a read-only
+sandbox mount.
 
 ```json
 {
@@ -190,6 +294,10 @@ back with `checkpoint_restore`.
 | `content` | string | *(required)* | The content to save |
 | `file` | string | `MEMORY.md` | Target file: `MEMORY.md`, `memory.md`, or `memory/<name>.md` |
 | `append` | boolean | `true` | Append to existing file (`true`) or overwrite (`false`) |
+
+If `memory.agent_write_mode = "search-only"` and `file` is omitted,
+`memory_save` defaults to `memory/notes.md`. The write mode can also reject
+targets that are otherwise valid paths.
 
 **Path validation:** The tool enforces a strict allowlist of write targets
 to prevent path traversal attacks. Only these patterns are accepted:
@@ -222,6 +330,9 @@ survive compaction.
    internal `write_file` tool backed by the same `MemoryWriter` as
    `memory_save`
 4. The LLM's response text is discarded (the user sees nothing)
+
+This pre-compaction flush obeys `memory.agent_write_mode`. In `off` mode, the
+flush is skipped entirely.
 5. Written files are automatically re-indexed for future search
 
 **What gets saved:**
@@ -289,7 +400,7 @@ systems.
 
 ### QMD not available
 
-1. Install QMD if needed: `npm install -g --ignore-scripts @tobilu/qmd` or `bun add -g @tobilu/qmd`
+1. Install QMD if needed: `npm install -g @tobilu/qmd` or `bun install -g @tobilu/qmd`
 2. Verify QMD is installed: `qmd --version`
 3. Check that the path is correct in settings
-4. Ensure QMD has indexed your collections: `qmd stats`
+4. Ensure QMD can see its index and collections: `qmd status`

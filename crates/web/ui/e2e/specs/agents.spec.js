@@ -7,23 +7,64 @@ const {
 	watchPageErrors,
 } = require("../helpers");
 
+function isRetryableRpcError(message) {
+	if (typeof message !== "string") return false;
+	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
+}
+
+async function sendRpcFromPage(page, method, params) {
+	let lastResponse = null;
+	for (let attempt = 0; attempt < 30; attempt++) {
+		if (attempt > 0) {
+			await waitForWsConnected(page, 5_000).catch(() => {});
+		}
+		lastResponse = await page
+			.evaluate(
+				async ({ methodName, methodParams }) => {
+					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+					if (!appScript) throw new Error("app module script not found");
+					var appUrl = new URL(appScript.src, window.location.origin);
+					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+					var helpers = await import(`${prefix}js/helpers.js`);
+					return helpers.sendRpc(methodName, methodParams);
+				},
+				{
+					methodName: method,
+					methodParams: params,
+				},
+			)
+			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
+		if (lastResponse?.ok) return lastResponse;
+		var message = lastResponse?.error?.message || "";
+		if (!isRetryableRpcError(message)) break;
+	}
+	return lastResponse;
+}
+
 async function waitForWelcomeOrNoProvidersCard(page) {
 	await page.waitForSelector("#welcomeCard, #noProvidersCard", {
 		state: "visible",
 		timeout: 10_000,
 	});
 
-	const noProvidersCard = page.locator("#noProvidersCard");
-	const noProvidersVisible = await noProvidersCard.isVisible().catch(() => false);
-	if (noProvidersVisible) {
-		await expect(noProvidersCard.getByRole("heading", { name: "No LLMs Connected", exact: true })).toBeVisible();
-		await expect(noProvidersCard.getByRole("link", { name: "Go to LLMs", exact: true })).toBeVisible();
-		return null;
+	// The two cards can swap during load: if models haven't arrived yet when the
+	// session opens, #noProvidersCard is rendered first and then replaced with
+	// #welcomeCard once models load (see refreshWelcomeCardIfNeeded in
+	// sessions.js). Prefer the welcome card if it eventually appears, and only
+	// treat the no-providers state as final when the welcome card never shows.
+	const welcomeCard = page.locator("#welcomeCard");
+	try {
+		await expect(welcomeCard).toBeVisible({ timeout: 5_000 });
+		return welcomeCard;
+	} catch {
+		// Welcome card never materialized — we're in the no-providers state.
 	}
 
-	const welcomeCard = page.locator("#welcomeCard");
-	await expect(welcomeCard).toBeVisible({ timeout: 10_000 });
-	return welcomeCard;
+	const noProvidersCard = page.locator("#noProvidersCard");
+	await expect(noProvidersCard).toBeVisible();
+	await expect(noProvidersCard.getByRole("heading", { name: "No LLMs Connected", exact: true })).toBeVisible();
+	await expect(noProvidersCard.getByRole("link", { name: "Go to LLMs", exact: true })).toBeVisible();
+	return null;
 }
 
 async function deleteAgentByName(page, agentName) {
@@ -228,6 +269,41 @@ test.describe("Agents settings page", () => {
 
 		await expect(page).toHaveURL(/\/settings\/identity$/);
 		await expectPageContentMounted(page);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("shows workspace prompt truncation warning when AGENTS.md exceeds the cap", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/agents");
+		await waitForWsConnected(page);
+
+		const originalResponse = await sendRpcFromPage(page, "agents.files.get", {
+			agent_id: "main",
+			path: "AGENTS.md",
+		});
+		const originalContent = originalResponse?.ok ? originalResponse.payload?.content || "" : "";
+		const oversizedContent = `${"A".repeat(32_050)}\n`;
+
+		try {
+			const setResponse = await sendRpcFromPage(page, "agents.files.set", {
+				agent_id: "main",
+				path: "AGENTS.md",
+				content: oversizedContent,
+			});
+			expect(setResponse?.ok).toBe(true);
+
+			await navigateAndWait(page, "/settings/agents");
+			const mainCard = page.locator(".backend-card").filter({ hasText: "Default" });
+			await expect(mainCard).toContainText("AGENTS.md", { timeout: 10_000 });
+			await expect(mainCard).toContainText("truncated by", { timeout: 10_000 });
+		} finally {
+			await sendRpcFromPage(page, "agents.files.set", {
+				agent_id: "main",
+				path: "AGENTS.md",
+				content: originalContent,
+			});
+		}
 
 		expect(pageErrors).toEqual([]);
 	});

@@ -134,6 +134,51 @@ pub async fn stream_emits_done_signal(provider: &dyn LlmProvider) -> anyhow::Res
     Ok(())
 }
 
+/// A streaming completion may surface reasoning separately from visible text.
+///
+/// Providers that support explicit reasoning channels should emit at least one
+/// `ReasoningDelta`, then at least one visible `Delta`, and still finish with
+/// `Done`.
+pub async fn stream_surfaces_reasoning_separately(
+    provider: &dyn LlmProvider,
+) -> anyhow::Result<()> {
+    let messages = vec![ChatMessage::user("Think, then answer.")];
+    let mut stream = provider.stream(messages);
+
+    let mut first_reasoning_index: Option<usize> = None;
+    let mut first_visible_index: Option<usize> = None;
+    let mut saw_done = false;
+    let mut event_index = 0usize;
+
+    while let Some(event) = stream.next().await {
+        match event {
+            StreamEvent::ReasoningDelta(_) => {
+                first_reasoning_index.get_or_insert(event_index);
+            },
+            StreamEvent::Delta(_) => {
+                first_visible_index.get_or_insert(event_index);
+            },
+            StreamEvent::Done(_) => {
+                saw_done = true;
+                break;
+            },
+            _ => {},
+        }
+        event_index += 1;
+    }
+
+    let first_reasoning_index = first_reasoning_index
+        .ok_or_else(|| anyhow::anyhow!("stream should emit at least one ReasoningDelta"))?;
+    let first_visible_index = first_visible_index
+        .ok_or_else(|| anyhow::anyhow!("stream should emit at least one visible Delta"))?;
+    assert!(
+        first_reasoning_index < first_visible_index,
+        "reasoning should arrive before visible text"
+    );
+    assert!(saw_done, "stream must emit a Done event");
+    Ok(())
+}
+
 /// A 429 rate-limit error message must contain "429" (retryable indicator).
 pub async fn error_classification_maps_429_to_retryable(provider: &dyn LlmProvider) {
     let messages = vec![ChatMessage::user("test")];
@@ -160,7 +205,44 @@ pub async fn error_classification_maps_401_to_fatal(provider: &dyn LlmProvider) 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::pin::Pin};
+
+    struct ReasoningProvider;
+
+    #[async_trait]
+    impl LlmProvider for ReasoningProvider {
+        fn name(&self) -> &str {
+            "reasoning-mock"
+        }
+
+        fn id(&self) -> &str {
+            "reasoning-model"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("final answer".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::iter(vec![
+                StreamEvent::ReasoningDelta("step 1".into()),
+                StreamEvent::ReasoningDelta(" step 2".into()),
+                StreamEvent::Delta("answer".into()),
+                StreamEvent::Done(Usage::default()),
+            ]))
+        }
+    }
 
     #[tokio::test]
     async fn contract_non_stream_returns_complete_response() {
@@ -174,6 +256,14 @@ mod tests {
     async fn contract_stream_emits_done_signal() {
         let provider = MockLlmProvider::ok();
         stream_emits_done_signal(&provider).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn contract_stream_surfaces_reasoning_separately() {
+        let provider = ReasoningProvider;
+        stream_surfaces_reasoning_separately(&provider)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

@@ -205,6 +205,7 @@ mod tests {
     fn test_payload() -> HookPayload {
         HookPayload::SessionStart {
             session_key: "test-123".into(),
+            channel: None,
         }
     }
 

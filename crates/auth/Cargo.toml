@@ -15,6 +15,7 @@ async-trait       = { workspace = true }
 axum              = { workspace = true }
 base64            = { workspace = true }
 dashmap           = { workspace = true }
+hmac              = { workspace = true }
 moltis-config     = { workspace = true }
 moltis-tools      = { workspace = true }
 moltis-vault      = { optional = true, workspace = true }

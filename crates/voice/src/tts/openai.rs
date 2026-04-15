@@ -38,6 +38,7 @@ const VOICES: &[(&str, &str)] = &[
 pub struct OpenAiTts {
     client: Client,
     api_key: Option<Secret<String>>,
+    base_url: String,
     default_voice: String,
     default_model: String,
 }
@@ -46,6 +47,7 @@ impl std::fmt::Debug for OpenAiTts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenAiTts")
             .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
             .field("default_voice", &self.default_voice)
             .field("default_model", &self.default_model)
             .finish()
@@ -59,37 +61,39 @@ impl Default for OpenAiTts {
 }
 
 impl OpenAiTts {
+    fn normalize_base_url(base_url: Option<String>) -> String {
+        base_url
+            .map(|url| url.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| API_BASE.into())
+    }
+
     /// Create a new OpenAI TTS provider.
     #[must_use]
     pub fn new(api_key: Option<Secret<String>>) -> Self {
         Self {
             client: Client::new(),
             api_key,
+            base_url: Self::normalize_base_url(None),
             default_voice: DEFAULT_VOICE.into(),
             default_model: DEFAULT_MODEL.into(),
         }
     }
 
-    /// Create with custom default voice and model.
+    /// Create with custom default voice, model, and optional base URL.
     #[must_use]
     pub fn with_defaults(
         api_key: Option<Secret<String>>,
+        base_url: Option<String>,
         voice: Option<String>,
         model: Option<String>,
     ) -> Self {
         Self {
             client: Client::new(),
             api_key,
+            base_url: Self::normalize_base_url(base_url),
             default_voice: voice.unwrap_or_else(|| DEFAULT_VOICE.into()),
             default_model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
         }
-    }
-
-    /// Get the API key, returning an error if not configured.
-    fn get_api_key(&self) -> Result<&Secret<String>> {
-        self.api_key
-            .as_ref()
-            .ok_or_else(|| anyhow!("OpenAI API key not configured"))
     }
 
     /// Map audio format to OpenAI response format.
@@ -114,7 +118,9 @@ impl TtsProvider for OpenAiTts {
     }
 
     fn is_configured(&self) -> bool {
-        self.api_key.is_some()
+        // Configured if API key is set, or if using a custom base URL (local servers
+        // like Chatterbox don't require auth).
+        self.api_key.is_some() || self.base_url != API_BASE
     }
 
     async fn voices(&self) -> Result<Vec<Voice>> {
@@ -131,7 +137,6 @@ impl TtsProvider for OpenAiTts {
     }
 
     async fn synthesize(&self, request: SynthesizeRequest) -> Result<AudioOutput> {
-        let api_key = self.get_api_key()?;
         let voice = request.voice_id.as_deref().unwrap_or(&self.default_voice);
         let model = request.model.as_deref().unwrap_or(&self.default_model);
         let body = TtsRequest {
@@ -142,15 +147,21 @@ impl TtsProvider for OpenAiTts {
             speed: request.speed,
         };
 
-        let response = self
+        let mut req = self
             .client
-            .post(format!("{API_BASE}/audio/speech"))
-            .header(
+            .post(format!("{}/audio/speech", self.base_url))
+            .header("Content-Type", "application/json")
+            .json(&body);
+
+        // Only add auth header if an API key is configured (local servers skip auth).
+        if let Some(api_key) = &self.api_key {
+            req = req.header(
                 "Authorization",
                 format!("Bearer {}", api_key.expose_secret()),
-            )
-            .header("Content-Type", "application/json")
-            .json(&body)
+            );
+        }
+
+        let response = req
             .send()
             .await
             .context("failed to send OpenAI TTS request")?;
@@ -237,20 +248,38 @@ mod tests {
             ..Default::default()
         };
 
+        // Without API key and default base URL, the request will fail
+        // (either connection error or auth rejection from OpenAI).
         let result = provider.synthesize(request).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not configured"));
     }
 
     #[test]
     fn test_with_defaults() {
         let provider = OpenAiTts::with_defaults(
             Some(Secret::new("key".into())),
+            None,
             Some("nova".into()),
             Some("tts-1-hd".into()),
         );
         assert_eq!(provider.default_voice, "nova");
         assert_eq!(provider.default_model, "tts-1-hd");
+        assert_eq!(provider.base_url, API_BASE);
+    }
+
+    #[test]
+    fn test_with_custom_base_url() {
+        let provider =
+            OpenAiTts::with_defaults(None, Some("http://10.1.2.30:8003".into()), None, None);
+        assert!(provider.is_configured());
+        assert_eq!(provider.base_url, "http://10.1.2.30:8003");
+    }
+
+    #[test]
+    fn test_with_custom_base_url_trims_trailing_slash() {
+        let provider =
+            OpenAiTts::with_defaults(None, Some("http://10.1.2.30:8003/".into()), None, None);
+        assert_eq!(provider.base_url, "http://10.1.2.30:8003");
     }
 
     #[test]

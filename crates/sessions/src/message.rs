@@ -32,6 +32,9 @@ pub enum PersistedMessage {
         /// Relative media path for uploaded user audio (e.g. "media/main/voice-123.webm").
         #[serde(skip_serializing_if = "Option::is_none")]
         audio: Option<String>,
+        /// Saved inbound documents attached to this user message.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        documents: Option<Vec<UserDocument>>,
         /// Channel metadata for UI display (e.g., Telegram sender info).
         #[serde(skip_serializing_if = "Option::is_none")]
         channel: Option<serde_json::Value>,
@@ -56,6 +59,12 @@ pub enum PersistedMessage {
         /// Total output tokens produced during this assistant turn.
         #[serde(rename = "outputTokens", skip_serializing_if = "Option::is_none")]
         output_tokens: Option<u32>,
+        /// Input tokens served from the provider cache during this assistant turn.
+        #[serde(rename = "cacheReadTokens", skip_serializing_if = "Option::is_none")]
+        cache_read_tokens: Option<u32>,
+        /// Input tokens written into the provider cache during this assistant turn.
+        #[serde(rename = "cacheWriteTokens", skip_serializing_if = "Option::is_none")]
+        cache_write_tokens: Option<u32>,
         #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
         /// Input tokens sent in the final LLM request for this turn.
@@ -67,6 +76,18 @@ pub enum PersistedMessage {
             skip_serializing_if = "Option::is_none"
         )]
         request_output_tokens: Option<u32>,
+        /// Input tokens served from cache in the final LLM request for this turn.
+        #[serde(
+            rename = "requestCacheReadTokens",
+            skip_serializing_if = "Option::is_none"
+        )]
+        request_cache_read_tokens: Option<u32>,
+        /// Input tokens written into cache in the final LLM request for this turn.
+        #[serde(
+            rename = "requestCacheWriteTokens",
+            skip_serializing_if = "Option::is_none"
+        )]
+        request_cache_write_tokens: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_calls: Option<Vec<PersistedToolCall>>,
         /// Optional provider reasoning/planning text (not final answer text).
@@ -139,6 +160,17 @@ pub struct ImageUrl {
     pub url: String,
 }
 
+/// Saved inbound user document metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserDocument {
+    pub display_name: String,
+    pub stored_filename: String,
+    pub mime_type: String,
+    pub media_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub absolute_path: Option<String>,
+}
+
 /// A tool call stored in an assistant message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedToolCall {
@@ -162,6 +194,7 @@ impl PersistedMessage {
             content: MessageContent::Text(text.into()),
             created_at: Some(now_ms()),
             audio: None,
+            documents: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -174,6 +207,7 @@ impl PersistedMessage {
             content: MessageContent::Text(text.into()),
             created_at: Some(now_ms()),
             audio: None,
+            documents: None,
             channel: Some(channel),
             seq: None,
             run_id: None,
@@ -186,6 +220,7 @@ impl PersistedMessage {
             content: MessageContent::Multimodal(blocks),
             created_at: Some(now_ms()),
             audio: None,
+            documents: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -201,6 +236,7 @@ impl PersistedMessage {
             content: MessageContent::Multimodal(blocks),
             created_at: Some(now_ms()),
             audio: None,
+            documents: None,
             channel: Some(channel),
             seq: None,
             run_id: None,
@@ -223,9 +259,13 @@ impl PersistedMessage {
             provider: Some(provider.into()),
             input_tokens: Some(input_tokens),
             output_tokens: Some(output_tokens),
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             duration_ms: None,
             request_input_tokens: Some(input_tokens),
             request_output_tokens: Some(output_tokens),
+            request_cache_read_tokens: None,
+            request_cache_write_tokens: None,
             tool_calls: None,
             reasoning: None,
             llm_api_response: None,
@@ -372,6 +412,7 @@ mod tests {
             content: MessageContent::Text("hello".to_string()),
             created_at: Some(12345),
             audio: None,
+            documents: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -392,6 +433,7 @@ mod tests {
             ]),
             created_at: Some(12345),
             audio: None,
+            documents: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -420,9 +462,13 @@ mod tests {
             provider: Some("openai".to_string()),
             input_tokens: Some(100),
             output_tokens: Some(50),
+            cache_read_tokens: Some(90),
+            cache_write_tokens: Some(4),
             duration_ms: Some(2_000),
             request_input_tokens: Some(100),
             request_output_tokens: Some(50),
+            request_cache_read_tokens: Some(90),
+            request_cache_write_tokens: Some(4),
             tool_calls: None,
             reasoning: None,
             llm_api_response: None,
@@ -437,9 +483,13 @@ mod tests {
         assert_eq!(json["provider"], "openai");
         assert_eq!(json["inputTokens"], 100);
         assert_eq!(json["outputTokens"], 50);
+        assert_eq!(json["cacheReadTokens"], 90);
+        assert_eq!(json["cacheWriteTokens"], 4);
         assert_eq!(json["durationMs"], 2_000);
         assert_eq!(json["requestInputTokens"], 100);
         assert_eq!(json["requestOutputTokens"], 50);
+        assert_eq!(json["requestCacheReadTokens"], 90);
+        assert_eq!(json["requestCacheWriteTokens"], 4);
         assert!(json.get("audio").is_none());
     }
 
@@ -477,6 +527,7 @@ mod tests {
             content: MessageContent::Text("voice note".to_string()),
             created_at: Some(12345),
             audio: Some("media/main/voice-123.webm".to_string()),
+            documents: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -488,6 +539,31 @@ mod tests {
     }
 
     #[test]
+    fn user_with_documents_serializes_correctly() {
+        let msg = PersistedMessage::User {
+            content: MessageContent::Text("review this".to_string()),
+            created_at: Some(12345),
+            audio: None,
+            documents: Some(vec![UserDocument {
+                display_name: "report.pdf".to_string(),
+                stored_filename: "abc_report.pdf".to_string(),
+                mime_type: "application/pdf".to_string(),
+                media_ref: "media/main/abc_report.pdf".to_string(),
+                absolute_path: Some("/tmp/main/abc_report.pdf".to_string()),
+            }]),
+            channel: None,
+            seq: None,
+            run_id: None,
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["documents"][0]["display_name"], "report.pdf");
+        assert_eq!(
+            json["documents"][0]["media_ref"],
+            "media/main/abc_report.pdf"
+        );
+    }
+
+    #[test]
     fn user_without_audio_field_deserializes() {
         let json = serde_json::json!({
             "role": "user",
@@ -496,9 +572,15 @@ mod tests {
         });
         let msg: PersistedMessage = serde_json::from_value(json).unwrap();
         match msg {
-            PersistedMessage::User { content, audio, .. } => {
+            PersistedMessage::User {
+                content,
+                audio,
+                documents,
+                ..
+            } => {
                 assert!(matches!(content, MessageContent::Text(t) if t == "old user message"));
                 assert!(audio.is_none());
+                assert!(documents.is_none());
             },
             _ => panic!("expected User message"),
         }
@@ -563,8 +645,12 @@ mod tests {
                 provider,
                 input_tokens,
                 output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
                 request_input_tokens,
                 request_output_tokens,
+                request_cache_read_tokens,
+                request_cache_write_tokens,
                 reasoning,
                 audio,
                 ..
@@ -574,8 +660,12 @@ mod tests {
                 assert_eq!(provider.as_deref(), Some("openai"));
                 assert_eq!(input_tokens, Some(100));
                 assert_eq!(output_tokens, Some(50));
+                assert!(cache_read_tokens.is_none());
+                assert!(cache_write_tokens.is_none());
                 assert_eq!(request_input_tokens, Some(100));
                 assert_eq!(request_output_tokens, Some(50));
+                assert!(request_cache_read_tokens.is_none());
+                assert!(request_cache_write_tokens.is_none());
                 assert!(reasoning.is_none());
                 assert!(audio.is_none());
             },
@@ -621,14 +711,66 @@ mod tests {
             PersistedMessage::Assistant {
                 audio,
                 content,
+                cache_read_tokens,
+                cache_write_tokens,
                 request_input_tokens,
                 request_output_tokens,
+                request_cache_read_tokens,
+                request_cache_write_tokens,
                 ..
             } => {
                 assert_eq!(content, "old message");
                 assert!(audio.is_none());
+                assert!(cache_read_tokens.is_none());
+                assert!(cache_write_tokens.is_none());
                 assert!(request_input_tokens.is_none());
                 assert!(request_output_tokens.is_none());
+                assert!(request_cache_read_tokens.is_none());
+                assert!(request_cache_write_tokens.is_none());
+            },
+            _ => panic!("expected Assistant message"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_assistant_with_cache_usage() {
+        let original = PersistedMessage::Assistant {
+            content: "cached response".to_string(),
+            created_at: Some(12345),
+            model: Some("gpt-4.1".to_string()),
+            provider: Some("openai".to_string()),
+            input_tokens: Some(1_200),
+            output_tokens: Some(80),
+            cache_read_tokens: Some(1_050),
+            cache_write_tokens: Some(0),
+            duration_ms: Some(250),
+            request_input_tokens: Some(1_200),
+            request_output_tokens: Some(80),
+            request_cache_read_tokens: Some(1_050),
+            request_cache_write_tokens: Some(0),
+            tool_calls: None,
+            reasoning: None,
+            llm_api_response: None,
+            audio: None,
+            seq: None,
+            run_id: None,
+        };
+        let json = original.to_value();
+        assert_eq!(json["cacheReadTokens"], 1_050);
+        assert_eq!(json["requestCacheReadTokens"], 1_050);
+        let parsed: PersistedMessage = serde_json::from_value(json).unwrap();
+        match parsed {
+            PersistedMessage::Assistant {
+                cache_read_tokens,
+                cache_write_tokens,
+                request_cache_read_tokens,
+                request_cache_write_tokens,
+                ..
+            } => {
+                assert_eq!(cache_read_tokens, Some(1_050));
+                assert_eq!(cache_write_tokens, Some(0));
+                assert_eq!(request_cache_read_tokens, Some(1_050));
+                assert_eq!(request_cache_write_tokens, Some(0));
             },
             _ => panic!("expected Assistant message"),
         }

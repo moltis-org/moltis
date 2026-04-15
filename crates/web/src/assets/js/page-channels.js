@@ -3,7 +3,7 @@
 import { signal, useSignal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
 	addChannel,
 	buildTeamsEndpoint,
@@ -37,7 +37,7 @@ import { ConfirmDialog, Modal, ModelSelect, requestConfirm, showToast } from "./
 var channels = signal([]);
 
 export function prefetchChannels() {
-	fetchChannelStatus().then((res) => {
+	return fetchChannelStatus().then((res) => {
 		if (res?.ok) {
 			var ch = res.payload?.channels || [];
 			channels.value = ch;
@@ -53,6 +53,7 @@ var showAddDiscord = signal(false);
 var showAddWhatsApp = signal(false);
 var showAddSlack = signal(false);
 var showAddMatrix = signal(false);
+var showAddNostr = signal(false);
 var editingChannel = signal(null);
 var sendersAccount = signal("");
 
@@ -73,6 +74,7 @@ function channelLabel(type) {
 	if (t === "whatsapp") return "WhatsApp";
 	if (t === "slack") return "Slack";
 	if (t === "matrix") return "Matrix";
+	if (t === "nostr") return "Nostr";
 	return "Telegram";
 }
 
@@ -439,8 +441,8 @@ function ChannelCard(props) {
 
 // ── Connect channel buttons ──────────────────────────────────
 function ConnectButtons() {
-	var offered = new Set(getGon("channels_offered") || ["telegram", "discord", "slack", "matrix"]);
-	return html`<div class="flex gap-2">
+	var offered = new Set(getGon("channels_offered") || ["telegram", "whatsapp", "discord", "slack", "matrix"]);
+	return html`<div class="flex gap-2 flex-wrap">
 		${
 			offered.has("telegram") &&
 			html`<button class="provider-btn provider-btn-secondary inline-flex items-center gap-1.5"
@@ -493,6 +495,15 @@ function ConnectButtons() {
 				if (connected.value) showAddWhatsApp.value = true;
 			}}>
 			<span class="icon icon-whatsapp"></span> Connect WhatsApp
+		</button>`
+		}
+		${
+			offered.has("nostr") &&
+			html`<button class="provider-btn provider-btn-secondary inline-flex items-center gap-1.5"
+			onClick=${() => {
+				if (connected.value) showAddNostr.value = true;
+			}}>
+			<span class="icon icon-nostr"></span> Connect Nostr
 		</button>`
 		}
 	</div>`;
@@ -762,7 +773,7 @@ function AddTelegramModal() {
 	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
 					advancedConfigPatch.value = value;
 				}} />
-	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+	      ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Telegram"}
 	      </button>
@@ -780,7 +791,51 @@ function AddTeamsModal() {
 	var webhookSecret = useSignal("");
 	var baseUrlDraft = useSignal(defaultTeamsBaseUrl());
 	var bootstrapEndpoint = useSignal("");
+	var tsStatus = useSignal(null);
+	var tsLoading = useSignal(true);
+	var enablingFunnel = useSignal(false);
 	var advancedConfigPatch = useSignal("");
+
+	// Fetch Tailscale status on mount.
+	useEffect(() => {
+		fetch("/api/tailscale/status")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => {
+				tsStatus.value = data;
+				tsLoading.value = false;
+				if (data?.mode === "funnel" && data?.url) {
+					baseUrlDraft.value = data.url.replace(/\/$/, "");
+				}
+			})
+			.catch(() => {
+				tsLoading.value = false;
+			});
+	}, []);
+
+	function onEnableFunnel() {
+		enablingFunnel.value = true;
+		error.value = "";
+		fetch("/api/tailscale/configure", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ mode: "funnel" }),
+		})
+			.then((r) => r.json())
+			.then((data) => {
+				enablingFunnel.value = false;
+				if (data?.ok !== false && data?.url) {
+					baseUrlDraft.value = data.url.replace(/\/$/, "");
+					tsStatus.value = data;
+					refreshBootstrapEndpoint();
+				} else {
+					error.value = data?.error || "Failed to enable Tailscale Funnel.";
+				}
+			})
+			.catch((e) => {
+				enablingFunnel.value = false;
+				error.value = `Tailscale error: ${e.message}`;
+			});
+	}
 
 	function refreshBootstrapEndpoint() {
 		if (!bootstrapEndpoint.value) return;
@@ -873,36 +928,70 @@ function AddTeamsModal() {
 	}}
 	    title="Connect Microsoft Teams">
 	    <div class="channel-form">
+	      ${
+					!(tsLoading.value || (tsStatus.value?.mode === "funnel" && tsStatus.value?.url)) &&
+					html`
+	        <div class="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex flex-col gap-2">
+	          <span class="font-medium text-[var(--text-strong)]">Public URL required</span>
+	          <span class="text-[var(--muted)]">Teams sends messages to your server via webhook. Your Moltis instance must be reachable over HTTPS.</span>
+	          ${
+							tsStatus.value?.installed && tsStatus.value?.tailscale_up
+								? html`<div class="flex flex-col gap-2">
+	              <span class="text-[var(--muted)]">Tailscale is connected. Enable <strong>Funnel</strong> to make it publicly reachable:</span>
+	              <button type="button" class="provider-btn provider-btn-sm" onClick=${onEnableFunnel} disabled=${enablingFunnel.value}>
+	                ${enablingFunnel.value ? "Enabling\u2026" : "Enable Tailscale Funnel"}
+	              </button>
+	            </div>`
+								: html`<span class="text-[var(--muted)]">Enable <strong>Tailscale Funnel</strong> in Settings, or use <a href="https://ngrok.com/" target="_blank" class="text-[var(--accent)] underline">ngrok</a> / <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/" target="_blank" class="text-[var(--accent)] underline">Cloudflare Tunnel</a>.</span>`
+						}
+	        </div>
+	      `
+				}
+	      ${
+					tsStatus.value?.mode === "funnel" &&
+					tsStatus.value?.url &&
+					html`
+	        <div class="rounded-md border border-green-500/30 bg-green-500/5 p-3 text-xs flex items-center gap-2">
+	          <span class="text-green-600">\u2713</span>
+	          <span class="text-[var(--muted)]">Tailscale Funnel active \u2014 publicly reachable at <strong>${tsStatus.value.url}</strong></span>
+	        </div>
+	      `
+				}
 	      <div class="channel-card">
-	        <div>
-	          <span class="text-xs font-medium text-[var(--text-strong)]">Microsoft Teams setup</span>
-	          <div class="text-xs text-[var(--muted)]">1. <a href="https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration" target="_blank" class="text-[var(--accent)] underline">Create an Azure Bot registration</a> and copy the App ID + App Password.</div>
-	          <div class="text-xs text-[var(--muted)]">2. Use Bootstrap Teams below to generate the exact messaging endpoint.</div>
-	          <div class="text-xs text-[var(--muted)]">3. Optional CLI shortcut: <code>moltis channels teams bootstrap</code>.</div>
+	        <div class="flex flex-col gap-1">
+	          <span class="text-xs font-medium text-[var(--text-strong)]">How to create a Teams bot</span>
+	          <span class="text-xs font-medium text-[var(--text-strong)] opacity-70" style="font-size:10px">Option A: Teams Developer Portal (easiest)</span>
+	          <div class="text-xs text-[var(--muted)]">1. Open <a href="https://dev.teams.microsoft.com/bots" target="_blank" class="text-[var(--accent)] underline">Teams Developer Portal \u2192 Bot Management</a></div>
+	          <div class="text-xs text-[var(--muted)]">2. Click <strong>+ New Bot</strong>, give it a name, copy the <strong>Bot ID</strong> (App ID)</div>
+	          <div class="text-xs text-[var(--muted)]">3. Under <strong>Client secrets</strong>, add a secret and copy the value (App Password)</div>
+	          <span class="text-xs font-medium text-[var(--text-strong)] opacity-70" style="font-size:10px;margin-top:4px">Option B: Azure Portal</span>
+	          <div class="text-xs text-[var(--muted)]">1. <a href="https://portal.azure.com/#create/Microsoft.AzureBot" target="_blank" class="text-[var(--accent)] underline">Create an Azure Bot</a>, then find App ID in Configuration</div>
+	          <div class="text-xs text-[var(--muted)]">2. Click <strong>Manage Password</strong> \u2192 <strong>New client secret</strong> for the App Password</div>
+	          <div class="text-xs text-[var(--muted)]" style="margin-top:4px">Then generate the endpoint below and paste it as the <strong>Messaging endpoint</strong> in your bot settings. <a href="https://docs.moltis.org/teams.html" target="_blank" class="text-[var(--accent)] underline">Full guide \u2192</a></div>
 	        </div>
 	      </div>
 	      <${ConnectionModeHint} type="msteams" />
-	      <label class="text-xs text-[var(--muted)]">App ID / Account ID</label>
-	      <input data-field="accountId" type="text" placeholder="Azure App ID or alias"
+	      <label class="text-xs text-[var(--muted)]">App ID (Bot ID from Azure)</label>
+	      <input data-field="accountId" type="text" placeholder="e.g. 12345678-abcd-efgh-ijkl-000000000000"
 	        value=${accountDraft.value}
 	        onInput=${(e) => {
 						accountDraft.value = e.target.value;
 						refreshBootstrapEndpoint();
 					}}
 	        class="channel-input" />
-	      <label class="text-xs text-[var(--muted)]">App Password (client secret)</label>
-	      <input data-field="credential" type="password" placeholder="Azure client secret" class="channel-input"
+	      <label class="text-xs text-[var(--muted)]">App Password (client secret from Azure)</label>
+	      <input data-field="credential" type="password" placeholder="Client secret value" class="channel-input"
 	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
 	        name="teams_app_password" />
 	      <div>
-	        <label class="text-xs text-[var(--muted)]">Webhook Secret (optional)</label>
-	        <input type="text" placeholder="shared secret for ?secret=..." class="channel-input"
+	        <label class="text-xs text-[var(--muted)]">Webhook Secret <span class="opacity-60">(optional \u2014 auto-generated if blank)</span></label>
+	        <input type="text" placeholder="Leave blank to auto-generate" class="channel-input"
 	          value=${webhookSecret.value}
 	          onInput=${(e) => {
 							webhookSecret.value = e.target.value;
 							refreshBootstrapEndpoint();
 						}} />
-	        <label class="text-xs text-[var(--muted)] mt-2">Public Base URL (for Teams webhook)</label>
+	        <label class="text-xs text-[var(--muted)] mt-2">Public Base URL <span class="opacity-60">(your server\u2019s HTTPS address)</span></label>
 	        <input type="text" placeholder="https://bot.example.com" class="channel-input"
 	          value=${baseUrlDraft.value}
 	          onInput=${(e) => {
@@ -922,17 +1011,18 @@ function AddTeamsModal() {
 	        </div>
 	        ${
 						bootstrapEndpoint.value &&
-						html`<div class="mt-2">
-	          <div class="text-xs text-[var(--muted)]">Messaging endpoint</div>
-	          <code class="text-xs block break-all">${bootstrapEndpoint.value}</code>
+						html`<div class="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2">
+	          <div class="text-xs text-[var(--muted)] mb-1">Messaging endpoint \u2014 paste this into your bot\u2019s configuration:</div>
+	          <code class="text-xs block break-all select-all">${bootstrapEndpoint.value}</code>
 	        </div>`
 					}
+	        <div class="text-[10px] text-[var(--muted)] mt-1 opacity-70">Teams requires HTTPS. For local dev, use <a href="https://ngrok.com/" target="_blank" class="text-[var(--accent)] underline">ngrok</a> or <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/" target="_blank" class="text-[var(--accent)] underline">Cloudflare Tunnel</a>.</div>
 	      </div>
 	      <${SharedChannelFields} addModel=${addModel} allowlistItems=${allowlistItems} />
 	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
 					advancedConfigPatch.value = value;
 				}} />
-	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+	      ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Microsoft Teams"}
 	      </button>
@@ -1054,7 +1144,7 @@ function AddDiscordModal() {
 	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
 					advancedConfigPatch.value = value;
 				}} />
-	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+	      ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Discord"}
 	      </button>
@@ -1221,7 +1311,7 @@ function AddSlackModal() {
 	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
 					advancedConfigPatch.value = value;
 				}} />
-	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+	      ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Slack"}
 	      </button>
@@ -1475,7 +1565,7 @@ function AddMatrixModal() {
 	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
 					advancedConfigPatch.value = value;
 				}} />
-	      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+	      ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
 	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
 	        ${saving.value ? "Connecting\u2026" : "Connect Matrix"}
 	      </button>
@@ -1523,6 +1613,132 @@ function QrCodeDisplay({ data, svg }) {
   </div>`;
 }
 
+// ── Add Nostr modal ──────────────────────────────────────────
+function AddNostrModal() {
+	var error = useSignal("");
+	var saving = useSignal(false);
+	var addModel = useSignal("");
+	var allowlistItems = useSignal([]);
+	var accountDraft = useSignal("");
+	var secretKeyDraft = useSignal("");
+	var relaysDraft = useSignal("wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol");
+	var advancedConfigPatch = useSignal("");
+
+	function onSubmit(e) {
+		e.preventDefault();
+		var form = e.target.closest(".channel-form");
+		var accountId = accountDraft.value.trim();
+		var secretKey = secretKeyDraft.value.trim();
+		if (!accountId) {
+			error.value = "Account ID is required.";
+			return;
+		}
+		if (!secretKey) {
+			error.value = "Secret key is required.";
+			return;
+		}
+		var advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+		if (!advancedPatch.ok) {
+			error.value = advancedPatch.error;
+			return;
+		}
+		error.value = "";
+		saving.value = true;
+		var relays = relaysDraft.value
+			.split(",")
+			.map((r) => r.trim())
+			.filter(Boolean);
+		var addConfig = {
+			secret_key: secretKey,
+			relays: relays,
+			dm_policy: form.querySelector("[data-field=dmPolicy]").value,
+			allowed_pubkeys: allowlistItems.value,
+		};
+		if (addModel.value) {
+			addConfig.model = addModel.value;
+			var found = modelsSig.value.find((x) => x.id === addModel.value);
+			if (found?.provider) addConfig.model_provider = found.provider;
+		}
+		Object.assign(addConfig, advancedPatch.value);
+		addChannel("nostr", accountId, addConfig).then((res) => {
+			saving.value = false;
+			if (res?.ok) {
+				showAddNostr.value = false;
+				addModel.value = "";
+				allowlistItems.value = [];
+				accountDraft.value = "";
+				secretKeyDraft.value = "";
+				relaysDraft.value = "wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol";
+				advancedConfigPatch.value = "";
+				loadChannels();
+			} else {
+				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect channel.";
+			}
+		});
+	}
+
+	return html`<${Modal} show=${showAddNostr.value} onClose=${() => {
+		showAddNostr.value = false;
+	}}
+	    title="Connect Nostr">
+	    <div class="channel-form">
+	      <div class="channel-card">
+	        <div>
+	          <span class="text-xs font-medium text-[var(--text-strong)]">How to set up Nostr DMs</span>
+	          <div class="text-xs text-[var(--muted)] channel-help">1. Generate or use an existing Nostr secret key (nsec1... or hex)</div>
+	          <div class="text-xs text-[var(--muted)]">2. Configure relay URLs (defaults are provided)</div>
+	          <div class="text-xs text-[var(--muted)]">3. Add allowed public keys (npub1... or hex) to the allowlist</div>
+	          <div class="text-xs text-[var(--muted)]">4. Send a DM to the bot's public key from any Nostr client</div>
+	        </div>
+	      </div>
+	      <${ConnectionModeHint} type="nostr" />
+	      <label class="text-xs text-[var(--muted)]">Account ID</label>
+	      <input data-field="accountId" type="text" placeholder="e.g. my-nostr-bot"
+	        value=${accountDraft.value}
+	        onInput=${(e) => {
+						accountDraft.value = e.target.value;
+					}}
+	        class="channel-input" />
+	      <label class="text-xs text-[var(--muted)]">Secret Key</label>
+	      <input data-field="credential" type="password" placeholder="nsec1... or 64-char hex" class="channel-input"
+	        value=${secretKeyDraft.value}
+	        onInput=${(e) => {
+						secretKeyDraft.value = e.target.value;
+					}}
+	        autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"
+	        name="nostr_secret_key" />
+	      <label class="text-xs text-[var(--muted)]">Relays (comma-separated)</label>
+	      <input data-field="relays" type="text" placeholder="wss://relay.damus.io, wss://nos.lol"
+	        value=${relaysDraft.value}
+	        onInput=${(e) => {
+						relaysDraft.value = e.target.value;
+					}}
+	        class="channel-input" />
+	      <label class="text-xs text-[var(--muted)]">DM Policy</label>
+	      <select data-field="dmPolicy" class="channel-select">
+	        <option value="allowlist">Allowlist only</option>
+	        <option value="open">Open (anyone)</option>
+	        <option value="disabled">Disabled</option>
+	      </select>
+	      <label class="text-xs text-[var(--muted)]">Default Model</label>
+	      <${ModelSelect} models=${modelsSig.value} value=${addModel.value} onChange=${(v) => {
+					addModel.value = v;
+				}} />
+	      <label class="text-xs text-[var(--muted)]">Allowed Public Keys</label>
+	      <${AllowlistInput} value=${allowlistItems.value} onChange=${(v) => {
+					allowlistItems.value = v;
+				}} />
+	      <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
+					advancedConfigPatch.value = value;
+				}} />
+	      ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
+	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value}>
+	        ${saving.value ? "Connecting\u2026" : "Connect Nostr"}
+	      </button>
+	    </div>
+	  </${Modal}>`;
+}
+
 // ── Add WhatsApp modal ───────────────────────────────────────
 function AddWhatsAppModal() {
 	var error = useSignal("");
@@ -1532,14 +1748,11 @@ function AddWhatsAppModal() {
 	var allowlistItems = useSignal([]);
 	var accountDraft = useSignal("");
 	var advancedConfigPatch = useSignal("");
+	var qrPollRef = useRef(null);
 
 	function onStartPairing(e) {
 		e.preventDefault();
-		var accountId = accountDraft.value.trim();
-		if (!accountId) {
-			error.value = "Account ID is required.";
-			return;
-		}
+		var accountId = accountDraft.value.trim() || "main";
 		var form = e.target.closest(".channel-form");
 		var advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
 		if (!advancedPatch.ok) {
@@ -1567,6 +1780,33 @@ function AddWhatsAppModal() {
 			saving.value = false;
 			if (res?.ok) {
 				pairingStarted.value = true;
+				// Poll channels.status as fallback for QR display and connection detection.
+				if (qrPollRef.current) clearInterval(qrPollRef.current);
+				qrPollRef.current = setInterval(async () => {
+					try {
+						var st = await sendRpc("channels.status");
+						if (!st?.ok) return;
+						var ch = (st.payload?.channels || []).find((c) => c.type === "whatsapp" && c.account_id === accountId);
+						if (!ch) return;
+						if (ch.status === "connected" || (waQrData.value && !ch.extra?.qr_data)) {
+							clearInterval(qrPollRef.current);
+							qrPollRef.current = null;
+							showToast("WhatsApp connected!");
+							showAddWhatsApp.value = false;
+							waPairingAccountId.value = null;
+							waQrData.value = null;
+							waQrSvg.value = null;
+							loadChannels();
+							return;
+						}
+						if (ch.extra?.qr_data) {
+							waQrData.value = ch.extra.qr_data;
+							if (ch.extra.qr_svg) waQrSvg.value = ch.extra.qr_svg;
+						}
+					} catch (_e) {
+						/* ignore */
+					}
+				}, 2000);
 			} else {
 				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to start pairing.";
 			}
@@ -1574,6 +1814,10 @@ function AddWhatsAppModal() {
 	}
 
 	function onClose() {
+		if (qrPollRef.current) {
+			clearInterval(qrPollRef.current);
+			qrPollRef.current = null;
+		}
 		showAddWhatsApp.value = false;
 		pairingStarted.value = false;
 		waQrData.value = null;
@@ -1602,7 +1846,7 @@ function AddWhatsAppModal() {
 							? html`<div class="text-sm text-[var(--error)]">${waPairingError.value}</div>`
 							: html`<${QrCodeDisplay} data=${waQrData.value} svg=${waQrSvg.value} />`
 					}
-          <div class="text-xs text-[var(--muted)]">QR code refreshes automatically. Keep this window open.</div>
+          <div class="text-xs text-[var(--muted)]">QR code refreshes automatically. Keep this window open.<br/>Only new messages will be processed — past conversations are not synced.</div>
         </div>
       `
 					: html`
@@ -1617,7 +1861,7 @@ function AddWhatsAppModal() {
         </div>
         <${ConnectionModeHint} type="whatsapp" />
         <label class="text-xs text-[var(--muted)]">Account ID</label>
-        <input data-field="accountId" type="text" placeholder="e.g. my-whatsapp" class="channel-input"
+        <input data-field="accountId" type="text" placeholder="main" class="channel-input"
           value=${accountDraft.value}
           onInput=${(e) => {
 						accountDraft.value = e.target.value;
@@ -1641,7 +1885,7 @@ function AddWhatsAppModal() {
         <${AdvancedConfigPatchField} value=${advancedConfigPatch.value} onInput=${(value) => {
 					advancedConfigPatch.value = value;
 				}} />
-        ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+        ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
         <button class="provider-btn" onClick=${onStartPairing} disabled=${saving.value}>
           ${saving.value ? "Starting\u2026" : "Start Pairing"}
         </button>
@@ -1661,6 +1905,10 @@ function EditChannelModal() {
 	var roomAllowlistItems = useSignal([]);
 	var editCredential = useSignal("");
 	var editWebhookSecret = useSignal("");
+	var editStreamMode = useSignal("edit_in_place");
+	var editReplyStyle = useSignal("top_level");
+	var editWelcomeCard = useSignal(true);
+	var editBotName = useSignal("");
 	var editMatrixAuthMode = useSignal("access_token");
 	var editMatrixDeviceDisplayName = useSignal("");
 	var editMatrixOwnershipMode = useSignal("user_managed");
@@ -1669,10 +1917,14 @@ function EditChannelModal() {
 	var editAdvancedConfigPatch = useSignal("");
 	useEffect(() => {
 		editModel.value = ch?.config?.model || "";
-		allowlistItems.value = ch?.config?.allowlist || ch?.config?.user_allowlist || [];
+		allowlistItems.value = ch?.config?.allowlist || ch?.config?.user_allowlist || ch?.config?.allowed_pubkeys || [];
 		roomAllowlistItems.value = ch?.config?.room_allowlist || [];
 		editCredential.value = "";
 		editWebhookSecret.value = ch?.config?.webhook_secret || "";
+		editStreamMode.value = ch?.config?.stream_mode || "edit_in_place";
+		editReplyStyle.value = ch?.config?.reply_style || "top_level";
+		editWelcomeCard.value = ch?.config?.welcome_card !== false;
+		editBotName.value = ch?.config?.bot_name || "";
 		editMatrixAuthMode.value = ch?.config?.password ? "password" : "access_token";
 		editMatrixDeviceDisplayName.value = ch?.config?.device_display_name || "";
 		editMatrixOwnershipMode.value = normalizeMatrixOwnershipMode(
@@ -1690,6 +1942,7 @@ function EditChannelModal() {
 	var isWhatsApp = chType === "whatsapp";
 	var isTelegram = chType === "telegram";
 	var isMatrix = chType === "matrix";
+	var isNostr = chType === "nostr";
 
 	function addModelToConfig(config) {
 		if (!editModel.value) return;
@@ -1707,6 +1960,13 @@ function EditChannelModal() {
 			config.token = editCredential.value || cfg.token || "";
 		} else if (isTelegram) {
 			config.token = cfg.token || "";
+		} else if (isNostr) {
+			config.secret_key = editCredential.value || cfg.secret_key || "";
+			var relaysVal = form.querySelector("[data-field=relays]")?.value || "";
+			config.relays = relaysVal
+				.split(",")
+				.map((r) => r.trim())
+				.filter(Boolean);
 		} else if (isMatrix) {
 			config.homeserver = form.querySelector("[data-field=homeserver]")?.value || cfg.homeserver || "";
 			config.user_id = form.querySelector("[data-field=userId]")?.value || cfg.user_id || "";
@@ -1738,11 +1998,23 @@ function EditChannelModal() {
 			updateConfig.otp_self_approval = editMatrixOtpSelfApproval.value;
 			updateConfig.otp_cooldown_secs = normalizeMatrixOtpCooldown(editMatrixOtpCooldown.value);
 		}
-		if (!isWhatsApp) {
+		if (isNostr) {
+			updateConfig.allowed_pubkeys = allowlistItems.value;
+			// Preserve OTP settings that have no dedicated UI fields yet.
+			updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
+			updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
+		}
+		if (!(isWhatsApp || isNostr)) {
 			updateConfig.mention_mode = form.querySelector("[data-field=mentionMode]")?.value || "mention";
 		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
+		if (isTeams) {
+			updateConfig.stream_mode = editStreamMode.value;
+			updateConfig.reply_style = editReplyStyle.value;
+			updateConfig.welcome_card = editWelcomeCard.value;
+			if (editBotName.value.trim()) updateConfig.bot_name = editBotName.value.trim();
+		}
 		return updateConfig;
 	}
 
@@ -1802,6 +2074,45 @@ function EditChannelModal() {
 				          onInput=${(e) => {
 										editWebhookSecret.value = e.target.value;
 									}} />
+				      </div>
+				      <div class="flex gap-3">
+				        <div class="flex-1">
+				          <label class="text-xs text-[var(--muted)]">Streaming</label>
+				          <select class="channel-select" value=${editStreamMode.value}
+				            onChange=${(e) => {
+											editStreamMode.value = e.target.value;
+										}}>
+				            <option value="edit_in_place">Edit-in-place (live updates)</option>
+				            <option value="off">Off (send once complete)</option>
+				          </select>
+				        </div>
+				        <div class="flex-1">
+				          <label class="text-xs text-[var(--muted)]">Reply Style</label>
+				          <select class="channel-select" value=${editReplyStyle.value}
+				            onChange=${(e) => {
+											editReplyStyle.value = e.target.value;
+										}}>
+				            <option value="top_level">Top-level message</option>
+				            <option value="thread">Reply in thread</option>
+				          </select>
+				        </div>
+				      </div>
+				      <div class="flex gap-3 items-end">
+				        <div class="flex-1">
+				          <label class="text-xs text-[var(--muted)]">Bot Name (for welcome card)</label>
+				          <input type="text" class="channel-input" value=${editBotName.value}
+				            onInput=${(e) => {
+											editBotName.value = e.target.value;
+										}}
+				            placeholder="Moltis" />
+				        </div>
+				        <label class="flex items-center gap-2 text-xs text-[var(--muted)] pb-2 cursor-pointer">
+				          <input type="checkbox" checked=${editWelcomeCard.value}
+				            onChange=${(e) => {
+											editWelcomeCard.value = e.target.checked;
+										}} />
+				          Welcome card
+				        </label>
 				      </div>`
 				}
 	      ${
@@ -1812,6 +2123,22 @@ function EditChannelModal() {
 				          onInput=${(e) => {
 										editCredential.value = e.target.value;
 									}} />
+				      </div>`
+				}
+	      ${
+					isNostr &&
+					html`<div class="flex flex-col gap-1">
+				        <label class="text-xs text-[var(--muted)]">Secret Key (optional: leave blank to keep existing)</label>
+				        <input type="password" class="channel-input w-full" value=${editCredential.value}
+				          onInput=${(e) => {
+										editCredential.value = e.target.value;
+									}}
+				          autocomplete="new-password" />
+				      </div>
+				      <div class="flex flex-col gap-1">
+				        <label class="text-xs text-[var(--muted)]">Relays (comma-separated)</label>
+				        <input data-field="relays" type="text" class="channel-input w-full"
+				          defaultValue=${(cfg.relays || []).join(", ")} />
 				      </div>`
 				}
 	      ${
@@ -1983,7 +2310,7 @@ function EditChannelModal() {
 						editAdvancedConfigPatch.value = value;
 					}}
 	        currentConfig=${cfg} />
-      ${error.value && html`<div class="text-xs text-[var(--error)] channel-error block">${error.value}</div>`}
+      ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
 	      <button class="provider-btn"
 	        onClick=${onSave} disabled=${saving.value}>
 	        ${saving.value ? "Saving\u2026" : "Save Changes"}
@@ -2033,6 +2360,7 @@ function handleChannelEvent(p) {
 // ── Main page component ──────────────────────────────────────
 function ChannelsPage() {
 	useEffect(() => {
+		S.setRefreshChannelsPage(loadChannels);
 		// Use prefetched cache for instant render
 		if (S.cachedChannels !== null) channels.value = S.cachedChannels;
 		if (connected.value) loadChannels();
@@ -2041,6 +2369,7 @@ function ChannelsPage() {
 		S.setChannelEventUnsub(unsub);
 
 		return () => {
+			S.setRefreshChannelsPage(null);
 			if (unsub) unsub();
 			S.setChannelEventUnsub(null);
 		};
@@ -2070,6 +2399,7 @@ function ChannelsPage() {
     <${AddDiscordModal} />
     <${AddSlackModal} />
     <${AddMatrixModal} />
+    <${AddNostrModal} />
     <${AddWhatsAppModal} />
     <${EditChannelModal} />
     <${ConfirmDialog} />
@@ -2087,6 +2417,7 @@ export function initChannels(container) {
 	showAddDiscord.value = false;
 	showAddSlack.value = false;
 	showAddMatrix.value = false;
+	showAddNostr.value = false;
 	showAddWhatsApp.value = false;
 	editingChannel.value = null;
 	sendersAccount.value = "";

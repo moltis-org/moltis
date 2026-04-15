@@ -10,6 +10,10 @@ use {
 use crate::{
     error::Result,
     exec::{ExecOpts, ExecResult},
+    sandbox::file_system::{
+        SandboxGrepOptions, SandboxListFilesResult, SandboxReadResult, command_grep,
+        command_list_files, command_read_file, command_write_file,
+    },
     wasm_limits::WasmToolLimits,
 };
 
@@ -289,6 +293,36 @@ pub trait Sandbox: Send + Sync {
 
     /// Execute a command inside the sandbox.
     async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult>;
+
+    /// Read a file inside the sandbox.
+    async fn read_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        command_read_file(self, id, file_path, max_bytes).await
+    }
+
+    /// Write a file inside the sandbox.
+    async fn write_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        command_write_file(self, id, file_path, content).await
+    }
+
+    /// List regular files inside the sandbox.
+    async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        command_list_files(self, id, root).await
+    }
+
+    /// Run grep inside the sandbox.
+    async fn grep(&self, id: &SandboxId, opts: SandboxGrepOptions) -> Result<serde_json::Value> {
+        command_grep(self, id, opts).await
+    }
 
     /// Clean up sandbox resources.
     async fn cleanup(&self, id: &SandboxId) -> Result<()>;

@@ -105,7 +105,8 @@ pub fn chunk_message(text: &str, max_len: usize) -> Vec<&str> {
         }
 
         // Find the best split point (last newline within limit).
-        let search_range = &remaining[..max_len];
+        let split_window_end = split_window_end(remaining, max_len);
+        let search_range = &remaining[..split_window_end];
         let split_at = search_range
             .rfind('\n')
             .map(|pos| pos + 1) // Include the newline in the first chunk.
@@ -114,7 +115,7 @@ pub fn chunk_message(text: &str, max_len: usize) -> Vec<&str> {
                 search_range
                     .rfind(' ')
                     .map(|pos| pos + 1)
-                    .unwrap_or(remaining.floor_char_boundary(max_len))
+                    .unwrap_or(split_window_end)
             });
 
         let (chunk, rest) = remaining.split_at(split_at);
@@ -123,6 +124,17 @@ pub fn chunk_message(text: &str, max_len: usize) -> Vec<&str> {
     }
 
     chunks
+}
+
+fn split_window_end(text: &str, max_len: usize) -> usize {
+    let split_window_end = text.floor_char_boundary(max_len);
+    if split_window_end > 0 {
+        return split_window_end;
+    }
+    text.chars()
+        .next()
+        .map(char::len_utf8)
+        .unwrap_or(text.len())
 }
 
 /// Strip `<@BOT_ID>` mentions from inbound text.
@@ -194,6 +206,17 @@ mod tests {
         assert!(chunks.len() >= 3);
         for chunk in &chunks {
             assert!(chunk.len() <= 40);
+        }
+    }
+
+    #[test]
+    fn chunk_message_handles_multibyte_boundary() {
+        let text = format!("{} tail", "😀".repeat(600));
+        let chunks = chunk_message(&text, 2001);
+        assert!(chunks.len() >= 2);
+        assert_eq!(chunks.concat(), text);
+        for chunk in chunks {
+            assert!(chunk.is_char_boundary(chunk.len()));
         }
     }
 

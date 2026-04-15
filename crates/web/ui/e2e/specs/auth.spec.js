@@ -394,8 +394,8 @@ test.describe("Authentication", () => {
 		await expect(page.getByRole("heading", { name: /Authentication|Security/ })).toBeVisible();
 		var passwordForm = page.locator("form").first();
 		var passwordInputs = passwordForm.locator("input[type='password']");
-		await passwordInputs.first().fill("testpass123");
-		await passwordInputs.nth(1).fill("testpass123");
+		await passwordInputs.first().fill("testpass1234");
+		await passwordInputs.nth(1).fill("testpass1234");
 		await passwordForm.getByRole("button", { name: "Set password" }).click();
 		await expect(page.getByText("Vault initialized — save this recovery key", { exact: true })).toBeVisible();
 		await expect(page.locator("code.select-all")).toContainText("test-recovery-key-1234");

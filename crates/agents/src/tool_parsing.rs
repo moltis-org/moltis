@@ -5,7 +5,9 @@
 //!
 //! 1. **Fenced blocks**: `` ```tool_call\n{...}\n``` ``
 //! 2. **XML function calls**: `<function=name><parameter=key>value</parameter></function>`
-//! 3. **Bare JSON**: `{"tool": "name", "arguments": {...}}`
+//! 3. **XML invoke calls**: `<invoke name="..."><arg name="...">value</arg></invoke>`
+//! 4. **Zhipu (Z.AI) XML**: `<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>`
+//! 5. **Bare JSON**: `{"tool": "name", "arguments": {...}}`
 
 use std::fmt::Write;
 
@@ -33,6 +35,24 @@ struct ParsedBlock {
     end: usize,
 }
 
+fn is_valid_tool_name(tool_name: &str) -> bool {
+    !tool_name.is_empty()
+        && tool_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn new_text_tool_call(
+    name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+) -> ToolCall {
+    ToolCall {
+        id: new_synthetic_tool_call_id("text"),
+        name: name.to_string(),
+        arguments: serde_json::Value::Object(arguments),
+    }
+}
+
 /// Parse ALL tool call blocks from model text output.
 ///
 /// Returns a list of parsed `ToolCall` values and any remaining text that was
@@ -51,7 +71,10 @@ pub fn parse_tool_calls_from_text(text: &str) -> (Vec<ToolCall>, Option<String>)
     // 3. Find XML <invoke name="..."><arg name="...">value</arg></invoke> blocks.
     collect_invoke_blocks(text, &mut blocks);
 
-    // 4. Find bare JSON {"tool": ...} blocks.
+    // 4. Find Zhipu (Z.AI) <tool_call>name<arg_key>...</arg_key><arg_value>...</arg_value></tool_call> blocks.
+    collect_zhipu_blocks(text, &mut blocks);
+
+    // 5. Find bare JSON {"tool": ...} blocks.
     collect_bare_json_blocks(text, &mut blocks);
 
     if blocks.is_empty() {
@@ -114,7 +137,9 @@ pub fn looks_like_failed_tool_call(text: &Option<String>) -> bool {
     (lower.contains("\"tool\"")
         || lower.contains("tool_call")
         || lower.contains("<function=")
-        || lower.contains("<invoke"))
+        || lower.contains("<invoke")
+        || lower.contains("<arg_key>")
+        || lower.contains("<arg_value>"))
         && parse_tool_call_from_text(t).is_none()
 }
 
@@ -160,11 +185,7 @@ fn collect_function_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
             break;
         };
         let tool_name = rest[..open_end_rel].trim();
-        if tool_name.is_empty()
-            || !tool_name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
+        if !is_valid_tool_name(tool_name) {
             search_from = after_marker;
             continue;
         }
@@ -228,11 +249,7 @@ fn collect_function_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
 
         if found {
             blocks.push(ParsedBlock {
-                tool_call: ToolCall {
-                    id: new_synthetic_tool_call_id("text"),
-                    name: tool_name.to_string(),
-                    arguments: serde_json::Value::Object(args),
-                },
+                tool_call: new_text_tool_call(tool_name, args),
                 start: abs_start,
                 end: final_end,
             });
@@ -274,11 +291,7 @@ fn collect_invoke_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
             search_from = after_marker + open_end_rel + 1;
             continue;
         };
-        if tool_name.is_empty()
-            || !tool_name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
+        if !is_valid_tool_name(tool_name) {
             search_from = after_marker + open_end_rel + 1;
             continue;
         }
@@ -336,16 +349,111 @@ fn collect_invoke_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
 
         if found {
             blocks.push(ParsedBlock {
-                tool_call: ToolCall {
-                    id: new_synthetic_tool_call_id("text"),
-                    name: tool_name.to_string(),
-                    arguments: serde_json::Value::Object(args),
-                },
+                tool_call: new_text_tool_call(tool_name, args),
                 start: abs_start,
                 end: abs_end,
             });
         }
         search_from = abs_end;
+    }
+}
+
+// ── Zhipu (Z.AI) XML parser ─────────────────────────────────────────────────
+
+/// Collect Zhipu/Z.AI proprietary tool-call blocks.
+///
+/// Shape (as emitted by Zhipu's `tool_mode = "text"`):
+///
+/// ```xml
+/// <tool_call>exec<arg_key>command</arg_key><arg_value>ls -la</arg_value>
+/// <arg_key>timeout</arg_key><arg_value>10</arg_value></tool_call>
+/// ```
+///
+/// The tool name is the plain-text prefix between `<tool_call>` and the first
+/// `<arg_key>`; arguments are interleaved `<arg_key>`/`<arg_value>` pairs.
+///
+/// Skipped when:
+/// - the body begins with `{` — that's a JSON-wrapped `<tool_call>{...}</tool_call>`
+///   handled by `response_sanitizer::recover_tool_calls_from_content` or the
+///   bare-JSON parser (and the merge step de-overlaps so we don't double-count);
+/// - the extracted tool name is empty or contains non-identifier characters —
+///   prevents stray prose like "<tool_call>maybe</tool_call>" from matching;
+/// - a `<tool_call>` has no closing `</tool_call>` — stop parsing because no
+///   later complete block can be recovered from the remaining suffix.
+fn collect_zhipu_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
+    let open = "<tool_call>";
+    let close = "</tool_call>";
+    let mut cursor = 0;
+
+    while let Some(rel_start) = text[cursor..].find(open) {
+        let abs_start = cursor + rel_start;
+        let content_start = abs_start + open.len();
+        let Some(rel_end) = text[content_start..].find(close) else {
+            break;
+        };
+        let abs_end = content_start + rel_end + close.len();
+        let inner = &text[content_start..content_start + rel_end];
+
+        // Defer to the JSON-wrapper recovery path for `<tool_call>{...}</tool_call>`.
+        if inner.trim_start().starts_with('{') {
+            cursor = abs_end;
+            continue;
+        }
+
+        // Tool name is everything before the first `<arg_key>` (or the whole
+        // inner body if there are no args at all).
+        let name_end = inner.find("<arg_key>").unwrap_or(inner.len());
+        let tool_name = inner[..name_end].trim();
+        if !is_valid_tool_name(tool_name) {
+            // Not a Zhipu-shaped block — advance past the opener so a later
+            // `<tool_call>` can still match.
+            cursor = abs_start + open.len();
+            continue;
+        }
+
+        // A block with no <arg_key>/<arg_value> pairs is ambiguous — let other
+        // parsers (e.g. the `<function=...>` collector inside the wrapper) own
+        // it rather than producing a zero-argument call.
+        if name_end == inner.len() {
+            cursor = abs_end;
+            continue;
+        }
+
+        let mut args = serde_json::Map::new();
+        let mut arg_cursor = name_end;
+        let mut parsed_any = false;
+        while let Some(key_rel) = inner[arg_cursor..].find("<arg_key>") {
+            let key_content_start = arg_cursor + key_rel + "<arg_key>".len();
+            let Some(key_end) = inner[key_content_start..].find("</arg_key>") else {
+                break;
+            };
+            let key = inner[key_content_start..key_content_start + key_end].trim();
+
+            let after_key = key_content_start + key_end + "</arg_key>".len();
+            let Some(val_rel) = inner[after_key..].find("<arg_value>") else {
+                break;
+            };
+            let val_content_start = after_key + val_rel + "<arg_value>".len();
+            let Some(val_end) = inner[val_content_start..].find("</arg_value>") else {
+                break;
+            };
+            let val = &inner[val_content_start..val_content_start + val_end];
+
+            if !key.is_empty() {
+                args.insert(key.to_string(), parse_param_value(val));
+                parsed_any = true;
+            }
+            arg_cursor = val_content_start + val_end + "</arg_value>".len();
+        }
+
+        if parsed_any {
+            blocks.push(ParsedBlock {
+                tool_call: new_text_tool_call(tool_name, args),
+                start: abs_start,
+                end: abs_end,
+            });
+        }
+        cursor = abs_end;
     }
 }
 
@@ -532,6 +640,27 @@ Step 2:
     }
 
     #[test]
+    fn parse_xml_function_preserves_falsy_and_null_values() {
+        let text = r#"<tool_call>
+<function=grep>
+<parameter=offset>0</parameter>
+<parameter=multiline>false</parameter>
+<parameter=type>null</parameter>
+</function>
+</tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "grep");
+        assert_eq!(calls[0].arguments["offset"], 0);
+        assert_eq!(calls[0].arguments["multiline"], false);
+        assert!(calls[0].arguments["type"].is_null());
+        assert!(
+            remaining.is_none() || remaining.as_deref() == Some(""),
+            "remaining: {remaining:?}"
+        );
+    }
+
+    #[test]
     fn parse_bare_json() {
         let text = r#"I'll run that command now: {"tool": "exec", "arguments": {"command": "whoami"}} and report back."#;
         let (calls, remaining) = parse_tool_calls_from_text(text);
@@ -548,6 +677,18 @@ Step 2:
         let (calls, _) = parse_tool_calls_from_text(text);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "calc");
+    }
+
+    #[test]
+    fn parse_bare_json_preserves_falsy_and_null_values() {
+        let text =
+            r#"{"tool": "grep", "arguments": {"offset": 0, "multiline": false, "type": null}}"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "grep");
+        assert_eq!(calls[0].arguments["offset"], 0);
+        assert_eq!(calls[0].arguments["multiline"], false);
+        assert!(calls[0].arguments["type"].is_null());
     }
 
     #[test]
@@ -808,6 +949,214 @@ Step 2:
         // This is a well-formed invoke that parses successfully — parse_tool_call_from_text
         // returns Some, so looks_like_failed_tool_call returns false.
         let valid = r#"<invoke name="exec"><arg name="command">ls</arg></invoke>"#;
+        assert!(!looks_like_failed_tool_call(&Some(valid.into())));
+    }
+
+    // ── Zhipu (Z.AI) XML format ─────────────────────────────────────
+    //
+    // Regression coverage for GitHub issue #637: Z.AI `tool_mode="text"` falls
+    // back to a proprietary XML shape that previously leaked into channel
+    // streams unparsed because none of the sibling collectors recognized it.
+
+    #[test]
+    fn parse_single_zhipu_block() {
+        let text = r#"I'll run the command.
+<tool_call>exec<arg_key>command</arg_key><arg_value>grep -A20 'hello' /tmp/test.txt</arg_value><arg_key>timeout</arg_key><arg_value>10</arg_value></tool_call>
+Done."#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "exec");
+        assert_eq!(
+            calls[0].arguments["command"],
+            "grep -A20 'hello' /tmp/test.txt"
+        );
+        // `parse_param_value` promotes JSON-parseable strings — `10` becomes a
+        // number, matching how the `<function=...>` collector treats values.
+        assert_eq!(calls[0].arguments["timeout"], 10);
+        let rem = remaining.unwrap();
+        assert!(rem.contains("I'll run the command."));
+        assert!(rem.contains("Done."));
+    }
+
+    #[test]
+    fn parse_zhipu_block_single_arg() {
+        let text = r#"<tool_call>web_search<arg_key>query</arg_key><arg_value>rust lifetimes</arg_value></tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web_search");
+        assert_eq!(calls[0].arguments["query"], "rust lifetimes");
+        assert!(
+            remaining.is_none() || remaining.as_deref() == Some(""),
+            "remaining: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn parse_multiple_zhipu_blocks() {
+        let text = r#"<tool_call>exec<arg_key>command</arg_key><arg_value>ls</arg_value></tool_call>
+between
+<tool_call>exec<arg_key>command</arg_key><arg_value>pwd</arg_value></tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].arguments["command"], "ls");
+        assert_eq!(calls[1].arguments["command"], "pwd");
+        let rem = remaining.unwrap();
+        assert!(rem.contains("between"));
+    }
+
+    /// Unclosed Zhipu block is gracefully skipped — no panic, no partial call.
+    #[test]
+    fn zhipu_unclosed_block_skipped() {
+        let text =
+            r#"before <tool_call>exec<arg_key>command</arg_key><arg_value>ls</arg_value> no-close"#;
+        let (calls, _remaining) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+    }
+
+    /// Empty tool name is rejected (not a Zhipu block, advance past opener).
+    #[test]
+    fn zhipu_empty_tool_name_skipped() {
+        let text = r#"<tool_call><arg_key>command</arg_key><arg_value>ls</arg_value></tool_call>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+    }
+
+    /// Tool name with whitespace/punctuation (not a bare identifier) is rejected.
+    #[test]
+    fn zhipu_prose_tool_name_skipped() {
+        let text = r#"<tool_call>maybe I should</tool_call>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+    }
+
+    /// A valid-looking Zhipu tool name without any arg pairs is ambiguous and
+    /// should be skipped rather than inventing a zero-argument call.
+    #[test]
+    fn zhipu_no_arg_pairs_skipped() {
+        let text = r#"<tool_call>exec</tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+        assert_eq!(remaining.as_deref(), Some(text));
+    }
+
+    /// A Zhipu block with a JSON body (`<tool_call>{"tool":...}</tool_call>`)
+    /// must defer to the JSON/recover path — the bare-JSON collector handles
+    /// it, and the merge step de-overlaps so we don't double-count.
+    #[test]
+    fn zhipu_parser_defers_to_json_wrapper() {
+        let text = r#"<tool_call>{"tool": "exec", "arguments": {"command": "ls"}}</tool_call>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "exec");
+        assert_eq!(calls[0].arguments["command"], "ls");
+    }
+
+    /// Zhipu arg values that look like JSON should be promoted to structured
+    /// values (matches sibling collector behavior via `parse_param_value`).
+    #[test]
+    fn zhipu_json_arg_value_promoted() {
+        let text = r#"<tool_call>exec<arg_key>config</arg_key><arg_value>{"verbose": true}</arg_value></tool_call>"#;
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments["config"]["verbose"], true);
+    }
+
+    /// Zhipu block with a multiline arg value.
+    #[test]
+    fn zhipu_multiline_arg_value() {
+        let text = "<tool_call>exec<arg_key>command</arg_key><arg_value>echo \"hello\nworld\"</arg_value></tool_call>";
+        let (calls, _) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments["command"], "echo \"hello\nworld\"");
+    }
+
+    /// Empty arg keys are ignored; without any valid key/value pairs the block
+    /// must be skipped entirely.
+    #[test]
+    fn zhipu_empty_arg_key_skipped() {
+        let text = r#"<tool_call>exec<arg_key>   </arg_key><arg_value>ls</arg_value></tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+        assert_eq!(remaining.as_deref(), Some(text));
+    }
+
+    #[test]
+    fn zhipu_missing_arg_key_close_skipped() {
+        let text = r#"<tool_call>exec<arg_key>command<arg_value>ls</arg_value></tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+        assert_eq!(remaining.as_deref(), Some(text));
+    }
+
+    #[test]
+    fn zhipu_missing_arg_value_open_skipped() {
+        let text = r#"<tool_call>exec<arg_key>command</arg_key>ls</tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+        assert_eq!(remaining.as_deref(), Some(text));
+    }
+
+    #[test]
+    fn zhipu_missing_arg_value_close_skipped() {
+        let text = r#"<tool_call>exec<arg_key>command</arg_key><arg_value>ls</tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert!(calls.is_empty());
+        assert_eq!(remaining.as_deref(), Some(text));
+    }
+
+    /// Exact leaked output from issue #637 must round-trip cleanly.
+    #[test]
+    fn zhipu_regression_issue_637() {
+        let text = r#"<tool_call>exec<arg_key>command</arg_key><arg_value>grep -A20 'hello' /tmp/test.txt</arg_value><arg_key>timeout</arg_key><arg_value>10</arg_value></tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 1, "expected exactly one parsed tool call");
+        assert_eq!(calls[0].name, "exec");
+        assert_eq!(
+            calls[0].arguments["command"],
+            "grep -A20 'hello' /tmp/test.txt"
+        );
+        assert_eq!(calls[0].arguments["timeout"], 10);
+        assert!(
+            remaining.is_none() || remaining.as_deref() == Some(""),
+            "remaining should be empty, got: {remaining:?}"
+        );
+    }
+
+    /// A mixed turn with one fenced block and one Zhipu block must yield two
+    /// distinct calls in source order and preserve interstitial prose.
+    #[test]
+    fn mixed_fenced_and_zhipu() {
+        let text = r#"Step 1:
+```tool_call
+{"tool": "exec", "arguments": {"command": "mkdir test"}}
+```
+Step 2:
+<tool_call>exec<arg_key>command</arg_key><arg_value>cd test</arg_value></tool_call>"#;
+        let (calls, remaining) = parse_tool_calls_from_text(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].arguments["command"], "mkdir test");
+        assert_eq!(calls[1].arguments["command"], "cd test");
+        let rem = remaining.unwrap();
+        assert!(rem.contains("Step 1:"));
+        assert!(rem.contains("Step 2:"));
+    }
+
+    /// A truncated Zhipu block (model was cut off mid-stream) should be flagged
+    /// as a failed tool call so the runner can trigger the malformed-retry path.
+    /// Uses `<arg_key>`/`<arg_value>` signal — these are genuinely new markers
+    /// added for Zhipu support, so we verify they flip the heuristic on.
+    #[test]
+    fn looks_like_failed_zhipu_truncated() {
+        assert!(looks_like_failed_tool_call(&Some(
+            r#"<tool_call>exec<arg_key>command</arg_key><arg_value>grep"#.into()
+        )));
+    }
+
+    /// A valid Zhipu block that parses successfully must NOT be flagged as failed.
+    #[test]
+    fn looks_like_failed_zhipu_valid_block_not_flagged() {
+        let valid =
+            r#"<tool_call>exec<arg_key>command</arg_key><arg_value>ls</arg_value></tool_call>"#;
         assert!(!looks_like_failed_tool_call(&Some(valid.into())));
     }
 }

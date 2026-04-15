@@ -5,7 +5,7 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
-use rand::RngCore;
+use rand::Rng;
 
 use crate::{error::VaultError, traits::Cipher};
 

@@ -759,7 +759,7 @@ pub fn is_container_available() -> bool {
     if is_apple_container_available() {
         return true;
     }
-    is_docker_available()
+    ContainerBackend::Podman.is_available() || is_docker_available()
 }
 
 fn parse_docker_container_names(output: &[u8], container_prefix: &str) -> Vec<String> {

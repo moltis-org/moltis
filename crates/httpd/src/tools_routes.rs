@@ -6,7 +6,10 @@
 //! They are protected by auth middleware, but also have explicit checks to ensure
 //! they never work without authentication on non-localhost connections.
 
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use {
+    axum::{Json, extract::State, http::StatusCode, response::IntoResponse},
+    moltis_gateway::auth::AuthIdentity,
+};
 
 const CONFIG_AUTH_REQUIRED: &str = "CONFIG_AUTH_REQUIRED";
 const CONFIG_READ_FAILED: &str = "CONFIG_READ_FAILED";
@@ -29,8 +32,27 @@ fn config_error(code: &str, error: impl Into<String>) -> serde_json::Value {
 /// - Running on localhost (loopback interface only), OR
 /// - User is authenticated via session or API key
 ///
+/// When `require_admin` is true, API keys must have the `operator.admin`
+/// scope (password/passkey/loopback always have full access).
+///
 /// This is a defense-in-depth check on top of the auth middleware.
-async fn require_config_access(state: &crate::server::AppState) -> Result<(), impl IntoResponse> {
+async fn require_config_access(
+    state: &crate::server::AppState,
+    identity: Option<&AuthIdentity>,
+    require_admin: bool,
+) -> Result<(), impl IntoResponse> {
+    if require_admin
+        && let Some(id) = identity
+        && !id.has_scope("operator.admin")
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(config_error(
+                "INSUFFICIENT_SCOPE",
+                "operator.admin scope required",
+            )),
+        ));
+    }
     let gw = &state.gateway;
 
     // On localhost with no password set, allow access (backward compat for initial setup)
@@ -85,7 +107,7 @@ async fn require_config_access(state: &crate::server::AppState) -> Result<(), im
 /// Get the current configuration as TOML.
 pub async fn config_get(State(state): State<crate::server::AppState>) -> impl IntoResponse {
     // Extra security check for config access
-    if let Err(resp) = require_config_access(&state).await {
+    if let Err(resp) = require_config_access(&state, None, false).await {
         return resp.into_response();
     }
 
@@ -125,7 +147,7 @@ pub async fn config_validate(
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     // Extra security check for config access
-    if let Err(resp) = require_config_access(&state).await {
+    if let Err(resp) = require_config_access(&state, None, false).await {
         return resp.into_response();
     }
 
@@ -166,7 +188,7 @@ pub async fn config_validate(
 /// Preserves the current port from the existing config.
 pub async fn config_template(State(state): State<crate::server::AppState>) -> impl IntoResponse {
     // Extra security check for config access
-    if let Err(resp) = require_config_access(&state).await {
+    if let Err(resp) = require_config_access(&state, None, false).await {
         return resp.into_response();
     }
 
@@ -182,11 +204,12 @@ pub async fn config_template(State(state): State<crate::server::AppState>) -> im
 
 /// Save configuration from TOML.
 pub async fn config_save(
+    identity: Option<axum::Extension<AuthIdentity>>,
     State(state): State<crate::server::AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    // Extra security check for config access
-    if let Err(resp) = require_config_access(&state).await {
+    let id_ref = identity.as_ref().map(|axum::Extension(id)| id);
+    if let Err(resp) = require_config_access(&state, id_ref, true).await {
         return resp.into_response();
     }
 
@@ -239,9 +262,12 @@ pub async fn config_save(
 ///
 /// Before restarting, the saved config is loaded from disk and validated. If the config
 /// is invalid the restart is refused so the server doesn't crash on startup.
-pub async fn restart(State(state): State<crate::server::AppState>) -> impl IntoResponse {
-    // Extra security check for config access (restart is a privileged operation)
-    if let Err(resp) = require_config_access(&state).await {
+pub async fn restart(
+    identity: Option<axum::Extension<AuthIdentity>>,
+    State(state): State<crate::server::AppState>,
+) -> impl IntoResponse {
+    let id_ref = identity.as_ref().map(|axum::Extension(id)| id);
+    if let Err(resp) = require_config_access(&state, id_ref, true).await {
         return resp.into_response();
     }
 
@@ -349,7 +375,7 @@ fn validate_config(config: &moltis_config::MoltisConfig) -> Vec<String> {
         {
             warnings.push(
                 "Sandbox mode is available but no container runtime found. \
-                 Browser sandbox (for sandboxed sessions) requires Docker or Apple Container."
+                 Browser sandbox (for sandboxed sessions) requires Docker, Podman, or Apple Container."
                     .to_string(),
             );
         }

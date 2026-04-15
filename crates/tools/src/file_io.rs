@@ -3,22 +3,19 @@
 //! Used by `send_image` and `send_document` to read files consistently,
 //! with sandbox routing and size validation.
 
-use {
-    base64::{Engine as _, engine::general_purpose::STANDARD as BASE64},
-    std::{path::PathBuf, sync::Arc, time::Duration},
-    tracing::warn,
-};
+use {std::sync::Arc, tracing::warn};
 
-use crate::{Result, error::Error, exec::ExecOpts, sandbox::SandboxRouter};
+use crate::{
+    Result,
+    error::Error,
+    sandbox::{
+        SandboxRouter,
+        file_system::{SandboxReadResult, sandbox_file_system_for_session},
+    },
+};
 
 /// 20 MB — Telegram's maximum file upload size.
 pub const MAX_FILE_SIZE: u64 = 20 * 1024 * 1024;
-
-/// Enough for a 20 MB binary file encoded as base64 (~26.7 MB) plus margin.
-pub const MAX_SANDBOX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
-
-/// Prefix emitted by the sandbox script when the file exceeds the size limit.
-pub const SANDBOX_TOO_LARGE_PREFIX: &str = "__MOLTIS_FILE_TOO_LARGE__:";
 
 /// Read a file from the host filesystem with size validation.
 pub async fn read_host_file(path: &str) -> Result<Vec<u8>> {
@@ -60,62 +57,36 @@ pub async fn read_sandbox_file(
     session_key: &str,
     path: &str,
 ) -> Result<Vec<u8>> {
-    let sandbox_id = router.sandbox_id_for(session_key);
-    let image = router.resolve_image(session_key, None).await;
-    let backend = router.backend();
-    backend.ensure_ready(&sandbox_id, Some(&image)).await?;
-
-    let quoted_path = shell_single_quote(path);
-    let command = format!(
-        "if [ ! -f {quoted_path} ]; then \
-             echo \"path is not a regular file\" >&2; \
-             exit 2; \
-         fi; \
-         size=$(wc -c < {quoted_path}); \
-         if [ \"$size\" -gt {MAX_FILE_SIZE} ]; then \
-             echo \"{SANDBOX_TOO_LARGE_PREFIX}$size\" >&2; \
-             exit 3; \
-         fi; \
-         base64 < {quoted_path} | tr -d '\\n'"
-    );
-
-    let opts = ExecOpts {
-        timeout: Duration::from_secs(30),
-        max_output_bytes: MAX_SANDBOX_OUTPUT_BYTES,
-        working_dir: Some(PathBuf::from("/home/sandbox")),
-        env: Vec::new(),
-    };
-
-    let result = backend.exec(&sandbox_id, &command, &opts).await?;
-    if result.exit_code != 0 {
-        if let Some(size_str) = result
-            .stderr
-            .lines()
-            .find_map(|line| line.strip_prefix(SANDBOX_TOO_LARGE_PREFIX))
-            && let Ok(size) = size_str.trim().parse::<u64>()
-        {
+    let sandbox_fs = sandbox_file_system_for_session(router, session_key).await?;
+    let read_result = sandbox_fs
+        .read_file(path, MAX_FILE_SIZE)
+        .await
+        .map_err(|error| Error::message(format!("cannot access '{path}' in sandbox: {error}")))?;
+    let bytes = match read_result {
+        SandboxReadResult::Ok(bytes) => bytes,
+        SandboxReadResult::NotFound => {
+            return Err(Error::message(format!(
+                "cannot access '{path}' in sandbox: file does not exist"
+            )));
+        },
+        SandboxReadResult::PermissionDenied => {
+            return Err(Error::message(format!(
+                "cannot access '{path}' in sandbox: insufficient permissions to access file"
+            )));
+        },
+        SandboxReadResult::NotRegularFile => {
+            return Err(Error::message(format!(
+                "cannot access '{path}' in sandbox: path is not a regular file"
+            )));
+        },
+        SandboxReadResult::TooLarge(size) => {
             return Err(Error::message(format!(
                 "file is too large ({:.1} MB) — maximum is {:.0} MB",
                 size as f64 / (1024.0 * 1024.0),
                 MAX_FILE_SIZE as f64 / (1024.0 * 1024.0),
             )));
-        }
-
-        let detail = if !result.stderr.trim().is_empty() {
-            result.stderr.trim().to_string()
-        } else if !result.stdout.trim().is_empty() {
-            result.stdout.trim().to_string()
-        } else {
-            format!("sandbox command failed with exit code {}", result.exit_code)
-        };
-        return Err(Error::message(format!(
-            "cannot access '{path}' in sandbox: {detail}"
-        )));
-    }
-
-    let bytes = BASE64
-        .decode(result.stdout.trim())
-        .map_err(|e| Error::message(format!("failed to decode sandbox file '{path}': {e}")))?;
+        },
+    };
 
     if bytes.len() as u64 > MAX_FILE_SIZE {
         return Err(Error::message(format!(
@@ -159,7 +130,7 @@ pub async fn read_file_for_session(
 
 /// Escape a string for safe use inside single quotes in a POSIX shell.
 pub fn shell_single_quote(input: &str) -> String {
-    format!("'{}'", input.replace('\'', "'\\''"))
+    crate::sandbox::file_system::shell_single_quote(input)
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]

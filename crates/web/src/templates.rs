@@ -1,10 +1,13 @@
 //! SPA templates, gon data, and template rendering.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use {
     askama::Template,
-    axum::response::{Html, IntoResponse},
+    axum::{
+        http::StatusCode,
+        response::{Html, IntoResponse},
+    },
     moltis_gateway::state::GatewayState,
     tracing::warn,
 };
@@ -65,6 +68,7 @@ pub(crate) struct GonData {
     heartbeat_runs: Vec<moltis_cron::types::CronRunRecord>,
     voice_enabled: bool,
     graphql_enabled: bool,
+    terminal_enabled: bool,
     git_branch: Option<String>,
     mem: MemSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,6 +85,8 @@ pub(crate) struct GonData {
     /// Small recent session snapshot for instant sidebar paint.
     sessions_recent: Vec<serde_json::Value>,
     agents: Vec<serde_json::Value>,
+    webhooks: Vec<serde_json::Value>,
+    webhook_profiles: Vec<serde_json::Value>,
     #[cfg(feature = "vault")]
     vault_status: String,
 }
@@ -177,6 +183,19 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
     out
 }
 
+fn default_channel_session_key(target: &moltis_channels::ChannelReplyTarget) -> String {
+    match &target.thread_id {
+        Some(thread_id) => format!(
+            "{}:{}:{}:{}",
+            target.channel_type, target.account_id, target.chat_id, thread_id
+        ),
+        None => format!(
+            "{}:{}:{}",
+            target.channel_type, target.account_id, target.chat_id
+        ),
+    }
+}
+
 async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<serde_json::Value> {
     let Some(ref metadata) = gw.services.session_metadata else {
         return Vec::new();
@@ -196,8 +215,8 @@ async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<
                         target.thread_id.as_deref(),
                     )
                     .await
-                    .map(|key| key == entry.key)
-                    .unwrap_or(false)
+                    .unwrap_or_else(|| default_channel_session_key(&target))
+                    == entry.key
             } else {
                 false
             }
@@ -360,7 +379,20 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .unwrap_or_default();
 
     let counts = build_nav_counts(gw).await;
-    let (crons, cron_status) = tokio::join!(gw.services.cron.list(), gw.services.cron.status());
+    let (crons, cron_status, webhooks_val, webhook_profiles_val) = tokio::join!(
+        gw.services.cron.list(),
+        gw.services.cron.status(),
+        gw.services.webhooks.list(),
+        gw.services.webhooks.profiles(),
+    );
+    let webhooks: Vec<serde_json::Value> = webhooks_val
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let webhook_profiles: Vec<serde_json::Value> = webhook_profiles_val
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
     let crons: Vec<moltis_cron::types::CronJob> = crons
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
@@ -369,13 +401,14 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let (heartbeat_config, channels_offered) = {
+    let (heartbeat_config, cached_channels_offered) = {
         let inner = gw.inner.read().await;
         (
             inner.heartbeat_config.clone(),
             inner.channels_offered.clone(),
         )
     };
+    let channels_offered = resolve_channels_offered(cached_channels_offered);
     let channel_descriptors: Vec<moltis_channels::ChannelDescriptor> = channels_offered
         .iter()
         .filter_map(|s| s.parse::<moltis_channels::ChannelType>().ok())
@@ -438,6 +471,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         heartbeat_runs,
         voice_enabled: cfg!(feature = "voice"),
         graphql_enabled: cfg!(feature = "graphql"),
+        terminal_enabled: gw.config.server.is_terminal_enabled(),
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
         deploy_platform: gw.deploy_platform.clone(),
@@ -454,6 +488,8 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
         sessions_recent,
         agents,
+        webhooks,
+        webhook_profiles,
         #[cfg(feature = "vault")]
         vault_status: {
             if let Some(ref vault) = gw.vault {
@@ -464,6 +500,30 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
             } else {
                 "disabled".to_owned()
             }
+        },
+    }
+}
+
+fn load_channels_offered_from_config_path(
+    path: &Path,
+) -> Result<Vec<String>, moltis_config::Error> {
+    moltis_config::loader::load_config(path).map(|config| config.channels.offered)
+}
+
+fn resolve_channels_offered(cached_channels_offered: Vec<String>) -> Vec<String> {
+    let Some(path) = moltis_config::loader::find_config_file() else {
+        return cached_channels_offered;
+    };
+
+    match load_channels_offered_from_config_path(&path) {
+        Ok(channels_offered) => channels_offered,
+        Err(error) => {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to reload channels.offered for gon data, using startup value"
+            );
+            cached_channels_offered
         },
     }
 }
@@ -493,6 +553,12 @@ pub(crate) enum SpaTemplate {
     Login,
     Onboarding,
     SetupRequired,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ErrorPageKind {
+    NotFound,
+    InternalServerError,
 }
 
 pub(crate) struct ShareMeta {
@@ -542,6 +608,16 @@ struct OnboardingHtmlTemplate<'a> {
 #[template(path = "setup-required.html", escape = "html")]
 struct SetupRequiredHtmlTemplate<'a> {
     asset_prefix: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "error.html", escape = "html")]
+struct ErrorHtmlTemplate<'a> {
+    asset_prefix: &'a str,
+    nonce: &'a str,
+    page_title: &'a str,
+    eyebrow: &'a str,
+    message: &'a str,
 }
 
 #[derive(serde::Deserialize)]
@@ -604,22 +680,120 @@ pub(crate) fn identity_name(identity: &moltis_config::ResolvedIdentity) -> &str 
     }
 }
 
-pub(crate) async fn render_spa_template(
-    gateway: &GatewayState,
-    template: SpaTemplate,
-) -> axum::response::Response {
-    let (build_ts, asset_prefix) = if is_dev_assets() {
+fn build_asset_prefix() -> String {
+    if is_dev_assets() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        ("dev".to_owned(), format!("/assets/v/{ts}/"))
+        format!("/assets/v/{ts}/")
     } else {
         static HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(asset_content_hash);
-        (HASH.to_string(), format!("/assets/v/{}/", *HASH))
+        format!("/assets/v/{}/", *HASH)
+    }
+}
+
+fn build_nonce() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+fn insert_standard_headers(response: &mut axum::response::Response, csp: &str) {
+    let headers = response.headers_mut();
+    if let Ok(val) = "no-cache, no-store".parse() {
+        headers.insert(axum::http::header::CACHE_CONTROL, val);
+    }
+    if let Ok(val) = csp.parse() {
+        headers.insert(axum::http::header::CONTENT_SECURITY_POLICY, val);
+    }
+}
+
+fn trim_route_path(path: &str) -> &str {
+    if path.len() > 1 {
+        path.trim_end_matches('/')
+    } else {
+        path
+    }
+}
+
+fn matches_exact_or_nested(path: &str, base: &str) -> bool {
+    path == base
+        || path
+            .strip_prefix(base)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+pub(crate) fn is_known_spa_route(path: &str) -> bool {
+    let path = trim_route_path(path);
+    path == "/"
+        || matches_exact_or_nested(path, SPA_ROUTES.projects)
+        || matches_exact_or_nested(path, SPA_ROUTES.skills)
+        || matches_exact_or_nested(path, SPA_ROUTES.chats)
+        || matches_exact_or_nested(path, SPA_ROUTES.settings)
+        || matches_exact_or_nested(path, SPA_ROUTES.monitoring)
+}
+
+pub(crate) fn render_error_page(
+    status: StatusCode,
+    kind: ErrorPageKind,
+    _requested_path: Option<&str>,
+) -> axum::response::Response {
+    let asset_prefix = build_asset_prefix();
+    let nonce = build_nonce();
+    let (page_title, eyebrow, message) = match kind {
+        ErrorPageKind::NotFound => ("Page not found", "404", "This page could not be found."),
+        ErrorPageKind::InternalServerError => (
+            "Internal server error",
+            "500",
+            "Moltis hit an internal error while building this page.",
+        ),
     };
 
-    let nonce = uuid::Uuid::new_v4().to_string();
+    let template = ErrorHtmlTemplate {
+        asset_prefix: &asset_prefix,
+        nonce: &nonce,
+        page_title,
+        eyebrow,
+        message,
+    };
+
+    let body = match template.render() {
+        Ok(html) => html,
+        Err(error) => {
+            warn!(%error, ?status, "failed to render error template");
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{status} {page_title}</title></head><body><h1>{eyebrow}</h1><p>{message}</p><p><a href=\"/\">Go home</a></p></body></html>",
+            )
+        },
+    };
+
+    let csp = format!(
+        "default-src 'self'; \
+         script-src 'self' 'nonce-{nonce}'; \
+         style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data:; \
+         font-src 'self'; \
+         frame-ancestors 'none'; \
+         form-action 'self'; \
+         base-uri 'self'; \
+         object-src 'none'",
+    );
+
+    let mut response = (status, Html(body)).into_response();
+    insert_standard_headers(&mut response, &csp);
+    response
+}
+
+pub(crate) async fn render_spa_template(
+    gateway: &GatewayState,
+    template: SpaTemplate,
+) -> axum::response::Response {
+    let build_ts = if is_dev_assets() {
+        "dev".to_owned()
+    } else {
+        asset_content_hash()
+    };
+    let asset_prefix = build_asset_prefix();
+    let nonce = build_nonce();
 
     // Resolve Shiki URL from config override or default CDN.
     let shiki_url = gateway
@@ -652,7 +826,11 @@ pub(crate) async fn render_spa_template(
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render index template");
-                    String::new()
+                    return render_error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorPageKind::InternalServerError,
+                        None,
+                    );
                 },
             }
         },
@@ -671,7 +849,11 @@ pub(crate) async fn render_spa_template(
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render login template");
-                    String::new()
+                    return render_error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorPageKind::InternalServerError,
+                        None,
+                    );
                 },
             }
         },
@@ -690,7 +872,11 @@ pub(crate) async fn render_spa_template(
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render onboarding template");
-                    String::new()
+                    return render_error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorPageKind::InternalServerError,
+                        None,
+                    );
                 },
             }
         },
@@ -702,7 +888,11 @@ pub(crate) async fn render_spa_template(
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render setup-required template");
-                    String::new()
+                    return render_error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorPageKind::InternalServerError,
+                        None,
+                    );
                 },
             }
         },
@@ -732,13 +922,7 @@ pub(crate) async fn render_spa_template(
     );
 
     let mut response = Html(body).into_response();
-    let headers = response.headers_mut();
-    if let Ok(val) = "no-cache, no-store".parse() {
-        headers.insert(axum::http::header::CACHE_CONTROL, val);
-    }
-    if let Ok(val) = csp.parse() {
-        headers.insert(axum::http::header::CONTENT_SECURITY_POLICY, val);
-    }
+    insert_standard_headers(&mut response, &csp);
     response
 }
 
@@ -769,7 +953,7 @@ pub(crate) async fn onboarding_completed(gw: &GatewayState) -> bool {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
+    use {super::*, std::io::Write};
 
     #[test]
     fn parse_git_branch_filters_defaults() {
@@ -792,6 +976,19 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_known_spa_routes() {
+        assert!(is_known_spa_route("/"));
+        assert!(is_known_spa_route("/projects/123"));
+        assert!(is_known_spa_route("/skills/example"));
+        assert!(is_known_spa_route("/chats/main"));
+        assert!(is_known_spa_route("/settings/providers"));
+        assert!(is_known_spa_route("/monitoring/charts"));
+        assert!(is_known_spa_route("/skills/"));
+        assert!(!is_known_spa_route("/definitely-not-a-route"));
+        assert!(!is_known_spa_route("/api/skills"));
+    }
+
+    #[test]
     fn setup_required_template_renders_html() {
         let template = SetupRequiredHtmlTemplate {
             asset_prefix: "/assets/v/test123/",
@@ -802,12 +999,16 @@ mod tests {
             "should produce a full HTML document"
         );
         assert!(
-            html.contains("Authentication Not Configured"),
-            "should contain the setup-required heading"
+            html.contains("First-time setup"),
+            "should contain the new setup heading"
         );
         assert!(
-            html.contains("moltis auth reset-password"),
-            "should contain the CLI reset command"
+            html.contains("setup code"),
+            "should mention the one-time setup code"
+        );
+        assert!(
+            html.contains("href=\"/onboarding\""),
+            "should link to the onboarding wizard"
         );
         assert!(
             html.contains("/assets/v/test123/"),
@@ -845,5 +1046,25 @@ mod tests {
         assert!(!should_redirect_from_onboarding(true, true));
         assert!(!should_redirect_from_onboarding(false, false));
         assert!(!should_redirect_from_onboarding(false, true));
+    }
+
+    #[test]
+    fn load_channels_offered_from_config_path_reads_matrix_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("moltis.toml");
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(
+            file,
+            "[channels]\noffered = [\"telegram\", \"matrix\", \"whatsapp\"]"
+        )
+        .unwrap();
+
+        let offered = load_channels_offered_from_config_path(&path).unwrap();
+
+        assert_eq!(offered, vec![
+            "telegram".to_owned(),
+            "matrix".to_owned(),
+            "whatsapp".to_owned(),
+        ]);
     }
 }

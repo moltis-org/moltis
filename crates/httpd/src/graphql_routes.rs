@@ -125,7 +125,7 @@ pub fn build_graphql_schema(state: Arc<GatewayState>) -> moltis_graphql::MoltisS
         state: Arc::clone(&state),
     });
     let services = state.services.to_services_with_chat(system_info, chat);
-    moltis_graphql::build_schema(services, state.graphql_broadcast.clone())
+    moltis_graphql::build_schema(services, state.broadcaster.graphql_broadcast.clone())
 }
 
 #[async_trait::async_trait]

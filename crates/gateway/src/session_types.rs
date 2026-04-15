@@ -24,6 +24,8 @@ pub struct PatchParams {
     pub label: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub archived: Option<bool>,
     #[serde(default, deserialize_with = "double_option", alias = "project_id")]
     pub project_id: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option", alias = "worktree_branch")]
@@ -103,6 +105,7 @@ mod tests {
         assert_eq!(p.key, "main");
         assert!(p.label.is_none());
         assert!(p.model.is_none());
+        assert!(p.archived.is_none());
         assert!(p.project_id.is_none());
         assert!(p.sandbox_enabled.is_none());
     }
@@ -113,12 +116,14 @@ mod tests {
             "key": "main",
             "label": "My Chat",
             "model": "gpt-4o",
+            "archived": true,
             "sandboxEnabled": true,
             "mcpDisabled": false,
         }))
         .unwrap();
         assert_eq!(p.label.as_deref(), Some("My Chat"));
         assert_eq!(p.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(p.archived, Some(true));
         assert_eq!(p.sandbox_enabled, Some(Some(true)));
         assert_eq!(p.mcp_disabled, Some(Some(false)));
     }

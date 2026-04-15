@@ -1,7 +1,7 @@
 use {
     anyhow::Result,
     base64::Engine,
-    rand::RngCore,
+    rand::Rng,
     sha2::{Digest, Sha256},
 };
 

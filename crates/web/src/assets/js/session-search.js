@@ -4,6 +4,7 @@ import { esc, sendRpc } from "./helpers.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { switchSession } from "./sessions.js";
 import * as S from "./state.js";
+import { sessionStore } from "./stores/session-store.js";
 
 var searchInput = S.$("sessionSearch");
 var searchResults = S.$("searchResults");
@@ -23,7 +24,10 @@ function doSearch() {
 		hideSearch();
 		return;
 	}
-	sendRpc("sessions.search", { query: q }).then((res) => {
+	sendRpc("sessions.search", {
+		query: q,
+		includeArchived: sessionStore.showArchivedSessions.value,
+	}).then((res) => {
 		if (!res?.ok) {
 			hideSearch();
 			return;

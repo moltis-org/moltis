@@ -281,4 +281,22 @@ mod tests {
             Some("val-b")
         );
     }
+
+    #[tokio::test]
+    async fn test_session_isolation() {
+        let pool = test_pool().await;
+        let store = SessionStateStore::new(pool);
+
+        store.set("s1", "ns", "key", "val-1").await.unwrap();
+        store.set("s2", "ns", "key", "val-2").await.unwrap();
+
+        assert_eq!(
+            store.get("s1", "ns", "key").await.unwrap().as_deref(),
+            Some("val-1")
+        );
+        assert_eq!(
+            store.get("s2", "ns", "key").await.unwrap().as_deref(),
+            Some("val-2")
+        );
+    }
 }

@@ -10,8 +10,9 @@ pub mod error;
 pub use error::{Context, Error, Result};
 
 use std::{
+    collections::BTreeSet,
     io::BufReader,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
@@ -32,6 +33,32 @@ use {
 /// The hostname used for loopback URLs instead of raw `127.0.0.1`.
 /// Subdomains of `.localhost` resolve to loopback per RFC 6761.
 pub const LOCALHOST_DOMAIN: &str = "moltis.localhost";
+
+/// Additional SAN entries that should be present on the auto-generated server
+/// certificate for this runtime.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ServerSan {
+    Dns(String),
+    Ip(IpAddr),
+}
+
+impl ServerSan {
+    fn metadata_line(&self) -> String {
+        match self {
+            Self::Dns(name) => format!("dns:{name}"),
+            Self::Ip(ip) => format!("ip:{ip}"),
+        }
+    }
+
+    fn from_metadata_line(line: &str) -> Option<Self> {
+        let (kind, value) = line.split_once(':')?;
+        match kind {
+            "dns" if !value.is_empty() => Some(Self::Dns(value.to_string())),
+            "ip" => value.parse().ok().map(Self::Ip),
+            _ => None,
+        }
+    }
+}
 
 /// DNS SAN names that must always exist on generated server certificates.
 fn required_dns_san_names() -> Vec<String> {
@@ -66,6 +93,41 @@ fn append_system_host_sans(names: &mut Vec<String>, hostname: &str) {
     }
 }
 
+fn default_required_sans() -> Vec<ServerSan> {
+    let mut sans = required_dns_san_names()
+        .into_iter()
+        .map(ServerSan::Dns)
+        .collect::<Vec<_>>();
+    sans.push(ServerSan::Ip(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)));
+    sans.push(ServerSan::Ip(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)));
+    normalize_sans(sans)
+}
+
+fn required_server_sans(runtime_sans: &[ServerSan]) -> Vec<ServerSan> {
+    normalize_sans(
+        default_required_sans()
+            .into_iter()
+            .chain(runtime_sans.iter().cloned()),
+    )
+}
+
+fn normalize_sans(sans: impl IntoIterator<Item = ServerSan>) -> Vec<ServerSan> {
+    sans.into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn is_default_loopback_ip(ip: &IpAddr) -> bool {
+    matches!(
+        ip,
+        IpAddr::V4(v4) if *v4 == std::net::Ipv4Addr::LOCALHOST
+    ) || matches!(
+        ip,
+        IpAddr::V6(v6) if *v6 == std::net::Ipv6Addr::LOCALHOST
+    )
+}
+
 fn der_contains_ascii(der: &[u8], needle: &str) -> bool {
     der.windows(needle.len())
         .any(|window| window == needle.as_bytes())
@@ -75,7 +137,7 @@ fn der_contains_ascii(der: &[u8], needle: &str) -> bool {
 pub trait CertManager: Send + Sync {
     /// Returns (ca_cert_path, server_cert_path, server_key_path).
     /// Generates certificates if they don't exist or are expired.
-    fn ensure_certs(&self) -> Result<(PathBuf, PathBuf, PathBuf)>;
+    fn ensure_certs(&self, runtime_sans: &[ServerSan]) -> Result<(PathBuf, PathBuf, PathBuf)>;
 
     /// Build a `rustls::ServerConfig` from the given cert and key PEM files.
     fn build_rustls_config(&self, cert: &Path, key: &Path) -> Result<ServerConfig>;
@@ -109,24 +171,28 @@ pub fn cert_dir() -> Result<PathBuf> {
 }
 
 impl CertManager for FsCertManager {
-    fn ensure_certs(&self) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    fn ensure_certs(&self, runtime_sans: &[ServerSan]) -> Result<(PathBuf, PathBuf, PathBuf)> {
         let ca_cert_path = self.cert_dir.join("ca.pem");
         let ca_key_path = self.cert_dir.join("ca-key.pem");
         let server_cert_path = self.cert_dir.join("server.pem");
         let server_key_path = self.cert_dir.join("server-key.pem");
+        let server_sans_path = self.cert_dir.join("server-sans.txt");
+        let required_sans = required_server_sans(runtime_sans);
 
         let need_regen = !ca_cert_path.exists()
             || !server_cert_path.exists()
             || !server_key_path.exists()
-            || is_expired(&server_cert_path, 30);
+            || is_expired(&server_cert_path, &server_sans_path, 30, &required_sans);
 
         if need_regen {
             info!("generating TLS certificates");
-            let (ca_cert_pem, ca_key_pem, server_cert_pem, server_key_pem) = generate_all()?;
+            let (ca_cert_pem, ca_key_pem, server_cert_pem, server_key_pem) =
+                generate_all(&required_sans)?;
             std::fs::write(&ca_cert_path, &ca_cert_pem)?;
             std::fs::write(&ca_key_path, &ca_key_pem)?;
             std::fs::write(&server_cert_path, &server_cert_pem)?;
             std::fs::write(&server_key_path, &server_key_pem)?;
+            write_san_metadata(&server_sans_path, &required_sans)?;
             info!(dir = %self.cert_dir.display(), "certificates written");
         }
 
@@ -145,7 +211,12 @@ impl CertManager for FsCertManager {
 /// were added. The DER-encoded cert contains
 /// DNS names as raw ASCII (IA5String), so a byte search on the decoded
 /// DER is sufficient to detect the missing SAN.
-fn is_expired(path: &Path, days: u64) -> bool {
+fn is_expired(
+    path: &Path,
+    san_metadata_path: &Path,
+    days: u64,
+    required_sans: &[ServerSan],
+) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return true;
     };
@@ -158,13 +229,18 @@ fn is_expired(path: &Path, days: u64) -> bool {
     if age > time::Duration::days(days as i64).unsigned_abs() {
         return true;
     }
-    // Regenerate if the cert predates the moltis.localhost SAN migration.
-    needs_san_update(path)
+    needs_san_update(path, san_metadata_path, required_sans)
 }
 
 /// Returns `true` if the cert at `path` does not contain the currently
 /// required DNS SANs (i.e. was generated before the latest SAN migration).
-fn needs_san_update(path: &Path) -> bool {
+fn needs_san_update(path: &Path, san_metadata_path: &Path, required_sans: &[ServerSan]) -> bool {
+    if let Some(existing_sans) = read_san_metadata(san_metadata_path) {
+        return required_sans
+            .iter()
+            .any(|entry| !existing_sans.contains(entry));
+    }
+
     let Ok(pem_bytes) = std::fs::read(path) else {
         return true;
     };
@@ -175,15 +251,46 @@ fn needs_san_update(path: &Path) -> bool {
         return true;
     }
     let der = certs[0].as_ref();
-    required_dns_san_names()
-        .into_iter()
+    required_sans.iter().any(|entry| match entry {
         // Wildcard entries are not required for compatibility checks.
-        .filter(|name| !name.starts_with("*."))
-        .any(|name| !der_contains_ascii(der, &name))
+        ServerSan::Dns(name) if !name.starts_with("*.") => !der_contains_ascii(der, name),
+        // Legacy certs do not carry SAN metadata, so require one regeneration
+        // to pick up any non-loopback runtime IPs.
+        ServerSan::Ip(ip) if !is_default_loopback_ip(ip) => true,
+        _ => false,
+    })
+}
+
+fn read_san_metadata(path: &Path) -> Option<Vec<ServerSan>> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let mut sans = Vec::new();
+    sans.extend(
+        contents
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter_map(ServerSan::from_metadata_line),
+    );
+    Some(normalize_sans(sans))
+}
+
+fn write_san_metadata(path: &Path, sans: &[ServerSan]) -> Result<()> {
+    let contents = sans
+        .iter()
+        .map(ServerSan::metadata_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let contents = if contents.is_empty() {
+        String::new()
+    } else {
+        format!("{contents}\n")
+    };
+    std::fs::write(path, contents).context("write server SAN metadata")?;
+    Ok(())
 }
 
 /// Generate CA + server certificates. Returns (ca_cert, ca_key, server_cert, server_key) PEM strings.
-fn generate_all() -> Result<(String, String, String, String)> {
+fn generate_all(required_sans: &[ServerSan]) -> Result<(String, String, String, String)> {
     let now = OffsetDateTime::now_utc();
 
     // --- CA ---
@@ -208,16 +315,13 @@ fn generate_all() -> Result<(String, String, String, String)> {
     server_params
         .distinguished_name
         .push(DnType::CommonName, LOCALHOST_DOMAIN);
-    let mut subject_alt_names: Vec<SanType> = required_dns_san_names()
-        .into_iter()
-        .filter_map(|name| name.as_str().try_into().ok().map(SanType::DnsName))
+    let subject_alt_names: Vec<SanType> = required_sans
+        .iter()
+        .filter_map(|entry| match entry {
+            ServerSan::Dns(name) => name.as_str().try_into().ok().map(SanType::DnsName),
+            ServerSan::Ip(ip) => Some(SanType::IpAddress(*ip)),
+        })
         .collect();
-    subject_alt_names.push(SanType::IpAddress(std::net::IpAddr::V4(
-        std::net::Ipv4Addr::LOCALHOST,
-    )));
-    subject_alt_names.push(SanType::IpAddress(std::net::IpAddr::V6(
-        std::net::Ipv6Addr::LOCALHOST,
-    )));
     server_params.subject_alt_names = subject_alt_names;
     // 1-year validity from today.
     server_params.not_before = now;
@@ -306,7 +410,7 @@ pub async fn start_http_redirect_server(
         .fallback(redirect_to_https)
         .with_state(state);
 
-    let ip: std::net::IpAddr = bind
+    let ip: IpAddr = bind
         .parse()
         .with_context(|| format!("invalid bind address '{bind}'"))?;
     let addr = SocketAddr::new(ip, http_port);
@@ -519,7 +623,8 @@ mod tests {
 
     #[test]
     fn test_generate_all_produces_valid_pems() {
-        let (ca_cert, ca_key, server_cert, server_key) = generate_all().unwrap();
+        let (ca_cert, ca_key, server_cert, server_key) =
+            generate_all(&default_required_sans()).unwrap();
         assert!(ca_cert.contains("BEGIN CERTIFICATE"));
         assert!(ca_key.contains("BEGIN PRIVATE KEY"));
         assert!(server_cert.contains("BEGIN CERTIFICATE"));
@@ -530,7 +635,7 @@ mod tests {
     fn test_certs_persist_to_disk() {
         let tmp = tempfile::tempdir().unwrap();
         let mgr = FsCertManager::with_dir(tmp.path().to_path_buf());
-        let (ca, cert, key) = mgr.ensure_certs().unwrap();
+        let (ca, cert, key) = mgr.ensure_certs(&[]).unwrap();
         assert!(ca.exists());
         assert!(cert.exists());
         assert!(key.exists());
@@ -540,11 +645,11 @@ mod tests {
     fn test_certs_not_regenerated_if_fresh() {
         let tmp = tempfile::tempdir().unwrap();
         let mgr = FsCertManager::with_dir(tmp.path().to_path_buf());
-        let (_, cert1, _) = mgr.ensure_certs().unwrap();
+        let (_, cert1, _) = mgr.ensure_certs(&[]).unwrap();
         let mtime1 = std::fs::metadata(&cert1).unwrap().modified().unwrap();
 
         // Second call should not regenerate.
-        let (_, cert2, _) = mgr.ensure_certs().unwrap();
+        let (_, cert2, _) = mgr.ensure_certs(&[]).unwrap();
         let mtime2 = std::fs::metadata(&cert2).unwrap().modified().unwrap();
         assert_eq!(mtime1, mtime2);
     }
@@ -553,14 +658,19 @@ mod tests {
     fn test_load_rustls_config() {
         let tmp = tempfile::tempdir().unwrap();
         let mgr = FsCertManager::with_dir(tmp.path().to_path_buf());
-        let (_ca, cert, key) = mgr.ensure_certs().unwrap();
+        let (_ca, cert, key) = mgr.ensure_certs(&[]).unwrap();
         let config = mgr.build_rustls_config(&cert, &key);
         assert!(config.is_ok());
     }
 
     #[test]
     fn test_is_expired_missing_file() {
-        assert!(is_expired(Path::new("/nonexistent/file.pem"), 30));
+        assert!(is_expired(
+            Path::new("/nonexistent/file.pem"),
+            Path::new("/nonexistent/server-sans.txt"),
+            30,
+            &default_required_sans()
+        ));
     }
 
     #[test]
@@ -584,6 +694,65 @@ mod tests {
         append_system_host_sans(&mut names, "localhost");
         append_system_host_sans(&mut names, LOCALHOST_DOMAIN);
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn required_server_sans_include_runtime_ip_without_duplicates() {
+        let sans = required_server_sans(&[
+            ServerSan::Ip("192.168.1.9".parse().unwrap()),
+            ServerSan::Ip("192.168.1.9".parse().unwrap()),
+        ]);
+        let count = sans
+            .iter()
+            .filter(|entry| matches!(entry, ServerSan::Ip(ip) if ip.to_string() == "192.168.1.9"))
+            .count();
+        assert_eq!(count, 1);
+        assert!(
+            sans.contains(&ServerSan::Ip(std::net::Ipv4Addr::LOCALHOST.into())),
+            "default loopback SANs should remain present"
+        );
+    }
+
+    #[test]
+    fn certs_regenerate_when_runtime_sans_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = FsCertManager::with_dir(tmp.path().to_path_buf());
+
+        let runtime_a = [ServerSan::Ip("192.168.1.9".parse().unwrap())];
+        let (_, cert1, _) = mgr.ensure_certs(&runtime_a).unwrap();
+        let cert1_pem = std::fs::read_to_string(&cert1).unwrap();
+
+        let (_, cert2, _) = mgr.ensure_certs(&runtime_a).unwrap();
+        let cert2_pem = std::fs::read_to_string(&cert2).unwrap();
+        assert_eq!(
+            cert1_pem, cert2_pem,
+            "same SAN set should not regenerate certs"
+        );
+
+        let runtime_b = [ServerSan::Ip("192.168.1.10".parse().unwrap())];
+        let (_, cert3, _) = mgr.ensure_certs(&runtime_b).unwrap();
+        let cert3_pem = std::fs::read_to_string(&cert3).unwrap();
+        assert!(
+            cert3_pem != cert2_pem,
+            "changing runtime SANs should regenerate certs"
+        );
+    }
+
+    #[test]
+    fn read_san_metadata_ignores_invalid_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let metadata_path = tmp.path().join("server-sans.txt");
+        std::fs::write(
+            &metadata_path,
+            "dns:gateway.local\nbogus line\nip:192.168.1.8\n\nip:not-an-ip\n",
+        )
+        .unwrap();
+
+        let sans = read_san_metadata(&metadata_path).unwrap();
+        assert_eq!(sans, vec![
+            ServerSan::Dns("gateway.local".to_string()),
+            ServerSan::Ip("192.168.1.8".parse().unwrap()),
+        ]);
     }
 
     #[test]

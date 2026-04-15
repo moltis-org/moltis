@@ -280,6 +280,19 @@ pub fn import(
         ));
     }
 
+    // Convert non-default agents into spawn presets
+    let presets = agents::agents_to_presets(&imported_agents);
+    if !presets.is_empty() {
+        if let Err(e) = persist_agent_presets(&presets, config_dir) {
+            warn!("failed to persist agent presets: {e}");
+        } else {
+            info!(
+                count = presets.len(),
+                "persisted agent presets to moltis.toml"
+            );
+        }
+    }
+
     // Always add TODO items for unsupported features
     add_todos(&mut report, detection);
 
@@ -388,6 +401,28 @@ fn persist_identity(imported: &identity::ImportedIdentity, config_dir: &Path) ->
     if let Some(ref user_name) = imported.user_name {
         debug!(user_name, "persisting user name to moltis.toml");
         config.user.name = Some(user_name.clone());
+    }
+
+    save_config_to_path(&config_path, &config)
+}
+
+/// Persist imported agent presets to `[agents.presets.*]` in `moltis.toml`.
+///
+/// Merges with existing presets — existing presets with the same name are
+/// preserved (not overwritten) so re-imports don't discard user tweaks.
+fn persist_agent_presets(
+    presets: &std::collections::HashMap<String, moltis_config::schema::AgentPreset>,
+    config_dir: &Path,
+) -> error::Result<()> {
+    let config_path = config_dir.join("moltis.toml");
+    let mut config = load_or_default_config(&config_path);
+
+    for (id, preset) in presets {
+        if config.agents.presets.contains_key(id) {
+            debug!(preset_id = %id, "agent preset already exists, skipping");
+            continue;
+        }
+        config.agents.presets.insert(id.clone(), preset.clone());
     }
 
     save_config_to_path(&config_path, &config)
@@ -503,11 +538,6 @@ fn save_config_to_path(path: &Path, config: &moltis_config::MoltisConfig) -> err
 }
 
 fn add_todos(report: &mut ImportReport, detection: &OpenClawDetection) {
-    report.add_todo(
-        "Sub-agents",
-        "OpenClaw's agent delegation/sub-agent spawning is not yet supported in Moltis.",
-    );
-
     for channel in &detection.unsupported_channels {
         report.add_todo(
             format!("{channel} channel"),
@@ -727,9 +757,9 @@ mod tests {
         // Check import state saved
         assert!(data_dir.join("openclaw-import-state.json").is_file());
 
-        // Check TODOs generated
+        // Check TODOs generated (sub-agents no longer a TODO since presets are supported)
         assert!(!report.todos.is_empty());
-        assert!(report.todos.iter().any(|t| t.feature == "Sub-agents"));
+        assert!(!report.todos.iter().any(|t| t.feature == "Sub-agents"));
     }
 
     #[test]
@@ -1145,5 +1175,105 @@ mod tests {
             content.contains("# See docs for all options"),
             "documentation comment should be preserved, got:\n{content}"
         );
+    }
+
+    #[test]
+    fn import_creates_agent_presets_for_non_default_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Multi-agent config: main + researcher (with model override)
+        std::fs::write(
+            home.join("openclaw.json"),
+            r#"{
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "anthropic/claude-opus-4-6"}
+                    },
+                    "list": [
+                        {"id": "main", "default": true, "name": "Claude"},
+                        {"id": "researcher", "name": "Scout", "model": "anthropic/claude-haiku-3-5-20241022"}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config_dir = tmp.path().join("config");
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        let detection = detect::detect_at(home).unwrap();
+        let _report = import(&detection, &ImportSelection::all(), &config_dir, &data_dir);
+
+        // moltis.toml should contain a preset for the non-default agent
+        let content = std::fs::read_to_string(config_dir.join("moltis.toml")).unwrap();
+        let config: moltis_config::MoltisConfig = toml::from_str(&content).unwrap();
+
+        assert!(
+            config.agents.presets.contains_key("researcher"),
+            "preset 'researcher' should be created"
+        );
+
+        let preset = config.agents.presets.get("researcher").unwrap();
+        assert_eq!(preset.identity.name.as_deref(), Some("Scout"));
+        assert_eq!(
+            preset.model.as_deref(),
+            Some("anthropic/claude-haiku-3-5-20241022")
+        );
+    }
+
+    #[test]
+    fn import_does_not_overwrite_existing_presets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(&home).unwrap();
+
+        std::fs::write(
+            home.join("openclaw.json"),
+            r#"{
+                "agents": {
+                    "list": [
+                        {"id": "main", "default": true, "name": "Claude"},
+                        {"id": "helper", "name": "Helper Bot"}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config_dir = tmp.path().join("config");
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        // Pre-existing config with a customized "helper" preset
+        let mut existing = moltis_config::MoltisConfig::default();
+        existing
+            .agents
+            .presets
+            .insert("helper".to_string(), moltis_config::schema::AgentPreset {
+                identity: moltis_config::AgentIdentity {
+                    name: Some("Custom Helper".to_string()),
+                    ..Default::default()
+                },
+                model: Some("openai/gpt-4o".to_string()),
+                ..Default::default()
+            });
+        let toml_str = toml::to_string_pretty(&existing).unwrap();
+        std::fs::write(config_dir.join("moltis.toml"), &toml_str).unwrap();
+
+        let detection = detect::detect_at(home).unwrap();
+        import(&detection, &ImportSelection::all(), &config_dir, &data_dir);
+
+        let content = std::fs::read_to_string(config_dir.join("moltis.toml")).unwrap();
+        let config: moltis_config::MoltisConfig = toml::from_str(&content).unwrap();
+
+        // Existing preset should be preserved, not overwritten
+        let preset = config.agents.presets.get("helper").unwrap();
+        assert_eq!(preset.identity.name.as_deref(), Some("Custom Helper"));
+        assert_eq!(preset.model.as_deref(), Some("openai/gpt-4o"));
     }
 }

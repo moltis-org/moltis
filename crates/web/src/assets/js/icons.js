@@ -29,6 +29,12 @@ export function makeMatrixIcon() {
 	return el;
 }
 
+export function makeNostrIcon() {
+	var el = document.createElement("span");
+	el.className = "icon icon-nostr";
+	return el;
+}
+
 export function makeCronIcon() {
 	var el = document.createElement("span");
 	el.className = "icon icon-cron";

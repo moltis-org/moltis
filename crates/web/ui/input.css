@@ -1881,6 +1881,10 @@
     -webkit-mask-image: url("./icons/masks/mask-7bc25523b909f60a.svg");
     mask-image: url("./icons/masks/mask-7bc25523b909f60a.svg");
   }
+  .icon-nostr {
+    -webkit-mask-image: url("./icons/masks/nostr.svg");
+    mask-image: url("./icons/masks/nostr.svg");
+  }
   .icon-cron {
     -webkit-mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");
     mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");
@@ -2124,6 +2128,10 @@
   .icon-graphql {
     -webkit-mask-image: url("./icons/masks/mask-4440661ac01a3ffb.svg");
     mask-image: url("./icons/masks/mask-4440661ac01a3ffb.svg");
+  }
+  .icon-webhooks {
+    -webkit-mask-image: url("./icons/nav/webhooks.svg");
+    mask-image: url("./icons/nav/webhooks.svg");
   }
 }
 

@@ -272,6 +272,10 @@ pub struct OpenAiTtsConfig {
     )]
     pub api_key: Option<Secret<String>>,
 
+    /// API base URL (default: https://api.openai.com/v1).
+    /// Override for OpenAI-compatible TTS servers (e.g. Chatterbox, local TTS).
+    pub base_url: Option<String>,
+
     /// Voice to use (alloy, echo, fable, onyx, nova, shimmer).
     pub voice: Option<String>,
 
@@ -444,6 +448,10 @@ pub struct WhisperConfig {
         deserialize_with = "deserialize_option_secret"
     )]
     pub api_key: Option<Secret<String>>,
+
+    /// API base URL (default: https://api.openai.com/v1).
+    /// Override for OpenAI-compatible STT servers (e.g. faster-whisper-server).
+    pub base_url: Option<String>,
 
     /// Model to use (whisper-1).
     pub model: Option<String>,

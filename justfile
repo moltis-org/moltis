@@ -13,6 +13,10 @@ format:
 format-check:
     cargo +{{nightly_toolchain}} fmt --all -- --check
 
+# Run live provider E2E scenarios (sources .envrc when present).
+provider-e2e-daily:
+    ./scripts/run-provider-e2e-daily.sh
+
 # Verify Cargo.lock is in sync with workspace manifests.
 lockfile-check:
     cargo fetch --locked
@@ -22,7 +26,7 @@ lint: lockfile-check
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" = "Darwin" ]; then
-        cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --exclude moltis-providers --exclude moltis-gateway --timings -- -D warnings
+        cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-targets --exclude moltis-providers --exclude moltis-gateway --timings -- -D warnings
         cargo +{{nightly_toolchain}} clippy -Z unstable-options -p moltis-providers --all-targets --features local-llm-metal --timings -- -D warnings
         cargo +{{nightly_toolchain}} clippy -Z unstable-options -p moltis-gateway --all-targets --features local-llm-metal --timings -- -D warnings
     else

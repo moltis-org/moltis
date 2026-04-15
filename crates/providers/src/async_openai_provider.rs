@@ -84,16 +84,18 @@ fn build_messages(messages: &[ChatMessage]) -> anyhow::Result<Vec<ChatCompletion
             },
             ChatMessage::User {
                 content: UserContent::Text(text),
+                name,
             } => {
-                out.push(
-                    ChatCompletionRequestUserMessageArgs::default()
-                        .content(text.as_str())
-                        .build()?
-                        .into(),
-                );
+                let mut builder = ChatCompletionRequestUserMessageArgs::default();
+                builder.content(text.as_str());
+                if let Some(name) = name {
+                    builder.name(name.clone());
+                }
+                out.push(builder.build()?.into());
             },
             ChatMessage::User {
                 content: UserContent::Multimodal(parts),
+                name,
             } => {
                 let content_parts: Vec<ChatCompletionRequestUserMessageContentPart> = parts
                     .iter()
@@ -119,7 +121,7 @@ fn build_messages(messages: &[ChatMessage]) -> anyhow::Result<Vec<ChatCompletion
                 out.push(ChatCompletionRequestMessage::User(
                     async_openai::types::chat::ChatCompletionRequestUserMessage {
                         content: ChatCompletionRequestUserMessageContent::Array(content_parts),
-                        name: None,
+                        name: name.clone(),
                     },
                 ));
             },
@@ -246,5 +248,72 @@ impl LlmProvider for AsyncOpenAiProvider {
 
             yield StreamEvent::Done(Usage::default());
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::build_messages,
+        async_openai::types::chat::{
+            ChatCompletionRequestMessage, ChatCompletionRequestUserMessageContent,
+            ChatCompletionRequestUserMessageContentPart,
+        },
+        moltis_agents::model::{ChatMessage, ContentPart, UserContent},
+    };
+
+    #[test]
+    fn build_messages_preserves_name_for_text_user_messages() {
+        let messages = vec![ChatMessage::User {
+            content: UserContent::Text("hello".into()),
+            name: Some("Alice".into()),
+        }];
+
+        let built = build_messages(&messages).expect("messages should build");
+        assert_eq!(built.len(), 1);
+        match &built[0] {
+            ChatCompletionRequestMessage::User(msg) => {
+                assert_eq!(msg.name.as_deref(), Some("Alice"));
+                assert_eq!(
+                    msg.content,
+                    ChatCompletionRequestUserMessageContent::Text("hello".into())
+                );
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_messages_preserves_name_for_multimodal_user_messages() {
+        let messages = vec![ChatMessage::User {
+            content: UserContent::Multimodal(vec![
+                ContentPart::Text("describe this".into()),
+                ContentPart::Image {
+                    media_type: "image/png".into(),
+                    data: "base64data".into(),
+                },
+            ]),
+            name: Some("Alice".into()),
+        }];
+
+        let built = build_messages(&messages).expect("messages should build");
+        assert_eq!(built.len(), 1);
+        match &built[0] {
+            ChatCompletionRequestMessage::User(msg) => {
+                assert_eq!(msg.name.as_deref(), Some("Alice"));
+                let ChatCompletionRequestUserMessageContent::Array(parts) = &msg.content else {
+                    panic!("expected array content");
+                };
+                assert!(matches!(
+                    parts.first(),
+                    Some(ChatCompletionRequestUserMessageContentPart::Text(_))
+                ));
+                assert!(matches!(
+                    parts.get(1),
+                    Some(ChatCompletionRequestUserMessageContentPart::ImageUrl(_))
+                ));
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
     }
 }

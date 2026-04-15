@@ -87,6 +87,12 @@ const READ_METHODS: &[&str] = &[
     "cron.list",
     "cron.status",
     "cron.runs",
+    "webhooks.list",
+    "webhooks.profiles",
+    "webhooks.deliveries",
+    "webhooks.delivery.get",
+    "webhooks.delivery.payload",
+    "webhooks.delivery.actions",
     "heartbeat.status",
     "heartbeat.runs",
     "system-presence",
@@ -96,6 +102,7 @@ const READ_METHODS: &[&str] = &[
     "chat.history",
     "chat.context",
     "chat.raw_prompt",
+    "chat.full_context",
     "providers.available",
     "providers.oauth.status",
     "providers.local.system_info",
@@ -127,6 +134,7 @@ const READ_METHODS: &[&str] = &[
 
 const WRITE_METHODS: &[&str] = &[
     "send",
+    "chat.prompt_memory.refresh",
     "agent",
     "agent.wait",
     "agent.identity.update",
@@ -166,6 +174,7 @@ const WRITE_METHODS: &[&str] = &[
     "browser.request",
     "logs.ack",
     "models.detect_supported",
+    "models.cancel_detect",
     "models.test",
     "providers.save_key",
     "providers.save_model",
@@ -218,6 +227,10 @@ const WRITE_METHODS: &[&str] = &[
     "cron.update",
     "cron.remove",
     "cron.run",
+    "webhooks.get",
+    "webhooks.create",
+    "webhooks.update",
+    "webhooks.delete",
     "heartbeat.update",
     "heartbeat.run",
     "voice.config.save_key",
@@ -757,27 +770,5 @@ mod tests {
         assert!(
             authorize_method("system.describe", "operator", &scopes(&["operator.read"])).is_none()
         );
-    }
-
-    #[test]
-    fn model_probe_params_include_provider_when_present() {
-        let params = services::model_probe_params(Some("github-copilot"));
-        assert_eq!(params["background"], serde_json::json!(true));
-        assert_eq!(params["reason"], serde_json::json!("provider_connected"));
-        assert_eq!(params["provider"], serde_json::json!("github-copilot"));
-    }
-
-    #[test]
-    fn model_probe_params_omit_provider_when_missing() {
-        let params = services::model_probe_params(None);
-        assert_eq!(params["background"], serde_json::json!(true));
-        assert_eq!(params["reason"], serde_json::json!("provider_connected"));
-        assert!(params.get("provider").is_none());
-    }
-
-    #[test]
-    fn model_probe_params_omit_provider_when_blank() {
-        let params = services::model_probe_params(Some("   "));
-        assert!(params.get("provider").is_none());
     }
 }

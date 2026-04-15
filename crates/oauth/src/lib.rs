@@ -8,6 +8,7 @@ pub mod error;
 pub mod flow;
 pub mod kimi;
 pub mod pkce;
+pub mod redirect;
 pub mod registration_store;
 pub mod storage;
 pub mod types;
@@ -23,6 +24,7 @@ pub use {
     },
     flow::OAuthFlow,
     kimi::kimi_headers,
+    redirect::normalize_loopback_redirect,
     registration_store::{RegistrationStore, StoredRegistration},
     storage::TokenStore,
     types::{OAuthConfig, OAuthTokens, PkceChallenge, serialize_option_secret, serialize_secret},

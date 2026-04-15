@@ -15,8 +15,8 @@ import {
 import { highlightCodeBlocks } from "./code-highlight.js";
 import * as gon from "./gon.js";
 import {
+	formatAssistantTokenUsage,
 	formatTokenSpeed,
-	formatTokens,
 	parseAgentsListPayload,
 	renderAudioPlayer,
 	renderDocument,
@@ -42,7 +42,7 @@ import {
 	replaceSessionHistory,
 	upsertSessionHistoryMessage,
 } from "./stores/session-history-cache.js";
-import { sessionStore } from "./stores/session-store.js";
+import { insertSessionInOrder, sessionStore } from "./stores/session-store.js";
 import { confirmDialog } from "./ui.js";
 
 var SESSION_PREVIEW_MAX_CHARS = 200;
@@ -544,6 +544,10 @@ newSessionBtn.addEventListener("click", () => {
 	}
 });
 
+export function isArchivableSession(session) {
+	return session.key !== "main" && (session.activeChannel !== true || session.archived === true);
+}
+
 function isClearableSession(session) {
 	var isChannelSessionKey =
 		session.key.startsWith("telegram:") ||
@@ -687,7 +691,7 @@ function createModelFooter(msg) {
 	ft.className = "msg-model-footer";
 	var ftText = msg.provider ? `${msg.provider} / ${msg.model}` : msg.model;
 	if (msg.inputTokens || msg.outputTokens) {
-		ftText += ` \u00b7 ${formatTokens(msg.inputTokens || 0)} in / ${formatTokens(msg.outputTokens || 0)} out`;
+		ftText += ` \u00b7 ${formatAssistantTokenUsage(msg.inputTokens, msg.outputTokens, msg.cacheReadTokens)}`;
 	}
 	var textSpan = document.createElement("span");
 	textSpan.textContent = ftText;
@@ -1172,7 +1176,7 @@ function ensureSessionInClientStore(key, entry, projectId) {
 	// Keep state.js mirror in sync for legacy call sites.
 	var inLegacy = S.sessions.some((s) => s.key === key);
 	if (!inLegacy) {
-		S.setSessions([...S.sessions, created]);
+		S.setSessions(insertSessionInOrder(S.sessions, created));
 	}
 	return createdSession;
 }

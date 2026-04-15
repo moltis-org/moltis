@@ -37,7 +37,7 @@ export function toggleVoiceProvider(providerId, enabled, type) {
  * Save an API key (and optional settings) for a voice provider.
  * @param {string} providerId
  * @param {string} apiKey
- * @param {object} [opts] - Optional TTS settings: voice, model, languageCode
+ * @param {object} [opts] - Optional settings: voice, model, languageCode, baseUrl
  */
 export function saveVoiceKey(providerId, apiKey, opts) {
 	var payload = { provider: providerId, api_key: apiKey };
@@ -47,7 +47,25 @@ export function saveVoiceKey(providerId, apiKey, opts) {
 	}
 	if (opts?.model) payload.model = opts.model;
 	if (opts?.languageCode) payload.languageCode = opts.languageCode;
+	if (typeof opts?.baseUrl === "string") payload.baseUrl = opts.baseUrl;
 	return sendRpc("voice.config.save_key", payload);
+}
+
+/**
+ * Save non-secret voice provider settings.
+ * @param {string} providerId
+ * @param {object} [opts] - Optional settings: voice, model, languageCode, baseUrl
+ */
+export function saveVoiceSettings(providerId, opts) {
+	var payload = { provider: providerId };
+	if (opts?.voice) {
+		payload.voice = opts.voice;
+		payload.voiceId = opts.voice;
+	}
+	if (opts?.model) payload.model = opts.model;
+	if (opts?.languageCode) payload.languageCode = opts.languageCode;
+	if (typeof opts?.baseUrl === "string") payload.baseUrl = opts.baseUrl;
+	return sendRpc("voice.config.save_settings", payload);
 }
 
 /**

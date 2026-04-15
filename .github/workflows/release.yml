@@ -182,6 +182,16 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           toolchain: stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Install QMD CLI
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: |
+          npm install -g @tobilu/qmd
+          qmd --version
       - uses: taiki-e/install-action@f176c07a0a40cbfdd08ee9aa8bf1655701d11e69 # v2.67.25
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:

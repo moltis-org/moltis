@@ -186,16 +186,22 @@ function SessionItem({ session, activeKey, depth, keyMap, refreshing }) {
 	var agentId = session.agent_id || "main";
 	var showAgentBadge = !!agentId && agentId !== "main";
 
-	function onClick() {
+	var href = sessionPath(session.key);
+
+	function onClick(event) {
+		if (event.defaultPrevented) return;
+		if (event.button !== 0) return;
+		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+		event.preventDefault();
 		if (currentPrefix !== "/chats") {
-			navigate(sessionPath(session.key));
+			navigate(href);
 		} else {
 			switchSession(session.key);
 		}
 	}
 
 	return html`
-		<div class=${className} data-session-key=${session.key} style=${style} onClick=${onClick}>
+		<a href=${href} class=${className} data-session-key=${session.key} style=${style} onClick=${onClick}>
 			<div class="session-info">
 				<div class="session-label">
 					<${SessionIcon} session=${session} isBranch=${isBranch} />
@@ -223,7 +229,7 @@ function SessionItem({ session, activeKey, depth, keyMap, refreshing }) {
 				${preview && html`<div class="session-preview">${preview}</div>`}
 				<${SessionMeta} session=${session} />
 			</div>
-		</div>
+		</a>
 	`;
 }
 
@@ -234,6 +240,7 @@ export function SessionList() {
 	var refreshingKey = sessionStore.refreshInProgressKey.value;
 	var filterId = projectStore.projectFilterId.value;
 	var tab = sessionStore.sessionListTab.value;
+	var showArchived = sessionStore.showArchivedSessions.value;
 
 	// Spinner animation via setInterval
 	var spinnersRef = useRef(null);
@@ -252,7 +259,7 @@ export function SessionList() {
 
 	var filtered = filterId ? allSessions.filter((s) => s.projectId === filterId) : allSessions;
 	if (tab === "sessions") {
-		filtered = filtered.filter((s) => !(s.key || "").startsWith("cron:"));
+		filtered = filtered.filter((s) => !(s.key || "").startsWith("cron:") && (showArchived || !s.archived));
 	} else if (tab === "cron") {
 		filtered = filtered.filter((s) => (s.key || "").startsWith("cron:"));
 	}

@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use {async_trait::async_trait, moltis_common::types::ReplyPayload, tokio::sync::mpsc};
+use {
+    async_trait::async_trait,
+    moltis_common::{hooks::ChannelBinding, types::ReplyPayload},
+    tokio::sync::mpsc,
+};
 
 use crate::{Error, Result, config_view::ChannelConfigView};
 
@@ -18,6 +22,7 @@ pub enum ChannelType {
     Discord,
     Slack,
     Matrix,
+    Nostr,
 }
 
 impl ChannelType {
@@ -30,6 +35,7 @@ impl ChannelType {
             Self::Discord => "discord",
             Self::Slack => "slack",
             Self::Matrix => "matrix",
+            Self::Nostr => "nostr",
         }
     }
 
@@ -42,6 +48,25 @@ impl ChannelType {
             Self::Discord => "Discord",
             Self::Slack => "Slack",
             Self::Matrix => "Matrix",
+            Self::Nostr => "Nostr",
+        }
+    }
+
+    /// Best-effort chat classification for hook and prompt context.
+    #[must_use]
+    pub fn classify_chat(&self, chat_id: &str) -> Option<String> {
+        match self {
+            Self::Telegram => {
+                if chat_id.starts_with("-100") {
+                    Some("channel_or_supergroup".to_string())
+                } else if chat_id.starts_with('-') {
+                    Some("group".to_string())
+                } else {
+                    Some("private".to_string())
+                }
+            },
+            Self::Nostr => Some("dm".to_string()),
+            _ => None,
         }
     }
 
@@ -54,6 +79,7 @@ impl ChannelType {
             Self::Discord => &["token"],
             Self::Slack => &["bot_token", "app_token", "signing_secret"],
             Self::Matrix => &["access_token", "password"],
+            Self::Nostr => &["secret_key"],
         }
     }
 }
@@ -75,6 +101,7 @@ impl std::str::FromStr for ChannelType {
             "discord" => Ok(Self::Discord),
             "slack" => Ok(Self::Slack),
             "matrix" | "element" => Ok(Self::Matrix),
+            "nostr" => Ok(Self::Nostr),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -91,6 +118,7 @@ impl ChannelType {
         Self::Discord,
         Self::Slack,
         Self::Matrix,
+        Self::Nostr,
     ];
 
     /// Returns the static descriptor for this channel type.
@@ -136,12 +164,12 @@ impl ChannelType {
                     inbound_mode: InboundMode::Webhook,
                     supports_outbound: true,
                     supports_streaming: true,
-                    supports_interactive: false,
-                    supports_threads: false,
+                    supports_interactive: true,
+                    supports_threads: true,
                     supports_voice_ingest: false,
                     supports_pairing: false,
                     supports_otp: false,
-                    supports_reactions: false,
+                    supports_reactions: true,
                     supports_location: true,
                 },
             },
@@ -154,7 +182,7 @@ impl ChannelType {
                     supports_streaming: true,
                     supports_interactive: true,
                     supports_threads: true,
-                    supports_voice_ingest: false,
+                    supports_voice_ingest: true,
                     supports_pairing: false,
                     supports_otp: false,
                     supports_reactions: false,
@@ -191,6 +219,22 @@ impl ChannelType {
                     supports_otp: true,
                     supports_reactions: true,
                     supports_location: true,
+                },
+            },
+            Self::Nostr => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Nostr",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: false,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: false,
                 },
             },
         }
@@ -327,8 +371,17 @@ pub trait ChannelEventSink: Send + Sync {
 
     /// Dispatch a slash command (e.g. "new", "clear", "compact", "context")
     /// and return a text result to send back to the channel.
-    async fn dispatch_command(&self, command: &str, reply_to: ChannelReplyTarget)
-    -> Result<String>;
+    ///
+    /// `sender_id` identifies the message sender. Privileged commands
+    /// (`/approve`, `/deny`) are restricted to senders on the channel
+    /// account's allowlist — authorization is enforced centrally by the
+    /// gateway, so channel implementations do not need to handle it.
+    async fn dispatch_command(
+        &self,
+        command: &str,
+        reply_to: ChannelReplyTarget,
+        sender_id: Option<&str>,
+    ) -> Result<String>;
 
     /// Request disabling a channel account due to a runtime error.
     ///
@@ -359,6 +412,19 @@ pub trait ChannelEventSink: Send + Sync {
         _filename: &str,
         _reply_to: &ChannelReplyTarget,
     ) -> Option<String> {
+        None
+    }
+
+    /// Save a non-audio inbound file to the session's media directory.
+    ///
+    /// Returns both the relative media reference and the absolute local path
+    /// on success so the agent can inspect the exact saved file.
+    async fn save_channel_attachment(
+        &self,
+        _file_data: &[u8],
+        _filename: &str,
+        _reply_to: &ChannelReplyTarget,
+    ) -> Option<SavedChannelFile> {
         None
     }
 
@@ -437,15 +503,25 @@ pub struct ChannelMessageMeta {
     pub channel_type: ChannelType,
     pub sender_name: Option<String>,
     pub username: Option<String>,
+    /// Platform-specific sender/peer ID (e.g. Telegram user ID, Discord user ID).
+    /// Used for per-sender tool policy resolution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<String>,
     /// Original inbound message media kind (voice, audio, photo, etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_kind: Option<ChannelMessageKind>,
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Default agent configured for this channel account or chat override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     /// Filename of saved voice audio (set by `save_channel_voice`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_filename: Option<String>,
+    /// Saved inbound documents/files attached to this user message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documents: Option<Vec<ChannelDocumentFile>>,
 }
 
 /// Inbound channel message media kind.
@@ -469,6 +545,28 @@ pub struct ChannelAttachment {
     pub media_type: String,
     /// Raw binary data of the attachment.
     pub data: Vec<u8>,
+}
+
+/// Metadata for a saved inbound channel document.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChannelDocumentFile {
+    /// User-facing original filename when available.
+    pub display_name: String,
+    /// Sanitized stored filename inside session media.
+    pub stored_filename: String,
+    /// MIME type reported by the channel.
+    pub mime_type: String,
+}
+
+/// Metadata for an inbound channel file saved to session media.
+#[derive(Debug, Clone)]
+pub struct SavedChannelFile {
+    /// Original or generated filename used in session media storage.
+    pub filename: String,
+    /// Relative media reference (e.g. `media/main/report.pdf`).
+    pub media_ref: String,
+    /// Absolute filesystem path for local tooling access.
+    pub absolute_path: String,
 }
 
 /// Where to send the LLM response back.
@@ -501,6 +599,58 @@ impl ChannelReplyTarget {
             None => std::borrow::Cow::Borrowed(&self.chat_id),
         }
     }
+}
+
+impl From<&ChannelReplyTarget> for ChannelBinding {
+    fn from(target: &ChannelReplyTarget) -> Self {
+        let channel_type = target.channel_type.as_str().to_string();
+        Self {
+            surface: Some(channel_type.clone()),
+            session_kind: Some("channel".to_string()),
+            channel_type: Some(channel_type),
+            account_id: Some(target.account_id.clone()),
+            chat_id: Some(target.chat_id.clone()),
+            chat_type: target.channel_type.classify_chat(&target.chat_id),
+            sender_id: None,
+        }
+    }
+}
+
+#[must_use]
+pub fn web_session_channel_binding() -> ChannelBinding {
+    ChannelBinding {
+        surface: Some("web".to_string()),
+        session_kind: Some("web".to_string()),
+        ..Default::default()
+    }
+}
+
+pub fn resolve_session_channel_binding(
+    session_key: &str,
+    binding_json: Option<&str>,
+) -> std::result::Result<ChannelBinding, serde_json::Error> {
+    if session_key == "cron:heartbeat" {
+        return Ok(ChannelBinding {
+            surface: Some("heartbeat".to_string()),
+            session_kind: Some("cron".to_string()),
+            ..Default::default()
+        });
+    }
+
+    if session_key.starts_with("cron:") {
+        return Ok(ChannelBinding {
+            surface: Some("cron".to_string()),
+            session_kind: Some("cron".to_string()),
+            ..Default::default()
+        });
+    }
+
+    if let Some(binding_json) = binding_json {
+        let binding = serde_json::from_str::<ChannelReplyTarget>(binding_json)?;
+        return Ok((&binding).into());
+    }
+
+    Ok(web_session_channel_binding())
 }
 
 // ── Interactive messages ─────────────────────────────────────────────────────
@@ -839,6 +989,7 @@ mod tests {
             &self,
             _command: &str,
             _reply_to: ChannelReplyTarget,
+            _sender_id: Option<&str>,
         ) -> Result<String> {
             Ok(String::new())
         }
@@ -1100,7 +1251,7 @@ mod tests {
     #[test]
     fn all_covers_every_variant() {
         // If a new variant is added to ChannelType, this test forces updating ALL.
-        assert_eq!(ChannelType::ALL.len(), 6);
+        assert_eq!(ChannelType::ALL.len(), 7);
         for ct in ChannelType::ALL {
             // descriptor() must not panic
             let desc = ct.descriptor();
@@ -1119,6 +1270,7 @@ mod tests {
         assert_eq!(ChannelType::Discord.descriptor().display_name, "Discord");
         assert_eq!(ChannelType::Slack.descriptor().display_name, "Slack");
         assert_eq!(ChannelType::Matrix.descriptor().display_name, "Matrix");
+        assert_eq!(ChannelType::Nostr.descriptor().display_name, "Nostr");
     }
 
     #[test]
@@ -1176,5 +1328,91 @@ mod tests {
         assert_eq!(json, "\"socket_mode\"");
         let json = serde_json::to_string(&InboundMode::Webhook).unwrap();
         assert_eq!(json, "\"webhook\"");
+    }
+
+    #[test]
+    fn telegram_chat_classification_matches_chat_id_shape() {
+        assert_eq!(
+            ChannelType::Telegram.classify_chat("-100123").as_deref(),
+            Some("channel_or_supergroup")
+        );
+        assert_eq!(
+            ChannelType::Telegram.classify_chat("-42").as_deref(),
+            Some("group")
+        );
+        assert_eq!(
+            ChannelType::Telegram.classify_chat("123").as_deref(),
+            Some("private")
+        );
+        assert!(ChannelType::Discord.classify_chat("123").is_none());
+    }
+
+    #[test]
+    fn channel_reply_target_converts_to_hook_channel_binding() {
+        let target = ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot1".into(),
+            chat_id: "-100999".into(),
+            message_id: Some("7".into()),
+            thread_id: Some("42".into()),
+        };
+
+        let binding: ChannelBinding = (&target).into();
+        assert_eq!(binding.surface.as_deref(), Some("telegram"));
+        assert_eq!(binding.session_kind.as_deref(), Some("channel"));
+        assert_eq!(binding.channel_type.as_deref(), Some("telegram"));
+        assert_eq!(binding.account_id.as_deref(), Some("bot1"));
+        assert_eq!(binding.chat_id.as_deref(), Some("-100999"));
+        assert_eq!(binding.chat_type.as_deref(), Some("channel_or_supergroup"));
+        assert!(binding.sender_id.is_none());
+    }
+
+    #[test]
+    fn resolve_session_channel_binding_classifies_special_sessions() {
+        let heartbeat = resolve_session_channel_binding("cron:heartbeat", None)
+            .unwrap_or_else(|error| panic!("heartbeat binding should resolve: {error}"));
+        assert_eq!(heartbeat.surface.as_deref(), Some("heartbeat"));
+        assert_eq!(heartbeat.session_kind.as_deref(), Some("cron"));
+
+        let cron = resolve_session_channel_binding("cron:nightly", None)
+            .unwrap_or_else(|error| panic!("cron binding should resolve: {error}"));
+        assert_eq!(cron.surface.as_deref(), Some("cron"));
+        assert_eq!(cron.session_kind.as_deref(), Some("cron"));
+
+        let web = resolve_session_channel_binding("main", None)
+            .unwrap_or_else(|error| panic!("web binding should resolve: {error}"));
+        assert_eq!(web.surface.as_deref(), Some("web"));
+        assert_eq!(web.session_kind.as_deref(), Some("web"));
+    }
+
+    #[test]
+    fn resolve_session_channel_binding_extracts_channel_target() {
+        let binding_json = serde_json::to_string(&ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot-main".into(),
+            chat_id: "-100123".into(),
+            message_id: Some("11".into()),
+            thread_id: None,
+        })
+        .unwrap_or_else(|error| panic!("serialize binding: {error}"));
+
+        let binding =
+            resolve_session_channel_binding("telegram:bot-main:-100123", Some(&binding_json))
+                .unwrap_or_else(|error| panic!("channel binding should resolve: {error}"));
+
+        assert_eq!(binding.surface.as_deref(), Some("telegram"));
+        assert_eq!(binding.session_kind.as_deref(), Some("channel"));
+        assert_eq!(binding.channel_type.as_deref(), Some("telegram"));
+        assert_eq!(binding.account_id.as_deref(), Some("bot-main"));
+        assert_eq!(binding.chat_id.as_deref(), Some("-100123"));
+        assert_eq!(binding.chat_type.as_deref(), Some("channel_or_supergroup"));
+    }
+
+    #[test]
+    fn resolve_session_channel_binding_returns_error_for_invalid_json() {
+        let error = resolve_session_channel_binding("telegram:bot-main:-100123", Some("{not-json"))
+            .err()
+            .unwrap_or_else(|| panic!("invalid binding json should fail"));
+        assert!(error.is_syntax());
     }
 }

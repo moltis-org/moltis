@@ -89,8 +89,8 @@ pub trait ChatRuntime: Send + Sync {
     /// Per-session sandbox router, if configured.
     fn sandbox_router(&self) -> Option<&Arc<SandboxRouter>>;
 
-    /// Memory manager for long-term memory search.
-    fn memory_manager(&self) -> Option<&Arc<moltis_memory::manager::MemoryManager>>;
+    /// Memory runtime for long-term memory search.
+    fn memory_manager(&self) -> Option<&moltis_memory::runtime::DynMemoryRuntime>;
 
     // ── Cached location ──────────────────────────────────────────────────
 

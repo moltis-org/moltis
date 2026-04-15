@@ -258,6 +258,8 @@ function AgentForm({ agent, onSave, onCancel }) {
 function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
 	var isMain = agent.id === "main";
 	var isDefault = !!agent.is_default || agent.id === defaultId;
+	var workspacePromptFiles = Array.isArray(agent.workspace_prompt_files) ? agent.workspace_prompt_files : [];
+	var truncatedWorkspacePromptFiles = workspacePromptFiles.filter((file) => file?.truncated);
 	return html`
 		<div class="backend-card">
 			<div class="flex items-center justify-between">
@@ -304,6 +306,22 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
 				html`
 				<div class="text-xs text-[var(--muted)] mt-1">
 					${agent.theme}
+				</div>
+			`
+			}
+			${
+				truncatedWorkspacePromptFiles.length > 0 &&
+				html`
+				<div class="text-xs mt-2 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--text)]">
+					${truncatedWorkspacePromptFiles.map((file, index) => {
+						var name = typeof file.name === "string" ? file.name : "workspace file";
+						var charCount = Number(file.original_chars || 0).toLocaleString();
+						var limitChars = Number(file.limit_chars || 0).toLocaleString();
+						var truncatedChars = Number(file.truncated_chars || 0).toLocaleString();
+						var source = typeof file.source === "string" ? ` (${file.source})` : "";
+						var line = `${name}${source}: ${charCount} chars, limit ${limitChars}, truncated by ${truncatedChars}`;
+						return html`<div key=${`${name}-${index}`}>${line}</div>`;
+					})}
 				</div>
 			`
 			}

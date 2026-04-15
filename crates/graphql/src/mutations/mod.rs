@@ -256,7 +256,7 @@ impl ChatMutation {
         &self,
         ctx: &Context<'_>,
         message: String,
-        session_key: Option<String>,
+        session_key: String,
         model: Option<String>,
     ) -> Result<BoolResult> {
         let s = services!(ctx);
@@ -268,7 +268,7 @@ impl ChatMutation {
     }
 
     /// Abort active chat response.
-    async fn abort(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<BoolResult> {
+    async fn abort(&self, ctx: &Context<'_>, session_key: String) -> Result<BoolResult> {
         let s = services!(ctx);
         from_service(
             s.chat
@@ -278,11 +278,7 @@ impl ChatMutation {
     }
 
     /// Cancel queued chat messages.
-    async fn cancel_queued(
-        &self,
-        ctx: &Context<'_>,
-        session_key: Option<String>,
-    ) -> Result<BoolResult> {
+    async fn cancel_queued(&self, ctx: &Context<'_>, session_key: String) -> Result<BoolResult> {
         let s = services!(ctx);
         from_service(
             s.chat
@@ -292,7 +288,7 @@ impl ChatMutation {
     }
 
     /// Clear chat history for session.
-    async fn clear(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<BoolResult> {
+    async fn clear(&self, ctx: &Context<'_>, session_key: String) -> Result<BoolResult> {
         let s = services!(ctx);
         from_service(
             s.chat
@@ -302,7 +298,7 @@ impl ChatMutation {
     }
 
     /// Compact chat messages.
-    async fn compact(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<BoolResult> {
+    async fn compact(&self, ctx: &Context<'_>, session_key: String) -> Result<BoolResult> {
         let s = services!(ctx);
         from_service(
             s.chat

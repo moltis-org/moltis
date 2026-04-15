@@ -16,8 +16,7 @@ pub mod store;
 pub use {
     error::{Error, Result},
     key::SessionKey,
-    message::{ContentBlock, MessageContent, PersistedMessage},
-    metadata::ExternalAgentKind,
+    message::{ContentBlock, MessageContent, PersistedMessage, UserDocument},
     store::SearchResult,
 };
 

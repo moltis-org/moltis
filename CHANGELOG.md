@@ -19,6 +19,566 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260414.02] - 2026-04-14
+### Changed
+- [node-exec] Merge node exec types into owners
+- [web] Remove prompt memory toolbar from chat header
+
+
+### Fixed
+- [web] Harden flaky e2e tests for cron delete and identity autosave
+- [sandbox] Mask /proc and /sys host metadata in Docker/Podman containers
+- [sandbox] Address PR review — strengthen test assertions
+- [channels] Use rand::RngExt for random_range after rand 0.10 upgrade
+- Update rand 0.10 imports across workspace
+- [onboarding] Surface local-llm and LM Studio in recommended providers
+- [auth] Update password minimum length strings from 8 to 12 characters
+- [slack] Bump slack-morphism to 2.20 to enable TLS for socket mode
+- Regenerate Cargo.lock for reqwest 0.13 and add query feature
+- [web] Restore clear button for main session modal (#671)
+
+## [20260414.01] - 2026-04-14
+### Changed
+- [node-exec] Merge node exec types into owners
+- [web] Remove prompt memory toolbar from chat header
+
+
+### Fixed
+- [web] Harden flaky e2e tests for cron delete and identity autosave
+- [sandbox] Mask /proc and /sys host metadata in Docker/Podman containers
+- [sandbox] Address PR review — strengthen test assertions
+- [channels] Use rand::RngExt for random_range after rand 0.10 upgrade
+- Update rand 0.10 imports across workspace
+- [onboarding] Surface local-llm and LM Studio in recommended providers
+- [auth] Update password minimum length strings from 8 to 12 characters
+
+## [20260413.06] - 2026-04-13
+### Fixed
+- [web] Gate openai live e2e server on api key
+
+## [20260413.05] - 2026-04-13
+### Added
+- [voice] Add local whisper web setup
+- [chat] Show cached input tokens
+
+
+### Changed
+- [providers] Normalize openai schemas with schema crates
+- [providers] Move schema normalization out of mod.rs
+- [chat] Unify usage propagation paths
+
+
+### Removed
+- [httpd] Remove unused route import
+- [httpd] Drop unused get import
+
+
+### Fixed
+- [providers] Sanitize openai tool schemas
+- [providers] Address PR review feedback
+- [providers] Keep openai compat module under file limit
+- [providers] Avoid expect in schema tests
+- [web] Restore nostr channel icons
+- [voice] Address PR review feedback
+- [chat] Satisfy clippy in cached token tests
+- [agents] Preserve streamed cache token usage
+- [openai] Add live e2e coverage and schema guard
+- [sessions] Wire archived sessions through gateway and web ui
+- [sessions] Address archived review feedback
+- [sessions] Allow archiving non-current channel chats
+- [sessions] Preserve orphaned search hits
+- [sessions] Allow unarchiving active channel chats
+
+## [20260413.04] - 2026-04-13
+### Changed
+- Split oversized rust modules
+- Split remaining oversized rust modules
+- Remove replaced module entrypoints
+
+
+### Removed
+- [agents] Remove duplicate tool arg match arm
+
+
+### Fixed
+- [providers] Preserve native tool arg types
+- [gateway] Repair split module blockers
+- Restore post-merge validation
+- Repair local lint regressions
+- [chat] Clean up split validation fallout
+- [gateway] Remove split warning debt
+- [httpd] Restore split module boundaries
+- [httpd] Drop stale server re-export
+- [httpd] Repair test and bridge lint fallout
+- [httpd] Restore vault test imports
+- [telegram] Mark byte-truncated documents
+- [httpd] Repair ngrok server split
+- [provider-setup] Restore ollama validation payload
+- [gateway] Drop duplicate broadcaster default impl
+- [gateway] Remove stale mcp service doc comment
+- [httpd] Move runtime-only route import
+- [tools] Scope apple sandbox helpers to macos
+- [tools] Restore sandbox test imports
+- [ci] Restore main build stability
+
+## [20260413.03] - 2026-04-13
+### Fixed
+- [gateway] Resolve release CI regressions
+
+## [20260413.02] - 2026-04-13
+### Added
+- [voice] Add base_url config for OpenAI TTS and Whisper STT providers
+
+
+### Changed
+- [browser] Type browserless API version as enum
+- [nodes] Extract core types and constants to dedicated crate
+- [nodes] Move pure ssh and env helper functions to node-exec-types
+- [mcp] Extract config parsing functions to moltis-mcp
+- [mcp] Extract MCP-agent tool bridge to dedicated crate
+- Group lock-free broadcast state into Broadcaster struct
+- [tools] Unify cron schema field helper
+
+
+### Fixed
+- [telegram] Persist inbound documents
+- [review] Make inbound document replay robust
+- [browser] Add Browserless v2 websocket fallback support
+- [browser] Change log level from warn to debug for sandboxed browser websocket connection failures
+- Complete MCP bridge extraction and address Greptile review
+- [broadcast] Make seq private, add #[must_use] to next_seq, add tests
+- [chat] Serialize data dir override tests
+- [voice] Address PR review feedback
+- [tools] Hide wasm internals and relax cron schema
+- [tools] Simplify cron schema unions
+- [agents] Preserve legacy tool-call compatibility
+
+
+### Security
+- [nodes] Define NodeInfoProvider trait for decoupling
+
+## [20260413.01] - 2026-04-13
+
+## [20260412.01] - 2026-04-12
+### Added
+- [discord] Handle inbound voice and image attachments
+- [hooks] Include channel provenance in payloads
+- [web] Add Projects section to Settings sidebar navigation
+- [tools] Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep)
+- [tools] Typed error taxonomy for Read (not_found / permission_denied / too_large / not_regular_file)
+- [tools] Phase 1 polish (byte cap, session key, fs-tools feature, contract tests)
+- [tools] CRLF-tolerant Edit recovery for fs tools
+- [tools] Per-session FsState with must-read-before-write + re-read loop detection
+- [tools] [tools.fs] config + path allow/deny policy (phase 4)
+- [tools] Checkpoint_before_mutation + binary base64 + respect_gitignore + docs page
+- [tools] Phase 2 sandbox bridge for Read/Write/Edit/MultiEdit/Glob
+- [tools] Phase 2b — Grep sandbox routing
+- [tools] Phase 3c — adaptive Read paging coupled to context window
+- [chat] Deterministic compaction with budget discipline
+- [chat] Pluggable compaction modes with config + docs
+- [chat] Implement recency_preserving compaction mode
+- [chat] Implement structured compaction mode
+- [chat] Surface mode + token usage in compaction broadcasts
+- [chat,web] Surface compaction mode + tokens in UI and channels
+- [compaction] Add chat.compaction.show_settings_hint opt-out
+- [tools] Claude Code compat — BOM strip, binary extensions, smart quotes, mtime tracking
+- [tools] PDF text extraction in Read tool
+- [tools] Image dispatch in Read + Grep context alias + Edit param aliases
+- [memory] Add prompt memory styles
+- [memory] Extend config surfaces
+- [provider-setup] Remove automatic model probe, add manual Test button
+- [tools] Auto-page reads and serialize fs mutations
+- [tools] Expose read continuation offsets
+- [tools] Surface sandbox scan truncation
+- [tools] Wire layered tool policy into runtime with per-provider, per-agent, per-channel, and per-sender support
+- [tools] Add sandbox tools_policy as layer 6 in policy resolution
+- [channels] Add Nostr DM channel support
+- [channels] Add Nostr web UI, E2E tests, and documentation
+- [channels] Add Nostr to onboarding flow
+- [nostr] Add metrics, NIP-44 decryption, and integration tests
+- [website] Add slack, matrix, and nostr channels
+- [website] Add Nostr channel SVG icon
+- [chat] Add summary budget discipline for compaction
+- [website] Add community quote from discussion #680 and make quotes horizontally scrollable
+- [web] Add option to disable terminal in Web UI
+- [auth] Add brute-force protection with IP ban and account lockout
+
+
+### Changed
+- [chat] Align multimodal rewrite updates
+- [telegram] Extract STT setup hint constant
+- [discord] Reuse inbound downloader per handler
+- [chat] Simplify deterministic compaction module
+- [chat] Split compaction_run into per-strategy submodules
+- [tools] Use ripgrep crates for fs grep
+- [tools] Split read.rs into read/ module with pdf.rs and image.rs
+- [tools] Centralize sandbox filesystem access
+- [media] Sniff mime and expose sandbox file ops
+- [tools] Add native host sandbox file ops
+- [tools] Add container-aware fs transports
+- [tools] Stream OCI file transfers
+- [tools] Stream OCI reads from cp
+
+
+### Fixed
+- [agents] Dispatch ToolResultPersist hooks
+- [agents] Sanitize ToolResultPersist tool names
+- [agents] Handle Z.AI text tool calls and dedupe providers
+- [gateway] Address PR comment follow-ups
+- [hooks] Honor MessageReceived actions
+- [chat] Harden MessageReceived hook handling
+- [telegram] Avoid placeholder voice fallbacks
+- [telegram] Preserve caption when STT unavailable
+- [discord] Address review feedback
+- [discord] Log stt-unavailable voice notes
+- [common] Block mapped ipv6 ssrf bypass
+- [hooks] Address review feedback
+- [chat] Warn on invalid channel bindings
+- [hooks] Address remaining provenance feedback
+- [agents] Warn on invalid hook channel context
+- [plugins] Refresh hook docs and logger timestamps
+- [common] Update message received fixtures
+- [web] Store container ref in teardownProjects, remove unused settings_projects route
+- [tools] Fs tools require absolute paths, add workspace_root for Glob/Grep
+- [agents] Warn on tool name collision in ToolRegistry::register*
+- [compaction] Address code review issues #1-7
+- [compaction] Address Greptile PR #653 review comments
+- [chat] Correct recent_messages_preserved flag in compaction
+- [compaction] Strip preamble and directive from re-compaction extraction
+- [compaction] Invert candidate order so bullets outlive plain lines
+- [compaction] Protect summary tags from budget-pressure dropping
+- [compaction] Address PR #653 review findings
+- [chat] Memory-file summary lookup across all compaction modes
+- [compaction] Extract_summary_body picks newest summary on iterative re-compaction
+- [chat] Wire chat.compaction.threshold_percent into auto-compact trigger
+- [compaction] Address Greptile round-2 review on #653 (P1 + P2)
+- [web] Track compacting status message per-session to avoid removing compact card
+- [compaction] Restore 0.95 default threshold + remove dead code
+- [chat] Close compact/store race and tag auto_compact broadcast paths
+- [compaction] Address Greptile round-5 P2 findings on #653
+- [tools] Enforce exec allowlist when approval_mode is off
+- [tools] Deny dangerous commands in off mode instead of hanging
+- [tools] Warn when safe-bin bypasses explicit allowlist in off mode
+- [config] List tools.policy.profile in preset silent-policy warning
+- [tools] Address filesystem review comments
+- [tools] Address Greptile round-2 findings (max_read_bytes wiring, sandbox note_fs_mutation, truncated semantics)
+- [tools] Address Greptile round-3 findings (Grep policy, must-read sandbox, Glob root deny)
+- [tools] Address Greptile round-4 findings (binary read tracking, sandbox Write new-file)
+- [tools] Sandbox Grep post-filters results through path policy
+- [tools] PDF/image dispatch now enforces path policy, sandbox guard, and FsState recording
+- [memory] Tighten qmd and rpc validation
+- [chat] Honor [skills] enabled=false at runtime
+- [chat] Replace test Mutex<()> with Semaphore
+- [chat] Reuse existing config in context skill discovery
+- [httpd] Redirect remote setup traffic to onboarding wizard
+- [agents] Detect and break tool-call reflex loops (#658)
+- [agents] Address Greptile review feedback on #658
+- [agents] Loop detector handles mixed-outcome batches correctly (#658)
+- [agents] Treat success=false without error field as failure (#658)
+- [e2e] Wait for Preact render flush in matrix senders test
+- [web] Show Clear button for main session in modal
+- [memory] Add missing runtime module
+- [web] Remove unused VALIDATION_HINT_RUNNING_TEXT, clear stale test results
+- [gateway] Unify config-override test lock to prevent flaky test
+- [tools] Smart-quote recovery preserves file content + sandbox grep uses PCRE
+- [tools] Scope tar helper to tests
+- [tools] Preserve loop warnings for auto-paged reads
+- [chat] Populate sender_id in channel binding and runtime context
+- [chat] Read sandbox state from runtime context in PolicyContext
+- [agents] Add missing channel_sender_id field in test
+- [tools] Use struct init instead of field reassign in test
+- [tools] Expand profile field in provider, sender, and sandbox policy layers
+- [httpd] Start stored channels on vault unseal
+- [httpd] Add missing continue in unsupported channel type guard
+- [config] Revert unintended matrix named field promotion
+- [nostr] Fix integration test DM round-trip reliability
+- [nostr] Prevent panic on UTF-8 boundary when truncating large DMs
+- [website] Use official Nostr protocol logo (CC0, mbarulli/nostr-logo)
+- [web] Preserve Nostr OTP settings on edit modal save
+- [nostr] Resolve clippy collapsible_match and len_without_is_empty
+- [nostr] Implement OTP challenge initiation and DM delivery
+- [nostr] Implement OTP verification path for code replies
+- [nostr] Use std::sync::RwLock for accounts map to avoid blocking panic
+- [web] Remove channel-error class from conditionally-rendered error divs
+- [chat] Correct budget accounting bugs in compress_summary
+- [chat] Address greptile review feedback (greploop iteration 1)
+- [channels] Finish discussion 425 follow-ups
+- [channels] Address review feedback
+- [channels] Harden channel command authorization and session scoping
+- [gateway] Truncate approval previews safely
+- [channels] Chunk unicode safely
+- [chat] Isolate sqlite memory tests
+- [web] Stabilize mocked channel refresh
+- [channels] Address greptile review feedback
+- [channels] Truncate command in approve/deny confirmation messages
+- [auth] Second-pass security hardening
+- [web] Address PR review comments
+- [config] Preserve TOML section order on web UI save
+- Apply local fixes
+
+
+### Security
+- [config] Warn when preset tool policies are set but tools.policy is empty
+- [nostr] Address PR review comments
+- [auth] Harden remote access with 9 security improvements
+
+## [20260410.01] - 2026-04-10
+### Added
+- [oauth] Log loopback redirect URI rewrites at debug level
+- [skills] Ship native read_skill tool
+- [skills] Harden read_skill with assets/, binary files, and metadata surfacing
+
+
+### Changed
+- [oauth] Share loopback redirect normalizer and apply to provider setup
+- [oauth] Eliminate dead branches in normalize_loopback_redirect
+
+
+### Removed
+- [web] Stabilize node selector and fork delete e2e
+
+
+### Fixed
+- [gateway] Dcg-guard PATH augmentation and loud missing-dcg warning
+- [gateway] Refresh stale dcg-guard files and use async subprocess
+- [gateway] Dcg-guard HOME fallback and unconditional startup log
+- [agents] Suppress auto-continue after substantive final answer
+- [agents] Address review feedback on auto-continue fix
+- [mcp] Normalize loopback redirect URIs to http for OAuth registration
+- [provider-setup] Normalize pre-loaded loopback redirect URIs
+- [skills] Address Greptile review feedback on read_skill
+- [skills] Address greptile review feedback (greploop iteration 2)
+- [skills] Cap skill body size in read_primary (greploop iteration 3)
+- [skills] Per-subdir sidecar cap + data_dir-scoped discoverer
+- [voice] Honor whisper.model and whisper.language in STT factory
+
+
+### Security
+- [hooks] Pin dcg install to tag and verify checksum
+
+## [20260409.04] - 2026-04-09
+### Added
+- [providers] Add Alibaba Cloud Coding Plan provider
+
+
+### Fixed
+- [ci] Avoid dynamic provider secrets
+
+## [20260409.03] - 2026-04-09
+### Removed
+- Remove redundant http client fallback check
+
+
+### Fixed
+- [common] Ensure User-Agent survives all HTTP client fallback paths
+- [test] Address PR review — clarify comment and assert no Error events
+- [crons] Persist schedule field values across modal re-renders
+- [crons] Read schedule fields as snake_case from server responses
+- [providers] Deliver MiniMax system prompt via first user message
+- [tests] Use streaming probe for OpenAI integration tests
+- [providers] Bump GPT-5 probe output cap to 16 tokens
+- [tests] Use Secret<T> for API keys in model discovery tests
+- [providers] Handle multimodal content in MiniMax system prompt rewrite
+
+## [20260409.02] - 2026-04-09
+### Added
+- [msteams] Comprehensive Teams channel implementation
+- [providers] Add Gemini 3.x models to catalog and update capability detection
+- [providers] Add ModelCapabilities struct to ModelInfo and DiscoveredModel
+- [chat] Use ModelCapabilities in API responses instead of provider lookups
+
+
+### Fixed
+- [web] Integrate Tailscale Funnel into Teams channel setup
+- [web] Remove 'Requires public URL' badge from Teams card
+- [web] Simplify Teams onboarding now that Remote Access step exists
+- [msteams] Address PR review feedback
+- [msteams] Use Graph token for reactions and thread context
+- [msteams] Prevent streaming retry storm and URL injection in search
+- [web] Disambiguate OAuth E2E selector for model picker
+- [web] Keep new chats at top of sidebar
+- Auto-allow direnv in superset worktree setup
+- Load BOOT.md per-session via system prompt instead of broken hook (#594)
+- Remove stale boot-md assertion from discover_hooks test
+- Update model count assertion for gemini-3 reasoning variants
+- [installer] Address PR review feedback
+- [browser] Include Podman in container availability check
+- [browser] Update stale comment to include Podman
+- [gateway] Narrow skill and memory watch roots
+- [gateway] Avoid blocking skill watcher refresh
+- [providers] Extract MiniMax system messages to top-level field
+- [providers] Warn on non-string MiniMax system message content
+- [providers] Add PartialEq/Eq to ModelCapabilities, use infer() in tests
+- [providers] Narrow gemma exclusion to gemma-3n- only
+- [agents] Surface workspace prompt truncation
+- [gateway] Address review feedback
+- [gateway] Match workspace prompt normalization
+- [agents] Make workspace file truncation limit configurable (#593)
+- Replace magic constant with ChatConfig::default() fallback
+- Eliminate double chars().count() and add zero-value validation
+- Report truncation when max_chars is zero
+- Remove duplicate workspace_file_max_chars key in schema map
+- [tools] Wire ExecConfig timeout and max_output_bytes to ExecTool
+- [tools] Make timeout schema description reflect configured default
+- [providers] Resolve 404 when selecting Ollama model in web UI
+- [web] Preserve ollama pull hint in humanizeProbeError
+- [providers] Forward auth header in Ollama native probe fallback
+- Align auth middleware tests with gateway state
+
+## [20260409.01] - 2026-04-09
+### Added
+- [matrix] Add slash command support
+- [models] Make model detection opt-in and add stop button
+
+
+### Fixed
+- [matrix] Match help command by exact name, not prefix
+- [models] Abort probe tasks on cancel, show feedback, await RPC
+- [tls] Include lan bind SANs in auto-generated certs
+- [tls] Address PR review feedback
+- [agents] Use system message for auto-continue nudge instead of user message
+- [common] Add default User-Agent header to shared HTTP client
+- [common] Use MOLTIS_VERSION for default user-agent and apply headers in apply_proxy
+- [agents] Keep auto-continue nudge as user message
+- [provider-setup] Include lmstudio in known_providers and replace ollama name checks
+- [provider-setup] Add dedicated local_only field to KnownProvider
+- Harden superset setup envrc handling
+
+## [20260408.01] - 2026-04-08
+### Added
+- [agents] Auto-continue when model stops mid-task + max iterations UX
+- [config] Make auto-continue tool-call threshold configurable
+
+
+### Fixed
+- Address PR review — translatable continue message, document tool-call threshold
+- Guard auto-continue against min_tool_calls=0 usize tautology
+- [minimax] Restore system prompts and null tool args
+- [providers] Discover live anthropic models
+- [providers] Mark anthropic recommendations globally
+
+## [20260407.01] - 2026-04-07
+### Added
+- [webhooks] Add generic webhook ingress for triggering AI agents
+- [web] Link to Hoppscotch for webhook testing
+- [web] Add CORS to webhook ingress and copy-curl button
+- [website] Add Webhooks to landing page features
+
+
+### Changed
+- [web] Extract webhooks nav icon to external SVG file
+
+
+### Fixed
+- [cli] Report release version in --version output
+- [providers] Propagate cache tokens in Responses API and custom providers
+- [providers] Read cached_tokens from input_tokens_details in non-streaming Responses SSE
+- [agents] Match provider-specific context window error strings
+- [chat] Honor public sessionKey in GraphQL flows
+- [chat] Address PR review — safer mock assertions and precedence test
+- [web] Use globe icon for webhooks settings nav
+- [web] Use ModelSelect and ComboSelect for webhook agent/model fields
+- [web] Use public URL (ngrok/tailscale) for webhook endpoint display
+- Improve webhook test script with verbose output and TLS support
+- Use OnceLock for webhook state fields instead of Arc::get_mut
+- [web] Show Hoppscotch link below webhook list, not only in empty state
+- [web] Match webhooks layout to cron/sandbox and fix nav icon
+- [web] Add missing space before Hoppscotch link
+- [web] Constrain webhooks list width with max-w-form
+- [web] Revert max-w-form, keep webhooks list full width
+- [web] Add webhooks icon to settings nav via components.css
+- [web] Recommend curl and Hoppscotch desktop for webhook testing
+- Use HeaderValue::from_static for CORS headers, remove warning
+- [web] Improve webhook test command button and footer text
+- Don't dedup generic webhooks by body hash, rebuild i18n
+- Address PR review comments
+- [security] Redact auth secrets from webhook API responses
+- Drain unprocessed webhook deliveries on worker startup
+- Include 'processing' deliveries in crash-recovery drain
+- Gitlab_token auth config key mismatch, add regression tests
+- [security] Fail closed on non-parseable Stripe signature timestamp
+- Enable foreign_keys pragma and explicit cascade delete
+- [ci] Restore CHANGELOG.md to main state (changelog guard)
+- Forward agent_id to chat.send_sync in webhook worker
+- Enforce CIDR allowlist, set foreign_keys on pool options
+- [security] Gate forwarded headers on behind_proxy, fix PagerDuty multi-sig
+- Use ConnectInfo for direct IP, disable source_profile on edit
+- [webhooks] Harden webhook execution and secrets
+- Proactive audit — 6 issues found and fixed
+- Wrap cascade deletes in transactions to prevent partial data loss
+- Resolve settings nav CI regression
+
+
+### Security
+- Add webhooks feature documentation
+
+## [20260406.05] - 2026-04-06
+### Added
+- [openclaw-import] Convert non-default agents to spawn_agent presets
+
+
+### Fixed
+- [web] Allow session sidebar links to open in new tabs
+- [web] Tighten session sidebar link accessibility
+- [docker] Add missing default features to Dockerfile build
+- [docker] Use default features instead of explicit list
+
+## [20260406.04] - 2026-04-06
+### Added
+- [website] Add provider/channel pills section and update branding
+- [website] Add positioning, how-it-works, use cases, and community quote
+
+
+### Changed
+- [providers] Avoid quadratic SSE buffer copies
+- [providers] Align copilot stream error handling
+
+
+### Fixed
+- [providers] Route Copilot enterprise tokens via proxy endpoint (#352)
+- [providers] Address PR review comments on Copilot enterprise
+- [providers] Harden Copilot enterprise proxy security
+- [providers] Reject bare IP addresses in Copilot proxy-ep
+- [providers] Address Copilot enterprise review feedback
+- [providers] Stream enterprise copilot responses
+- [website] Crop MiniMax icon, grayscale raster icons, official GraphQL logo
+- [website] Add Discord source links to community quote
+- [website] Update LoC stats on security page
+- [website] Update LoC stats in all locale files
+- [website] Regenerate all locale files with new homepage sections
+- [website] Update i18n titles and regenerate all locale files
+- [website] Translate new homepage sections in all 9 locale files
+- [website] Translate remaining English strings in all locale files
+- [website] Localize injected nav tabs
+- [website] Address greptile review feedback
+- [website] Sync i18n builder with locale pages
+- [website] Correct i18n generator keys
+
+
+### Security
+- [providers] Redact CopilotTokenResponse token in Debug output
+
+## [20260406.03] - 2026-04-06
+### Fixed
+- [web] Restore all-features build
+
+## [20260406.02] - 2026-04-06
+### Fixed
+- [web] Map config reload errors explicitly
+
+## [20260406.01] - 2026-04-06
+### Added
+- [cron] Auto-clean orphaned sessions and prune sandbox containers
+
+
+### Fixed
+- [swift-bridge] Await embedded httpd shutdown
+- [cron] Use time crate for retention math and fix named-session guard
+- [sandbox] Include remove_image_override in cleanup_session
+- [cron] Skip pruning cycle when session key lookup fails
+- [web] Reload offered channels from config
+- [ci] Await channel preload in settings e2e
+
 ## [20260405.06] - 2026-04-05
 ### Security
 - Add GitHub artifact attestations to release workflow

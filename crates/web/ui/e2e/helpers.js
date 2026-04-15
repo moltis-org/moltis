@@ -7,12 +7,17 @@ const { expect } = require("@playwright/test");
 async function expectPageContentMounted(page) {
 	await expect
 		.poll(
-			() => {
-				return page.evaluate(() => {
-					const el = document.getElementById("pageContent");
-					if (!el) return 0;
-					return el.childElementCount;
-				});
+			async () => {
+				try {
+					return await page.evaluate(() => {
+						const el = document.getElementById("pageContent");
+						if (!el) return 0;
+						return el.childElementCount;
+					});
+				} catch (error) {
+					if (isRetryableNavigationError(error)) return 0;
+					throw error;
+				}
 			},
 			{
 				timeout: 20_000,

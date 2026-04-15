@@ -33,11 +33,14 @@ url             = { workspace = true }
 uuid            = { workspace = true }
 which           = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [features]
 agent              = ["moltis-gateway/agent"]
 default            = ["embedded-assets"]
 embedded-assets    = ["dep:include_dir"]
-graphql            = []
+graphql            = ["moltis-gateway/graphql", "moltis-httpd/graphql"]
 mdns               = ["moltis-httpd/mdns"]
 metrics            = ["moltis-httpd/metrics"]
 ngrok              = ["moltis-httpd/ngrok"]

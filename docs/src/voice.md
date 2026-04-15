@@ -104,6 +104,7 @@ similarity_boost = 0.75
 [voice.tts.openai]
 # No api_key needed if OpenAI is configured as an LLM provider or OPENAI_API_KEY is set.
 # api_key = "sk-..."
+# base_url = "http://10.1.2.30:8003"  # Override for OpenAI-compatible servers (e.g. Chatterbox)
 voice = "alloy"  # alloy, echo, fable, onyx, nova, shimmer
 model = "tts-1"
 speed = 1.0
@@ -314,6 +315,7 @@ providers = []          # Optional UI allowlist, empty = show all STT providers
 [voice.stt.whisper]
 # No api_key needed if OpenAI is configured as an LLM provider or OPENAI_API_KEY is set.
 # api_key = "sk-..."
+# base_url = "http://10.1.2.30:8001"  # Override for OpenAI-compatible servers (e.g. faster-whisper-server)
 model = "whisper-1"
 language = "en"     # Optional ISO 639-1 hint
 

@@ -54,7 +54,7 @@ general-purpose).
 | **Daily logs** | `memory/YYYY-MM-DD.md` | `memory/YYYY-MM-DD.md` |
 | **Session transcripts** | `memory/sessions/*.md` | Session JSONL files (separate) |
 | **Extra paths** | Via `memory_dirs` config | Via `memorySearch.extraPaths` |
-| **MEMORY.md loading** | Always available in system prompt | Only in private sessions (not group chats) |
+| **MEMORY.md loading** | Available in system prompt, with configurable live reload or frozen-per-session mode | Only in private sessions (not group chats) |
 
 ### Agent Tools
 
@@ -113,7 +113,7 @@ memory paths and the file watcher to re-index.
 |---------|--------|----------|
 | **Session storage** | SQLite database | JSONL files (append-only, tree structure) |
 | **Auto-compaction** | Yes, near context window limit | Yes, near context window limit |
-| **Manual compaction** | Not yet | `/compact` command with optional instructions |
+| **Manual compaction** | `/compact` (uses [configured compaction strategy](compaction.md#the-four-modes)) | `/compact` command with optional instructions |
 | **Pre-compaction memory flush** | Silent turn via `MemoryWriter` trait | Silent turn via `write_file` tool |
 | **Flush visibility** | Completely hidden from user | Hidden via `NO_REPLY` convention |
 | **Session export to memory** | Markdown files in `memory/sessions/` | Optional (`sessionMemory` experimental flag) |
@@ -207,7 +207,6 @@ context. The implementation differs:
 
 ## What OpenClaw Has That Moltis Does Not (Yet)
 
-- **Manual `/compact` command** with user-specified instructions
 - **CLI memory commands** (`status`, `index`, `search`) for debugging
 - **Session pruning** (cache-TTL based trimming of old tool results)
 - **Gemini and Voyage embedding providers**

@@ -19,7 +19,6 @@ use std::{
 use {
     async_trait::async_trait,
     secrecy::ExposeSecret,
-    serde::{Deserialize, Serialize},
     tokio::{io::AsyncReadExt, process::Command},
     tracing::warn,
 };
@@ -29,8 +28,10 @@ use crate::{
     state::GatewayState,
 };
 
+use moltis_tools::nodes::{NodeInfo, NodeInfoProvider, NodeProviderInfo};
+
 /// Result of a remote command execution on a node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct NodeExecResult {
     pub stdout: String,
     pub stderr: String,
@@ -38,13 +39,13 @@ pub struct NodeExecResult {
 }
 
 /// Environment variables that are safe to forward to a remote node.
-const SAFE_ENV_ALLOWLIST: &[&str] = &["TERM", "LANG", "COLORTERM", "NO_COLOR", "FORCE_COLOR"];
+pub const SAFE_ENV_ALLOWLIST: &[&str] = &["TERM", "LANG", "COLORTERM", "NO_COLOR", "FORCE_COLOR"];
 
 /// Environment variable prefixes that are safe to forward.
-const SAFE_ENV_PREFIX_ALLOWLIST: &[&str] = &["LC_"];
+pub const SAFE_ENV_PREFIX_ALLOWLIST: &[&str] = &["LC_"];
 
 /// Environment variable patterns that must NEVER be forwarded to a remote node.
-const BLOCKED_ENV_PREFIXES: &[&str] = &[
+pub const BLOCKED_ENV_PREFIXES: &[&str] = &[
     "DYLD_",
     "LD_",
     "NODE_OPTIONS",
@@ -53,7 +54,6 @@ const BLOCKED_ENV_PREFIXES: &[&str] = &[
     "RUBYOPT",
     "SHELLOPTS",
     "PS4",
-    // Security-sensitive keys
     "MOLTIS_",
     "OPENAI_",
     "ANTHROPIC_",
@@ -62,23 +62,59 @@ const BLOCKED_ENV_PREFIXES: &[&str] = &[
     "AZURE_",
 ];
 
-const SSH_ID_PREFIX: &str = "ssh:";
-const SSH_TARGET_ID_PREFIX: &str = "ssh:target:";
+/// SSH node ID prefix.
+pub const SSH_ID_PREFIX: &str = "ssh:";
 
-pub(crate) fn ssh_node_id(target: &str) -> String {
+/// SSH target ID prefix.
+pub const SSH_TARGET_ID_PREFIX: &str = "ssh:target:";
+
+pub fn ssh_node_id(target: &str) -> String {
     format!("{SSH_ID_PREFIX}{target}")
 }
 
-fn ssh_stored_node_id(id: i64) -> String {
+pub fn ssh_stored_node_id(id: i64) -> String {
     format!("{SSH_TARGET_ID_PREFIX}{id}")
 }
 
-pub(crate) fn ssh_target_matches(node_ref: &str, target: &str) -> bool {
+pub fn ssh_target_matches(node_ref: &str, target: &str) -> bool {
     node_ref == "ssh" || node_ref == target || node_ref.strip_prefix(SSH_ID_PREFIX) == Some(target)
 }
 
-pub(crate) fn ssh_node_info(target: &str) -> moltis_tools::nodes::NodeInfo {
-    moltis_tools::nodes::NodeInfo {
+pub fn filter_env(env: &HashMap<String, String>) -> HashMap<String, String> {
+    env.iter()
+        .filter(|(key, _)| is_safe_env(key) && is_valid_env_key(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+pub fn is_safe_env(key: &str) -> bool {
+    for prefix in BLOCKED_ENV_PREFIXES {
+        if key.starts_with(prefix) {
+            return false;
+        }
+    }
+
+    if SAFE_ENV_ALLOWLIST.contains(&key) {
+        return true;
+    }
+
+    for prefix in SAFE_ENV_PREFIX_ALLOWLIST {
+        if key.starts_with(prefix) {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn is_valid_env_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(ch) if ch.is_ascii_alphabetic() || ch == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+pub(crate) fn ssh_node_info(target: &str) -> NodeInfo {
+    NodeInfo {
         node_id: ssh_node_id(target),
         display_name: Some(format!("SSH: {target}")),
         platform: "ssh".to_string(),
@@ -99,12 +135,12 @@ pub(crate) fn ssh_node_info(target: &str) -> moltis_tools::nodes::NodeInfo {
     }
 }
 
-fn ssh_target_node_info(target: &SshResolvedTarget) -> moltis_tools::nodes::NodeInfo {
+fn ssh_target_node_info(target: &SshResolvedTarget) -> NodeInfo {
     let auth_service = match target.auth_mode {
         SshAuthMode::System => "ssh-system",
         SshAuthMode::Managed => "ssh-managed",
     };
-    moltis_tools::nodes::NodeInfo {
+    NodeInfo {
         node_id: ssh_stored_node_id(target.id),
         display_name: Some(format!("SSH: {}", target.label)),
         platform: "ssh".to_string(),
@@ -542,43 +578,6 @@ fn ssh_config_quote_path(path: &Path) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// Filter environment variables to the safe allowlist.
-fn filter_env(env: &HashMap<String, String>) -> HashMap<String, String> {
-    env.iter()
-        .filter(|(key, _)| is_safe_env(key) && is_valid_env_key(key))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect()
-}
-
-fn is_safe_env(key: &str) -> bool {
-    // Block dangerous prefixes first.
-    for prefix in BLOCKED_ENV_PREFIXES {
-        if key.starts_with(prefix) {
-            return false;
-        }
-    }
-
-    // Allow exact matches.
-    if SAFE_ENV_ALLOWLIST.contains(&key) {
-        return true;
-    }
-
-    // Allow prefix matches.
-    for prefix in SAFE_ENV_PREFIX_ALLOWLIST {
-        if key.starts_with(prefix) {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn is_valid_env_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    matches!(chars.next(), Some(ch) if ch.is_ascii_alphabetic() || ch == '_')
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-}
-
 fn parse_exec_result(value: &serde_json::Value) -> anyhow::Result<NodeExecResult> {
     // Try structured result first.
     if let Some(stdout) = value.get("stdout").and_then(|v| v.as_str()) {
@@ -739,8 +738,8 @@ impl moltis_tools::exec::NodeExecProvider for GatewayNodeExecProvider {
 // ── Node info provider ──────────────────────────────────────────────────────
 
 /// Convert a `NodeSession` into a serializable `NodeInfo`.
-fn node_to_info(n: &crate::nodes::NodeSession) -> moltis_tools::nodes::NodeInfo {
-    moltis_tools::nodes::NodeInfo {
+fn node_to_info(n: &crate::nodes::NodeSession) -> NodeInfo {
+    NodeInfo {
         node_id: n.node_id.clone(),
         display_name: n.display_name.clone(),
         platform: n.platform.clone(),
@@ -762,7 +761,7 @@ fn node_to_info(n: &crate::nodes::NodeSession) -> moltis_tools::nodes::NodeInfo 
         providers: n
             .providers
             .iter()
-            .map(|p| moltis_tools::nodes::NodeProviderInfo {
+            .map(|p| NodeProviderInfo {
                 provider: p.provider.clone(),
                 models: p.models.clone(),
             })
@@ -770,7 +769,7 @@ fn node_to_info(n: &crate::nodes::NodeSession) -> moltis_tools::nodes::NodeInfo 
     }
 }
 
-/// Bridge that implements [`moltis_tools::nodes::NodeInfoProvider`] by
+/// Bridge that implements [`NodeInfoProvider`] by
 /// reading from the `NodeRegistry` and session metadata in `GatewayState`.
 pub struct GatewayNodeInfoProvider {
     state: Arc<GatewayState>,
@@ -787,8 +786,8 @@ impl GatewayNodeInfoProvider {
 }
 
 #[async_trait]
-impl moltis_tools::nodes::NodeInfoProvider for GatewayNodeInfoProvider {
-    async fn list_nodes(&self) -> Vec<moltis_tools::nodes::NodeInfo> {
+impl NodeInfoProvider for GatewayNodeInfoProvider {
+    async fn list_nodes(&self) -> Vec<NodeInfo> {
         let inner = self.state.inner.read().await;
         let mut nodes: Vec<_> = inner.nodes.list().iter().map(|n| node_to_info(n)).collect();
         drop(inner);
@@ -822,7 +821,7 @@ impl moltis_tools::nodes::NodeInfoProvider for GatewayNodeInfoProvider {
         nodes
     }
 
-    async fn describe_node(&self, node_ref: &str) -> Option<moltis_tools::nodes::NodeInfo> {
+    async fn describe_node(&self, node_ref: &str) -> Option<NodeInfo> {
         if let Some(store) = self.state.credential_store.as_ref() {
             match store.resolve_ssh_target(node_ref).await {
                 Ok(Some(target)) => return Some(ssh_target_node_info(&target)),

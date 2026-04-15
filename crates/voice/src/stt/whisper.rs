@@ -30,14 +30,18 @@ const DEFAULT_MODEL: &str = "whisper-1";
 pub struct WhisperStt {
     client: Client,
     api_key: Option<Secret<String>>,
+    base_url: String,
     model: String,
+    language: Option<String>,
 }
 
 impl std::fmt::Debug for WhisperStt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WhisperStt")
             .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
             .field("model", &self.model)
+            .field("language", &self.language)
             .finish()
     }
 }
@@ -49,31 +53,39 @@ impl Default for WhisperStt {
 }
 
 impl WhisperStt {
+    fn normalize_base_url(base_url: Option<String>) -> String {
+        base_url
+            .map(|url| url.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| API_BASE.into())
+    }
+
     /// Create a new Whisper STT provider.
     #[must_use]
     pub fn new(api_key: Option<Secret<String>>) -> Self {
-        Self {
-            client: Client::new(),
-            api_key,
-            model: DEFAULT_MODEL.into(),
-        }
+        Self::with_options(api_key, None, None, None)
     }
 
-    /// Create with custom model.
+    /// Create with custom model (no base URL or language override).
     #[must_use]
     pub fn with_model(api_key: Option<Secret<String>>, model: Option<String>) -> Self {
+        Self::with_options(api_key, None, model, None)
+    }
+
+    /// Create with custom base URL, model, and language.
+    #[must_use]
+    pub fn with_options(
+        api_key: Option<Secret<String>>,
+        base_url: Option<String>,
+        model: Option<String>,
+        language: Option<String>,
+    ) -> Self {
         Self {
             client: Client::new(),
             api_key,
+            base_url: Self::normalize_base_url(base_url),
             model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
+            language,
         }
-    }
-
-    /// Get the API key, returning an error if not configured.
-    fn get_api_key(&self) -> Result<&Secret<String>> {
-        self.api_key
-            .as_ref()
-            .ok_or_else(|| anyhow!("OpenAI API key not configured for Whisper"))
     }
 
     /// Get file extension for audio format.
@@ -98,12 +110,12 @@ impl SttProvider for WhisperStt {
     }
 
     fn is_configured(&self) -> bool {
-        self.api_key.is_some()
+        // Configured if API key is set, or if using a custom base URL (local servers
+        // like faster-whisper-server don't require auth).
+        self.api_key.is_some() || self.base_url != API_BASE
     }
 
     async fn transcribe(&self, request: TranscribeRequest) -> Result<Transcript> {
-        let api_key = self.get_api_key()?;
-
         let filename = format!("audio.{}", Self::file_extension(request.format));
         let mime_type = Self::mime_type(request.format);
 
@@ -118,7 +130,8 @@ impl SttProvider for WhisperStt {
             .text("model", self.model.clone())
             .text("response_format", "verbose_json");
 
-        if let Some(language) = request.language {
+        // Request language overrides the configured language, otherwise fall back.
+        if let Some(language) = request.language.or_else(|| self.language.clone()) {
             form = form.text("language", language);
         }
 
@@ -126,14 +139,20 @@ impl SttProvider for WhisperStt {
             form = form.text("prompt", prompt);
         }
 
-        let response = self
+        let mut req = self
             .client
-            .post(format!("{API_BASE}/audio/transcriptions"))
-            .header(
+            .post(format!("{}/audio/transcriptions", self.base_url))
+            .multipart(form);
+
+        // Only add auth header if an API key is configured (local servers skip auth).
+        if let Some(api_key) = &self.api_key {
+            req = req.header(
                 "Authorization",
                 format!("Bearer {}", api_key.expose_secret()),
-            )
-            .multipart(form)
+            );
+        }
+
+        let response = req
             .send()
             .await
             .context("failed to send Whisper transcription request")?;
@@ -232,18 +251,79 @@ mod tests {
             prompt: None,
         };
 
+        // Without API key and default base URL, the request will fail
+        // (either connection refused to api.openai.com or auth error).
         let result = provider.transcribe(request).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not configured"));
     }
 
     #[test]
-    fn test_with_model() {
-        let provider = WhisperStt::with_model(
+    fn test_with_options() {
+        let provider = WhisperStt::with_options(
             Some(Secret::new("key".into())),
+            None,
             Some("whisper-large-v3".into()),
+            None,
         );
         assert_eq!(provider.model, "whisper-large-v3");
+        assert_eq!(provider.base_url, API_BASE);
+        assert!(provider.language.is_none());
+    }
+
+    #[test]
+    fn test_with_custom_base_url() {
+        let provider =
+            WhisperStt::with_options(None, Some("http://10.1.2.30:8001".into()), None, None);
+        assert!(provider.is_configured());
+        assert_eq!(provider.base_url, "http://10.1.2.30:8001");
+    }
+
+    #[test]
+    fn test_with_custom_base_url_trims_trailing_slash() {
+        let provider =
+            WhisperStt::with_options(None, Some("http://10.1.2.30:8001/".into()), None, None);
+        assert_eq!(provider.base_url, "http://10.1.2.30:8001");
+    }
+
+    #[test]
+    fn test_with_options_sets_model_and_language() {
+        let provider = WhisperStt::with_options(
+            Some(Secret::new("key".into())),
+            None,
+            Some("whisper-large-v3".into()),
+            Some("ru".into()),
+        );
+        assert_eq!(provider.model, "whisper-large-v3");
+        assert_eq!(provider.language, Some("ru".into()));
+    }
+
+    #[test]
+    fn test_with_options_defaults() {
+        let provider = WhisperStt::with_options(Some(Secret::new("key".into())), None, None, None);
+        assert_eq!(provider.model, DEFAULT_MODEL);
+        assert!(provider.language.is_none());
+    }
+
+    #[test]
+    fn test_new_delegates_to_with_options() {
+        let provider = WhisperStt::new(Some(Secret::new("key".into())));
+        assert_eq!(provider.model, DEFAULT_MODEL);
+        assert!(provider.language.is_none());
+    }
+
+    #[test]
+    fn test_debug_includes_language() {
+        let provider = WhisperStt::with_options(
+            Some(Secret::new("super-secret-key".into())),
+            None,
+            Some("whisper-large-v3".into()),
+            Some("ru".into()),
+        );
+        let debug_output = format!("{:?}", provider);
+        assert!(debug_output.contains("[REDACTED]"));
+        assert!(!debug_output.contains("super-secret-key"));
+        assert!(debug_output.contains("whisper-large-v3"));
+        assert!(debug_output.contains("ru"));
     }
 
     #[test]

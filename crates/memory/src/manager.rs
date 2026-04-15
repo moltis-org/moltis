@@ -88,9 +88,27 @@ impl MemoryManager {
         self.config.citations
     }
 
+    /// Root data directory used for memory writes, when configured.
+    pub fn data_dir(&self) -> Option<&Path> {
+        self.config.data_dir.as_deref()
+    }
+
     /// Whether LLM reranking is enabled.
     pub fn llm_reranking_enabled(&self) -> bool {
         self.config.llm_reranking
+    }
+
+    /// Resolve a file path by a content-hash prefix.
+    pub async fn resolve_file_by_hash_prefix(
+        &self,
+        hash_prefix: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let prefix = hash_prefix.trim_start_matches('#');
+        let files = self.store.list_files().await?;
+        Ok(files
+            .into_iter()
+            .find(|file| file.hash.starts_with(prefix))
+            .map(|file| file.path))
     }
 
     /// Synchronize: walk configured directories, detect changed files, re-chunk and re-embed.

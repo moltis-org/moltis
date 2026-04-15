@@ -30,9 +30,15 @@ destructive actions without consent.
 When the agent wants to run a command:
 
 1. The command is analyzed against approval policies
-2. If approval is required, the user sees a prompt in the UI
+2. If approval is required, the user sees a prompt in the UI. Channel-backed
+   sessions also receive a notification in the originating channel so the run
+   does not stall silently.
 3. The user can approve, deny, or modify the command
 4. Only approved commands execute
+
+For channel-backed sessions, operators can also use `/approvals` to list the
+pending requests for the current session, then `/approve N` or `/deny N`
+directly from Telegram or WhatsApp.
 
 ### Approval Policies
 

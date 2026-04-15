@@ -214,7 +214,7 @@ impl LlmProvider for KimiCodeProvider {
         });
 
         if !tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
+            body["tools"] = serde_json::Value::Array(to_openai_tools(tools, true));
         }
 
         debug!(
@@ -309,7 +309,7 @@ impl LlmProvider for KimiCodeProvider {
             });
 
             if !tools.is_empty() {
-                body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
+                body["tools"] = serde_json::Value::Array(to_openai_tools(&tools, true));
             }
 
             debug!(
@@ -529,7 +529,7 @@ mod tests {
             });
 
             if !tools.is_empty() {
-                body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
+                body["tools"] = serde_json::Value::Array(to_openai_tools(tools, true));
             }
 
             let http_resp = self

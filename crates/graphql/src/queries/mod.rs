@@ -226,7 +226,7 @@ pub struct ChatQuery;
 #[Object]
 impl ChatQuery {
     /// Get chat history for a session.
-    async fn history(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<Json> {
+    async fn history(&self, ctx: &Context<'_>, session_key: String) -> Result<Json> {
         let s = services!(ctx);
         // Messages contain deeply nested tool calls, images, etc.
         from_service_json(
@@ -237,7 +237,7 @@ impl ChatQuery {
     }
 
     /// Get chat context data.
-    async fn context(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<Json> {
+    async fn context(&self, ctx: &Context<'_>, session_key: String) -> Result<Json> {
         let s = services!(ctx);
         // Dynamic context shape (system prompt, tools, etc.).
         from_service_json(
@@ -248,11 +248,7 @@ impl ChatQuery {
     }
 
     /// Get rendered system prompt.
-    async fn raw_prompt(
-        &self,
-        ctx: &Context<'_>,
-        session_key: Option<String>,
-    ) -> Result<ChatRawPrompt> {
+    async fn raw_prompt(&self, ctx: &Context<'_>, session_key: String) -> Result<ChatRawPrompt> {
         let s = services!(ctx);
         from_service(
             s.chat
@@ -262,7 +258,7 @@ impl ChatQuery {
     }
 
     /// Get full context with rendering (OpenAI messages format).
-    async fn full_context(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<Json> {
+    async fn full_context(&self, ctx: &Context<'_>, session_key: String) -> Result<Json> {
         let s = services!(ctx);
         // OpenAI messages format — deeply nested, dynamic.
         from_service_json(

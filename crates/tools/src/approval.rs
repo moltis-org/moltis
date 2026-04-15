@@ -239,7 +239,18 @@ pub fn matches_allowlist(command: &str, allowlist: &[String]) -> bool {
 
 /// Pending approval request waiting for gateway resolution.
 struct PendingApproval {
+    command: String,
+    session_key: Option<String>,
     tx: oneshot::Sender<ApprovalDecision>,
+}
+
+/// Serializable summary of a pending approval request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingApprovalView {
+    pub id: String,
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_key: Option<String>,
 }
 
 /// The approval manager handles approval flow for exec commands.
@@ -269,9 +280,24 @@ impl ApprovalManager {
     /// Decide whether a command needs approval.
     /// Returns Ok(()) if the command can proceed, Err if denied.
     pub async fn check_command(&self, command: &str) -> Result<ApprovalAction> {
-        // Safety floor: dangerous patterns force approval regardless of mode.
+        // Safety floor: dangerous patterns are blocked unless explicitly
+        // allowlisted. In OnMiss/Always mode we escalate to NeedsApproval so a
+        // human can gate. In Off mode there is no human approver to wait on,
+        // so the only safe outcome is to deny — otherwise the agent would hang
+        // on `NeedsApproval` forever in headless deployments (moltis-org/moltis#654).
         if let Some(desc) = check_dangerous(command) {
             if !matches_allowlist(command, &self.allowlist) {
+                if self.mode == ApprovalMode::Off {
+                    warn!(
+                        command,
+                        pattern = %desc,
+                        "dangerous command denied in approval_mode=off",
+                    );
+                    return Err(Error::message(format!(
+                        "exec denied: dangerous command pattern '{desc}' (approval_mode=off): \
+                         {command}"
+                    )));
+                }
                 warn!(command, pattern = %desc, "dangerous command detected, forcing approval");
                 return Ok(ApprovalAction::NeedsApproval);
             }
@@ -287,7 +313,35 @@ impl ApprovalManager {
         }
 
         match self.mode {
-            ApprovalMode::Off => Ok(ApprovalAction::Proceed),
+            ApprovalMode::Off => {
+                // With an empty allowlist, Off mode is unrestricted (preserves
+                // historical behavior for deployments that never configured a list).
+                // With a non-empty allowlist, the list is authoritative: the user
+                // explicitly asked for enforcement, and there is no human to prompt
+                // in headless deployments — non-matches must be denied, not silently
+                // proceeded (moltis-org/moltis#654).
+                if self.allowlist.is_empty() {
+                    return Ok(ApprovalAction::Proceed);
+                }
+                if matches_allowlist(command, &self.allowlist) {
+                    return Ok(ApprovalAction::Proceed);
+                }
+                if is_safe_command(command) {
+                    // Safe bins bypass the explicit allowlist so operators don't
+                    // have to enumerate common read-only utilities. Emit a warn
+                    // so strict-posture operators can detect the gap at runtime
+                    // (they can `grep safe-bin` their logs to audit, or file a
+                    // follow-up for an opt-in strict mode that gates safe bins).
+                    warn!(
+                        command,
+                        "exec safe-bin bypassed non-empty allowlist in approval_mode=off",
+                    );
+                    return Ok(ApprovalAction::Proceed);
+                }
+                Err(Error::message(format!(
+                    "exec denied: command not in allowlist (approval_mode=off): {command}"
+                )))
+            },
             ApprovalMode::Always => Ok(ApprovalAction::NeedsApproval),
             ApprovalMode::OnMiss => {
                 // Check safe bins.
@@ -311,14 +365,19 @@ impl ApprovalManager {
     pub async fn create_request(
         &self,
         command: &str,
+        session_key: Option<&str>,
     ) -> (String, oneshot::Receiver<ApprovalDecision>) {
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
         self.pending
             .write()
             .await
-            .insert(id.clone(), PendingApproval { tx });
-        debug!(id = %id, command, "approval request created");
+            .insert(id.clone(), PendingApproval {
+                command: command.to_string(),
+                session_key: session_key.map(str::to_string),
+                tx,
+            });
+        debug!(id = %id, command, session_key, "approval request created");
         (id, rx)
     }
 
@@ -339,7 +398,38 @@ impl ApprovalManager {
 
     /// Return the IDs of all pending approval requests.
     pub async fn pending_ids(&self) -> Vec<String> {
-        self.pending.read().await.keys().cloned().collect()
+        let mut ids: Vec<_> = self.pending.read().await.keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    /// Return summaries of all pending approval requests.
+    pub async fn pending_requests(&self) -> Vec<PendingApprovalView> {
+        let mut requests: Vec<_> = self
+            .pending
+            .read()
+            .await
+            .iter()
+            .map(|(id, pending)| PendingApprovalView {
+                id: id.clone(),
+                command: pending.command.clone(),
+                session_key: pending.session_key.clone(),
+            })
+            .collect();
+        requests.sort_by(|left, right| left.id.cmp(&right.id));
+        requests
+    }
+
+    /// Return summaries of pending approval requests scoped to a session.
+    pub async fn pending_requests_for_session(
+        &self,
+        session_key: &str,
+    ) -> Vec<PendingApprovalView> {
+        self.pending_requests()
+            .await
+            .into_iter()
+            .filter(|request| request.session_key.as_deref() == Some(session_key))
+            .collect()
     }
 
     /// Wait for an approval decision with timeout.
@@ -430,7 +520,82 @@ mod tests {
             mode: ApprovalMode::Off,
             ..Default::default()
         };
-        // Non-dangerous commands proceed when mode is off.
+        // Non-dangerous commands proceed when mode is off and allowlist is empty.
+        let action = mgr.check_command("curl https://example.com").await.unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[tokio::test]
+    async fn test_approval_off_with_allowlist_match() {
+        // Regression test for moltis-org/moltis#654: non-empty allowlist must be
+        // enforced even when approval_mode is off (headless deployments).
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            allowlist: vec!["git *".into()],
+            ..Default::default()
+        };
+        let action = mgr.check_command("git status").await.unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[tokio::test]
+    async fn test_approval_off_with_allowlist_miss_denies() {
+        // Regression test for moltis-org/moltis#654: commands outside the
+        // configured allowlist must be denied in Off mode, not silently proceeded.
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            allowlist: vec!["git *".into()],
+            ..Default::default()
+        };
+        let err = mgr
+            .check_command("curl https://evil.example.com")
+            .await
+            .expect_err("expected denial for non-allowlisted command in off mode");
+        assert!(
+            err.to_string().contains("not in allowlist"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_approval_off_with_allowlist_safe_bin() {
+        // Safe bins are still allowed in Off mode so operators don't have to
+        // enumerate them in every allowlist.
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            allowlist: vec!["git *".into()],
+            ..Default::default()
+        };
+        let action = mgr.check_command("echo hi").await.unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[tokio::test]
+    async fn test_approval_off_empty_allowlist_unrestricted() {
+        // Explicit contract lock: Off mode with an empty allowlist preserves
+        // historical unrestricted semantics.
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            allowlist: Vec::new(),
+            ..Default::default()
+        };
+        let action = mgr
+            .check_command(r#"python3 -c "print('hi')""#)
+            .await
+            .unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
+    }
+
+    #[tokio::test]
+    async fn test_approval_off_full_security_bypasses_allowlist() {
+        // SecurityLevel::Full short-circuits before the mode match, so even an
+        // explicit allowlist has no effect.
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            security_level: SecurityLevel::Full,
+            allowlist: vec!["git *".into()],
+            ..Default::default()
+        };
         let action = mgr.check_command("curl https://example.com").await.unwrap();
         assert_eq!(action, ApprovalAction::Proceed);
     }
@@ -608,13 +773,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dangerous_forces_approval_when_mode_off() {
+    async fn test_dangerous_denied_when_mode_off() {
+        // In Off mode dangerous commands must be denied (not NeedsApproval),
+        // otherwise headless agents hang waiting for an approver that never
+        // arrives (moltis-org/moltis#654).
         let mgr = ApprovalManager {
             mode: ApprovalMode::Off,
             ..Default::default()
         };
-        let action = mgr.check_command("rm -rf /").await.unwrap();
-        assert_eq!(action, ApprovalAction::NeedsApproval);
+        let err = mgr
+            .check_command("rm -rf /")
+            .await
+            .expect_err("expected denial for dangerous command in off mode");
+        assert!(
+            err.to_string().contains("dangerous command pattern"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dangerous_denied_when_mode_off_full_security() {
+        // Full security level does not change the safety floor: dangerous
+        // commands are still denied in Off mode.
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            security_level: SecurityLevel::Full,
+            ..Default::default()
+        };
+        let err = mgr
+            .check_command("git reset --hard")
+            .await
+            .expect_err("expected denial for dangerous command in off+full");
+        assert!(
+            err.to_string().contains("dangerous command pattern"),
+            "unexpected error message: {err}"
+        );
     }
 
     #[tokio::test]
@@ -625,5 +818,21 @@ mod tests {
         };
         let action = mgr.check_command("git reset --hard").await.unwrap();
         assert_eq!(action, ApprovalAction::NeedsApproval);
+    }
+
+    #[tokio::test]
+    async fn test_pending_requests_for_session_filters_other_sessions() {
+        let mgr = ApprovalManager::default();
+        let _ = mgr.create_request("echo one", Some("session:a")).await;
+        let _ = mgr.create_request("echo two", Some("session:b")).await;
+        let _ = mgr.create_request("echo three", Some("session:a")).await;
+
+        let pending = mgr.pending_requests_for_session("session:a").await;
+        assert_eq!(pending.len(), 2);
+        assert!(
+            pending
+                .iter()
+                .all(|request| request.session_key.as_deref() == Some("session:a"))
+        );
     }
 }

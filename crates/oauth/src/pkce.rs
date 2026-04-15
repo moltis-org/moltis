@@ -1,6 +1,6 @@
 use {
     base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD},
-    rand::RngCore,
+    rand::Rng,
     sha2::{Digest, Sha256},
 };
 

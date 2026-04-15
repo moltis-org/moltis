@@ -15,6 +15,7 @@ use {
         response::{IntoResponse, Json, Response},
     },
     dashmap::{DashMap, mapref::entry::Entry},
+    moltis_auth::locality::is_local_connection,
 };
 
 use crate::server::AppState;
@@ -249,7 +250,7 @@ async fn should_bypass_throttling(state: &AppState, headers: &HeaderMap, addr: S
         return true;
     };
 
-    let is_local = crate::server::is_local_connection(headers, addr, state.gateway.behind_proxy);
+    let is_local = is_local_connection(headers, addr, state.gateway.behind_proxy);
     matches!(
         crate::auth_middleware::check_auth(store, headers, is_local).await,
         crate::auth_middleware::AuthResult::Allowed(_)
@@ -284,7 +285,7 @@ fn rate_limited_response(path: String, retry_after: Duration) -> Response {
     response
 }
 
-fn resolve_client_ip(headers: &HeaderMap, addr: SocketAddr, behind_proxy: bool) -> IpAddr {
+pub fn resolve_client_ip(headers: &HeaderMap, addr: SocketAddr, behind_proxy: bool) -> IpAddr {
     if behind_proxy && let Some(ip) = extract_forwarded_ip(headers) {
         return ip;
     }

@@ -119,10 +119,20 @@ hardening flags by default:
 | `--tmpfs /tmp:rw,nosuid,size=256m` | Writable tmpfs for temp files (noexec on real root) |
 | `--tmpfs /run:rw,nosuid,size=64m` | Writable tmpfs for runtime files |
 | `--read-only` | Read-only root filesystem (prebuilt images only) |
+| `--hostname sandbox` | Prevents host hostname leakage |
+| `--tmpfs /sys/firmware:ro,nosuid` | Masks BIOS/UEFI firmware data |
+| `--tmpfs /sys/class/dmi:ro,nosuid` | Masks system serial numbers and identifiers |
+| `--tmpfs /sys/devices/virtual/dmi:ro,nosuid` | Masks DMI attributes |
+| `--tmpfs /sys/class/block:ro,nosuid` | Masks block device info (disk models, LUKS UUIDs) |
 
 The `--read-only` flag is applied only to prebuilt sandbox images (where
 packages are already baked in). Non-prebuilt images need a writable root
 filesystem for `apt-get` provisioning on first start.
+
+The `/sys` tmpfs overlays prevent host hardware metadata (serial numbers, disk
+models, LUKS UUIDs) from being visible inside the container. Note that
+`tools.fs.deny_paths` only restricts Moltis file-access tools — these kernel
+filesystem masks prevent leakage via shell commands as well.
 
 ## WASM Sandbox (Wasmtime + WASI)
 

@@ -124,11 +124,36 @@ export var switchInProgress = signal(false);
 export var refreshInProgressKey = signal("");
 /** Session list tab filter: "all" | "sessions" | "cron" */
 export var sessionListTab = signal(localStorage.getItem("moltis-session-tab") || "sessions");
+export var showArchivedSessions = signal(localStorage.getItem("moltis-show-archived-sessions") === "1");
 
 export var activeSession = computed(() => {
 	var key = activeSessionKey.value;
 	return sessions.value.find((s) => s.key === key) || null;
 });
+
+export function compareSessionOrder(left, right) {
+	var leftKey = left?.key || "";
+	var rightKey = right?.key || "";
+	var leftMain = leftKey === "main";
+	var rightMain = rightKey === "main";
+	if (leftMain !== rightMain) return leftMain ? -1 : 1;
+
+	var updatedDiff = (Number(right?.updatedAt) || 0) - (Number(left?.updatedAt) || 0);
+	if (updatedDiff !== 0) return updatedDiff;
+
+	var createdDiff = (Number(right?.createdAt) || 0) - (Number(left?.createdAt) || 0);
+	if (createdDiff !== 0) return createdDiff;
+
+	return leftKey.localeCompare(rightKey);
+}
+
+export function insertSessionInOrder(list, session) {
+	if (!session?.key) return Array.isArray(list) ? list.slice() : [];
+	var result = Array.isArray(list) ? list.filter((entry) => entry?.key !== session.key) : [];
+	result.push(session);
+	result.sort(compareSessionOrder);
+	return result;
+}
 
 // ── Methods ──────────────────────────────────────────────────
 
@@ -173,10 +198,11 @@ export function upsert(serverData) {
 	var prev = getByKey(serverData.key);
 	if (prev) {
 		prev.update(serverData);
+		sessions.value = insertSessionInOrder(sessions.value, prev);
 		return prev;
 	}
 	var next = new Session(serverData);
-	sessions.value = [...sessions.value, next];
+	sessions.value = insertSessionInOrder(sessions.value, next);
 	return next;
 }
 
@@ -230,6 +256,12 @@ export function setSessionListTab(tab) {
 	localStorage.setItem("moltis-session-tab", tab);
 }
 
+/** Toggle whether archived sessions are shown in the sidebar. */
+export function setShowArchivedSessions(show) {
+	showArchivedSessions.value = !!show;
+	localStorage.setItem("moltis-show-archived-sessions", show ? "1" : "0");
+}
+
 export var sessionStore = {
 	sessions,
 	activeSessionKey,
@@ -237,6 +269,7 @@ export var sessionStore = {
 	switchInProgress,
 	refreshInProgressKey,
 	sessionListTab,
+	showArchivedSessions,
 	Session,
 	setAll,
 	upsert,
@@ -245,5 +278,6 @@ export var sessionStore = {
 	getByKey,
 	setActive,
 	setSessionListTab,
+	setShowArchivedSessions,
 	notify,
 };

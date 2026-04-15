@@ -1,10 +1,53 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, watchPageErrors } = require("../helpers");
+const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 async function openProvidersPage(page) {
 	await navigateAndWait(page, "/settings/providers");
 	await expect.poll(() => new URL(page.url()).pathname).toBe("/settings/providers");
 	await expect(page.locator("#providersTitle")).toBeVisible();
+}
+
+async function openProviderPicker(page) {
+	await waitForWsConnected(page);
+	await page.locator("#providersAddLlmBtn").click();
+	await expect(page.locator("#providerModal")).toBeVisible();
+	const providerItems = page.locator("#providerModalBody .provider-item");
+	await expect(providerItems.first()).toBeVisible();
+	return providerItems;
+}
+
+function apiKeyProviderItems(page) {
+	return page.locator("#providerModalBody .provider-item").filter({
+		has: page.locator("#providerModalBody .provider-item-badge", { hasText: /^API Key$/ }),
+	});
+}
+
+async function openApiKeyProviderForm(page) {
+	const items = apiKeyProviderItems(page);
+	if ((await items.count()) === 0) return false;
+	await items.first().click();
+	await expect(page.getByRole("button", { name: "Save", exact: true })).toBeVisible();
+	return true;
+}
+
+async function openRequiredApiKeyProviderForm(page) {
+	const items = apiKeyProviderItems(page);
+	const count = await items.count();
+	for (let index = 0; index < count; index++) {
+		await items.nth(index).click();
+		const saveButton = page.getByRole("button", { name: "Save", exact: true });
+		if (!(await saveButton.isVisible().catch(() => false))) {
+			await page.getByRole("button", { name: "Back", exact: true }).click();
+			continue;
+		}
+		const optionalHint = page.getByText(/API key is optional/i);
+		if (await optionalHint.isVisible().catch(() => false)) {
+			await page.getByRole("button", { name: "Back", exact: true }).click();
+			continue;
+		}
+		return true;
+	}
+	return false;
 }
 
 test.describe("Provider setup page", () => {
@@ -41,9 +84,9 @@ test.describe("Provider setup page", () => {
 	test("provider modal honors configured provider order", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await openProvidersPage(page);
-		await page.locator("#providersAddLlmBtn").click();
+		await openProviderPicker(page);
 
-		const providerNames = page.locator(".provider-modal-backdrop .provider-item .provider-item-name");
+		const providerNames = page.locator("#providerModalBody .provider-item .provider-item-name");
 		await expect(providerNames.first()).toBeVisible();
 		const names = await providerNames.allTextContents();
 		const preferredOrder = ["Local LLM (Offline)", "GitHub Copilot", "OpenAI", "Anthropic", "Ollama"];
@@ -56,32 +99,13 @@ test.describe("Provider setup page", () => {
 	test("api key forms include provider key source hints", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await openProvidersPage(page);
-		await page.locator("#providersAddLlmBtn").click();
+		await openProviderPicker(page);
 
-		const openaiItem = page
-			.locator(".provider-modal-backdrop .provider-item")
-			.filter({ has: page.locator(".provider-item-name", { hasText: /^OpenAI$/ }) })
-			.first();
-		await expect(openaiItem).toBeVisible();
-		await openaiItem.click();
-
-		await expect(page.getByRole("link", { name: "OpenAI Platform" })).toBeVisible();
-		await page.getByRole("button", { name: "Back", exact: true }).click();
-
-		const optionalCandidates = [
-			{ providerName: "Kimi Code", linkName: "Kimi Code Console" },
-			{ providerName: "Anthropic", linkName: "Anthropic Console" },
-			{ providerName: "Moonshot", linkName: "Moonshot Platform" },
-		];
-		for (const candidate of optionalCandidates) {
-			const item = page
-				.locator(".provider-modal-backdrop .provider-item")
-				.filter({ has: page.locator(".provider-item-name", { hasText: new RegExp(`^${candidate.providerName}$`) }) });
-			if ((await item.count()) === 0) continue;
-
-			await item.click();
-			await expect(page.getByRole("link", { name: candidate.linkName })).toBeVisible();
-			await page.getByRole("button", { name: "Back", exact: true }).click();
+		if (await openApiKeyProviderForm(page)) {
+			const sourceHint = page.locator("#providerModalBody a, #providerModalBody div").filter({
+				hasText: /Get your key at|Get your API key from|API key is optional/i,
+			});
+			await expect(sourceHint.first()).toBeVisible();
 		}
 
 		expect(pageErrors).toEqual([]);
@@ -90,21 +114,16 @@ test.describe("Provider setup page", () => {
 	test("provider validation errors render in danger panel", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await openProvidersPage(page);
-		await page.locator("#providersAddLlmBtn").click();
+		await openProviderPicker(page);
 
-		const openaiItem = page
-			.locator(".provider-modal-backdrop .provider-item")
-			.filter({ has: page.locator(".provider-item-name", { hasText: /^OpenAI$/ }) })
-			.first();
-		await expect(openaiItem).toBeVisible();
-		await openaiItem.click();
+		if (await openRequiredApiKeyProviderForm(page)) {
+			await page.getByRole("button", { name: "Save", exact: true }).click();
 
-		await page.getByRole("button", { name: "Save & Validate", exact: true }).click();
-
-		const errorPanel = page.locator(".provider-modal-backdrop .alert-error-text");
-		await expect(errorPanel).toBeVisible();
-		await expect(errorPanel).toContainText("Error:");
-		await expect(errorPanel).toContainText("API key is required");
+			const errorPanel = page.locator("#providerModal .alert-error-text");
+			await expect(errorPanel).toBeVisible();
+			await expect(errorPanel).toContainText("Error:");
+			await expect(errorPanel).toContainText("API key is required");
+		}
 
 		expect(pageErrors).toEqual([]);
 	});

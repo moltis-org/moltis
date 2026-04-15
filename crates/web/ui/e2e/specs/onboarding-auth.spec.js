@@ -127,12 +127,11 @@ test.describe("Onboarding with forced auth (remote)", () => {
 
 	test("completes auth and identity steps via WebSocket", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		// Fresh runs should land on /onboarding (remote setup allows the
-		// onboarding page through for the setup-code auth flow).  Retries
-		// can land on /login if a previous attempt already configured auth.
-		// Navigate directly to /onboarding since / redirects to
-		// /setup-required for remote connections during setup (#350).
-		await page.goto("/onboarding");
+		// Fresh runs visiting `/` on a remote (proxied) connection should
+		// be redirected to /onboarding so the setup-code AuthStep is
+		// shown (#350, #646).  Retries can land on /login if a previous
+		// attempt already configured auth.
+		await page.goto("/");
 		await expect
 			.poll(() => new URL(page.url()).pathname, { timeout: 15_000 })
 			.toMatch(/^\/(?:onboarding|login|chats\/.+)$/);

@@ -7,6 +7,7 @@
 
 import { readFileSync, existsSync } from "fs";
 import { JSDOM } from "jsdom";
+import { NAV_I18N, localizeNavHtml, resolvePageLang } from "./nav-i18n.mjs";
 
 const LANGUAGES = [
   { code: "en", locale: "en_US", file: "index.en.html" },
@@ -22,6 +23,7 @@ const LANGUAGES = [
 ];
 
 let exitCode = 0;
+const navTemplate = readFileSync("_partials/nav.html", "utf-8");
 
 function fail(msg) {
   console.error(`  FAIL: ${msg}`);
@@ -33,7 +35,10 @@ function pass(msg) {
 }
 
 function loadDOM(file) {
-  const html = readFileSync(file, "utf-8");
+  let html = readFileSync(file, "utf-8");
+  if (html.includes("<!--NAV-->")) {
+    html = html.replace("<!--NAV-->", localizeNavHtml(navTemplate, resolvePageLang(html)));
+  }
   return new JSDOM(html).window.document;
 }
 
@@ -109,6 +114,27 @@ for (const lang of LANGUAGES) {
 
   if (extraIds.length === 0) pass(`No extra IDs in ${lang.code.toUpperCase()}`);
   else fail(`Extra IDs in ${lang.code.toUpperCase()}: ${extraIds.join(", ")}`);
+
+  const expectedNav = NAV_I18N[lang.code]?.tabs;
+  const actualNav = [...doc.querySelectorAll("#nav-tabs .nav-tab[data-page]")]
+    .map((el) => el.textContent.trim());
+  if (expectedNav) {
+    const expectedNavOrder = [
+      expectedNav.home,
+      expectedNav.install,
+      expectedNav.features,
+      expectedNav.security,
+      expectedNav.compare,
+      expectedNav.changelog,
+    ];
+    if (JSON.stringify(actualNav) === JSON.stringify(expectedNavOrder)) {
+      pass(`Top nav labels localized for ${lang.code.toUpperCase()}`);
+    } else {
+      fail(
+        `Top nav labels for ${lang.code.toUpperCase()} should be ${expectedNavOrder.join(", ")}, got ${actualNav.join(", ")}`,
+      );
+    }
+  }
 
   // 4. Check data-page attributes match
   const enPages = [...enDoc.querySelectorAll("[data-page]")]

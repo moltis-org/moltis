@@ -597,11 +597,15 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         let geo = moltis_config::GeoLocation::now(lat, lon, None);
                         ctx.state.inner.write().await.cached_location = Some(geo.clone());
 
-                        // Persist to USER.md (best-effort).
-                        let mut user = moltis_config::load_user().unwrap_or_default();
-                        user.location = Some(geo);
-                        if let Err(e) = moltis_config::save_user(&user) {
-                            tracing::warn!(error = %e, "failed to persist location to USER.md");
+                        let write_mode = moltis_config::discover_and_load()
+                            .memory
+                            .user_profile_write_mode;
+                        if write_mode.allows_auto_write() {
+                            let mut user = moltis_config::resolve_user_profile();
+                            user.location = Some(geo);
+                            if let Err(e) = moltis_config::save_user_with_mode(&user, write_mode) {
+                                tracing::warn!(error = %e, "failed to persist location to USER.md");
+                            }
                         }
                     }
                     serde_json::json!({ "location": ctx.params.get("location") })

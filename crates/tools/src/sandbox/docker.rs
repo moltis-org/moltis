@@ -12,7 +12,10 @@ use {
             sandbox_image_tag,
         },
         host::provision_packages,
-        paths::{ensure_sandbox_home_persistence_host_dir, host_visible_data_dir},
+        paths::{
+            ensure_sandbox_home_persistence_host_dir, host_visible_data_dir,
+            resolve_home_persistence_guest_path_on_host, resolve_workspace_guest_path_on_host,
+        },
         types::{
             BuildImageResult, DEFAULT_SANDBOX_IMAGE, NetworkPolicy, SANDBOX_HOME_DIR, Sandbox,
             SandboxConfig, SandboxId, WorkspaceMount, canonical_sandbox_packages,
@@ -22,6 +25,11 @@ use {
     crate::{
         error::{Error, Result},
         exec::{ExecOpts, ExecResult},
+        sandbox::file_system::{
+            SandboxListFilesResult, SandboxReadResult, native_host_list_files,
+            native_host_read_file, native_host_write_file, oci_container_list_files,
+            oci_container_read_file, oci_container_write_file, remap_host_list_result_to_guest,
+        },
     },
 };
 
@@ -73,6 +81,20 @@ impl DockerSandbox {
 
     fn image_repo(&self) -> &str {
         self.container_prefix()
+    }
+
+    fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<std::path::PathBuf> {
+        let guest_path = std::path::Path::new(guest_path);
+        resolve_workspace_guest_path_on_host(&self.config, Some(self.cli), guest_path).or_else(
+            || {
+                resolve_home_persistence_guest_path_on_host(
+                    &self.config,
+                    Some(self.cli),
+                    id,
+                    guest_path,
+                )
+            },
+        )
     }
 
     pub(crate) fn resource_args(&self) -> Vec<String> {
@@ -159,14 +181,33 @@ impl DockerSandbox {
     /// non-prebuilt images need a writable root for `apt-get` provisioning.
     pub(crate) fn hardening_args(is_prebuilt: bool) -> Vec<String> {
         let mut args = vec![
+            // --- Capability / privilege ---
             "--cap-drop".to_string(),
             "ALL".to_string(),
             "--security-opt".to_string(),
             "no-new-privileges".to_string(),
+            // --- Writable tmpfs mounts ---
             "--tmpfs".to_string(),
             "/tmp:rw,nosuid,size=256m".to_string(),
             "--tmpfs".to_string(),
             "/run:rw,nosuid,size=64m".to_string(),
+            // --- Host metadata isolation ---
+            // Give the container its own hostname so /proc/sys/kernel/hostname
+            // and the `hostname` command do not reveal the host identity.
+            "--hostname".to_string(),
+            "sandbox".to_string(),
+            // Mask /sys subtrees that expose host hardware identifiers
+            // (serial numbers, BIOS/UEFI data, disk models, LUKS UUIDs).
+            // Empty read-only tmpfs overlays hide the underlying sysfs entries
+            // and work identically on Docker and Podman.
+            "--tmpfs".to_string(),
+            "/sys/firmware:ro,nosuid".to_string(),
+            "--tmpfs".to_string(),
+            "/sys/class/dmi:ro,nosuid".to_string(),
+            "--tmpfs".to_string(),
+            "/sys/devices/virtual/dmi:ro,nosuid".to_string(),
+            "--tmpfs".to_string(),
+            "/sys/class/block:ro,nosuid".to_string(),
         ];
         if is_prebuilt {
             args.push("--read-only".to_string());
@@ -424,6 +465,61 @@ impl Sandbox for DockerSandbox {
         }
     }
 
+    async fn read_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        if let Some(host_path) = self.mounted_host_path(id, file_path) {
+            return native_host_read_file(
+                host_path
+                    .to_str()
+                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
+                max_bytes,
+            )
+            .await;
+        }
+
+        let container_name = self.container_name(id);
+        oci_container_read_file(self.cli, &container_name, file_path, max_bytes).await
+    }
+
+    async fn write_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        if let Some(host_path) = self.mounted_host_path(id, file_path) {
+            return native_host_write_file(
+                host_path
+                    .to_str()
+                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
+                content,
+            )
+            .await;
+        }
+
+        let container_name = self.container_name(id);
+        oci_container_write_file(self.cli, &container_name, file_path, content).await
+    }
+
+    async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        if let Some(host_path) = self.mounted_host_path(id, root) {
+            let host_files = native_host_list_files(
+                host_path
+                    .to_str()
+                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
+            )
+            .await?;
+            return remap_host_list_result_to_guest(root, &host_path, host_files);
+        }
+
+        let container_name = self.container_name(id);
+        oci_container_list_files(self.cli, &container_name, root).await
+    }
+
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
         let name = self.container_name(id);
         let _ = tokio::process::Command::new(self.cli)
@@ -453,6 +549,28 @@ impl Sandbox for NoSandbox {
 
     async fn exec(&self, _id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
         crate::exec::exec_command(command, opts).await
+    }
+
+    async fn read_file(
+        &self,
+        _id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        native_host_read_file(file_path, max_bytes).await
+    }
+
+    async fn write_file(
+        &self,
+        _id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        native_host_write_file(file_path, content).await
+    }
+
+    async fn list_files(&self, _id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        native_host_list_files(root).await
     }
 
     async fn cleanup(&self, _id: &SandboxId) -> Result<()> {

@@ -13,6 +13,7 @@ pub mod embeddings_local;
 pub mod embeddings_openai;
 pub mod manager;
 pub mod reranking;
+pub mod runtime;
 pub mod schema;
 pub mod search;
 pub mod session_export;

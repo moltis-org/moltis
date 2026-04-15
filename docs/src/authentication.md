@@ -91,7 +91,7 @@ If **any** check fails, the connection is treated as remote.
 
 - Set during initial setup or added later via Settings
 - Hashed with Argon2id before storage
-- Minimum 8 characters
+- Minimum 12 characters
 - Verified against `auth_password` table
 
 ### Passkey (WebAuthn)

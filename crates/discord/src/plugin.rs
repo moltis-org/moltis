@@ -155,10 +155,7 @@ impl ChannelPlugin for DiscordPlugin {
         // Spawn the serenity client in a background task.
         let cancel_for_task = cancel.clone();
         tokio::spawn(async move {
-            let handler = Handler {
-                account_id: account_id_owned.clone(),
-                accounts: Arc::clone(&accounts_clone),
-            };
+            let handler = Handler::new(account_id_owned.clone(), Arc::clone(&accounts_clone));
 
             let mut client = match serenity::Client::builder(&token, required_intents())
                 .event_handler(handler)
@@ -333,5 +330,8 @@ mod tests {
 
         // Interactive: Discord supports interactive messages
         assert!(desc.capabilities.supports_interactive);
+
+        // Voice ingest: Discord now handles inbound voice attachments.
+        assert!(desc.capabilities.supports_voice_ingest);
     }
 }

@@ -49,7 +49,11 @@ use {
 };
 
 #[derive(Parser)]
-#[command(name = "moltis", about = "Moltis — personal AI gateway", version)]
+#[command(
+    name = "moltis",
+    about = "Moltis — personal AI gateway",
+    version = moltis_config::VERSION
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,

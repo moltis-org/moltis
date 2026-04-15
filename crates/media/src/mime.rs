@@ -1,6 +1,84 @@
+use image::ImageFormat;
+
 /// MIME detection via buffer sniffing with header fallback.
-pub fn detect_mime(_buffer: &[u8], _headers: Option<&str>) -> String {
-    todo!("sniff magic bytes, fall back to content-type header")
+pub fn detect_mime(buffer: &[u8], headers: Option<&str>) -> String {
+    if let Some(mime) = sniff_image_mime(buffer) {
+        return mime.to_string();
+    }
+
+    if buffer.starts_with(b"%PDF-") {
+        return "application/pdf".to_string();
+    }
+    if buffer.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+        return "application/zip".to_string();
+    }
+    if buffer.starts_with(&[0x1F, 0x8B]) {
+        return "application/gzip".to_string();
+    }
+
+    let trimmed = trim_ascii_start(buffer);
+    if trimmed.starts_with(b"{") || trimmed.starts_with(b"[") {
+        return "application/json".to_string();
+    }
+    if trimmed.starts_with(b"<!DOCTYPE html") || trimmed.starts_with(b"<html") {
+        return "text/html".to_string();
+    }
+    if trimmed.starts_with(b"<?xml") {
+        return "application/xml".to_string();
+    }
+    if let Some(header) = headers.and_then(parse_content_type_header) {
+        return header;
+    }
+    if std::str::from_utf8(buffer).is_ok() {
+        return "text/plain".to_string();
+    }
+
+    "application/octet-stream".to_string()
+}
+
+fn sniff_image_mime(buffer: &[u8]) -> Option<&'static str> {
+    let format = image::guess_format(buffer).ok()?;
+    Some(match format {
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::Png => "image/png",
+        ImageFormat::Gif => "image/gif",
+        ImageFormat::WebP => "image/webp",
+        ImageFormat::Bmp => "image/bmp",
+        ImageFormat::Pnm => "image/x-portable-pixmap",
+        ImageFormat::Tiff => "image/tiff",
+        ImageFormat::Ico => "image/x-icon",
+        ImageFormat::Avif => "image/avif",
+        _ => return None,
+    })
+}
+
+fn trim_ascii_start(buffer: &[u8]) -> &[u8] {
+    let first_non_ws = buffer
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(buffer.len());
+    &buffer[first_non_ws..]
+}
+
+fn parse_content_type_header(header: &str) -> Option<String> {
+    let raw = header.trim();
+    let value = raw
+        .split_once(':')
+        .map(|(name, value)| {
+            if name.trim().eq_ignore_ascii_case("content-type") {
+                value
+            } else {
+                raw
+            }
+        })
+        .unwrap_or(raw)
+        .trim();
+    let mime = value.split(';').next()?.trim().to_ascii_lowercase();
+    if mime.is_empty() {
+        None
+    } else {
+        Some(mime)
+    }
 }
 
 /// Map a MIME type to its canonical file extension.
@@ -88,6 +166,29 @@ mod tests {
     fn extension_for_mime_unknown_returns_bin() {
         assert_eq!(extension_for_mime("application/octet-stream"), "bin");
         assert_eq!(extension_for_mime("something/unknown"), "bin");
+    }
+
+    #[test]
+    fn detect_mime_sniffs_png_bytes() {
+        let png = [
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(detect_mime(&png, None), "image/png");
+    }
+
+    #[test]
+    fn detect_mime_prefers_sniffed_bytes_over_header() {
+        let pdf = b"%PDF-1.7\n";
+        assert_eq!(detect_mime(pdf, Some("image/png")), "application/pdf");
+    }
+
+    #[test]
+    fn detect_mime_falls_back_to_header() {
+        let data = [0x00, 0x01, 0x02, 0x03];
+        assert_eq!(
+            detect_mime(&data, Some("Content-Type: image/webp; charset=binary")),
+            "image/webp"
+        );
     }
 
     #[test]

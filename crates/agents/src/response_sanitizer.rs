@@ -48,6 +48,7 @@ const TOOL_CALL_TAGS: &[&str] = &["function_call", "tool_call"];
 pub fn clean_response(text: &str) -> String {
     let mut result = strip_internal_tags(text);
     result = strip_standalone_pipe_tokens(&result);
+    result = strip_trailing_stop_tokens(&result);
     result = strip_reasoning_patterns(&result);
     result.trim().to_string()
 }
@@ -150,6 +151,39 @@ fn strip_standalone_pipe_tokens(text: &str) -> String {
     for token in STANDALONE_PIPE_TOKENS {
         // Simple replacement — these tokens are always standalone.
         result = result.replace(token, "");
+    }
+    result
+}
+
+/// Strip trailing `<|...|>` stop tokens leaked by models as content.
+///
+/// Some models (e.g. Jamba via OpenRouter) emit their stop/separator token
+/// (like `<|eom|>`) as a content delta right before `finish_reason: "stop"`.
+/// Because leaked stop tokens are always the last content before the stream
+/// ends, we only strip from the trailing position — mid-text occurrences
+/// (e.g. a model explaining tokenizers) are preserved.
+fn strip_trailing_stop_tokens(text: &str) -> String {
+    let mut result = text.to_string();
+    loop {
+        let trimmed = result.trim_end();
+        if let Some(start) = trimmed.rfind("<|") {
+            let candidate = &trimmed[start..];
+            if let Some(close) = candidate.find("|>") {
+                let token_content = &candidate[2..close];
+                // Only strip if the `<|...|>` is at the very end and looks
+                // like a control token (alphanumeric + underscore).
+                if close + 2 == candidate.len()
+                    && !token_content.is_empty()
+                    && token_content
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                {
+                    result = trimmed[..start].to_string();
+                    continue; // Check for stacked trailing tokens.
+                }
+            }
+        }
+        break;
     }
     result
 }
@@ -450,5 +484,67 @@ mod tests {
         let input = "Here is the result. <invoke name=\"exec\">leftover</invoke>";
         let cleaned = clean_response(input);
         assert_eq!(cleaned, "Here is the result.");
+    }
+
+    // ── strip_trailing_stop_tokens ──────────────────────────────
+
+    #[test]
+    fn trailing_strips_eom_token() {
+        let input = "Hello world!<|eom|>";
+        assert_eq!(strip_trailing_stop_tokens(input), "Hello world!");
+    }
+
+    #[test]
+    fn trailing_preserves_mid_text_token() {
+        // A model explaining tokenizers — mid-text token must survive.
+        let input = "The stop token is <|eom|> for this model.";
+        assert_eq!(strip_trailing_stop_tokens(input), input);
+    }
+
+    #[test]
+    fn trailing_strips_unknown_future_token() {
+        let input = "Answer<|some_future_stop|>";
+        assert_eq!(strip_trailing_stop_tokens(input), "Answer");
+    }
+
+    #[test]
+    fn trailing_strips_with_trailing_whitespace() {
+        let input = "Hello<|eom|>  \n";
+        assert_eq!(strip_trailing_stop_tokens(input), "Hello");
+    }
+
+    #[test]
+    fn trailing_strips_stacked_tokens() {
+        let input = "Hello<|eom|><|end|>";
+        assert_eq!(strip_trailing_stop_tokens(input), "Hello");
+    }
+
+    #[test]
+    fn trailing_preserves_non_token_pipe() {
+        let input = "Keep <|not a token|>";
+        assert_eq!(strip_trailing_stop_tokens(input), input);
+    }
+
+    #[test]
+    fn trailing_preserves_empty_pipe() {
+        let input = "Keep <||>";
+        assert_eq!(strip_trailing_stop_tokens(input), input);
+    }
+
+    #[test]
+    fn trailing_no_match() {
+        let input = "normal text";
+        assert_eq!(strip_trailing_stop_tokens(input), input);
+    }
+
+    // ── clean_response with eom ───────────────────────────────────
+
+    #[test]
+    fn clean_response_strips_eom_from_jamba() {
+        let input = "Why don't scientists trust atoms?\nBecause they make up everything!<|eom|>";
+        assert_eq!(
+            clean_response(input),
+            "Why don't scientists trust atoms?\nBecause they make up everything!"
+        );
     }
 }

@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use {async_trait::async_trait, moltis_agents::tool_registry::AgentTool, serde_json::json};
 
-use crate::manager::MemoryManager;
+use crate::runtime::MemoryRuntime;
 
 /// Tool: search memory with a natural language query.
 pub struct MemorySearchTool {
-    manager: Arc<MemoryManager>,
+    manager: Arc<dyn MemoryRuntime>,
 }
 
 impl MemorySearchTool {
-    pub fn new(manager: Arc<MemoryManager>) -> Self {
+    pub fn new(manager: Arc<dyn MemoryRuntime>) -> Self {
         Self { manager }
     }
 }
@@ -85,11 +85,11 @@ impl AgentTool for MemorySearchTool {
 
 /// Tool: get a specific memory chunk by ID.
 pub struct MemoryGetTool {
-    manager: Arc<MemoryManager>,
+    manager: Arc<dyn MemoryRuntime>,
 }
 
 impl MemoryGetTool {
-    pub fn new(manager: Arc<MemoryManager>) -> Self {
+    pub fn new(manager: Arc<dyn MemoryRuntime>) -> Self {
         Self { manager }
     }
 }
@@ -141,11 +141,11 @@ impl AgentTool for MemoryGetTool {
 
 /// Tool: save content to long-term memory files.
 pub struct MemorySaveTool {
-    manager: Arc<MemoryManager>,
+    manager: Arc<dyn MemoryRuntime>,
 }
 
 impl MemorySaveTool {
-    pub fn new(manager: Arc<MemoryManager>) -> Self {
+    pub fn new(manager: Arc<dyn MemoryRuntime>) -> Self {
         Self { manager }
     }
 }
@@ -190,7 +190,6 @@ impl AgentTool for MemorySaveTool {
         let file = params["file"].as_str().unwrap_or("MEMORY.md");
         let append = params["append"].as_bool().unwrap_or(true);
 
-        use moltis_agents::memory_writer::MemoryWriter;
         let result = self.manager.write_memory(file, content, append).await?;
 
         Ok(json!({
@@ -207,8 +206,8 @@ mod tests {
     use {
         super::*,
         crate::{
-            config::MemoryConfig, embeddings::EmbeddingProvider, schema::run_migrations,
-            store_sqlite::SqliteMemoryStore,
+            config::MemoryConfig, embeddings::EmbeddingProvider, manager::MemoryManager,
+            schema::run_migrations, store_sqlite::SqliteMemoryStore,
         },
         sqlx::SqlitePool,
         tempfile::TempDir,
@@ -372,7 +371,7 @@ mod tests {
         manager.sync().await.unwrap();
 
         // First search to find a chunk_id
-        let search_tool = MemorySearchTool::new(Arc::clone(&manager));
+        let search_tool = MemorySearchTool::new(manager.clone());
         let search_result = search_tool
             .execute(json!({ "query": "database", "limit": 1 }))
             .await
@@ -431,8 +430,8 @@ mod tests {
         std::fs::write(mem_dir.join("recipe.md"), original_text).unwrap();
         manager.sync().await.unwrap();
 
-        let search_tool = MemorySearchTool::new(Arc::clone(&manager));
-        let get_tool = MemoryGetTool::new(Arc::clone(&manager));
+        let search_tool = MemorySearchTool::new(manager.clone());
+        let get_tool = MemoryGetTool::new(manager.clone());
 
         // Search
         let search_result = search_tool
@@ -481,7 +480,7 @@ mod tests {
     async fn test_memory_save_append_default() {
         let (manager, tmp) = setup_manager().await;
         let data_dir = tmp.path().to_path_buf();
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
 
         let r1 = tool
             .execute(json!({ "content": "First memory about rust." }))
@@ -509,7 +508,7 @@ mod tests {
     async fn test_memory_save_overwrite() {
         let (manager, tmp) = setup_manager().await;
         let data_dir = tmp.path().to_path_buf();
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
 
         tool.execute(json!({ "content": "Original content about rust." }))
             .await
@@ -535,7 +534,7 @@ mod tests {
     async fn test_memory_save_custom_file() {
         let (manager, tmp) = setup_manager().await;
         let data_dir = tmp.path().to_path_buf();
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
 
         let result = tool
             .execute(json!({
@@ -562,7 +561,7 @@ mod tests {
         std::fs::remove_dir_all(data_dir.join("memory")).unwrap();
         assert!(!data_dir.join("memory").exists());
 
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
         tool.execute(json!({
             "content": "Content for new dir.",
             "file": "memory/notes.md"
@@ -577,8 +576,8 @@ mod tests {
     #[tokio::test]
     async fn test_memory_save_reindexes() {
         let (manager, _tmp) = setup_manager().await;
-        let save_tool = MemorySaveTool::new(Arc::clone(&manager));
-        let search_tool = MemorySearchTool::new(Arc::clone(&manager));
+        let save_tool = MemorySaveTool::new(manager.clone());
+        let search_tool = MemorySearchTool::new(manager.clone());
 
         save_tool
             .execute(json!({
@@ -605,7 +604,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_save_rejects_path_traversal() {
         let (manager, _tmp) = setup_manager().await;
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
 
         for bad_path in &[
             "../etc/passwd",
@@ -623,7 +622,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_save_rejects_absolute_paths() {
         let (manager, _tmp) = setup_manager().await;
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
 
         let result = tool
             .execute(json!({ "content": "test", "file": "/etc/passwd" }))
@@ -635,7 +634,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_save_rejects_invalid_names() {
         let (manager, _tmp) = setup_manager().await;
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
 
         let invalid = &[
             "memory/notes.txt",     // wrong extension
@@ -658,7 +657,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_save_missing_content() {
         let (manager, _tmp) = setup_manager().await;
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
 
         let result = tool.execute(json!({})).await;
         assert!(result.is_err(), "missing content should produce an error");
@@ -668,7 +667,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_save_content_size_limit() {
         let (manager, _tmp) = setup_manager().await;
-        let tool = MemorySaveTool::new(Arc::clone(&manager));
+        let tool = MemorySaveTool::new(manager.clone());
 
         // 50 KB limit is enforced by MemoryManager's MemoryWriter impl
         let big = "x".repeat(50 * 1024 + 1);
@@ -684,9 +683,9 @@ mod tests {
     #[tokio::test]
     async fn test_memory_save_round_trip() {
         let (manager, _tmp) = setup_manager().await;
-        let save_tool = MemorySaveTool::new(Arc::clone(&manager));
-        let search_tool = MemorySearchTool::new(Arc::clone(&manager));
-        let get_tool = MemoryGetTool::new(Arc::clone(&manager));
+        let save_tool = MemorySaveTool::new(manager.clone());
+        let search_tool = MemorySearchTool::new(manager.clone());
+        let get_tool = MemoryGetTool::new(manager.clone());
 
         let text = "Music from the jazz era is deeply expressive and soulful.";
         save_tool

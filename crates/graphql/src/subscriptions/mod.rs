@@ -25,18 +25,17 @@ impl SubscriptionRoot {
     async fn chat_event(
         &self,
         ctx: &Context<'_>,
-        session_key: Option<String>,
+        session_key: String,
     ) -> Result<impl Stream<Item = GenericEvent>> {
         let c = ctx.data::<Arc<GqlContext>>()?;
         let mut rx = c.subscribe();
         Ok(async_stream::stream! {
             while let Ok((event_name, payload)) = rx.recv().await {
                 if event_name == "chat" {
-                    if let Some(ref sk) = session_key
-                        && let Some(event_sk) = payload.get("sessionKey").and_then(|v| v.as_str())
-                        && event_sk != sk
-                    {
-                        continue;
+                    match payload.get("sessionKey").and_then(|v| v.as_str()) {
+                        Some(event_sk) if event_sk != session_key => continue,
+                        None => continue,
+                        _ => {}
                     }
                     yield GenericEvent::from(payload);
                 }

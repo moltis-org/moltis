@@ -23,10 +23,12 @@ async-stream      = { workspace = true }
 async-trait       = { workspace = true }
 futures           = { workspace = true }
 http              = { workspace = true }
+json_schema_ast   = { workspace = true }
 moltis-agents     = { path = "../agents" }
 moltis-common     = { workspace = true }
 moltis-config     = { workspace = true }
 reqwest           = { workspace = true }
+schemars          = { workspace = true }
 secrecy           = { workspace = true }
 serde             = { workspace = true }
 serde_json        = { workspace = true }

@@ -12,25 +12,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light dark">
-    <title>Moltis — 신뢰할 수 있는 Rust 네이티브 claw</title>
+    <title>Moltis — Rust로 구축된 안전하고 영구적인 개인 에이전트 서버</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <meta name="description" content="신뢰할 수 있는 Rust 네이티브 claw. 단일 바이너리, 샌드박스 실행, 멀티 프로바이더 LLM, 음성, 메모리, Telegram, WhatsApp, Discord, Teams, MCP 도구. 보안 설계, 당신의 하드웨어에서 실행.">
-    <meta property="og:title" content="Moltis — 신뢰할 수 있는 Rust 네이티브 claw">
-    <meta property="og:description" content="신뢰할 수 있는 Rust 네이티브 claw. 단일 바이너리, 샌드박스 실행, 멀티 프로바이더 LLM, 음성, 메모리, Telegram, WhatsApp, Discord, Teams, MCP 도구. 보안 설계, 당신의 하드웨어에서 실행.">
+    <meta name="description" content="Rust로 구축된 안전하고 영구적인 개인 에이전트 서버. 단일 바이너리, 샌드박스 실행, 멀티 프로바이더 LLM, 음성, 메모리, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams, MCP 도구. 보안 설계, 당신의 하드웨어에서 실행.">
+    <meta property="og:title" content="Moltis — Rust로 구축된 안전하고 영구적인 개인 에이전트 서버">
+    <meta property="og:description" content="Rust로 구축된 안전하고 영구적인 개인 에이전트 서버. 단일 바이너리, 샌드박스 실행, 멀티 프로바이더 LLM, 음성, 메모리, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams, MCP 도구. 보안 설계, 당신의 하드웨어에서 실행.">
     <meta property="og:site_name" content="Moltis">
     <meta property="og:locale" content="ko_KR">
-    <meta property="og:image" content="https://moltis.org/og-social.png?v=8">
-    <meta property="og:image:secure_url" content="https://moltis.org/og-social.png?v=8">
+    <meta property="og:image" content="https://moltis.org/og-social.png?v=9">
+    <meta property="og:image:secure_url" content="https://moltis.org/og-social.png?v=9">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="Moltis — 신뢰할 수 있는 Rust 네이티브 claw">
+    <meta property="og:image:alt" content="Moltis — Rust로 구축된 안전하고 영구적인 개인 에이전트 서버">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://moltis.org">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:image" content="https://moltis.org/og-social.png?v=8">
-    <meta name="twitter:image:alt" content="Moltis — 신뢰할 수 있는 Rust 네이티브 claw">
-    <meta name="twitter:title" content="Moltis — 신뢰할 수 있는 Rust 네이티브 claw">
-    <meta name="twitter:description" content="신뢰할 수 있는 Rust 네이티브 claw. 단일 바이너리, 샌드박스 실행, 멀티 프로바이더 LLM, 음성, 메모리, Telegram, WhatsApp, Discord, Teams, MCP 도구. 보안 설계, 당신의 하드웨어에서 실행.">
+    <meta name="twitter:image" content="https://moltis.org/og-social.png?v=9">
+    <meta name="twitter:image:alt" content="Moltis — Rust로 구축된 안전하고 영구적인 개인 에이전트 서버">
+    <meta name="twitter:title" content="Moltis — Rust로 구축된 안전하고 영구적인 개인 에이전트 서버">
+    <meta name="twitter:description" content="Rust로 구축된 안전하고 영구적인 개인 에이전트 서버. 단일 바이너리, 샌드박스 실행, 멀티 프로바이더 LLM, 음성, 메모리, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams, MCP 도구. 보안 설계, 당신의 하드웨어에서 실행.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400&family=Outfit:wght@700&display=swap" rel="stylesheet">
@@ -60,17 +60,7 @@
             if ((localStorage.getItem('theme') || 'system') === 'system') applyTheme('system');
         });
     </script>
-    <style>
-        @keyframes pulse-slow {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 0.7; }
-        }
-        .animate-pulse-slow { animation: pulse-slow 4s ease-in-out infinite; }
-        .animation-delay-2s { animation-delay: 2s; }
-        .font-outfit { font-family: 'Outfit', sans-serif; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-white dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen relative transition-colors duration-300 overflow-x-hidden w-full">
     <!-- Toast notification -->
@@ -84,70 +74,7 @@
         <div class="absolute bottom-1/4 right-1/4 w-64 h-64 sm:w-96 sm:h-96 bg-red-300/20 dark:bg-red-600/15 rounded-full blur-3xl animate-pulse-slow animation-delay-2s"></div>
     </div>
 
-    <!-- Sticky Navigation Bar -->
-    <nav class="sticky top-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md border-b border-gray-200/50 dark:border-gray-800/50">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6">
-            <div class="flex items-center justify-between h-14 gap-4">
-                <!-- Logo -->
-                <a href="#home" class="flex items-center gap-2 shrink-0" onclick="navigateTo('home')">
-                    <img src="favicon.svg" alt="Moltis" width="32" height="26">
-                    <span class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-orange-500 to-red-500 dark:from-orange-400 dark:to-red-400 bg-clip-text text-transparent font-outfit">Moltis</span>
-                </a>
-
-                <!-- Nav tabs (desktop) -->
-                <div class="hidden sm:flex items-center gap-1" id="nav-tabs">
-                    <a href="#home" data-page="home" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">홈</a>
-                    <a href="#install" data-page="install" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">설치</a>
-                    <a href="#features" data-page="features" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">기능</a>
-                    <a href="#security" data-page="security" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">보안</a>
-                    <a href="#compare" data-page="compare" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">비교</a>
-                </div>
-
-                <!-- Right side: theme toggle + GitHub stars -->
-                <div class="flex items-center gap-1 shrink-0">
-                    <!-- Theme cycle button -->
-                    <button id="theme-toggle" title="Toggle theme" class="p-1.5 rounded-md text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-                        <svg id="theme-icon-light" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-                        <svg id="theme-icon-system" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                        <svg id="theme-icon-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-                    </button>
-                    <!-- 언어 selector -->
-                    <div class="relative" id="lang-switcher">
-                        <button onclick="this.nextElementSibling.classList.toggle('hidden')" class="flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-semibold text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="언어 변경">
-                            KO
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
-                        </button>
-                        <div class="hidden absolute right-0 mt-1 min-w-[8rem] bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50">
-                            <button onclick="setLang('en')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">English</button>
-                            <button onclick="setLang('fr')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Fran&#231;ais</button>
-                            <button onclick="setLang('zh')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#20013;&#25991;</button>
-                            <button onclick="setLang('es')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Espa&#241;ol</button>
-                            <button onclick="setLang('de')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Deutsch</button>
-                            <button onclick="setLang('it')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Italiano</button>
-                            <button onclick="setLang('pt')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Portugu&#234;s</button>
-                            <button onclick="setLang('ja')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#26085;&#26412;&#35486;</button>
-                            <button onclick="setLang('ko')" class="w-full text-left px-3 py-1.5 text-xs font-semibold text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-700">&#54620;&#44397;&#50612;</button>
-                            <button onclick="setLang('ru')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#1056;&#1091;&#1089;&#1089;&#1082;&#1080;&#1081;</button>
-                        </div>
-                    </div>
-                    <!-- GitHub stars -->
-                    <a href="https://github.com/moltis-org/moltis" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:text-gray-700 dark:hover:text-gray-300 transition-colors" id="github-stars-link">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-                        <span id="github-stars"></span>
-                    </a>
-                </div>
-            </div>
-
-            <!-- Mobile nav tabs -->
-            <div class="flex sm:hidden items-center gap-1 pb-2 overflow-x-auto hide-scrollbar -mx-1 px-1" id="nav-tabs-mobile">
-                <a href="#home" data-page="home" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">홈</a>
-                <a href="#install" data-page="install" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">설치</a>
-                <a href="#features" data-page="features" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">기능</a>
-                <a href="#security" data-page="security" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">보안</a>
-                <a href="#compare" data-page="compare" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">비교</a>
-            </div>
-        </div>
-    </nav>
+    <!--NAV-->
 
     <!-- Lightbox overlay -->
     <div id="lightbox" class="hidden fixed inset-0 z-50 bg-black/90 flex items-center justify-center" onclick="if(event.target===this)closeLightbox()">
@@ -167,7 +94,7 @@
     <!-- PAGE: Home -->
     <!-- ============================================================ -->
     <div id="page-home" class="page-content">
-        <div class="relative z-10 text-center px-4 sm:px-6 w-full max-w-2xl mx-auto pt-12 pb-8">
+        <div class="relative z-10 text-center px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
             <!-- Announcement banner -->
             <a href="#features" onclick="navigateTo('features')" class="group inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 hover:border-orange-400 dark:hover:border-orange-500 transition-all hover:shadow-md">
                 <span class="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-bold uppercase tracking-wide">신규</span>
@@ -176,7 +103,14 @@
             </a>
 
             <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-2 text-gray-800 dark:text-gray-100">신뢰할 수 있는 Rust 네이티브 claw</h1>
-            <p class="text-sm sm:text-base text-gray-400 dark:text-gray-500 mb-6">One binary — sandboxed, secure, yours.</p>
+            <p class="text-sm sm:text-base text-gray-400 dark:text-gray-500 mb-4">One binary — sandboxed, built in Rust, yours to own.</p>
+
+            <!-- Positioning -->
+            <p class="text-sm sm:text-base text-gray-600 dark:text-gray-400 max-w-xl mx-auto mb-6 leading-relaxed">
+                Not a chatbot wrapper. Not a cloud service tied to one provider.
+                A real agent server that runs on your hardware, remembers across sessions,
+                and reaches you through every channel you use.
+            </p>
 
             <!-- CTA buttons -->
             <div class="flex items-center justify-center gap-3 mb-6">
@@ -202,6 +136,52 @@
                     <img src="screenshots/thumbs/5.png" alt="샌드박스ed shell execution in Docker container" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(4)">
                     <img src="screenshots/thumbs/6.png" alt="Telegram bot channel with voice and events" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(5)">
                     <img src="screenshots/thumbs/7.png" alt="Web UI showing Telegram channel messages" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(6)">
+                </div>
+            </div>
+
+            <!-- How it works -->
+            <div class="max-w-3xl mx-auto mb-8 text-left">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1 text-center">Up and running in 60 seconds</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6 text-center">Three steps. No dependencies.</p>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <!-- Step 1: Install -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">1</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">설치</h3>
+                        </div>
+                        <div class="rounded-md bg-gray-900 dark:bg-gray-800 p-3 font-mono text-[11px] text-gray-300 leading-relaxed overflow-x-auto">
+                            <span class="text-gray-500">$</span> curl -fsSL moltis.org/install.sh | sh
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Configure -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">2</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Configure</h3>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Open <span class="font-mono text-orange-500 dark:text-orange-400">localhost:13131</span>, paste your provider key, pick a model. O인증 providers like GitHub Copilot work with zero config.</p>
+                    </div>
+
+                    <!-- Step 3: Chat from anywhere -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">3</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Chat from anywhere</h3>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5">
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/globe.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Web UI</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/telegram.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Telegram</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/whatsapp.svg" alt="" width="12" height="12" class="dark:invert opacity-60">WhatsApp</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/discord.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Discord</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/slack.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Slack</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/matrix.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Matrix</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/nostr.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Nostr</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/teams.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Teams</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -237,10 +217,171 @@
                         </span>
                         <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">Full-featured</h3>
                     </div>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Telegram, WhatsApp, Discord, Teams, voice, memory, scheduling, tools — all built-in. No plugin marketplace to get supply-chain attacked through.</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams, voice, memory, scheduling, tools — all built-in. No plugin marketplace to get supply-chain attacked through.</p>
                 </a>
             </div>
 
+            <!-- What your agent actually does -->
+            <div class="max-w-3xl mx-auto mb-8 text-center">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">What your agent actually does</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6">Not a demo. These run today.</p>
+
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Schedules tasks</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Recurring cron jobs in natural language</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Runs code safely</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">샌드박스ed shell in Docker or Apple Containers</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Browses the web</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Fetches, summarizes, and SSRF-protected</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Manages your calendar</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">CalDAV integration for events and reminders</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Messages everywhere</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Remembers context</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Persistent memory with vector + full-text search</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Talks and listens</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">음성 input and output with cloud and local providers</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">Extends itself</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Creates its own skills, hooks, and MCP 도구 at runtime</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Community quotes (horizontal scroll) -->
+            <div class="max-w-3xl mx-auto mb-8 overflow-x-auto hide-scrollbar">
+                <div class="flex gap-4 px-1 pb-2 snap-x snap-mandatory" style="min-width: min-content">
+                    <div class="w-72 sm:w-80 flex-shrink-0 snap-start p-5 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 text-left">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" class="text-orange-300 dark:text-orange-700 mb-2"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983z"/></svg>
+                        <blockquote class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed mb-2">
+                            Moltis worked in 1 command. I found several AI guardrails missing or turned off in OpenClaw which are working out of the box here. Moltis is way more performant and stable.
+                        </blockquote>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                            <img src="images/icons/discord.svg" alt="" width="14" height="14" class="opacity-60">
+                            <span class="font-medium">Noita</span> on Discord
+                            <a href="https://discord.com/channels/1469505370169933837/1469505371398996115/1488503462487654500" class="text-orange-500 dark:text-orange-400 hover:underline ml-1">#1</a>
+                            <a href="https://discord.com/channels/1469505370169933837/1469505371398996115/1488498690376204379" class="text-orange-500 dark:text-orange-400 hover:underline">#2</a>
+                        </p>
+                    </div>
+                    <div class="w-72 sm:w-80 flex-shrink-0 snap-start p-5 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 text-left">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" class="text-orange-300 dark:text-orange-700 mb-2"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983z"/></svg>
+                        <blockquote class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed mb-2">
+                            I've found the project incredibly useful. In fact I do my Moltis contributions in Moltis.
+                        </blockquote>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                            <img src="images/icons/github.svg" alt="" width="14" height="14" class="opacity-60">
+                            <span class="font-medium">Cstewart-HC</span> on GitHub
+                            <a href="https://github.com/moltis-org/moltis/discussions/680" class="text-orange-500 dark:text-orange-400 hover:underline ml-1">discussion</a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 당신의 스택과 호환 -->
+            <div class="max-w-3xl mx-auto mb-10 text-center">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">당신의 스택과 호환</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6">20개 이상의 공급자, 로컬 모델, 모든 주요 채널 — 모두 내장.</p>
+
+                <div class="space-y-6">
+                    <!-- 클라우드 공급자 -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">클라우드 공급자</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/anthropic.svg" alt="" class="pill-icon">Anthropic</span>
+                            <span class="pill"><img src="images/icons/openai.svg" alt="" class="pill-icon">OpenAI</span>
+                            <span class="pill"><img src="images/icons/gemini.svg" alt="" class="pill-icon">Google Gemini</span>
+                            <span class="pill"><img src="images/icons/mistral.svg" alt="" class="pill-icon">Mistral</span>
+                            <span class="pill"><img src="images/icons/deepseek.svg" alt="" class="pill-icon">DeepSeek</span>
+                            <span class="pill"><img src="images/icons/fireworks.svg" alt="" class="pill-icon">Fireworks</span>
+                            <span class="pill"><img src="images/icons/cerebras.svg" alt="" class="pill-icon">Cerebras</span>
+                            <span class="pill"><img src="images/icons/minimax.png" alt="" class="pill-icon pill-icon-color">MiniMax</span>
+                            <span class="pill"><img src="images/icons/moonshot.svg" alt="" class="pill-icon">Moonshot</span>
+                            <span class="pill"><img src="images/icons/zai.svg" alt="" class="pill-icon">Z.AI</span>
+                            <span class="pill"><img src="images/icons/globe.svg" alt="" class="pill-icon">Venice</span>
+                        </div>
+                    </div>
+
+                    <!-- Local & BYOM -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">로컬 & 직접 가져오기</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/ollama.svg" alt="" class="pill-icon">Ollama</span>
+                            <span class="pill"><img src="images/icons/lmstudio.webp" alt="" class="pill-icon pill-icon-color">LM Studio</span>
+                            <span class="pill">Local GGUF <span class="pill-badge bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-300">CPU/GPU</span></span>
+                            <span class="pill"><img src="images/apple.svg" alt="" class="pill-icon">MLX <span class="pill-badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">Apple Silicon</span></span>
+                            <span class="pill"><img src="images/icons/huggingface.svg" alt="" class="pill-icon">Hugging Face</span>
+                            <span class="pill"><img src="images/icons/openrouter.svg" alt="" class="pill-icon">OpenRouter</span>
+                            <span class="pill"><img src="images/icons/openai-compat.svg" alt="" class="pill-icon">Any OpenAI-compatible</span>
+                        </div>
+                    </div>
+
+                    <!-- O인증 / Zero-Config -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">O인증 &mdash; 설정 불필요</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/github.svg" alt="" class="pill-icon">GitHub Copilot</span>
+                            <span class="pill"><img src="images/icons/openai.svg" alt="" class="pill-icon">OpenAI Codex</span>
+                            <span class="pill"><img src="images/icons/moonshot.svg" alt="" class="pill-icon">Kimi Code</span>
+                        </div>
+                    </div>
+
+                    <!-- 채널 -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">채널</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/globe.svg" alt="" class="pill-icon">Web UI</span>
+                            <span class="pill"><img src="images/icons/telegram.svg" alt="" class="pill-icon">Telegram</span>
+                            <span class="pill"><img src="images/icons/whatsapp.svg" alt="" class="pill-icon">WhatsApp</span>
+                            <span class="pill"><img src="images/icons/discord.svg" alt="" class="pill-icon">Discord</span>
+                            <span class="pill"><img src="images/icons/slack.svg" alt="" class="pill-icon">Slack</span>
+                            <span class="pill"><img src="images/icons/matrix.svg" alt="" class="pill-icon">Matrix</span>
+                            <span class="pill"><img src="images/icons/nostr.svg" alt="" class="pill-icon">Nostr</span>
+                            <span class="pill"><img src="images/icons/teams.svg" alt="" class="pill-icon">Microsoft Teams</span>
+                            <span class="pill"><img src="images/apple.svg" alt="" class="pill-icon">iOS <span class="pill-badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">Soon</span></span>
+                            <span class="pill"><img src="images/icons/graphql.svg" alt="" class="pill-icon">GraphQL API</span>
+                            <span class="pill"><img src="images/icons/code.svg" alt="" class="pill-icon">JSON-RPC</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
         </div>
     </div>
@@ -497,7 +638,7 @@
                         </span>
                         <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Multi-Channel</p>
                     </div>
-                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Web UI, Telegram, WhatsApp, Discord, Teams, or API. One agent, every frontend.</p>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Web UI, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams, or API. One agent, every frontend.</p>
                 </div>
                 <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
                     <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
@@ -568,6 +709,16 @@
                     </div>
                     <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">완전한 i18n 지원. 현재 10개 언어가 기본 탑재되어 있습니다.</p>
                 </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 0 0 8.7-6.7M12 21a9 9 0 0 1-8.7-6.7M12 21c2.5 0 4.5-4 4.5-9S14.5 3 12 3m0 18c-2.5 0-4.5-4-4.5-9S9.5 3 12 3m0 0a9 9 0 0 1 7.8 4.6M12 3a9 9 0 0 0-7.8 4.6m15.6 0A12 12 0 0 1 12 10.5 12 12 0 0 1 4.2 7.6m15.6 0A9 9 0 0 1 21 12c0 .8-.1 1.5-.3 2.3m0 0A18 18 0 0 1 12 16.5a18 18 0 0 1-8.7-2.2m0 0A9 9 0 0 1 3 12c0-1.3.3-2.5.7-3.6"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Webhooks</p>
+                        <span class="px-1.5 py-0.5 rounded-full bg-orange-500 text-white text-[9px] font-bold uppercase">신규</span>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Run AI agents on GitHub PRs, Stripe payments, or any webhook. Review code, triage issues, handle payments &mdash; automatically.</p>
+                </div>
             </div>
 
             <!-- Extended features checklist -->
@@ -620,6 +771,7 @@
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> CalDAV calendar integration</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Hook system (lifecycle)</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Cron job scheduling</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> <a href="https://docs.moltis.org/webhooks.html" class="hover:text-orange-500 transition-colors">Webhook triggers</a></li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> i18n (10개 언어)</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> <a href="https://docs.moltis.org/openclaw-import.html" class="hover:text-orange-500 transition-colors">OpenClaw 가져오기</a></li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> TOML configuration</li>
@@ -633,6 +785,9 @@
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Telegram bot</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> WhatsApp</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Discord</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Slack</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Matrix</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Nostr</li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Microsoft Teams</li>
                             <li class="flex items-center gap-2"><span class="text-gray-400 dark:text-gray-500">&#9675;</span> <span class="text-gray-400 dark:text-gray-500">iOS companion app (coming soon)</span></li>
                             <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> JSON-RPC + GraphQL API</li>
@@ -794,11 +949,11 @@
                         <p class="text-xs text-gray-500 dark:text-gray-400">npm 의존성</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~5K</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~11K</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400">에이전트 코어 LoC</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~150K</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~216K</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400">Rust 라인 수 (전체)</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
@@ -904,7 +1059,7 @@
                                 <td class="px-3 py-2">Web, Telegram</td>
                                 <td class="px-3 py-2">Web, Telegram</td>
                                 <td class="px-3 py-2">Web, Discord</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Web, Telegram, WhatsApp, Discord, Teams</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Web, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">API</td>
@@ -1147,44 +1302,14 @@
         // Intercept nav tab clicks to prevent default hash jump
         document.querySelectorAll('.nav-tab').forEach(function(tab) {
             tab.addEventListener('click', function(e) {
+                var href = tab.getAttribute('href') || '';
+                if (!tab.dataset.page || !href.startsWith('#') && !href.startsWith('/#')) return;
                 e.preventDefault();
                 navigateTo(tab.dataset.page);
             });
         });
 
-        // ============================================================
-        // GitHub stars
-        // ============================================================
-        (function() {
-            fetch('https://api.github.com/repos/moltis-org/moltis')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.stargazers_count != null) {
-                        var count = data.stargazers_count;
-                        var formatted;
-                        if (count >= 1000) {
-                            formatted = (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-                        } else {
-                            formatted = String(count);
-                        }
-                        var el = document.getElementById('github-stars');
-                        // Build star icon + count using safe DOM methods
-                        el.textContent = '';
-                        var star = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                        star.setAttribute('width', '12');
-                        star.setAttribute('height', '12');
-                        star.setAttribute('viewBox', '0 0 24 24');
-                        star.setAttribute('fill', 'currentColor');
-                        star.setAttribute('class', 'text-amber-400 inline');
-                        var polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                        polygon.setAttribute('points', '12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2');
-                        star.appendChild(polygon);
-                        el.appendChild(star);
-                        el.appendChild(document.createTextNode(' ' + formatted));
-                    }
-                })
-                .catch(function() {});
-        })();
+        // GitHub stars are fetched by the shared nav partial script.
 
         // ============================================================
         // Installation tabs
@@ -1294,6 +1419,19 @@
                 });
             });
         }
+        // Scroll-reveal for pill groups
+        var revealObserver = new IntersectionObserver(function(entries) {
+            var idx = 0;
+            entries.forEach(function(entry) {
+                if (!entry.isIntersecting) return;
+                setTimeout(function() { entry.target.classList.add('revealed'); }, idx * 100);
+                idx++;
+                revealObserver.unobserve(entry.target);
+            });
+        }, { threshold: 0.15 });
+        document.querySelectorAll('[data-reveal]').forEach(function(el) {
+            revealObserver.observe(el);
+        });
     </script>
 </body>
 </html>

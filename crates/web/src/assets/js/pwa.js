@@ -22,6 +22,10 @@ export function isAndroid() {
 	return /Android/.test(navigator.userAgent);
 }
 
+export function syncStandaloneClass() {
+	document.documentElement.classList.toggle("pwa-standalone", isStandalone());
+}
+
 // Register service worker
 export async function registerServiceWorker() {
 	if (!("serviceWorker" in navigator)) {
@@ -133,6 +137,7 @@ export function getNotificationPermission() {
 
 // Initialize PWA features
 export function initPWA() {
+	syncStandaloneClass();
 	var hadControllerBeforeInit = Boolean(navigator.serviceWorker?.controller);
 
 	// Register service worker

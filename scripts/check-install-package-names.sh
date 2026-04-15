@@ -16,6 +16,9 @@
 #   arch:    moltis-${VERSION}-1-${ARCH}.pkg.tar.zst
 #            (manual tar with pkgver = ${VERSION}-1)
 #
+#   appimage: moltis-${VERSION}-${ARCH}.AppImage
+#             (release workflow packages AppImage without a revision suffix)
+#
 #   binary:  moltis-${VERSION}-${TARGET}.tar.gz
 #            (manual tar)
 
@@ -98,7 +101,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 4: binary tarball filename
+# Check 4: AppImage filename
+#
+# Release workflow: appimagetool ... "moltis-${VERSION}-${MATRIX_ARCH}.AppImage"
+# ---------------------------------------------------------------------------
+
+echo "Checking AppImage filename pattern..."
+
+appimage_line=$(grep 'appimage_file=' "$INSTALL_SH" | head -1)
+
+if echo "$appimage_line" | grep -q '\-${version}-${arch}\.AppImage'; then
+  pass "AppImage filename: matches release workflow pattern"
+else
+  fail "AppImage filename does not match expected 'moltis-\${version}-\${arch}.AppImage'. Line: $appimage_line"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 5: binary tarball filename
 #
 # Release workflow: tar ... "moltis-${VERSION}-${BUILD_TARGET}.tar.gz"
 # ---------------------------------------------------------------------------
@@ -114,7 +133,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 5: release_tag() handles date-based and semver versions
+# Check 6: release_tag() handles date-based and semver versions
 #
 # Date-based (YYYYMMDD.NN) → bare tag
 # Semver → v-prefixed
@@ -142,7 +161,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 6: .deb arch mapping
+# Check 7: .deb arch mapping
 # ---------------------------------------------------------------------------
 
 echo "Checking architecture mappings..."
@@ -161,7 +180,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 7: Cross-validate against release.yml if present
+# Check 8: Cross-validate against release.yml if present
 # ---------------------------------------------------------------------------
 
 if [[ -f "$RELEASE_YML" ]]; then
@@ -180,10 +199,16 @@ if [[ -f "$RELEASE_YML" ]]; then
   else
     fail "release.yml: --deb-version not found — .deb naming may have changed"
   fi
+
+  if grep -q "\"moltis-\${VERSION}-\${MATRIX_ARCH}.AppImage\"" "$RELEASE_YML"; then
+    pass "release.yml: AppImage naming matches install.sh"
+  else
+    fail "release.yml: AppImage naming pattern changed — install.sh may be stale"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-# Check 8: Verify both install scripts are in sync (belt + suspenders)
+# Check 9: Verify both install scripts are in sync (belt + suspenders)
 # ---------------------------------------------------------------------------
 
 echo "Checking install.sh sync..."

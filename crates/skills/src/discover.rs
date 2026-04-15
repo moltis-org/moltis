@@ -31,13 +31,23 @@ impl FsSkillDiscoverer {
     ///
     /// Workspace root is always the configured data directory.
     pub fn default_paths() -> Vec<(PathBuf, SkillSource)> {
-        let workspace_root = moltis_config::data_dir();
-        let data = workspace_root.clone();
+        Self::default_paths_for(&moltis_config::data_dir())
+    }
+
+    /// Build the default search paths rooted at an explicit workspace / data
+    /// directory.
+    ///
+    /// Prefer this over [`default_paths`](Self::default_paths) when the caller
+    /// already has a `data_dir` in hand (e.g. the gateway's `bootstrap` scope)
+    /// so the read and write sides stay consistent even if
+    /// `moltis_config::data_dir()` is ever reconfigured at runtime.
+    #[must_use]
+    pub fn default_paths_for(data_dir: &Path) -> Vec<(PathBuf, SkillSource)> {
         vec![
-            (workspace_root.join(".moltis/skills"), SkillSource::Project),
-            (data.join("skills"), SkillSource::Personal),
-            (data.join("installed-skills"), SkillSource::Registry),
-            (data.join("installed-plugins"), SkillSource::Plugin),
+            (data_dir.join(".moltis/skills"), SkillSource::Project),
+            (data_dir.join("skills"), SkillSource::Personal),
+            (data_dir.join("installed-skills"), SkillSource::Registry),
+            (data_dir.join("installed-plugins"), SkillSource::Plugin),
         ]
     }
 }
@@ -222,6 +232,37 @@ mod tests {
         super::*,
         crate::types::{RepoEntry, SkillState, SkillsManifest},
     };
+
+    #[test]
+    fn default_paths_for_returns_expected_layout() {
+        // Regression guard: the gateway wires `ReadSkillTool` through this
+        // helper, so the shape of the returned list is part of the public
+        // contract. If someone reorders or renames any of these paths, the
+        // `<available_skills>` prompt block and the read tool could start
+        // disagreeing about which directories contain skills.
+        let data_dir = PathBuf::from("/tmp/data");
+        let paths = FsSkillDiscoverer::default_paths_for(&data_dir);
+        assert_eq!(paths.len(), 4);
+        assert_eq!(paths[0].0, PathBuf::from("/tmp/data/.moltis/skills"));
+        assert_eq!(paths[0].1, SkillSource::Project);
+        assert_eq!(paths[1].0, PathBuf::from("/tmp/data/skills"));
+        assert_eq!(paths[1].1, SkillSource::Personal);
+        assert_eq!(paths[2].0, PathBuf::from("/tmp/data/installed-skills"));
+        assert_eq!(paths[2].1, SkillSource::Registry);
+        assert_eq!(paths[3].0, PathBuf::from("/tmp/data/installed-plugins"));
+        assert_eq!(paths[3].1, SkillSource::Plugin);
+    }
+
+    #[test]
+    fn default_paths_matches_default_paths_for_with_data_dir() {
+        // The zero-arg helper must reduce to the explicit-`data_dir`
+        // variant applied to `moltis_config::data_dir()`. Any future
+        // refactor that breaks this symmetry would cause the prompt
+        // builder and the read tool to see different filesystem layouts.
+        let explicit = FsSkillDiscoverer::default_paths_for(&moltis_config::data_dir());
+        let implicit = FsSkillDiscoverer::default_paths();
+        assert_eq!(explicit, implicit);
+    }
 
     #[tokio::test]
     async fn test_discover_skills_in_temp_dir() {

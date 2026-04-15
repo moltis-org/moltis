@@ -1,6 +1,6 @@
 //! Gateway adapter: wraps `LiveOnboardingService` to implement `OnboardingService`.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use {async_trait::async_trait, serde_json::Value};
 
@@ -95,7 +95,10 @@ impl GatewayOnboardingService {
     }
 
     #[cfg(feature = "openclaw-import")]
-    async fn sync_imported_sessions_to_sqlite(&self, data_dir: &Path) -> Result<(), String> {
+    async fn sync_imported_sessions_to_sqlite(
+        &self,
+        data_dir: &std::path::Path,
+    ) -> Result<(), String> {
         let metadata_path = data_dir.join("sessions").join("metadata.json");
         if !metadata_path.is_file() {
             return Ok(());

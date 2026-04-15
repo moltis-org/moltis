@@ -51,10 +51,20 @@ pub mod share_store;
 pub mod state;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
+pub mod teams_agent_tools;
 pub mod tts_phrases;
 pub mod update_check;
 pub mod voice;
 pub mod voice_agent_tools;
+pub mod webhooks;
+
+#[cfg(test)]
+pub(crate) fn config_override_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
 
 /// Run database migrations for the gateway crate.
 ///

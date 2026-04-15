@@ -36,7 +36,7 @@ WORKDIR {SANDBOX_HOME_DIR}\n"
     )
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 const APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS: u64 = 2_147_483_647;
 
 #[cfg(any(target_os = "macos", test))]
@@ -44,14 +44,14 @@ fn apple_container_wrap_shell_command(shell_command: String) -> String {
     format!("mkdir -p {SANDBOX_HOME_DIR} && {shell_command}")
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 pub(crate) fn apple_container_bootstrap_command() -> String {
     apple_container_wrap_shell_command(format!(
         "if command -v gnusleep >/dev/null 2>&1; then exec gnusleep infinity; else exec sleep {APPLE_CONTAINER_FALLBACK_SLEEP_SECONDS}; fi"
     ))
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 pub(crate) fn apple_container_run_args(
     name: &str,
     image: &str,

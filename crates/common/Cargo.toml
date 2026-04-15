@@ -6,6 +6,7 @@ version.workspace = true
 [dependencies]
 async-trait    = { workspace = true }
 futures        = { workspace = true }
+ipnet          = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 reqwest        = { workspace = true }
 secrecy        = { workspace = true }
@@ -14,6 +15,7 @@ serde_json     = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
+url            = { workspace = true }
 uuid           = { workspace = true }
 
 [features]

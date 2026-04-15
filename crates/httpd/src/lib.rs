@@ -11,6 +11,7 @@ pub mod auth_middleware;
 pub mod auth_routes;
 pub mod channel_webhook_middleware;
 pub mod env_routes;
+pub mod login_guard;
 pub mod request_throttle;
 pub mod server;
 pub mod ssh_routes;

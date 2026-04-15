@@ -248,6 +248,10 @@
       <button class="session-tab flex-1 py-1.5 text-center cursor-pointer bg-transparent border-b-2 border-transparent text-[var(--muted)] hover:text-[var(--text)] transition-colors" data-tab="sessions" role="tab">Sessions</button>
       <button class="session-tab flex-1 py-1.5 text-center cursor-pointer bg-transparent border-b-2 border-transparent text-[var(--muted)] hover:text-[var(--text)] transition-colors" data-tab="cron" role="tab">Cron</button>
     </div>
+    <label id="archivedSessionsRow" class="px-3 py-2 border-b border-[var(--border)] hidden text-xs text-[var(--muted)] flex items-center gap-2 cursor-pointer select-none">
+      <input id="showArchivedSessions" type="checkbox" class="cursor-pointer" />
+      <span>Show archived sessions</span>
+    </label>
     <div class="flex-1 overflow-y-auto" id="sessionList"></div>
   </div>
 

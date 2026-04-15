@@ -1,0 +1,339 @@
+name: Provider Integration Tests
+
+on:
+  schedule:
+    # Daily at 06:00 UTC (after the main CI cron at 04:00)
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: provider-integration
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  provider-tests:
+    name: ${{ matrix.provider }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Don't fail the whole workflow if one provider is down
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      # Run providers sequentially to avoid rate limits across suites
+      max-parallel: 1
+      matrix:
+        include:
+          - provider: minimax
+            test: minimax_integration
+          - provider: moonshot
+            test: moonshot_integration
+          - provider: fireworks
+            test: fireworks_integration
+          - provider: anthropic
+            test: anthropic_integration
+          - provider: openai
+            test: openai_integration
+          - provider: mistral
+            test: mistral_integration
+          - provider: openrouter
+            test: openrouter_integration
+          - provider: kimi-code
+            test: kimi_code_integration
+          - provider: deepseek
+            test: deepseek_integration
+          - provider: gemini
+            test: gemini_integration
+          - provider: zai
+            test: zai_integration
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Configure provider secret (minimax)
+        if: matrix.provider == 'minimax'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "MINIMAX_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (moonshot)
+        if: matrix.provider == 'moonshot'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "MOONSHOT_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (fireworks)
+        if: matrix.provider == 'fireworks'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "FIREWORKS_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (anthropic)
+        if: matrix.provider == 'anthropic'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "ANTHROPIC_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (openai)
+        if: matrix.provider == 'openai'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "OPENAI_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (mistral)
+        if: matrix.provider == 'mistral'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "MISTRAL_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (openrouter)
+        if: matrix.provider == 'openrouter'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "OPENROUTER_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (kimi-code)
+        if: matrix.provider == 'kimi-code'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "KIMI_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (deepseek)
+        if: matrix.provider == 'deepseek'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "DEEPSEEK_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (gemini)
+        if: matrix.provider == 'gemini'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "GEMINI_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (zai)
+        if: matrix.provider == 'zai'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.Z_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "Z_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        if: env.SKIP != 'true'
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        if: env.SKIP != 'true'
+        with:
+          shared-key: provider-integration-v1
+          cache-all-crates: true
+
+      - name: Install build dependencies
+        if: env.SKIP != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config
+
+      - name: Run integration tests
+        if: env.SKIP != 'true'
+        env:
+          TEST_NAME: ${{ matrix.test }}
+        run: |
+          cargo test \
+            --test "$TEST_NAME" \
+            -- --ignored \
+            --test-threads=1
+
+  provider-e2e-scenarios:
+    name: Provider E2E Scenarios
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+    env:
+      Z_API_KEY: ${{ secrets.Z_API_KEY }}
+      ALIBABA_CODING_API_KEY: ${{ secrets.ALIBABA_CODING_API_KEY }}
+      ALIBABA_CODING_BASE_URL: ${{ secrets.ALIBABA_CODING_BASE_URL }}
+      SERIALIZATION_TEST_ZAI_MODEL: glm-5
+      SERIALIZATION_TEST_ALIBABA_MODEL: qwen3.5-plus
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: provider-e2e-scenarios-v1
+          cache-all-crates: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config
+
+      - name: Run provider E2E scenarios
+        run: ./scripts/run-provider-e2e-daily.sh
+
+  openai-live-e2e:
+    name: OpenAI Live E2E
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Check OpenAI secret
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::warning::OPENAI_API_KEY is not configured, skipping live OpenAI E2E"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          fi
+
+      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        if: env.SKIP != 'true'
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: env.SKIP != 'true'
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        if: env.SKIP != 'true'
+        with:
+          shared-key: openai-live-e2e-v1
+          cache-all-crates: true
+
+      - name: Install npm dependencies
+        if: env.SKIP != 'true'
+        working-directory: crates/web/ui
+        run: npm ci
+
+      - name: Build Tailwind CSS
+        if: env.SKIP != 'true'
+        run: |
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
+          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
+
+      - name: Build moltis binary
+        if: env.SKIP != 'true'
+        run: cargo build --bin moltis
+
+      - name: Install Playwright browsers
+        if: env.SKIP != 'true'
+        working-directory: crates/web/ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run live OpenAI E2E
+        if: env.SKIP != 'true'
+        working-directory: crates/web/ui
+        env:
+          CI: "true"
+        run: npx playwright test --project=openai-live e2e/specs/openai-live.spec.js
+
+      - name: Upload OpenAI live E2E results
+        if: ${{ !cancelled() && env.SKIP != 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openai-live-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            crates/web/ui/playwright-report/
+            crates/web/ui/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  summary:
+    name: Integration Summary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs:
+      - provider-tests
+      - provider-e2e-scenarios
+      - openai-live-e2e
+    if: always()
+    steps:
+      - name: Report
+        run: echo "Provider integration tests completed. Check individual job results above."

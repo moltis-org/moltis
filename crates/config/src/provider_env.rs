@@ -92,6 +92,7 @@ pub fn normalize_provider_name(value: &str) -> Option<String> {
         "local" => "local-llm",
         "z-ai" | "z.ai" | "zhipu" | "zhipu-ai" => "zai",
         "zai-code" | "zai-coding" | "zhipu-code" => "zai-code",
+        "alibaba" | "alibaba-coding" | "dashscope-coding" => "alibaba-coding",
         other => other,
     };
 
@@ -145,6 +146,26 @@ mod tests {
             panic!("generic provider env should resolve");
         };
         assert_eq!(resolved.provider, "gemini");
+    }
+
+    #[test]
+    fn normalize_alibaba_coding_aliases() {
+        assert_eq!(
+            normalize_provider_name("alibaba"),
+            Some("alibaba-coding".into())
+        );
+        assert_eq!(
+            normalize_provider_name("alibaba-coding"),
+            Some("alibaba-coding".into())
+        );
+        assert_eq!(
+            normalize_provider_name("dashscope-coding"),
+            Some("alibaba-coding".into())
+        );
+        assert_eq!(
+            normalize_provider_name("ALIBABA_CODING"),
+            Some("alibaba-coding".into())
+        );
     }
 
     #[test]

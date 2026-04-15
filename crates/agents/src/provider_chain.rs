@@ -58,12 +58,16 @@ impl ProviderErrorKind {
 /// Error patterns for context window overflow (reused from runner.rs).
 const CONTEXT_WINDOW_PATTERNS: &[&str] = &[
     "context_length_exceeded",
+    "context_window_exceeded",
+    "model_context_window_exceeded",
     "max_tokens",
     "too many tokens",
     "request too large",
     "maximum context length",
     "context window",
     "token limit",
+    "input too long",
+    "input_too_long",
     "content_too_large",
     "request_too_large",
 ];
@@ -612,6 +616,18 @@ mod tests {
     #[test]
     fn classify_context_window() {
         let err = anyhow::anyhow!("context_length_exceeded: maximum context length is 200000");
+        assert_eq!(classify_error(&err), ProviderErrorKind::ContextWindow);
+        // Z.AI / OpenAI-compat finish_reason
+        let err = anyhow::anyhow!("model_context_window_exceeded");
+        assert_eq!(classify_error(&err), ProviderErrorKind::ContextWindow);
+        // Generic underscore variant
+        let err = anyhow::anyhow!("context_window_exceeded");
+        assert_eq!(classify_error(&err), ProviderErrorKind::ContextWindow);
+        // Provider input-too-long
+        let err = anyhow::anyhow!("input_too_long: your prompt exceeds the limit");
+        assert_eq!(classify_error(&err), ProviderErrorKind::ContextWindow);
+        // Space variant
+        let err = anyhow::anyhow!("input too long");
         assert_eq!(classify_error(&err), ProviderErrorKind::ContextWindow);
     }
 

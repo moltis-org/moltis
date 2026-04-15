@@ -3,12 +3,10 @@
 //! This module provides concrete implementations of the `TtsService` and
 //! `SttService` traits using the moltis-voice crate's providers.
 
-use {
-    async_trait::async_trait,
-    serde_json::{Value, json},
-};
-
-use crate::services::{ServiceError, ServiceResult};
+#[cfg(feature = "voice")]
+use async_trait::async_trait;
+#[cfg(feature = "voice")]
+use serde_json::{Value, json};
 
 #[cfg(feature = "voice")]
 use {
@@ -27,6 +25,8 @@ use moltis_voice::{
 
 #[cfg(feature = "voice")]
 use crate::services::TtsService;
+#[cfg(feature = "voice")]
+use crate::services::{ServiceError, ServiceResult};
 
 #[cfg(feature = "voice")]
 trait IntoVoiceSttProvider {
@@ -61,6 +61,31 @@ fn resolve_openai_key(
         .cloned()
         .or_else(|| std::env::var("OPENAI_API_KEY").ok().map(Secret::new))
         .or_else(|| cfg.providers.get("openai").and_then(|p| p.api_key.clone()))
+}
+
+#[cfg(feature = "voice")]
+fn resolve_openai_provider_base_url(cfg: &moltis_config::MoltisConfig) -> Option<String> {
+    cfg.providers.get("openai").and_then(|p| p.base_url.clone())
+}
+
+#[cfg(feature = "voice")]
+fn resolve_openai_tts_base_url(cfg: &moltis_config::MoltisConfig) -> Option<String> {
+    cfg.voice
+        .tts
+        .openai
+        .base_url
+        .clone()
+        .or_else(|| resolve_openai_provider_base_url(cfg))
+}
+
+#[cfg(feature = "voice")]
+fn resolve_openai_whisper_base_url(cfg: &moltis_config::MoltisConfig) -> Option<String> {
+    cfg.voice
+        .stt
+        .whisper
+        .base_url
+        .clone()
+        .or_else(|| resolve_openai_provider_base_url(cfg))
 }
 
 // ── TTS Service ─────────────────────────────────────────────────────────────
@@ -112,6 +137,7 @@ impl LiveTtsService {
             },
             openai: moltis_voice::OpenAiTtsConfig {
                 api_key: resolve_openai_key(cfg.voice.tts.openai.api_key.as_ref(), &cfg),
+                base_url: resolve_openai_tts_base_url(&cfg),
                 voice: cfg.voice.tts.openai.voice.clone(),
                 model: cfg.voice.tts.openai.model.clone(),
                 speed: None,
@@ -150,13 +176,19 @@ impl LiveTtsService {
                     config.elevenlabs.model.clone(),
                 )) as Box<dyn TtsProvider + Send + Sync>
             }),
-            TtsProviderId::OpenAi => config.openai.api_key.as_ref().map(|key| {
-                Box::new(OpenAiTts::with_defaults(
-                    Some(key.clone()),
+            TtsProviderId::OpenAi => {
+                let provider = OpenAiTts::with_defaults(
+                    config.openai.api_key.clone(),
+                    config.openai.base_url.clone(),
                     config.openai.voice.clone(),
                     config.openai.model.clone(),
-                )) as Box<dyn TtsProvider + Send + Sync>
-            }),
+                );
+                if provider.is_configured() {
+                    Some(Box::new(provider) as Box<dyn TtsProvider + Send + Sync>)
+                } else {
+                    None
+                }
+            },
             TtsProviderId::Google => config.google.api_key.as_ref().map(|_| {
                 Box::new(GoogleTts::new(&config.google)) as Box<dyn TtsProvider + Send + Sync>
             }),
@@ -187,7 +219,10 @@ impl LiveTtsService {
                 TtsProviderId::ElevenLabs,
                 config.elevenlabs.api_key.is_some(),
             ),
-            (TtsProviderId::OpenAi, config.openai.api_key.is_some()),
+            (
+                TtsProviderId::OpenAi,
+                config.openai.api_key.is_some() || config.openai.base_url.is_some(),
+            ),
             (TtsProviderId::Google, config.google.api_key.is_some()),
             (TtsProviderId::Piper, config.piper.model_path.is_some()),
             (TtsProviderId::Coqui, true), // Always available if server running
@@ -518,9 +553,17 @@ impl LiveSttService {
         match provider_id {
             SttProviderId::Whisper => {
                 let key = resolve_openai_key(cfg.voice.stt.whisper.api_key.as_ref(), &cfg);
-                key.map(|k| {
-                    Box::new(WhisperStt::new(Some(k))) as Box<dyn SttProvider + Send + Sync>
-                })
+                let provider = WhisperStt::with_options(
+                    key,
+                    resolve_openai_whisper_base_url(&cfg),
+                    cfg.voice.stt.whisper.model.clone(),
+                    cfg.voice.stt.whisper.language.clone(),
+                );
+                if provider.is_configured() {
+                    Some(Box::new(provider) as Box<dyn SttProvider + Send + Sync>)
+                } else {
+                    None
+                }
             },
             SttProviderId::Groq => cfg.voice.stt.groq.api_key.as_ref().map(|key| {
                 Box::new(GroqStt::with_options(
@@ -603,7 +646,8 @@ impl LiveSttService {
         vec![
             (
                 SttProviderId::Whisper,
-                cfg.voice.stt.whisper.api_key.is_some(),
+                cfg.voice.stt.whisper.api_key.is_some()
+                    || resolve_openai_whisper_base_url(&cfg).is_some(),
             ),
             (SttProviderId::Groq, cfg.voice.stt.groq.api_key.is_some()),
             (
@@ -794,7 +838,39 @@ impl SttService for LiveSttService {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(all(test, feature = "voice"))]
 mod tests {
-    use {super::*, secrecy::ExposeSecret, serde_json::json};
+    use {super::*, secrecy::ExposeSecret, serde_json::json, tempfile::TempDir};
+
+    struct VoiceConfigTestGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        _config_dir: TempDir,
+        _data_dir: TempDir,
+    }
+
+    impl VoiceConfigTestGuard {
+        fn with_config(config_toml: &str) -> Self {
+            let lock = crate::config_override_test_lock();
+            let config_dir = tempfile::tempdir()
+                .unwrap_or_else(|error| panic!("config tempdir should be created: {error}"));
+            let data_dir = tempfile::tempdir()
+                .unwrap_or_else(|error| panic!("data tempdir should be created: {error}"));
+            std::fs::write(config_dir.path().join("moltis.toml"), config_toml)
+                .unwrap_or_else(|error| panic!("config should be written: {error}"));
+            moltis_config::set_config_dir(config_dir.path().to_path_buf());
+            moltis_config::set_data_dir(data_dir.path().to_path_buf());
+            Self {
+                _lock: lock,
+                _config_dir: config_dir,
+                _data_dir: data_dir,
+            }
+        }
+    }
+
+    impl Drop for VoiceConfigTestGuard {
+        fn drop(&mut self) {
+            moltis_config::clear_config_dir();
+            moltis_config::clear_data_dir();
+        }
+    }
 
     #[test]
     fn test_resolve_openai_key_prefers_voice_key_over_llm_provider_key() {
@@ -849,6 +925,100 @@ mod tests {
             Some(SttProviderId::Whisper)
         );
         assert!(LiveSttService::resolve_provider(None).is_some());
+    }
+
+    #[test]
+    fn test_live_stt_whisper_base_url_counts_as_configured() {
+        let _guard = VoiceConfigTestGuard::with_config(
+            r#"
+[server]
+port = 18080
+
+[voice.stt.whisper]
+base_url = "http://127.0.0.1:8001/"
+"#,
+        );
+
+        let providers = LiveSttService::list_providers();
+        let whisper = providers
+            .into_iter()
+            .find(|(id, _)| *id == SttProviderId::Whisper);
+
+        assert_eq!(whisper, Some((SttProviderId::Whisper, true)));
+        assert_eq!(
+            LiveSttService::resolve_provider(None),
+            Some(SttProviderId::Whisper)
+        );
+    }
+
+    #[test]
+    fn test_resolve_openai_tts_base_url_prefers_voice_specific_value() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.voice.tts.openai.base_url = Some("http://127.0.0.1:8003".to_string());
+        cfg.providers.providers.insert(
+            "openai".to_string(),
+            moltis_config::schema::ProviderEntry {
+                base_url: Some("http://127.0.0.1:8001".to_string()),
+                ..moltis_config::schema::ProviderEntry::default()
+            },
+        );
+
+        assert_eq!(
+            resolve_openai_tts_base_url(&cfg).as_deref(),
+            Some("http://127.0.0.1:8003")
+        );
+    }
+
+    #[test]
+    fn test_resolve_openai_tts_base_url_falls_back_to_provider_value() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.providers.providers.insert(
+            "openai".to_string(),
+            moltis_config::schema::ProviderEntry {
+                base_url: Some("http://127.0.0.1:8001".to_string()),
+                ..moltis_config::schema::ProviderEntry::default()
+            },
+        );
+
+        assert_eq!(
+            resolve_openai_tts_base_url(&cfg).as_deref(),
+            Some("http://127.0.0.1:8001")
+        );
+    }
+
+    #[test]
+    fn test_resolve_openai_whisper_base_url_prefers_voice_specific_value() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.voice.stt.whisper.base_url = Some("http://127.0.0.1:8002".to_string());
+        cfg.providers.providers.insert(
+            "openai".to_string(),
+            moltis_config::schema::ProviderEntry {
+                base_url: Some("http://127.0.0.1:8001".to_string()),
+                ..moltis_config::schema::ProviderEntry::default()
+            },
+        );
+
+        assert_eq!(
+            resolve_openai_whisper_base_url(&cfg).as_deref(),
+            Some("http://127.0.0.1:8002")
+        );
+    }
+
+    #[test]
+    fn test_resolve_openai_whisper_base_url_falls_back_to_provider_value() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.providers.providers.insert(
+            "openai".to_string(),
+            moltis_config::schema::ProviderEntry {
+                base_url: Some("http://127.0.0.1:8001".to_string()),
+                ..moltis_config::schema::ProviderEntry::default()
+            },
+        );
+
+        assert_eq!(
+            resolve_openai_whisper_base_url(&cfg).as_deref(),
+            Some("http://127.0.0.1:8001")
+        );
     }
 
     #[tokio::test]

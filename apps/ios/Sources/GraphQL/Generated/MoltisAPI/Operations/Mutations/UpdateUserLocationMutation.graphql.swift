@@ -5,7 +5,7 @@
 @_spi(Execution) @_spi(Unsafe) import ApolloAPI
 
 extension MoltisAPI {
-  struct UpdateUserLocationMutation: GraphQLMutation {
+  nonisolated struct UpdateUserLocationMutation: GraphQLMutation {
     static let operationName: String = "UpdateUserLocation"
     static let operationDocument: ApolloAPI.OperationDocument = .init(
       definition: .init(
@@ -20,7 +20,7 @@ extension MoltisAPI {
 
     @_spi(Unsafe) public var __variables: Variables? { ["input": input] }
 
-    struct Data: MoltisAPI.SelectionSet {
+    nonisolated struct Data: MoltisAPI.SelectionSet {
       let __data: DataDict
       init(_dataDict: DataDict) { __data = _dataDict }
 
@@ -37,7 +37,7 @@ extension MoltisAPI {
       /// Agents
       ///
       /// Parent Type: `AgentMutation`
-      struct Agents: MoltisAPI.SelectionSet {
+      nonisolated struct Agents: MoltisAPI.SelectionSet {
         let __data: DataDict
         init(_dataDict: DataDict) { __data = _dataDict }
 
@@ -56,7 +56,7 @@ extension MoltisAPI {
         /// Agents.UpdateIdentity
         ///
         /// Parent Type: `BoolResult`
-        struct UpdateIdentity: MoltisAPI.SelectionSet {
+        nonisolated struct UpdateIdentity: MoltisAPI.SelectionSet {
           let __data: DataDict
           init(_dataDict: DataDict) { __data = _dataDict }
 

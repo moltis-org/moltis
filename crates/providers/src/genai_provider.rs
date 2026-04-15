@@ -63,9 +63,11 @@ fn build_genai_messages(messages: &[ChatMessage]) -> Vec<genai::chat::ChatMessag
             )),
             ChatMessage::User {
                 content: UserContent::Text(text),
+                ..
             } => Some(genai::chat::ChatMessage::user(text)),
             ChatMessage::User {
                 content: UserContent::Multimodal(_),
+                ..
             } => {
                 // genai doesn't support multimodal content; send empty string.
                 Some(genai::chat::ChatMessage::user(""))

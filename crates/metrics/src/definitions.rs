@@ -501,6 +501,28 @@ pub mod telegram {
     pub const OTP_VERIFICATIONS_TOTAL: &str = "moltis_telegram_otp_verifications_total";
 }
 
+/// Nostr DM channel metrics
+pub mod nostr {
+    /// DMs received from Nostr relays
+    pub const MESSAGES_RECEIVED_TOTAL: &str = "moltis_nostr_messages_received_total";
+    /// DMs sent to Nostr relays
+    pub const MESSAGES_SENT_TOTAL: &str = "moltis_nostr_messages_sent_total";
+    /// DM send duration in seconds
+    pub const MESSAGE_SEND_DURATION_SECONDS: &str = "moltis_nostr_message_send_duration_seconds";
+    /// DM send errors by type
+    pub const MESSAGE_SEND_ERRORS_TOTAL: &str = "moltis_nostr_message_send_errors_total";
+    /// Active Nostr accounts
+    pub const ACTIVE_ACCOUNTS: &str = "moltis_nostr_active_accounts";
+    /// Access control denials
+    pub const ACCESS_CONTROL_DENIALS_TOTAL: &str = "moltis_nostr_access_control_denials_total";
+    /// NIP-04/NIP-44 decryption failures
+    pub const DECRYPT_ERRORS_TOTAL: &str = "moltis_nostr_decrypt_errors_total";
+    /// Relay connection count (gauge-like, re-emitted on change)
+    pub const RELAYS_CONNECTED: &str = "moltis_nostr_relays_connected";
+    /// OTP challenges issued to non-allowlisted users
+    pub const OTP_CHALLENGES_TOTAL: &str = "moltis_nostr_otp_challenges_total";
+}
+
 /// Config loading metrics
 pub mod config {
     /// Config load duration in seconds

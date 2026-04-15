@@ -7,10 +7,13 @@ use {
     tracing::{debug, info, warn},
 };
 
-use moltis_protocol::{
-    ConnectParams, ConnectParamsV4, ErrorShape, EventFrame, Extensions, Features, GatewayFrame,
-    HANDSHAKE_TIMEOUT_MS, HelloAuth, HelloOk, KNOWN_EVENTS, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
-    Policy, ResponseFrame, ServerInfo, error_codes, roles, scopes,
+use {
+    moltis_gateway::auth::{AuthIdentity, AuthMethod},
+    moltis_protocol::{
+        ConnectParams, ConnectParamsV4, ErrorShape, EventFrame, Extensions, Features, GatewayFrame,
+        HANDSHAKE_TIMEOUT_MS, HelloAuth, HelloOk, KNOWN_EVENTS, MAX_PAYLOAD_BYTES,
+        PROTOCOL_VERSION, Policy, ResponseFrame, ServerInfo, error_codes, roles, scopes,
+    },
 };
 
 use moltis_gateway::{
@@ -38,7 +41,7 @@ pub async fn handle_connection(
     remote_addr: SocketAddr,
     accept_language: Option<String>,
     remote_ip: Option<String>,
-    header_authenticated: bool,
+    header_identity: Option<AuthIdentity>,
     is_local: bool,
 ) {
     let conn_id = uuid::Uuid::new_v4().to_string();
@@ -141,9 +144,14 @@ pub async fn handle_connection(
     //   - TCP source IP loopback check
     //
     // See CVE-2026-25253 for the analogous OpenClaw vulnerability.
-    let mut authenticated = header_authenticated;
+    let mut authenticated = header_identity.is_some();
     // Scopes from API key verification (if any).
-    let mut api_key_scopes: Option<Vec<String>> = None;
+    // When authenticated via HTTP header (cookie/bearer), scopes come from
+    // the AuthIdentity. API-key scopes are non-empty; password/loopback
+    // scopes are empty (= full access).
+    let mut api_key_scopes: Option<Vec<String>> = header_identity
+        .filter(|id| id.method == AuthMethod::ApiKey)
+        .map(|id| id.scopes);
     // Device token verification result (if any).
     let mut device_token_device_id: Option<String> = None;
 
@@ -242,7 +250,7 @@ pub async fn handle_connection(
         warn!(
             conn_id = %conn_id,
             is_local,
-            header_authenticated,
+            authenticated,
             setup_complete,
             has_api_key,
             has_password,
@@ -358,15 +366,14 @@ pub async fn handle_connection(
     if let Some(ref tz_str) = browser_timezone
         && let Ok(tz) = tz_str.parse::<chrono_tz::Tz>()
     {
-        let existing_user = moltis_config::load_user();
-        if existing_user
-            .as_ref()
-            .and_then(|u| u.timezone.as_ref())
-            .is_none()
-        {
-            let mut user = existing_user.unwrap_or_default();
+        let write_mode = moltis_config::discover_and_load()
+            .memory
+            .user_profile_write_mode;
+        let existing_user = moltis_config::resolve_user_profile();
+        if existing_user.timezone.as_ref().is_none() && write_mode.allows_auto_write() {
+            let mut user = existing_user;
             user.timezone = Some(moltis_config::Timezone::from(tz));
-            if let Err(e) = moltis_config::save_user(&user) {
+            if let Err(e) = moltis_config::save_user_with_mode(&user, write_mode) {
                 warn!(conn_id = %conn_id, error = %e, "ws: failed to auto-persist timezone");
             } else {
                 info!(conn_id = %conn_id, timezone = %tz_str, "ws: auto-persisted browser timezone to USER.md");
