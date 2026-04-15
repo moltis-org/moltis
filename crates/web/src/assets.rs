@@ -20,6 +20,9 @@ use {
     tracing::info,
 };
 
+#[cfg(feature = "embedded-assets")]
+use tracing::warn;
+
 // ── Embedded assets (feature-gated) ─────────────────────────────────────────
 
 #[cfg(feature = "embedded-assets")]

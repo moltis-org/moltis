@@ -2372,6 +2372,7 @@ function ChannelTypeSelector({ onSelect, offered }) {
 		["whatsapp", "icon-whatsapp", "WhatsApp"],
 		["msteams", "icon-msteams", "Microsoft Teams"],
 		["discord", "icon-discord", "Discord"],
+		["slack", "icon-slack", "Slack"],
 		["matrix", "icon-matrix", "Matrix"],
 		["nostr", "icon-nostr", "Nostr"],
 	].filter(([type]) => offered.has(type));
@@ -3656,6 +3657,159 @@ function NostrForm({ onConnected, error, setError }) {
 	</form>`;
 }
 
+function SlackForm({ onConnected, error, setError }) {
+	var [accountId, setAccountId] = useState("");
+	var [botToken, setBotToken] = useState("");
+	var [connectionMode, setConnectionMode] = useState("socket_mode");
+	var [appToken, setAppToken] = useState("");
+	var [signingSecret, setSigningSecret] = useState("");
+	var [dmPolicy, setDmPolicy] = useState("allowlist");
+	var [allowlist, setAllowlist] = useState("");
+	var [advancedConfig, setAdvancedConfig] = useState("");
+	var [saving, setSaving] = useState(false);
+
+	function onSubmit(e) {
+		e.preventDefault();
+		if (!accountId.trim()) {
+			setError("Account ID is required.");
+			return;
+		}
+		if (!botToken.trim()) {
+			setError("Bot Token is required.");
+			return;
+		}
+		if (connectionMode === "socket_mode" && !appToken.trim()) {
+			setError("App Token is required for Socket Mode.");
+			return;
+		}
+		if (connectionMode === "events_api" && !signingSecret.trim()) {
+			setError("Signing Secret is required for Events API mode.");
+			return;
+		}
+		var advancedPatch = parseChannelConfigPatch(advancedConfig);
+		if (!advancedPatch.ok) {
+			setError(advancedPatch.error);
+			return;
+		}
+		setError(null);
+		setSaving(true);
+		var allowlistEntries = allowlist
+			.trim()
+			.split(/\n/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		var config = {
+			bot_token: botToken.trim(),
+			connection_mode: connectionMode,
+			dm_policy: dmPolicy,
+			mention_mode: "mention",
+			allowlist: allowlistEntries,
+		};
+		if (connectionMode === "socket_mode") {
+			config.app_token = appToken.trim();
+		}
+		if (connectionMode === "events_api") {
+			config.signing_secret = signingSecret.trim();
+		}
+		Object.assign(config, advancedPatch.value);
+		addChannel("slack", accountId.trim(), config).then((res) => {
+			setSaving(false);
+			if (res?.ok) {
+				onConnected(accountId.trim(), "slack");
+			} else {
+				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect Slack.");
+			}
+		});
+	}
+
+	return html`<form onSubmit=${onSubmit} class="flex flex-col gap-3">
+		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<span class="font-medium text-[var(--text-strong)]">How to set up a Slack bot</span>
+			<span>1. Go to <a href="https://api.slack.com/apps" target="_blank" class="text-[var(--accent)] underline">api.slack.com/apps</a> and create a new app</span>
+			<span>2. Under OAuth & Permissions, add bot scopes: <code class="text-[var(--accent)]">chat:write</code>, <code class="text-[var(--accent)]">channels:history</code>, <code class="text-[var(--accent)]">im:history</code>, <code class="text-[var(--accent)]">app_mentions:read</code></span>
+			<span>3. Install the app to your workspace and copy the Bot User OAuth Token</span>
+			<span>4. For Socket Mode: enable it and generate an App-Level Token with <code class="text-[var(--accent)]">connections:write</code> scope</span>
+			<span>5. For Events API: set the Request URL to your server\u2019s webhook endpoint</span>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Account ID</label>
+			<input type="text" class="provider-key-input w-full"
+				value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
+				placeholder="e.g. my-slack-bot"
+				autocomplete="off"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="slack_account_id"
+				autofocus />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Bot Token (xoxb-...)</label>
+			<input type="password" class="provider-key-input w-full"
+				value=${botToken} onInput=${(e) => setBotToken(e.target.value)}
+				placeholder="xoxb-..."
+				autocomplete="new-password"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+				name="slack_bot_token" />
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Connection Mode</label>
+			<select class="provider-key-input w-full cursor-pointer" value=${connectionMode} onChange=${(e) => setConnectionMode(e.target.value)}>
+				<option value="socket_mode">Socket Mode (recommended)</option>
+				<option value="events_api">Events API (HTTP webhook)</option>
+			</select>
+		</div>
+		${
+			connectionMode === "socket_mode" &&
+			html`<div>
+				<label class="text-xs text-[var(--muted)] mb-1 block">App Token (xapp-...)</label>
+				<input type="password" class="provider-key-input w-full"
+					value=${appToken} onInput=${(e) => setAppToken(e.target.value)}
+					placeholder="xapp-..."
+					autocomplete="new-password"
+					autocapitalize="none"
+					autocorrect="off"
+					spellcheck="false"
+					name="slack_app_token" />
+			</div>`
+		}
+		${
+			connectionMode === "events_api" &&
+			html`<div>
+				<label class="text-xs text-[var(--muted)] mb-1 block">Signing Secret</label>
+				<input type="password" class="provider-key-input w-full"
+					value=${signingSecret} onInput=${(e) => setSigningSecret(e.target.value)}
+					placeholder="Signing secret from Basic Information"
+					autocomplete="new-password"
+					autocapitalize="none"
+					autocorrect="off"
+					spellcheck="false"
+					name="slack_signing_secret" />
+			</div>`
+		}
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+				<option value="allowlist">Allowlist only (recommended)</option>
+				<option value="open">Open (anyone)</option>
+				<option value="disabled">Disabled</option>
+			</select>
+		</div>
+		<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Allowed Slack user(s)</label>
+			<textarea class="provider-key-input w-full" rows="2"
+				value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+				placeholder="slack_username" style="resize:vertical;font-family:var(--font-body);" />
+			<div class="text-xs text-[var(--muted)] mt-1">One per line. These users can DM your bot.</div>
+		</div>
+		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
+		${error && html`<${ErrorPanel} message=${error} />`}
+		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Slack"}</button>
+	</form>`;
+}
+
 function ChannelStep({ onNext, onBack }) {
 	var offeredList = getGon("channels_offered") || ["telegram", "whatsapp", "discord", "slack", "matrix"];
 	var offered = new Set(offeredList);
@@ -3702,6 +3856,7 @@ function ChannelStep({ onNext, onBack }) {
 		${phase === "form" && selectedType === "whatsapp" && html`<${WhatsAppForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "msteams" && html`<${TeamsForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "discord" && html`<${DiscordForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
+		${phase === "form" && selectedType === "slack" && html`<${SlackForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "matrix" && html`<${MatrixForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "nostr" && html`<${NostrForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "success" && html`<${ChannelSuccess} channelName=${connectedName} channelType=${connectedType} onAnother=${onAnother} />`}
