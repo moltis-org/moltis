@@ -950,18 +950,21 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # edit_throttle_ms = 500          # Min ms between streaming edits
 # thread_replies = true           # Reply in threads
 
-# Matrix bots / appservices using access tokens or password login
-# NOTE: Matrix encrypted rooms require password auth. Access tokens can connect
-# for plain Matrix traffic, but they reuse an existing Matrix session without
-# that device's private E2EE keys, so Moltis cannot reliably decrypt encrypted
-# chats from token auth alone. Use password auth so Moltis creates and persists
-# its own Matrix device keys, then finish Element verification in the chat with
-# `verify yes`, `verify no`, `verify show`, or `verify cancel`.
+# Matrix bots / appservices using OIDC, access tokens, or password login
+# Three authentication modes:
+#   oidc         - OAuth 2.0/OIDC via Matrix Authentication Service (MSC3861).
+#                  Recommended for modern homeservers (e.g. matrix.org since April 2025).
+#                  Authenticates via browser; no password or token needed.
+#   password     - UIAA password login. Required for encrypted Matrix chats on
+#                  older homeservers. Moltis creates and persists its own device keys.
+#   access_token - Reuses an existing Matrix session. Plain traffic only (no E2EE).
 # [channels.matrix.my-bot]
 # homeserver = "https://matrix.example.com"
-# access_token = "syt_..."        # Plain/unencrypted Matrix traffic only
-# password = "..."                # Required for encrypted Matrix chats
-# user_id = "@bot:example.com"    # Required for password login, auto-detected for token auth
+# auth_mode = "oidc"              # "oidc", "password", or "access_token" (auto-detected if omitted)
+# oidc_issuer = ""                # Optional: override OIDC issuer URL (auto-discovered if blank)
+# access_token = "syt_..."        # Required for access_token mode
+# password = "..."                # Required for password mode
+# user_id = "@bot:example.com"    # Required for password login, auto-detected for token/OIDC auth
 # device_id = "MOLTISBOT"         # Optional device ID for session restore
 # device_display_name = "Moltis Matrix Bot"  # Optional display name for password logins
 # ownership_mode = "moltis_owned" # "moltis_owned" or "user_managed"

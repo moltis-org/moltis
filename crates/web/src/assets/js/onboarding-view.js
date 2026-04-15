@@ -3109,7 +3109,8 @@ function DiscordForm({ onConnected, error, setError }) {
 
 function MatrixForm({ onConnected, error, setError }) {
 	var [homeserver, setHomeserver] = useState(MATRIX_DEFAULT_HOMESERVER);
-	var [authMode, setAuthMode] = useState("password");
+	var [authMode, setAuthMode] = useState("oidc");
+	var [oidcWaiting, setOidcWaiting] = useState(false);
 	var [userId, setUserId] = useState("");
 	var [credential, setCredential] = useState("");
 	var [deviceDisplayName, setDeviceDisplayName] = useState("");
@@ -3155,6 +3156,46 @@ function MatrixForm({ onConnected, error, setError }) {
 		}
 		setError(null);
 		setSaving(true);
+
+		// OIDC flow: start browser-based auth.
+		if (normalizeMatrixAuthMode(authMode) === "oidc") {
+			var redirectUri = window.location.origin + "/api/oauth/callback";
+			sendRpc("channels.oauth_start", {
+				account_id: accountId,
+				homeserver: homeserver.trim(),
+				redirect_uri: redirectUri,
+			}).then((res) => {
+				if (res?.ok && res.result?.auth_url) {
+					setOidcWaiting(true);
+					setSaving(false);
+					window.open(res.result.auth_url, "_blank", "noopener");
+					var pollCount = 0;
+					var poll = setInterval(() => {
+						pollCount++;
+						if (pollCount > 120) {
+							clearInterval(poll);
+							setOidcWaiting(false);
+							setError("OIDC authentication timed out. Please try again.");
+							return;
+						}
+						fetchChannelStatus().then((statusRes) => {
+							if (!statusRes?.ok) return;
+							var channels = statusRes.result?.channels || [];
+							if (channels.some((ch) => ch.account_id === accountId && ch.connected)) {
+								clearInterval(poll);
+								setOidcWaiting(false);
+								onConnected(accountId.trim(), "matrix");
+							}
+						});
+					}, 1000);
+				} else {
+					setSaving(false);
+					setError((res?.error && (res.error.message || res.error.detail)) || "Failed to start OIDC login.");
+				}
+			});
+			return;
+		}
+
 		var config = {
 			homeserver: homeserver.trim(),
 			ownership_mode:
@@ -3190,7 +3231,7 @@ function MatrixForm({ onConnected, error, setError }) {
 		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 			<span class="font-medium text-[var(--text-strong)]">Connect a Matrix bot user</span>
 			<span>1. Leave the homeserver as <span class="font-mono">${MATRIX_DEFAULT_HOMESERVER}</span> for matrix.org accounts</span>
-			<span>2. Password is the default because it supports encrypted Matrix chats. Access token auth is only for plain Matrix traffic</span>
+			<span>2. OIDC is the default for modern homeservers. Use Password for encrypted chats on older servers, or Access Token for plain traffic</span>
 			<span>3. Moltis generates the local account ID automatically from the Matrix user or homeserver</span>
 		</div>
 		<div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 flex flex-col gap-1">
@@ -3208,13 +3249,20 @@ function MatrixForm({ onConnected, error, setError }) {
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">Authentication</label>
 			<select class="provider-key-input w-full cursor-pointer" value=${authMode} onChange=${(e) => setAuthMode(normalizeMatrixAuthMode(e.target.value))}>
+				<option value="oidc">OIDC (recommended)</option>
 				<option value="password">Password</option>
 				<option value="access_token">Access token</option>
 			</select>
 			<div class="text-xs text-[var(--muted)] mt-1">${matrixAuthModeGuidance(authMode)}</div>
 		</div>
+		${oidcWaiting && html`
+			<div class="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-3 text-xs text-blue-100 flex items-center gap-2">
+				<span class="animate-spin inline-block w-4 h-4 border-2 border-blue-300 border-t-transparent rounded-full"></span>
+				<span>Waiting for OIDC authentication... Complete the login in the browser window that opened.</span>
+			</div>
+		`}
 		${
-			authMode === "password"
+			authMode !== "oidc" && (authMode === "password"
 				? html`<label class="flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3">
 					<input
 						type="checkbox"
@@ -3226,8 +3274,9 @@ function MatrixForm({ onConnected, error, setError }) {
 						<span class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(authMode, ownershipMode)}</span>
 					</span>
 				</label>`
-				: html`<div class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(authMode, "user_managed")}</div>`
+				: html`<div class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(authMode, "user_managed")}</div>`)
 		}
+		${authMode !== "oidc" && html`
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">Matrix User ID${authMode === "password" ? " (required)" : " (optional)"}</label>
 			<input type="text" class="provider-key-input w-full"
@@ -3253,6 +3302,7 @@ function MatrixForm({ onConnected, error, setError }) {
 				<a href=${MATRIX_DOCS_URL} target="_blank" rel="noreferrer" class="text-[var(--accent)] underline">Matrix setup docs</a>
 			</div>
 		</div>
+		`}
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">Device Display Name (optional)</label>
 			<input type="text" class="provider-key-input w-full"
@@ -3321,7 +3371,7 @@ function MatrixForm({ onConnected, error, setError }) {
 		</div>
 		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
 		${error && html`<${ErrorPanel} message=${error} />`}
-		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Matrix"}</button>
+		<button type="submit" class="provider-btn" disabled=${saving || oidcWaiting}>${saving ? "Connecting\u2026" : oidcWaiting ? "Waiting for OIDC\u2026" : authMode === "oidc" ? "Authenticate with OIDC" : "Connect Matrix"}</button>
 	</form>`;
 }
 

@@ -783,6 +783,29 @@ pub trait ChannelPlugin: Send + Sync {
     ) -> Option<Box<dyn crate::channel_webhook_middleware::ChannelWebhookVerifier>> {
         None
     }
+
+    /// Start an OAuth/OIDC login flow. Returns auth URL and CSRF state.
+    async fn oidc_start(
+        &self,
+        _account_id: &str,
+        _config: serde_json::Value,
+        _redirect_uri: &str,
+    ) -> Result<serde_json::Value> {
+        Err(Error::unavailable(
+            "OIDC login not supported for this channel",
+        ))
+    }
+
+    /// Complete an OAuth/OIDC login after browser redirect.
+    async fn oidc_complete(
+        &self,
+        _csrf_state: &str,
+        _callback_url: &str,
+    ) -> Result<serde_json::Value> {
+        Err(Error::unavailable(
+            "OIDC login not supported for this channel",
+        ))
+    }
 }
 
 /// OTP challenge provider for channels that support self-approval.

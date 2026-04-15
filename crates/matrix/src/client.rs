@@ -24,8 +24,8 @@ use {
 use moltis_channels::{Error as ChannelError, Result as ChannelResult};
 
 use crate::{
-    config::{MatrixAccountConfig, MatrixOwnershipMode},
-    handler,
+    config::{MatrixAccountConfig, MatrixAuthMode, MatrixOwnershipMode},
+    handler, oidc,
     state::AccountStateMap,
     verification,
 };
@@ -34,6 +34,7 @@ use crate::{
 pub(crate) enum AuthMode {
     AccessToken,
     Password,
+    Oidc,
 }
 
 #[derive(Debug, Clone)]
@@ -67,10 +68,16 @@ pub(crate) async fn build_client(
     config: &MatrixAccountConfig,
 ) -> ChannelResult<Client> {
     let store_path = ensure_store_path(account_id)?;
-    Client::builder()
+    let mut builder = Client::builder()
         .homeserver_url(&config.homeserver)
         .with_encryption_settings(encryption_settings())
-        .sqlite_store(&store_path, None)
+        .sqlite_store(&store_path, None);
+
+    if matches!(auth_mode(config), Ok(AuthMode::Oidc)) {
+        builder = builder.handle_refresh_tokens();
+    }
+
+    builder
         .build()
         .await
         .map_err(|error| ChannelError::external("matrix client build", error))
@@ -122,6 +129,49 @@ fn should_rebuild_store_after_auth_error(
 }
 
 pub(crate) fn auth_mode(config: &MatrixAccountConfig) -> ChannelResult<AuthMode> {
+    // Explicit auth_mode takes precedence when present.
+    if let Some(ref explicit) = config.auth_mode {
+        return match explicit {
+            MatrixAuthMode::Oidc => {
+                if config.homeserver.trim().is_empty() {
+                    return Err(ChannelError::invalid_input(
+                        "homeserver is required when using OIDC authentication",
+                    ));
+                }
+                Ok(AuthMode::Oidc)
+            },
+            MatrixAuthMode::Password => {
+                if config.user_id.as_deref().is_none_or(str::is_empty) {
+                    return Err(ChannelError::invalid_input(
+                        "user_id is required when using password authentication",
+                    ));
+                }
+                let password = config
+                    .password
+                    .as_ref()
+                    .map(|secret| secret.expose_secret().trim())
+                    .unwrap_or_default();
+                if password.is_empty() || password == moltis_common::secret_serde::REDACTED {
+                    return Err(ChannelError::invalid_input(
+                        "password is required when auth_mode is \"password\"",
+                    ));
+                }
+                Ok(AuthMode::Password)
+            },
+            MatrixAuthMode::AccessToken => {
+                let access_token = config.access_token.expose_secret().trim();
+                if access_token.is_empty() || access_token == moltis_common::secret_serde::REDACTED
+                {
+                    return Err(ChannelError::invalid_input(
+                        "access_token is required when auth_mode is \"access_token\"",
+                    ));
+                }
+                Ok(AuthMode::AccessToken)
+            },
+        };
+    }
+
+    // Backward-compatible auto-detection from credentials.
     let access_token = config.access_token.expose_secret().trim();
     if !access_token.is_empty() && access_token != moltis_common::secret_serde::REDACTED {
         return Ok(AuthMode::AccessToken);
@@ -188,6 +238,7 @@ pub(crate) async fn authenticate_client(
                 ownership_startup_error: None,
             })
         },
+        AuthMode::Oidc => oidc::restore_oidc_session(client, account_id).await,
     }
 }
 
@@ -1121,5 +1172,45 @@ mod tests {
             false,
             RecoveryState::Unknown
         ));
+    }
+
+    #[test]
+    fn explicit_oidc_auth_mode_returns_oidc() {
+        let cfg = MatrixAccountConfig {
+            auth_mode: Some(MatrixAuthMode::Oidc),
+            ..config()
+        };
+        assert!(matches!(auth_mode(&cfg), Ok(AuthMode::Oidc)));
+    }
+
+    #[test]
+    fn explicit_oidc_auth_mode_requires_homeserver() {
+        let cfg = MatrixAccountConfig {
+            auth_mode: Some(MatrixAuthMode::Oidc),
+            homeserver: String::new(),
+            ..Default::default()
+        };
+        let error = match auth_mode(&cfg) {
+            Ok(mode) => panic!("OIDC with empty homeserver should fail, got {mode:?}"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("homeserver is required"));
+    }
+
+    #[test]
+    fn backward_compat_auto_detection_ignores_absent_auth_mode() {
+        // No auth_mode field — should auto-detect from credentials.
+        let token_cfg = MatrixAccountConfig {
+            access_token: Secret::new("syt_test".into()),
+            ..config()
+        };
+        assert!(matches!(auth_mode(&token_cfg), Ok(AuthMode::AccessToken)));
+
+        let password_cfg = MatrixAccountConfig {
+            password: Some(Secret::new("wordpass".into())),
+            user_id: Some("@bot:example.com".into()),
+            ..config()
+        };
+        assert!(matches!(auth_mode(&password_cfg), Ok(AuthMode::Password)));
     }
 }

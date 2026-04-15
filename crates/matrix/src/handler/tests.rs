@@ -70,6 +70,7 @@ fn account_state_map(initial_sync_complete: bool) -> AccountStateMap {
         pending_identity_reset: Mutex::new(None),
         otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
         verification: Mutex::new(Default::default()),
+        oidc_pending: Mutex::new(None),
     });
 
     Arc::new(RwLock::new(accounts))

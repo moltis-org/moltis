@@ -786,6 +786,104 @@ impl ChannelService for LiveChannelService {
             "type": channel_type.to_string()
         }))
     }
+
+    #[tracing::instrument(skip(self, params))]
+    async fn oauth_start(&self, params: Value) -> ServiceResult {
+        let account_id = params
+            .get("account_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let homeserver = params
+            .get("homeserver")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let redirect_uri = params
+            .get("redirect_uri")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
+        if account_id.is_empty() {
+            return Err("account_id is required".into());
+        }
+        if homeserver.is_empty() {
+            return Err("homeserver is required".into());
+        }
+        if redirect_uri.is_empty() {
+            return Err("redirect_uri is required".into());
+        }
+
+        let config = serde_json::json!({
+            "homeserver": homeserver,
+            "auth_mode": "oidc",
+            "access_token": "",
+        });
+
+        let plugin_lock = self
+            .registry
+            .get("matrix")
+            .ok_or_else(|| ServiceError::from("Matrix channel plugin is not available"))?;
+        let plugin = plugin_lock.read().await;
+        let result = plugin
+            .oidc_start(&account_id, config, &redirect_uri)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(result)
+    }
+
+    #[tracing::instrument(skip(self, params))]
+    async fn oauth_complete(&self, params: Value) -> ServiceResult {
+        let state = params
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let code = params
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
+        if state.is_empty() {
+            return Err("state parameter is required".into());
+        }
+        if code.is_empty() {
+            return Err("code parameter is required".into());
+        }
+
+        let callback_url = format!("http://localhost/callback?code={code}&state={state}");
+
+        let plugin_lock = self
+            .registry
+            .get("matrix")
+            .ok_or_else(|| ServiceError::from("Matrix channel plugin is not available"))?;
+        let plugin = plugin_lock.read().await;
+        let result = plugin
+            .oidc_complete(&state, &callback_url)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Persist the new channel to the store.
+        if let Some(account_id) = result.get("account_id").and_then(Value::as_str)
+            && let Some(config_json) = plugin.account_config_json(account_id)
+            && let Err(e) = self
+                .store
+                .upsert(StoredChannel {
+                    account_id: account_id.to_string(),
+                    channel_type: "matrix".to_string(),
+                    config: config_json,
+                    created_at: unix_now(),
+                    updated_at: unix_now(),
+                })
+                .await
+        {
+            warn!(error = %e, account_id, "failed to persist OIDC channel to store");
+        }
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]

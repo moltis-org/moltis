@@ -15,6 +15,12 @@ use {
 
 use crate::config::MatrixAccountConfig;
 
+/// Pending OIDC login state held between the start and complete phases.
+pub(crate) struct OidcPendingState {
+    pub client: matrix_sdk::Client,
+    pub csrf_state: String,
+}
+
 /// Shared account state map.
 pub type AccountStateMap = Arc<RwLock<HashMap<String, AccountState>>>;
 
@@ -34,6 +40,8 @@ pub struct AccountState {
     pub otp: Mutex<OtpState>,
     /// In-memory Matrix verification flow state.
     pub verification: Mutex<VerificationRuntimeState>,
+    /// Pending OIDC login state (between start and complete phases).
+    pub(crate) oidc_pending: Mutex<Option<OidcPendingState>>,
 }
 
 impl AccountState {

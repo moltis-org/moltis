@@ -137,6 +137,16 @@ pub trait ChannelService: Send + Sync {
     async fn senders_list(&self, params: Value) -> ServiceResult;
     async fn sender_approve(&self, params: Value) -> ServiceResult;
     async fn sender_deny(&self, params: Value) -> ServiceResult;
+
+    async fn oauth_start(&self, params: Value) -> ServiceResult {
+        let _ = params;
+        Err("channel OAuth not supported".into())
+    }
+
+    async fn oauth_complete(&self, params: Value) -> ServiceResult {
+        let _ = params;
+        Err("channel OAuth not supported".into())
+    }
 }
 
 pub struct NoopChannelService;
