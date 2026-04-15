@@ -739,17 +739,11 @@ pub(crate) fn render_error_page(
 ) -> axum::response::Response {
     let asset_prefix = build_asset_prefix();
     let nonce = build_nonce();
-    let (page_title, eyebrow, heading, message) = match kind {
-        ErrorPageKind::NotFound => (
-            "Page not found",
-            "404",
-            "This page wandered off",
-            "This page could not be found.",
-        ),
+    let (page_title, eyebrow, message) = match kind {
+        ErrorPageKind::NotFound => ("Page not found", "404", "This page could not be found."),
         ErrorPageKind::InternalServerError => (
             "Internal server error",
             "500",
-            "Something broke on our side",
             "Moltis hit an internal error while building this page.",
         ),
     };
@@ -767,7 +761,7 @@ pub(crate) fn render_error_page(
         Err(error) => {
             warn!(%error, ?status, "failed to render error template");
             format!(
-                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{status} {page_title}</title></head><body><h1>{heading}</h1><p>{message}</p><p><a href=\"/\">Go home</a></p></body></html>",
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{status} {page_title}</title></head><body><h1>{eyebrow}</h1><p>{message}</p><p><a href=\"/\">Go home</a></p></body></html>",
             )
         },
     };

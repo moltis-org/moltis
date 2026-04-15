@@ -10,8 +10,8 @@ test("unknown browser route renders standalone 404 with a home link", async ({ p
 
 	expect(response).not.toBeNull();
 	expect(response.status()).toBe(404);
-	await expect(page.getByText("This page wandered off", { exact: true })).toBeVisible();
-	await expect(page.getByText("/definitely-not-a-route", { exact: true })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "404", exact: true })).toBeVisible();
+	await expect(page.getByText("This page could not be found.", { exact: true })).toBeVisible();
 
 	const homeLink = page.getByRole("link", {
 		name: "Go to home page",
