@@ -429,9 +429,9 @@ fn strict_mode_nullable_enum_includes_null_in_enum_values() {
     // them nullable. The enum array must include null alongside the original
     // string values.
     let time_range = &schema["properties"]["time_range"];
-    let time_enum = time_range["enum"]
-        .as_array()
-        .expect("time_range should have enum");
+    let Some(time_enum) = time_range["enum"].as_array() else {
+        panic!("time_range should have enum");
+    };
     assert!(
         time_enum.iter().any(|v| v.is_null()),
         "time_range enum should include null, got: {time_enum:?}"
@@ -439,9 +439,9 @@ fn strict_mode_nullable_enum_includes_null_in_enum_values() {
     assert_eq!(time_enum.len(), 5, "original 4 values + null");
 
     let country = &schema["properties"]["country"];
-    let country_enum = country["enum"]
-        .as_array()
-        .expect("country should have enum");
+    let Some(country_enum) = country["enum"].as_array() else {
+        panic!("country should have enum");
+    };
     assert!(
         country_enum.iter().any(|v| v.is_null()),
         "country enum should include null, got: {country_enum:?}"
@@ -468,9 +468,9 @@ fn strict_mode_required_enum_keeps_original_values() {
 
     patch_schema_for_strict_mode(&mut schema);
 
-    let mode_enum = schema["properties"]["mode"]["enum"]
-        .as_array()
-        .expect("mode should have enum");
+    let Some(mode_enum) = schema["properties"]["mode"]["enum"].as_array() else {
+        panic!("mode should have enum");
+    };
     assert_eq!(
         mode_enum.len(),
         2,
@@ -505,9 +505,9 @@ fn to_openai_tools_strict_nullable_enum_has_null() {
     let converted = to_openai_tools(&tools, true);
     let params = &converted[0]["function"]["parameters"];
 
-    let time_enum = params["properties"]["time_range"]["enum"]
-        .as_array()
-        .expect("time_range should have enum");
+    let Some(time_enum) = params["properties"]["time_range"]["enum"].as_array() else {
+        panic!("time_range should have enum");
+    };
     assert!(
         time_enum.iter().any(|v| v.is_null()),
         "time_range enum should include null after strict-mode patching, got: {time_enum:?}"
@@ -534,9 +534,9 @@ fn strict_mode_nullable_enum_only_schema_includes_null() {
 
     patch_schema_for_strict_mode(&mut schema);
 
-    let time_enum = schema["properties"]["time_range"]["enum"]
-        .as_array()
-        .expect("time_range should have enum");
+    let Some(time_enum) = schema["properties"]["time_range"]["enum"].as_array() else {
+        panic!("time_range should have enum");
+    };
     assert!(
         time_enum.iter().any(|v| v.is_null()),
         "enum-only schema should include null, got: {time_enum:?}"

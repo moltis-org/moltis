@@ -63,10 +63,10 @@ fn make_nullable(schema: &mut serde_json::Value) {
 
 /// Append `null` to an `enum` array if present and not already included.
 fn add_null_to_enum(obj: &mut serde_json::Map<String, serde_json::Value>) {
-    if let Some(enum_values) = obj.get_mut("enum").and_then(|v| v.as_array_mut()) {
-        if !enum_values.iter().any(|v| v.is_null()) {
-            enum_values.push(serde_json::Value::Null);
-        }
+    if let Some(enum_values) = obj.get_mut("enum").and_then(|v| v.as_array_mut())
+        && !enum_values.iter().any(|v| v.is_null())
+    {
+        enum_values.push(serde_json::Value::Null);
     }
 }
 
