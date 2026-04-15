@@ -1394,7 +1394,7 @@ function AddMatrixModal() {
 				homeserver: homeserver,
 				redirect_uri: redirectUri,
 			}).then((res) => {
-				if (res?.ok && res.result?.auth_url) {
+				if (res?.ok && res.payload?.auth_url) {
 					oidcWaiting.value = true;
 					saving.value = false;
 					window.open(res.result.auth_url, "_blank", "noopener");
@@ -1411,7 +1411,7 @@ function AddMatrixModal() {
 						}
 						fetchChannelStatus().then((statusRes) => {
 							if (!statusRes?.ok) return;
-							var channels = statusRes.result?.channels || [];
+							var channels = statusRes.payload?.channels || [];
 							if (channels.some((ch) => ch.account_id === accountId && ch.connected)) {
 								clearInterval(oidcPollRef.current);
 								oidcPollRef.current = null;

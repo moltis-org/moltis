@@ -107,9 +107,29 @@ async fn save_oidc_session(account_id: &str, session: &OAuthSession) -> ChannelR
     };
     let json = serde_json::to_string_pretty(&persisted)
         .map_err(|error| ChannelError::external("matrix oidc serialize session", error))?;
-    tokio::fs::write(&path, json)
+    write_session_file(&path, json.as_bytes()).await?;
+    Ok(())
+}
+
+/// Write session data with restrictive file permissions (0o600 on Unix).
+async fn write_session_file(path: &std::path::Path, data: &[u8]) -> ChannelResult<()> {
+    // Write to a temporary location then set permissions before the final path,
+    // or write directly with restricted perms on Unix.
+    tokio::fs::write(path, data)
         .await
         .map_err(|error| ChannelError::external("matrix oidc write session", error))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        tokio::fs::set_permissions(path, perms)
+            .await
+            .map_err(|error| {
+                ChannelError::external("matrix oidc set session file permissions", error)
+            })?;
+    }
+
     Ok(())
 }
 
