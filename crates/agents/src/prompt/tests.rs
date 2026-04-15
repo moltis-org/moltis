@@ -1056,7 +1056,18 @@ fn test_custom_guidelines_replaces_hardcoded() {
     let tools = ToolRegistry::new();
     let custom = "## My Guidelines\n- Always be terse.\n";
     let prompt = build_system_prompt_with_session_runtime(
-        &tools, true, None, &[], None, None, None, None, None, None, None, None,
+        &tools,
+        true,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         Some(custom),
     );
     assert!(prompt.contains("My Guidelines"));
@@ -1067,7 +1078,18 @@ fn test_custom_guidelines_replaces_hardcoded() {
 fn test_none_guidelines_uses_tool_guidelines() {
     let tools = ToolRegistry::new();
     let prompt = build_system_prompt_with_session_runtime(
-        &tools, true, None, &[], None, None, None, None, None, None, None, None,
+        &tools,
+        true,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
     );
     assert!(prompt.contains("## Silent Replies"));
@@ -1077,7 +1099,18 @@ fn test_none_guidelines_uses_tool_guidelines() {
 fn test_empty_string_guidelines_falls_through_to_hardcoded() {
     let tools = ToolRegistry::new();
     let prompt = build_system_prompt_with_session_runtime(
-        &tools, true, None, &[], None, None, None, None, None, None, None, None,
+        &tools,
+        true,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         Some(""),
     );
     // Some("") should fall through to TOOL_GUIDELINES, not produce no guidelines
