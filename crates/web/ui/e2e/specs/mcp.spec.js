@@ -203,10 +203,10 @@ test.describe("MCP page", () => {
 			});
 			await expect(serverEntry).toBeVisible({ timeout: 10_000 });
 
-			// Check the state badge text — should be "running" now that #732 is fixed
+			// Check the state badge text — should be "running" now that #732 is fixed.
+			// Use toHaveText with retry to avoid flakes during status transitions.
 			var stateBadge = serverEntry.locator("span").filter({ hasText: /^(running|dead|stopped|connecting)$/ }).first();
-			await expect(stateBadge).toBeVisible();
-			expect(await stateBadge.textContent()).toBe("running");
+			await expect(stateBadge).toHaveText("running", { timeout: 15_000 });
 
 			// Verify the server has 1 tool (mock_echo) — proves POST connection worked
 			await expect(serverEntry.getByText("1 tool", { exact: false })).toBeVisible();
