@@ -616,13 +616,8 @@ struct ErrorHtmlTemplate<'a> {
     asset_prefix: &'a str,
     nonce: &'a str,
     page_title: &'a str,
-    status_code: u16,
     eyebrow: &'a str,
-    heading: &'a str,
     message: &'a str,
-    detail: &'a str,
-    show_requested_path: bool,
-    requested_path: &'a str,
 }
 
 #[derive(serde::Deserialize)]
@@ -740,27 +735,22 @@ pub(crate) fn is_known_spa_route(path: &str) -> bool {
 pub(crate) fn render_error_page(
     status: StatusCode,
     kind: ErrorPageKind,
-    requested_path: Option<&str>,
+    _requested_path: Option<&str>,
 ) -> axum::response::Response {
     let asset_prefix = build_asset_prefix();
     let nonce = build_nonce();
-    let requested_path = requested_path.unwrap_or("");
-    let (page_title, eyebrow, heading, message, detail, show_requested_path) = match kind {
+    let (page_title, eyebrow, heading, message) = match kind {
         ErrorPageKind::NotFound => (
             "Page not found",
             "404",
             "This page wandered off",
-            "Moltis could not find the page you asked for.",
-            "Try the home page or double-check the URL if you typed it by hand.",
-            !requested_path.is_empty(),
+            "This page could not be found.",
         ),
         ErrorPageKind::InternalServerError => (
             "Internal server error",
             "500",
             "Something broke on our side",
             "Moltis hit an internal error while building this page.",
-            "Try again in a moment. If it keeps happening, check the server logs.",
-            false,
         ),
     };
 
@@ -768,13 +758,8 @@ pub(crate) fn render_error_page(
         asset_prefix: &asset_prefix,
         nonce: &nonce,
         page_title,
-        status_code: status.as_u16(),
         eyebrow,
-        heading,
         message,
-        detail,
-        show_requested_path,
-        requested_path,
     };
 
     let body = match template.render() {
