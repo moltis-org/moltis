@@ -15,7 +15,9 @@ fn strict_mode_collapses_object_union_types() {
 
     assert_eq!(schema["type"], "object");
     assert_eq!(schema["additionalProperties"], false);
-    let required = schema["required"].as_array().unwrap();
+    let Some(required) = schema["required"].as_array() else {
+        panic!("required should be an array");
+    };
     assert_eq!(required.len(), 2);
 }
 
@@ -99,18 +101,24 @@ fn strict_mode_collapses_nested_object_union_types() {
         false
     );
 
-    let top_required: Vec<&str> = schema["required"]
-        .as_array()
-        .unwrap()
+    let Some(top_required_values) = schema["required"].as_array() else {
+        panic!("top-level required should be an array");
+    };
+    let top_required: Vec<&str> = top_required_values
         .iter()
-        .map(|value| value.as_str().unwrap())
+        .map(|value| {
+            let Some(name) = value.as_str() else {
+                panic!("required entry should be a string");
+            };
+            name
+        })
         .collect();
+    let Some(properties) = schema["properties"].as_object() else {
+        panic!("top-level properties should be an object");
+    };
     for name in &top_required {
         assert!(
-            schema["properties"]
-                .as_object()
-                .unwrap()
-                .contains_key(*name),
+            properties.contains_key(*name),
             "top-level required '{name}' missing from properties"
         );
     }
@@ -177,7 +185,9 @@ fn collapse_inside_any_of_variants() {
 
     patch_schema_for_strict_mode(&mut schema);
 
-    let any_of = schema["properties"]["config"]["anyOf"].as_array().unwrap();
+    let Some(any_of) = schema["properties"]["config"]["anyOf"].as_array() else {
+        panic!("config.anyOf should be an array");
+    };
     assert_eq!(any_of[0]["type"], "object");
     assert_eq!(any_of[0]["additionalProperties"], false);
     assert_eq!(any_of[1]["type"], "string");
@@ -200,9 +210,9 @@ fn collapse_inside_one_of_variants() {
 
     patch_schema_for_strict_mode(&mut schema);
 
-    let one_of = schema["properties"]["schedule"]["oneOf"]
-        .as_array()
-        .unwrap();
+    let Some(one_of) = schema["properties"]["schedule"]["oneOf"].as_array() else {
+        panic!("schedule.oneOf should be an array");
+    };
     assert_eq!(one_of[0]["type"], "object");
     assert_eq!(one_of[1]["type"], "object");
 }
@@ -249,9 +259,9 @@ fn collapsed_optional_object_becomes_nullable() {
     patch_schema_for_strict_mode(&mut schema);
 
     let config_type = &schema["properties"]["config"]["type"];
-    let arr = config_type
-        .as_array()
-        .expect("optional union-type object should have array type after nullable conversion");
+    let Some(arr) = config_type.as_array() else {
+        panic!("optional union-type object should have array type after nullable conversion");
+    };
     assert!(arr.contains(&serde_json::json!("object")));
     assert!(arr.contains(&serde_json::json!("null")));
 }
