@@ -1264,6 +1264,26 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         }
     }
 
+    // Unknown external agent kinds in external_agents.agents.
+    let valid_agent_kinds = ["claude-code", "opencode", "codex", "pi-agent", "acp"];
+    for agent_kind in config.external_agents.agents.keys() {
+        if !valid_agent_kinds.contains(&agent_kind.as_str()) {
+            let suggestion = suggest(agent_kind, &valid_agent_kinds, 3)
+                .map(|candidate| format!(" Did you mean \"{candidate}\"?"))
+                .unwrap_or_default();
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("external_agents.agents.{agent_kind}"),
+                message: format!(
+                    "unknown external agent kind \"{agent_kind}\"; expected one of: {}.{}",
+                    valid_agent_kinds.join(", "),
+                    suggestion
+                ),
+            });
+        }
+    }
+
     // Unknown tailscale mode
     let valid_ts_modes = ["off", "serve", "funnel"];
     if !valid_ts_modes.contains(&config.tailscale.mode.as_str()) {
@@ -2716,6 +2736,58 @@ token = "xoxb-test"
             warning.is_none(),
             "dynamically configured channel type should be accepted in offered, got: {:?}",
             result.diagnostics
+        );
+    }
+
+    #[test]
+    fn external_agents_known_kinds_not_warned() {
+        let toml = r#"
+[external_agents]
+enabled = true
+
+[external_agents.agents.claude-code]
+binary = "claude"
+
+[external_agents.agents.codex]
+binary = "codex"
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result.diagnostics.iter().find(|d| {
+            d.path.starts_with("external_agents.agents.") && d.category == "unknown-field"
+        });
+        assert!(
+            warning.is_none(),
+            "known external agent kinds should not warn, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn external_agents_unknown_kind_warned_with_suggestion() {
+        let toml = r#"
+[external_agents]
+enabled = true
+
+[external_agents.agents.claude_code]
+binary = "claude"
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result.diagnostics.iter().find(|d| {
+            d.path == "external_agents.agents.claude_code" && d.category == "unknown-field"
+        });
+        assert!(
+            warning.is_some(),
+            "unknown external agent kind should produce warning, got: {:?}",
+            result.diagnostics
+        );
+        let warning = match warning {
+            Some(warning) => warning,
+            None => unreachable!("assert above guarantees warning exists"),
+        };
+        assert!(
+            warning.message.contains("Did you mean \"claude-code\"?"),
+            "expected typo suggestion in warning, got: {:?}",
+            warning
         );
     }
 

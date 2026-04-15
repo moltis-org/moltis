@@ -401,6 +401,38 @@ pub mod protocol {
     pub const FRAME_RATE_EXCEEDED_TOTAL: &str = "moltis_protocol_frame_rate_exceeded_total";
 }
 
+/// External agent bridge metrics
+pub mod external_agents {
+    /// Transport availability probes by transport implementation
+    pub const TRANSPORT_AVAILABILITY_CHECKS_TOTAL: &str =
+        "moltis_external_agents_transport_availability_checks_total";
+    /// Duration of transport availability probes in seconds
+    pub const TRANSPORT_AVAILABILITY_DURATION_SECONDS: &str =
+        "moltis_external_agents_transport_availability_duration_seconds";
+    /// Session start attempts by agent kind and transport
+    pub const SESSION_STARTS_TOTAL: &str = "moltis_external_agents_session_starts_total";
+    /// Session start duration in seconds
+    pub const SESSION_START_DURATION_SECONDS: &str =
+        "moltis_external_agents_session_start_duration_seconds";
+    /// Session start failures by agent kind and transport
+    pub const SESSION_START_ERRORS_TOTAL: &str =
+        "moltis_external_agents_session_start_errors_total";
+    /// Prompt send attempts routed to external agents
+    pub const PROMPTS_TOTAL: &str = "moltis_external_agents_prompts_total";
+    /// Prompt send duration in seconds
+    pub const PROMPT_DURATION_SECONDS: &str = "moltis_external_agents_prompt_duration_seconds";
+    /// Prompt send failures
+    pub const PROMPT_ERRORS_TOTAL: &str = "moltis_external_agents_prompt_errors_total";
+    /// Session shutdown attempts
+    pub const SESSION_SHUTDOWNS_TOTAL: &str = "moltis_external_agents_session_shutdowns_total";
+    /// Session shutdown duration in seconds
+    pub const SESSION_SHUTDOWN_DURATION_SECONDS: &str =
+        "moltis_external_agents_session_shutdown_duration_seconds";
+    /// Session shutdown failures
+    pub const SESSION_SHUTDOWN_ERRORS_TOTAL: &str =
+        "moltis_external_agents_session_shutdown_errors_total";
+}
+
 /// Routing metrics
 pub mod routing {
     /// Route resolutions by binding level
@@ -519,7 +551,9 @@ pub mod labels {
     pub const MODE: &str = "mode";
     pub const ACCOUNT_ID: &str = "account_id";
     pub const FILE_TYPE: &str = "file_type";
+    pub const KIND: &str = "kind";
     pub const REJECTION_REASON: &str = "rejection_reason";
+    pub const TRANSPORT: &str = "transport";
 }
 
 /// Standard histogram buckets for different metric types
