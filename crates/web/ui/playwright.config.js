@@ -46,6 +46,10 @@ const openaiLivePort = resolvePort("MOLTIS_E2E_OPENAI_LIVE_PORT", usedPorts);
 const openaiLiveBaseURL = process.env.MOLTIS_E2E_OPENAI_LIVE_BASE_URL || `http://127.0.0.1:${openaiLivePort}`;
 const openAiLiveKey = process.env.MOLTIS_E2E_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "";
 const enableOpenAiLiveProject = openAiLiveKey !== "";
+const ollamaQwenLiveEnabled = process.env.MOLTIS_E2E_OLLAMA_QWEN_LIVE === "1";
+const ollamaQwenLivePort = resolvePort("MOLTIS_E2E_OLLAMA_QWEN_LIVE_PORT", usedPorts);
+const ollamaQwenLiveBaseURL =
+	process.env.MOLTIS_E2E_OLLAMA_QWEN_LIVE_BASE_URL || `http://127.0.0.1:${ollamaQwenLivePort}`;
 // Reliability first: fresh local gateway instances by default avoid
 // hidden cross-run state leaks. Set MOLTIS_E2E_REUSE_SERVER=1 to trade
 // determinism for faster startup in ad-hoc local runs.
@@ -60,6 +64,7 @@ const projects = [
 			/onboarding-auth\.spec/,
 			/onboarding-anthropic\.spec/,
 			/openai-live\.spec/,
+			/ollama-qwen-live\.spec/,
 			/oauth\.spec/,
 		],
 	},
@@ -104,6 +109,16 @@ if (enableOpenAiLiveProject) {
 		testMatch: /openai-live\.spec/,
 		use: {
 			baseURL: openaiLiveBaseURL,
+		},
+	});
+}
+
+if (ollamaQwenLiveEnabled) {
+	projects.push({
+		name: "ollama-qwen-live",
+		testMatch: /ollama-qwen-live\.spec/,
+		use: {
+			baseURL: ollamaQwenLiveBaseURL,
 		},
 	});
 }
@@ -176,6 +191,20 @@ if (enableOpenAiLiveProject) {
 		env: {
 			...process.env,
 			MOLTIS_E2E_OPENAI_LIVE_PORT: openaiLivePort,
+		},
+	});
+}
+
+if (ollamaQwenLiveEnabled) {
+	webServer.push({
+		command: "./e2e/start-gateway-ollama-qwen-live.sh",
+		cwd: __dirname,
+		url: `${ollamaQwenLiveBaseURL}/health`,
+		reuseExistingServer: reuseExistingServer,
+		timeout: 300_000,
+		env: {
+			...process.env,
+			MOLTIS_E2E_OLLAMA_QWEN_LIVE_PORT: ollamaQwenLivePort,
 		},
 	});
 }

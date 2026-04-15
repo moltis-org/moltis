@@ -254,7 +254,7 @@ impl LlmProvider for AsyncOpenAiProvider {
 #[cfg(test)]
 mod tests {
     use {
-        super::build_messages,
+        crate::async_openai_provider::build_messages,
         async_openai::types::chat::{
             ChatCompletionRequestMessage, ChatCompletionRequestUserMessageContent,
             ChatCompletionRequestUserMessageContentPart,
@@ -270,7 +270,7 @@ mod tests {
         }];
 
         let built = match build_messages(&messages) {
-            Ok(messages) => messages,
+            Ok(built) => built,
             Err(error) => panic!("messages should build: {error}"),
         };
         assert_eq!(built.len(), 1);
@@ -300,7 +300,7 @@ mod tests {
         }];
 
         let built = match build_messages(&messages) {
-            Ok(messages) => messages,
+            Ok(built) => built,
             Err(error) => panic!("messages should build: {error}"),
         };
         assert_eq!(built.len(), 1);

@@ -1,13 +1,13 @@
 use moltis_providers::openai_compat::{patch_schema_for_strict_mode, to_openai_tools};
 
-fn expect_array<'a>(value: &'a serde_json::Value, context: &str) -> &'a [serde_json::Value] {
+fn array_value<'a>(value: &'a serde_json::Value, context: &str) -> &'a [serde_json::Value] {
     match value.as_array() {
-        Some(array) => array,
+        Some(values) => values,
         None => panic!("{context} should be an array, got {value:?}"),
     }
 }
 
-fn expect_object<'a>(
+fn object_value<'a>(
     value: &'a serde_json::Value,
     context: &str,
 ) -> &'a serde_json::Map<String, serde_json::Value> {
@@ -17,13 +17,12 @@ fn expect_object<'a>(
     }
 }
 
-fn expect_str<'a>(value: &'a serde_json::Value, context: &str) -> &'a str {
+fn str_value<'a>(value: &'a serde_json::Value, context: &str) -> &'a str {
     match value.as_str() {
         Some(string) => string,
         None => panic!("{context} should be a string, got {value:?}"),
     }
 }
-
 #[test]
 fn strict_mode_collapses_object_union_types() {
     let mut schema = serde_json::json!({
@@ -39,7 +38,7 @@ fn strict_mode_collapses_object_union_types() {
 
     assert_eq!(schema["type"], "object");
     assert_eq!(schema["additionalProperties"], false);
-    let required = expect_array(&schema["required"], "required");
+    let required = array_value(&schema["required"], "required");
     assert_eq!(required.len(), 2);
 }
 
@@ -123,13 +122,14 @@ fn strict_mode_collapses_nested_object_union_types() {
         false
     );
 
-    let top_required: Vec<&str> = expect_array(&schema["required"], "top-level required")
+    let top_required: Vec<&str> = array_value(&schema["required"], "required")
         .iter()
-        .map(|value| expect_str(value, "required entry"))
+        .map(|value| str_value(value, "required entry"))
         .collect();
+    let properties = object_value(&schema["properties"], "properties");
     for name in &top_required {
         assert!(
-            expect_object(&schema["properties"], "top-level properties").contains_key(*name),
+            properties.contains_key(*name),
             "top-level required '{name}' missing from properties"
         );
     }
@@ -196,7 +196,7 @@ fn collapse_inside_any_of_variants() {
 
     patch_schema_for_strict_mode(&mut schema);
 
-    let any_of = expect_array(&schema["properties"]["config"]["anyOf"], "config.anyOf");
+    let any_of = array_value(&schema["properties"]["config"]["anyOf"], "config.anyOf");
     assert_eq!(any_of[0]["type"], "object");
     assert_eq!(any_of[0]["additionalProperties"], false);
     assert_eq!(any_of[1]["type"], "string");
@@ -219,7 +219,7 @@ fn collapse_inside_one_of_variants() {
 
     patch_schema_for_strict_mode(&mut schema);
 
-    let one_of = expect_array(&schema["properties"]["schedule"]["oneOf"], "schedule.oneOf");
+    let one_of = array_value(&schema["properties"]["schedule"]["oneOf"], "schedule.oneOf");
     assert_eq!(one_of[0]["type"], "object");
     assert_eq!(one_of[1]["type"], "object");
 }
@@ -266,7 +266,7 @@ fn collapsed_optional_object_becomes_nullable() {
     patch_schema_for_strict_mode(&mut schema);
 
     let config_type = &schema["properties"]["config"]["type"];
-    let arr = expect_array(
+    let arr = array_value(
         config_type,
         "optional union-type object should have array type after nullable conversion",
     );

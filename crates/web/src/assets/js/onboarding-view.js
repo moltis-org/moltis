@@ -3764,30 +3764,30 @@ function SlackForm({ onConnected, error, setError }) {
 		${
 			connectionMode === "socket_mode" &&
 			html`<div>
-			<label class="text-xs text-[var(--muted)] mb-1 block">App Token (xapp-...)</label>
-			<input type="password" class="provider-key-input w-full"
-				value=${appToken} onInput=${(e) => setAppToken(e.target.value)}
-				placeholder="xapp-..."
-				autocomplete="new-password"
-				autocapitalize="none"
-				autocorrect="off"
-				spellcheck="false"
-				name="slack_app_token" />
-		</div>`
+				<label class="text-xs text-[var(--muted)] mb-1 block">App Token (xapp-...)</label>
+				<input type="password" class="provider-key-input w-full"
+					value=${appToken} onInput=${(e) => setAppToken(e.target.value)}
+					placeholder="xapp-..."
+					autocomplete="new-password"
+					autocapitalize="none"
+					autocorrect="off"
+					spellcheck="false"
+					name="slack_app_token" />
+			</div>`
 		}
 		${
 			connectionMode === "events_api" &&
 			html`<div>
-			<label class="text-xs text-[var(--muted)] mb-1 block">Signing Secret</label>
-			<input type="password" class="provider-key-input w-full"
-				value=${signingSecret} onInput=${(e) => setSigningSecret(e.target.value)}
-				placeholder="Signing secret from Basic Information"
-				autocomplete="new-password"
-				autocapitalize="none"
-				autocorrect="off"
-				spellcheck="false"
-				name="slack_signing_secret" />
-		</div>`
+				<label class="text-xs text-[var(--muted)] mb-1 block">Signing Secret</label>
+				<input type="password" class="provider-key-input w-full"
+					value=${signingSecret} onInput=${(e) => setSigningSecret(e.target.value)}
+					placeholder="Signing secret from Basic Information"
+					autocomplete="new-password"
+					autocapitalize="none"
+					autocorrect="off"
+					spellcheck="false"
+					name="slack_signing_secret" />
+			</div>`
 		}
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>

@@ -74,6 +74,7 @@ pub async fn setup_required_handler(State(state): State<AppState>) -> impl IntoR
 
 fn canonical_standalone_path(path: &str) -> Option<&'static str> {
     match path {
+        "/setup" | "/setup/" => Some("/onboarding"),
         "/onboarding/" => Some("/onboarding"),
         "/login/" => Some("/login"),
         "/setup-required/" => Some("/setup-required"),
@@ -96,6 +97,8 @@ mod tests {
 
     #[test]
     fn canonicalizes_standalone_paths() {
+        assert_eq!(canonical_standalone_path("/setup"), Some("/onboarding"));
+        assert_eq!(canonical_standalone_path("/setup/"), Some("/onboarding"));
         assert_eq!(
             canonical_standalone_path("/onboarding/"),
             Some("/onboarding")

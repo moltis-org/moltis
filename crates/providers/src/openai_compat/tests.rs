@@ -1,6 +1,6 @@
 use super::{
     parse_responses_completion, parse_tool_calls, sanitize_schema_for_openai_compat,
-    to_openai_tools, to_responses_api_tools,
+    strict_mode::patch_schema_for_strict_mode, to_openai_tools, to_responses_api_tools,
 };
 
 #[test]
@@ -399,4 +399,146 @@ fn to_openai_tools_non_strict_complex_cron_like_schema() {
     };
     assert_eq!(config_required.len(), 1);
     assert_eq!(config_required[0], "timeout");
+}
+
+/// Issue #712: optional enum properties must include `null` in the enum
+/// array when strict mode makes them nullable, otherwise the LLM sends
+/// the literal string `"null"` instead of JSON null.
+#[test]
+fn strict_mode_nullable_enum_includes_null_in_enum_values() {
+    let mut schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string" },
+            "time_range": {
+                "type": "string",
+                "enum": ["day", "week", "month", "year"],
+                "description": "Time range filter"
+            },
+            "country": {
+                "type": "string",
+                "enum": ["US", "UK", "FR", "DE"]
+            }
+        },
+        "required": ["query"]
+    });
+
+    patch_schema_for_strict_mode(&mut schema);
+
+    // time_range and country are originally optional, so strict mode makes
+    // them nullable. The enum array must include null alongside the original
+    // string values.
+    let time_range = &schema["properties"]["time_range"];
+    let Some(time_enum) = time_range["enum"].as_array() else {
+        panic!("time_range should have enum");
+    };
+    assert!(
+        time_enum.iter().any(|v| v.is_null()),
+        "time_range enum should include null, got: {time_enum:?}"
+    );
+    assert_eq!(time_enum.len(), 5, "original 4 values + null");
+
+    let country = &schema["properties"]["country"];
+    let Some(country_enum) = country["enum"].as_array() else {
+        panic!("country should have enum");
+    };
+    assert!(
+        country_enum.iter().any(|v| v.is_null()),
+        "country enum should include null, got: {country_enum:?}"
+    );
+
+    // query is originally required — its enum (if any) should NOT get null injected
+    assert!(schema["properties"]["query"]["enum"].is_null());
+}
+
+/// Issue #712: required enum properties should NOT get null added to
+/// their enum values, even though strict mode still processes them.
+#[test]
+fn strict_mode_required_enum_keeps_original_values() {
+    let mut schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["search", "lookup"]
+            }
+        },
+        "required": ["mode"]
+    });
+
+    patch_schema_for_strict_mode(&mut schema);
+
+    let Some(mode_enum) = schema["properties"]["mode"]["enum"].as_array() else {
+        panic!("mode should have enum");
+    };
+    assert_eq!(
+        mode_enum.len(),
+        2,
+        "required enum should keep original values only"
+    );
+    assert!(
+        !mode_enum.iter().any(|v| v.is_null()),
+        "required enum should not include null"
+    );
+}
+
+/// Issue #712: end-to-end test through `to_openai_tools` with an MCP-style
+/// schema that has optional enum parameters.
+#[test]
+fn to_openai_tools_strict_nullable_enum_has_null() {
+    let tools = vec![serde_json::json!({
+        "name": "mcp__tavily__search",
+        "description": "Search the web",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string" },
+                "time_range": {
+                    "type": "string",
+                    "enum": ["day", "week", "month", "year"]
+                }
+            },
+            "required": ["query"]
+        }
+    })];
+
+    let converted = to_openai_tools(&tools, true);
+    let params = &converted[0]["function"]["parameters"];
+
+    let Some(time_enum) = params["properties"]["time_range"]["enum"].as_array() else {
+        panic!("time_range should have enum");
+    };
+    assert!(
+        time_enum.iter().any(|v| v.is_null()),
+        "time_range enum should include null after strict-mode patching, got: {time_enum:?}"
+    );
+}
+
+/// Issue #712: enum-only schemas (no `type` key) must also get null
+/// appended. Canonicalization can strip the redundant `"type": "string"`
+/// leaving just `{"enum": [...]}` — the final fallback in make_nullable
+/// must handle this.
+#[test]
+fn strict_mode_nullable_enum_only_schema_includes_null() {
+    let mut schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string" },
+            "time_range": {
+                "enum": ["day", "week", "month", "year"],
+                "description": "No type key — enum-only schema"
+            }
+        },
+        "required": ["query"]
+    });
+
+    patch_schema_for_strict_mode(&mut schema);
+
+    let Some(time_enum) = schema["properties"]["time_range"]["enum"].as_array() else {
+        panic!("time_range should have enum");
+    };
+    assert!(
+        time_enum.iter().any(|v| v.is_null()),
+        "enum-only schema should include null, got: {time_enum:?}"
+    );
 }

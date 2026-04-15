@@ -544,10 +544,13 @@ pub async fn ssh_doctor(
         .iter()
         .filter(|target| target.known_host.is_some())
         .count();
+    #[cfg(feature = "vault")]
     let vault_is_unsealed = match state.gateway.vault.as_ref() {
         Some(vault) => vault.is_unsealed().await,
         None => false,
     };
+    #[cfg(not(feature = "vault"))]
+    let vault_is_unsealed = false;
 
     let active_route = if exec_host == "ssh" {
         default_target

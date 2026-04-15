@@ -42,7 +42,8 @@ app enters onboarding mode. Uses a random free port by default.
 
 ## Playwright Projects
 
-The test suite is split into six Playwright projects:
+The test suite is split into seven Playwright projects, plus one opt-in live
+project for local Ollama/Qwen validation:
 
 | Project | Port | Spec files | Notes |
 |---------|------|------------|-------|
@@ -52,6 +53,7 @@ The test suite is split into six Playwright projects:
 | `onboarding-auth` | Random free port (`MOLTIS_E2E_ONBOARDING_AUTH_PORT`) | `onboarding-auth.spec.js` | Separate server with remote-auth simulation |
 | `onboarding-anthropic` | Random free port (`MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT`) | `onboarding-anthropic.spec.js` | Separate server proving first-run Anthropic onboarding with zero providers at startup |
 | `openai-live` | Random free port (`MOLTIS_E2E_OPENAI_LIVE_PORT`) | `openai-live.spec.js` | Separate server that preserves only the existing OpenAI env and proves a real OpenAI chat turn works |
+| `ollama-qwen-live` | Random free port (`MOLTIS_E2E_OLLAMA_QWEN_LIVE_PORT`) + Ollama API port (`MOLTIS_E2E_OLLAMA_QWEN_API_PORT`, default `11435`) | `ollama-qwen-live.spec.js` | Opt-in server that starts a local Ollama instance, seeds a custom OpenAI-compatible Qwen provider, and proves the multiple-system-message regression is fixed |
 
 ## Spec Files
 
@@ -74,6 +76,7 @@ The test suite is split into six Playwright projects:
 | `onboarding-auth.spec.js` | 1 | Remote onboarding auth flow with setup code and identity save |
 | `onboarding-anthropic.spec.js` | 1 | Anthropic onboarding from empty startup, model discovery, model selection |
 | `openai-live.spec.js` | 1 | Live OpenAI provider smoke test using the existing env and a real chat turn |
+| `ollama-qwen-live.spec.js` | 1 | Opt-in live Ollama smoke test for the custom OpenAI-compatible Qwen regression path |
 
 ## Shared Helpers
 
@@ -93,6 +96,9 @@ cd crates/web/ui && npx playwright test e2e/specs/sessions.spec.js
 
 # Run a specific project
 npx playwright test --project=auth
+
+# Run the opt-in Ollama/Qwen live project
+MOLTIS_E2E_OLLAMA_QWEN_LIVE=1 npx playwright test --project=ollama-qwen-live e2e/specs/ollama-qwen-live.spec.js
 
 # Run with visible browser
 just ui-e2e-headed
