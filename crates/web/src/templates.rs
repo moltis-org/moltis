@@ -725,8 +725,8 @@ fn matches_exact_or_nested(path: &str, base: &str) -> bool {
 pub(crate) fn is_known_spa_route(path: &str) -> bool {
     let path = trim_route_path(path);
     path == "/"
-        || path == SPA_ROUTES.projects
-        || path == SPA_ROUTES.skills
+        || matches_exact_or_nested(path, SPA_ROUTES.projects)
+        || matches_exact_or_nested(path, SPA_ROUTES.skills)
         || matches_exact_or_nested(path, SPA_ROUTES.chats)
         || matches_exact_or_nested(path, SPA_ROUTES.settings)
         || matches_exact_or_nested(path, SPA_ROUTES.monitoring)
@@ -984,6 +984,8 @@ mod tests {
     #[test]
     fn recognizes_known_spa_routes() {
         assert!(is_known_spa_route("/"));
+        assert!(is_known_spa_route("/projects/123"));
+        assert!(is_known_spa_route("/skills/example"));
         assert!(is_known_spa_route("/chats/main"));
         assert!(is_known_spa_route("/settings/providers"));
         assert!(is_known_spa_route("/monitoring/charts"));

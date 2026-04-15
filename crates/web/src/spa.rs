@@ -84,7 +84,8 @@ fn canonical_standalone_path(path: &str) -> Option<&'static str> {
 fn is_non_page_path(path: &str) -> bool {
     path.starts_with("/assets/")
         || path.starts_with("/api/")
-        || path.starts_with("/ws")
+        || path == "/ws"
+        || path.starts_with("/ws/")
         || path.starts_with("/auth/")
         || path.contains('.')
 }
@@ -111,7 +112,10 @@ mod tests {
     fn filters_non_page_prefixes() {
         assert!(is_non_page_path("/api/unknown"));
         assert!(is_non_page_path("/assets/js/missing.js"));
+        assert!(is_non_page_path("/ws"));
+        assert!(is_non_page_path("/ws/chat"));
         assert!(is_non_page_path("/favicon.ico"));
+        assert!(!is_non_page_path("/ws-hook"));
         assert!(!is_non_page_path("/does-not-exist"));
         assert!(!is_non_page_path("/settings/identity"));
     }
