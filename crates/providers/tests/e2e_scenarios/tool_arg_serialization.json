@@ -102,6 +102,44 @@
           "mode": "must_pass"
         }
       }
+    },
+    {
+      "id": "issue-712-nullable-enum-params",
+      "prompt": "Search the web for 'rust async' using the mcp_tavily_search tool. Only set query, leave time_range and country as null.",
+      "tool": {
+        "name": "mcp_tavily_search",
+        "description": "You MUST call this tool exactly once with the exact values requested by the user. Do not convert, normalize, or omit values. Send JSON null for parameters the user says to leave as null.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": { "type": "string", "description": "Search query" },
+            "time_range": {
+              "type": "string",
+              "enum": ["day", "week", "month", "year"],
+              "description": "Time range filter"
+            },
+            "country": {
+              "type": "string",
+              "enum": ["US", "UK", "FR", "DE"],
+              "description": "Country filter"
+            }
+          },
+          "required": ["query"]
+        }
+      },
+      "expected_arguments": {
+        "query": "rust async",
+        "time_range": null,
+        "country": null
+      },
+      "providers": {
+        "zai": {
+          "mode": "must_pass"
+        },
+        "openrouter-google": {
+          "mode": "must_pass"
+        }
+      }
     }
   ]
 }
