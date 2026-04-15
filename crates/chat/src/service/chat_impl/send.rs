@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use {
     serde_json::Value,
     tokio::sync::OwnedSemaphorePermit,
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 use {moltis_config::MessageQueueMode, moltis_service_traits::ServiceResult};

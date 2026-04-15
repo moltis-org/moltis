@@ -12,7 +12,7 @@ use {
     async_trait::async_trait,
     serde_json::Value,
     tokio::sync::RwLock,
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 use {

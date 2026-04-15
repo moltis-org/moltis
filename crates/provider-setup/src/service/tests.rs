@@ -1,10 +1,18 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use {super::*, moltis_config::schema::ProviderEntry, moltis_oauth::OAuthTokens};
+use {
+    super::*,
+    crate::{KeyStore, known_providers::AuthType},
+    moltis_config::schema::{ProviderEntry, ProvidersConfig},
+    moltis_oauth::{OAuthTokens, TokenStore},
+    moltis_providers::ProviderRegistry,
+    moltis_service_traits::{NoopProviderSetupService, ProviderSetupService},
+    std::{collections::HashMap, sync::Arc},
+    tokio::sync::RwLock,
+};
 
 #[tokio::test]
 async fn noop_service_returns_empty() {
-    use moltis_service_traits::NoopProviderSetupService;
     let svc = NoopProviderSetupService;
     let result = svc.available().await.unwrap();
     assert_eq!(result, serde_json::json!([]));
@@ -252,20 +260,9 @@ async fn available_includes_subscription_provider_with_oauth_token_outside_offer
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
     )));
-    let svc = LiveProviderSetupService {
-        registry,
-        config: Arc::new(Mutex::new(config)),
-        broadcaster: Arc::new(OnceCell::new()),
-        token_store,
-        key_store,
-        pending_oauth: Arc::new(RwLock::new(HashMap::new())),
-        deploy_platform: None,
-        priority_models: None,
-        registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
-        env_overrides: HashMap::new(),
-        error_parser: default_error_parser,
-        callback_bind_addr: "127.0.0.1".to_string(),
-    };
+    let mut svc = LiveProviderSetupService::new(registry, config, None);
+    svc.token_store = token_store;
+    svc.key_store = key_store;
 
     let result = svc.available().await.unwrap();
     let arr = result
@@ -309,20 +306,8 @@ async fn available_includes_configured_custom_provider_outside_offered() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
     )));
-    let svc = LiveProviderSetupService {
-        registry,
-        config: Arc::new(Mutex::new(config)),
-        broadcaster: Arc::new(OnceCell::new()),
-        token_store: TokenStore::new(),
-        key_store,
-        pending_oauth: Arc::new(RwLock::new(HashMap::new())),
-        deploy_platform: None,
-        priority_models: None,
-        registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
-        env_overrides: HashMap::new(),
-        error_parser: default_error_parser,
-        callback_bind_addr: "127.0.0.1".to_string(),
-    };
+    let mut svc = LiveProviderSetupService::new(registry, config, None);
+    svc.key_store = key_store;
 
     let result = svc.available().await.expect("providers.available");
     let arr = result

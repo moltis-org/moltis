@@ -3761,7 +3761,9 @@ function SlackForm({ onConnected, error, setError }) {
 				<option value="events_api">Events API (HTTP webhook)</option>
 			</select>
 		</div>
-		${connectionMode === "socket_mode" && html`<div>
+		${
+			connectionMode === "socket_mode" &&
+			html`<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">App Token (xapp-...)</label>
 			<input type="password" class="provider-key-input w-full"
 				value=${appToken} onInput=${(e) => setAppToken(e.target.value)}
@@ -3771,8 +3773,11 @@ function SlackForm({ onConnected, error, setError }) {
 				autocorrect="off"
 				spellcheck="false"
 				name="slack_app_token" />
-		</div>`}
-		${connectionMode === "events_api" && html`<div>
+		</div>`
+		}
+		${
+			connectionMode === "events_api" &&
+			html`<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">Signing Secret</label>
 			<input type="password" class="provider-key-input w-full"
 				value=${signingSecret} onInput=${(e) => setSigningSecret(e.target.value)}
@@ -3782,7 +3787,8 @@ function SlackForm({ onConnected, error, setError }) {
 				autocorrect="off"
 				spellcheck="false"
 				name="slack_signing_secret" />
-		</div>`}
+		</div>`
+		}
 		<div>
 			<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
 			<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
