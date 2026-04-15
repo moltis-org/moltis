@@ -158,7 +158,7 @@ pub async fn run_agent_loop_streaming(
             loop_detector.clear_strip_tools();
         }
 
-        if iterations >= compaction_min_iterations {
+        if iterations > compaction_min_iterations {
             super::enforce_tool_result_context_budget(
                 &mut messages,
                 &schemas_for_api,
