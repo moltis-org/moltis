@@ -513,3 +513,32 @@ fn to_openai_tools_strict_nullable_enum_has_null() {
         "time_range enum should include null after strict-mode patching, got: {time_enum:?}"
     );
 }
+
+/// Issue #712: enum-only schemas (no `type` key) must also get null
+/// appended. Canonicalization can strip the redundant `"type": "string"`
+/// leaving just `{"enum": [...]}` — the final fallback in make_nullable
+/// must handle this.
+#[test]
+fn strict_mode_nullable_enum_only_schema_includes_null() {
+    let mut schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string" },
+            "time_range": {
+                "enum": ["day", "week", "month", "year"],
+                "description": "No type key — enum-only schema"
+            }
+        },
+        "required": ["query"]
+    });
+
+    patch_schema_for_strict_mode(&mut schema);
+
+    let time_enum = schema["properties"]["time_range"]["enum"]
+        .as_array()
+        .expect("time_range should have enum");
+    assert!(
+        time_enum.iter().any(|v| v.is_null()),
+        "enum-only schema should include null, got: {time_enum:?}"
+    );
+}
