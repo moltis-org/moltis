@@ -202,17 +202,6 @@ pub struct ProviderEntry {
     #[serde(default, skip_serializing_if = "is_default_cache_retention")]
     pub cache_retention: CacheRetention,
 
-    /// Whether to use OpenAI strict mode for tool schemas.
-    ///
-    /// - `true`: force strict mode (`additionalProperties: false`, all properties
-    ///   required, optional properties made nullable via array-form types).
-    /// - `false`: skip strict-mode patching. Use this for providers that reject
-    ///   array-form types like `["boolean", "null"]` (e.g. Google/Gemini).
-    /// - unset (default): auto-detect based on provider. OpenRouter and Gemini
-    ///   default to non-strict; all others default to strict.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub strict_tools: Option<bool>,
-
     /// Tool policy override for this provider. When set, these allow/deny
     /// rules are merged on top of the global `[tools.policy]` for requests
     /// routed through this provider.
@@ -245,7 +234,6 @@ impl std::fmt::Debug for ProviderEntry {
             .field("alias", &self.alias)
             .field("tool_mode", &self.tool_mode)
             .field("cache_retention", &self.cache_retention)
-            .field("strict_tools", &self.strict_tools)
             .field("policy", &self.policy)
             .field("model_overrides", &self.model_overrides)
             .finish()
@@ -265,7 +253,6 @@ impl Default for ProviderEntry {
             alias: None,
             tool_mode: ToolMode::Auto,
             cache_retention: CacheRetention::Short,
-            strict_tools: None,
             policy: None,
             model_overrides: HashMap::new(),
         }
