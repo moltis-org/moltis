@@ -4,6 +4,7 @@ use crate::model_id::capability_model_id;
 
 /// Return the known context window size (in tokens) for a model ID.
 /// Falls back to 200,000 for unknown models.
+#[must_use]
 pub fn context_window_for_model(model_id: &str) -> u32 {
     context_window_for_model_inner(model_id)
 }
@@ -23,6 +24,7 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
 /// Callers are responsible for extracting the `u32` from `ModelOverride.context_window`.
 ///
 /// When no config is provided, this is equivalent to [`context_window_for_model`].
+#[must_use]
 pub fn context_window_for_model_with_config(
     model_id: &str,
     global_overrides: &std::collections::HashMap<String, u32>,
