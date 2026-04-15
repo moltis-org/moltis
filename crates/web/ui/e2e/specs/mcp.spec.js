@@ -187,23 +187,16 @@ test.describe("MCP page", () => {
 
 			// Find the server entry and check its status badge.
 			// The mock server responds to POST (tools work) but returns 405 for GET.
-			//
-			// BUG #732: Currently shows "dead" because is_alive() GET check fails
-			//           with 405 even though the server is fully functional.
-			// EXPECTED: Should show "running" after the fix.
+			// After the fix for #732, is_alive() treats any HTTP response as alive.
 			var serverEntry = page.locator(".skills-repo-card").filter({
 				has: page.locator(`text=127-0-0-1`),
 			});
 			await expect(serverEntry).toBeVisible({ timeout: 10_000 });
 
-			// Check the state badge text
+			// Check the state badge text — should be "running" now that #732 is fixed
 			var stateBadge = serverEntry.locator("span").filter({ hasText: /^(running|dead|stopped|connecting)$/ }).first();
 			await expect(stateBadge).toBeVisible();
-			var statusText = await stateBadge.textContent();
-
-			// Assert the current buggy behavior. When fix is applied, change to:
-			// expect(statusText).toBe("running");
-			expect(["running", "dead"]).toContain(statusText);
+			expect(await stateBadge.textContent()).toBe("running");
 
 			// Verify the server has 1 tool (mock_echo) — proves POST connection worked
 			await expect(serverEntry.getByText("1 tool", { exact: false })).toBeVisible();

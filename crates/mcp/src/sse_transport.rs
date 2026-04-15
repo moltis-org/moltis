@@ -482,13 +482,12 @@ impl McpTransport for SseTransport {
         match req.send().await {
             Ok(resp) => {
                 self.store_session_id_from_response(&resp).await;
-                if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-                    return true;
-                }
-                // Any successful response means the server is reachable —
-                // Streamable HTTP servers may reply with application/json
-                // rather than text/event-stream, which is equally valid.
-                resp.status().is_success()
+                // Any HTTP response proves the server is reachable.
+                // Non-success statuses (401, 403, 405) are common for
+                // Streamable HTTP servers where GET is optional (MCP spec)
+                // or auth headers differ between GET and POST. Only true
+                // network errors (connection refused, timeout, DNS) mean dead.
+                true
             },
             Err(_) => false,
         }
@@ -946,15 +945,7 @@ mod tests {
             .await;
 
         let transport = SseTransport::new(&server.url()).unwrap();
-        // BUG (issue #732): currently returns false because is_alive()
-        // only treats 2xx and 401 as alive. This causes "dead" status
-        // in the UI for working Streamable HTTP servers.
-        //
-        // After fix: this assertion should be `assert!(transport.is_alive().await);`
-        assert!(
-            !transport.is_alive().await,
-            "expected false (unfixed bug #732); flip to assert!(true) when fixed"
-        );
+        assert!(transport.is_alive().await);
     }
 
     /// A 403 Forbidden from the health check still proves the server is
@@ -969,11 +960,7 @@ mod tests {
             .await;
 
         let transport = SseTransport::new(&server.url()).unwrap();
-        // BUG (issue #732): currently returns false.
-        assert!(
-            !transport.is_alive().await,
-            "expected false (unfixed bug #732); flip to assert!(true) when fixed"
-        );
+        assert!(transport.is_alive().await);
     }
 
     /// A 400 Bad Request still proves the server endpoint is alive.
@@ -988,11 +975,7 @@ mod tests {
             .await;
 
         let transport = SseTransport::new(&server.url()).unwrap();
-        // BUG (issue #732): currently returns false.
-        assert!(
-            !transport.is_alive().await,
-            "expected false (unfixed bug #732); flip to assert!(true) when fixed"
-        );
+        assert!(transport.is_alive().await);
     }
 
     #[tokio::test]
