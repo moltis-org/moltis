@@ -853,7 +853,14 @@ impl ChannelService for LiveChannelService {
             return Err("code parameter is required".into());
         }
 
-        let callback_url = format!("http://localhost/callback?code={code}&state={state}");
+        let callback_url = {
+            let mut url = url::Url::parse("http://localhost/callback")
+                .map_err(|e| ServiceError::from(e.to_string()))?;
+            url.query_pairs_mut()
+                .append_pair("code", &code)
+                .append_pair("state", &state);
+            url.to_string()
+        };
 
         let plugin_lock = self
             .registry

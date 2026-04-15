@@ -3111,6 +3111,7 @@ function MatrixForm({ onConnected, error, setError }) {
 	var [homeserver, setHomeserver] = useState(MATRIX_DEFAULT_HOMESERVER);
 	var [authMode, setAuthMode] = useState("oidc");
 	var [oidcWaiting, setOidcWaiting] = useState(false);
+	var oidcPollRef = useRef(null);
 	var [userId, setUserId] = useState("");
 	var [credential, setCredential] = useState("");
 	var [deviceDisplayName, setDeviceDisplayName] = useState("");
@@ -3170,10 +3171,11 @@ function MatrixForm({ onConnected, error, setError }) {
 					setSaving(false);
 					window.open(res.result.auth_url, "_blank", "noopener");
 					var pollCount = 0;
-					var poll = setInterval(() => {
+					oidcPollRef.current = setInterval(() => {
 						pollCount++;
 						if (pollCount > 120) {
-							clearInterval(poll);
+							clearInterval(oidcPollRef.current);
+							oidcPollRef.current = null;
 							setOidcWaiting(false);
 							setError("OIDC authentication timed out. Please try again.");
 							return;
@@ -3182,7 +3184,8 @@ function MatrixForm({ onConnected, error, setError }) {
 							if (!statusRes?.ok) return;
 							var channels = statusRes.result?.channels || [];
 							if (channels.some((ch) => ch.account_id === accountId && ch.connected)) {
-								clearInterval(poll);
+								clearInterval(oidcPollRef.current);
+								oidcPollRef.current = null;
 								setOidcWaiting(false);
 								onConnected(accountId.trim(), "matrix");
 							}

@@ -1333,11 +1333,16 @@ function AddMatrixModal() {
 	var deviceDisplayNameDraft = useSignal("");
 	var ownershipModeDraft = useSignal("moltis_owned");
 	var oidcWaiting = useSignal(false);
+	var oidcPollRef = useRef(null);
 	var otpSelfApprovalDraft = useSignal(true);
 	var otpCooldownDraft = useSignal("300");
 	var advancedConfigPatch = useSignal("");
 
 	function resetForm() {
+		if (oidcPollRef.current) {
+			clearInterval(oidcPollRef.current);
+			oidcPollRef.current = null;
+		}
 		addModel.value = "";
 		userAllowlistItems.value = [];
 		roomAllowlistItems.value = [];
@@ -1395,10 +1400,11 @@ function AddMatrixModal() {
 					window.open(res.result.auth_url, "_blank", "noopener");
 					// Poll for the channel to appear.
 					var pollCount = 0;
-					var poll = setInterval(() => {
+					oidcPollRef.current = setInterval(() => {
 						pollCount++;
 						if (pollCount > 120) { // 2 min timeout
-							clearInterval(poll);
+							clearInterval(oidcPollRef.current);
+							oidcPollRef.current = null;
 							oidcWaiting.value = false;
 							error.value = "OIDC authentication timed out. Please try again.";
 							return;
@@ -1407,7 +1413,8 @@ function AddMatrixModal() {
 							if (!statusRes?.ok) return;
 							var channels = statusRes.result?.channels || [];
 							if (channels.some((ch) => ch.account_id === accountId && ch.connected)) {
-								clearInterval(poll);
+								clearInterval(oidcPollRef.current);
+								oidcPollRef.current = null;
 								oidcWaiting.value = false;
 								showAddMatrix.value = false;
 								resetForm();
@@ -1466,6 +1473,7 @@ function AddMatrixModal() {
 			: "(server default)";
 
 	return html`<${Modal} show=${showAddMatrix.value} onClose=${() => {
+		resetForm();
 		showAddMatrix.value = false;
 	}}
 	    title="Connect Matrix">

@@ -17,6 +17,8 @@ use {
         ruma::serde::Raw,
         store::RoomLoadSettings,
     },
+    moltis_common::secret_serde,
+    secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
     tracing::{info, instrument, warn},
     url::Url,
@@ -35,13 +37,34 @@ pub(crate) struct OidcLoginPending {
 }
 
 /// Persisted OIDC session (client_id + user tokens).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct PersistedOidcSession {
     client_id: String,
     user_id: String,
     device_id: String,
-    access_token: String,
-    refresh_token: Option<String>,
+    #[serde(serialize_with = "secret_serde::serialize_secret")]
+    access_token: Secret<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "secret_serde::serialize_option_secret"
+    )]
+    refresh_token: Option<Secret<String>>,
+}
+
+impl std::fmt::Debug for PersistedOidcSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersistedOidcSession")
+            .field("client_id", &self.client_id)
+            .field("user_id", &self.user_id)
+            .field("device_id", &self.device_id)
+            .field("access_token", &"[REDACTED]")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 fn oidc_session_path(account_id: &str) -> PathBuf {
@@ -71,26 +94,28 @@ fn sanitize_account_id(account_id: &str) -> String {
 async fn save_oidc_session(account_id: &str, session: &OAuthSession) -> ChannelResult<()> {
     let path = oidc_session_path(account_id);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        tokio::fs::create_dir_all(parent)
+            .await
             .map_err(|error| ChannelError::external("matrix oidc create session dir", error))?;
     }
     let persisted = PersistedOidcSession {
         client_id: session.client_id.to_string(),
         user_id: session.user.meta.user_id.to_string(),
         device_id: session.user.meta.device_id.to_string(),
-        access_token: session.user.tokens.access_token.clone(),
-        refresh_token: session.user.tokens.refresh_token.clone(),
+        access_token: Secret::new(session.user.tokens.access_token.clone()),
+        refresh_token: session.user.tokens.refresh_token.clone().map(Secret::new),
     };
     let json = serde_json::to_string_pretty(&persisted)
         .map_err(|error| ChannelError::external("matrix oidc serialize session", error))?;
-    std::fs::write(&path, json)
+    tokio::fs::write(&path, json)
+        .await
         .map_err(|error| ChannelError::external("matrix oidc write session", error))?;
     Ok(())
 }
 
 async fn load_oidc_session(account_id: &str) -> ChannelResult<Option<PersistedOidcSession>> {
     let path = oidc_session_path(account_id);
-    match std::fs::read_to_string(&path) {
+    match tokio::fs::read_to_string(&path).await {
         Ok(json) => {
             let session: PersistedOidcSession = serde_json::from_str(&json)
                 .map_err(|error| ChannelError::external("matrix oidc parse session", error))?;
@@ -101,24 +126,21 @@ async fn load_oidc_session(account_id: &str) -> ChannelResult<Option<PersistedOi
     }
 }
 
-fn build_client_metadata(redirect_uri: &Url) -> ClientMetadata {
+fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
     let origin_url: Url = redirect_uri
         .origin()
         .unicode_serialization()
         .parse()
-        .unwrap_or_else(|_| {
-            "http://localhost"
-                .parse()
-                .unwrap_or_else(|error| panic!("fallback URL should parse: {error}"))
-        });
+        .or_else(|_| "http://localhost".parse())
+        .map_err(|error| ChannelError::external("matrix oidc parse origin url", error))?;
     let client_uri = Localized::new(origin_url, std::iter::empty());
-    ClientMetadata::new(
+    Ok(ClientMetadata::new(
         ApplicationType::Native,
         vec![OAuthGrantType::AuthorizationCode {
             redirect_uris: vec![redirect_uri.clone()],
         }],
         client_uri,
-    )
+    ))
 }
 
 /// Phase 1: Start the OIDC login flow.
@@ -139,7 +161,7 @@ pub(crate) async fn start_oidc_login(
         .await
         .map_err(|error| ChannelError::external("matrix oidc server metadata discovery", error))?;
 
-    let metadata = build_client_metadata(redirect_uri);
+    let metadata = build_client_metadata(redirect_uri)?;
     let raw_metadata: Raw<ClientMetadata> = Raw::new(&metadata)
         .map_err(|error| ChannelError::external("matrix oidc serialize client metadata", error))?;
     let registration_data = ClientRegistrationData::new(raw_metadata);
@@ -247,8 +269,10 @@ pub(crate) async fn restore_oidc_session(
                 device_id,
             },
             tokens: matrix_sdk::authentication::SessionTokens {
-                access_token: persisted.access_token,
-                refresh_token: persisted.refresh_token,
+                access_token: persisted.access_token.expose_secret().clone(),
+                refresh_token: persisted
+                    .refresh_token
+                    .map(|secret| secret.expose_secret().clone()),
             },
         },
     };
@@ -330,7 +354,8 @@ mod tests {
         let redirect = "http://localhost:8080/api/oauth/callback"
             .parse()
             .unwrap_or_else(|error| panic!("redirect url should parse: {error}"));
-        let metadata = build_client_metadata(&redirect);
+        let metadata =
+            build_client_metadata(&redirect).unwrap_or_else(|error| panic!("should work: {error}"));
         assert_eq!(metadata.application_type, ApplicationType::Native);
         assert_eq!(metadata.grant_types.len(), 1);
         match &metadata.grant_types[0] {
@@ -345,18 +370,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn debug_impl_redacts_tokens() {
+        let session = PersistedOidcSession {
+            client_id: "test-client".into(),
+            user_id: "@bot:example.com".into(),
+            device_id: "TESTDEVICE".into(),
+            access_token: Secret::new("super-secret-token".into()),
+            refresh_token: Some(Secret::new("super-secret-refresh".into())),
+        };
+        let debug = format!("{session:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("super-secret-token"));
+        assert!(!debug.contains("super-secret-refresh"));
+    }
+
     #[tokio::test]
     async fn save_and_load_oidc_session_round_trip() {
         let dir =
             tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir should work: {error}"));
         let account_id = "test-oidc-roundtrip";
-        // Override path by testing the serialization logic directly.
+        // Test the serialization logic directly.
         let persisted = PersistedOidcSession {
             client_id: "test-client-id".into(),
             user_id: "@bot:example.com".into(),
             device_id: "TESTDEVICE".into(),
-            access_token: "test-access-token".into(),
-            refresh_token: Some("test-refresh-token".into()),
+            access_token: Secret::new("test-access-token".into()),
+            refresh_token: Some(Secret::new("test-refresh-token".into())),
         };
         let path = dir.path().join(format!("{account_id}-oidc-session.json"));
         let json = serde_json::to_string_pretty(&persisted)
@@ -372,7 +412,13 @@ mod tests {
         assert_eq!(loaded.client_id, "test-client-id");
         assert_eq!(loaded.user_id, "@bot:example.com");
         assert_eq!(loaded.device_id, "TESTDEVICE");
-        assert_eq!(loaded.access_token, "test-access-token");
-        assert_eq!(loaded.refresh_token.as_deref(), Some("test-refresh-token"));
+        assert_eq!(loaded.access_token.expose_secret(), "test-access-token");
+        assert_eq!(
+            loaded
+                .refresh_token
+                .as_ref()
+                .map(|s| s.expose_secret().as_str()),
+            Some("test-refresh-token")
+        );
     }
 }
