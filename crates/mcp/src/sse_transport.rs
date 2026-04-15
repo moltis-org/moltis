@@ -902,6 +902,99 @@ mod tests {
         assert!(resp.result.is_some());
     }
 
+    // ── is_alive health-check tests (issue #732) ──────────────────────
+
+    #[tokio::test]
+    async fn test_is_alive_200_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"ok":true}"#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    #[tokio::test]
+    async fn test_is_alive_401_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(401)
+            .with_header("www-authenticate", r#"Bearer realm="test""#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    /// Streamable HTTP servers may not support GET (it's optional in the MCP
+    /// spec). A 405 response proves the server is reachable and alive.
+    #[tokio::test]
+    async fn test_is_alive_405_method_not_allowed_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(405)
+            .with_header("allow", "POST, DELETE")
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        // BUG (issue #732): currently returns false because is_alive()
+        // only treats 2xx and 401 as alive. This causes "dead" status
+        // in the UI for working Streamable HTTP servers.
+        //
+        // After fix: this assertion should be `assert!(transport.is_alive().await);`
+        assert!(
+            !transport.is_alive().await,
+            "expected false (unfixed bug #732); flip to assert!(true) when fixed"
+        );
+    }
+
+    /// A 403 Forbidden from the health check still proves the server is
+    /// reachable — it just refused the request. The server is alive.
+    #[tokio::test]
+    async fn test_is_alive_403_forbidden_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(403)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        // BUG (issue #732): currently returns false.
+        assert!(
+            !transport.is_alive().await,
+            "expected false (unfixed bug #732); flip to assert!(true) when fixed"
+        );
+    }
+
+    /// A 400 Bad Request still proves the server endpoint is alive.
+    #[tokio::test]
+    async fn test_is_alive_400_bad_request_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(400)
+            .with_body(r#"{"error":"bad request"}"#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        // BUG (issue #732): currently returns false.
+        assert!(
+            !transport.is_alive().await,
+            "expected false (unfixed bug #732); flip to assert!(true) when fixed"
+        );
+    }
+
     #[tokio::test]
     async fn test_sse_transport_kill_sends_delete_with_session_id() {
         let mut server = mockito::Server::new_async().await;
