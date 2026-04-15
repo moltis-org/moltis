@@ -1397,7 +1397,7 @@ function AddMatrixModal() {
 				if (res?.ok && res.payload?.auth_url) {
 					oidcWaiting.value = true;
 					saving.value = false;
-					window.open(res.result.auth_url, "_blank", "noopener");
+					window.open(res.payload.auth_url, "_blank", "noopener");
 					// Poll for the channel to appear.
 					var pollCount = 0;
 					oidcPollRef.current = setInterval(() => {

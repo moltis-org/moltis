@@ -3169,7 +3169,7 @@ function MatrixForm({ onConnected, error, setError }) {
 				if (res?.ok && res.payload?.auth_url) {
 					setOidcWaiting(true);
 					setSaving(false);
-					window.open(res.result.auth_url, "_blank", "noopener");
+					window.open(res.payload.auth_url, "_blank", "noopener");
 					var pollCount = 0;
 					oidcPollRef.current = setInterval(() => {
 						pollCount++;
