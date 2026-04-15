@@ -55,7 +55,7 @@ pub use {
     discovered_model::{DiscoveredModel, catalog_to_discovered},
     model_capabilities::{
         ModelCapabilities, ModelInfo, context_window_for_model,
-        context_window_for_model_with_config, is_chat_capable_model, supports_reasoning_for_model,
+        context_window_for_model_with_config, extract_cw_overrides, is_chat_capable_model, supports_reasoning_for_model,
         supports_tools_for_model, supports_vision_for_model,
     },
     registry::{

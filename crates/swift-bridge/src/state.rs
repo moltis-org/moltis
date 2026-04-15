@@ -159,7 +159,7 @@ pub(crate) fn build_registry() -> ProviderRegistry {
         moltis_provider_setup::config_with_saved_keys(&config.providers, &key_store, &[]);
     #[cfg(test)]
     {
-        ProviderRegistry::from_config_with_static_catalogs(&effective, &env_overrides)
+        ProviderRegistry::from_config_with_static_catalogs(&effective, &env_overrides, std::collections::HashMap::new())
     }
     #[cfg(not(test))]
     {
