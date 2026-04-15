@@ -12,12 +12,18 @@ function startMockMcpServer(args = []) {
 		var serverPath = path.resolve(__dirname, "../mock-mcp-server.js");
 		var child = fork(serverPath, args, { silent: true });
 		var output = "";
+		var timeoutHandle = setTimeout(() => reject(new Error("Mock MCP server startup timeout")), 5000);
+
+		child.stderr.on("data", (chunk) => {
+			process.stderr.write(`[mock-mcp-server] ${chunk}`);
+		});
 
 		child.stdout.on("data", (chunk) => {
 			output += chunk.toString();
 			try {
 				var parsed = JSON.parse(output.trim());
 				if (parsed.port) {
+					clearTimeout(timeoutHandle);
 					resolve({ port: parsed.port, process: child });
 				}
 			} catch {
@@ -25,12 +31,16 @@ function startMockMcpServer(args = []) {
 			}
 		});
 
-		child.on("error", reject);
-		child.on("exit", (code) => {
-			if (!output) reject(new Error(`Mock MCP server exited with code ${code}`));
+		child.on("error", (err) => {
+			clearTimeout(timeoutHandle);
+			reject(err);
 		});
-
-		setTimeout(() => reject(new Error("Mock MCP server startup timeout")), 5000);
+		child.on("exit", (code) => {
+			if (!output) {
+				clearTimeout(timeoutHandle);
+				reject(new Error(`Mock MCP server exited with code ${code}`));
+			}
+		});
 	});
 }
 
