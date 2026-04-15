@@ -12,10 +12,12 @@ use std::{
     sync::LazyLock,
 };
 
+#[cfg(feature = "embedded-assets")]
+use tracing::warn;
 use {
     axum::{extract::Path, http::StatusCode, response::IntoResponse},
     serde::Serialize,
-    tracing::{info, warn},
+    tracing::info,
 };
 
 // ── Embedded assets (feature-gated) ─────────────────────────────────────────
