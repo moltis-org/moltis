@@ -749,7 +749,7 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         for (model_id, override_cfg) in &provider_entry.model_overrides {
             validate_context_window(
                 override_cfg.context_window,
-                &format!("providers.{provider_name}.models.{model_id}.context_window"),
+                &format!("providers.{provider_name}.model_overrides.{model_id}.context_window"),
                 diagnostics,
             );
         }

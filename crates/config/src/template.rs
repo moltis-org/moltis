@@ -105,6 +105,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   fetch_models - Discover models from provider API when available (default: true)
 #   stream_transport - Streaming transport: "sse", "websocket", or "auto" (default: "sse")
 #   alias     - Custom name for metrics labels (useful for multiple instances)
+#   strict_tools - Force strict/non-strict tool schemas (default: auto-detect per provider)
 #   policy    - Per-provider tool policy override (allow/deny lists)
 #   model_overrides.<model_id>.context_window - Override context window for a specific model
 
