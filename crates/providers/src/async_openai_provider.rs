@@ -269,7 +269,10 @@ mod tests {
             name: Some("Alice".into()),
         }];
 
-        let built = build_messages(&messages).expect("messages should build");
+        let built = match build_messages(&messages) {
+            Ok(messages) => messages,
+            Err(error) => panic!("messages should build: {error}"),
+        };
         assert_eq!(built.len(), 1);
         match &built[0] {
             ChatCompletionRequestMessage::User(msg) => {
@@ -296,7 +299,10 @@ mod tests {
             name: Some("Alice".into()),
         }];
 
-        let built = build_messages(&messages).expect("messages should build");
+        let built = match build_messages(&messages) {
+            Ok(messages) => messages,
+            Err(error) => panic!("messages should build: {error}"),
+        };
         assert_eq!(built.len(), 1);
         match &built[0] {
             ChatCompletionRequestMessage::User(msg) => {
