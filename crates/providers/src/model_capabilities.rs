@@ -18,6 +18,10 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
 /// Both override maps use the **normalized** model ID (after
 /// [`capability_model_id`] processing) as the lookup key.
 ///
+/// Note: This function accepts `HashMap<String, u32>` (not the config crate's
+/// `ModelOverride`) to keep the providers crate independent of the config crate.
+/// Callers are responsible for extracting the `u32` from `ModelOverride.context_window`.
+///
 /// When no config is provided, this is equivalent to [`context_window_for_model`].
 pub fn context_window_for_model_with_config(
     model_id: &str,

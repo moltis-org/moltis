@@ -733,48 +733,48 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         });
     }
 
-    // Validate global model overrides
+    // Validate global model overrides.
+    // Negative values are rejected by u32 deserialization (type error),
+    // so we only need to guard zero and unusually large values here.
     for (model_id, override_cfg) in &config.models {
-        if let Some(cw) = override_cfg.context_window {
-            if cw == 0 {
-                diagnostics.push(Diagnostic {
-                    severity: Severity::Error,
-                    category: "invalid-value",
-                    path: format!("models.{model_id}.context_window"),
-                    message: "context_window must be at least 1".into(),
-                });
-            } else if cw > 10_000_000 {
-                diagnostics.push(Diagnostic {
-                    severity: Severity::Warning,
-                    category: "invalid-value",
-                    path: format!("models.{model_id}.context_window"),
-                    message: format!("context_window is {cw}, which is unusually large (> 10M)").into(),
-                });
-            }
-        }
+        validate_context_window(override_cfg.context_window, &format!("models.{model_id}.context_window"), diagnostics);
     }
 
-    // Validate provider-scoped model overrides
+    // Validate provider-scoped model overrides.
     for (provider_name, provider_entry) in &config.providers.providers {
         for (model_id, override_cfg) in &provider_entry.model_overrides {
-            if let Some(cw) = override_cfg.context_window {
-                if cw == 0 {
-                    diagnostics.push(Diagnostic {
-                        severity: Severity::Error,
-                        category: "invalid-value",
-                        path: format!("providers.{provider_name}.models.{model_id}.context_window"),
-                        message: "context_window must be at least 1".into(),
-                    });
-                } else if cw > 10_000_000 {
-                    diagnostics.push(Diagnostic {
-                        severity: Severity::Warning,
-                        category: "invalid-value",
-                        path: format!("providers.{provider_name}.models.{model_id}.context_window"),
-                        message: format!("context_window is {cw}, which is unusually large (> 10M)").into(),
-                    });
-                }
-            }
+            validate_context_window(
+                override_cfg.context_window,
+                &format!("providers.{provider_name}.models.{model_id}.context_window"),
+                diagnostics,
+            );
         }
+    }
+}
+
+/// Validate a `context_window` override value (optional field).
+fn validate_context_window(
+    value: Option<u32>,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Some(cw) = value else {
+        return;
+    };
+    if cw == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: path.into(),
+            message: "context_window must be at least 1".into(),
+        });
+    } else if cw > 10_000_000 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: path.into(),
+            message: format!("context_window is {cw}, which is unusually large (> 10M)"),
+        });
     }
 }
 

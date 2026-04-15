@@ -109,18 +109,6 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   policy    - Per-provider tool policy override (allow/deny lists)
 #   model_overrides.<model_id>.context_window - Override context window for a specific model
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MODEL OVERRIDES (GLOBAL)
-# ══════════════════════════════════════════════════════════════════════════════
-# Override context window sizes for specific models across all providers.
-# Provider-scoped overrides ([providers.<name>.model_overrides.<id>]) take precedence.
-#
-# [models.claude-opus-4-6]
-# context_window = 1_000_000                  # Override the built-in heuristic
-#
-# [models.glm-5-turbo]
-# context_window = 200_000
-
 [providers]
 offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # show_legacy_models = true  # Show models older than 1 year in the chat model selector (they always appear in Settings)
@@ -215,6 +203,18 @@ models = ["kimi-k2.5"]                        # Preferred models shown first
 
 [providers.local-llm]
 # models = ["qwen2.5-coder-7b-q4_k_m"]        # Optional; configure local models in onboarding
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODEL OVERRIDES (GLOBAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Override context window sizes for specific models across all providers.
+# Provider-scoped overrides ([providers.<name>.model_overrides.<id>]) take precedence.
+#
+# [models.claude-opus-4-6]
+# context_window = 1_000_000                  # Override the built-in heuristic
+#
+# [models.glm-5-turbo]
+# context_window = 200_000
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHAT SETTINGS
