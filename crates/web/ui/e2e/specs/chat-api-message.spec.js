@@ -1,18 +1,11 @@
 // Tests for GH #729: User messages sent via the GraphQL/RPC API (not the web UI)
 // should appear in the web interface in real-time.
 //
-// Currently, when a message is sent via `chat.send` from an external client
-// (GraphQL mutation, mobile app, etc.), the backend persists it and runs the
-// LLM, but no WebSocket event is broadcast for the user message itself.  The
-// web UI only shows it after a full page reload or session switch.
-//
-// The fix will:
-//  1. Backend: broadcast a `user_message` event after persisting the user
-//     message in send_impl().
-//  2. Frontend: add a `user_message` handler in websocket.js that renders the
-//     message and caches it, similar to the existing `channel_user` handler.
-//  3. Frontend: skip rendering when the current connection originated the
-//     message (the web UI already renders it optimistically).
+// The backend now broadcasts a `user_message` event after persisting the user
+// message in send_impl().  The frontend handler in websocket.js renders the
+// message and caches it (similar to the existing `channel_user` handler),
+// skipping rendering when the current connection originated the message
+// (the web UI already renders it optimistically via seq-based dedup).
 
 const { expect, test } = require("../base-test");
 const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
@@ -83,21 +76,18 @@ test.describe("API-sent user messages (GH #729)", () => {
 		);
 	});
 
-	// This test verifies the fix for GH #729: once the backend broadcasts a
-	// `user_message` event and the frontend handles it, an API-sent message
-	// should appear in the chat without a page reload.
-	test.fixme("user_message broadcast renders in active session", async ({ page }) => {
+	test("user_message broadcast renders in active session", async ({ page }) => {
 		await expectRpcOk(page, "chat.clear", {});
 
 		// Simulate the backend broadcasting a user_message event, as it
 		// would after persisting a message sent via the GraphQL API.
+		// The backend omits messageIndex (same as channel_user).
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
 				state: "user_message",
 				text: "Bonjour Moltis !",
-				messageIndex: 0,
 			},
 		});
 
@@ -130,7 +120,7 @@ test.describe("API-sent user messages (GH #729)", () => {
 	// Verify the sender's own web UI does not duplicate a message it already
 	// rendered optimistically.  The broadcast includes the client seq so the
 	// handler can detect "I already rendered this" and suppress the echo.
-	test.fixme("user_message broadcast is deduplicated for the originating client", async ({ page }) => {
+	test("user_message broadcast is deduplicated for the originating client", async ({ page }) => {
 		await expectRpcOk(page, "chat.clear", {});
 
 		// Simulate the web UI having optimistically rendered a message at
@@ -158,7 +148,6 @@ test.describe("API-sent user messages (GH #729)", () => {
 				state: "user_message",
 				text: "Hello from UI",
 				seq: 1,
-				messageIndex: 0,
 			},
 		});
 
@@ -169,7 +158,7 @@ test.describe("API-sent user messages (GH #729)", () => {
 
 	// Verify that a user_message for a non-active session does not render
 	// in the current chat view but does bump the session badge.
-	test.fixme("user_message for inactive session does not render in active chat", async ({ page }) => {
+	test("user_message for inactive session does not render in active chat", async ({ page }) => {
 		await expectRpcOk(page, "chat.clear", {});
 
 		// Broadcast a user_message for a different session.
@@ -179,7 +168,6 @@ test.describe("API-sent user messages (GH #729)", () => {
 				sessionKey: "other-session",
 				state: "user_message",
 				text: "Message for other session",
-				messageIndex: 0,
 			},
 		});
 

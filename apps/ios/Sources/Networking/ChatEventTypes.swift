@@ -19,6 +19,7 @@ enum ChatEventState: String, Decodable {
     case aborted
     case voicePending = "voice_pending"
     case channelUser = "channel_user"
+    case userMessage = "user_message"
 }
 
 // MARK: - Chat event payload

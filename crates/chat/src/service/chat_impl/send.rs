@@ -1003,6 +1003,26 @@ impl LiveChatService {
             warn!("failed to persist user message: {e}");
         }
 
+        // Broadcast a user_message event so that other connected clients
+        // (e.g. the web UI when the message was sent via the GraphQL API)
+        // can display the message in real-time without a page reload.
+        // We intentionally omit messageIndex (same rationale as
+        // channel_user in dispatch.rs) and include `seq` so that the
+        // originating web client can suppress the echo it already
+        // rendered optimistically.
+        broadcast(
+            &self.state,
+            "chat",
+            serde_json::json!({
+                "state": "user_message",
+                "text": text,
+                "sessionKey": session_key,
+                "seq": client_seq,
+            }),
+            BroadcastOpts::default(),
+        )
+        .await;
+
         // Set preview from the first user message if not already set.
         if let Some(entry) = self.session_metadata.get(&session_key).await
             && entry.preview.is_none()
