@@ -961,7 +961,6 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # [channels.matrix.my-bot]
 # homeserver = "https://matrix.example.com"
 # auth_mode = "oidc"              # "oidc", "password", or "access_token" (auto-detected if omitted)
-# oidc_issuer = ""                # Optional: override OIDC issuer URL (auto-discovered if blank)
 # access_token = "syt_..."        # Required for access_token mode
 # password = "..."                # Required for password mode
 # user_id = "@bot:example.com"    # Required for password login, auto-detected for token/OIDC auth

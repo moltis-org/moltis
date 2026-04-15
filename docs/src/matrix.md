@@ -112,7 +112,6 @@ To configure OIDC via `moltis.toml`:
 [channels.matrix.my-bot]
 homeserver = "https://matrix.example.com"
 auth_mode = "oidc"
-# oidc_issuer = "https://auth.example.com"  # optional override
 ```
 
 Note: OIDC initial setup requires the web UI (browser-based flow). After the
