@@ -178,6 +178,7 @@ zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --m
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo +${nightly_toolchain} nextest run --all-features --profile ci}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
+ollama_qwen_e2e_cmd="${LOCAL_VALIDATE_OLLAMA_QWEN_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && MOLTIS_E2E_OLLAMA_QWEN_LIVE=1 npx playwright test --project=ollama-qwen-live e2e/specs/ollama-qwen-live.spec.js}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
 macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate build}"
 ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
@@ -260,8 +261,19 @@ cleanup_e2e_ports() {
     return 0
   fi
 
+  local ports=(
+    "${MOLTIS_E2E_PORT:-18789}"
+    "${MOLTIS_E2E_ONBOARDING_PORT:-18790}"
+    "${MOLTIS_E2E_ONBOARDING_AUTH_PORT:-18791}"
+    "${MOLTIS_E2E_OAUTH_PORT:-18792}"
+    "${MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT:-18793}"
+    "${MOLTIS_E2E_OPENAI_LIVE_PORT:-18794}"
+    "${MOLTIS_E2E_OLLAMA_QWEN_LIVE_PORT:-18795}"
+    "${MOLTIS_E2E_OLLAMA_QWEN_API_PORT:-11435}"
+  )
+
   local port
-  for port in "${MOLTIS_E2E_PORT:-18789}" "${MOLTIS_E2E_ONBOARDING_PORT:-18790}"; do
+  for port in "${ports[@]}"; do
     local pids
     pids="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
     if [[ -z "$pids" ]]; then
@@ -572,6 +584,13 @@ if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" != "1" ]]; then
   run_check "local/e2e" "$e2e_cmd"
 else
   echo "Skipping E2E checks (LOCAL_VALIDATE_SKIP_E2E=1)."
+fi
+
+if [[ "${LOCAL_VALIDATE_OLLAMA_QWEN_E2E:-0}" == "1" ]]; then
+  cleanup_e2e_ports
+  run_check "local/e2e-ollama" "$ollama_qwen_e2e_cmd"
+else
+  echo "Skipping Ollama Qwen live E2E (LOCAL_VALIDATE_OLLAMA_QWEN_E2E=0)."
 fi
 
 # Coverage (optional — requires cargo-llvm-cov).
