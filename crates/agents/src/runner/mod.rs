@@ -36,6 +36,6 @@ pub(crate) use helpers::{
 // Items only consumed by test submodules (`tests`, `tests_legacy`).
 #[cfg(test)]
 pub(crate) use helpers::{
-    TOOL_RESULT_COMPACTION_PLACEHOLDER, compact_tool_results_newest_first_in_place,
+    TOOL_RESULT_COMPACTION_PLACEHOLDER, compact_tool_results_oldest_first_in_place,
     legacy_public_tool_alias,
 };

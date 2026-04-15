@@ -441,7 +441,7 @@ pub(crate) fn has_tool_result_messages(messages: &[ChatMessage]) -> bool {
         .any(|message| matches!(message, ChatMessage::Tool { .. }))
 }
 
-pub(crate) fn compact_tool_results_newest_first_in_place(
+pub(crate) fn compact_tool_results_oldest_first_in_place(
     messages: &mut [ChatMessage],
     tokens_needed: usize,
 ) -> usize {
@@ -505,7 +505,7 @@ pub(crate) fn enforce_tool_result_context_budget(
 
     if current_tokens > compaction_budget {
         let needed = current_tokens.saturating_sub(compaction_budget);
-        let reduced = compact_tool_results_newest_first_in_place(messages, needed);
+        let reduced = compact_tool_results_oldest_first_in_place(messages, needed);
         tracing::debug!(
             current_tokens,
             compaction_budget,
