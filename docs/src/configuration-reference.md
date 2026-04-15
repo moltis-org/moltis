@@ -64,7 +64,7 @@
   - [`tools.maps`](#toolsmaps)
 - **Tools — Policy & Agent Limits**
   - [`tools.policy`](#toolspolicy)
-  - [`tools (agent scalars)`](#tools-agent-scalars)
+  - [`tools` (agent-level scalars)](#tools-agent-level-scalars)
 - **Channels & Integrations**
   - [`channels`](#channels)
   - [`channels.*.<account>.tools`](#channels*accounttools)
@@ -110,7 +110,6 @@
   - [`voice.stt.sherpa_onnx`](#voicesttsherpa-onnx)
 - **Environment**
   - [`env`](#env)
-  - [`tools` (agent-level scalars)](#tools-agent-level-scalars)
 
 
 ---
@@ -368,7 +367,7 @@ User profile collected during onboarding.
 | `scope` | string | `"session"` | Container lifetime (`"session"` or `"per-command"`). |
 | `workspace_mount` | string | `"ro"` | Workspace mount mode (`"ro"`, `"rw"`, `"none"`). |
 | `host_data_dir` | optional string | `null` | Host-visible path for Moltis `data_dir()` when creating sandbox containers from inside another container. |
-| `home_persistence` | list (`"off"`, `"session"`, `"shared"`) | `"shared"` | Persistence strategy for `/home/sandbox` in sandbox containers. |
+| `home_persistence` | enum: `"off"`, `"session"`, `"shared"` | `"shared"` | Persistence strategy for `/home/sandbox` in sandbox containers. |
 | `shared_home_dir` | optional string | `null` | Host directory for shared `/home/sandbox` persistence. Relative paths resolved against `data_dir()`. |
 | `image` | optional string | `null` | Docker/Podman image for sandbox containers. |
 | `container_prefix` | optional string | `null` | Name prefix for created containers. |
@@ -447,7 +446,7 @@ Default `tool_overrides` entries:
 | `persist_profile` | bool | `true` | Persist Chrome user profile (cookies, auth, local storage) across sessions. |
 | `profile_dir` | optional string | `null` | Custom path for persistent Chrome profile directory. Implies `persist_profile = true`. |
 | `container_host` | string | `"127.0.0.1"` | Hostname/IP to connect to the browser container from the host. Use `"host.docker.internal"` when Moltis runs inside Docker. |
-| `browserless_api_version` | list (`"v1"`, `"v2"`) | `"v1"` | Browserless API compatibility mode for websocket endpoints. |
+| `browserless_api_version` | enum: `"v1"`, `"v2"` | `"v1"` | Browserless API compatibility mode for websocket endpoints. |
 
 ---
 
