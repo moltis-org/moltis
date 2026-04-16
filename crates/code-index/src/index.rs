@@ -11,16 +11,20 @@ use tracing::info;
 
 use crate::config::CodeIndexConfig;
 use crate::discover::discover_tracked_files;
-use crate::error::{Error, Result};
+use crate::error::Result;
+#[cfg(feature = "qmd")]
+use crate::error::Error;
 use crate::filter::filter_tracked_files;
+use crate::snapshot_store::SnapshotStore;
 use crate::types::IndexStatus;
 
 /// Code index manager.
 ///
-/// Owns a configuration and (when the `qmd` feature is enabled) a
-/// QMD backend for indexing and search.
+/// Owns a configuration, a snapshot store, and (when the `qmd` feature is enabled)
+/// a QMD backend for indexing and search.
 pub struct CodeIndex {
     config: CodeIndexConfig,
+    snapshot_store: SnapshotStore,
     #[cfg(feature = "qmd")]
     qmd: Option<moltis_qmd::QmdManager>,
 }
@@ -32,8 +36,15 @@ impl CodeIndex {
     /// collections for the project(s) to be indexed.
     #[cfg(feature = "qmd")]
     pub fn new(config: CodeIndexConfig, qmd: moltis_qmd::QmdManager) -> Self {
+        let snapshot_store = SnapshotStore::new(
+            config
+                .data_dir
+                .clone()
+                .unwrap_or_else(|| moltis_config::data_dir().join("code-index")),
+        );
         Self {
             config,
+            snapshot_store,
             qmd: Some(qmd),
         }
     }
@@ -45,8 +56,15 @@ impl CodeIndex {
     /// or [`index_project`](CodeIndex::index_project) on a config-only instance will return
     /// [`Error::BackendUnavailable`].
     pub fn config_only(config: CodeIndexConfig) -> Self {
+        let snapshot_store = SnapshotStore::new(
+            config
+                .data_dir
+                .clone()
+                .unwrap_or_else(|| moltis_config::data_dir().join("code-index")),
+        );
         Self {
             config,
+            snapshot_store,
             #[cfg(feature = "qmd")]
             qmd: None,
         }
@@ -63,6 +81,26 @@ impl CodeIndex {
         Ok(filtered)
     }
 
+    /// Load the persisted hash snapshot for a project.
+    ///
+    /// Returns `Ok(None)` if no snapshot exists (first run or deleted).
+    /// Use this with [`compute_delta`](crate::delta::compute_delta) for incremental reindexing.
+    pub fn load_snapshot(&self, project_id: &str) -> Result<Option<crate::delta::HashSnapshot>> {
+        self.snapshot_store.load(project_id)
+    }
+
+    /// Save a hash snapshot for a project.
+    ///
+    /// Typically called after a full index or incremental delta to persist
+    /// the current state for future comparisons.
+    pub fn save_snapshot(
+        &self,
+        project_id: &str,
+        snapshot: &crate::delta::HashSnapshot,
+    ) -> Result<()> {
+        self.snapshot_store.save(project_id, snapshot)
+    }
+
     /// Full indexing pipeline for a project.
     ///
     /// Requires a QMD backend — returns [`Error::BackendUnavailable`] if
@@ -72,6 +110,7 @@ impl CodeIndex {
     /// 2. Filter by extension, size, binary
     /// 3. Ensure QMD collection exists
     /// 4. Trigger QMD reindex
+    /// 5. Save hash snapshot for incremental delta on next run
     ///
     /// Returns the status of the indexed project.
     #[cfg(feature = "qmd")]
@@ -111,6 +150,10 @@ impl CodeIndex {
                 message: format!("QMD refresh_index failed: {e}"),
             }
         })?;
+
+        // Build and persist snapshot for future incremental delta.
+        let snapshot = crate::delta::build_initial_snapshot(project_dir, &self.config)?;
+        self.snapshot_store.save(project_id, &snapshot)?;
 
         info!(
             project_id,

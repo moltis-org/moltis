@@ -2,6 +2,8 @@
 
 use std::sync::LazyLock;
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 /// Default maximum file size for indexing: 1 MB.
@@ -73,6 +75,10 @@ pub struct CodeIndexConfig {
     pub skip_binary: bool,
     /// Path prefixes to skip (e.g. "vendor/", "node_modules/").
     pub skip_paths: Vec<String>,
+    /// Root directory for snapshot storage.
+    /// Defaults to `<moltis_data_dir>/code-index/` when `None`.
+    #[serde(skip)]
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for CodeIndexConfig {
@@ -83,6 +89,7 @@ impl Default for CodeIndexConfig {
             max_file_size_bytes: DEFAULT_MAX_FILE_SIZE_BYTES,
             skip_binary: true,
             skip_paths: DEFAULT_SKIP_PATHS.clone(),
+            data_dir: None,
         }
     }
 }
