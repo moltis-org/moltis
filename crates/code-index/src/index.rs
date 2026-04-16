@@ -1,11 +1,12 @@
 //! Code index orchestrator.
 //!
 //! Ties together discover → filter → QMD indexing into a single
-//! `CodeIndex` struct that owns a `QmdManager` and provides
+//! `CodeIndex` struct that optionally owns a `QmdManager` and provides
 //! `index_project()` and `search()` methods.
 
 use std::path::Path;
 
+#[cfg(feature = "qmd")]
 use tracing::info;
 
 use crate::config::CodeIndexConfig;
@@ -21,38 +22,34 @@ use crate::types::IndexStatus;
 pub struct CodeIndex {
     config: CodeIndexConfig,
     #[cfg(feature = "qmd")]
-    qmd: moltis_qmd::QmdManager,
+    qmd: Option<moltis_qmd::QmdManager>,
 }
 
 impl CodeIndex {
-    /// Create a new code index with the given config and QMD manager.
+    /// Create a new code index with the given config and QMD backend.
     ///
     /// The QMD manager should already be configured with the correct
     /// collections for the project(s) to be indexed.
     #[cfg(feature = "qmd")]
     pub fn new(config: CodeIndexConfig, qmd: moltis_qmd::QmdManager) -> Self {
-        Self { config, qmd }
+        Self {
+            config,
+            qmd: Some(qmd),
+        }
     }
 
-    /// Create a code index with default config and no QMD backend.
+    /// Create a code index with config but no backend.
     ///
     /// Useful for discover/filter-only workflows where search is not needed.
+    /// Calling [`search`](CodeIndex::search), [`keyword_search`](CodeIndex::keyword_search),
+    /// or [`index_project`](CodeIndex::index_project) on a config-only instance will return
+    /// [`Error::BackendUnavailable`].
     pub fn config_only(config: CodeIndexConfig) -> Self {
-        Self::new_without_backend(config)
-    }
-
-    #[cfg(not(feature = "qmd"))]
-    fn new_without_backend(config: CodeIndexConfig) -> Self {
-        Self { config }
-    }
-
-    #[cfg(feature = "qmd")]
-    fn new_without_backend(config: CodeIndexConfig) -> Self {
-        // Build a default QMD manager so the struct field is populated.
-        // It won't be used for search but the field must exist.
-        let qmd_config = moltis_qmd::QmdManagerConfig::default();
-        let qmd = moltis_qmd::QmdManager::new(qmd_config);
-        Self { config, qmd }
+        Self {
+            config,
+            #[cfg(feature = "qmd")]
+            qmd: None,
+        }
     }
 
     /// Discover and list all git-tracked files that pass the filter.
@@ -68,18 +65,29 @@ impl CodeIndex {
 
     /// Full indexing pipeline for a project.
     ///
+    /// Requires a QMD backend — returns [`Error::BackendUnavailable`] if
+    /// constructed via [`CodeIndex::config_only`].
+    ///
     /// 1. Discover git-tracked files
     /// 2. Filter by extension, size, binary
     /// 3. Ensure QMD collection exists
     /// 4. Trigger QMD reindex
     ///
-    /// Returns the number of files that passed filtering.
+    /// Returns the status of the indexed project.
     #[cfg(feature = "qmd")]
     pub async fn index_project(
         &self,
         project_id: &str,
+        enable_embeddings: bool,
         project_dir: &Path,
     ) -> Result<IndexStatus> {
+        let qmd = self.qmd.as_ref().ok_or_else(|| {
+            Error::BackendUnavailable(
+                "no QMD backend configured \u{2014} use CodeIndex::new() to provide one"
+                    .to_string(),
+            )
+        })?;
+
         let filtered = self.list_indexable_files(project_dir)?;
 
         info!(
@@ -89,12 +97,12 @@ impl CodeIndex {
         );
 
         // Ensure QMD collections are registered.
-        self.qmd.ensure_collections().await.map_err(|e| {
+        qmd.ensure_collections().await.map_err(|e| {
             Error::BackendUnavailable(format!("QMD ensure_collections failed: {e}"))
         })?;
 
         // Refresh the index — this triggers QMD to re-scan the files.
-        self.qmd.refresh_index(true).await.map_err(|e| {
+        qmd.refresh_index(enable_embeddings).await.map_err(|e| {
             Error::IndexFailed {
                 project_id: project_id.to_string(),
                 message: format!("QMD refresh_index failed: {e}"),
@@ -107,16 +115,16 @@ impl CodeIndex {
             "code index complete"
         );
 
+        let epoch_ms = time::OffsetDateTime::now_utc()
+            .unix_timestamp_nanos()
+            .unsigned_abs() as u64
+            / 1_000_000;
+
         Ok(IndexStatus {
             project_id: project_id.to_string(),
             total_files: filtered.len(),
             total_chunks: 0, // QMD doesn't expose chunk count directly
-            last_sync_ms: Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64,
-            ),
+            last_sync_ms: Some(epoch_ms),
             embedding_model: None,
             backend: "qmd".to_string(),
         })
@@ -125,6 +133,7 @@ impl CodeIndex {
     /// Search the code index for a project.
     ///
     /// Delegates to QMD hybrid search (keyword + vector).
+    /// Requires a QMD backend — returns [`Error::BackendUnavailable`] otherwise.
     #[cfg(feature = "qmd")]
     pub async fn search(
         &self,
@@ -132,8 +141,14 @@ impl CodeIndex {
         query: &str,
         limit: usize,
     ) -> Result<Vec<crate::types::SearchResult>> {
-        let raw_results = self
-            .qmd
+        let qmd = self.qmd.as_ref().ok_or_else(|| {
+            Error::BackendUnavailable(
+                "no QMD backend configured \u{2014} use CodeIndex::new() to provide one"
+                    .to_string(),
+            )
+        })?;
+
+        let raw_results = qmd
             .hybrid_search(query, limit, true)
             .await
             .map_err(|e| {
@@ -144,6 +159,8 @@ impl CodeIndex {
     }
 
     /// Keyword-only search (BM25, no vector embeddings).
+    ///
+    /// Requires a QMD backend — returns [`Error::BackendUnavailable`] otherwise.
     #[cfg(feature = "qmd")]
     pub async fn keyword_search(
         &self,
@@ -151,8 +168,14 @@ impl CodeIndex {
         query: &str,
         limit: usize,
     ) -> Result<Vec<crate::types::SearchResult>> {
-        let raw_results = self
-            .qmd
+        let qmd = self.qmd.as_ref().ok_or_else(|| {
+            Error::BackendUnavailable(
+                "no QMD backend configured \u{2014} use CodeIndex::new() to provide one"
+                    .to_string(),
+            )
+        })?;
+
+        let raw_results = qmd
             .keyword_search(query, limit)
             .await
             .map_err(|e| {
@@ -165,40 +188,51 @@ impl CodeIndex {
     /// Get the current index status for a project.
     ///
     /// Checks QMD availability and reports file counts.
+    /// Propagates discover/filter errors instead of silently reporting zero.
     #[cfg(feature = "qmd")]
     pub async fn status(&self, project_id: &str, project_dir: &Path) -> Result<IndexStatus> {
-        let available = self.qmd.is_available().await;
-
-        if !available {
-            return Ok(IndexStatus {
+        match &self.qmd {
+            None => Ok(IndexStatus {
                 project_id: project_id.to_string(),
                 total_files: 0,
                 total_chunks: 0,
                 last_sync_ms: None,
                 embedding_model: None,
-                backend: "qmd (unavailable)".to_string(),
-            });
+                backend: "none (config-only)".to_string(),
+            }),
+            Some(qmd) => {
+                if !qmd.is_available().await {
+                    return Ok(IndexStatus {
+                        project_id: project_id.to_string(),
+                        total_files: 0,
+                        total_chunks: 0,
+                        last_sync_ms: None,
+                        embedding_model: None,
+                        backend: "qmd (unavailable)".to_string(),
+                    });
+                }
+
+                let filtered = self.list_indexable_files(project_dir)?;
+
+                Ok(IndexStatus {
+                    project_id: project_id.to_string(),
+                    total_files: filtered.len(),
+                    total_chunks: 0,
+                    last_sync_ms: None, // Would need QMD metadata to determine this
+                    embedding_model: None,
+                    backend: "qmd".to_string(),
+                })
+            }
         }
-
-        // Try to count indexable files even if QMD is available.
-        let filtered = self.list_indexable_files(project_dir).unwrap_or_default();
-
-        Ok(IndexStatus {
-            project_id: project_id.to_string(),
-            total_files: filtered.len(),
-            total_chunks: 0,
-            last_sync_ms: None, // Would need QMD metadata to determine this
-            embedding_model: None,
-            backend: "qmd".to_string(),
-        })
     }
 
     /// Get the current index status (no QMD backend).
     ///
     /// Only reports the number of indexable files.
+    /// Propagates discover/filter errors instead of silently reporting zero.
     #[cfg(not(feature = "qmd"))]
     pub async fn status(&self, project_id: &str, project_dir: &Path) -> Result<IndexStatus> {
-        let filtered = self.list_indexable_files(project_dir).unwrap_or_default();
+        let filtered = self.list_indexable_files(project_dir)?;
 
         Ok(IndexStatus {
             project_id: project_id.to_string(),
@@ -250,5 +284,53 @@ mod tests {
 
         let result = idx.list_indexable_files(Path::new("/nonexistent/path/that/does/not/exist"));
         assert!(result.is_err());
+    }
+
+    /// Config-only instances must reject search/index calls with BackendUnavailable.
+    #[cfg(feature = "qmd")]
+    #[tokio::test]
+    async fn test_config_only_rejects_search() {
+        let config = CodeIndexConfig::default();
+        let idx = CodeIndex::config_only(config);
+
+        let result = idx.search("test-project", "fn main", 10).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, Error::BackendUnavailable(_)),
+            "expected BackendUnavailable, got {err:?}"
+        );
+    }
+
+    #[cfg(feature = "qmd")]
+    #[tokio::test]
+    async fn test_config_only_rejects_keyword_search() {
+        let config = CodeIndexConfig::default();
+        let idx = CodeIndex::config_only(config);
+
+        let result = idx.keyword_search("test-project", "fn main", 10).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, Error::BackendUnavailable(_)),
+            "expected BackendUnavailable, got {err:?}"
+        );
+    }
+
+    #[cfg(feature = "qmd")]
+    #[tokio::test]
+    async fn test_config_only_rejects_index_project() {
+        let config = CodeIndexConfig::default();
+        let idx = CodeIndex::config_only(config);
+
+        let result = idx
+            .index_project("test-project", true, Path::new("/tmp"))
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, Error::BackendUnavailable(_)),
+            "expected BackendUnavailable, got {err:?}"
+        );
     }
 }
