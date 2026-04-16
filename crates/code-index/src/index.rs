@@ -98,7 +98,10 @@ impl CodeIndex {
 
         // Ensure QMD collections are registered.
         qmd.ensure_collections().await.map_err(|e| {
-            Error::BackendUnavailable(format!("QMD ensure_collections failed: {e}"))
+            Error::IndexFailed {
+                project_id: project_id.to_string(),
+                message: format!("QMD ensure_collections failed: {e}"),
+            }
         })?;
 
         // Refresh the index — this triggers QMD to re-scan the files.

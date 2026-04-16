@@ -45,29 +45,8 @@ pub fn filter_tracked_files(
             continue;
         }
 
-        // 2. Extension check.
-        let ext = rel_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-
-        // Special handling for extensionless files like Dockerfile, Makefile.
-        let file_name = rel_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-
-        let effective_ext = if ext.is_empty() {
-            // Map known extensionless filenames to language extensions.
-            match file_name.to_ascii_lowercase().as_str() {
-                "dockerfile" | "containerfile" => "dockerfile",
-                "makefile" | "gnumakefile" => "mk",
-                "cmakelists.txt" => "cmake",
-                _ => "",
-            }
-        } else {
-            ext
-        };
+        // 2. Extension check (handles extensionless files like Dockerfile).
+        let effective_ext = effective_extension(rel_path);
 
         if !config.extension_allowed(effective_ext) {
             trace!(path = %path_str, ext = %effective_ext, "skipped: extension not allowed");
@@ -153,6 +132,35 @@ pub fn content_hash(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
     hasher.update(&data);
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Determine the effective file extension for extension and language detection.
+///
+/// For files with a normal extension (e.g. `main.rs` → `"rs"`), returns it as-is.
+/// For known extensionless filenames (Dockerfile, Makefile, CMakeLists.txt),
+/// returns a synthetic extension mapping them to their language.
+pub fn effective_extension(path: &Path) -> &str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+
+    if !ext.is_empty() {
+        return ext;
+    }
+
+    // No extension — map known extensionless filenames.
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    match file_name.to_ascii_lowercase().as_str() {
+        "dockerfile" | "containerfile" => "dockerfile",
+        "makefile" | "gnumakefile" => "mk",
+        "cmakelists.txt" => "cmake",
+        _ => "",
+    }
 }
 
 #[cfg(test)]
