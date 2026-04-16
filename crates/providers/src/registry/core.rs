@@ -761,7 +761,7 @@ impl ProviderRegistry {
     /// Auto-discover providers from environment variables.
     /// Uses default config (all providers enabled).
     pub fn from_env() -> Self {
-        Self::from_env_with_config(&ProvidersConfig::default())
+        Self::from_env_with_config(&ProvidersConfig::default(), HashMap::new())
     }
 
     /// Auto-discover providers from environment variables,
@@ -778,9 +778,12 @@ impl ProviderRegistry {
     /// 2. Everything else
     ///
     /// Within the same preference tier, registration order wins.
-    pub fn from_env_with_config(config: &ProvidersConfig) -> Self {
+    pub fn from_env_with_config(
+        config: &ProvidersConfig,
+        global_cw_overrides: HashMap<String, u32>,
+    ) -> Self {
         let env_overrides = HashMap::new();
-        Self::from_env_with_config_and_overrides(config, &env_overrides)
+        Self::from_env_with_config_and_overrides(config, &env_overrides, global_cw_overrides)
     }
 
     /// Auto-discover providers from config, process env, and optional env
@@ -793,10 +796,11 @@ impl ProviderRegistry {
     pub fn from_env_with_config_and_overrides(
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
+        global_cw_overrides: HashMap<String, u32>,
     ) -> Self {
         let pending = Self::fire_discoveries(config, env_overrides);
         let prefetched = Self::collect_discoveries(pending);
-        Self::from_config_with_prefetched(config, env_overrides, &prefetched, HashMap::new())
+        Self::from_config_with_prefetched(config, env_overrides, &prefetched, global_cw_overrides)
     }
 
     /// Register providers without making any discovery HTTP requests.
