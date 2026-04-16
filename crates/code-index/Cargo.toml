@@ -7,14 +7,15 @@ version.workspace = true
 [features]
 default = ["qmd"]
 qmd = ["dep:moltis-qmd", "dep:moltis-agents"]
-pgvector = ["dep:sqlx"]
-file-watcher = ["dep:notify-debouncer-full", "tokio"]
+builtin = ["dep:moltis-memory", "dep:sqlx", "dep:tokio"]
+file-watcher = ["dep:notify-debouncer-full", "dep:tokio"]
 
 [dependencies]
 anyhow           = { workspace = true }
 async-trait      = { workspace = true }
 gix              = { workspace = true }
 moltis-agents    = { optional = true, workspace = true }
+moltis-memory    = { optional = true, workspace = true }
 moltis-qmd       = { optional = true, workspace = true }
 moltis-config    = { workspace = true }
 moltis-tools     = { workspace = true }

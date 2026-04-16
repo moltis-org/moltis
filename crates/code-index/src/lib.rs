@@ -1,41 +1,68 @@
-//! Codebase indexing for moltis.
+//! Code-index crate for Moltis — workspace codebase intelligence.
 //!
-//! Indexes git-tracked source files per project with pluggable backends
-//! (QMD default, pgvector future). Reuses existing embedding, chunking,
-//! and search infrastructure from `moltis-memory` and `moltis-qmd`.
+//! Supports multiple backends:
+//! - **QMD** (optional, `qmd` feature): External QMD binary for hybrid search.
+//! - **Builtin** (optional, `builtin` feature): SQLite + FTS5 with embeddings.
+//! - **Config-only**: File discovery and filtering without search.
 
+// Core modules (always available).
+pub mod chunker;
 pub mod config;
 pub mod delta;
 pub mod discover;
 pub mod error;
 pub mod filter;
+pub mod index;
 pub mod snapshot_store;
+pub mod store;
 pub mod types;
 
 // Optional backends, gated behind feature flags.
 #[cfg(feature = "qmd")]
 pub mod backend_qmd;
 
-// Search result adapter.
-#[cfg(feature = "qmd")]
-pub mod search;
+#[cfg(feature = "builtin")]
+pub mod store_sqlite;
 
-// Agent tools (behind qmd feature since they require CodeIndex with backend).
-#[cfg(feature = "qmd")]
-pub mod tools;
-
-// Index orchestrator.
-pub mod index;
-
-// File watcher for incremental reindexing.
 #[cfg(feature = "file-watcher")]
 pub mod watcher;
 
-// Re-export primary types.
+// Search result adapter (only relevant with QMD).
+#[cfg(feature = "qmd")]
+pub mod search;
+
+// Agent tools (only relevant with search backend).
+#[cfg(any(feature = "qmd", feature = "builtin"))]
+pub mod tools;
+
+// Re-exports for convenience.
 pub use config::CodeIndexConfig;
-pub use delta::SyncDelta;
-pub use delta::HashSnapshot;
 pub use error::{Error, Result};
 pub use index::CodeIndex;
-pub use snapshot_store::SnapshotStore;
-pub use types::{CodeChunk, FileEntry, FilteredFile, IndexStatus, Language, SearchResult};
+pub use types::{IndexStatus, SearchResult};
+
+/// Utility function to sanitize a project ID for use as a QMD collection name.
+pub fn sanitize_project_id(project_id: &str) -> String {
+    project_id
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_project_id() {
+        assert_eq!(sanitize_project_id("my/project"), "my_project");
+        assert_eq!(sanitize_project_id("hello world"), "hello_world");
+        assert_eq!(sanitize_project_id("foo-bar_baz"), "foo-bar_baz");
+    }
+}
