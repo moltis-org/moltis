@@ -64,6 +64,14 @@ impl Transform for PruneOrphanedRequiredTransform {
                     .is_some_and(|name| defined_props.contains(name))
             });
         }
+        // Remove `required` entirely when retain emptied it.
+        if obj
+            .get("required")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| a.is_empty())
+        {
+            obj.remove("required");
+        }
     }
 }
 
