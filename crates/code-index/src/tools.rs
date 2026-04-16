@@ -21,9 +21,10 @@ use crate::CodeIndexConfig;
 use crate::Error;
 
 // ---------------------------------------------------------------------------
-// CodebaseSearchTool
+// CodebaseSearchTool (requires QMD backend)
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "qmd")]
 /// Search the codebase index for a project using hybrid (keyword + vector) search.
 ///
 /// Requires a QMD backend. Returns ranked results with file path, line range,
@@ -32,12 +33,14 @@ pub struct CodebaseSearchTool {
     index: Arc<CodeIndex>,
 }
 
+#[cfg(feature = "qmd")]
 impl CodebaseSearchTool {
     pub fn new(index: Arc<CodeIndex>) -> Self {
         Self { index }
     }
 }
 
+#[cfg(feature = "qmd")]
 #[async_trait]
 impl AgentTool for CodebaseSearchTool {
     fn name(&self) -> &str {
@@ -268,15 +271,36 @@ impl AgentTool for CodebaseStatusTool {
 
 /// Register all code-index tools into a [`ToolRegistry`].
 ///
-/// Only call this when the `qmd` feature is enabled — the tools require
-/// a QMD-backed [`CodeIndex`].
+/// Register the QMD-dependent search tool.
+///
+/// Only call this when the `qmd` feature is enabled.
+#[cfg(feature = "qmd")]
+pub fn register_search_tool(
+    registry: &mut moltis_agents::tool_registry::ToolRegistry,
+    index: Arc<CodeIndex>,
+) {
+    registry.register(Box::new(CodebaseSearchTool::new(index)));
+}
+
+/// Register tools that work without a QMD backend (peek, status).
+pub fn register_non_search_tools(
+    registry: &mut moltis_agents::tool_registry::ToolRegistry,
+    index: Arc<CodeIndex>,
+) {
+    registry.register(Box::new(CodebasePeekTool::new(Arc::clone(&index))));
+    registry.register(Box::new(CodebaseStatusTool::new(index)));
+}
+
+/// Register all code-index tools (search + peek + status).
+///
+/// Only call this when the `qmd` feature is enabled.
+#[cfg(feature = "qmd")]
 pub fn register_tools(
     registry: &mut moltis_agents::tool_registry::ToolRegistry,
     index: Arc<CodeIndex>,
 ) {
-    registry.register(Box::new(CodebaseSearchTool::new(Arc::clone(&index))));
-    registry.register(Box::new(CodebasePeekTool::new(Arc::clone(&index))));
-    registry.register(Box::new(CodebaseStatusTool::new(index)));
+    register_search_tool(registry, Arc::clone(&index));
+    register_non_search_tools(registry, index);
 }
 
 // ---------------------------------------------------------------------------

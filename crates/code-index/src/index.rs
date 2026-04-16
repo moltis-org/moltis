@@ -244,7 +244,6 @@ impl CodeIndex {
                 .into_iter()
                 .filter(|r| {
                     Path::new(&r.path).starts_with(dir)
-                        || r.path.starts_with(dir.to_string_lossy().as_ref())
                 })
                 .take(limit)
                 .collect()
@@ -292,7 +291,6 @@ impl CodeIndex {
                 .into_iter()
                 .filter(|r| {
                     Path::new(&r.path).starts_with(dir)
-                        || r.path.starts_with(dir.to_string_lossy().as_ref())
                 })
                 .take(limit)
                 .collect()

@@ -20,8 +20,8 @@ pub mod backend_qmd;
 #[cfg(feature = "qmd")]
 pub mod search;
 
-// Agent tools (behind qmd feature since they require CodeIndex with backend).
-#[cfg(feature = "qmd")]
+// Agent tools for codebase search, peek, and status.
+
 pub mod tools;
 
 // Index orchestrator.
