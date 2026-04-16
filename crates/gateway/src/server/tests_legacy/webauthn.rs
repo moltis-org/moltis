@@ -25,6 +25,9 @@ async fn sync_runtime_webauthn_host_registers_new_origin() {
         false,
         None,
         None,
+        Arc::new(moltis_code_index::CodeIndex::config_only(
+            moltis_code_index::CodeIndexConfig::default(),
+        )),
         18789,
         false,
         None,
