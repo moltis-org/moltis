@@ -40,10 +40,10 @@ export default {
 
 	// ── Reasoning toggle ─────────────────────────────────────
 	reasoningTooltip: "Effort de raisonnement",
-	reasoningOff: "Off",
-	reasoningLow: "Low",
-	reasoningMedium: "Medium",
-	reasoningHigh: "High",
+	reasoningOff: "Désactivé",
+	reasoningLow: "Faible",
+	reasoningMedium: "Moyen",
+	reasoningHigh: "Élevé",
 
 	// ── Debug panel ──────────────────────────────────────────
 	debugTooltip: "Show context debug info",

@@ -7,14 +7,10 @@
 // backend changes required.
 
 import { effect } from "@preact/signals";
+import { t } from "./i18n.js";
 import { modelStore } from "./stores/model-store.js";
 
-var EFFORTS = [
-	{ value: "", label: "Off" },
-	{ value: "low", label: "Low" },
-	{ value: "medium", label: "Medium" },
-	{ value: "high", label: "High" },
-];
+var EFFORT_VALUES = ["", "low", "medium", "high"];
 
 var reasoningCombo = null;
 var reasoningComboBtn = null;
@@ -24,23 +20,23 @@ var reasoningDropdownList = null;
 var disposeVisibility = null;
 
 function effortLabel(effort) {
-	var found = EFFORTS.find((e) => e.value === effort);
-	return found ? found.label : "Off";
+	var map = { "": t("chat:reasoningOff"), low: t("chat:reasoningLow"), medium: t("chat:reasoningMedium"), high: t("chat:reasoningHigh") };
+	return map[effort] ?? t("chat:reasoningOff");
 }
 
 function renderOptions() {
 	if (!reasoningDropdownList) return;
 	reasoningDropdownList.textContent = "";
 	var current = modelStore.reasoningEffort.value;
-	for (var opt of EFFORTS) {
+	for (var value of EFFORT_VALUES) {
 		var el = document.createElement("div");
 		el.className = "model-dropdown-item";
-		if (opt.value === current) el.classList.add("selected");
+		if (value === current) el.classList.add("selected");
 		var label = document.createElement("span");
 		label.className = "model-item-label";
-		label.textContent = opt.label;
+		label.textContent = effortLabel(value);
 		el.appendChild(label);
-		el.addEventListener("click", selectEffort.bind(null, opt.value));
+		el.addEventListener("click", selectEffort.bind(null, value));
 		reasoningDropdownList.appendChild(el);
 	}
 }
@@ -103,9 +99,7 @@ export function bindReasoningToggle() {
 /** Restore reasoning toggle state from a session's stored model ID. */
 export function restoreReasoningFromModelId(modelId) {
 	var parsed = modelStore.parseReasoningSuffix(modelId);
-	if (parsed.effort) {
-		modelStore.setReasoningEffort(parsed.effort);
-	}
+	modelStore.setReasoningEffort(parsed.effort);
 	if (reasoningComboLabel) {
 		reasoningComboLabel.textContent = effortLabel(modelStore.reasoningEffort.value);
 	}

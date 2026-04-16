@@ -6,7 +6,7 @@
 import { computed, signal } from "@preact/signals";
 import { sendRpc } from "../helpers.js";
 
-var REASONING_SEP = "@reasoning-";
+export var REASONING_SEP = "@reasoning-";
 
 // ── Signals ──────────────────────────────────────────────────
 export var models = signal([]);
