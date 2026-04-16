@@ -336,6 +336,10 @@ pub(super) async fn complete_startup(
     #[cfg(feature = "qmd")]
     let code_index_for_tools = Arc::clone(&code_index);
 
+    #[cfg(feature = "code-index-builtin")]
+    #[allow(unused_variables)]
+    let code_index_for_tools_builtin = Arc::clone(&code_index);
+
     let state = GatewayState::with_options(
         resolved_auth,
         services,
@@ -822,6 +826,14 @@ pub(super) async fn complete_startup(
         #[cfg(feature = "qmd")]
         {
             moltis_code_index::tools::register_tools(&mut tool_registry, code_index_for_tools);
+        }
+
+        #[cfg(all(feature = "code-index-builtin", not(feature = "qmd")))]
+        {
+            moltis_code_index::tools::register_tools(
+                &mut tool_registry,
+                code_index_for_tools_builtin,
+            );
         }
 
         {

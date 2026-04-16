@@ -4,8 +4,12 @@
 //! system, creates a [`moltis_code_index::CodeIndex`] in full mode (discover,
 //! filter, status, peek, and search all work).
 //!
-//! If QMD is unavailable or the feature is disabled, falls back to config-only
-//! mode where search operations return [`BackendUnavailable`] gracefully.
+//! When the `code-index-builtin` feature is enabled, creates a builtin
+//! SQLite+FTS5 backend for local code indexing.
+//!
+//! If neither feature is enabled (or QMD is unavailable), falls back to
+//! config-only mode where search operations return [`BackendUnavailable`]
+//! gracefully.
 //!
 //! Per-project collection registration is deferred — the `QmdManager` starts
 //! with empty collections. When `index_project()` is called, collections are
@@ -54,7 +58,29 @@ pub(crate) async fn init_code_index(
         );
     }
 
-    #[cfg(not(feature = "qmd"))]
+    #[cfg(feature = "code-index-builtin")]
+    {
+        let db_path = data_dir.join("code-index").join("index.db");
+        match moltis_code_index::store_sqlite::SqliteCodeIndexStore::new(&db_path).await {
+            Ok(store) => {
+                info!(path = %db_path.display(), "code-index: builtin SQLite backend initialized");
+                return Arc::new(moltis_code_index::CodeIndex::new_builtin(
+                    code_index_config,
+                    Box::new(store),
+                    None,
+                ));
+            }
+            Err(e) => {
+                warn!(
+                    path = %db_path.display(),
+                    error = %e,
+                    "code-index: failed to initialize builtin backend, falling back to config-only"
+                );
+            }
+        }
+    }
+
+    #[cfg(not(any(feature = "qmd", feature = "code-index-builtin")))]
     {
         info!(
             "code-index: initialized in config-only mode \

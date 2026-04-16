@@ -286,6 +286,7 @@ impl CodeIndex {
 
         let filter_config = self.config.filter();
         let index = Arc::clone(self);
+        let proj_dir = project_dir.to_path_buf();
 
         let handler: WatchHandler = Arc::new(move |proj_id, changed_paths| {
             let paths: Vec<std::path::PathBuf> = changed_paths.to_vec();
@@ -293,7 +294,7 @@ impl CodeIndex {
             let pid = proj_id.to_string();
 
             tokio::spawn(async move {
-                if let Err(e) = idx.reindex_files(&pid, &paths).await {
+                if let Err(e) = idx.reindex_files(&pid, &proj_dir, &paths).await {
                     warn!(project_id = %pid, error = %e, "watcher reindex failed");
                 }
             });
@@ -351,6 +352,7 @@ impl CodeIndex {
     pub async fn reindex_files(
         &self,
         project_id: &str,
+        project_dir: &Path,
         paths: &[std::path::PathBuf],
     ) -> Result<()> {
         let Backend::Builtin { store, embedder } = &self.backend else {
@@ -364,16 +366,16 @@ impl CodeIndex {
         let files: Vec<FilteredFile> = paths
             .iter()
             .filter_map(|p| {
-                if p.is_file() {
-                    Some(FilteredFile {
-                        path: p.clone(),
-                        relative_path: p.clone(),
-                        size: p.metadata().map(|m| m.len()).unwrap_or(0),
-                        language: crate::types::Language::from_path(p),
-                    })
-                } else {
-                    None
+                if !p.is_file() {
+                    return None;
                 }
+                let relative_path = p.strip_prefix(project_dir).unwrap_or(p).to_path_buf();
+                Some(FilteredFile {
+                    path: p.clone(),
+                    relative_path,
+                    size: p.metadata().map(|m| m.len()).unwrap_or(0),
+                    language: crate::types::Language::from_path(p),
+                })
             })
             .collect();
 
@@ -820,32 +822,23 @@ mod tests {
     }
 
     fn git_init(dir: &Path) {
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
+        let mut repo = gix::init(dir).expect("failed to init repo");
+        let mut config = repo.config_snapshot_mut();
+        config
+            .set_raw_value_by("user", None::<&gix::bstr::BStr>, "email", "test@test.com")
+            .expect("failed to set user.email");
+        config
+            .set_raw_value_by("user", None::<&gix::bstr::BStr>, "name", "Test")
+            .expect("failed to set user.name");
     }
 
     fn git_commit_all(dir: &Path, msg: &str) {
         std::process::Command::new("git")
-            .args(["add", "."])
-            .current_dir(dir)
+            .args(["-C", &dir.to_string_lossy(), "add", "."])
             .output()
             .unwrap();
         std::process::Command::new("git")
-            .args(["commit", "-m", msg])
-            .current_dir(dir)
+            .args(["-C", &dir.to_string_lossy(), "commit", "-m", msg])
             .output()
             .unwrap();
     }
@@ -878,7 +871,7 @@ mod tests {
         SqliteCodeIndexStore::from_pool(pool).await.unwrap()
     }
 
-    async fn setup_index() -> (CodeIndex, tempfile::TempDir) {
+    async fn setup_index() -> (CodeIndex, tempfile::TempDir, tempfile::TempDir) {
         let repo = create_test_repo();
         let store = make_store().await;
         let data_dir = tempfile::tempdir().unwrap();
@@ -887,12 +880,10 @@ mod tests {
             ..CodeIndexConfig::default()
         };
         let index = CodeIndex::new_builtin(config, Box::new(store), None);
-        // Keep data_dir alive for the test's lifetime.
-        std::mem::forget(data_dir);
-        (index, repo)
+        (index, data_dir, repo)
     }
 
-    async fn setup_index_with_embedder() -> (CodeIndex, tempfile::TempDir) {
+    async fn setup_index_with_embedder() -> (CodeIndex, tempfile::TempDir, tempfile::TempDir) {
         let repo = create_test_repo();
         let store = make_store().await;
         let data_dir = tempfile::tempdir().unwrap();
@@ -903,11 +894,10 @@ mod tests {
         let embedder: Box<dyn moltis_memory::embeddings::EmbeddingProvider> =
             Box::new(MockEmbedder::new(16));
         let index = CodeIndex::new_builtin(config, Box::new(store), Some(embedder));
-        std::mem::forget(data_dir);
-        (index, repo)
+        (index, data_dir, repo)
     }
 
-    async fn setup_index_with_failing_embedder() -> (CodeIndex, tempfile::TempDir) {
+    async fn setup_index_with_failing_embedder() -> (CodeIndex, tempfile::TempDir, tempfile::TempDir) {
         let repo = create_test_repo();
         let store = make_store().await;
         let data_dir = tempfile::tempdir().unwrap();
@@ -918,13 +908,12 @@ mod tests {
         let embedder: Box<dyn moltis_memory::embeddings::EmbeddingProvider> =
             Box::new(FailingEmbedder);
         let index = CodeIndex::new_builtin(config, Box::new(store), Some(embedder));
-        std::mem::forget(data_dir);
-        (index, repo)
+        (index, data_dir, repo)
     }
 
     #[tokio::test]
     async fn test_index_project_no_embedder() {
-        let (index, repo) = setup_index().await;
+        let (index, _data_dir, repo) = setup_index().await;
         let status = index
             .index_project("test-proj", false, repo.path())
             .await
@@ -939,7 +928,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_and_keyword_search() {
-        let (index, repo) = setup_index().await;
+        let (index, _data_dir, repo) = setup_index().await;
         index
             .index_project("test-proj", false, repo.path())
             .await
@@ -954,7 +943,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_and_keyword_search_miss() {
-        let (index, repo) = setup_index().await;
+        let (index, _data_dir, repo) = setup_index().await;
         index
             .index_project("test-proj", false, repo.path())
             .await
@@ -969,7 +958,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_clears_old_data() {
-        let (index, repo) = setup_index().await;
+        let (index, _data_dir, repo) = setup_index().await;
 
         let s1 = index
             .index_project("test-proj", false, repo.path())
@@ -987,7 +976,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_multiple_projects() {
-        let (index, repo1) = setup_index().await;
+        let (index, _data_dir, repo1) = setup_index().await;
         let repo2 = create_test_repo();
 
         // Modify repo2 to have distinct content
@@ -1018,7 +1007,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_with_mock_embedder() {
-        let (index, repo) = setup_index_with_embedder().await;
+        let (index, _data_dir, repo) = setup_index_with_embedder().await;
         index
             .index_project("test-proj", true, repo.path())
             .await
@@ -1034,7 +1023,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_embedder_failure_fallback() {
-        let (index, repo) = setup_index_with_failing_embedder().await;
+        let (index, _data_dir, repo) = setup_index_with_failing_embedder().await;
         index
             .index_project("test-proj", true, repo.path())
             .await

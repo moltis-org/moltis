@@ -39,6 +39,11 @@ pub struct FileWatcher {
     project_id: String,
     /// The root directory being watched.
     watch_dir: PathBuf,
+    /// The debouncer — must be kept alive for the watcher to fire.
+    _debouncer: notify_debouncer_full::Debouncer<
+        notify_debouncer_full::notify::RecommendedWatcher,
+        notify_debouncer_full::RecommendedCache,
+    >,
     /// Cancellation token to stop the watcher.
     cancel: tokio_util::sync::CancellationToken,
 }
@@ -112,6 +117,7 @@ impl FileWatcher {
         Ok(Self {
             project_id,
             watch_dir,
+            _debouncer: debouncer,
             cancel,
         })
     }

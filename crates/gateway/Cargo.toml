@@ -95,6 +95,7 @@ caldav = ["dep:moltis-caldav"]
 default = [
   "agent",
   "caldav",
+  "code-index-builtin",
   "file-watcher",
   "firecrawl",
   "fs-tools",
@@ -119,6 +120,7 @@ default = [
   "web-ui",
   "whatsapp",
 ]
+code-index-builtin = ["moltis-code-index/builtin"]
 file-watcher = [
   "moltis-memory/file-watcher",
   "moltis-openclaw-import?/file-watcher",
