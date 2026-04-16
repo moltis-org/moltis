@@ -5,18 +5,17 @@
 //! - `codebase_peek` — list indexable files in a project directory
 //! - `codebase_status` — report indexing status for a project
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
-use {async_trait::async_trait, moltis_agents::tool_registry::AgentTool, moltis_tools::params, serde_json::json};
+use {
+    async_trait::async_trait, moltis_agents::tool_registry::AgentTool, moltis_tools::params,
+    serde_json::json,
+};
 
-use crate::CodeIndex;
+use crate::{CodeIndex, Error};
 
 #[cfg(test)]
 use crate::CodeIndexConfig;
-
-#[cfg(feature = "qmd")]
-use crate::Error;
 
 // ---------------------------------------------------------------------------
 // CodebaseSearchTool
@@ -287,6 +286,7 @@ pub fn register_tools(
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -326,7 +326,10 @@ mod tests {
             .await
             .expect("peek tool itself should not panic");
 
-        assert!(result.get("error").is_some(), "should report directory error");
+        assert!(
+            result.get("error").is_some(),
+            "should report directory error"
+        );
     }
 
     #[tokio::test]
@@ -343,7 +346,10 @@ mod tests {
             .expect("search tool should return Ok even without backend");
 
         // Config-only search returns a structured error response, not Err.
-        assert!(result.get("error").is_some(), "config-only search should report error");
+        assert!(
+            result.get("error").is_some(),
+            "config-only search should report error"
+        );
         assert!(
             result.get("search_available").is_some(),
             "config-only search should report search_available"
@@ -393,7 +399,10 @@ mod tests {
             .await
             .expect("status tool itself should not panic");
 
-        assert!(result.get("error").is_some(), "should report directory error");
+        assert!(
+            result.get("error").is_some(),
+            "should report directory error"
+        );
     }
 
     #[test]

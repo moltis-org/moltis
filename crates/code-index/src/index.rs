@@ -1,15 +1,21 @@
 use std::path::Path;
+
+#[cfg(feature = "file-watcher")]
 use std::sync::Arc;
 
+#[cfg(any(feature = "builtin", feature = "file-watcher"))]
 use tracing::{debug, info, warn};
 
-use crate::config::CodeIndexConfig;
-use crate::delta::{build_initial_snapshot, compute_delta, HashSnapshot};
-use crate::discover::discover_tracked_files;
-use crate::error::{Error, Result};
-use crate::filter::filter_tracked_files;
-use crate::snapshot_store::SnapshotStore;
-use crate::types::{FilteredFile, IndexStatus, SearchResult};
+use crate::{
+    config::CodeIndexConfig,
+    discover::discover_tracked_files,
+    error::{Error, Result},
+    filter::filter_tracked_files,
+    snapshot_store::SnapshotStore,
+    types::{FilteredFile, IndexStatus, SearchResult},
+};
+
+use crate::delta::{HashSnapshot, build_initial_snapshot, compute_delta};
 
 #[cfg(feature = "builtin")]
 use crate::store::CodeIndexStore;
@@ -22,6 +28,7 @@ use crate::watcher::FileWatcher;
 // ---------------------------------------------------------------------------
 
 /// Active backend for the code index.
+#[allow(clippy::large_enum_variant)]
 enum Backend {
     /// No backend configured — search always returns empty.
     ConfigOnly,
@@ -119,12 +126,9 @@ impl CodeIndex {
     ///
     /// Discovers git-tracked files and applies extension/size/path filters.
     /// Does not require any backend — works with `config_only`.
-    pub fn list_indexable_files(
-        &self,
-        project_dir: &Path,
-    ) -> Result<Vec<FilteredFile>> {
-        let tracked =
-            discover_tracked_files(project_dir).map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+    pub fn list_indexable_files(&self, project_dir: &Path) -> Result<Vec<FilteredFile>> {
+        let tracked = discover_tracked_files(project_dir)
+            .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
         let filtered = filter_tracked_files(project_dir, &tracked, &self.config)?;
         Ok(filtered)
     }
@@ -144,8 +148,13 @@ impl CodeIndex {
         force: bool,
         project_dir: &Path,
     ) -> Result<IndexStatus> {
-        let tracked = discover_tracked_files(project_dir).map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+        let tracked = discover_tracked_files(project_dir)
+            .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
         let filtered = filter_tracked_files(project_dir, &tracked, &self.config)?;
+        #[cfg(not(any(feature = "builtin", feature = "qmd")))]
+        let _filtered = filtered;
+        #[cfg(not(any(feature = "builtin", feature = "qmd")))]
+        let _force = force;
 
         match &self.backend {
             Backend::ConfigOnly => Err(Error::IndexFailed {
@@ -155,16 +164,20 @@ impl CodeIndex {
 
             #[cfg(feature = "qmd")]
             Backend::Qmd(qmd) => {
-                qmd.ensure_collections().await.map_err(|e| Error::IndexFailed {
-                    project_id: project_id.to_string(),
-                    message: format!("QMD ensure_collections error: {e}"),
-                })?;
-                qmd.refresh_index(true).await.map_err(|e| Error::IndexFailed {
-                    project_id: project_id.to_string(),
-                    message: format!("QMD refresh_index error: {e}"),
-                })?;
+                qmd.ensure_collections()
+                    .await
+                    .map_err(|e| Error::IndexFailed {
+                        project_id: project_id.to_string(),
+                        message: format!("QMD ensure_collections error: {e}"),
+                    })?;
+                qmd.refresh_index(true)
+                    .await
+                    .map_err(|e| Error::IndexFailed {
+                        project_id: project_id.to_string(),
+                        message: format!("QMD refresh_index error: {e}"),
+                    })?;
                 self.status(project_id).await
-            }
+            },
 
             #[cfg(feature = "builtin")]
             Backend::Builtin { store, embedder } => {
@@ -189,7 +202,7 @@ impl CodeIndex {
                     )
                     .await
                 }
-            }
+            },
         }
     }
 
@@ -207,21 +220,26 @@ impl CodeIndex {
 
             #[cfg(feature = "qmd")]
             Backend::Qmd(qmd) => {
-                let results = qmd
-                    .hybrid_search(query, limit, true)
-                    .await
-                    .map_err(|e| Error::SearchFailed {
+                let results = qmd.hybrid_search(query, limit, true).await.map_err(|e| {
+                    Error::SearchFailed {
                         project_id: project_id.to_string(),
                         message: format!("QMD search error: {e}"),
-                    })?;
+                    }
+                })?;
                 Ok(crate::search::from_qmd_results(&results, project_id))
-            }
+            },
 
             #[cfg(feature = "builtin")]
             Backend::Builtin { store, embedder } => {
-                self.search_builtin(project_id, query, limit, store.as_ref(), embedder.as_deref())
-                    .await
-            }
+                self.search_builtin(
+                    project_id,
+                    query,
+                    limit,
+                    store.as_ref(),
+                    embedder.as_deref(),
+                )
+                .await
+            },
         }
     }
 
@@ -244,13 +262,13 @@ impl CodeIndex {
                     embedding_model: None,
                     backend: "qmd".to_string(),
                 })
-            }
+            },
 
             #[cfg(feature = "builtin")]
             Backend::Builtin { store, embedder } => {
                 self.build_status_builtin(project_id, store.as_ref(), embedder.as_deref())
                     .await
-            }
+            },
         }
     }
 
@@ -263,11 +281,7 @@ impl CodeIndex {
     /// When files change, the handler re-indexes only the affected files
     /// via [`reindex_files`].
     #[cfg(feature = "file-watcher")]
-    pub fn start_watcher(
-        self: &Arc<Self>,
-        project_id: &str,
-        project_dir: &Path,
-    ) -> Result<()> {
+    pub fn start_watcher(self: &Arc<Self>, project_id: &str, project_dir: &Path) -> Result<()> {
         use crate::watcher::WatchHandler;
 
         let filter_config = self.config.filter();
@@ -371,11 +385,7 @@ impl CodeIndex {
         self.index_files_builtin(project_id, &file_refs, store.as_ref(), embedder.as_deref())
             .await?;
 
-        debug!(
-            project_id,
-            count = files.len(),
-            "watcher reindex completed"
-        );
+        debug!(project_id, count = files.len(), "watcher reindex completed");
         Ok(())
     }
 
@@ -414,9 +424,7 @@ impl CodeIndex {
             // First index — full reindex required.
             self.index_full_builtin(project_id, project_dir, filtered, store, embedder)
                 .await?;
-            return self
-                .build_status_builtin(project_id, store, embedder)
-                .await;
+            return self.build_status_builtin(project_id, store, embedder).await;
         }
 
         // Compute delta from previous snapshot.
@@ -437,11 +445,7 @@ impl CodeIndex {
         );
 
         // Process added + modified files.
-        let changed: Vec<&FilteredFile> = delta
-            .added
-            .iter()
-            .chain(delta.modified.iter())
-            .collect();
+        let changed: Vec<&FilteredFile> = delta.added.iter().chain(delta.modified.iter()).collect();
 
         if !changed.is_empty() {
             self.index_files_builtin(project_id, &changed, store, embedder)
@@ -486,24 +490,24 @@ impl CodeIndex {
             message: format!("failed to initialize store: {e}"),
         })?;
 
-        store.clear_project(project_id).await.map_err(|e| {
-            Error::IndexFailed {
+        store
+            .clear_project(project_id)
+            .await
+            .map_err(|e| Error::IndexFailed {
                 project_id: project_id.to_string(),
                 message: format!("failed to clear project: {e}"),
-            }
-        })?;
+            })?;
 
         let file_refs: Vec<&FilteredFile> = filtered.iter().collect();
         self.index_files_builtin(project_id, &file_refs, store, embedder)
             .await?;
 
         // Build and save the initial snapshot for future incremental updates.
-        let snapshot = build_initial_snapshot(project_dir, &self.config).map_err(|e| {
-            Error::IndexFailed {
+        let snapshot =
+            build_initial_snapshot(project_dir, &self.config).map_err(|e| Error::IndexFailed {
                 project_id: project_id.to_string(),
                 message: format!("failed to build snapshot: {e}"),
-            }
-        })?;
+            })?;
         self.snapshot_store
             .save(project_id, &snapshot)
             .map_err(|e| Error::IndexFailed {
@@ -523,8 +527,7 @@ impl CodeIndex {
         store: &dyn CodeIndexStore,
         embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
     ) -> Result<()> {
-        use crate::chunker::CodeChunker;
-        use crate::store::CodeChunk as StoreChunk;
+        use crate::{chunker::CodeChunker, store::CodeChunk as StoreChunk};
 
         let chunker = CodeChunker::new(self.config.chunker());
         let mut indexed = 0u64;
@@ -543,7 +546,7 @@ impl CodeIndex {
                     );
                     errors += 1;
                     continue;
-                }
+                },
             };
 
             let raw_chunks = chunker.chunk(&content, &file.relative_path.display().to_string());
@@ -552,21 +555,19 @@ impl CodeIndex {
             let chunks: Vec<StoreChunk> = if let Some(emb) = embedder {
                 let texts: Vec<String> = raw_chunks.iter().map(|c| c.content.clone()).collect();
                 match emb.embed_batch(&texts).await {
-                    Ok(embeddings) => {
-                        raw_chunks
-                            .into_iter()
-                            .zip(embeddings.into_iter())
-                            .enumerate()
-                            .map(|(idx, (chunk, embedding))| StoreChunk {
-                                file_path: chunk.file_path.clone(),
-                                chunk_index: idx,
-                                content: chunk.content,
-                                embedding: Some(embedding),
-                                start_line: chunk.start_line,
-                                end_line: chunk.end_line,
-                            })
-                            .collect()
-                    }
+                    Ok(embeddings) => raw_chunks
+                        .into_iter()
+                        .zip(embeddings.into_iter())
+                        .enumerate()
+                        .map(|(idx, (chunk, embedding))| StoreChunk {
+                            file_path: chunk.file_path.clone(),
+                            chunk_index: idx,
+                            content: chunk.content,
+                            embedding: Some(embedding),
+                            start_line: chunk.start_line,
+                            end_line: chunk.end_line,
+                        })
+                        .collect(),
                     Err(e) => {
                         warn!(
                             path = %file.relative_path.display(),
@@ -585,7 +586,7 @@ impl CodeIndex {
                                 end_line: chunk.end_line,
                             })
                             .collect()
-                    }
+                    },
                 }
             } else {
                 raw_chunks
@@ -615,12 +616,7 @@ impl CodeIndex {
             }
         }
 
-        info!(
-            project_id,
-            indexed,
-            errors,
-            "file batch indexed (builtin)"
-        );
+        info!(project_id, indexed, errors, "file batch indexed (builtin)");
 
         Ok(())
     }
@@ -661,11 +657,11 @@ impl CodeIndex {
                         "embed_batch returned empty result for single input".to_string(),
                     )
                 })?
-            }
+            },
             Err(e) => {
                 warn!(error = %e, "query embedding failed, falling back to keyword results");
                 return Ok(keyword_results.into_iter().take(limit).collect());
-            }
+            },
         };
 
         // PERF: loads ALL chunks into memory for brute-force vector search.
@@ -716,18 +712,20 @@ impl CodeIndex {
         store: &dyn CodeIndexStore,
         embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
     ) -> Result<IndexStatus> {
-        let total_chunks = store.chunk_count(project_id).await.map_err(|e| {
-            Error::IndexFailed {
+        let total_chunks = store
+            .chunk_count(project_id)
+            .await
+            .map_err(|e| Error::IndexFailed {
                 project_id: project_id.to_string(),
                 message: format!("failed to count chunks: {e}"),
-            }
-        })?;
-        let total_files = store.file_count(project_id).await.map_err(|e| {
-            Error::IndexFailed {
+            })?;
+        let total_files = store
+            .file_count(project_id)
+            .await
+            .map_err(|e| Error::IndexFailed {
                 project_id: project_id.to_string(),
                 message: format!("failed to count files: {e}"),
-            }
-        })?;
+            })?;
 
         Ok(IndexStatus {
             project_id: project_id.to_string(),
@@ -745,6 +743,7 @@ impl CodeIndex {
 // ---------------------------------------------------------------------------
 
 /// Extract a range of lines from text content.
+#[cfg(feature = "builtin")]
 fn peek_lines(content: &str, start: usize, max_lines: usize) -> String {
     let lines: Vec<&str> = content.lines().collect();
     let end = (start + max_lines).min(lines.len());
@@ -756,9 +755,7 @@ fn peek_lines(content: &str, start: usize, max_lines: usize) -> String {
 #[cfg(all(test, feature = "builtin"))]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
-    use crate::store_sqlite::SqliteCodeIndexStore;
-    use async_trait::async_trait;
+    use {super::*, crate::store_sqlite::SqliteCodeIndexStore, async_trait::async_trait};
 
     /// Mock embedder producing deterministic vectors from text content.
     struct MockEmbedder {
@@ -949,7 +946,10 @@ mod tests {
             .unwrap();
 
         let results = index.search("test-proj", "hello", 10).await.unwrap();
-        assert!(!results.is_empty(), "keyword search for 'hello' should find results");
+        assert!(
+            !results.is_empty(),
+            "keyword search for 'hello' should find results"
+        );
     }
 
     #[tokio::test]
@@ -991,8 +991,11 @@ mod tests {
         let repo2 = create_test_repo();
 
         // Modify repo2 to have distinct content
-        std::fs::write(repo2.path().join("README.md"), "# Different\n\nUnique content here.\n")
-            .unwrap();
+        std::fs::write(
+            repo2.path().join("README.md"),
+            "# Different\n\nUnique content here.\n",
+        )
+        .unwrap();
         git_commit_all(repo2.path(), "update readme");
 
         index

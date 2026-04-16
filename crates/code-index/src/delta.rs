@@ -5,14 +5,18 @@
 //! removed, or modified since the last index. This enables efficient
 //! partial reindexing instead of re-scanning the entire project.
 
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
-use crate::config::CodeIndexConfig;
-use crate::discover::discover_tracked_files;
-use crate::error::Result;
-use crate::filter::{content_hash, filter_tracked_files};
-use crate::types::FilteredFile;
+use crate::{
+    config::CodeIndexConfig,
+    discover::discover_tracked_files,
+    error::Result,
+    filter::{content_hash, filter_tracked_files},
+    types::FilteredFile,
+};
 
 /// The set of changes between two index snapshots.
 #[derive(Debug, Clone)]
@@ -46,8 +50,7 @@ pub fn compute_delta(
     let tracked = discover_tracked_files(project_dir)?;
     let filtered = filter_tracked_files(project_dir, &tracked, config)?;
 
-    let previous_paths: HashSet<&str> =
-        previous.keys().map(|s| s.as_str()).collect();
+    let previous_paths: HashSet<&str> = previous.keys().map(|s| s.as_str()).collect();
 
     let mut added = Vec::new();
     let mut modified = Vec::new();
@@ -90,8 +93,7 @@ pub fn compute_delta(
     }
 
     // Find removed files: in previous but not in current filtered set.
-    let current_paths: HashSet<&str> =
-        current_snapshot.keys().map(|s| s.as_str()).collect();
+    let current_paths: HashSet<&str> = current_snapshot.keys().map(|s| s.as_str()).collect();
 
     let removed = previous_paths
         .iter()
@@ -141,6 +143,7 @@ pub fn build_initial_snapshot(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

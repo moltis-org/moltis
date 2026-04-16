@@ -3,15 +3,18 @@
 //! Takes discovered git-tracked files and filters them down to text-equivalent
 //! code files based on extension, size, binary detection, and path exclusions.
 
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
-use sha2::{Digest, Sha256};
-use tracing::{debug, trace};
+use {
+    sha2::{Digest, Sha256},
+    tracing::{debug, trace},
+};
 
-use crate::config::CodeIndexConfig;
-use crate::error::Result;
-use crate::types::{FilteredFile, Language};
+use crate::{
+    config::CodeIndexConfig,
+    error::Result,
+    types::{FilteredFile, Language},
+};
 
 /// Maximum bytes to read for binary detection.
 const BINARY_CHECK_BYTES: u64 = 8192;
@@ -70,7 +73,7 @@ pub fn filter_tracked_files(
             Err(e) => {
                 debug!(path = %path_str, error = %e, "skipped: cannot read metadata");
                 continue;
-            }
+            },
         };
         let size = metadata.len();
         if size > config.max_file_size_bytes {
@@ -149,20 +152,14 @@ pub fn content_hash(path: &Path) -> Result<String> {
 /// For known extensionless filenames (Dockerfile, Makefile, CMakeLists.txt),
 /// returns a synthetic extension mapping them to their language.
 pub fn effective_extension(path: &Path) -> &str {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     if !ext.is_empty() {
         return ext;
     }
 
     // No extension — map known extensionless filenames.
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     match file_name.to_ascii_lowercase().as_str() {
         "dockerfile" | "containerfile" => "dockerfile",
@@ -173,11 +170,11 @@ pub fn effective_extension(path: &Path) -> &str {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::*;
-    use crate::config::CodeIndexConfig;
+    use {super::*, crate::config::CodeIndexConfig};
 
     fn test_config() -> CodeIndexConfig {
         CodeIndexConfig::default()
@@ -214,7 +211,9 @@ mod tests {
         let filtered = filter_tracked_files(dir.path(), &files, &config).unwrap();
         // rs and py should pass; png should be excluded by extension.
         assert!(
-            filtered.iter().any(|f| f.relative_path.ends_with("main.rs")),
+            filtered
+                .iter()
+                .any(|f| f.relative_path.ends_with("main.rs")),
             "main.rs should pass the extension filter"
         );
         assert!(
@@ -222,12 +221,16 @@ mod tests {
             "lib.py should pass the extension filter"
         );
         assert!(
-            !filtered.iter().any(|f| f.relative_path.ends_with("logo.png")),
+            !filtered
+                .iter()
+                .any(|f| f.relative_path.ends_with("logo.png")),
             "logo.png should be excluded by extension"
         );
         // output.bin has a null byte so it should be excluded by binary detection
         assert!(
-            !filtered.iter().any(|f| f.relative_path.ends_with("output.bin")),
+            !filtered
+                .iter()
+                .any(|f| f.relative_path.ends_with("output.bin")),
             "output.bin should be excluded (binary)"
         );
     }
@@ -237,7 +240,10 @@ mod tests {
         let dir = setup_temp_dir(&[
             ("src/main.rs", b"fn main() {}".as_slice()),
             ("vendor/lib/foo.rs", b"fn foo() {}".as_slice()),
-            ("node_modules/react/index.js", b"module.exports = {};".as_slice()),
+            (
+                "node_modules/react/index.js",
+                b"module.exports = {};".as_slice(),
+            ),
         ]);
         let config = test_config();
         let files = vec![
@@ -248,7 +254,9 @@ mod tests {
 
         let filtered = filter_tracked_files(dir.path(), &files, &config).unwrap();
         assert!(
-            filtered.iter().any(|f| f.relative_path.ends_with("main.rs")),
+            filtered
+                .iter()
+                .any(|f| f.relative_path.ends_with("main.rs")),
             "src/main.rs should pass"
         );
         assert!(
@@ -258,9 +266,11 @@ mod tests {
             "vendor paths should be skipped"
         );
         assert!(
-            !filtered
-                .iter()
-                .any(|f| f.relative_path.display().to_string().contains("node_modules")),
+            !filtered.iter().any(|f| f
+                .relative_path
+                .display()
+                .to_string()
+                .contains("node_modules")),
             "node_modules paths should be skipped"
         );
     }

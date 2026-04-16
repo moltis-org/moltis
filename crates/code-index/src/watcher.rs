@@ -5,16 +5,19 @@
 //!
 //! The watcher is started via [`CodeIndex::start_watcher`] in `index.rs`.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
-use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
-use tokio::sync::mpsc;
-use tracing::{debug, info};
+use {
+    notify_debouncer_full::{new_debouncer, notify::RecursiveMode},
+    tokio::sync::mpsc,
+    tracing::{debug, info},
+};
 
-use crate::filter::FilterConfig;
-use crate::types::Language;
+use crate::{filter::FilterConfig, types::Language};
 
 /// Debounce delay for file system events (ms).
 const DEBOUNCE_MS: u64 = 500;
@@ -62,7 +65,10 @@ impl FileWatcher {
         let mut debouncer = new_debouncer(
             Duration::from_millis(DEBOUNCE_MS),
             None,
-            move |result: Result<Vec<notify_debouncer_full::DebouncedEvent>, Vec<notify_debouncer_full::notify::Error>>| {
+            move |result: Result<
+                Vec<notify_debouncer_full::DebouncedEvent>,
+                Vec<notify_debouncer_full::notify::Error>,
+            >| {
                 if let Ok(events) = result {
                     for event in events {
                         let watch_event = WatchEvent {

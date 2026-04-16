@@ -5,13 +5,16 @@
 
 use std::path::Path;
 
-use async_trait::async_trait;
-use sqlx::{sqlite::SqliteConnectOptions, Acquire, Row, SqlitePool};
+use {
+    async_trait::async_trait,
+    sqlx::{Acquire, Row, SqlitePool, sqlite::SqliteConnectOptions},
+};
 
-use crate::error::{Error, Result};
-use crate::store::{CodeChunk, CodeIndexStore};
-use crate::store::{dequantize, quantize};
-use crate::types::SearchResult;
+use crate::{
+    error::{Error, Result},
+    store::{CodeChunk, CodeIndexStore, dequantize, quantize},
+    types::SearchResult,
+};
 
 /// SQLite-backed code index store.
 pub struct SqliteCodeIndexStore {
@@ -78,12 +81,10 @@ impl CodeIndexStore for SqliteCodeIndexStore {
         .map_err(|e| Error::IndexStore(format!("failed to create chunks table: {e}")))?;
 
         // Create indexes
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_chunks_project ON code_chunks(project_id)",
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to create project index: {e}")))?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_project ON code_chunks(project_id)")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| Error::IndexStore(format!("failed to create project index: {e}")))?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_chunks_file ON code_chunks(project_id, file_path)",
@@ -151,14 +152,12 @@ impl CodeIndexStore for SqliteCodeIndexStore {
             .map_err(|e| Error::IndexStore(format!("failed to begin transaction: {e}")))?;
 
         // Delete existing chunks for this file first (full reindex of file)
-        sqlx::query(
-            "DELETE FROM code_chunks WHERE project_id = ? AND file_path = ?",
-        )
-        .bind(project_id)
-        .bind(file_path)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to delete existing chunks: {e}")))?;
+        sqlx::query("DELETE FROM code_chunks WHERE project_id = ? AND file_path = ?")
+            .bind(project_id)
+            .bind(file_path)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::IndexStore(format!("failed to delete existing chunks: {e}")))?;
 
         // Insert new chunks
         for chunk in chunks {
@@ -198,14 +197,12 @@ impl CodeIndexStore for SqliteCodeIndexStore {
     async fn delete_file_chunks(&self, project_id: &str, file_path: &str) -> Result<()> {
         let mut conn = self.conn().await?;
 
-        sqlx::query(
-            "DELETE FROM code_chunks WHERE project_id = ? AND file_path = ?",
-        )
-        .bind(project_id)
-        .bind(file_path)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to delete file chunks: {e}")))?;
+        sqlx::query("DELETE FROM code_chunks WHERE project_id = ? AND file_path = ?")
+            .bind(project_id)
+            .bind(file_path)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| Error::IndexStore(format!("failed to delete file chunks: {e}")))?;
 
         Ok(())
     }
@@ -296,23 +293,23 @@ impl CodeIndexStore for SqliteCodeIndexStore {
         .await
         .map_err(|e| Error::IndexStore(format!("keyword search failed: {e}")))?;
 
-            let results = rows
-                .into_iter()
-                .enumerate()
-                .map(|(rank, row)| {
-                    let file_path: String = row.get("file_path");
-                    let start_line = row.get::<i64, _>("start_line") as usize;
-                    SearchResult {
-                        chunk_id: format!("{}:{}:{}", project_id, file_path, start_line),
-                        path: file_path,
-                        text: row.get("content"),
-                        start_line,
-                        end_line: row.get::<i64, _>("end_line") as usize,
-                        score: 1.0 / (1.0 + rank as f32), // Map rank to (0, 1] range, higher is better
-                        source: "builtin".to_string(),
-                    }
-                })
-                .collect();
+        let results = rows
+            .into_iter()
+            .enumerate()
+            .map(|(rank, row)| {
+                let file_path: String = row.get("file_path");
+                let start_line = row.get::<i64, _>("start_line") as usize;
+                SearchResult {
+                    chunk_id: format!("{}:{}:{}", project_id, file_path, start_line),
+                    path: file_path,
+                    text: row.get("content"),
+                    start_line,
+                    end_line: row.get::<i64, _>("end_line") as usize,
+                    score: 1.0 / (1.0 + rank as f32), // Map rank to (0, 1] range, higher is better
+                    source: "builtin".to_string(),
+                }
+            })
+            .collect();
 
         Ok(results)
     }
@@ -334,13 +331,12 @@ impl CodeIndexStore for SqliteCodeIndexStore {
     async fn chunk_count(&self, project_id: &str) -> Result<usize> {
         let mut conn = self.conn().await?;
 
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM code_chunks WHERE project_id = ?",
-        )
-        .bind(project_id)
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to count chunks: {e}")))?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM code_chunks WHERE project_id = ?")
+                .bind(project_id)
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(|e| Error::IndexStore(format!("failed to count chunks: {e}")))?;
 
         Ok(count as usize)
     }
@@ -388,7 +384,10 @@ mod tests {
             make_chunk("foo.rs", 0, "fn main() {}", 1, 1),
             make_chunk("foo.rs", 1, "fn helper() {}", 2, 2),
         ];
-        store.upsert_chunks("proj", "foo.rs", &chunks).await.unwrap();
+        store
+            .upsert_chunks("proj", "foo.rs", &chunks)
+            .await
+            .unwrap();
 
         let got = store.get_project_chunks("proj").await.unwrap();
         assert_eq!(got.len(), 2);
@@ -423,8 +422,14 @@ mod tests {
         let store = setup().await;
         let chunks_a = vec![make_chunk("a.rs", 0, "file a", 1, 1)];
         let chunks_b = vec![make_chunk("b.rs", 0, "file b", 1, 1)];
-        store.upsert_chunks("proj", "a.rs", &chunks_a).await.unwrap();
-        store.upsert_chunks("proj", "b.rs", &chunks_b).await.unwrap();
+        store
+            .upsert_chunks("proj", "a.rs", &chunks_a)
+            .await
+            .unwrap();
+        store
+            .upsert_chunks("proj", "b.rs", &chunks_b)
+            .await
+            .unwrap();
 
         let got = store.get_project_chunks("proj").await.unwrap();
         assert_eq!(got.len(), 2);
@@ -439,8 +444,14 @@ mod tests {
     async fn test_multi_project_isolation() {
         let store = setup().await;
         let chunks = vec![make_chunk("shared.rs", 0, "content", 1, 1)];
-        store.upsert_chunks("X", "shared.rs", &chunks).await.unwrap();
-        store.upsert_chunks("Y", "shared.rs", &chunks).await.unwrap();
+        store
+            .upsert_chunks("X", "shared.rs", &chunks)
+            .await
+            .unwrap();
+        store
+            .upsert_chunks("Y", "shared.rs", &chunks)
+            .await
+            .unwrap();
 
         let got_x = store.get_project_chunks("X").await.unwrap();
         assert_eq!(got_x.len(), 1);
@@ -488,7 +499,10 @@ mod tests {
         let mut chunk = make_chunk("emb.rs", 0, "embedded code", 1, 5);
         chunk.embedding = Some(original.clone());
 
-        store.upsert_chunks("proj", "emb.rs", &[chunk]).await.unwrap();
+        store
+            .upsert_chunks("proj", "emb.rs", &[chunk])
+            .await
+            .unwrap();
 
         let got = store.get_project_chunks("proj").await.unwrap();
         assert_eq!(got.len(), 1);
@@ -506,19 +520,23 @@ mod tests {
     async fn test_keyword_search_basic() {
         let store = setup().await;
         store
-            .upsert_chunks(
-                "proj",
+            .upsert_chunks("proj", "main.rs", &[make_chunk(
                 "main.rs",
-                &[make_chunk("main.rs", 0, "fn main() { println!(\"hello\"); }", 1, 1)],
-            )
+                0,
+                "fn main() { println!(\"hello\"); }",
+                1,
+                1,
+            )])
             .await
             .unwrap();
         store
-            .upsert_chunks(
-                "proj",
+            .upsert_chunks("proj", "greet.py", &[make_chunk(
                 "greet.py",
-                &[make_chunk("greet.py", 0, "def greet(): pass", 1, 1)],
-            )
+                0,
+                "def greet(): pass",
+                1,
+                1,
+            )])
             .await
             .unwrap();
 
@@ -531,27 +549,33 @@ mod tests {
     async fn test_keyword_search_multi_result() {
         let store = setup().await;
         store
-            .upsert_chunks(
-                "proj",
+            .upsert_chunks("proj", "a.rs", &[make_chunk(
                 "a.rs",
-                &[make_chunk("a.rs", 0, "database connection pool", 1, 1)],
-            )
+                0,
+                "database connection pool",
+                1,
+                1,
+            )])
             .await
             .unwrap();
         store
-            .upsert_chunks(
-                "proj",
+            .upsert_chunks("proj", "b.rs", &[make_chunk(
                 "b.rs",
-                &[make_chunk("b.rs", 0, "database query builder", 1, 1)],
-            )
+                0,
+                "database query builder",
+                1,
+                1,
+            )])
             .await
             .unwrap();
         store
-            .upsert_chunks(
-                "proj",
+            .upsert_chunks("proj", "c.rs", &[make_chunk(
                 "c.rs",
-                &[make_chunk("c.rs", 0, "http request handler", 1, 1)],
-            )
+                0,
+                "http request handler",
+                1,
+                1,
+            )])
             .await
             .unwrap();
 
@@ -563,11 +587,13 @@ mod tests {
     async fn test_keyword_search_no_results() {
         let store = setup().await;
         store
-            .upsert_chunks(
-                "proj",
+            .upsert_chunks("proj", "a.rs", &[make_chunk(
                 "a.rs",
-                &[make_chunk("a.rs", 0, "hello world", 1, 1)],
-            )
+                0,
+                "hello world",
+                1,
+                1,
+            )])
             .await
             .unwrap();
 
@@ -582,19 +608,23 @@ mod tests {
     async fn test_keyword_search_scores_valid() {
         let store = setup().await;
         store
-            .upsert_chunks(
-                "proj",
+            .upsert_chunks("proj", "a.rs", &[make_chunk(
                 "a.rs",
-                &[make_chunk("a.rs", 0, "rust programming language", 1, 1)],
-            )
+                0,
+                "rust programming language",
+                1,
+                1,
+            )])
             .await
             .unwrap();
         store
-            .upsert_chunks(
-                "proj",
+            .upsert_chunks("proj", "b.rs", &[make_chunk(
                 "b.rs",
-                &[make_chunk("b.rs", 0, "rust memory safety", 1, 1)],
-            )
+                0,
+                "rust memory safety",
+                1,
+                1,
+            )])
             .await
             .unwrap();
 
@@ -613,14 +643,10 @@ mod tests {
         let store = setup().await;
         for file in ["a.rs", "b.rs", "c.rs"] {
             store
-                .upsert_chunks(
-                    "proj",
-                    file,
-                    &[
-                        make_chunk(file, 0, "chunk0", 1, 5),
-                        make_chunk(file, 1, "chunk1", 6, 10),
-                    ],
-                )
+                .upsert_chunks("proj", file, &[
+                    make_chunk(file, 0, "chunk0", 1, 5),
+                    make_chunk(file, 1, "chunk1", 6, 10),
+                ])
                 .await
                 .unwrap();
         }
@@ -632,7 +658,13 @@ mod tests {
     #[tokio::test]
     async fn test_empty_project() {
         let store = setup().await;
-        assert!(store.get_project_chunks("nonexistent").await.unwrap().is_empty());
+        assert!(
+            store
+                .get_project_chunks("nonexistent")
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(store.file_count("nonexistent").await.unwrap(), 0);
         assert_eq!(store.chunk_count("nonexistent").await.unwrap(), 0);
     }

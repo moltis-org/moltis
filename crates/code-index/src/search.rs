@@ -42,6 +42,7 @@ pub fn from_qmd_results(results: &[QmdSearchResult], project_id: &str) -> Vec<Se
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -66,8 +66,16 @@ impl CodeChunker {
 
                 for (idx, half) in [first_half, second_half].iter().enumerate() {
                     let content = half.join("\n");
-                    let half_start = if idx == 0 { start_line } else { mid };
-                    let half_end = if idx == 0 { mid } else { end_line };
+                    let half_start = if idx == 0 {
+                        start_line
+                    } else {
+                        mid
+                    };
+                    let half_end = if idx == 0 {
+                        mid
+                    } else {
+                        end_line
+                    };
 
                     chunks.push(CodeChunk {
                         file_path: file_path.to_string(),
@@ -90,7 +98,10 @@ impl CodeChunker {
             }
 
             // Move forward with overlap
-            let step = self.config.chunk_size_lines.saturating_sub(self.config.overlap_lines);
+            let step = self
+                .config
+                .chunk_size_lines
+                .saturating_sub(self.config.overlap_lines);
             start_line += step;
 
             // Prevent infinite loop on small files
@@ -109,6 +120,7 @@ impl CodeChunker {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -171,7 +183,10 @@ mod tests {
         };
         let chunker = CodeChunker::new(config);
 
-        let content = (0..20).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        let content = (0..20)
+            .map(|i| format!("line{}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         let chunks = chunker.chunk(&content, "test.rs");
 
         for (idx, chunk) in chunks.iter().enumerate() {
@@ -187,10 +202,17 @@ mod tests {
             max_chunk_bytes: 100_000,
         };
         let chunker = CodeChunker::new(config);
-        let content: String = (0..10).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let content: String = (0..10)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let chunks = chunker.chunk(&content, "test.rs");
-        assert_eq!(chunks.len(), 1, "exactly 10 lines with chunk_size 10 should be 1 chunk");
+        assert_eq!(
+            chunks.len(),
+            1,
+            "exactly 10 lines with chunk_size 10 should be 1 chunk"
+        );
         assert_eq!(chunks[0].start_line, 1);
         assert_eq!(chunks[0].end_line, 10);
     }
@@ -222,7 +244,7 @@ mod tests {
         let chunker = CodeChunker::new(config);
         let content = "hello 🌍\nworld 🎉\nfoo ñ\nbar";
 
-        let chunks = chunker.chunk(&content, "test.rs");
+        let chunks = chunker.chunk(content, "test.rs");
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].start_line, 1);
         assert_eq!(chunks[0].end_line, 3);
@@ -248,12 +270,22 @@ mod tests {
 
         // Verify overlap: last 2 lines of chunk[i] should be first 2 lines of chunk[i+1]
         for i in 0..chunks.len().saturating_sub(1) {
-            let overlap_lines_a: Vec<&str> = chunks[i].content.lines().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+            let overlap_lines_a: Vec<&str> = chunks[i]
+                .content
+                .lines()
+                .rev()
+                .take(2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
             let overlap_lines_b: Vec<&str> = chunks[i + 1].content.lines().take(2).collect();
             assert_eq!(
-                overlap_lines_a, overlap_lines_b,
+                overlap_lines_a,
+                overlap_lines_b,
                 "overlap mismatch between chunk {} and {}",
-                i, i + 1
+                i,
+                i + 1
             );
         }
     }

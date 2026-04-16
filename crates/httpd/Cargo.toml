@@ -98,6 +98,7 @@ vault = ["dep:moltis-vault", "moltis-gateway/vault"]
 web-ui = ["moltis-gateway/web-ui"]
 
 [dev-dependencies]
+moltis-code-index.workspace = true
 moltis-providers = { workspace = true }
 moltis-web       = { workspace = true }
 sqlx             = { workspace = true }
