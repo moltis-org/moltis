@@ -333,6 +333,9 @@ pub(super) async fn complete_startup(
     #[cfg(not(feature = "tls"))]
     let tls_enabled_for_gateway = false;
 
+    #[cfg(feature = "qmd")]
+    let code_index_for_tools = Arc::clone(&code_index);
+
     let state = GatewayState::with_options(
         resolved_auth,
         services,
@@ -813,6 +816,12 @@ pub(super) async fn complete_startup(
                 Arc::clone(&registry),
                 Arc::clone(&session_metadata),
             )));
+        }
+
+        // ── Code index tools ─────────────────────────────────────────────
+        #[cfg(feature = "qmd")]
+        {
+            moltis_code_index::tools::register_tools(&mut tool_registry, code_index_for_tools);
         }
 
         {
