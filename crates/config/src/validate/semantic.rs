@@ -755,6 +755,18 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         }
     }
 
+    // tools: overflow_ratio must not be zero (budget becomes 0, every iteration fails)
+    if config.tools.preemptive_overflow_ratio == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: "preemptive_overflow_ratio = 0 means the overflow budget is always \
+                      0 tokens; the agent loop will fail immediately on every iteration"
+                .into(),
+        });
+    }
+
     // tools: ratio fields should not exceed 100 (percentages)
     if config.tools.tool_result_compaction_ratio > 100 {
         diagnostics.push(Diagnostic {
