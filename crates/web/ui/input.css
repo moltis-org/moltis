@@ -1113,6 +1113,11 @@
     color: var(--text);
     outline: none;
   }
+  #reasoningCombo .model-combo-btn {
+    max-width: none;
+    width: auto;
+    justify-content: flex-start;
+  }
   .model-combo-chevron {
     flex-shrink: 0;
     opacity: 0.6;
