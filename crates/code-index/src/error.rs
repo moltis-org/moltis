@@ -19,6 +19,9 @@ pub enum Error {
 
     #[error("backend unavailable: {0}")]
     BackendUnavailable(String),
+
+    #[error("snapshot store error: {0}")]
+    Store(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
