@@ -1118,6 +1118,10 @@
     width: auto;
     justify-content: flex-start;
   }
+  #reasoningCombo .model-dropdown {
+    width: auto;
+    min-width: 100px;
+  }
   .model-combo-chevron {
     flex-shrink: 0;
     opacity: 0.6;
