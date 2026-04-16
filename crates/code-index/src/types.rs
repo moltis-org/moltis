@@ -101,6 +101,28 @@ impl Language {
     }
 }
 
+/// Index backend type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Backend {
+    /// Built-in SQLite + FTS5 backend.
+    Builtin,
+    /// QMD (local vector search engine).
+    Qmd,
+    /// PostgreSQL + pgvector backend.
+    Pgvector,
+}
+
+impl std::fmt::Display for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Builtin => write!(f, "builtin"),
+            Self::Qmd => write!(f, "qmd"),
+            Self::Pgvector => write!(f, "pgvector"),
+        }
+    }
+}
+
 /// A file discovered in a git repository, after filtering.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -116,8 +138,8 @@ pub struct FileEntry {
     pub language: Language,
     /// Whether the file is tracked by git.
     pub git_tracked: bool,
-    /// Epoch millis when this file was last indexed (0 if never).
-    pub last_indexed: u64,
+    /// Epoch millis when this file was last indexed (None if never).
+    pub last_indexed: Option<u64>,
 }
 
 /// A file that passed all filters and is ready for indexing.
@@ -165,8 +187,8 @@ pub struct IndexStatus {
     pub last_sync_ms: Option<u64>,
     /// Embedding model in use (if any).
     pub embedding_model: Option<String>,
-    /// Index backend in use (e.g. "qmd", "builtin").
-    pub backend: String,
+    /// Index backend in use.
+    pub backend: Backend,
 }
 
 /// A search result from the code index.
@@ -184,6 +206,6 @@ pub struct SearchResult {
     pub score: f32,
     /// Matched text content.
     pub text: String,
-    /// Source of the result (e.g. "qmd", "builtin", "pgvector").
-    pub source: String,
+    /// Backend that produced this result.
+    pub source: Backend,
 }

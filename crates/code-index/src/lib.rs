@@ -17,4 +17,4 @@ pub mod backend_qmd;
 // Re-export primary types.
 pub use config::CodeIndexConfig;
 pub use error::{Error, Result};
-pub use types::{CodeChunk, FileEntry, FilteredFile, IndexStatus, Language};
+pub use types::{Backend, CodeChunk, FileEntry, FilteredFile, IndexStatus, Language};

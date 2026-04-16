@@ -47,7 +47,9 @@ pub fn discover_tracked_files(repo_dir: &Path) -> Result<Vec<PathBuf>> {
     })?;
 
     // Collect submodule paths to exclude.
-    let module_paths = collect_submodule_paths(repo_dir);
+    // Use work_dir (the resolved git work-tree root) rather than repo_dir
+    // (the caller-supplied path), since .gitmodules lives at the repo root.
+    let module_paths = collect_submodule_paths(&work_dir);
 
     let mut tracked = Vec::new();
     for entry in index.entries() {
