@@ -1,0 +1,32 @@
+[package]
+description       = "Codebase indexing for moltis — git-tracked file discovery, filtering, chunking, and project-scoped search"
+edition.workspace = true
+name              = "moltis-code-index"
+version.workspace = true
+
+[features]
+default = ["qmd"]
+qmd = ["dep:moltis-qmd"]
+pgvector = ["sqlx/postgres"]
+
+[dependencies]
+anyhow           = { workspace = true }
+async-trait      = { workspace = true }
+gix              = { workspace = true }
+moltis-memory    = { workspace = true }
+moltis-qmd       = { optional = true, workspace = true }
+moltis-projects  = { workspace = true }
+regex            = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+sha2             = { workspace = true }
+sqlx             = { workspace = true }
+thiserror        = { workspace = true }
+tokio            = { workspace = true }
+tracing          = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
