@@ -10,6 +10,7 @@ default-members = [
   "crates/canvas",
   "crates/channels",
   "crates/chat",
+  "crates/code-index",
   "crates/cli",
   "crates/common",
   "crates/config",
@@ -69,6 +70,7 @@ members = [
   "crates/canvas",
   "crates/channels",
   "crates/chat",
+  "crates/code-index",
   "crates/cli",
   "crates/common",
   "crates/config",
@@ -329,6 +331,7 @@ moltis-caldav           = { path = "crates/caldav" }
 moltis-canvas           = { path = "crates/canvas" }
 moltis-channels         = { path = "crates/channels" }
 moltis-chat             = { path = "crates/chat" }
+moltis-code-index      = { path = "crates/code-index" }
 moltis-common           = { path = "crates/common" }
 moltis-config           = { path = "crates/config" }
 moltis-cron             = { path = "crates/cron" }
