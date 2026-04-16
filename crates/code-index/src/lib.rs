@@ -9,6 +9,7 @@ pub mod delta;
 pub mod discover;
 pub mod error;
 pub mod filter;
+pub mod snapshot_store;
 pub mod types;
 
 // Optional backends, gated behind feature flags.
@@ -33,6 +34,8 @@ pub mod watcher;
 // Re-export primary types.
 pub use config::CodeIndexConfig;
 pub use delta::SyncDelta;
+pub use delta::HashSnapshot;
 pub use error::{Error, Result};
 pub use index::CodeIndex;
+pub use snapshot_store::SnapshotStore;
 pub use types::{CodeChunk, FileEntry, FilteredFile, IndexStatus, Language, SearchResult};

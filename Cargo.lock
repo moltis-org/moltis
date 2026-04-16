@@ -7349,6 +7349,7 @@ dependencies = [
  "async-trait",
  "gix",
  "moltis-agents",
+ "moltis-config",
  "moltis-qmd",
  "moltis-tools",
  "notify-debouncer-full",
