@@ -15,6 +15,7 @@
 mod helpers;
 mod hooks;
 mod init_channels;
+mod init_code_index;
 mod init_memory;
 mod location;
 mod prepare_core;

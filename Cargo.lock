@@ -7489,6 +7489,7 @@ dependencies = [
  "moltis-canvas",
  "moltis-channels",
  "moltis-chat",
+ "moltis-code-index",
  "moltis-common",
  "moltis-config",
  "moltis-cron",

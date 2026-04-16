@@ -380,6 +380,9 @@ pub struct GatewayState {
     /// Memory runtime for long-term memory search.
     /// `Arc` because it is cloned into background tokio tasks.
     pub memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+    /// Code index for workspace codebase intelligence (discover, filter, status, peek).
+    /// Always initialized in config-only mode; search is deferred to QMD backend.
+    pub code_index: Arc<moltis_code_index::CodeIndex>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
     /// Whether the server is known to be behind a reverse proxy.
@@ -461,6 +464,9 @@ impl GatewayState {
             false,
             None,
             None,
+            Arc::new(moltis_code_index::CodeIndex::config_only(
+                moltis_code_index::CodeIndexConfig::default(),
+            )),
             18789,
             false,
             None,
@@ -487,6 +493,7 @@ impl GatewayState {
         tls_active: bool,
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
         memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+        code_index: Arc<moltis_code_index::CodeIndex>,
         port: u16,
         ws_request_logs: bool,
         deploy_platform: Option<String>,
@@ -510,6 +517,7 @@ impl GatewayState {
             sandbox_router,
             pairing_store,
             memory_manager,
+            code_index,
             localhost_only,
             behind_proxy,
             tls_active,
