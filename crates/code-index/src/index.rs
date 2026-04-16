@@ -1,16 +1,10 @@
-//! Code index for workspace codebase intelligence.
-//!
-//! The index supports multiple backends:
-//! - **QMD**: External QMD binary for hybrid search (requires `qmd` feature)
-//! - **Builtin**: SQLite + FTS5 with in-memory vector similarity (requires `builtin` feature)
-//! - **Config-only**: File discovery and filtering only, no search
-
 use std::path::Path;
+use std::sync::Arc;
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::config::CodeIndexConfig;
-use crate::delta::{build_initial_snapshot, HashSnapshot};
+use crate::delta::{build_initial_snapshot, compute_delta, HashSnapshot};
 use crate::discover::discover_tracked_files;
 use crate::error::{Error, Result};
 use crate::filter::filter_tracked_files;
@@ -20,31 +14,50 @@ use crate::types::{FilteredFile, IndexStatus, SearchResult};
 #[cfg(feature = "builtin")]
 use crate::store::CodeIndexStore;
 
-/// Code index supporting multiple backends.
-pub struct CodeIndex {
-    config: CodeIndexConfig,
-    snapshot_store: SnapshotStore,
-    backend: Backend,
-}
+#[cfg(feature = "file-watcher")]
+use crate::watcher::FileWatcher;
 
-/// Backend variants for code indexing.
+// ---------------------------------------------------------------------------
+// Backend enum
+// ---------------------------------------------------------------------------
+
+/// Active backend for the code index.
 enum Backend {
-    /// QMD backend for hybrid search.
+    /// No backend configured — search always returns empty.
+    ConfigOnly,
+
+    /// QMD (external vector DB) backend.
     #[cfg(feature = "qmd")]
     Qmd(moltis_qmd::QmdManager),
 
-    /// Builtin SQLite + FTS5 backend.
+    /// Built-in SQLite + FTS5 backend with optional embedding provider.
     #[cfg(feature = "builtin")]
     Builtin {
         store: Box<dyn CodeIndexStore>,
         embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>>,
     },
+}
 
-    /// Config-only: discovery/filter only, no search.
-    ConfigOnly,
+// ---------------------------------------------------------------------------
+// CodeIndex — main orchestrator
+// ---------------------------------------------------------------------------
+
+/// Code index supporting multiple backends.
+pub struct CodeIndex {
+    config: CodeIndexConfig,
+    snapshot_store: SnapshotStore,
+    backend: Backend,
+
+    /// Active file watchers, keyed by project ID.
+    #[cfg(feature = "file-watcher")]
+    watchers: std::sync::Mutex<Vec<FileWatcher>>,
 }
 
 impl CodeIndex {
+    // -----------------------------------------------------------------------
+    // Constructors
+    // -----------------------------------------------------------------------
+
     /// Create a new code index with QMD backend.
     #[cfg(feature = "qmd")]
     pub fn new(config: CodeIndexConfig, qmd: moltis_qmd::QmdManager) -> Self {
@@ -58,6 +71,8 @@ impl CodeIndex {
             config,
             snapshot_store,
             backend: Backend::Qmd(qmd),
+            #[cfg(feature = "file-watcher")]
+            watchers: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -78,6 +93,8 @@ impl CodeIndex {
             config,
             snapshot_store,
             backend: Backend::Builtin { store, embedder },
+            #[cfg(feature = "file-watcher")]
+            watchers: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -93,158 +110,382 @@ impl CodeIndex {
             config,
             snapshot_store,
             backend: Backend::ConfigOnly,
+            #[cfg(feature = "file-watcher")]
+            watchers: std::sync::Mutex::new(Vec::new()),
         }
     }
 
-    /// Check if the index has a functional search backend.
-    pub fn has_search_backend(&self) -> bool {
-        match &self.backend {
-            #[cfg(feature = "qmd")]
-            Backend::Qmd(_) => true,
-            #[cfg(feature = "builtin")]
-            Backend::Builtin { .. } => true,
-            Backend::ConfigOnly => false,
-        }
-    }
-
-    /// Discover and list all git-tracked files that pass the filter.
-    pub fn list_indexable_files(&self, project_dir: &Path) -> Result<Vec<FilteredFile>> {
-        let tracked = discover_tracked_files(project_dir)?;
+    /// List the indexable files for a project directory.
+    ///
+    /// Discovers git-tracked files and applies extension/size/path filters.
+    /// Does not require any backend — works with `config_only`.
+    pub fn list_indexable_files(
+        &self,
+        project_dir: &Path,
+    ) -> Result<Vec<FilteredFile>> {
+        let tracked =
+            discover_tracked_files(project_dir).map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
         let filtered = filter_tracked_files(project_dir, &tracked, &self.config)?;
         Ok(filtered)
     }
 
-    /// Load the persisted hash snapshot for a project.
-    pub fn load_snapshot(&self, project_id: &str) -> Result<Option<HashSnapshot>> {
-        self.snapshot_store.load(project_id)
-    }
-
-    /// Save a hash snapshot for a project.
-    pub fn save_snapshot(
-        &self,
-        project_id: &str,
-        snapshot: &HashSnapshot,
-    ) -> Result<()> {
-        self.snapshot_store.save(project_id, snapshot)
-    }
+    // -----------------------------------------------------------------------
+    // Public API — index, search, status
+    // -----------------------------------------------------------------------
 
     /// Index a project directory.
     ///
-    /// Scans files, chunks them, generates embeddings (if embedder available),
-    /// and stores in the configured backend.
+    /// On first run (no snapshot), performs a full reindex. On subsequent runs,
+    /// computes a delta from the previous snapshot and only processes changed files.
+    /// Pass `force = true` to force a full reindex regardless.
     pub async fn index_project(
         &self,
         project_id: &str,
-        enable_embeddings: bool,
+        force: bool,
         project_dir: &Path,
     ) -> Result<IndexStatus> {
+        let tracked = discover_tracked_files(project_dir).map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+        let filtered = filter_tracked_files(project_dir, &tracked, &self.config)?;
+
         match &self.backend {
+            Backend::ConfigOnly => Err(Error::IndexFailed {
+                project_id: project_id.to_string(),
+                message: "no backend configured".to_string(),
+            }),
+
             #[cfg(feature = "qmd")]
             Backend::Qmd(qmd) => {
-                self.index_project_qmd(project_id, enable_embeddings, project_dir, qmd)
-                    .await
+                qmd.ensure_collections().await.map_err(|e| Error::IndexFailed {
+                    project_id: project_id.to_string(),
+                    message: format!("QMD ensure_collections error: {e}"),
+                })?;
+                qmd.refresh_index(true).await.map_err(|e| Error::IndexFailed {
+                    project_id: project_id.to_string(),
+                    message: format!("QMD refresh_index error: {e}"),
+                })?;
+                self.status(project_id).await
             }
+
             #[cfg(feature = "builtin")]
             Backend::Builtin { store, embedder } => {
-                self.index_project_builtin(project_id, project_dir, store.as_ref(), embedder.as_ref().map(|v| v.as_ref()))
+                if force {
+                    self.index_full_builtin(
+                        project_id,
+                        project_dir,
+                        &filtered,
+                        store.as_ref(),
+                        embedder.as_deref(),
+                    )
+                    .await?;
+                    self.build_status_builtin(project_id, store.as_ref(), embedder.as_deref())
+                        .await
+                } else {
+                    self.index_incremental_builtin(
+                        project_id,
+                        project_dir,
+                        &filtered,
+                        store.as_ref(),
+                        embedder.as_deref(),
+                    )
                     .await
+                }
             }
-            Backend::ConfigOnly => Err(Error::BackendUnavailable(
-                "no search backend available".to_string(),
-            )),
         }
     }
 
-    /// Index project using QMD backend.
-    #[cfg(feature = "qmd")]
-    async fn index_project_qmd(
+    /// Search the code index for a project.
+    pub async fn search(
         &self,
         project_id: &str,
-        enable_embeddings: bool,
-        project_dir: &Path,
-        qmd: &moltis_qmd::QmdManager,
-    ) -> Result<IndexStatus> {
-        let filtered = self.list_indexable_files(project_dir)?;
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
+        match &self.backend {
+            Backend::ConfigOnly => Err(Error::BackendUnavailable(
+                "no backend configured".to_string(),
+            )),
 
-        info!(
-            project_id,
-            total = filtered.len(),
-            "starting code index for project (QMD)"
-        );
-
-        // Register this project as a QMD collection (idempotent).
-        let collection =
-            crate::backend_qmd::project_collection_config(project_dir, project_id, &self.config);
-        qmd.ensure_collection(project_id, &collection).await.map_err(|e| {
-            Error::IndexFailed {
-                project_id: project_id.to_string(),
-                message: format!("QMD ensure_collection failed: {e}"),
+            #[cfg(feature = "qmd")]
+            Backend::Qmd(qmd) => {
+                let results = qmd
+                    .hybrid_search(query, limit, true)
+                    .await
+                    .map_err(|e| Error::SearchFailed {
+                        project_id: project_id.to_string(),
+                        message: format!("QMD search error: {e}"),
+                    })?;
+                Ok(crate::search::from_qmd_results(&results, project_id))
             }
-        })?;
 
-        // Refresh the index.
-        qmd.refresh_index(enable_embeddings).await.map_err(|e| {
-            Error::IndexFailed {
-                project_id: project_id.to_string(),
-                message: format!("QMD refresh_index failed: {e}"),
+            #[cfg(feature = "builtin")]
+            Backend::Builtin { store, embedder } => {
+                self.search_builtin(project_id, query, limit, store.as_ref(), embedder.as_deref())
+                    .await
             }
-        })?;
-
-        // Build and persist snapshot for future incremental delta.
-        let snapshot = build_initial_snapshot(project_dir, &self.config)?;
-        self.snapshot_store.save(project_id, &snapshot)?;
-
-        info!(
-            project_id,
-            files_indexed = filtered.len(),
-            "code index complete (QMD)"
-        );
-
-        let epoch_ms = time::OffsetDateTime::now_utc()
-            .unix_timestamp_nanos()
-            .unsigned_abs() as u64
-            / 1_000_000;
-
-        Ok(IndexStatus {
-            project_id: project_id.to_string(),
-            total_files: filtered.len(),
-            total_chunks: 0, // QMD doesn't expose chunk count directly
-            last_sync_ms: Some(epoch_ms),
-            embedding_model: None,
-            backend: "qmd".to_string(),
-        })
+        }
     }
 
-    /// Index project using builtin backend.
+    /// Get the index status for a project.
+    pub async fn status(&self, project_id: &str) -> Result<IndexStatus> {
+        match &self.backend {
+            Backend::ConfigOnly => Err(Error::BackendUnavailable(
+                "no backend configured".to_string(),
+            )),
+
+            #[cfg(feature = "qmd")]
+            Backend::Qmd(qmd) => {
+                let qmd_status = qmd.status().await;
+                let total_files: usize = qmd_status.indexed_files.values().sum();
+                Ok(IndexStatus {
+                    project_id: project_id.to_string(),
+                    total_files,
+                    total_chunks: total_files, // QMD doesn't expose chunk count
+                    last_sync_ms: None,
+                    embedding_model: None,
+                    backend: "qmd".to_string(),
+                })
+            }
+
+            #[cfg(feature = "builtin")]
+            Backend::Builtin { store, embedder } => {
+                self.build_status_builtin(project_id, store.as_ref(), embedder.as_deref())
+                    .await
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Watcher lifecycle
+    // -----------------------------------------------------------------------
+
+    /// Start watching a project directory for incremental reindexing.
+    ///
+    /// When files change, the handler re-indexes only the affected files
+    /// via [`reindex_files`].
+    #[cfg(feature = "file-watcher")]
+    pub fn start_watcher(
+        self: &Arc<Self>,
+        project_id: &str,
+        project_dir: &Path,
+    ) -> Result<()> {
+        use crate::watcher::WatchHandler;
+
+        let filter_config = self.config.filter();
+        let index = Arc::clone(self);
+
+        let handler: WatchHandler = Arc::new(move |proj_id, changed_paths| {
+            let paths: Vec<std::path::PathBuf> = changed_paths.to_vec();
+            let idx = Arc::clone(&index);
+            let pid = proj_id.to_string();
+
+            tokio::spawn(async move {
+                if let Err(e) = idx.reindex_files(&pid, &paths).await {
+                    warn!(project_id = %pid, error = %e, "watcher reindex failed");
+                }
+            });
+        });
+
+        let watcher = FileWatcher::start(
+            project_id.to_string(),
+            project_dir.to_path_buf(),
+            filter_config,
+            handler,
+        )
+        .map_err(|e| Error::IndexFailed {
+            project_id: project_id.to_string(),
+            message: format!("failed to start watcher: {e}"),
+        })?;
+
+        self.watchers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(watcher);
+        info!(project_id, "file watcher registered");
+        Ok(())
+    }
+
+    /// Stop all watchers for a given project.
+    #[cfg(feature = "file-watcher")]
+    pub fn stop_watcher(&self, project_id: &str) {
+        let mut watchers = self.watchers.lock().unwrap_or_else(|e| e.into_inner());
+        watchers.retain(|w| {
+            if w.project_id() == project_id {
+                w.stop();
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// Stop all watchers.
+    #[cfg(feature = "file-watcher")]
+    pub fn stop_all_watchers(&self) {
+        let mut watchers = self.watchers.lock().unwrap_or_else(|e| e.into_inner());
+        watchers.clear(); // Drop triggers stop()
+    }
+
+    // -----------------------------------------------------------------------
+    // Incremental reindex — called by watcher and public API
+    // -----------------------------------------------------------------------
+
+    /// Re-index a set of changed files for a project.
+    ///
+    /// Reads each file, chunks it, generates embeddings if available,
+    /// and upserts into the store. Files that no longer exist on disk are skipped.
     #[cfg(feature = "builtin")]
-    async fn index_project_builtin(
+    pub async fn reindex_files(
+        &self,
+        project_id: &str,
+        paths: &[std::path::PathBuf],
+    ) -> Result<()> {
+        let Backend::Builtin { store, embedder } = &self.backend else {
+            return Err(Error::IndexFailed {
+                project_id: project_id.to_string(),
+                message: "reindex_files only available with builtin backend".to_string(),
+            });
+        };
+
+        // Convert absolute paths to FilteredFile entries.
+        let files: Vec<FilteredFile> = paths
+            .iter()
+            .filter_map(|p| {
+                if p.is_file() {
+                    Some(FilteredFile {
+                        path: p.clone(),
+                        relative_path: p.clone(),
+                        size: p.metadata().map(|m| m.len()).unwrap_or(0),
+                        language: crate::types::Language::from_path(p),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if files.is_empty() {
+            return Ok(());
+        }
+
+        let file_refs: Vec<&FilteredFile> = files.iter().collect();
+        self.index_files_builtin(project_id, &file_refs, store.as_ref(), embedder.as_deref())
+            .await?;
+
+        debug!(
+            project_id,
+            count = files.len(),
+            "watcher reindex completed"
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Builtin backend — indexing
+    // -----------------------------------------------------------------------
+
+    /// Incremental index: compute delta from previous snapshot, process changes only.
+    #[cfg(feature = "builtin")]
+    async fn index_incremental_builtin(
         &self,
         project_id: &str,
         project_dir: &Path,
+        filtered: &[FilteredFile],
         store: &dyn CodeIndexStore,
         embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
     ) -> Result<IndexStatus> {
-        let filtered = self.list_indexable_files(project_dir)?;
-
         info!(
             project_id,
             total = filtered.len(),
-            "starting code index for project (builtin)"
+            "starting incremental code index (builtin)"
         );
 
-        // Initialize store if needed (idempotent — new() already calls this,
-        // but a direct store construction might skip it).
-        store.initialize().await.map_err(|e| {
-            Error::IndexFailed {
-                project_id: project_id.to_string(),
-                message: format!("failed to initialize store: {e}"),
-            }
+        store.initialize().await.map_err(|e| Error::IndexFailed {
+            project_id: project_id.to_string(),
+            message: format!("failed to initialize store: {e}"),
         })?;
 
-        // TODO(crash-safety): clear-then-reindex is not atomic across files.
-        // If the process crashes mid-index, old data is gone and new data is incomplete.
-        // Safer patterns: write-to-temp-project-id + rename, or clear-per-file
-        // (upsert_chunks already does per-file DELETE+INSERT in a transaction).
+        let previous_snapshot: HashSnapshot = self
+            .snapshot_store
+            .load(project_id)
+            .map_err(|e| Error::Store(e.to_string()))?
+            .unwrap_or_default();
+
+        if previous_snapshot.is_empty() {
+            // First index — full reindex required.
+            self.index_full_builtin(project_id, project_dir, filtered, store, embedder)
+                .await?;
+            return self
+                .build_status_builtin(project_id, store, embedder)
+                .await;
+        }
+
+        // Compute delta from previous snapshot.
+        let (delta, current_snapshot) =
+            compute_delta(project_dir, &self.config, &previous_snapshot).map_err(|e| {
+                Error::IndexFailed {
+                    project_id: project_id.to_string(),
+                    message: format!("delta computation failed: {e}"),
+                }
+            })?;
+
+        info!(
+            project_id,
+            added = delta.added.len(),
+            modified = delta.modified.len(),
+            removed = delta.removed.len(),
+            "incremental delta computed"
+        );
+
+        // Process added + modified files.
+        let changed: Vec<&FilteredFile> = delta
+            .added
+            .iter()
+            .chain(delta.modified.iter())
+            .collect();
+
+        if !changed.is_empty() {
+            self.index_files_builtin(project_id, &changed, store, embedder)
+                .await?;
+        }
+
+        // Delete chunks for removed files.
+        for removed_path in &delta.removed {
+            store
+                .delete_file_chunks(project_id, removed_path)
+                .await
+                .map_err(|e| Error::IndexFailed {
+                    project_id: project_id.to_string(),
+                    message: format!("failed to delete removed file chunks: {e}"),
+                })?;
+            debug!(path = %removed_path, "deleted chunks for removed file");
+        }
+
+        // Persist updated snapshot.
+        self.snapshot_store
+            .save(project_id, &current_snapshot)
+            .map_err(|e| Error::IndexFailed {
+                project_id: project_id.to_string(),
+                message: format!("failed to save snapshot: {e}"),
+            })?;
+
+        self.build_status_builtin(project_id, store, embedder).await
+    }
+
+    /// Full reindex: clear project and index all files from scratch.
+    #[cfg(feature = "builtin")]
+    async fn index_full_builtin(
+        &self,
+        project_id: &str,
+        project_dir: &Path,
+        filtered: &[FilteredFile],
+        store: &dyn CodeIndexStore,
+        embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
+    ) -> Result<()> {
+        store.initialize().await.map_err(|e| Error::IndexFailed {
+            project_id: project_id.to_string(),
+            message: format!("failed to initialize store: {e}"),
+        })?;
+
         store.clear_project(project_id).await.map_err(|e| {
             Error::IndexFailed {
                 project_id: project_id.to_string(),
@@ -252,112 +493,143 @@ impl CodeIndex {
             }
         })?;
 
-        let chunker = crate::chunker::CodeChunker::new(crate::chunker::ChunkerConfig::default());
-        let mut total_chunks = 0;
+        let file_refs: Vec<&FilteredFile> = filtered.iter().collect();
+        self.index_files_builtin(project_id, &file_refs, store, embedder)
+            .await?;
 
-        // Process each file.
-        for file in &filtered {
+        // Build and save the initial snapshot for future incremental updates.
+        let snapshot = build_initial_snapshot(project_dir, &self.config).map_err(|e| {
+            Error::IndexFailed {
+                project_id: project_id.to_string(),
+                message: format!("failed to build snapshot: {e}"),
+            }
+        })?;
+        self.snapshot_store
+            .save(project_id, &snapshot)
+            .map_err(|e| Error::IndexFailed {
+                project_id: project_id.to_string(),
+                message: format!("failed to save snapshot: {e}"),
+            })?;
+
+        Ok(())
+    }
+
+    /// Index a batch of files into the store (shared by full and incremental paths).
+    #[cfg(feature = "builtin")]
+    async fn index_files_builtin(
+        &self,
+        project_id: &str,
+        files: &[&FilteredFile],
+        store: &dyn CodeIndexStore,
+        embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
+    ) -> Result<()> {
+        use crate::chunker::CodeChunker;
+        use crate::store::CodeChunk as StoreChunk;
+
+        let chunker = CodeChunker::new(self.config.chunker());
+        let mut indexed = 0u64;
+        let mut errors = 0u64;
+
+        for file in files {
             // file.path is absolute — use directly for disk reads.
             // file.relative_path is the repo-relative path — used for storage and logging.
             let content = match tokio::fs::read_to_string(&file.path).await {
                 Ok(c) => c,
                 Err(e) => {
-                    warn!(path = %file.relative_path.display(), error = %e, "failed to read file, skipping");
+                    warn!(
+                        path = %file.relative_path.display(),
+                        error = %e,
+                        "failed to read file, skipping"
+                    );
+                    errors += 1;
                     continue;
                 }
             };
 
-            // Chunk the file.
-            let chunks = chunker.chunk(&content, &file.relative_path.display().to_string());
-            if chunks.is_empty() {
-                continue;
-            }
+            let raw_chunks = chunker.chunk(&content, &file.relative_path.display().to_string());
 
-            // Generate embeddings if embedder available.
-            let mut chunks_with_embeddings = Vec::new();
-            if let Some(emb) = embedder {
-                let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
+            // Generate embeddings for chunks if embedder is available.
+            let chunks: Vec<StoreChunk> = if let Some(emb) = embedder {
+                let texts: Vec<String> = raw_chunks.iter().map(|c| c.content.clone()).collect();
                 match emb.embed_batch(&texts).await {
                     Ok(embeddings) => {
-                        for (mut chunk, embedding) in chunks.into_iter().zip(embeddings) {
-                            chunk.embedding = Some(embedding);
-                            chunks_with_embeddings.push(chunk);
-                        }
+                        raw_chunks
+                            .into_iter()
+                            .zip(embeddings.into_iter())
+                            .enumerate()
+                            .map(|(idx, (chunk, embedding))| StoreChunk {
+                                file_path: chunk.file_path.clone(),
+                                chunk_index: idx,
+                                content: chunk.content,
+                                embedding: Some(embedding),
+                                start_line: chunk.start_line,
+                                end_line: chunk.end_line,
+                            })
+                            .collect()
                     }
                     Err(e) => {
-                        warn!(path = %file.relative_path.display(), error = %e, "failed to embed chunks, using without embeddings");
-                        chunks_with_embeddings = chunks;
+                        warn!(
+                            path = %file.relative_path.display(),
+                            error = %e,
+                            "embedding failed for file, indexing without embeddings"
+                        );
+                        raw_chunks
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, chunk)| StoreChunk {
+                                file_path: chunk.file_path.clone(),
+                                chunk_index: idx,
+                                content: chunk.content,
+                                embedding: None,
+                                start_line: chunk.start_line,
+                                end_line: chunk.end_line,
+                            })
+                            .collect()
                     }
                 }
             } else {
-                chunks_with_embeddings = chunks;
-            }
+                raw_chunks
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, chunk)| StoreChunk {
+                        file_path: chunk.file_path.clone(),
+                        chunk_index: idx,
+                        content: chunk.content,
+                        embedding: None,
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                    })
+                    .collect()
+            };
 
-            // Store chunks.
-            let rel_path_str = file.relative_path.to_str().unwrap_or_default();
-            store
-                .upsert_chunks(project_id, rel_path_str, &chunks_with_embeddings)
-                .await
-                .map_err(|e| {
-                    Error::IndexFailed {
+            if !chunks.is_empty() {
+                let file_path_str = file.relative_path.display().to_string();
+                store
+                    .upsert_chunks(project_id, &file_path_str, &chunks)
+                    .await
+                    .map_err(|e| Error::IndexFailed {
                         project_id: project_id.to_string(),
-                        message: format!("failed to store chunks for {rel_path_str}: {e}"),
-                    }
-                })?;
-
-            total_chunks += chunks_with_embeddings.len();
+                        message: format!("failed to upsert chunks for {file_path_str}: {e}"),
+                    })?;
+                indexed += chunks.len() as u64;
+            }
         }
-
-        // Build and persist snapshot.
-        let snapshot = build_initial_snapshot(project_dir, &self.config)?;
-        self.snapshot_store.save(project_id, &snapshot)?;
 
         info!(
             project_id,
-            files_indexed = filtered.len(),
-            chunks_indexed = total_chunks,
-            "code index complete (builtin)"
+            indexed,
+            errors,
+            "file batch indexed (builtin)"
         );
 
-        let epoch_ms = time::OffsetDateTime::now_utc()
-            .unix_timestamp_nanos()
-            .unsigned_abs() as u64
-            / 1_000_000;
-
-        Ok(IndexStatus {
-            project_id: project_id.to_string(),
-            total_files: filtered.len(),
-            total_chunks,
-            last_sync_ms: Some(epoch_ms),
-            embedding_model: embedder.map(|e| e.model_name().to_string()),
-            backend: "builtin".to_string(),
-        })
+        Ok(())
     }
 
-    /// Search the code index for a project.
-    pub async fn search(&self, project_id: &str, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        match &self.backend {
-            #[cfg(feature = "qmd")]
-            Backend::Qmd(qmd) => {
-                let raw_results = qmd
-                    .hybrid_search(query, limit, true)
-                    .await
-                    .map_err(|e| Error::BackendUnavailable(format!("QMD search failed: {e}")))?;
+    // -----------------------------------------------------------------------
+    // Builtin backend — search
+    // -----------------------------------------------------------------------
 
-                Ok(crate::search::from_qmd_results(&raw_results, project_id))
-            }
-            #[cfg(feature = "builtin")]
-            Backend::Builtin { store, embedder } => {
-                self.search_builtin(project_id, query, limit, store.as_ref(), embedder.as_ref().map(|v| v.as_ref()))
-                    .await
-            }
-            Backend::ConfigOnly => Err(Error::BackendUnavailable(
-                "no search backend available".to_string(),
-            )),
-        }
-    }
-
-    /// Search using builtin backend.
+    /// Search using the builtin backend (hybrid keyword + vector).
     #[cfg(feature = "builtin")]
     async fn search_builtin(
         &self,
@@ -367,10 +639,15 @@ impl CodeIndex {
         store: &dyn CodeIndexStore,
         embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
     ) -> Result<Vec<SearchResult>> {
-        // Get keyword results.
-        let keyword_results = store.search_keyword(project_id, query, limit * 2).await?;
+        // Always run keyword search via FTS5.
+        let keyword_results = store
+            .search_keyword(project_id, query, limit)
+            .await
+            .map_err(|e| Error::SearchFailed {
+                project_id: project_id.to_string(),
+                message: format!("keyword search failed: {e}"),
+            })?;
 
-        // If no embedder, return keyword results only.
         let Some(emb) = embedder else {
             return Ok(keyword_results.into_iter().take(limit).collect());
         };
@@ -380,7 +657,9 @@ impl CodeIndex {
             Ok(mut embeddings) => {
                 // Invariant: passed one string, get one embedding back.
                 embeddings.pop().ok_or_else(|| {
-                    Error::IndexStore("embed_batch returned empty result for single input".to_string())
+                    Error::IndexStore(
+                        "embed_batch returned empty result for single input".to_string(),
+                    )
                 })?
             }
             Err(e) => {
@@ -395,101 +674,85 @@ impl CodeIndex {
         // approach would be needed for very large projects.
         let chunks = store.get_project_chunks(project_id).await?;
 
-        // Score chunks by cosine similarity.
-        let mut scored_chunks: Vec<(f32, SearchResult)> = chunks
-            .into_iter()
-            .filter_map(|chunk| {
-                let chunk_embedding = chunk.embedding?;
-                let score = crate::store::cosine_similarity(&query_embedding, &chunk_embedding);
-                let result = SearchResult {
-                    chunk_id: format!("{}:{}:{}", project_id, chunk.file_path, chunk.start_line),
-                    path: chunk.file_path,
-                    text: chunk.content,
-                    start_line: chunk.start_line,
-                    end_line: chunk.end_line,
-                    score,
-                    source: "builtin".to_string(),
-                };
-                Some((score, result))
-            })
-            .collect();
+        // Score chunks by cosine similarity against the query embedding.
+        let mut scored_chunks: Vec<(f32, &crate::store::CodeChunk)> = Vec::new();
+        for chunk in &chunks {
+            let Some(ref chunk_emb) = chunk.embedding else {
+                continue;
+            };
+            let score = crate::store::cosine_similarity(&query_embedding, chunk_emb);
+            scored_chunks.push((score, chunk));
+        }
 
-        // Sort by score descending.
         scored_chunks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         let vector_results: Vec<SearchResult> = scored_chunks
             .into_iter()
-            .take(limit * 2)
-            .map(|(_, r)| r)
+            .take(limit)
+            .map(|(score, chunk)| SearchResult {
+                chunk_id: format!("{}:{}", chunk.file_path, chunk.start_line),
+                path: chunk.file_path.clone(),
+                text: peek_lines(&chunk.content, 0, 10),
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                score,
+                source: "builtin".to_string(),
+            })
             .collect();
 
-        // Merge with keyword results.
-        Ok(crate::store::merge_hybrid_results(vector_results, keyword_results, limit))
+        let merged = crate::store::merge_hybrid_results(vector_results, keyword_results, limit);
+        Ok(merged)
     }
 
-    /// Keyword-only search (BM25, no vector embeddings).
-    pub async fn keyword_search(&self, project_id: &str, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        match &self.backend {
-            #[cfg(feature = "qmd")]
-            Backend::Qmd(qmd) => {
-                let raw_results = qmd
-                    .keyword_search(query, limit)
-                    .await
-                    .map_err(|e| Error::BackendUnavailable(format!("QMD keyword search failed: {e}")))?;
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
 
-                Ok(crate::search::from_qmd_results(&raw_results, project_id))
+    /// Build an [`IndexStatus`] from the current store counts.
+    #[cfg(feature = "builtin")]
+    async fn build_status_builtin(
+        &self,
+        project_id: &str,
+        store: &dyn CodeIndexStore,
+        embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
+    ) -> Result<IndexStatus> {
+        let total_chunks = store.chunk_count(project_id).await.map_err(|e| {
+            Error::IndexFailed {
+                project_id: project_id.to_string(),
+                message: format!("failed to count chunks: {e}"),
             }
-            #[cfg(feature = "builtin")]
-            Backend::Builtin { store, .. } => {
-                store.search_keyword(project_id, query, limit).await
+        })?;
+        let total_files = store.file_count(project_id).await.map_err(|e| {
+            Error::IndexFailed {
+                project_id: project_id.to_string(),
+                message: format!("failed to count files: {e}"),
             }
-            Backend::ConfigOnly => Err(Error::BackendUnavailable(
-                "no search backend available".to_string(),
-            )),
-        }
-    }
+        })?;
 
-    /// Get the status of the indexed project.
-    pub async fn status(&self, project_id: &str) -> Result<IndexStatus> {
-        match &self.backend {
-            #[cfg(feature = "qmd")]
-            Backend::Qmd(_) => Err(Error::BackendUnavailable(
-                "status not implemented for QMD backend".to_string(),
-            )),
-            #[cfg(feature = "builtin")]
-            Backend::Builtin { store, .. } => {
-                let file_count = store.file_count(project_id).await?;
-                let chunk_count = store.chunk_count(project_id).await?;
-
-                Ok(IndexStatus {
-                    project_id: project_id.to_string(),
-                    total_files: file_count,
-                    total_chunks: chunk_count,
-                    last_sync_ms: None,
-                    embedding_model: None,
-                    backend: "builtin".to_string(),
-                })
-            }
-            Backend::ConfigOnly => Err(Error::BackendUnavailable(
-                "no search backend available".to_string(),
-            )),
-        }
+        Ok(IndexStatus {
+            project_id: project_id.to_string(),
+            total_files,
+            total_chunks,
+            last_sync_ms: None,
+            embedding_model: embedder.map(|e| e.model_name().to_string()),
+            backend: "builtin".to_string(),
+        })
     }
 }
 
-/// Peek at a specific file's indexed content.
-pub fn peek_file(project_dir: &Path, file_path: &str, start_line: usize, end_line: usize) -> Result<String> {
-    let full_path = project_dir.join(file_path);
-    let content = std::fs::read_to_string(&full_path)
-        .map_err(Error::Io)?;
+// ---------------------------------------------------------------------------
+// Utility functions
+// ---------------------------------------------------------------------------
 
+/// Extract a range of lines from text content.
+fn peek_lines(content: &str, start: usize, max_lines: usize) -> String {
     let lines: Vec<&str> = content.lines().collect();
-    let start = (start_line.saturating_sub(1)).min(lines.len());
-    let end = end_line.min(lines.len());
-
-    Ok(lines[start..end].join("\n"))
+    let end = (start + max_lines).min(lines.len());
+    if start >= lines.len() {
+        return String::new();
+    }
+    lines[start..end].join("\n")
 }
-
 #[cfg(all(test, feature = "builtin"))]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -621,28 +884,44 @@ mod tests {
     async fn setup_index() -> (CodeIndex, tempfile::TempDir) {
         let repo = create_test_repo();
         let store = make_store().await;
-        let config = CodeIndexConfig::default();
+        let data_dir = tempfile::tempdir().unwrap();
+        let config = CodeIndexConfig {
+            data_dir: Some(data_dir.path().to_path_buf()),
+            ..CodeIndexConfig::default()
+        };
         let index = CodeIndex::new_builtin(config, Box::new(store), None);
+        // Keep data_dir alive for the test's lifetime.
+        std::mem::forget(data_dir);
         (index, repo)
     }
 
     async fn setup_index_with_embedder() -> (CodeIndex, tempfile::TempDir) {
         let repo = create_test_repo();
         let store = make_store().await;
-        let config = CodeIndexConfig::default();
+        let data_dir = tempfile::tempdir().unwrap();
+        let config = CodeIndexConfig {
+            data_dir: Some(data_dir.path().to_path_buf()),
+            ..CodeIndexConfig::default()
+        };
         let embedder: Box<dyn moltis_memory::embeddings::EmbeddingProvider> =
             Box::new(MockEmbedder::new(16));
         let index = CodeIndex::new_builtin(config, Box::new(store), Some(embedder));
+        std::mem::forget(data_dir);
         (index, repo)
     }
 
     async fn setup_index_with_failing_embedder() -> (CodeIndex, tempfile::TempDir) {
         let repo = create_test_repo();
         let store = make_store().await;
-        let config = CodeIndexConfig::default();
+        let data_dir = tempfile::tempdir().unwrap();
+        let config = CodeIndexConfig {
+            data_dir: Some(data_dir.path().to_path_buf()),
+            ..CodeIndexConfig::default()
+        };
         let embedder: Box<dyn moltis_memory::embeddings::EmbeddingProvider> =
             Box::new(FailingEmbedder);
         let index = CodeIndex::new_builtin(config, Box::new(store), Some(embedder));
+        std::mem::forget(data_dir);
         (index, repo)
     }
 
@@ -743,7 +1022,7 @@ mod tests {
             .unwrap();
 
         let status = index.status("test-proj").await.unwrap();
-        assert_eq!(status.embedding_model, None); // status() doesn't carry model info from ctor
+        assert_eq!(status.embedding_model, Some("mock-embedder".to_string()));
 
         // Search should work — vector results should be present
         let results = index.search("test-proj", "main", 10).await.unwrap();

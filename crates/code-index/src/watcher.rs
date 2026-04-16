@@ -1,160 +1,193 @@
-//! File watcher for code index directories.
+//! File watcher for incremental code index updates.
 //!
-//! Watches a project directory for file create/modify/delete events
-//! and sends debounced notifications through a channel. Only files
-//! that pass the extension filter are reported.
+//! Uses `notify-debouncer-full` to watch project directories for file changes,
+//! then invokes a handler callback with the set of changed file paths.
 //!
-//! Follows the same `notify_debouncer_full` pattern used by
-//! `moltis-skills::watcher` and `moltis-openclaw-import::watcher`.
+//! The watcher is started via [`CodeIndex::start_watcher`] in `index.rs`.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
-use notify_debouncer_full::{
-    DebounceEventResult, Debouncer, RecommendedCache, new_debouncer,
-    notify::RecursiveMode,
-};
+use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::config::CodeIndexConfig;
-use crate::filter::effective_extension;
+use crate::filter::FilterConfig;
+use crate::types::Language;
 
-/// Events emitted by the code index watcher.
-#[derive(Debug, Clone)]
-pub enum CodeWatchEvent {
-    /// One or more files were created or modified.
-    Changed(Vec<PathBuf>),
-    /// One or more files were deleted.
-    Removed(Vec<PathBuf>),
+/// Debounce delay for file system events (ms).
+const DEBOUNCE_MS: u64 = 500;
+
+/// A debounced file-system event, sent from the notify backend to the processor.
+#[derive(Debug)]
+struct WatchEvent {
+    paths: Vec<PathBuf>,
+    kind: notify_debouncer_full::notify::EventKind,
 }
 
-/// Debounce interval for the file watcher (500ms, same as skills watcher).
-const DEBOUNCE_INTERVAL_MS: u64 = 500;
+/// Handler invoked when files change in a watched project.
+pub type WatchHandler = Arc<dyn Fn(&str, &[PathBuf]) + Send + Sync>;
 
-/// Watches a project directory for code file changes with debouncing.
-///
-/// The watcher must be kept alive (not dropped) for events to continue.
-pub struct CodeIndexWatcher {
-    _debouncer: Debouncer<notify_debouncer_full::notify::RecommendedWatcher, RecommendedCache>,
+/// A running file watcher for a single project directory.
+#[allow(dead_code)] // watch_dir kept for future diagnostics/health-check
+pub struct FileWatcher {
+    /// The project ID this watcher is associated with.
+    project_id: String,
+    /// The root directory being watched.
+    watch_dir: PathBuf,
+    /// Cancellation token to stop the watcher.
+    cancel: tokio_util::sync::CancellationToken,
 }
 
-impl CodeIndexWatcher {
+impl FileWatcher {
     /// Start watching a project directory for file changes.
     ///
-    /// Only files that pass the config's extension filter and path
-    /// exclusions generate events. The watcher uses 500ms debouncing
-    /// to coalesce rapid changes into single events.
-    ///
-    /// Note: within a single debounced batch, the same path may
-    /// appear in multiple events (e.g., a rename produces both a
-    /// Create and a Remove). Callers should deduplicate if needed.
-    ///
-    /// Returns the watcher handle and a receiver for [`CodeWatchEvent`]s.
-    /// Drop the watcher to stop watching.
+    /// Spawns a background task that debounces filesystem events and calls
+    /// `handler` with the set of changed file paths.
     pub fn start(
-        project_dir: &Path,
-        config: CodeIndexConfig,
-    ) -> anyhow::Result<(Self, mpsc::UnboundedReceiver<CodeWatchEvent>)> {
-        let (tx, rx) = mpsc::unbounded_channel();
+        project_id: String,
+        watch_dir: PathBuf,
+        filter_config: FilterConfig,
+        handler: WatchHandler,
+    ) -> Result<Self, notify_debouncer_full::notify::Error> {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let pid = project_id.clone();
 
-        let dir = project_dir.to_path_buf();
-        let debouncer = new_debouncer(
-            std::time::Duration::from_millis(DEBOUNCE_INTERVAL_MS),
+        // Channel for debounced events from the notify backend.
+        let (tx, mut rx) = mpsc::channel::<WatchEvent>(256);
+
+        // Create the filesystem watcher.
+        let mut debouncer = new_debouncer(
+            Duration::from_millis(DEBOUNCE_MS),
             None,
-            move |result: DebounceEventResult| match result {
-                Ok(events) => {
-                    let mut changed = Vec::new();
-                    let mut removed = Vec::new();
-
+            move |result: Result<Vec<notify_debouncer_full::DebouncedEvent>, Vec<notify_debouncer_full::notify::Error>>| {
+                if let Ok(events) = result {
                     for event in events {
-                        // Filter paths through the config's extension and path rules.
-                        for path in &event.paths {
-                            let rel_path = path.strip_prefix(&dir).unwrap_or(path);
-
-                            // Check path exclusions first (cheapest).
-                            if config.path_skipped(&rel_path.to_string_lossy()) {
-                                debug!(path = %path.display(), "watcher: skipped path exclusion");
-                                continue;
-                            }
-
-                            // Check extension (handles extensionless files like Dockerfile).
-                            let effective_ext = effective_extension(rel_path);
-
-                            if !config.extension_allowed(effective_ext) {
-                                continue;
-                            }
-
-                            use notify_debouncer_full::notify::EventKind;
-                            match event.kind {
-                                EventKind::Create(_) | EventKind::Modify(_) => {
-                                    changed.push(path.clone());
-                                },
-                                EventKind::Remove(_) => {
-                                    removed.push(path.clone());
-                                },
-                                _ => {},
-                            }
-                        }
+                        let watch_event = WatchEvent {
+                            paths: event.paths.clone(),
+                            kind: event.kind,
+                        };
+                        let _ = tx.blocking_send(watch_event);
                     }
-
-                    if !changed.is_empty() {
-                        let _ = tx.send(CodeWatchEvent::Changed(changed));
-                    }
-                    if !removed.is_empty() {
-                        let _ = tx.send(CodeWatchEvent::Removed(removed));
-                    }
-                },
-                Err(errors) => {
-                    for e in errors {
-                        warn!(error = %e, "code index watcher error");
-                    }
-                },
+                }
             },
         )?;
 
-        let mut watcher = Self {
-            _debouncer: debouncer,
-        };
+        debouncer.watch(&watch_dir, RecursiveMode::Recursive)?;
 
-        watcher._debouncer.watch(project_dir, RecursiveMode::Recursive)?;
         info!(
-            path = %project_dir.display(),
-            "code index watcher: watching project directory"
+            project_id = %pid,
+            path = %watch_dir.display(),
+            "file watcher started"
         );
 
-        Ok((watcher, rx))
+        // Spawn the event processing loop.
+        let _watcher_guard = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = cancel_clone.cancelled() => {
+                        debug!(project_id = %pid, "file watcher stopping");
+                        break;
+                    }
+                    event = rx.recv() => {
+                        match event {
+                            Some(event) => {
+                                Self::handle_event(&pid, &filter_config, &handler, event);
+                            }
+                            None => break, // Channel closed
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            project_id,
+            watch_dir,
+            cancel,
+        })
+    }
+
+    /// Stop the watcher.
+    pub fn stop(&self) {
+        info!(project_id = %self.project_id, "stopping file watcher");
+        self.cancel.cancel();
+    }
+
+    /// Return the project ID this watcher is for.
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
+    fn handle_event(
+        project_id: &str,
+        filter_config: &FilterConfig,
+        handler: &WatchHandler,
+        event: WatchEvent,
+    ) {
+        use notify_debouncer_full::notify::EventKind;
+
+        // We only care about create, modify, and remove events.
+        let is_relevant = matches!(
+            event.kind,
+            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+        );
+        if !is_relevant {
+            return;
+        }
+
+        // Filter to indexable files only.
+        let indexable: Vec<PathBuf> = event
+            .paths
+            .into_iter()
+            .filter(|p| Self::is_indexable(p, filter_config))
+            .collect();
+
+        if !indexable.is_empty() {
+            debug!(
+                project_id,
+                count = indexable.len(),
+                "files changed, invoking handler"
+            );
+            handler(project_id, &indexable);
+        }
+    }
+
+    /// Check if a file path should be indexed based on extension and filter config.
+    fn is_indexable(path: &Path, config: &FilterConfig) -> bool {
+        // Must be a file (not a directory).
+        if !path.is_file() {
+            return false;
+        }
+
+        // Check extension.
+        let ext = match path.extension().and_then(|e| e.to_str()) {
+            Some(e) => e,
+            None => return false,
+        };
+
+        // Check against known language extensions.
+        let lang = Language::from_extension(ext);
+        if matches!(lang, Language::Unknown) {
+            return false;
+        }
+
+        // Check against ignored patterns.
+        let path_str = path.to_string_lossy();
+        for pattern in &config.skip_paths {
+            if path_str.contains(pattern) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_watcher_config_filters_extensions() {
-        // Verify that the config's extension filter is wired correctly.
-        let config = CodeIndexConfig::default();
-        // Default config allows .rs files.
-        assert!(config.extension_allowed("rs"));
-        // Default config disallows .png files.
-        assert!(!config.extension_allowed("png"));
-    }
-
-    #[test]
-    fn test_watcher_config_filters_paths() {
-        let config = CodeIndexConfig::default();
-        assert!(config.path_skipped("vendor/lib/foo.rs"));
-        assert!(!config.path_skipped("src/main.rs"));
-    }
-
-    #[test]
-    fn test_watch_event_debug_format() {
-        let changed = CodeWatchEvent::Changed(vec![PathBuf::from("/tmp/test.rs")]);
-        let debug_str = format!("{changed:?}");
-        assert!(debug_str.contains("Changed"));
-
-        let removed = CodeWatchEvent::Removed(vec![PathBuf::from("/tmp/old.rs")]);
-        let debug_str = format!("{removed:?}");
-        assert!(debug_str.contains("Removed"));
+impl Drop for FileWatcher {
+    fn drop(&mut self) {
+        self.stop();
     }
 }

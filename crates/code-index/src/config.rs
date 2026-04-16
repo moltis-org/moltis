@@ -117,6 +117,21 @@ impl CodeIndexConfig {
             .iter()
             .any(|pattern| path_forward.starts_with(&pattern.to_ascii_lowercase()))
     }
+
+    /// Return a [`FilterConfig`](crate::filter::FilterConfig) for the file watcher.
+    #[must_use]
+    pub fn filter(&self) -> crate::filter::FilterConfig {
+        crate::filter::FilterConfig {
+            extensions: self.extensions.clone(),
+            skip_paths: self.skip_paths.clone(),
+        }
+    }
+
+    /// Return a [`ChunkerConfig`](crate::chunker::ChunkerConfig) for the chunker.
+    #[must_use]
+    pub fn chunker(&self) -> crate::chunker::ChunkerConfig {
+        crate::chunker::ChunkerConfig::default()
+    }
 }
 
 #[cfg(test)]
