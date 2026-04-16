@@ -16,6 +16,14 @@ use crate::{
     types::SearchResult,
 };
 
+/// Run database migrations for the code-index SQLite backend.
+pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .map_err(|e| Error::IndexStore(format!("code-index migration failed: {e}")))
+}
+
 /// SQLite-backed code index store.
 pub struct SqliteCodeIndexStore {
     pool: SqlitePool,
@@ -57,84 +65,7 @@ impl SqliteCodeIndexStore {
 #[async_trait]
 impl CodeIndexStore for SqliteCodeIndexStore {
     async fn initialize(&self) -> Result<()> {
-        let mut conn = self.conn().await?;
-
-        // Create chunks table with quantized embeddings as BLOB
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS code_chunks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                embedding BLOB,  -- Quantized i8 vector
-                start_line INTEGER NOT NULL,
-                end_line INTEGER NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(project_id, file_path, chunk_index)
-            )
-            "#,
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to create chunks table: {e}")))?;
-
-        // Create indexes
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_project ON code_chunks(project_id)")
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| Error::IndexStore(format!("failed to create project index: {e}")))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_chunks_file ON code_chunks(project_id, file_path)",
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to create file index: {e}")))?;
-
-        // Create FTS5 virtual table for keyword search
-        sqlx::query(
-            r#"
-            CREATE VIRTUAL TABLE IF NOT EXISTS code_chunks_fts USING fts5(
-                content,
-                content_rowid=rowid,
-                tokenize='porter'
-            )
-            "#,
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to create FTS table: {e}")))?;
-
-        // Create trigger to keep FTS synced
-        sqlx::query(
-            r#"
-            CREATE TRIGGER IF NOT EXISTS code_chunks_fts_insert
-            AFTER INSERT ON code_chunks
-            BEGIN
-                INSERT INTO code_chunks_fts(rowid, content) VALUES (NEW.id, NEW.content);
-            END
-            "#,
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to create insert trigger: {e}")))?;
-
-        sqlx::query(
-            r#"
-            CREATE TRIGGER IF NOT EXISTS code_chunks_fts_delete
-            AFTER DELETE ON code_chunks
-            BEGIN
-                DELETE FROM code_chunks_fts WHERE rowid = OLD.id;
-            END
-            "#,
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| Error::IndexStore(format!("failed to create delete trigger: {e}")))?;
-
-        Ok(())
+        run_migrations(&self.pool).await
     }
 
     async fn upsert_chunks(

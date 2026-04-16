@@ -125,6 +125,7 @@ file-watcher = [
   "moltis-memory/file-watcher",
   "moltis-openclaw-import?/file-watcher",
   "moltis-skills/file-watcher",
+  "moltis-code-index/file-watcher",
 ]
 firecrawl = ["moltis-tools/firecrawl"]
 fs-tools = ["moltis-tools/fs-tools"]
