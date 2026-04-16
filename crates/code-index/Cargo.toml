@@ -7,25 +7,27 @@ version.workspace = true
 [features]
 default = ["qmd"]
 qmd = ["dep:moltis-qmd"]
-pgvector = ["sqlx/postgres"]
+pgvector = ["dep:sqlx"]
 
 [dependencies]
-anyhow           = { workspace = true }
-async-trait      = { workspace = true }
 gix              = { workspace = true }
-moltis-memory    = { workspace = true }
 moltis-qmd       = { optional = true, workspace = true }
-moltis-projects  = { workspace = true }
-regex            = { workspace = true }
 serde            = { workspace = true }
-serde_json       = { workspace = true }
 sha2             = { workspace = true }
-sqlx             = { workspace = true }
+sqlx             = { optional = true, workspace = true }
 thiserror        = { workspace = true }
-tokio            = { workspace = true }
 tracing          = { workspace = true }
 
+# P2+ dependencies (uncomment when wiring backend, chunking, embedding)
+# async-trait      = { workspace = true }
+# moltis-memory    = { workspace = true }
+# moltis-projects  = { workspace = true }
+# regex            = { workspace = true }
+# serde_json       = { workspace = true }
+# tokio            = { workspace = true }
+
 [dev-dependencies]
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]
