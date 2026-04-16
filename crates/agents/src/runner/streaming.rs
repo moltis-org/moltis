@@ -158,15 +158,18 @@ pub async fn run_agent_loop_streaming(
             loop_detector.clear_strip_tools();
         }
 
-        if iterations > compaction_min_iterations {
-            super::enforce_tool_result_context_budget(
-                &mut messages,
-                &schemas_for_api,
-                provider.context_window(),
-                compaction_ratio,
-                overflow_ratio,
-            )?;
-        }
+        let effective_ratio = if iterations > compaction_min_iterations {
+            compaction_ratio
+        } else {
+            0 // skip compaction but still check for overflow
+        };
+        super::enforce_tool_result_context_budget(
+            &mut messages,
+            &schemas_for_api,
+            provider.context_window(),
+            effective_ratio,
+            overflow_ratio,
+        )?;
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Iteration(iterations));
