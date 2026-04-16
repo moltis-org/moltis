@@ -7348,6 +7348,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "gix",
+ "metrics 0.24.3",
  "moltis-agents",
  "moltis-config",
  "moltis-memory",

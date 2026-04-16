@@ -162,7 +162,14 @@ impl AgentTool for CodebasePeekTool {
             }));
         }
 
-        let files = self.index.list_indexable_files(&project_dir)?;
+        let files = match self.index.list_indexable_files(&project_dir) {
+            Ok(f) => f,
+            Err(e) => {
+                return Ok(json!({
+                    "error": e.to_string(),
+                }));
+            },
+        };
 
         let total_size: u64 = files.iter().map(|f| f.size).sum();
 
@@ -171,7 +178,8 @@ impl AgentTool for CodebasePeekTool {
             .map(|f| {
                 json!({
                     "path": f.relative_path.to_string_lossy(),
-                    "language": format!("{:?}", f.language).to_lowercase(),
+                    "language": serde_json::to_value(f.language)
+                        .unwrap_or(serde_json::Value::String("unknown".to_string())),
                     "size": f.size,
                 })
             })

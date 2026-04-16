@@ -5,10 +5,12 @@ name              = "moltis-code-index"
 version.workspace = true
 
 [features]
-default = ["builtin"]
+default = ["builtin", "tracing"]
 qmd = ["dep:moltis-qmd", "dep:moltis-agents"]
 builtin = ["dep:moltis-memory", "dep:moltis-agents", "dep:sqlx", "dep:tokio"]
 file-watcher = ["dep:notify-debouncer-full", "dep:tokio", "dep:tokio-util"]
+tracing = ["dep:tracing"]
+metrics = ["dep:metrics"]
 
 [dependencies]
 anyhow           = { workspace = true }
@@ -28,7 +30,8 @@ thiserror        = { workspace = true }
 time             = { workspace = true }
 tokio            = { workspace = true, features = ["sync"], optional = true }
 tokio-util       = { workspace = true, optional = true }
-tracing          = { workspace = true }
+tracing          = { workspace = true, optional = true }
+metrics          = { workspace = true, optional = true }
 
 # Future dependencies (add when wiring P5+ features):
 # moltis-memory    = { workspace = true }

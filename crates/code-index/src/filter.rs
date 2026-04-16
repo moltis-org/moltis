@@ -5,10 +5,9 @@
 
 use std::{fs, path::Path};
 
-use {
-    sha2::{Digest, Sha256},
-    tracing::{debug, trace},
-};
+use sha2::{Digest, Sha256};
+
+use crate::log::{debug, info, trace};
 
 use crate::{
     config::CodeIndexConfig,
@@ -104,13 +103,9 @@ pub fn filter_tracked_files(
         });
     }
 
-    tracing::info!(
+    info!(
         accepted = accepted.len(),
-        skipped_extension,
-        skipped_size,
-        skipped_binary,
-        skipped_path,
-        "file filtering complete"
+        skipped_extension, skipped_size, skipped_binary, skipped_path, "file filtering complete"
     );
 
     Ok(accepted)

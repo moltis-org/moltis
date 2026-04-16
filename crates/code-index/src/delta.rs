@@ -10,6 +10,8 @@ use std::{
     path::Path,
 };
 
+use crate::log::debug;
+
 use crate::{
     config::CodeIndexConfig,
     discover::discover_tracked_files,
@@ -63,7 +65,7 @@ pub fn compute_delta(
         let hash = match content_hash(&file.path) {
             Ok(h) => h,
             Err(e) => {
-                tracing::debug!(
+                debug!(
                     path = %file.relative_path.display(),
                     error = %e,
                     "skipping file: cannot compute content hash"
@@ -128,7 +130,7 @@ pub fn build_initial_snapshot(
         let hash = match content_hash(&file.path) {
             Ok(h) => h,
             Err(e) => {
-                tracing::debug!(
+                debug!(
                     path = %file.relative_path.display(),
                     error = %e,
                     "skipping file: cannot compute content hash"
@@ -140,6 +142,21 @@ pub fn build_initial_snapshot(
     }
 
     Ok(snapshot)
+}
+
+/// Build a hash snapshot from already-filtered files (no discovery pass).
+///
+/// Use this when the caller has already run `discover` + `filter`,
+/// to avoid a TOCTOU window from double-scanning the filesystem.
+pub fn build_snapshot_from_filtered(filtered: &[FilteredFile]) -> HashSnapshot {
+    let mut snapshot = HashMap::new();
+    for file in filtered {
+        let rel_str = file.relative_path.to_string_lossy().into_owned();
+        if let Ok(hash) = content_hash(&file.path) {
+            snapshot.insert(rel_str, hash);
+        }
+    }
+    snapshot
 }
 
 #[cfg(test)]

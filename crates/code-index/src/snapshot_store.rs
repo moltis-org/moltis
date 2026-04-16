@@ -6,7 +6,7 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use tracing::debug;
+use crate::log::debug;
 
 use crate::{
     delta::HashSnapshot,
@@ -85,8 +85,15 @@ impl SnapshotStore {
             ))
         })?;
 
-        // Write to temp file, then rename atomically.
-        let temp_path = path.with_extension("json.tmp");
+        // Write to temp file with PID suffix to avoid concurrent-save races,
+        // then rename atomically.
+        let temp_path = path.with_file_name(format!(
+            "{}.{}.tmp",
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("snapshot"),
+            std::process::id(),
+        ));
         std::fs::write(&temp_path, &json).map_err(|e| {
             Error::Store(format!(
                 "failed to write temp snapshot for project {project_id}: {e}"
@@ -110,13 +117,18 @@ impl SnapshotStore {
     /// Returns `Ok(())` even if no file existed.
     pub fn delete(&self, project_id: &str) -> Result<()> {
         let path = self.project_path(project_id)?;
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| {
-                Error::Store(format!(
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                debug!(project_id, "snapshot deleted");
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Already gone — this is fine per our contract.
+            },
+            Err(e) => {
+                return Err(Error::Store(format!(
                     "failed to delete snapshot for project {project_id}: {e}"
-                ))
-            })?;
-            debug!(project_id, "snapshot deleted");
+                )));
+            },
         }
         Ok(())
     }

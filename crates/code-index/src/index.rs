@@ -4,7 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 #[cfg(any(feature = "builtin", feature = "file-watcher"))]
-use tracing::{debug, info, warn};
+use crate::log::{debug, info, warn};
+use tracing::instrument;
 
 use crate::{
     config::CodeIndexConfig,
@@ -15,7 +16,7 @@ use crate::{
     types::{FilteredFile, IndexStatus, SearchResult},
 };
 
-use crate::delta::{HashSnapshot, build_initial_snapshot, compute_delta};
+use crate::delta::{HashSnapshot, build_snapshot_from_filtered, compute_delta};
 
 #[cfg(feature = "builtin")]
 use crate::store::CodeIndexStore;
@@ -55,6 +56,9 @@ pub struct CodeIndex {
     snapshot_store: SnapshotStore,
     backend: Backend,
 
+    /// Project ID → project directory mapping for search scoping.
+    project_dirs: std::sync::Mutex<std::collections::HashMap<String, std::path::PathBuf>>,
+
     /// Active file watchers, keyed by project ID.
     #[cfg(feature = "file-watcher")]
     watchers: std::sync::Mutex<Vec<FileWatcher>>,
@@ -78,6 +82,7 @@ impl CodeIndex {
             config,
             snapshot_store,
             backend: Backend::Qmd(qmd),
+            project_dirs: std::sync::Mutex::new(std::collections::HashMap::new()),
             #[cfg(feature = "file-watcher")]
             watchers: std::sync::Mutex::new(Vec::new()),
         }
@@ -100,6 +105,7 @@ impl CodeIndex {
             config,
             snapshot_store,
             backend: Backend::Builtin { store, embedder },
+            project_dirs: std::sync::Mutex::new(std::collections::HashMap::new()),
             #[cfg(feature = "file-watcher")]
             watchers: std::sync::Mutex::new(Vec::new()),
         }
@@ -117,6 +123,7 @@ impl CodeIndex {
             config,
             snapshot_store,
             backend: Backend::ConfigOnly,
+            project_dirs: std::sync::Mutex::new(std::collections::HashMap::new()),
             #[cfg(feature = "file-watcher")]
             watchers: std::sync::Mutex::new(Vec::new()),
         }
@@ -142,12 +149,19 @@ impl CodeIndex {
     /// On first run (no snapshot), performs a full reindex. On subsequent runs,
     /// computes a delta from the previous snapshot and only processes changed files.
     /// Pass `force = true` to force a full reindex regardless.
+    #[instrument(skip(self))]
     pub async fn index_project(
         &self,
         project_id: &str,
         force: bool,
         project_dir: &Path,
     ) -> Result<IndexStatus> {
+        // Remember the project directory for search scoping.
+        self.project_dirs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(project_id.to_string(), project_dir.to_path_buf());
+
         let tracked = discover_tracked_files(project_dir)
             .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
         let filtered = filter_tracked_files(project_dir, &tracked, &self.config)?;
@@ -207,6 +221,7 @@ impl CodeIndex {
     }
 
     /// Search the code index for a project.
+    #[instrument(skip(self))]
     pub async fn search(
         &self,
         project_id: &str,
@@ -220,13 +235,37 @@ impl CodeIndex {
 
             #[cfg(feature = "qmd")]
             Backend::Qmd(qmd) => {
-                let results = qmd.hybrid_search(query, limit, true).await.map_err(|e| {
-                    Error::SearchFailed {
+                // Request extra results to compensate for cross-project filtering.
+                let fetch_limit = limit * 3;
+                let results = qmd
+                    .hybrid_search(query, fetch_limit, true)
+                    .await
+                    .map_err(|e| Error::SearchFailed {
                         project_id: project_id.to_string(),
                         message: format!("QMD search error: {e}"),
-                    }
-                })?;
-                Ok(crate::search::from_qmd_results(&results, project_id))
+                    })?;
+                let mapped = crate::search::from_qmd_results(&results, project_id);
+
+                // Filter results to only include files belonging to this project.
+                let project_dir = self
+                    .project_dirs
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(project_id)
+                    .cloned();
+                let scoped: Vec<SearchResult> = if let Some(ref dir) = project_dir {
+                    mapped
+                        .into_iter()
+                        .filter(|r| {
+                            r.path.starts_with(dir.to_string_lossy().as_ref())
+                                || Path::new(&r.path).starts_with(dir)
+                        })
+                        .take(limit)
+                        .collect()
+                } else {
+                    mapped.into_iter().take(limit).collect()
+                };
+                Ok(scoped)
             },
 
             #[cfg(feature = "builtin")]
@@ -244,6 +283,7 @@ impl CodeIndex {
     }
 
     /// Get the index status for a project.
+    #[instrument(skip(self))]
     pub async fn status(&self, project_id: &str) -> Result<IndexStatus> {
         match &self.backend {
             Backend::ConfigOnly => Err(Error::BackendUnavailable(
@@ -292,6 +332,7 @@ impl CodeIndex {
             let paths: Vec<std::path::PathBuf> = changed_paths.to_vec();
             let idx = Arc::clone(&index);
             let pid = proj_id.to_string();
+            let proj_dir = proj_dir.clone();
 
             tokio::spawn(async move {
                 if let Err(e) = idx.reindex_files(&pid, &proj_dir, &paths).await {
@@ -349,6 +390,7 @@ impl CodeIndex {
     /// Reads each file, chunks it, generates embeddings if available,
     /// and upserts into the store. Files that no longer exist on disk are skipped.
     #[cfg(feature = "builtin")]
+    #[instrument(skip(self))]
     pub async fn reindex_files(
         &self,
         project_id: &str,
@@ -482,7 +524,7 @@ impl CodeIndex {
     async fn index_full_builtin(
         &self,
         project_id: &str,
-        project_dir: &Path,
+        _project_dir: &Path,
         filtered: &[FilteredFile],
         store: &dyn CodeIndexStore,
         embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
@@ -504,12 +546,9 @@ impl CodeIndex {
         self.index_files_builtin(project_id, &file_refs, store, embedder)
             .await?;
 
-        // Build and save the initial snapshot for future incremental updates.
-        let snapshot =
-            build_initial_snapshot(project_dir, &self.config).map_err(|e| Error::IndexFailed {
-                project_id: project_id.to_string(),
-                message: format!("failed to build snapshot: {e}"),
-            })?;
+        // Build and save the snapshot from the already-filtered files
+        // (avoids TOCTOU from double-scanning the filesystem).
+        let snapshot = build_snapshot_from_filtered(filtered);
         self.snapshot_store
             .save(project_id, &snapshot)
             .map_err(|e| Error::IndexFailed {
@@ -832,6 +871,9 @@ mod tests {
             .expect("failed to set user.name");
     }
 
+    // NOTE: Uses std::process::Command intentionally. gix's index staging API
+    // (add_entry) is low-level and unstable across versions; `git add .` +
+    // `git commit -m` is the mature, reliable approach for test helpers.
     fn git_commit_all(dir: &Path, msg: &str) {
         std::process::Command::new("git")
             .args(["-C", &dir.to_string_lossy(), "add", "."])
@@ -897,7 +939,8 @@ mod tests {
         (index, data_dir, repo)
     }
 
-    async fn setup_index_with_failing_embedder() -> (CodeIndex, tempfile::TempDir, tempfile::TempDir) {
+    async fn setup_index_with_failing_embedder() -> (CodeIndex, tempfile::TempDir, tempfile::TempDir)
+    {
         let repo = create_test_repo();
         let store = make_store().await;
         let data_dir = tempfile::tempdir().unwrap();

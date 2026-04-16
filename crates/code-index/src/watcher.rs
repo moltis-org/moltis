@@ -14,8 +14,9 @@ use std::{
 use {
     notify_debouncer_full::{new_debouncer, notify::RecursiveMode},
     tokio::sync::mpsc,
-    tracing::{debug, info},
 };
+
+use crate::log::{debug, info};
 
 use crate::{filter::FilterConfig, types::Language};
 

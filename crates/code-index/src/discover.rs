@@ -5,10 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use {
-    gix::bstr::ByteSlice,
-    tracing::{debug, info},
-};
+use gix::bstr::ByteSlice;
+
+use crate::log::{debug, info};
 
 use crate::error::{Error, Result};
 

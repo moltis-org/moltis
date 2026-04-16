@@ -13,6 +13,7 @@ pub mod discover;
 pub mod error;
 pub mod filter;
 pub mod index;
+pub mod log;
 pub mod snapshot_store;
 pub mod store;
 pub mod types;
