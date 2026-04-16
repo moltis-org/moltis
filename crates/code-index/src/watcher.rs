@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::config::CodeIndexConfig;
+use crate::filter::effective_extension;
 
 /// Events emitted by the code index watcher.
 #[derive(Debug, Clone)]
@@ -43,6 +44,10 @@ impl CodeIndexWatcher {
     /// Only files that pass the config's extension filter and path
     /// exclusions generate events. The watcher uses 500ms debouncing
     /// to coalesce rapid changes into single events.
+    ///
+    /// Note: within a single debounced batch, the same path may
+    /// appear in multiple events (e.g., a rename produces both a
+    /// Create and a Remove). Callers should deduplicate if needed.
     ///
     /// Returns the watcher handle and a receiver for [`CodeWatchEvent`]s.
     /// Drop the watcher to stop watching.
@@ -72,28 +77,8 @@ impl CodeIndexWatcher {
                                 continue;
                             }
 
-                            // Check extension.
-                            let ext = rel_path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("");
-
-                            // Handle extensionless files (Dockerfile, Makefile, etc.)
-                            let file_name = rel_path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("");
-
-                            let effective_ext = if ext.is_empty() {
-                                match file_name.to_ascii_lowercase().as_str() {
-                                    "dockerfile" | "containerfile" => "dockerfile",
-                                    "makefile" | "gnumakefile" => "mk",
-                                    "cmakelists.txt" => "cmake",
-                                    _ => "",
-                                }
-                            } else {
-                                ext
-                            };
+                            // Check extension (handles extensionless files like Dockerfile).
+                            let effective_ext = effective_extension(rel_path);
 
                             if !config.extension_allowed(effective_ext) {
                                 continue;

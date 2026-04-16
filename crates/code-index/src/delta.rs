@@ -65,6 +65,12 @@ pub fn compute_delta(
                     error = %e,
                     "skipping file: cannot compute content hash"
                 );
+                // Carry forward the previous hash so the file isn't spuriously
+                // marked as "removed" on the next delta call. If the file is
+                // new (not in previous), it's simply omitted from this cycle.
+                if let Some(prev_hash) = previous.get(rel_str.as_str()) {
+                    current_snapshot.insert(rel_str.clone(), prev_hash.clone());
+                }
                 continue;
             },
         };
@@ -119,7 +125,14 @@ pub fn build_initial_snapshot(
         let rel_str = file.relative_path.to_string_lossy().into_owned();
         let hash = match content_hash(&file.path) {
             Ok(h) => h,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(
+                    path = %file.relative_path.display(),
+                    error = %e,
+                    "skipping file: cannot compute content hash"
+                );
+                continue;
+            },
         };
         snapshot.insert(rel_str, hash);
     }
