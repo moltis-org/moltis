@@ -25,6 +25,9 @@ pub enum Error {
 
     #[error("index store error: {0}")]
     IndexStore(String),
+
+    #[error("search failed for project {project_id}: {message}")]
+    SearchFailed { project_id: String, message: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

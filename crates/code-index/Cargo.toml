@@ -8,7 +8,7 @@ version.workspace = true
 default = ["qmd"]
 qmd = ["dep:moltis-qmd", "dep:moltis-agents"]
 builtin = ["dep:moltis-memory", "dep:sqlx", "dep:tokio"]
-file-watcher = ["dep:notify-debouncer-full", "dep:tokio"]
+file-watcher = ["dep:notify-debouncer-full", "dep:tokio", "dep:tokio-util"]
 
 [dependencies]
 anyhow           = { workspace = true }
@@ -27,6 +27,7 @@ sqlx             = { optional = true, workspace = true }
 thiserror        = { workspace = true }
 time             = { workspace = true }
 tokio            = { workspace = true, features = ["sync"], optional = true }
+tokio-util       = { workspace = true, optional = true }
 tracing          = { workspace = true }
 
 # Future dependencies (add when wiring P5+ features):

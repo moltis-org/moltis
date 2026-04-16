@@ -19,6 +19,15 @@ const BINARY_CHECK_BYTES: u64 = 8192;
 /// Null byte — if found in the first `BINARY_CHECK_BYTES`, the file is binary.
 const NULL_BYTE: u8 = 0;
 
+/// Lightweight filter configuration used by the file watcher.
+#[derive(Debug, Clone)]
+pub struct FilterConfig {
+    /// File extensions to index (without leading dot).
+    pub extensions: Vec<String>,
+    /// Path prefixes to skip.
+    pub skip_paths: Vec<String>,
+}
+
 /// Filter a list of relative file paths according to the config.
 ///
 /// For each file: check extension, check size, check for binary content,

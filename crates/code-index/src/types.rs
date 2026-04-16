@@ -68,6 +68,15 @@ impl Language {
         }
     }
 
+    /// Derive the language from a file path by inspecting its extension.
+    pub fn from_path(path: &std::path::Path) -> Self {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        Self::from_extension(ext)
+    }
+
     /// Return the file extension typically associated with this language.
     /// Used primarily for display and debugging.
     pub fn primary_extension(&self) -> &'static str {
@@ -187,6 +196,6 @@ pub struct SearchResult {
     pub score: f32,
     /// Matched text content.
     pub text: String,
-/// Source of the result (e.g. "qmd", "builtin").
+    /// Source of the result (e.g. "qmd", "builtin").
     pub source: String,
 }
