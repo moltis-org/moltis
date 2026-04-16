@@ -246,7 +246,7 @@ impl AgentTool for CodebaseStatusTool {
             }));
         }
 
-        match self.index.status(&project_id, &project_dir).await {
+        match self.index.status(&project_id).await {
             Ok(status) => Ok(json!({
                 "project_id": status.project_id,
                 "total_files": status.total_files,
@@ -372,11 +372,11 @@ mod tests {
             .await
             .expect("status should succeed on moltis repo");
 
-        // Config-only should report backend as "none (config-only)"
-        let backend = result["backend"].as_str().unwrap_or("unknown");
+        // Config-only should report search unavailable (BackendUnavailable error path).
+        let search_available = result["search_available"].as_bool().unwrap_or(true);
         assert!(
-            backend.contains("config-only") || backend == "none",
-            "config-only status should report no search backend, got: {backend}"
+            !search_available,
+            "config-only status should report search_available=false, got: {result}"
         );
     }
 

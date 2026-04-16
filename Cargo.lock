@@ -7350,6 +7350,7 @@ dependencies = [
  "gix",
  "moltis-agents",
  "moltis-config",
+ "moltis-memory",
  "moltis-qmd",
  "moltis-tools",
  "notify-debouncer-full",

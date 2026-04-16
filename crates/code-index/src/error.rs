@@ -22,6 +22,9 @@ pub enum Error {
 
     #[error("snapshot store error: {0}")]
     Store(String),
+
+    #[error("index store error: {0}")]
+    IndexStore(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -133,9 +133,12 @@ pub struct FilteredFile {
     pub language: Language,
 }
 
-/// A chunk of code produced by the chunker.
+/// A chunk of code discovered during indexing (metadata only, no embedding).
+///
+/// This is distinct from [`crate::store::CodeChunk`] which is the storage-level
+/// representation with embedding support.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeChunk {
+pub struct DiscoveredChunk {
     /// Unique identifier: `{relative_path}:{start_line}:{end_line}`.
     pub id: String,
     /// Relative path from the repository root.
@@ -184,6 +187,6 @@ pub struct SearchResult {
     pub score: f32,
     /// Matched text content.
     pub text: String,
-    /// Source of the result (e.g. "qmd", "builtin", "pgvector").
+/// Source of the result (e.g. "qmd", "builtin").
     pub source: String,
 }
