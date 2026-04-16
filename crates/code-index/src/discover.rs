@@ -72,10 +72,7 @@ pub fn discover_tracked_files(repo_dir: &Path) -> Result<Vec<PathBuf>> {
     }
 
     #[cfg(feature = "tracing")]
-    debug!(
-        count = tracked.len(),
-        "enumerated git-tracked files"
-    );
+    debug!(count = tracked.len(), "enumerated git-tracked files");
 
     Ok(tracked)
 }
@@ -100,9 +97,7 @@ fn collect_submodule_paths(repo_dir: &Path) -> Vec<PathBuf> {
             current_is_submodule = true;
         } else if trimmed.starts_with('[') {
             current_is_submodule = false;
-        } else if current_is_submodule
-            && let Some(path_val) = trimmed.strip_prefix("path =")
-        {
+        } else if current_is_submodule && let Some(path_val) = trimmed.strip_prefix("path =") {
             let path_val = path_val.trim();
             if !path_val.is_empty() {
                 paths.push(PathBuf::from(path_val));

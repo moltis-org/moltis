@@ -9,16 +9,16 @@
 
 use std::path::{Path, PathBuf};
 
-use notify_debouncer_full::{
-    DebounceEventResult, Debouncer, RecommendedCache, new_debouncer,
-    notify::RecursiveMode,
-};
-use tokio::sync::mpsc;
 #[cfg(feature = "tracing")]
 use tracing::{debug, info, warn};
+use {
+    notify_debouncer_full::{
+        DebounceEventResult, Debouncer, RecommendedCache, new_debouncer, notify::RecursiveMode,
+    },
+    tokio::sync::mpsc,
+};
 
-use crate::config::CodeIndexConfig;
-use crate::filter::effective_extension;
+use crate::{config::CodeIndexConfig, filter::effective_extension};
 
 /// Events emitted by the code index watcher.
 #[derive(Debug, Clone)]
@@ -121,7 +121,9 @@ impl CodeIndexWatcher {
             _debouncer: debouncer,
         };
 
-        watcher._debouncer.watch(project_dir, RecursiveMode::Recursive)?;
+        watcher
+            ._debouncer
+            .watch(project_dir, RecursiveMode::Recursive)?;
         #[cfg(feature = "tracing")]
         info!(
             path = %project_dir.display(),

@@ -4,20 +4,22 @@
 //! `CodeIndex` struct that optionally owns a `QmdManager` and provides
 //! `index_project()` and `search()` methods.
 
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 #[cfg(feature = "qmd")]
 #[cfg(feature = "tracing")]
 use tracing::info;
 
-use crate::config::CodeIndexConfig;
-use crate::discover::discover_tracked_files;
-use crate::error::Result;
 #[cfg(feature = "qmd")]
 use crate::error::Error;
-use crate::filter::filter_tracked_files;
-use crate::snapshot_store::SnapshotStore;
-use crate::types::IndexStatus;
+use crate::{
+    config::CodeIndexConfig, discover::discover_tracked_files, error::Result,
+    filter::filter_tracked_files, snapshot_store::SnapshotStore, types::IndexStatus,
+};
 
 /// Code index manager.
 ///
@@ -28,6 +30,9 @@ pub struct CodeIndex {
     snapshot_store: SnapshotStore,
     #[cfg(feature = "qmd")]
     qmd: Option<moltis_qmd::QmdManager>,
+
+    /// Project ID → project directory mapping for search scoping.
+    project_dirs: Mutex<HashMap<String, PathBuf>>,
 }
 
 impl CodeIndex {
@@ -47,6 +52,7 @@ impl CodeIndex {
             config,
             snapshot_store,
             qmd: Some(qmd),
+            project_dirs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -68,6 +74,7 @@ impl CodeIndex {
             snapshot_store,
             #[cfg(feature = "qmd")]
             qmd: None,
+            project_dirs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -76,7 +83,10 @@ impl CodeIndex {
     /// This is a pure-read operation — it does not index anything.
     /// Useful for inspecting what would be indexed before committing
     /// to a full `index_project()` run.
-    pub fn list_indexable_files(&self, project_dir: &Path) -> Result<Vec<crate::types::FilteredFile>> {
+    pub fn list_indexable_files(
+        &self,
+        project_dir: &Path,
+    ) -> Result<Vec<crate::types::FilteredFile>> {
         let tracked = discover_tracked_files(project_dir)?;
         let filtered = filter_tracked_files(project_dir, &tracked, &self.config)?;
         Ok(filtered)
@@ -128,6 +138,12 @@ impl CodeIndex {
             )
         })?;
 
+        // Register project directory for search scoping.
+        self.project_dirs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(project_id.to_string(), project_dir.to_path_buf());
+
         let filtered = self.list_indexable_files(project_dir)?;
 
         #[cfg(feature = "tracing")]
@@ -147,21 +163,21 @@ impl CodeIndex {
                 .strip_prefix("**/*.")
                 .unwrap_or(&collection.glob);
             let key = format!("{project_id}-{ext_key}");
-            qmd.ensure_collection(&key, &collection).await.map_err(|e| {
-                Error::IndexFailed {
+            qmd.ensure_collection(&key, &collection)
+                .await
+                .map_err(|e| Error::IndexFailed {
                     project_id: project_id.to_string(),
                     message: format!("QMD ensure_collection failed: {e}"),
-                }
-            })?;
+                })?;
         }
 
         // Refresh the index — this triggers QMD to re-scan the files.
-        qmd.refresh_index(enable_embeddings).await.map_err(|e| {
-            Error::IndexFailed {
+        qmd.refresh_index(enable_embeddings)
+            .await
+            .map_err(|e| Error::IndexFailed {
                 project_id: project_id.to_string(),
                 message: format!("QMD refresh_index failed: {e}"),
-            }
-        })?;
+            })?;
 
         // Build and persist snapshot for future incremental delta.
         let snapshot = crate::delta::build_initial_snapshot(project_dir, &self.config)?;
@@ -207,14 +223,35 @@ impl CodeIndex {
             )
         })?;
 
+        // Request extra results to compensate for cross-project filtering.
+        let fetch_limit = limit * 3;
         let raw_results = qmd
-            .hybrid_search(query, limit, true)
+            .hybrid_search(query, fetch_limit, true)
             .await
-            .map_err(|e| {
-                Error::BackendUnavailable(format!("QMD search failed: {e}"))
-            })?;
+            .map_err(|e| Error::BackendUnavailable(format!("QMD search failed: {e}")))?;
 
-        Ok(crate::search::from_qmd_results(&raw_results, project_id))
+        let mapped = crate::search::from_qmd_results(&raw_results, project_id);
+
+        // Filter results to only include files belonging to this project.
+        let project_dir = self
+            .project_dirs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(project_id)
+            .cloned();
+        let scoped: Vec<crate::types::SearchResult> = if let Some(ref dir) = project_dir {
+            mapped
+                .into_iter()
+                .filter(|r| {
+                    Path::new(&r.path).starts_with(dir)
+                        || r.path.starts_with(dir.to_string_lossy().as_ref())
+                })
+                .take(limit)
+                .collect()
+        } else {
+            mapped.into_iter().take(limit).collect()
+        };
+        Ok(scoped)
     }
 
     /// Keyword-only search (BM25, no vector embeddings).
@@ -234,14 +271,35 @@ impl CodeIndex {
             )
         })?;
 
+        // Request extra results to compensate for cross-project filtering.
+        let fetch_limit = limit * 3;
         let raw_results = qmd
-            .keyword_search(query, limit)
+            .keyword_search(query, fetch_limit)
             .await
-            .map_err(|e| {
-                Error::BackendUnavailable(format!("QMD keyword_search failed: {e}"))
-            })?;
+            .map_err(|e| Error::BackendUnavailable(format!("QMD keyword_search failed: {e}")))?;
 
-        Ok(crate::search::from_qmd_results(&raw_results, project_id))
+        let mapped = crate::search::from_qmd_results(&raw_results, project_id);
+
+        // Filter results to only include files belonging to this project.
+        let project_dir = self
+            .project_dirs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(project_id)
+            .cloned();
+        let scoped: Vec<crate::types::SearchResult> = if let Some(ref dir) = project_dir {
+            mapped
+                .into_iter()
+                .filter(|r| {
+                    Path::new(&r.path).starts_with(dir)
+                        || r.path.starts_with(dir.to_string_lossy().as_ref())
+                })
+                .take(limit)
+                .collect()
+        } else {
+            mapped.into_iter().take(limit).collect()
+        };
+        Ok(scoped)
     }
 
     /// Get the current index status for a project.
@@ -281,7 +339,7 @@ impl CodeIndex {
                     embedding_model: None,
                     backend: "qmd".to_string(),
                 })
-            }
+            },
         }
     }
 
@@ -306,8 +364,7 @@ impl CodeIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::path::Path;
+    use {super::*, std::path::Path};
 
     #[test]
     fn test_list_indexable_files_on_moltis_repo() {
@@ -325,13 +382,17 @@ mod tests {
 
         // Rust files must be present.
         assert!(
-            files.iter().any(|f| f.relative_path.to_string_lossy().ends_with(".rs")),
+            files
+                .iter()
+                .any(|f| f.relative_path.to_string_lossy().ends_with(".rs")),
             "should find .rs files in the moltis repo"
         );
 
         // Target directory should be excluded (.gitignored, not tracked).
         assert!(
-            !files.iter().any(|f| f.relative_path.to_string_lossy().starts_with("target/")),
+            !files
+                .iter()
+                .any(|f| f.relative_path.to_string_lossy().starts_with("target/")),
             "target/ files should not be tracked"
         );
     }

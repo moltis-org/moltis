@@ -4,14 +4,15 @@
 //! Uses atomic writes (write to temp, rename over target) to prevent partial-read corruption.
 //! Project IDs are sanitized against path traversal before use as filenames.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 #[cfg(feature = "tracing")]
 use tracing::debug;
 
-use crate::delta::HashSnapshot;
-use crate::error::{Error, Result};
+use crate::{
+    delta::HashSnapshot,
+    error::{Error, Result},
+};
 
 /// Directory name under the data dir for snapshot files.
 const SNAPSHOT_DIR: &str = "code-index";
@@ -103,11 +104,7 @@ impl SnapshotStore {
         })?;
 
         #[cfg(feature = "tracing")]
-        debug!(
-            project_id,
-            entries = snapshot.len(),
-            "snapshot saved"
-        );
+        debug!(project_id, entries = snapshot.len(), "snapshot saved");
         Ok(())
     }
 
@@ -116,14 +113,19 @@ impl SnapshotStore {
     /// Returns `Ok(())` even if no file existed.
     pub fn delete(&self, project_id: &str) -> Result<()> {
         let path = self.project_path(project_id)?;
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| {
-                Error::Store(format!(
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                #[cfg(feature = "tracing")]
+                debug!(project_id, "snapshot deleted");
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Already gone - this is fine per our contract.
+            },
+            Err(e) => {
+                return Err(Error::Store(format!(
                     "failed to delete snapshot for project {project_id}: {e}"
-                ))
-            })?;
-            #[cfg(feature = "tracing")]
-            debug!(project_id, "snapshot deleted");
+                )));
+            },
         }
         Ok(())
     }
@@ -145,11 +147,7 @@ fn sanitize_project_id(id: &str) -> Result<&str> {
     if id.is_empty() {
         return Err(Error::Store("project ID must not be empty".into()));
     }
-    if id.contains('/')
-        || id.contains('\\')
-        || id.contains("..")
-        || id.contains('\0')
-    {
+    if id.contains('/') || id.contains('\\') || id.contains("..") || id.contains('\0') {
         return Err(Error::Store(format!(
             "project ID contains forbidden characters: {id:?}"
         )));
@@ -183,7 +181,10 @@ mod tests {
     fn test_sanitize_accepts_valid_ids() {
         assert_eq!(sanitize_project_id("my-project").unwrap(), "my-project");
         assert_eq!(sanitize_project_id("project_123").unwrap(), "project_123");
-        assert_eq!(sanitize_project_id("org.repo#main").unwrap(), "org.repo#main");
+        assert_eq!(
+            sanitize_project_id("org.repo#main").unwrap(),
+            "org.repo#main"
+        );
     }
 
     #[test]
@@ -203,7 +204,10 @@ mod tests {
 
         store.save("test-project", &snapshot).unwrap();
 
-        let loaded = store.load("test-project").unwrap().expect("should have snapshot");
+        let loaded = store
+            .load("test-project")
+            .unwrap()
+            .expect("should have snapshot");
         assert_eq!(loaded, snapshot);
     }
 

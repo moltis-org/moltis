@@ -32,10 +32,11 @@ pub mod index;
 pub mod watcher;
 
 // Re-export primary types.
-pub use config::CodeIndexConfig;
-pub use delta::SyncDelta;
-pub use delta::HashSnapshot;
-pub use error::{Error, Result};
-pub use index::CodeIndex;
-pub use snapshot_store::SnapshotStore;
-pub use types::{CodeChunk, FileEntry, FilteredFile, IndexStatus, Language, SearchResult};
+pub use {
+    config::CodeIndexConfig,
+    delta::{HashSnapshot, SyncDelta},
+    error::{Error, Result},
+    index::CodeIndex,
+    snapshot_store::SnapshotStore,
+    types::{CodeChunk, FileEntry, FilteredFile, IndexStatus, Language, SearchResult},
+};
