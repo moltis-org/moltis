@@ -1329,6 +1329,10 @@ pub async fn prepare_gateway_core(
     .await;
     startup_mem_probe.checkpoint("memory_manager.initialized");
 
+    // ── Code index initialization ──────────────────────────────────────
+    let code_index = init_code_index::init_code_index(&data_dir).await;
+    startup_mem_probe.checkpoint("code_index.initialized");
+
     post_state::complete_startup(post_state::PostStateInputs {
         bind: bind.to_string(),
         port,
@@ -1382,7 +1386,7 @@ pub async fn prepare_gateway_core(
         tailscale_mode_override,
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
-        code_index: init_code_index::init_code_index(),
+        code_index,
     })
     .await
 }
