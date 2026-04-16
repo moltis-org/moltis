@@ -1,18 +1,13 @@
 //! QMD backend for code indexing.
 //!
-//! Delegates indexing and search operations to the QMD sidecar process
-//! via the existing [`moltis_qmd::QmdManager`].
+//! Creates [`QmdManagerConfig`] and [`QmdCollection`] entries scoped to
+//! a single project, using the code-index extension allowlist as the QMD
+//! glob mask.
 
 #[cfg(feature = "qmd")]
 use moltis_qmd::{QmdCollection, QmdManagerConfig};
 
 use crate::config::CodeIndexConfig;
-
-// P2 will use Error, Result, and IndexStatus when wiring the full backend.
-#[allow(unused_imports)]
-use crate::error::Result;
-#[allow(unused_imports)]
-use crate::types::IndexStatus;
 
 /// Build a QMD collection configuration for a project.
 ///
@@ -37,8 +32,8 @@ pub fn project_collection_config(
 
 /// Build a [`QmdManagerConfig`] for code indexing.
 ///
-/// Uses the project ID as the QMD collection name and configures
-/// the manager to point at the project directory.
+/// Registers a single collection keyed by `project_id` and sets the
+/// QMD index name to `code-{project_id}`.
 #[cfg(feature = "qmd")]
 pub fn qmd_config_for_project(
     project_dir: &std::path::Path,
