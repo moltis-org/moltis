@@ -634,7 +634,14 @@ mod tests {
         };
         let node = NodeHost::new(config);
         // Should return Err (unreachable host), NOT panic.
-        let result = node.run().await;
+        // Wrap in a timeout so the test doesn't hang if a firewall silently
+        // drops packets to 127.0.0.1:1 instead of refusing immediately.
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            node.run(),
+        )
+        .await
+        .expect("timed out — possible firewall drop on 127.0.0.1:1");
         assert!(result.is_err(), "expected connection error, got Ok");
     }
 
