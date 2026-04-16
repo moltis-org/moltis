@@ -17,16 +17,17 @@ use moltis_qmd::QmdSearchResult;
 #[cfg(feature = "qmd")]
 pub fn from_qmd(result: &QmdSearchResult, project_id: &str) -> SearchResult {
     let text = result.text();
+    let start_line = (result.line as usize).max(1);
     let end_line = if text.is_empty() {
-        result.line as usize
+        start_line
     } else {
-        result.line as usize + text.lines().count().saturating_sub(1)
+        start_line + text.lines().count().saturating_sub(1)
     };
 
     SearchResult {
-        chunk_id: format!("{}:{}:{}", project_id, result.file, result.line),
+        chunk_id: format!("{}:{}:{}", project_id, result.file, start_line),
         path: result.file.clone(),
-        start_line: result.line as usize,
+        start_line,
         end_line,
         score: result.score,
         text,
