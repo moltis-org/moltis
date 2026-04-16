@@ -7346,6 +7346,7 @@ name = "moltis-code-index"
 version = "0.1.0"
 dependencies = [
  "gix",
+ "moltis-metrics",
  "moltis-qmd",
  "serde",
  "serde_json",

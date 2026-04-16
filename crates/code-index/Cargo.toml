@@ -5,12 +5,15 @@ name              = "moltis-code-index"
 version.workspace = true
 
 [features]
-default = ["qmd"]
+default = ["tracing", "qmd"]
+tracing = []
+metrics = ["dep:moltis-metrics"]
 qmd = ["dep:moltis-qmd"]
 pgvector = ["dep:sqlx"]
 
 [dependencies]
 gix              = { workspace = true }
+moltis-metrics   = { optional = true, workspace = true }
 moltis-qmd       = { optional = true, workspace = true }
 serde            = { workspace = true }
 sha2             = { workspace = true }
