@@ -116,14 +116,19 @@ impl SnapshotStore {
     /// Returns `Ok(())` even if no file existed.
     pub fn delete(&self, project_id: &str) -> Result<()> {
         let path = self.project_path(project_id)?;
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| {
-                Error::Store(format!(
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                #[cfg(feature = "tracing")]
+                debug!(project_id, "snapshot deleted");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Already gone - this is fine per our contract.
+            }
+            Err(e) => {
+                return Err(Error::Store(format!(
                     "failed to delete snapshot for project {project_id}: {e}"
-                ))
-            })?;
-            #[cfg(feature = "tracing")]
-            debug!(project_id, "snapshot deleted");
+                )));
+            }
         }
         Ok(())
     }

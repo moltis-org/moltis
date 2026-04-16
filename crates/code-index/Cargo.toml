@@ -6,7 +6,7 @@ version.workspace = true
 
 [features]
 default = ["tracing", "qmd"]
-tracing = []
+tracing = ["dep:tracing"]
 metrics = ["dep:moltis-metrics"]
 qmd = ["dep:moltis-qmd", "dep:moltis-agents"]
 pgvector = ["dep:sqlx"]
@@ -29,7 +29,7 @@ sqlx             = { optional = true, workspace = true }
 thiserror        = { workspace = true }
 time             = { workspace = true }
 tokio            = { workspace = true, features = ["sync"], optional = true }
-tracing          = { workspace = true }
+tracing          = { workspace = true, optional = true }
 
 # Future dependencies (add when wiring P5+ features):
 # moltis-memory    = { workspace = true }
