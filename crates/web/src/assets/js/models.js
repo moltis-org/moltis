@@ -86,6 +86,14 @@ function buildModelItem(m, currentId) {
 		meta.appendChild(prov);
 	}
 
+	if (m.supportsReasoning) {
+		var brainIcon = document.createElement("span");
+		brainIcon.className = "icon icon-xs icon-brain";
+		brainIcon.title = "Supports reasoning";
+		brainIcon.style.cssText = "opacity:0.5;flex-shrink:0;";
+		meta.appendChild(brainIcon);
+	}
+
 	if (m.unsupported) {
 		var badge = document.createElement("span");
 		badge.className = "model-item-unsupported";

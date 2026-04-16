@@ -1303,7 +1303,7 @@ var chatPageHTML =
 	"</div>" +
 	'<div id="reasoningCombo" class="model-combo hidden">' +
 	'<button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort">' +
-	'<span class="icon icon-sm icon-sparkles" style="flex-shrink:0;"></span>' +
+	'<span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span>' +
 	'<span id="reasoningComboLabel">Off</span>' +
 	'<span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>' +
 	"</button>" +
