@@ -22,8 +22,10 @@ use tracing::{info, warn};
 pub(crate) async fn init_code_index(
     data_dir: &std::path::Path,
 ) -> Arc<moltis_code_index::CodeIndex> {
-    let mut code_index_config = moltis_code_index::CodeIndexConfig::default();
-    code_index_config.data_dir = Some(data_dir.join("code-index"));
+    let code_index_config = moltis_code_index::CodeIndexConfig {
+        data_dir: Some(data_dir.join("code-index")),
+        ..Default::default()
+    };
 
     #[cfg(feature = "qmd")]
     {
@@ -33,10 +35,7 @@ pub(crate) async fn init_code_index(
             max_results: 20,
             timeout_ms: 30_000,
             work_dir: data_dir.to_path_buf(),
-            index_name: format!(
-                "code-{}",
-                super::helpers::sanitize_qmd_index_name(data_dir)
-            ),
+            index_name: format!("code-{}", super::helpers::sanitize_qmd_index_name(data_dir)),
             env_overrides: std::collections::HashMap::new(),
         };
         let qmd = moltis_qmd::QmdManager::new(qmd_config);
@@ -46,10 +45,7 @@ pub(crate) async fn init_code_index(
                 index = %qmd.index_name(),
                 "code-index: QMD backend available, initializing in full mode"
             );
-            return Arc::new(moltis_code_index::CodeIndex::new(
-                code_index_config,
-                qmd,
-            ));
+            return Arc::new(moltis_code_index::CodeIndex::new(code_index_config, qmd));
         }
 
         warn!(

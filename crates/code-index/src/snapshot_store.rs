@@ -4,13 +4,14 @@
 //! Uses atomic writes (write to temp, rename over target) to prevent partial-read corruption.
 //! Project IDs are sanitized against path traversal before use as filenames.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use tracing::debug;
 
-use crate::delta::HashSnapshot;
-use crate::error::{Error, Result};
+use crate::{
+    delta::HashSnapshot,
+    error::{Error, Result},
+};
 
 /// Directory name under the data dir for snapshot files.
 const SNAPSHOT_DIR: &str = "code-index";
@@ -100,11 +101,7 @@ impl SnapshotStore {
             ))
         })?;
 
-        debug!(
-            project_id,
-            entries = snapshot.len(),
-            "snapshot saved"
-        );
+        debug!(project_id, entries = snapshot.len(), "snapshot saved");
         Ok(())
     }
 
@@ -141,11 +138,7 @@ fn sanitize_project_id(id: &str) -> Result<&str> {
     if id.is_empty() {
         return Err(Error::Store("project ID must not be empty".into()));
     }
-    if id.contains('/')
-        || id.contains('\\')
-        || id.contains("..")
-        || id.contains('\0')
-    {
+    if id.contains('/') || id.contains('\\') || id.contains("..") || id.contains('\0') {
         return Err(Error::Store(format!(
             "project ID contains forbidden characters: {id:?}"
         )));
@@ -161,6 +154,7 @@ fn sanitize_project_id(id: &str) -> Result<&str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -179,7 +173,10 @@ mod tests {
     fn test_sanitize_accepts_valid_ids() {
         assert_eq!(sanitize_project_id("my-project").unwrap(), "my-project");
         assert_eq!(sanitize_project_id("project_123").unwrap(), "project_123");
-        assert_eq!(sanitize_project_id("org.repo#main").unwrap(), "org.repo#main");
+        assert_eq!(
+            sanitize_project_id("org.repo#main").unwrap(),
+            "org.repo#main"
+        );
     }
 
     #[test]
@@ -199,7 +196,10 @@ mod tests {
 
         store.save("test-project", &snapshot).unwrap();
 
-        let loaded = store.load("test-project").unwrap().expect("should have snapshot");
+        let loaded = store
+            .load("test-project")
+            .unwrap()
+            .expect("should have snapshot");
         assert_eq!(loaded, snapshot);
     }
 

@@ -5,9 +5,9 @@ name              = "moltis-code-index"
 version.workspace = true
 
 [features]
-default = ["qmd"]
+default = ["builtin"]
 qmd = ["dep:moltis-qmd", "dep:moltis-agents"]
-builtin = ["dep:moltis-memory", "dep:sqlx", "dep:tokio"]
+builtin = ["dep:moltis-memory", "dep:moltis-agents", "dep:sqlx", "dep:tokio"]
 file-watcher = ["dep:notify-debouncer-full", "dep:tokio", "dep:tokio-util"]
 
 [dependencies]

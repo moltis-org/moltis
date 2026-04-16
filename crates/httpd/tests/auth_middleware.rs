@@ -83,6 +83,9 @@ async fn start_auth_server_impl(
         false,
         None,
         None,
+        Arc::new(moltis_code_index::CodeIndex::config_only(
+            moltis_code_index::CodeIndexConfig::default(),
+        )),
         18789,
         false,
         None,
@@ -154,6 +157,9 @@ async fn start_localhost_server_with_vault() -> (
         false,
         None,
         None,
+        Arc::new(moltis_code_index::CodeIndex::config_only(
+            moltis_code_index::CodeIndexConfig::default(),
+        )),
         18789,
         false,
         None,
@@ -228,6 +234,9 @@ async fn start_localhost_server_with_vault_and_session_store() -> (
         false,
         None,
         None,
+        Arc::new(moltis_code_index::CodeIndex::config_only(
+            moltis_code_index::CodeIndexConfig::default(),
+        )),
         18789,
         false,
         None,

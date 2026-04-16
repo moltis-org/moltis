@@ -7594,6 +7594,7 @@ dependencies = [
  "moltis-auth",
  "moltis-browser",
  "moltis-channels",
+ "moltis-code-index",
  "moltis-common",
  "moltis-config",
  "moltis-cron",

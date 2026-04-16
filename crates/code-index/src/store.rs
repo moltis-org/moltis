@@ -2,11 +2,9 @@
 //!
 //! Abstracts over SQLite (builtin) and potential future backends.
 
-use async_trait::async_trait;
-use std::collections::HashMap;
+use {async_trait::async_trait, std::collections::HashMap};
 
-use crate::error::Result;
-use crate::types::SearchResult;
+use crate::{error::Result, types::SearchResult};
 
 /// A chunk of code with optional embedding.
 #[derive(Debug, Clone)]
@@ -218,10 +216,7 @@ mod tests {
 
     #[test]
     fn test_merge_hybrid_results_pure_keyword() {
-        let keyword = vec![
-            make_result("a.rs", 1, 0.8),
-            make_result("b.rs", 1, 0.6),
-        ];
+        let keyword = vec![make_result("a.rs", 1, 0.8), make_result("b.rs", 1, 0.6)];
         let merged = merge_hybrid_results(vec![], keyword, 10);
         assert_eq!(merged.len(), 2);
     }

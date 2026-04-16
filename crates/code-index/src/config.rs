@@ -13,25 +13,63 @@ const DEFAULT_MAX_FILE_SIZE_BYTES: u64 = 1024 * 1024;
 static DEFAULT_EXTENSIONS: LazyLock<Vec<String>> = LazyLock::new(|| {
     [
         // Systems languages
-        "rs", "c", "h", "cpp", "hpp", "cc", "cxx", "go", "zig",
+        "rs",
+        "c",
+        "h",
+        "cpp",
+        "hpp",
+        "cc",
+        "cxx",
+        "go",
+        "zig",
         // Scripting languages
-        "py", "pyi", "rb", "php", "sh", "bash",
+        "py",
+        "pyi",
+        "rb",
+        "php",
+        "sh",
+        "bash",
         // JVM languages
-        "java", "kt", "kts", "scala",
+        "java",
+        "kt",
+        "kts",
+        "scala",
         // Web languages
-        "js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts", "css", "scss", "less", "html", "htm",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs",
+        "ts",
+        "tsx",
+        "mts",
+        "cts",
+        "css",
+        "scss",
+        "less",
+        "html",
+        "htm",
         // .NET
         "cs",
         // Apple
         "swift",
         // Data / config
-        "sql", "json", "toml", "yaml", "yml", "nix",
+        "sql",
+        "json",
+        "toml",
+        "yaml",
+        "yml",
+        "nix",
         // Documentation
-        "md", "markdown", "mdx", "txt",
+        "md",
+        "markdown",
+        "mdx",
+        "txt",
         // Docker / CI
-        "dockerfile", "containerfile",
+        "dockerfile",
+        "containerfile",
         // DSLs
-        "graphql", "proto",
+        "graphql",
+        "proto",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -105,7 +143,9 @@ impl CodeIndexConfig {
     /// Check whether a file extension (without dot) is in the allowlist.
     pub fn extension_allowed(&self, ext: &str) -> bool {
         let ext_lower = ext.to_ascii_lowercase();
-        self.extensions.iter().any(|e| e.to_ascii_lowercase() == ext_lower)
+        self.extensions
+            .iter()
+            .any(|e| e.to_ascii_lowercase() == ext_lower)
     }
 
     /// Check whether a relative path matches any skip pattern.
@@ -135,6 +175,7 @@ impl CodeIndexConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -36,10 +36,12 @@ pub mod search;
 pub mod tools;
 
 // Re-exports for convenience.
-pub use config::CodeIndexConfig;
-pub use error::{Error, Result};
-pub use index::CodeIndex;
-pub use types::{IndexStatus, SearchResult};
+pub use {
+    config::CodeIndexConfig,
+    error::{Error, Result},
+    index::CodeIndex,
+    types::{IndexStatus, SearchResult},
+};
 
 /// Utility function to sanitize a project ID for use as a QMD collection name.
 pub fn sanitize_project_id(project_id: &str) -> String {
@@ -56,6 +58,7 @@ pub fn sanitize_project_id(project_id: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

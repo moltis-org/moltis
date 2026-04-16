@@ -70,10 +70,7 @@ impl Language {
 
     /// Derive the language from a file path by inspecting its extension.
     pub fn from_path(path: &std::path::Path) -> Self {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         Self::from_extension(ext)
     }
 
