@@ -70,6 +70,7 @@ pub(super) struct PostStateInputs {
     pub provider_setup_service: Arc<LiveProviderSetupService>,
     pub live_mcp: Arc<crate::mcp_service::LiveMcpService>,
     pub memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+    pub code_index: Arc<moltis_code_index::CodeIndex>,
     pub credential_store: Arc<auth::CredentialStore>,
     pub db_pool: sqlx::SqlitePool,
     pub session_store: Arc<SessionStore>,
@@ -275,6 +276,7 @@ pub(super) async fn complete_startup(
         tailscale_mode_override,
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
+        code_index,
     } = inputs;
 
     let openclaw_startup_status = deferred_openclaw_status();
@@ -343,6 +345,7 @@ pub(super) async fn complete_startup(
         tls_enabled_for_gateway,
         hook_registry.clone(),
         memory_manager.clone(),
+        code_index,
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),

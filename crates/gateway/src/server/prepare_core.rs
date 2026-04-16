@@ -6,7 +6,7 @@ use {
             maybe_deliver_cron_output, restore_saved_local_llm_models,
             validate_proxy_tls_configuration,
         },
-        init_channels, init_memory,
+        init_channels, init_code_index, init_memory,
         prepared::PreparedGatewayCore,
         workspace::{
             seed_default_workspace_markdown_files, sync_persona_into_preset,
@@ -1382,6 +1382,7 @@ pub async fn prepare_gateway_core(
         tailscale_mode_override,
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
+        code_index: init_code_index::init_code_index(),
     })
     .await
 }
