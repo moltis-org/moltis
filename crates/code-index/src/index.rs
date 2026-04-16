@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-#[cfg(feature = "qmd")]
+#[cfg(feature = "tracing")]
 use tracing::info;
 
 use crate::config::CodeIndexConfig;
@@ -129,6 +129,7 @@ impl CodeIndex {
 
         let filtered = self.list_indexable_files(project_dir)?;
 
+        #[cfg(feature = "tracing")]
         info!(
             project_id,
             total = filtered.len(),
@@ -156,6 +157,7 @@ impl CodeIndex {
         let snapshot = crate::delta::build_snapshot_from_filtered(&filtered)?;
         self.snapshot_store.save(project_id, &snapshot)?;
 
+        #[cfg(feature = "tracing")]
         info!(
             project_id,
             files_indexed = filtered.len(),
