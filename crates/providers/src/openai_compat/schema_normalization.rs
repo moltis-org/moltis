@@ -102,7 +102,7 @@ impl Transform for SimplifyCompositeTransform {
             return;
         };
 
-        for keyword in ["anyOf", "oneOf"] {
+        for keyword in ["anyOf", "oneOf", "allOf"] {
             let Some(variants) = obj.get_mut(keyword).and_then(|v| v.as_array_mut()) else {
                 continue;
             };
@@ -116,6 +116,10 @@ impl Transform for SimplifyCompositeTransform {
                 obj.remove(keyword);
                 if let serde_json::Value::Object(inner) = single {
                     for (k, v) in inner {
+                        // Parent-key wins: if a key is already present (e.g. `type`
+                        // from a surrounding object schema), we keep the parent value
+                        // and discard the variant's. This is safe for the `not`→`{}`
+                        // canonicalization pattern this transform targets.
                         obj.entry(k).or_insert(v);
                     }
                 }
