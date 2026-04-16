@@ -11,6 +11,62 @@ use {
     tracing::warn,
 };
 
+/// Prune `required` entries that reference properties not defined in `properties`.
+///
+/// MCP tools (e.g. Home Assistant with 80+ tools) may declare `required`
+/// entries for properties defined via unsupported keywords (`dependentSchemas`,
+/// `if`/`then`/`else`, `patternProperties`) that get stripped by
+/// `OpenAiSchemaSubsetTransform`. Gemini strictly validates that every
+/// `required` entry has a matching property and rejects the request with
+/// "property is not defined" when they don't match (issue #747).
+#[derive(Debug, Clone, Default)]
+struct PruneOrphanedRequiredTransform;
+
+impl Transform for PruneOrphanedRequiredTransform {
+    fn transform(&mut self, schema: &mut Schema) {
+        let Some(obj) = schema.as_object_mut() else {
+            return;
+        };
+
+        // Collect property names that have a meaningful schema.  Properties
+        // with bare boolean schemas (`true`) or empty objects (`{}`) are
+        // treated as undefined because:
+        //  - canonicalization adds `true` (the "accept anything" schema) for
+        //    orphaned `required` entries
+        //  - keyword stripping can reduce a property to `{}` when all its
+        //    keywords were unsupported
+        // In both cases the property has no usable type information and Gemini
+        // rejects it with "property is not defined" (issue #747).
+        let defined_props: BTreeSet<String> = obj
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .map(|props| {
+                props
+                    .iter()
+                    .filter(|(_, v)| {
+                        v.as_bool().is_none() && !v.as_object().is_some_and(|o| o.is_empty())
+                    })
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if defined_props.is_empty() {
+            // No usable properties — `required` is entirely orphaned.
+            obj.remove("required");
+            return;
+        }
+
+        if let Some(required) = obj.get_mut("required").and_then(|v| v.as_array_mut()) {
+            required.retain(|entry| {
+                entry
+                    .as_str()
+                    .is_some_and(|name| defined_props.contains(name))
+            });
+        }
+    }
+}
+
 /// Re-infer `"type"` from `"enum"` values when canonicalization stripped it.
 ///
 /// `json_schema_ast` canonicalization removes redundant `"type"` annotations
@@ -247,6 +303,13 @@ pub(crate) fn sanitize_schema_for_openai_compat(schema: &mut serde_json::Value) 
     // single-variant composites inline (issue #743).
     let mut simplify_composite = RecursiveTransform(SimplifyCompositeTransform);
     simplify_composite.transform(&mut transformed);
+
+    // Prune `required` entries that reference properties not defined in
+    // `properties`. Keyword stripping above can remove property definitions
+    // (e.g. `dependentSchemas`, `if/then/else`) while leaving their names
+    // in `required`. Gemini rejects such schemas (issue #747).
+    let mut prune_orphaned_required = RecursiveTransform(PruneOrphanedRequiredTransform);
+    prune_orphaned_required.transform(&mut transformed);
 
     // Re-infer `"type"` from enum values after canonicalization stripped it.
     // Providers like Fireworks AI reject schemas without explicit type
