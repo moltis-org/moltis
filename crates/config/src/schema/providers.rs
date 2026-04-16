@@ -20,7 +20,7 @@ pub struct OAuthProviderConfig {
 
 /// Override configuration for a specific model.
 ///
-/// Used in both `[models.<id>]` (global) and `[providers.<name>.models.<id>]`
+/// Used in both `[models.<id>]` (global) and `[providers.<name>.model_overrides.<id>]`
 /// (provider-scoped) sections of `moltis.toml`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -30,7 +30,7 @@ pub struct ModelOverride {
     /// When set, this value takes precedence over the built-in heuristic.
     /// Must be between 1 and 10,000,000 (inclusive).
     ///
-    /// Provider-scoped overrides (`[providers.<name>.models.<id>]`)
+    /// Provider-scoped overrides (`[providers.<name>.model_overrides.<id>]`)
     /// take precedence over global overrides (`[models.<id>]`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u32>,

@@ -867,8 +867,9 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 
 [channels]
 # Which channel types appear in the web UI's "+ Add Channel" menu.
-# Default: ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr"]
-# offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr"]
+# Default: ["telegram", "msteams", "discord", "slack", "matrix", "nostr"]
+# Add "whatsapp" to enable it in the UI.
+# offered = ["telegram", "msteams", "discord", "slack", "matrix", "nostr", "whatsapp"]
 
 # WhatsApp linked-device accounts
 # [channels.whatsapp.my-bot]
