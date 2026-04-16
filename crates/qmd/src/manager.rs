@@ -264,36 +264,57 @@ impl QmdManager {
         Ok(self.run_with_timeout(command).await?.status.success())
     }
 
-    /// Ensure Moltis-managed collections exist in the selected QMD index.
-    pub async fn ensure_collections(&self) -> anyhow::Result<()> {
+    /// Ensure a single collection exists in the selected QMD index.
+    ///
+    /// Idempotent — if the collection already exists, this is a no-op.
+    /// Useful for registering collections discovered at runtime (e.g. per-project
+    /// code index directories) rather than only those pre-configured at startup.
+    pub async fn ensure_collection(
+        &self,
+        name: &str,
+        collection: &QmdCollection,
+    ) -> anyhow::Result<()> {
         if !self.is_available().await {
             anyhow::bail!("QMD is not available");
         }
 
-        for (name, collection) in &self.config.collections {
-            if self.collection_exists(name).await? {
-                continue;
-            }
-
-            let mut command = self.command_with_index();
-            command
-                .arg("collection")
-                .arg("add")
-                .arg(&collection.path)
-                .arg("--name")
-                .arg(name)
-                .arg("--mask")
-                .arg(&collection.glob)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-
-            let output = self.run_with_timeout(command).await?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("QMD collection add failed for {name}: {}", stderr.trim());
-            }
+        if self.collection_exists(name).await? {
+            return Ok(());
         }
 
+        let mut command = self.command_with_index();
+        command
+            .arg("collection")
+            .arg("add")
+            .arg(&collection.path)
+            .arg("--name")
+            .arg(name)
+            .arg("--mask")
+            .arg(&collection.glob)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let output = self.run_with_timeout(command).await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "QMD collection add failed for {name}: {}",
+                stderr.trim()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Ensure all pre-configured collections exist in the selected QMD index.
+    ///
+    /// Iterates the collections set at construction time and registers any
+    /// that don't already exist. For dynamic per-call registration, use
+    /// [`ensure_collection`](Self::ensure_collection) instead.
+    pub async fn ensure_collections(&self) -> anyhow::Result<()> {
+        for (name, collection) in &self.config.collections {
+            self.ensure_collection(name, collection).await?;
+        }
         Ok(())
     }
 
