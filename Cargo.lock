@@ -7345,20 +7345,14 @@ dependencies = [
 name = "moltis-code-index"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
  "gix",
- "moltis-memory",
- "moltis-projects",
  "moltis-qmd",
- "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
  "tempfile",
  "thiserror 2.0.18",
- "tokio",
  "tracing",
 ]
 
