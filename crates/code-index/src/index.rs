@@ -7,6 +7,7 @@
 use std::path::Path;
 
 #[cfg(feature = "qmd")]
+#[cfg(feature = "tracing")]
 use tracing::info;
 
 use crate::config::CodeIndexConfig;
@@ -129,6 +130,7 @@ impl CodeIndex {
 
         let filtered = self.list_indexable_files(project_dir)?;
 
+        #[cfg(feature = "tracing")]
         info!(
             project_id,
             total = filtered.len(),
@@ -136,14 +138,22 @@ impl CodeIndex {
         );
 
         // Register this project as a QMD collection (idempotent).
-        let collection =
-            crate::backend_qmd::project_collection_config(project_dir, project_id, &self.config);
-        qmd.ensure_collection(project_id, &collection).await.map_err(|e| {
-            Error::IndexFailed {
-                project_id: project_id.to_string(),
-                message: format!("QMD ensure_collection failed: {e}"),
-            }
-        })?;
+        // One collection per extension — QMD's --mask accepts a single glob.
+        for collection in
+            crate::backend_qmd::project_collections(project_dir, project_id, &self.config)
+        {
+            let ext_key = collection
+                .glob
+                .strip_prefix("**/*.")
+                .unwrap_or(&collection.glob);
+            let key = format!("{project_id}-{ext_key}");
+            qmd.ensure_collection(&key, &collection).await.map_err(|e| {
+                Error::IndexFailed {
+                    project_id: project_id.to_string(),
+                    message: format!("QMD ensure_collection failed: {e}"),
+                }
+            })?;
+        }
 
         // Refresh the index — this triggers QMD to re-scan the files.
         qmd.refresh_index(enable_embeddings).await.map_err(|e| {
@@ -157,6 +167,7 @@ impl CodeIndex {
         let snapshot = crate::delta::build_initial_snapshot(project_dir, &self.config)?;
         self.snapshot_store.save(project_id, &snapshot)?;
 
+        #[cfg(feature = "tracing")]
         info!(
             project_id,
             files_indexed = filtered.len(),

@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+#[cfg(feature = "tracing")]
 use tracing::debug;
 
 use crate::delta::HashSnapshot;
@@ -47,6 +48,7 @@ impl SnapshotStore {
     pub fn load(&self, project_id: &str) -> Result<Option<HashSnapshot>> {
         let path = self.project_path(project_id)?;
         if !path.exists() {
+            #[cfg(feature = "tracing")]
             debug!(project_id, "no snapshot file found, starting fresh");
             return Ok(None);
         }
@@ -84,8 +86,8 @@ impl SnapshotStore {
             ))
         })?;
 
-        // Write to temp file, then rename atomically.
-        let temp_path = path.with_extension("json.tmp");
+        // Write to temp file (PID-suffixed to avoid race under concurrent saves), then rename atomically.
+        let temp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
         std::fs::write(&temp_path, &json).map_err(|e| {
             Error::Store(format!(
                 "failed to write temp snapshot for project {project_id}: {e}"
@@ -100,6 +102,7 @@ impl SnapshotStore {
             ))
         })?;
 
+        #[cfg(feature = "tracing")]
         debug!(
             project_id,
             entries = snapshot.len(),
@@ -119,6 +122,7 @@ impl SnapshotStore {
                     "failed to delete snapshot for project {project_id}: {e}"
                 ))
             })?;
+            #[cfg(feature = "tracing")]
             debug!(project_id, "snapshot deleted");
         }
         Ok(())

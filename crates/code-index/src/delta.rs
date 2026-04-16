@@ -60,11 +60,14 @@ pub fn compute_delta(
         let hash = match content_hash(&file.path) {
             Ok(h) => h,
             Err(e) => {
+                #[cfg(feature = "tracing")]
                 tracing::debug!(
                     path = %file.relative_path.display(),
                     error = %e,
                     "skipping file: cannot compute content hash"
                 );
+                #[cfg(not(feature = "tracing"))]
+                let _ = e;
                 // Carry forward the previous hash so the file isn't spuriously
                 // marked as "removed" on the next delta call. If the file is
                 // new (not in previous), it's simply omitted from this cycle.
@@ -112,25 +115,26 @@ pub fn compute_delta(
 ///
 /// Convenience function for the initial index (no previous snapshot).
 /// Equivalent to calling [`compute_delta`] with an empty previous snapshot.
-pub fn build_initial_snapshot(
-    project_dir: &Path,
-    config: &CodeIndexConfig,
-) -> Result<HashSnapshot> {
-    let tracked = discover_tracked_files(project_dir)?;
-    let filtered = filter_tracked_files(project_dir, &tracked, config)?;
-
+/// Build a snapshot from pre-filtered files.
+///
+/// Avoids re-discovering and re-filtering files that have already been
+/// processed, eliminating a TOCTOU window.
+pub fn build_snapshot_from_filtered(filtered: &[FilteredFile]) -> Result<HashSnapshot> {
     let mut snapshot = HashMap::new();
 
-    for file in &filtered {
+    for file in filtered {
         let rel_str = file.relative_path.to_string_lossy().into_owned();
         let hash = match content_hash(&file.path) {
             Ok(h) => h,
             Err(e) => {
+                #[cfg(feature = "tracing")]
                 tracing::debug!(
                     path = %file.relative_path.display(),
                     error = %e,
                     "skipping file: cannot compute content hash"
                 );
+                #[cfg(not(feature = "tracing"))]
+                let _ = e;
                 continue;
             },
         };
@@ -138,6 +142,21 @@ pub fn build_initial_snapshot(
     }
 
     Ok(snapshot)
+}
+
+/// Build a snapshot by discovering and filtering files from scratch.
+///
+/// Convenience wrapper around [`build_snapshot_from_filtered`] that
+/// performs its own file discovery and filtering. Prefer
+/// `build_snapshot_from_filtered` when files are already available
+/// to avoid redundant I/O and TOCTOU issues.
+pub fn build_initial_snapshot(
+    project_dir: &Path,
+    config: &CodeIndexConfig,
+) -> Result<HashSnapshot> {
+    let tracked = discover_tracked_files(project_dir)?;
+    let filtered = filter_tracked_files(project_dir, &tracked, config)?;
+    build_snapshot_from_filtered(&filtered)
 }
 
 #[cfg(test)]

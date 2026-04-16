@@ -14,6 +14,7 @@ use notify_debouncer_full::{
     notify::RecursiveMode,
 };
 use tokio::sync::mpsc;
+#[cfg(feature = "tracing")]
 use tracing::{debug, info, warn};
 
 use crate::config::CodeIndexConfig;
@@ -73,6 +74,7 @@ impl CodeIndexWatcher {
 
                             // Check path exclusions first (cheapest).
                             if config.path_skipped(&rel_path.to_string_lossy()) {
+                                #[cfg(feature = "tracing")]
                                 debug!(path = %path.display(), "watcher: skipped path exclusion");
                                 continue;
                             }
@@ -106,7 +108,10 @@ impl CodeIndexWatcher {
                 },
                 Err(errors) => {
                     for e in errors {
+                        #[cfg(feature = "tracing")]
                         warn!(error = %e, "code index watcher error");
+                        #[cfg(not(feature = "tracing"))]
+                        let _ = e;
                     }
                 },
             },
@@ -117,6 +122,7 @@ impl CodeIndexWatcher {
         };
 
         watcher._debouncer.watch(project_dir, RecursiveMode::Recursive)?;
+        #[cfg(feature = "tracing")]
         info!(
             path = %project_dir.display(),
             "code index watcher: watching project directory"

@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
+#[cfg(feature = "tracing")]
 use tracing::{debug, trace};
 
 use crate::config::CodeIndexConfig;
@@ -30,9 +31,13 @@ pub fn filter_tracked_files(
     config: &CodeIndexConfig,
 ) -> Result<Vec<FilteredFile>> {
     let mut accepted = Vec::new();
+    #[cfg(feature = "tracing")]
     let mut skipped_extension = 0usize;
+    #[cfg(feature = "tracing")]
     let mut skipped_size = 0usize;
+    #[cfg(feature = "tracing")]
     let mut skipped_binary = 0usize;
+    #[cfg(feature = "tracing")]
     let mut skipped_path = 0usize;
 
     for rel_path in relative_paths {
@@ -40,8 +45,11 @@ pub fn filter_tracked_files(
 
         // 1. Path skip check (cheapest — no I/O).
         if config.path_skipped(&path_str) {
-            debug!(path = %path_str, "skipped: path exclusion");
-            skipped_path += 1;
+            #[cfg(feature = "tracing")]
+            {
+                debug!(path = %path_str, "skipped: path exclusion");
+                skipped_path += 1;
+            }
             continue;
         }
 
@@ -49,8 +57,11 @@ pub fn filter_tracked_files(
         let effective_ext = effective_extension(rel_path);
 
         if !config.extension_allowed(effective_ext) {
-            trace!(path = %path_str, ext = %effective_ext, "skipped: extension not allowed");
-            skipped_extension += 1;
+            #[cfg(feature = "tracing")]
+            {
+                trace!(path = %path_str, ext = %effective_ext, "skipped: extension not allowed");
+                skipped_extension += 1;
+            }
             continue;
         }
 
@@ -59,26 +70,35 @@ pub fn filter_tracked_files(
         let metadata = match fs::metadata(&abs_path) {
             Ok(m) => m,
             Err(e) => {
+                #[cfg(feature = "tracing")]
                 debug!(path = %path_str, error = %e, "skipped: cannot read metadata");
+                #[cfg(not(feature = "tracing"))]
+                let _ = e;
                 continue;
             }
         };
         let size = metadata.len();
         if size > config.max_file_size_bytes {
-            debug!(
-                path = %path_str,
-                size,
-                max = config.max_file_size_bytes,
-                "skipped: file too large"
-            );
-            skipped_size += 1;
+            #[cfg(feature = "tracing")]
+            {
+                debug!(
+                    path = %path_str,
+                    size,
+                    max = config.max_file_size_bytes,
+                    "skipped: file too large"
+                );
+                skipped_size += 1;
+            }
             continue;
         }
 
         // 4. Binary detection (read first 8 KiB, check for null bytes).
         if config.skip_binary && is_binary_file(&abs_path, size) {
-            debug!(path = %path_str, "skipped: binary content detected");
-            skipped_binary += 1;
+            #[cfg(feature = "tracing")]
+            {
+                debug!(path = %path_str, "skipped: binary content detected");
+                skipped_binary += 1;
+            }
             continue;
         }
 
@@ -92,6 +112,7 @@ pub fn filter_tracked_files(
         });
     }
 
+    #[cfg(feature = "tracing")]
     tracing::info!(
         accepted = accepted.len(),
         skipped_extension,

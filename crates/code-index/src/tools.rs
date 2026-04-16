@@ -255,11 +255,6 @@ impl AgentTool for CodebaseStatusTool {
                 "embedding_model": status.embedding_model,
                 "backend": status.backend,
             })),
-            Err(Error::BackendUnavailable(msg)) => Ok(json!({
-                "project_id": project_id,
-                "error": msg,
-                "search_available": false,
-            })),
             Err(e) => Err(anyhow::anyhow!("{e}")),
         }
     }

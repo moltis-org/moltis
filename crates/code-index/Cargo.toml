@@ -5,7 +5,9 @@ name              = "moltis-code-index"
 version.workspace = true
 
 [features]
-default = ["qmd"]
+default = ["tracing", "qmd"]
+tracing = []
+metrics = ["dep:moltis-metrics"]
 qmd = ["dep:moltis-qmd", "dep:moltis-agents"]
 pgvector = ["dep:sqlx"]
 file-watcher = ["dep:notify-debouncer-full", "tokio"]
@@ -15,6 +17,7 @@ anyhow           = { workspace = true }
 async-trait      = { workspace = true }
 gix              = { workspace = true }
 moltis-agents    = { optional = true, workspace = true }
+moltis-metrics   = { optional = true, workspace = true }
 moltis-qmd       = { optional = true, workspace = true }
 moltis-config    = { workspace = true }
 moltis-tools     = { workspace = true }
