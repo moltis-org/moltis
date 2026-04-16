@@ -253,6 +253,10 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
     if id.contains("deepseek-r1") || id.contains("deepseek-reasoner") {
         return true;
     }
+    // xAI Grok 3+ reasoning models (Grok 3, Grok 3 Mini, Grok 4 series)
+    if id.starts_with("grok-3") || id.starts_with("grok-4") {
+        return true;
+    }
     false
 }
 
@@ -542,6 +546,23 @@ mod tests {
         assert!(supports_reasoning_for_model("gpt-5"));
         assert!(supports_reasoning_for_model("gpt-5-mini"));
         assert!(supports_reasoning_for_model("gpt-5.2"));
+        // xAI Grok reasoning models
+        assert!(supports_reasoning_for_model("grok-3"));
+        assert!(supports_reasoning_for_model("grok-3-latest"));
+        assert!(supports_reasoning_for_model("grok-3-mini"));
+        assert!(supports_reasoning_for_model("grok-3-mini-latest"));
+        assert!(supports_reasoning_for_model("grok-4-0420"));
+        assert!(supports_reasoning_for_model("grok-4"));
+        // OpenRouter-style namespaced Grok model IDs
+        assert!(supports_reasoning_for_model(
+            "custom-openrouter::xai/grok-4-0420"
+        ));
+        assert!(supports_reasoning_for_model(
+            "custom-openrouter::xai/grok-3-mini"
+        ));
+        // Grok 2 does NOT support reasoning
+        assert!(!supports_reasoning_for_model("grok-2"));
+        assert!(!supports_reasoning_for_model("grok-2-latest"));
 
         // Models that don't support reasoning
         assert!(!supports_reasoning_for_model("gemini-2.0-flash"));
