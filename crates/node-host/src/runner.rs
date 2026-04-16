@@ -129,6 +129,13 @@ impl NodeHost {
     ///
     /// Returns `Ok(())` on clean shutdown, `Err` on connection/protocol errors.
     pub async fn run(&self) -> anyhow::Result<()> {
+        // Install a rustls CryptoProvider before any TLS connection.
+        // Without this, `connect_async` on a `wss://` URL panics because
+        // tokio-tungstenite uses rustls under the hood and no provider is
+        // registered in the node-host code path (the gateway sets its own
+        // in `gateway.rs`). See #744.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         // Validate URL first, then pass string to connect_async.
         let _url = url::Url::parse(&self.config.gateway_url)?;
         info!(url = %self.config.gateway_url, node_id = %self.config.node_id, "connecting to gateway");
@@ -612,6 +619,23 @@ mod tests {
         });
         let result = host.handle_system_run(&args).await.unwrap();
         assert_eq!(result["stderr"].as_str().unwrap().trim(), "err");
+    }
+
+    /// Regression test for #744: `connect_async("wss://...")` panicked on
+    /// Windows because no rustls `CryptoProvider` was installed in the
+    /// node-host code path.  After the fix, `run()` returns a connection
+    /// error instead of panicking.
+    #[tokio::test]
+    async fn wss_url_does_not_panic_without_crypto_provider() {
+        let config = NodeConfig {
+            gateway_url: "wss://127.0.0.1:1/ws".into(),
+            device_token: "test-token".into(),
+            ..Default::default()
+        };
+        let node = NodeHost::new(config);
+        // Should return Err (unreachable host), NOT panic.
+        let result = node.run().await;
+        assert!(result.is_err(), "expected connection error, got Ok");
     }
 
     #[tokio::test]
