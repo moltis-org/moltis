@@ -14,7 +14,15 @@ pub mod types;
 #[cfg(feature = "qmd")]
 pub mod backend_qmd;
 
+// Search result adapter.
+#[cfg(feature = "qmd")]
+pub mod search;
+
+// Index orchestrator.
+pub mod index;
+
 // Re-export primary types.
 pub use config::CodeIndexConfig;
 pub use error::{Error, Result};
-pub use types::{CodeChunk, FileEntry, FilteredFile, IndexStatus, Language};
+pub use index::CodeIndex;
+pub use types::{CodeChunk, FileEntry, FilteredFile, IndexStatus, Language, SearchResult};
