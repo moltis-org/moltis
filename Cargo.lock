@@ -7345,7 +7345,10 @@ dependencies = [
 name = "moltis-code-index"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "gix",
+ "moltis-agents",
  "moltis-qmd",
  "serde",
  "serde_json",
@@ -7353,6 +7356,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tracing",
 ]
