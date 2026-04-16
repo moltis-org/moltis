@@ -8,6 +8,7 @@ version.workspace = true
 default = ["qmd"]
 qmd = ["dep:moltis-qmd", "dep:moltis-agents"]
 pgvector = ["dep:sqlx"]
+file-watcher = ["dep:notify-debouncer-full", "tokio"]
 
 [dependencies]
 anyhow           = { workspace = true }
@@ -15,19 +16,20 @@ async-trait      = { workspace = true }
 gix              = { workspace = true }
 moltis-agents    = { optional = true, workspace = true }
 moltis-qmd       = { optional = true, workspace = true }
+notify-debouncer-full = { optional = true, workspace = true }
 serde            = { workspace = true }
 serde_json       = { workspace = true }
 sha2             = { workspace = true }
 sqlx             = { optional = true, workspace = true }
 thiserror        = { workspace = true }
 time             = { workspace = true }
+tokio            = { workspace = true, features = ["sync"], optional = true }
 tracing          = { workspace = true }
 
-# Future dependencies (add when wiring P4+ features):
+# Future dependencies (add when wiring P5+ features):
 # moltis-memory    = { workspace = true }
 # moltis-projects  = { workspace = true }
 # regex            = { workspace = true }
-# tokio            = { workspace = true, features = ["macros", "rt"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
