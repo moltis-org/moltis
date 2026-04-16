@@ -7350,6 +7350,7 @@ dependencies = [
  "gix",
  "moltis-agents",
  "moltis-qmd",
+ "moltis-tools",
  "notify-debouncer-full",
  "serde",
  "serde_json",

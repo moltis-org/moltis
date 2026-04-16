@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use {async_trait::async_trait, moltis_agents::tool_registry::AgentTool, serde_json::json};
+use {async_trait::async_trait, moltis_agents::tool_registry::AgentTool, moltis_tools::params, serde_json::json};
 
 use crate::CodeIndex;
 
@@ -17,28 +17,6 @@ use crate::CodeIndexConfig;
 
 #[cfg(feature = "qmd")]
 use crate::Error;
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-/// Parse a required string parameter from the tool invocation JSON.
-fn require_str(params: &serde_json::Value, key: &str) -> anyhow::Result<String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| anyhow::anyhow!("missing required parameter '{key}'"))
-}
-
-
-/// Parse an optional usize parameter, defaulting to the given value.
-fn opt_usize_or(params: &serde_json::Value, key: &str, default: usize) -> usize {
-    params
-        .get(key)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(default as u64) as usize
-}
 
 // ---------------------------------------------------------------------------
 // CodebaseSearchTool
@@ -93,33 +71,41 @@ impl AgentTool for CodebaseSearchTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let project_id = require_str(&params, "project_id")?;
-        let query = require_str(&params, "query")?;
-        let limit = opt_usize_or(&params, "limit", 10);
+    async fn execute(&self, params_value: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let project_id = params::require_str(&params_value, "project_id")?.to_string();
+        let query = params::require_str(&params_value, "query")?.to_string();
+        let limit = usize::try_from(params::u64_param(&params_value, "limit", 10)).unwrap_or(10);
 
-        let results = self.index.search(&project_id, &query, limit).await?;
+        match self.index.search(&project_id, &query, limit).await {
+            Ok(results) => {
+                let items: Vec<serde_json::Value> = results
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "chunk_id": r.chunk_id,
+                            "path": r.path,
+                            "start_line": r.start_line,
+                            "end_line": r.end_line,
+                            "score": r.score,
+                            "text": r.text,
+                            "source": r.source,
+                        })
+                    })
+                    .collect();
 
-        let items: Vec<serde_json::Value> = results
-            .iter()
-            .map(|r| {
-                json!({
-                    "chunk_id": r.chunk_id,
-                    "path": r.path,
-                    "start_line": r.start_line,
-                    "end_line": r.end_line,
-                    "score": r.score,
-                    "text": r.text,
-                    "source": r.source,
-                })
-            })
-            .collect();
-
-        Ok(json!({
-            "results": items,
-            "total": items.len(),
-            "project_id": project_id,
-        }))
+                Ok(json!({
+                    "results": items,
+                    "total": items.len(),
+                    "project_id": project_id,
+                }))
+            },
+            Err(Error::BackendUnavailable(msg)) => Ok(json!({
+                "project_id": project_id,
+                "error": msg,
+                "search_available": false,
+            })),
+            Err(e) => Err(anyhow::anyhow!("{e}")),
+        }
     }
 }
 
@@ -167,8 +153,8 @@ impl AgentTool for CodebasePeekTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let dir = require_str(&params, "project_dir")?;
+    async fn execute(&self, params_value: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let dir = params::require_str(&params_value, "project_dir")?.to_string();
         let project_dir = PathBuf::from(&dir);
 
         if !project_dir.is_dir() {
@@ -249,9 +235,9 @@ impl AgentTool for CodebaseStatusTool {
         })
     }
 
-    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let project_id = require_str(&params, "project_id")?;
-        let dir = require_str(&params, "project_dir")?;
+    async fn execute(&self, params_value: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let project_id = params::require_str(&params_value, "project_id")?.to_string();
+        let dir = params::require_str(&params_value, "project_dir")?.to_string();
         let project_dir = PathBuf::from(&dir);
 
         if !project_dir.is_dir() {
@@ -353,11 +339,16 @@ mod tests {
                 "project_id": "test-project",
                 "query": "fn main"
             }))
-            .await;
+            .await
+            .expect("search tool should return Ok even without backend");
 
-        // The tool wraps CodeIndex::search which returns BackendUnavailable.
-        // AgentTool::execute returns Result<Value>, so the error propagates.
-        assert!(result.is_err(), "config-only search should fail with BackendUnavailable");
+        // Config-only search returns a structured error response, not Err.
+        assert!(result.get("error").is_some(), "config-only search should report error");
+        assert!(
+            result.get("search_available").is_some(),
+            "config-only search should report search_available"
+        );
+        assert_eq!(result["search_available"], false);
     }
 
     #[tokio::test]

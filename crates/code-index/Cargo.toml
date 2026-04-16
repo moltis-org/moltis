@@ -16,6 +16,7 @@ async-trait      = { workspace = true }
 gix              = { workspace = true }
 moltis-agents    = { optional = true, workspace = true }
 moltis-qmd       = { optional = true, workspace = true }
+moltis-tools     = { workspace = true }
 notify-debouncer-full = { optional = true, workspace = true }
 serde            = { workspace = true }
 serde_json       = { workspace = true }
