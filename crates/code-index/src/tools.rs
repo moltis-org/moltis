@@ -163,7 +163,14 @@ impl AgentTool for CodebasePeekTool {
             }));
         }
 
-        let files = self.index.list_indexable_files(&project_dir)?;
+        let files = match self.index.list_indexable_files(&project_dir) {
+            Ok(f) => f,
+            Err(e) => {
+                return Ok(json!({
+                    "error": format!("failed to list indexable files: {e}"),
+                }));
+            }
+        };
 
         let total_size: u64 = files.iter().map(|f| f.size).sum();
 

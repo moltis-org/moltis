@@ -152,7 +152,8 @@ impl CodeIndex {
         })?;
 
         // Build and persist snapshot for future incremental delta.
-        let snapshot = crate::delta::build_initial_snapshot(project_dir, &self.config)?;
+        // Use already-filtered files to avoid TOCTOU double-scan.
+        let snapshot = crate::delta::build_snapshot_from_filtered(&filtered)?;
         self.snapshot_store.save(project_id, &snapshot)?;
 
         info!(
@@ -161,10 +162,9 @@ impl CodeIndex {
             "code index complete"
         );
 
-        let epoch_ms = time::OffsetDateTime::now_utc()
-            .unix_timestamp_nanos()
-            .unsigned_abs() as u64
-            / 1_000_000;
+        let now = time::OffsetDateTime::now_utc();
+        let epoch_ms = now.unix_timestamp().saturating_mul(1_000)
+            .saturating_add(i64::from(now.millisecond())) as u64;
 
         Ok(IndexStatus {
             project_id: project_id.to_string(),
