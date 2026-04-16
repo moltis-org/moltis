@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Language {
-    Bash,
     C,
     Cpp,
     CSharp,
@@ -73,7 +72,6 @@ impl Language {
     /// Used primarily for display and debugging.
     pub fn primary_extension(&self) -> &'static str {
         match self {
-            Self::Bash => "bash",
             Self::Shell => "sh",
             Self::C => "c",
             Self::Cpp => "cpp",
