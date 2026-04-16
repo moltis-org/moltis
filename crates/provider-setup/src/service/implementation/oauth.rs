@@ -59,8 +59,7 @@ impl LiveProviderSetupService {
         let registry = Arc::clone(&self.registry);
         let config = self.effective_config();
         let env_overrides = self.env_overrides.clone();
-        let cw_overrides = self.global_cw_overrides.lock()
-            .unwrap_or_else(|e| e.into_inner()).clone();
+        let cw_overrides = self.global_cw_overrides.clone();
         let poll_headers = extra_headers.clone();
         tokio::spawn(async move {
             let poll_extra = poll_headers.as_ref();
@@ -201,8 +200,7 @@ impl LiveProviderSetupService {
         let registry = Arc::clone(&self.registry);
         let config = self.effective_config();
         let env_overrides = self.env_overrides.clone();
-        let cw_overrides = self.global_cw_overrides.lock()
-            .unwrap_or_else(|e| e.into_inner()).clone();
+        let cw_overrides = self.global_cw_overrides.clone();
         let bind_addr = self.callback_bind_addr.clone();
         let pending_oauth = Arc::clone(&self.pending_oauth);
         let callback_state = expected_state.clone();

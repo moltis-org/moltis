@@ -755,6 +755,30 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         }
     }
 
+    // tools: ratio fields should not exceed 100 (percentages)
+    if config.tools.tool_result_compaction_ratio > 100 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.tool_result_compaction_ratio".into(),
+            message: format!(
+                "tool_result_compaction_ratio ({}) exceeds 100 — compaction will trigger on every iteration regardless of context usage",
+                config.tools.tool_result_compaction_ratio
+            ),
+        });
+    }
+    if config.tools.preemptive_overflow_ratio > 100 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: format!(
+                "preemptive_overflow_ratio ({}) exceeds 100 — overflow protection will always trigger",
+                config.tools.preemptive_overflow_ratio
+            ),
+        });
+    }
+
     // tools: overflow_ratio must be greater than compaction_ratio
     if config.tools.tool_result_compaction_ratio > 0
         && config.tools.preemptive_overflow_ratio <= config.tools.tool_result_compaction_ratio
