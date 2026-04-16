@@ -8,9 +8,6 @@ pub enum Error {
     #[error("git repository not found at {path}: {message}")]
     GitRepoNotFound { path: PathBuf, message: String },
 
-    #[error("git operation failed: {0}")]
-    GitOperation(String),
-
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
