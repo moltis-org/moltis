@@ -1,9 +1,6 @@
 //! Nostr channel plugin — lifecycle, registration, and OTP provider.
 
-use {
-    std::{collections::HashMap, sync::Arc},
-    tokio::sync::RwLock as TokioRwLock,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use {
     async_trait::async_trait,
@@ -151,11 +148,11 @@ impl ChannelPlugin for NostrPlugin {
         // Pre-parse allowlist and create shared config — the bus loop and
         // update_account_config both use this same Arc so policy changes
         // take effect immediately.
-        let cached_allowlist = Arc::new(TokioRwLock::new(keys::normalize_pubkeys(
+        let cached_allowlist = Arc::new(std::sync::RwLock::new(keys::normalize_pubkeys(
             &nostr_config.allowed_pubkeys,
         )));
         let otp_cooldown = nostr_config.otp_cooldown_secs;
-        let shared_config = Arc::new(TokioRwLock::new(nostr_config));
+        let shared_config = Arc::new(std::sync::RwLock::new(nostr_config));
         let shared_otp = Arc::new(std::sync::Mutex::new(moltis_channels::otp::OtpState::new(
             otp_cooldown,
         )));
@@ -258,7 +255,7 @@ impl ChannelPlugin for NostrPlugin {
     fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts.get(account_id).map(|s| {
-            let cfg = s.config.blocking_read();
+            let cfg = s.config.read().unwrap_or_else(|e| e.into_inner());
             Box::new(cfg.clone()) as Box<dyn ChannelConfigView>
         })
     }
@@ -266,7 +263,7 @@ impl ChannelPlugin for NostrPlugin {
     fn account_config_json(&self, account_id: &str) -> Option<Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts.get(account_id).and_then(|s| {
-            let cfg = s.config.blocking_read();
+            let cfg = s.config.read().unwrap_or_else(|e| e.into_inner());
             serde_json::to_value(crate::config::RedactedConfig(&cfg)).ok()
         })
     }
@@ -281,17 +278,22 @@ impl ChannelPlugin for NostrPlugin {
             // Merge guard: if the incoming secret_key is the redacted sentinel,
             // preserve the existing key instead of corrupting it.
             if new_config.secret_key.expose_secret() == REDACTED_SENTINEL {
-                let existing = state.config.blocking_read();
+                let existing = state.config.read().unwrap_or_else(|e| e.into_inner());
                 new_config.secret_key = existing.secret_key.clone();
             }
 
             // Update shared config — the bus loop sees this immediately.
-            *state.config.blocking_write() = new_config.clone();
+            let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
+            *cfg = new_config.clone();
+            drop(cfg);
 
             // Refresh cached allowlist so access control uses the new list
             // without re-parsing on every DM.
-            *state.cached_allowlist.blocking_write() =
-                keys::normalize_pubkeys(&new_config.allowed_pubkeys);
+            let mut al = state
+                .cached_allowlist
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            *al = keys::normalize_pubkeys(&new_config.allowed_pubkeys);
         }
         Ok(())
     }
@@ -362,5 +364,78 @@ impl ChannelStatus for NostrPlugin {
 impl ChannelOtpProvider for NostrPlugin {
     fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
         self.otp_challenges(account_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, moltis_channels::ChannelPlugin, nostr_sdk::prelude::Keys};
+
+    /// Build a minimal `NostrPlugin` with one dummy account inserted.
+    ///
+    /// The account has no relay connections — only enough state to exercise
+    /// the sync config accessors without touching the network.
+    fn plugin_with_dummy_account() -> NostrPlugin {
+        let keys = Keys::generate();
+        let client = Client::new(keys.clone());
+        let config = NostrAccountConfig::default();
+        let cached_allowlist = Arc::new(std::sync::RwLock::new(keys::normalize_pubkeys(
+            &config.allowed_pubkeys,
+        )));
+        let shared_config = Arc::new(std::sync::RwLock::new(config));
+        let otp = Arc::new(std::sync::Mutex::new(moltis_channels::otp::OtpState::new(
+            300,
+        )));
+        let cancel = CancellationToken::new();
+
+        let state = AccountState {
+            client,
+            keys,
+            config: shared_config,
+            cached_allowlist,
+            cancel,
+            otp,
+        };
+
+        let plugin = NostrPlugin::new();
+        plugin
+            .accounts
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("test".to_string(), state);
+        plugin
+    }
+
+    /// Regression test for <https://github.com/moltis-org/moltis/issues/736>.
+    ///
+    /// `account_config_json` is a sync trait method that must be callable from
+    /// inside a tokio runtime. With `tokio::sync::RwLock` + `blocking_read()`
+    /// this panics; with `std::sync::RwLock` it works.
+    #[tokio::test]
+    async fn account_config_json_does_not_panic_in_async() {
+        let plugin = plugin_with_dummy_account();
+        let json = plugin.account_config_json("test");
+        assert!(json.is_some(), "should return config for existing account");
+    }
+
+    /// Same regression test for `update_account_config`.
+    #[tokio::test]
+    async fn update_account_config_does_not_panic_in_async() {
+        let plugin = plugin_with_dummy_account();
+        let new_config =
+            serde_json::to_value(NostrAccountConfig::default()).expect("serialize default config");
+        let result = plugin.update_account_config("test", new_config);
+        assert!(result.is_ok(), "update_account_config must not panic");
+    }
+
+    /// Same regression test for `account_config`.
+    #[tokio::test]
+    async fn account_config_does_not_panic_in_async() {
+        let plugin = plugin_with_dummy_account();
+        let view = plugin.account_config("test");
+        assert!(
+            view.is_some(),
+            "should return config view for existing account"
+        );
     }
 }

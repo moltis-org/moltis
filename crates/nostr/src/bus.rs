@@ -6,12 +6,13 @@
 
 use std::sync::Arc;
 
+use std::sync::RwLock;
+
 use {
     nostr_sdk::prelude::{
         Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, Timestamp, ToBech32,
         nip04, nip44,
     },
-    tokio::sync::RwLock,
     tokio_util::sync::CancellationToken,
 };
 
@@ -160,7 +161,7 @@ async fn handle_event(
 
     // 5. Read config fields (drop guard before any .await).
     let (dm_policy, otp_self_approval) = {
-        let cfg = config.read().await;
+        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
         (cfg.dm_policy.clone(), cfg.otp_self_approval)
     };
 
@@ -195,10 +196,11 @@ async fn handle_event(
         return;
     }
 
-    // 5b. Normal access-control gate.
-    let allowed = cached_allowlist.read().await;
-    let access_result = access::check_dm_access(&event.pubkey, &dm_policy, &allowed);
-    drop(allowed);
+    // 5b. Normal access-control gate (scope the guard so it drops before any .await).
+    let access_result = {
+        let allowed = cached_allowlist.read().unwrap_or_else(|e| e.into_inner());
+        access::check_dm_access(&event.pubkey, &dm_policy, &allowed)
+    };
 
     match &access_result {
         Ok(()) => {},
