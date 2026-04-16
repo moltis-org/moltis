@@ -1,4 +1,4 @@
-use std::{collections::HashSet, pin::Pin, sync::mpsc, time::Duration};
+use std::{collections::{HashMap, HashSet}, pin::Pin, sync::mpsc, time::Duration};
 
 use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_stream::Stream};
 
@@ -20,6 +20,11 @@ pub struct AnthropicProvider {
     reasoning_effort: Option<moltis_agents::model::ReasoningEffort>,
     /// Prompt cache retention policy. When `None`, caching is disabled.
     cache_retention: moltis_config::CacheRetention,
+    /// Global per-model context window overrides from `[models.<id>]` config.
+    context_window_global: HashMap<String, u32>,
+    /// Provider-scoped per-model context window overrides from
+    /// `[providers.<name>.model_overrides.<id>]` config.
+    context_window_provider: HashMap<String, u32>,
 }
 
 const ANTHROPIC_MODELS_ENDPOINT_PATH: &str = "/v1/models";
@@ -34,6 +39,8 @@ impl AnthropicProvider {
             alias: None,
             reasoning_effort: None,
             cache_retention: moltis_config::CacheRetention::Short,
+            context_window_global: HashMap::new(),
+            context_window_provider: HashMap::new(),
         }
     }
 
@@ -52,6 +59,8 @@ impl AnthropicProvider {
             alias,
             reasoning_effort: None,
             cache_retention: moltis_config::CacheRetention::Short,
+            context_window_global: HashMap::new(),
+            context_window_provider: HashMap::new(),
         }
     }
 
@@ -64,6 +73,21 @@ impl AnthropicProvider {
     /// Returns `true` when prompt caching is enabled (short or long retention).
     fn caching_enabled(&self) -> bool {
         !matches!(self.cache_retention, moltis_config::CacheRetention::None)
+    }
+
+    /// Set context window override maps extracted from config.
+    ///
+    /// `global` comes from `[models.<id>].context_window` and
+    /// `provider` comes from `[providers.<name>.model_overrides.<id>].context_window`.
+    #[must_use]
+    pub fn with_context_window_overrides(
+        mut self,
+        global: HashMap<String, u32>,
+        provider: HashMap<String, u32>,
+    ) -> Self {
+        self.context_window_global = global;
+        self.context_window_provider = provider;
+        self
     }
 
     /// Apply `thinking` configuration to an Anthropic request body based on
@@ -563,6 +587,8 @@ impl LlmProvider for AnthropicProvider {
             alias: self.alias.clone(),
             reasoning_effort: Some(effort),
             cache_retention: self.cache_retention,
+            context_window_global: self.context_window_global.clone(),
+            context_window_provider: self.context_window_provider.clone(),
         }))
     }
 
@@ -575,7 +601,11 @@ impl LlmProvider for AnthropicProvider {
     }
 
     fn context_window(&self) -> u32 {
-        super::context_window_for_model(&self.model)
+        crate::context_window_for_model_with_config(
+            &self.model,
+            &self.context_window_global,
+            &self.context_window_provider,
+        )
     }
 
     fn supports_vision(&self) -> bool {
@@ -1011,6 +1041,8 @@ mod tests {
     #[test]
     fn apply_thinking_injects_budget_for_high_effort() {
         let provider = AnthropicProvider {
+            context_window_global: std::collections::HashMap::new(),
+            context_window_provider: std::collections::HashMap::new(),
             api_key: secrecy::Secret::new("test".into()),
             model: "claude-opus-4-5-20251101".into(),
             base_url: "https://api.anthropic.com".into(),
@@ -1044,6 +1076,8 @@ mod tests {
     #[test]
     fn apply_thinking_low_effort_budget() {
         let provider = AnthropicProvider {
+            context_window_global: std::collections::HashMap::new(),
+            context_window_provider: std::collections::HashMap::new(),
             api_key: secrecy::Secret::new("test".into()),
             model: "claude-sonnet-4-5-20250929".into(),
             base_url: "https://api.anthropic.com".into(),
@@ -1403,6 +1437,8 @@ mod tests {
     #[test]
     fn cache_retention_none_skips_cache_control() {
         let provider = AnthropicProvider {
+            context_window_global: std::collections::HashMap::new(),
+            context_window_provider: std::collections::HashMap::new(),
             api_key: secrecy::Secret::new("test".into()),
             model: "claude-sonnet-4-5-20250929".into(),
             base_url: "https://api.anthropic.com".into(),

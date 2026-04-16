@@ -27,4 +27,9 @@ pub struct OpenAiProvider {
     cache_retention: moltis_config::CacheRetention,
     /// Explicit override for strict tool schema mode. `None` = auto-detect.
     strict_tools_override: Option<bool>,
+    /// Global per-model context window overrides from `[models.<id>]` config.
+    context_window_global: std::collections::HashMap<String, u32>,
+    /// Provider-scoped per-model context window overrides from
+    /// `[providers.<name>.model_overrides.<id>]` config.
+    context_window_provider: std::collections::HashMap<String, u32>,
 }

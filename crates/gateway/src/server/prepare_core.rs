@@ -147,6 +147,7 @@ pub async fn prepare_gateway_core(
         ProviderRegistry::from_config_with_static_catalogs(
             &effective_providers,
             &config_env_overrides,
+            moltis_providers::extract_cw_overrides(&config.models),
         ),
     ));
     {

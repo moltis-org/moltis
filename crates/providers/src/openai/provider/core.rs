@@ -9,7 +9,7 @@ use {
 
 use tracing::debug;
 
-use crate::{context_window_for_model, supports_tools_for_model, supports_vision_for_model};
+use crate::{context_window_for_model_with_config, supports_tools_for_model, supports_vision_for_model};
 
 use moltis_agents::model::{
     ChatMessage, CompletionResponse, LlmProvider, ModelMetadata, StreamEvent,
@@ -32,6 +32,8 @@ impl OpenAiProvider {
             reasoning_effort: None,
             cache_retention: moltis_config::CacheRetention::Short,
             strict_tools_override: None,
+            context_window_global: std::collections::HashMap::new(),
+            context_window_provider: std::collections::HashMap::new(),
         }
     }
 
@@ -54,6 +56,8 @@ impl OpenAiProvider {
             reasoning_effort: None,
             cache_retention: moltis_config::CacheRetention::Short,
             strict_tools_override: None,
+            context_window_global: std::collections::HashMap::new(),
+            context_window_provider: std::collections::HashMap::new(),
         }
     }
 
@@ -84,6 +88,21 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_strict_tools(mut self, strict: bool) -> Self {
         self.strict_tools_override = Some(strict);
+        self
+    }
+
+    /// Set context window override maps extracted from config.
+    ///
+    /// `global` comes from `[models.<id>].context_window` and
+    /// `provider` comes from `[providers.<name>.model_overrides.<id>].context_window`.
+    #[must_use]
+    pub fn with_context_window_overrides(
+        mut self,
+        global: std::collections::HashMap<String, u32>,
+        provider: std::collections::HashMap<String, u32>,
+    ) -> Self {
+        self.context_window_global = global;
+        self.context_window_provider = provider;
         self
     }
 
@@ -166,6 +185,8 @@ impl LlmProvider for OpenAiProvider {
             reasoning_effort: Some(effort),
             wire_api: self.wire_api,
             cache_retention: self.cache_retention,
+            context_window_global: self.context_window_global.clone(),
+            context_window_provider: self.context_window_provider.clone(),
             strict_tools_override: self.strict_tools_override,
         }))
     }
@@ -187,7 +208,11 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn context_window(&self) -> u32 {
-        context_window_for_model(&self.model)
+        context_window_for_model_with_config(
+            &self.model,
+            &self.context_window_global,
+            &self.context_window_provider,
+        )
     }
 
     fn supports_vision(&self) -> bool {

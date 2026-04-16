@@ -65,6 +65,10 @@ impl ProviderRegistry {
                 .map(|e| e.cache_retention)
                 .unwrap_or(moltis_config::CacheRetention::Short);
             let models = Self::desired_anthropic_models(config, fetched);
+            let provider_cw = config
+                .get("anthropic")
+                .map(|e| extract_cw_overrides(&e.model_overrides))
+                .unwrap_or_default();
 
             added += self.replace_anthropic_catalog(
                 models,
@@ -73,6 +77,7 @@ impl ProviderRegistry {
                 &provider_label,
                 alias,
                 cache_retention,
+                provider_cw,
             );
         }
 
@@ -104,7 +109,13 @@ impl ProviderRegistry {
                         base_url.clone(),
                         provider_label.clone(),
                     )
-                    .with_stream_transport(stream_transport),
+                    .with_stream_transport(stream_transport)
+                    .with_context_window_overrides(
+                        self.global_cw_overrides.clone(),
+                        config.get("openai")
+                            .map(|e| extract_cw_overrides(&e.model_overrides))
+                            .unwrap_or_default(),
+                    ),
                 );
                 self.register(
                     ModelInfo {
@@ -197,7 +208,14 @@ impl ProviderRegistry {
                     provider_label.clone(),
                 )
                 .with_stream_transport(stream_transport)
-                .with_cache_retention(cache_retention);
+                .with_cache_retention(cache_retention)
+                .with_context_window_overrides(
+                    self.global_cw_overrides.clone(),
+                    config
+                        .get(def.config_name)
+                        .map(|e| extract_cw_overrides(&e.model_overrides))
+                        .unwrap_or_default(),
+                );
 
                 if !matches!(effective_tool_mode, moltis_config::ToolMode::Auto) {
                     oai = oai.with_tool_mode(effective_tool_mode);
@@ -253,7 +271,11 @@ impl ProviderRegistry {
                     base_url.clone(),
                     name.clone(),
                 )
-                .with_stream_transport(entry.stream_transport);
+                .with_stream_transport(entry.stream_transport)
+                .with_context_window_overrides(
+                    self.global_cw_overrides.clone(),
+                    extract_cw_overrides(&entry.model_overrides),
+                );
                 if !matches!(entry.wire_api, moltis_config::WireApi::ChatCompletions) {
                     oai = oai.with_wire_api(entry.wire_api);
                 }
@@ -681,6 +703,10 @@ impl ProviderRegistry {
                 .map(|e| e.cache_retention)
                 .unwrap_or(moltis_config::CacheRetention::Short);
             let models = Self::desired_anthropic_models(config, prefetched);
+            let provider_cw = config
+                .get("anthropic")
+                .map(|e| extract_cw_overrides(&e.model_overrides))
+                .unwrap_or_default();
             self.register_anthropic_catalog(
                 models,
                 &key,
@@ -688,6 +714,7 @@ impl ProviderRegistry {
                 &provider_label,
                 alias,
                 cache_retention,
+                provider_cw,
             );
         }
 
@@ -745,7 +772,14 @@ impl ProviderRegistry {
                         base_url.clone(),
                         provider_label.clone(),
                     )
-                    .with_stream_transport(stream_transport),
+                    .with_stream_transport(stream_transport)
+                    .with_context_window_overrides(
+                        self.global_cw_overrides.clone(),
+                        config
+                            .get("openai")
+                            .map(|e| extract_cw_overrides(&e.model_overrides))
+                            .unwrap_or_default(),
+                    ),
                 );
                 self.register(
                     ModelInfo {
@@ -897,7 +931,14 @@ impl ProviderRegistry {
                     provider_label.clone(),
                 )
                 .with_stream_transport(stream_transport)
-                .with_cache_retention(cache_retention);
+                .with_cache_retention(cache_retention)
+                .with_context_window_overrides(
+                    self.global_cw_overrides.clone(),
+                    config
+                        .get(def.config_name)
+                        .map(|e| extract_cw_overrides(&e.model_overrides))
+                        .unwrap_or_default(),
+                );
 
                 if !matches!(effective_tool_mode, moltis_config::ToolMode::Auto) {
                     oai = oai.with_tool_mode(effective_tool_mode);
@@ -988,7 +1029,11 @@ impl ProviderRegistry {
                     name.clone(),
                 )
                 .with_stream_transport(entry.stream_transport)
-                .with_cache_retention(entry.cache_retention);
+                .with_cache_retention(entry.cache_retention)
+                .with_context_window_overrides(
+                    self.global_cw_overrides.clone(),
+                    extract_cw_overrides(&entry.model_overrides),
+                );
                 if !matches!(entry.wire_api, moltis_config::WireApi::ChatCompletions) {
                     oai = oai.with_wire_api(entry.wire_api);
                 }

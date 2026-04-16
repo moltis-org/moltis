@@ -1,6 +1,20 @@
 //! Model capability heuristics: context window, tool support, vision, reasoning.
 
 use crate::model_id::capability_model_id;
+use moltis_config::schema::ModelOverride;
+
+/// Extract a `HashMap<String, u32>` of model ID → context window from
+/// a `HashMap<String, ModelOverride>`, filtering out entries without a
+/// `context_window` value.
+#[must_use]
+pub fn extract_cw_overrides(
+    overrides: &std::collections::HashMap<String, ModelOverride>,
+) -> std::collections::HashMap<String, u32> {
+    overrides
+        .iter()
+        .filter_map(|(k, v)| v.context_window.map(|cw| (k.clone(), cw)))
+        .collect()
+}
 
 /// Return the known context window size (in tokens) for a model ID.
 /// Falls back to 200,000 for unknown models.
@@ -774,3 +788,80 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tests_cw_overrides {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Verify provider-scoped override wins over global and heuristic.
+    #[test]
+    fn provider_override_wins() {
+        let global: HashMap<String, u32> =
+            vec![("claude-sonnet-4-20250514".into(), 300_000)].into_iter().collect();
+        let provider: HashMap<String, u32> =
+            vec![("claude-sonnet-4-20250514".into(), 999_000)].into_iter().collect();
+
+        let cw = context_window_for_model_with_config(
+            "claude-sonnet-4-20250514",
+            &global,
+            &provider,
+        );
+        assert_eq!(cw, 999_000);
+    }
+
+    /// Verify global override wins over heuristic when no provider override.
+    #[test]
+    fn global_override_wins_over_heuristic() {
+        let global: HashMap<String, u32> =
+            vec![("claude-sonnet-4-20250514".into(), 500_000)].into_iter().collect();
+        let provider: HashMap<String, u32> = HashMap::new();
+
+        let cw = context_window_for_model_with_config(
+            "claude-sonnet-4-20250514",
+            &global,
+            &provider,
+        );
+        assert_eq!(cw, 500_000);
+    }
+
+    /// Verify empty maps fall through to heuristic.
+    #[test]
+    fn empty_maps_use_heuristic() {
+        let cw = context_window_for_model_with_config(
+            "claude-sonnet-4-20250514",
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        // Heuristic for claude-* is 200_000
+        assert_eq!(cw, 200_000);
+    }
+
+    /// Verify extract_cw_overrides filters out None entries.
+    #[test]
+    fn extract_cw_overrides_filters_none() {
+        use moltis_config::schema::ModelOverride;
+
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "claude-opus-4-20250514".into(),
+            ModelOverride { context_window: Some(1_000_000) },
+        );
+        overrides.insert(
+            "gpt-4o".into(),
+            ModelOverride { context_window: None },
+        );
+
+        let extracted = extract_cw_overrides(&overrides);
+        assert_eq!(extracted.len(), 1);
+        assert_eq!(extracted.get("claude-opus-4-20250514"), Some(&1_000_000));
+    }
+
+    /// Verify extract_cw_overrides returns empty map for empty input.
+    #[test]
+    fn extract_cw_overrides_empty() {
+        let extracted = extract_cw_overrides(&HashMap::new());
+        assert!(extracted.is_empty());
+    }
+}
+

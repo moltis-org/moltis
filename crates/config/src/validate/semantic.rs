@@ -764,8 +764,7 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             category: "invalid-value",
             path: "tools.preemptive_overflow_ratio".into(),
             message: format!(
-                "preemptive_overflow_ratio ({}) should be greater than 
-                 tool_result_compaction_ratio ({}) to avoid context overflow on every iteration",
+                "preemptive_overflow_ratio ({}) should be greater than tool_result_compaction_ratio ({}) to avoid context overflow on every iteration",
                 config.tools.preemptive_overflow_ratio, config.tools.tool_result_compaction_ratio
             ),
         });

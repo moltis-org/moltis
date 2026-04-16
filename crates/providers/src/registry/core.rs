@@ -29,7 +29,7 @@ use crate::{
         DiscoveredModel, catalog_to_discovered, merge_discovered_with_fallback_catalog,
         merge_preferred_and_discovered_models,
     },
-    model_capabilities::{ModelCapabilities, ModelInfo},
+    model_capabilities::{extract_cw_overrides, ModelCapabilities, ModelInfo},
     model_catalogs::{ANTHROPIC_MODELS, OPENAI_COMPAT_PROVIDERS},
     model_id::{
         REASONING_SUFFIX_SEP, REASONING_SUFFIXES, namespaced_model_id, raw_model_id,
@@ -424,6 +424,8 @@ impl DynamicModelDiscovery for GitHubCopilotDiscovery {
 pub struct ProviderRegistry {
     pub(crate) providers: HashMap<String, Arc<dyn LlmProvider>>,
     pub(crate) models: Vec<ModelInfo>,
+    /// Global per-model context window overrides from `[models.<id>]` config.
+    pub(crate) global_cw_overrides: HashMap<String, u32>,
 }
 
 /// Pending model discovery handles returned by [`ProviderRegistry::fire_discoveries`].
@@ -438,6 +440,7 @@ impl ProviderRegistry {
         Self {
             providers: HashMap::new(),
             models: Vec::new(),
+            global_cw_overrides: HashMap::new(),
         }
     }
 
@@ -621,8 +624,10 @@ impl ProviderRegistry {
         provider_label: &str,
         alias: Option<String>,
         cache_retention: moltis_config::CacheRetention,
+        provider_cw_overrides: HashMap<String, u32>,
     ) -> usize {
         let mut added = 0usize;
+        let global = self.global_cw_overrides.clone();
 
         for model in models {
             let caps = model
@@ -644,7 +649,8 @@ impl ProviderRegistry {
                     base_url.to_string(),
                     alias.clone(),
                 )
-                .with_cache_retention(cache_retention),
+                .with_cache_retention(cache_retention)
+                .with_context_window_overrides(global.clone(), provider_cw_overrides.clone()),
             );
             self.register(
                 ModelInfo {
@@ -671,7 +677,9 @@ impl ProviderRegistry {
         provider_label: &str,
         alias: Option<String>,
         cache_retention: moltis_config::CacheRetention,
+        provider_cw_overrides: HashMap<String, u32>,
     ) -> usize {
+        let global = self.global_cw_overrides.clone();
         let new_entries: Vec<(ModelInfo, Arc<dyn LlmProvider>)> = models
             .into_iter()
             .map(|model| {
@@ -685,7 +693,8 @@ impl ProviderRegistry {
                         base_url.to_string(),
                         alias.clone(),
                     )
-                    .with_cache_retention(cache_retention),
+                    .with_cache_retention(cache_retention)
+                .with_context_window_overrides(global.clone(), provider_cw_overrides.clone()),
                 );
                 (
                     ModelInfo {
@@ -787,7 +796,7 @@ impl ProviderRegistry {
     ) -> Self {
         let pending = Self::fire_discoveries(config, env_overrides);
         let prefetched = Self::collect_discoveries(pending);
-        Self::from_config_with_prefetched(config, env_overrides, &prefetched)
+        Self::from_config_with_prefetched(config, env_overrides, &prefetched, HashMap::new())
     }
 
     /// Register providers without making any discovery HTTP requests.
@@ -797,9 +806,10 @@ impl ProviderRegistry {
     pub fn from_config_with_static_catalogs(
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
+        global_cw_overrides: HashMap<String, u32>,
     ) -> Self {
         let prefetched = HashMap::new();
-        Self::from_config_with_prefetched(config, env_overrides, &prefetched)
+        Self::from_config_with_prefetched(config, env_overrides, &prefetched, global_cw_overrides)
     }
 
     /// Register providers using already-collected discovery results.
@@ -810,8 +820,10 @@ impl ProviderRegistry {
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
         prefetched: &HashMap<String, Vec<DiscoveredModel>>,
+        global_cw_overrides: HashMap<String, u32>,
     ) -> Self {
         let mut reg = Self::empty();
+        reg.global_cw_overrides = global_cw_overrides;
 
         // Built-in providers first: they support tool calling.
         reg.register_builtin_providers(config, env_overrides, prefetched);
