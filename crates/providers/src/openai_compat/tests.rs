@@ -667,6 +667,114 @@ fn sanitize_does_not_infer_type_for_mixed_enums() {
     );
 }
 
+/// Issue #743: MCP tools declaring `$schema: "http://json-schema.org/draft-07/schema#"`
+/// (e.g. Attio) bypass canonicalization entirely because `SchemaDocument::from_json()`
+/// only accepts Draft 2020-12. Without canonicalization, stripping `not` leaves
+/// empty `{}` schemas inside `anyOf` which OpenAI rejects ("schema must have a
+/// 'type' key"). The sanitizer must strip `$schema` before canonicalization so
+/// that draft-07 schemas get the same AST resolution as draft 2020-12.
+#[test]
+fn sanitize_draft07_schema_strips_unsupported_keywords() {
+    // Reproduces the Attio MCP schema pattern from issue #743:
+    // nested anyOf with `not` and no `type` key, declared as draft-07.
+    let mut schema = serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "query": {
+                "anyOf": [
+                    {
+                        "anyOf": [
+                            {
+                                "not": {
+                                    "const": ""
+                                }
+                            },
+                            {
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            }
+        }
+    });
+
+    sanitize_schema_for_openai_compat(&mut schema);
+    let encoded = schema.to_string();
+
+    // `$schema` must be stripped.
+    assert!(
+        !encoded.contains("$schema"),
+        "$schema should be removed, got: {encoded}"
+    );
+    // `not` must be stripped.
+    assert!(
+        !encoded.contains("\"not\""),
+        "\"not\" should be removed from draft-07 schema, got: {encoded}"
+    );
+
+    // Critical assertion: no empty `{}` schemas left inside anyOf variants.
+    // Without canonicalization, stripping `not` leaves `{}` which OpenAI
+    // rejects with "schema must have a 'type' key".
+    assert!(
+        !encoded.contains("{}"),
+        "empty schemas should not remain after sanitization, got: {encoded}"
+    );
+    // The root `type: object` must survive.
+    assert_eq!(schema["type"], "object");
+}
+
+/// Issue #743: end-to-end through `to_responses_api_tools` with a draft-07
+/// schema containing the exact Attio pattern that OpenAI rejects.
+#[test]
+fn responses_tools_draft07_attio_schema_normalized() {
+    let tools = vec![serde_json::json!({
+        "name": "mcp__attio__list-attribute-definitions",
+        "description": "Attio test tool (draft-07)",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+                "query": {
+                    "anyOf": [
+                        {
+                            "anyOf": [
+                                {
+                                    "not": {
+                                        "const": ""
+                                    }
+                                },
+                                {
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ]
+                }
+            }
+        }
+    })];
+
+    let converted = to_responses_api_tools(&tools);
+    let params = &converted[0]["parameters"];
+    let encoded = params.to_string();
+
+    assert!(!encoded.contains("$schema"), "$schema must be removed: {encoded}");
+    assert!(!encoded.contains("\"not\""), "\"not\" must be removed: {encoded}");
+    assert!(
+        !encoded.contains("{}"),
+        "empty schemas should not remain after sanitization: {encoded}"
+    );
+    assert_eq!(params["type"], "object");
+}
+
 /// Issue #712: enum-only schemas (no `type` key) must also get null
 /// appended. Canonicalization can strip the redundant `"type": "string"`
 /// leaving just `{"enum": [...]}` — the final fallback in make_nullable

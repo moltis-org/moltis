@@ -86,6 +86,46 @@ impl Transform for RestoreEnumTypeTransform {
     }
 }
 
+/// Remove empty `{}` (the JSON Schema "true" schema) from `anyOf`/`oneOf`
+/// composite arrays and collapse single-variant composites inline.
+///
+/// Canonicalization of `not` and other negation keywords produces `{}` (the
+/// "accepts anything" schema). After keyword stripping, these survive as
+/// empty objects inside `anyOf`/`oneOf`, which OpenAI rejects with
+/// "schema must have a 'type' key" (issue #743).
+#[derive(Debug, Clone, Default)]
+struct SimplifyCompositeTransform;
+
+impl Transform for SimplifyCompositeTransform {
+    fn transform(&mut self, schema: &mut Schema) {
+        let Some(obj) = schema.as_object_mut() else {
+            return;
+        };
+
+        for keyword in ["anyOf", "oneOf"] {
+            let Some(variants) = obj.get_mut(keyword).and_then(|v| v.as_array_mut()) else {
+                continue;
+            };
+
+            // Drop empty-object variants (`{}`).
+            variants.retain(|v| !v.as_object().is_some_and(|o| o.is_empty()));
+
+            if variants.len() == 1 {
+                // Single variant left — inline it, replacing the composite.
+                let single = variants.remove(0);
+                obj.remove(keyword);
+                if let serde_json::Value::Object(inner) = single {
+                    for (k, v) in inner {
+                        obj.entry(k).or_insert(v);
+                    }
+                }
+            } else if variants.is_empty() {
+                obj.remove(keyword);
+            }
+        }
+    }
+}
+
 const OPENAI_ALLOWED_SCHEMA_KEYWORDS: &[&str] = &[
     "$ref",
     "$defs",
@@ -132,14 +172,26 @@ impl Transform for OpenAiSchemaSubsetTransform {
 }
 
 fn canonicalize_schema_for_openai_compat(schema: &serde_json::Value) -> serde_json::Value {
-    let document = match SchemaDocument::from_json(schema) {
+    // Strip `$schema` so `SchemaDocument::from_json()` doesn't reject
+    // non-2020-12 drafts (e.g. draft-07 from Attio MCP tools, issue #743).
+    // Draft-07 and 2020-12 share enough structural keywords that
+    // canonicalization works; remaining differences (`definitions` vs
+    // `$defs`, tuple `items` vs `prefixItems`) are handled by schemars
+    // transforms downstream. `$schema` itself is later stripped by
+    // `OpenAiSchemaSubsetTransform` anyway.
+    let mut input = schema.clone();
+    if let Some(obj) = input.as_object_mut() {
+        obj.remove("$schema");
+    }
+
+    let document = match SchemaDocument::from_json(&input) {
         Ok(document) => document,
         Err(error) => {
             warn!(
                 error = %error,
                 "openai tool schema failed Draft 2020-12 preflight; using raw schema for best-effort normalization"
             );
-            return schema.clone();
+            return input;
         },
     };
 
@@ -148,7 +200,7 @@ fn canonicalize_schema_for_openai_compat(schema: &serde_json::Value) -> serde_js
             error = %error,
             "openai tool schema failed canonical AST resolution; using raw schema for best-effort normalization"
         );
-        return schema.clone();
+        return input;
     }
 
     document
@@ -159,7 +211,7 @@ fn canonicalize_schema_for_openai_compat(schema: &serde_json::Value) -> serde_js
                     error = %error,
                     "openai tool schema canonicalization was unavailable; using raw schema for best-effort normalization"
                 );
-                schema.clone()
+                input
             },
             serde_json::Value::clone,
         )
@@ -185,6 +237,12 @@ pub(crate) fn sanitize_schema_for_openai_compat(schema: &mut serde_json::Value) 
     remove_ref_siblings.transform(&mut transformed);
     let mut subset_transform = RecursiveTransform(OpenAiSchemaSubsetTransform);
     subset_transform.transform(&mut transformed);
+
+    // Strip empty `{}` schemas from anyOf/oneOf (left behind by
+    // canonicalization of `not` and other negation keywords) and collapse
+    // single-variant composites inline (issue #743).
+    let mut simplify_composite = RecursiveTransform(SimplifyCompositeTransform);
+    simplify_composite.transform(&mut transformed);
 
     // Re-infer `"type"` from enum values after canonicalization stripped it.
     // Providers like Fireworks AI reject schemas without explicit type
