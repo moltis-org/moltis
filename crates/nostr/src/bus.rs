@@ -4,9 +4,7 @@
 //! Events flow through dedup, self-message filtering, access control, and
 //! decryption before being dispatched to the gateway via `ChannelEventSink`.
 
-use std::sync::Arc;
-
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use {
     nostr_sdk::prelude::{
