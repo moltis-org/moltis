@@ -36,7 +36,10 @@ function renderOptions() {
 		var el = document.createElement("div");
 		el.className = "model-dropdown-item";
 		if (opt.value === current) el.classList.add("selected");
-		el.textContent = opt.label;
+		var label = document.createElement("span");
+		label.className = "model-item-label";
+		label.textContent = opt.label;
+		el.appendChild(label);
 		el.addEventListener("click", selectEffort.bind(null, opt.value));
 		reasoningDropdownList.appendChild(el);
 	}
