@@ -17,8 +17,6 @@ use crate::{
 
 // ── Constants ───────────────────────────────────────────────────────────
 
-pub(crate) const TOOL_RESULT_COMPACTION_RATIO_PERCENT: usize = 75;
-pub(crate) const PREEMPTIVE_OVERFLOW_RATIO_PERCENT: usize = 90;
 pub(crate) const TOOL_RESULT_COMPACTION_PLACEHOLDER: &str =
     "[tool result compacted to preserve context budget]";
 pub(crate) const TOOL_RESULT_COMPACTION_MIN_BYTES: usize = 200;
@@ -441,7 +439,7 @@ pub(crate) fn has_tool_result_messages(messages: &[ChatMessage]) -> bool {
         .any(|message| matches!(message, ChatMessage::Tool { .. }))
 }
 
-pub(crate) fn compact_tool_results_newest_first_in_place(
+pub(crate) fn compact_tool_results_oldest_first_in_place(
     messages: &mut [ChatMessage],
     tokens_needed: usize,
 ) -> usize {
@@ -450,7 +448,7 @@ pub(crate) fn compact_tool_results_newest_first_in_place(
     }
 
     let mut reduced = 0;
-    for message in messages.iter_mut().rev() {
+    for message in messages.iter_mut() {
         if reduced >= tokens_needed {
             break;
         }
@@ -492,27 +490,40 @@ pub(crate) fn enforce_tool_result_context_budget(
     messages: &mut [ChatMessage],
     tool_schemas: &[serde_json::Value],
     context_window: u32,
+    compaction_ratio: usize,
+    overflow_ratio: usize,
 ) -> Result<(), AgentRunError> {
     let context_window = context_window as usize;
     if context_window == 0 || !has_tool_result_messages(messages) {
         return Ok(());
     }
 
-    let compaction_budget =
-        context_window.saturating_mul(TOOL_RESULT_COMPACTION_RATIO_PERCENT) / 100;
-    let overflow_budget = context_window.saturating_mul(PREEMPTIVE_OVERFLOW_RATIO_PERCENT) / 100;
+    // Allow disabling per-iteration compaction entirely via config (ratio = 0).
+    if compaction_ratio == 0 {
+        let overflow_budget = context_window.saturating_mul(overflow_ratio) / 100;
+        let current_tokens = estimate_prompt_tokens(messages, tool_schemas);
+        if current_tokens > overflow_budget {
+            return Err(AgentRunError::ContextWindowExceeded(format!(
+                "preemptive context overflow: estimated prompt size {current_tokens} tokens \
+                 exceeds {overflow_budget} token budget (compaction disabled)"
+            )));
+        }
+        return Ok(());
+    }
+    let compaction_budget = context_window.saturating_mul(compaction_ratio) / 100;
+    let overflow_budget = context_window.saturating_mul(overflow_ratio) / 100;
     let current_tokens = estimate_prompt_tokens(messages, tool_schemas);
 
     if current_tokens > compaction_budget {
         let needed = current_tokens.saturating_sub(compaction_budget);
-        let reduced = compact_tool_results_newest_first_in_place(messages, needed);
+        let reduced = compact_tool_results_oldest_first_in_place(messages, needed);
         tracing::debug!(
             current_tokens,
             compaction_budget,
             overflow_budget,
             needed,
             reduced,
-            "compacted newest tool results to preserve prompt budget"
+            "compacted oldest tool results to preserve prompt budget"
         );
     }
 

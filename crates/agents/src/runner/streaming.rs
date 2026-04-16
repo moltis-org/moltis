@@ -67,6 +67,9 @@ pub async fn run_agent_loop_streaming(
     let max_tool_result_bytes = config.tools.max_tool_result_bytes;
     let max_auto_continues = config.tools.agent_max_auto_continues;
     let auto_continue_min_tool_calls = config.tools.agent_auto_continue_min_tool_calls;
+    let compaction_ratio = config.tools.tool_result_compaction_ratio as usize;
+    let overflow_ratio = config.tools.preemptive_overflow_ratio as usize;
+    let compaction_min_iterations = config.tools.compaction_min_iterations;
     let base_max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
     // Lazy mode needs extra iterations for tool_search discovery round-trips.
     let max_iterations = if config.tools.registry_mode == moltis_config::ToolRegistryMode::Lazy {
@@ -155,10 +158,17 @@ pub async fn run_agent_loop_streaming(
             loop_detector.clear_strip_tools();
         }
 
+        let effective_ratio = if iterations > compaction_min_iterations {
+            compaction_ratio
+        } else {
+            0 // skip compaction but still check for overflow
+        };
         super::enforce_tool_result_context_budget(
             &mut messages,
             &schemas_for_api,
             provider.context_window(),
+            effective_ratio,
+            overflow_ratio,
         )?;
 
         if let Some(cb) = on_event {

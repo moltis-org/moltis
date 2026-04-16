@@ -332,6 +332,9 @@ max_tool_result_bytes = 50000     # Max bytes per tool result before truncation 
 # registry_mode = "full"          # "full" = all schemas every turn, "lazy" = tool_search discovery
 agent_loop_detector_window = 3    # Fire intervention after N identical failing tool calls in a row (0 = disable)
 agent_loop_detector_strip_tools_on_second_fire = true  # On second consecutive fire, strip tool schemas for one turn to force a text response
+tool_result_compaction_ratio = 75     # % of context_window before oldest tool results are compacted (0 = disable)
+preemptive_overflow_ratio = 90        # % of context_window before hard ContextWindowExceeded error
+compaction_min_iterations = 3         # Min loop iterations before per-iteration compaction can fire
 
 # ── Maps ─────────────────────────────────────────────────────────────────────
 

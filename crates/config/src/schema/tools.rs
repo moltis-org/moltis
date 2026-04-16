@@ -47,6 +47,21 @@ pub struct ToolsConfig {
     /// in text. Default true.
     #[serde(default = "default_agent_loop_detector_strip_tools")]
     pub agent_loop_detector_strip_tools_on_second_fire: bool,
+    /// Percentage of the provider's context window at which per-iteration
+    /// tool-result compaction starts. Oldest results are compacted first.
+    /// Set to 0 to disable per-iteration compaction entirely. Default 75.
+    #[serde(default = "default_tool_result_compaction_ratio")]
+    pub tool_result_compaction_ratio: u32,
+    /// Percentage of the provider's context window at which a hard
+    /// `ContextWindowExceeded` error fires even after compaction.
+    /// Must be greater than `tool_result_compaction_ratio`. Default 90.
+    #[serde(default = "default_preemptive_overflow_ratio")]
+    pub preemptive_overflow_ratio: u32,
+    /// Minimum number of agent loop iterations before per-iteration
+    /// tool-result compaction is allowed to fire. Prevents premature
+    /// context destruction in short loops. Default 3.
+    #[serde(default = "default_compaction_min_iterations")]
+    pub compaction_min_iterations: usize,
 }
 
 impl Default for ToolsConfig {
@@ -67,6 +82,9 @@ impl Default for ToolsConfig {
             agent_loop_detector_window: default_agent_loop_detector_window(),
             agent_loop_detector_strip_tools_on_second_fire: default_agent_loop_detector_strip_tools(
             ),
+            tool_result_compaction_ratio: default_tool_result_compaction_ratio(),
+            preemptive_overflow_ratio: default_preemptive_overflow_ratio(),
+            compaction_min_iterations: default_compaction_min_iterations(),
         }
     }
 }
@@ -211,6 +229,18 @@ fn default_agent_loop_detector_window() -> usize {
 
 fn default_agent_loop_detector_strip_tools() -> bool {
     true
+}
+
+fn default_tool_result_compaction_ratio() -> u32 {
+    75
+}
+
+fn default_preemptive_overflow_ratio() -> u32 {
+    90
+}
+
+fn default_compaction_min_iterations() -> usize {
+    3
 }
 
 /// Map tools configuration.

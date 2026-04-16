@@ -754,6 +754,22 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             );
         }
     }
+
+    // tools: overflow_ratio must be greater than compaction_ratio
+    if config.tools.tool_result_compaction_ratio > 0
+        && config.tools.preemptive_overflow_ratio <= config.tools.tool_result_compaction_ratio
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: format!(
+                "preemptive_overflow_ratio ({}) should be greater than 
+                 tool_result_compaction_ratio ({}) to avoid context overflow on every iteration",
+                config.tools.preemptive_overflow_ratio, config.tools.tool_result_compaction_ratio
+            ),
+        });
+    }
 }
 
 /// Validate a `context_window` override value (optional field).

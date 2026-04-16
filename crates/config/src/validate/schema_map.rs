@@ -221,6 +221,9 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("registry_mode", Leaf),
             ("agent_loop_detector_window", Leaf),
             ("agent_loop_detector_strip_tools_on_second_fire", Leaf),
+            ("tool_result_compaction_ratio", Leaf),
+            ("preemptive_overflow_ratio", Leaf),
+            ("compaction_min_iterations", Leaf),
         ]))
     };
 
