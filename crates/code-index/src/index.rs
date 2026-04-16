@@ -135,11 +135,13 @@ impl CodeIndex {
             "starting code index for project"
         );
 
-        // Ensure QMD collections are registered.
-        qmd.ensure_collections().await.map_err(|e| {
+        // Register this project as a QMD collection (idempotent).
+        let collection =
+            crate::backend_qmd::project_collection_config(project_dir, project_id, &self.config);
+        qmd.ensure_collection(project_id, &collection).await.map_err(|e| {
             Error::IndexFailed {
                 project_id: project_id.to_string(),
-                message: format!("QMD ensure_collections failed: {e}"),
+                message: format!("QMD ensure_collection failed: {e}"),
             }
         })?;
 
