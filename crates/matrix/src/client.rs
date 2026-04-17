@@ -480,15 +480,36 @@ async fn ensure_oidc_owned_encryption_state(
 
     wait_for_e2ee_state_to_settle(client).await;
 
-    if let Err(error) = ensure_own_device_is_cross_signed(client).await {
-        warn!(
-            account_id,
-            error = %error,
-            "matrix OIDC device self-signing failed"
-        );
+    // The signing keys may not be immediately available after bootstrap.
+    // Retry self-signing a few times with short waits for key propagation.
+    let mut self_signed = false;
+    for attempt in 1..=3 {
+        match ensure_own_device_is_cross_signed(client).await {
+            Ok(()) => {
+                self_signed = true;
+                break;
+            },
+            Err(error) if attempt < 3 => {
+                info!(
+                    account_id,
+                    attempt,
+                    error = %error,
+                    "matrix OIDC device self-signing not ready yet, retrying"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                wait_for_e2ee_state_to_settle(client).await;
+            },
+            Err(error) => {
+                warn!(
+                    account_id,
+                    error = %error,
+                    "matrix OIDC device self-signing failed after retries"
+                );
+            },
+        }
     }
 
-    if ownership_is_ready(client).await.unwrap_or(false) {
+    if self_signed || ownership_is_ready(client).await.unwrap_or(false) {
         info!(account_id, "matrix OIDC ownership bootstrap complete");
     } else {
         info!(
