@@ -147,18 +147,38 @@ async fn load_oidc_session(account_id: &str) -> ChannelResult<Option<PersistedOi
 }
 
 /// Project URL used as `client_uri` during OIDC dynamic client registration.
-/// MAS validates this URL and rejects loopback addresses for native apps.
+/// MAS validates this URL and rejects loopback addresses.
 const MOLTIS_CLIENT_URI: &str = "https://moltis.org/";
+
+/// Rewrite loopback redirect URIs from `https://` to `http://`.
+///
+/// MAS follows RFC 8252 §7.3 and requires native/loopback redirect URIs to
+/// use `http://`. When Moltis serves over TLS on localhost, the browser's
+/// HTTP-to-HTTPS redirect (or HSTS) will still deliver the callback to the
+/// HTTPS server, so the OAuth code+state arrive correctly.
+fn normalize_loopback_redirect(redirect_uri: &Url) -> Url {
+    let host = redirect_uri.host_str().unwrap_or_default();
+    let is_loopback =
+        host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost");
+    if is_loopback && redirect_uri.scheme() == "https" {
+        let mut normalized = redirect_uri.clone();
+        let _ = normalized.set_scheme("http");
+        normalized
+    } else {
+        redirect_uri.clone()
+    }
+}
 
 fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
     let client_uri_url: Url = MOLTIS_CLIENT_URI
         .parse()
         .map_err(|error| ChannelError::external("matrix oidc parse client uri", error))?;
     let client_uri = Localized::new(client_uri_url, std::iter::empty());
+    let registration_redirect = normalize_loopback_redirect(redirect_uri);
     Ok(ClientMetadata::new(
         ApplicationType::Native,
         vec![OAuthGrantType::AuthorizationCode {
-            redirect_uris: vec![redirect_uri.clone()],
+            redirect_uris: vec![registration_redirect],
         }],
         client_uri,
     ))
@@ -182,6 +202,7 @@ pub(crate) async fn start_oidc_login(
         .await
         .map_err(|error| ChannelError::external("matrix oidc server metadata discovery", error))?;
 
+    let registration_redirect = normalize_loopback_redirect(redirect_uri);
     let metadata = build_client_metadata(redirect_uri)?;
     let raw_metadata: Raw<ClientMetadata> = Raw::new(&metadata)
         .map_err(|error| ChannelError::external("matrix oidc serialize client metadata", error))?;
@@ -192,10 +213,12 @@ pub(crate) async fn start_oidc_login(
         .filter(|device_id| !device_id.is_empty())
         .map(|device_id| device_id.into());
 
+    // The redirect_uri in the authorization request must match the one
+    // registered during client registration (the normalized loopback version).
     let OAuthAuthorizationData { url, state } = client
         .oauth()
         .login(
-            redirect_uri.clone(),
+            registration_redirect,
             device_id_owned,
             Some(registration_data),
             None,
@@ -392,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn build_client_metadata_uses_project_url_for_client_uri() {
+    fn build_client_metadata_normalizes_loopback_and_uses_project_client_uri() {
         let redirect: Url = "https://localhost:52979/auth/callback"
             .parse()
             .unwrap_or_else(|error| panic!("{error}"));
@@ -401,8 +424,8 @@ mod tests {
             OAuthGrantType::AuthorizationCode { redirect_uris } => {
                 assert_eq!(
                     redirect_uris[0].as_str(),
-                    "https://localhost:52979/auth/callback",
-                    "redirect_uri should be passed through unchanged"
+                    "http://localhost:52979/auth/callback",
+                    "loopback redirect_uri must be http:// for MAS RFC 8252 compliance"
                 );
             },
             other => panic!("expected AuthorizationCode, got {other:?}"),
@@ -411,6 +434,39 @@ mod tests {
             metadata.client_uri.get(None).map(|u| u.as_str()),
             Some(MOLTIS_CLIENT_URI),
             "client_uri should be the project URL"
+        );
+    }
+
+    #[test]
+    fn normalize_loopback_redirect_rewrites_https_localhost() {
+        let url: Url = "https://localhost:52979/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            normalize_loopback_redirect(&url).as_str(),
+            "http://localhost:52979/auth/callback"
+        );
+    }
+
+    #[test]
+    fn normalize_loopback_redirect_preserves_non_loopback() {
+        let url: Url = "https://moltis.example.com/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            normalize_loopback_redirect(&url).as_str(),
+            "https://moltis.example.com/auth/callback"
+        );
+    }
+
+    #[test]
+    fn normalize_loopback_redirect_preserves_http_localhost() {
+        let url: Url = "http://localhost:8080/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            normalize_loopback_redirect(&url).as_str(),
+            "http://localhost:8080/auth/callback"
         );
     }
 
