@@ -518,12 +518,21 @@ async fn ensure_oidc_owned_encryption_state(
                                 pending_identity_reset: None,
                             };
                         }
+                        let _ = client
+                            .encryption()
+                            .bootstrap_cross_signing_if_needed(None)
+                            .await;
                         wait_for_e2ee_state_to_settle(client).await;
                     },
                 }
             },
             Ok(None) => {
-                // Reset completed without needing approval.
+                // Reset completed — re-bootstrap to load private signing
+                // keys into the local crypto store, then settle.
+                let _ = client
+                    .encryption()
+                    .bootstrap_cross_signing_if_needed(None)
+                    .await;
                 wait_for_e2ee_state_to_settle(client).await;
             },
             Err(error) => {
@@ -539,6 +548,15 @@ async fn ensure_oidc_owned_encryption_state(
             },
         }
     }
+
+    // Re-bootstrap to ensure private signing keys are in the local store.
+    // After identity reset or on restart, the keys may exist on the server
+    // but not be loaded locally.
+    let _ = client
+        .encryption()
+        .bootstrap_cross_signing_if_needed(None)
+        .await;
+    wait_for_e2ee_state_to_settle(client).await;
 
     let cross_signing_complete = cross_signing_is_complete(client).await;
     let device_verified = own_device_is_cross_signed_by_owner(client)
