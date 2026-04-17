@@ -293,6 +293,22 @@ impl ChannelPlugin for MatrixPlugin {
             client::build_and_authenticate_client(account_id, &cfg).await?;
         let bot_user_id = authenticated.user_id;
 
+        // Guard: reject if another account is already connected as this Matrix user.
+        {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            for (aid, state) in accounts.iter() {
+                if aid != account_id
+                    && state.bot_user_id == bot_user_id.as_str()
+                    && !state.bot_user_id.is_empty()
+                {
+                    return Err(ChannelError::invalid_input(format!(
+                        "Matrix user {} is already connected as account '{aid}'",
+                        bot_user_id,
+                    )));
+                }
+            }
+        }
+
         let cancel = CancellationToken::new();
 
         {
@@ -552,6 +568,22 @@ impl ChannelPlugin for MatrixPlugin {
         let authenticated =
             crate::oidc::finish_oidc_login(&mx_client, &account_id, callback_url).await?;
         let bot_user_id = authenticated.user_id.clone();
+
+        // Guard: reject if another account is already connected as this Matrix user.
+        {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            for (aid, state) in accounts.iter() {
+                if aid != &account_id
+                    && state.bot_user_id == bot_user_id.as_str()
+                    && !state.bot_user_id.is_empty()
+                {
+                    return Err(ChannelError::invalid_input(format!(
+                        "Matrix user {} is already connected as account '{aid}'",
+                        bot_user_id,
+                    )));
+                }
+            }
+        }
 
         {
             let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());

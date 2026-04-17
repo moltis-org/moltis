@@ -134,8 +134,8 @@ function MatrixInfoRow({ label, value, copyLabel = null }) {
 	var text = String(value || "").trim();
 	return html`<div class="flex items-center justify-between gap-3">
 		<div class="min-w-0">
-			<div class="text-[11px] uppercase tracking-wide text-emerald-200/70">${label}</div>
-			<div class="truncate font-mono text-emerald-50">${text || "\u2014"}</div>
+			<div class="text-[11px] uppercase tracking-wide text-sky-700">${label}</div>
+			<div class="truncate font-mono text-sky-900">${text || "\u2014"}</div>
 		</div>
 		${
 			text &&
@@ -220,20 +220,20 @@ function MatrixOwnershipCard({ channel, matrixStatus }) {
 		});
 	}
 
-	return html`<div class="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
+	return html`<div class="rounded-md border border-sky-600/30 bg-sky-50 px-3 py-2 text-xs text-sky-900">
 		<div class="flex items-center gap-2">
-			<div class="font-medium text-sky-50">${modeTitle}</div>
+			<div class="font-medium text-sky-800">${modeTitle}</div>
 			<span class="provider-item-badge ${deviceVerified ? "configured" : "oauth"}">${verificationText}</span>
 		</div>
-		<div class="mt-1 text-sky-100/90">${modeText}</div>
-		<div class="mt-2 text-sky-100/90">
+		<div class="mt-1 text-sky-900">${modeText}</div>
+		<div class="mt-2 text-sky-900">
 			Cross-signing: <span class="font-medium">${matrixStatus?.cross_signing_complete ? "ready" : "not ready"}</span>.
 			Recovery: <span class="font-medium">${recoveryState}</span>.
 		</div>
 		${
 			hasAccountDetails &&
-			html`<details class="mt-2 rounded-md border border-sky-500/20 bg-sky-500/5 px-3 py-2">
-				<summary class="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-sky-100/80">
+			html`<details class="mt-2 rounded-md border border-sky-600/20 bg-sky-100/50 px-3 py-2">
+				<summary class="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-sky-800">
 					Matrix account details
 				</summary>
 				<div class="mt-2 grid gap-2">
@@ -268,7 +268,7 @@ function MatrixOwnershipCard({ channel, matrixStatus }) {
 						${retryingOwnership.value ? "Retrying ownership setup..." : "Click here once you reset the account"}
 					</button>
 				</div>
-				<div class="mt-2 text-[11px] text-sky-100/80">Make sure the browser page is signed into <span class="font-mono text-sky-50">${matrixStatus?.user_id || "the Matrix bot account"}</span>.</div>
+				<div class="mt-2 text-[11px] text-sky-800">Make sure the browser page is signed into <span class="font-mono text-sky-800">${matrixStatus?.user_id || "the Matrix bot account"}</span>.</div>
 				${
 					retryOwnershipError.value &&
 					html`<div class="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-100">
