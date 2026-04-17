@@ -138,6 +138,18 @@ impl ChannelRegistry {
         Ok(())
     }
 
+    /// Register an account in the index without starting it.
+    ///
+    /// Used by flows that create accounts outside of `start_account`
+    /// (e.g. OIDC two-phase login).
+    pub fn index_account(&self, account_id: &str, channel_type: &str) {
+        let mut index = self
+            .account_index
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        index.insert(account_id.to_string(), channel_type.to_string());
+    }
+
     /// Resolve account_id → channel_type via the index.
     pub fn resolve_channel_type(&self, account_id: &str) -> Option<String> {
         let index = self.account_index.read().unwrap_or_else(|e| e.into_inner());

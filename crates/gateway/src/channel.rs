@@ -836,6 +836,9 @@ impl ChannelService for LiveChannelService {
             .oidc_start(&account_id, config, &redirect_uri)
             .await
             .map_err(|e| e.to_string())?;
+        // Pre-register in the registry index so the account is findable
+        // before oidc_complete runs.
+        self.registry.index_account(&account_id, "matrix");
         Ok(result)
     }
 
@@ -877,6 +880,12 @@ impl ChannelService for LiveChannelService {
             .oidc_complete(&state, &callback_url)
             .await
             .map_err(|e| e.to_string())?;
+
+        // Register in the registry index so retry_ownership and other
+        // registry-level operations can find this account.
+        if let Some(account_id) = result.get("account_id").and_then(Value::as_str) {
+            self.registry.index_account(account_id, "matrix");
+        }
 
         // Persist the new channel to the store.
         if let Some(account_id) = result.get("account_id").and_then(Value::as_str)
