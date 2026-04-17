@@ -552,6 +552,9 @@ pub(super) async fn start_server_with_onboarding(
         false,
         None,
         None,
+        Arc::new(moltis_code_index::CodeIndex::config_only(
+            moltis_code_index::CodeIndexConfig::default(),
+        )),
         18789,
         false,
         None,

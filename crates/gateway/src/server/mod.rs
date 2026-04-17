@@ -9,12 +9,14 @@
 // - hooks:          hook discovery, DCG guard, seeding
 // - seed_content:   large const strings for seed files
 // - workspace:      workspace file seeding, persona sync
-// - init_channels:  channel store/registry/plugin setup
-// - init_memory:    memory system / embedding provider setup
+// - init_channels:    channel store/registry/plugin setup
+// - init_code_index:  code index config-only initialization
+// - init_memory:      memory system / embedding provider setup
 
 mod helpers;
 mod hooks;
 mod init_channels;
+mod init_code_index;
 mod init_memory;
 mod location;
 mod prepare_core;

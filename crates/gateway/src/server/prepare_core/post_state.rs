@@ -70,6 +70,7 @@ pub(super) struct PostStateInputs {
     pub provider_setup_service: Arc<LiveProviderSetupService>,
     pub live_mcp: Arc<crate::mcp_service::LiveMcpService>,
     pub memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+    pub code_index: Arc<moltis_code_index::CodeIndex>,
     pub credential_store: Arc<auth::CredentialStore>,
     pub db_pool: sqlx::SqlitePool,
     pub session_store: Arc<SessionStore>,
@@ -275,6 +276,7 @@ pub(super) async fn complete_startup(
         tailscale_mode_override,
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
+        code_index,
     } = inputs;
 
     let openclaw_startup_status = deferred_openclaw_status();
@@ -331,6 +333,13 @@ pub(super) async fn complete_startup(
     #[cfg(not(feature = "tls"))]
     let tls_enabled_for_gateway = false;
 
+    #[cfg(feature = "qmd")]
+    let code_index_for_tools = Arc::clone(&code_index);
+
+    #[cfg(feature = "code-index-builtin")]
+    #[allow(unused_variables)]
+    let code_index_for_tools_builtin = Arc::clone(&code_index);
+
     let state = GatewayState::with_options(
         resolved_auth,
         services,
@@ -343,6 +352,7 @@ pub(super) async fn complete_startup(
         tls_enabled_for_gateway,
         hook_registry.clone(),
         memory_manager.clone(),
+        code_index,
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),
@@ -810,6 +820,20 @@ pub(super) async fn complete_startup(
                 Arc::clone(&registry),
                 Arc::clone(&session_metadata),
             )));
+        }
+
+        // ── Code index tools ─────────────────────────────────────────────
+        #[cfg(feature = "qmd")]
+        {
+            moltis_code_index::tools::register_tools(&mut tool_registry, code_index_for_tools);
+        }
+
+        #[cfg(all(feature = "code-index-builtin", not(feature = "qmd")))]
+        {
+            moltis_code_index::tools::register_tools(
+                &mut tool_registry,
+                code_index_for_tools_builtin,
+            );
         }
 
         {

@@ -33,6 +33,7 @@ moltis-matrix           = { optional = true, workspace = true }
 moltis-mcp              = { workspace = true }
 moltis-mcp-agent-bridge = { workspace = true }
 moltis-media            = { workspace = true }
+moltis-code-index       = { workspace = true }
 moltis-memory           = { workspace = true }
 moltis-metrics          = { optional = true, workspace = true }
 moltis-msteams          = { workspace = true }
@@ -94,6 +95,7 @@ caldav = ["dep:moltis-caldav"]
 default = [
   "agent",
   "caldav",
+  "code-index-builtin",
   "file-watcher",
   "firecrawl",
   "fs-tools",
@@ -118,10 +120,12 @@ default = [
   "web-ui",
   "whatsapp",
 ]
+code-index-builtin = ["moltis-code-index/builtin"]
 file-watcher = [
   "moltis-memory/file-watcher",
   "moltis-openclaw-import?/file-watcher",
   "moltis-skills/file-watcher",
+  "moltis-code-index/file-watcher",
 ]
 firecrawl = ["moltis-tools/firecrawl"]
 fs-tools = ["moltis-tools/fs-tools"]
@@ -151,7 +155,7 @@ nostr = ["dep:moltis-nostr"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
-qmd = ["dep:moltis-qmd"]
+qmd = ["dep:moltis-qmd", "moltis-code-index/qmd"]
 slack = ["dep:moltis-slack", "moltis-slack/metrics"]
 tailscale = ["dep:moltis-tailscale"]
 tls = []
