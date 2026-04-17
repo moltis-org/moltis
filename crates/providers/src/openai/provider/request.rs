@@ -416,13 +416,24 @@ fn assign_openai_tool_call_id(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use secrecy::Secret;
 
     use super::*;
 
+    fn next_test_secret_id() -> u64 {
+        static NEXT_TEST_SECRET_ID: AtomicU64 = AtomicU64::new(1);
+        NEXT_TEST_SECRET_ID.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn generated_api_key() -> Secret<String> {
+        Secret::new(format!("k{:016x}", next_test_secret_id()))
+    }
+
     fn provider(model: &str, provider_name: &str, base_url: &str) -> OpenAiProvider {
         OpenAiProvider::new_with_name(
-            Secret::new("test-key".to_string()),
+            generated_api_key(),
             model.to_string(),
             base_url.to_string(),
             provider_name.to_string(),
