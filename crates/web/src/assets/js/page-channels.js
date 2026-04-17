@@ -1518,7 +1518,7 @@ function AddMatrixModal() {
 	        </div>
 	      `}
 	      ${
-					authModeDraft.value !== "oidc" && (authModeDraft.value === "password"
+					authModeDraft.value === "password" || authModeDraft.value === "oidc"
 						? html`
 	        <label class="flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2">
 	          <input
@@ -1539,7 +1539,7 @@ function AddMatrixModal() {
 						: html`<div class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(
 								authModeDraft.value,
 								"user_managed",
-							)}</div>`)
+							)}</div>`
 				}
 	      ${authModeDraft.value !== "oidc" && html`
 	      <label class="text-xs text-[var(--muted)]">Matrix User ID${authModeDraft.value === "password" ? " (required)" : " (optional)"}</label>

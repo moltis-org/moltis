@@ -3266,7 +3266,7 @@ function MatrixForm({ onConnected, error, setError }) {
 			</div>
 		`}
 		${
-			authMode !== "oidc" && (authMode === "password"
+			authMode === "password" || authMode === "oidc"
 				? html`<label class="flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3">
 					<input
 						type="checkbox"
@@ -3278,7 +3278,7 @@ function MatrixForm({ onConnected, error, setError }) {
 						<span class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(authMode, ownershipMode)}</span>
 					</span>
 				</label>`
-				: html`<div class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(authMode, "user_managed")}</div>`)
+				: html`<div class="text-xs text-[var(--muted)]">${matrixOwnershipModeGuidance(authMode, "user_managed")}</div>`
 		}
 		${authMode !== "oidc" && html`
 		<div>
