@@ -480,36 +480,75 @@ async fn ensure_oidc_owned_encryption_state(
 
     wait_for_e2ee_state_to_settle(client).await;
 
-    // The signing keys may not be immediately available after bootstrap.
-    // Retry self-signing a few times with short waits for key propagation.
-    let mut self_signed = false;
-    for attempt in 1..=3 {
-        match ensure_own_device_is_cross_signed(client).await {
-            Ok(()) => {
-                self_signed = true;
-                break;
+    // After bootstrap, check if this device can actually self-sign.
+    // If cross-signing was already set up by a previous session, this device
+    // won't have the private signing keys. In that case, reset the identity
+    // to create fresh cross-signing keys owned by this device.
+    if !ownership_is_ready(client).await.unwrap_or(false) {
+        info!(
+            account_id,
+            "matrix OIDC cross-signing exists but this device lacks signing keys, resetting identity"
+        );
+
+        match client.encryption().recovery().reset_identity().await {
+            Ok(Some(handle)) => {
+                match handle.auth_type() {
+                    CrossSigningResetAuthType::OAuth(_) => {
+                        let startup_error = ownership_approval_message(&handle);
+                        warn!(
+                            account_id,
+                            error = startup_error,
+                            "matrix OIDC ownership needs browser approval"
+                        );
+                        return OwnershipAttemptResult {
+                            startup_error: Some(startup_error),
+                            pending_identity_reset: Some(handle),
+                        };
+                    },
+                    CrossSigningResetAuthType::Uiaa(_) => {
+                        // Try reset without auth — MAS may allow it.
+                        if let Err(error) = handle.reset(None).await {
+                            warn!(
+                                account_id,
+                                error = %error,
+                                "matrix OIDC identity reset auth failed"
+                            );
+                            return OwnershipAttemptResult {
+                                startup_error: Some(error.to_string()),
+                                pending_identity_reset: None,
+                            };
+                        }
+                        wait_for_e2ee_state_to_settle(client).await;
+                    },
+                }
             },
-            Err(error) if attempt < 3 => {
-                info!(
-                    account_id,
-                    attempt,
-                    error = %error,
-                    "matrix OIDC device self-signing not ready yet, retrying"
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            Ok(None) => {
+                // Reset completed without needing approval.
                 wait_for_e2ee_state_to_settle(client).await;
             },
             Err(error) => {
                 warn!(
                     account_id,
                     error = %error,
-                    "matrix OIDC device self-signing failed after retries"
+                    "matrix OIDC identity reset failed"
                 );
+                return OwnershipAttemptResult {
+                    startup_error: Some(error.to_string()),
+                    pending_identity_reset: None,
+                };
             },
         }
     }
 
-    if self_signed || ownership_is_ready(client).await.unwrap_or(false) {
+    if let Err(error) = ensure_own_device_is_cross_signed(client).await {
+        warn!(
+            account_id,
+            error = %error,
+            "matrix OIDC device self-signing failed"
+        );
+    }
+
+    if ownership_is_ready(client).await.unwrap_or(false) {
         info!(account_id, "matrix OIDC ownership bootstrap complete");
     } else {
         info!(
