@@ -152,10 +152,19 @@ impl FileWatcher {
         }
 
         // Filter to indexable files only.
+        // For Remove events, skip the `is_file()` check since the file
+        // is already gone — only validate extension and skip patterns.
+        let is_remove = matches!(event.kind, EventKind::Remove(_));
         let indexable: Vec<PathBuf> = event
             .paths
             .into_iter()
-            .filter(|p| Self::is_indexable(p, filter_config))
+            .filter(|p| {
+                if is_remove {
+                    Self::is_indexable_by_extension(p, filter_config)
+                } else {
+                    Self::is_indexable(p, filter_config)
+                }
+            })
             .collect();
 
         if !indexable.is_empty() {
@@ -175,7 +184,14 @@ impl FileWatcher {
             return false;
         }
 
-        // Check extension.
+        Self::is_indexable_by_extension(path, config)
+    }
+
+    /// Check if a path should be indexed based solely on extension and skip patterns.
+    ///
+    /// Used for Remove events where `is_file()` would return false because
+    /// the file is already deleted.
+    fn is_indexable_by_extension(path: &Path, config: &FilterConfig) -> bool {
         let ext = match path.extension().and_then(|e| e.to_str()) {
             Some(e) => e,
             None => return false,

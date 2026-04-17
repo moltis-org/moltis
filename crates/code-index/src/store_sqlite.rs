@@ -32,6 +32,16 @@ pub struct SqliteCodeIndexStore {
 impl SqliteCodeIndexStore {
     /// Create a new SQLite store at the given path.
     pub async fn new(db_path: &Path) -> Result<Self> {
+        // Ensure parent directory exists — SQLite only creates the file, not directories.
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                Error::IndexStore(format!(
+                    "failed to create code-index directory {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+
         let options = SqliteConnectOptions::new()
             .filename(db_path)
             .create_if_missing(true);
