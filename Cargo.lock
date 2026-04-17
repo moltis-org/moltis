@@ -7342,6 +7342,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-code-index"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "gix",
+ "metrics 0.24.3",
+ "moltis-agents",
+ "moltis-config",
+ "moltis-memory",
+ "moltis-qmd",
+ "moltis-tools",
+ "notify-debouncer-full",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "moltis-common"
 version = "0.1.0"
 dependencies = [
@@ -7466,6 +7492,7 @@ dependencies = [
  "moltis-canvas",
  "moltis-channels",
  "moltis-chat",
+ "moltis-code-index",
  "moltis-common",
  "moltis-config",
  "moltis-cron",
@@ -7568,6 +7595,7 @@ dependencies = [
  "moltis-auth",
  "moltis-browser",
  "moltis-channels",
+ "moltis-code-index",
  "moltis-common",
  "moltis-config",
  "moltis-cron",
