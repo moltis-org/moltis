@@ -39,12 +39,12 @@ END;
 CREATE TRIGGER IF NOT EXISTS code_chunks_fts_delete
 AFTER DELETE ON code_chunks
 BEGIN
-    DELETE FROM code_chunks_fts WHERE rowid = OLD.id;
+    INSERT INTO code_chunks_fts(code_chunks_fts, rowid, content) VALUES('delete', OLD.id, OLD.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS code_chunks_fts_update
 AFTER UPDATE ON code_chunks
 BEGIN
-    DELETE FROM code_chunks_fts WHERE rowid = OLD.id;
+    INSERT INTO code_chunks_fts(code_chunks_fts, rowid, content) VALUES('delete', OLD.id, OLD.content);
     INSERT INTO code_chunks_fts(rowid, content) VALUES (NEW.id, NEW.content);
 END;
