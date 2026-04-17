@@ -27,7 +27,7 @@ default = []
 metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true
