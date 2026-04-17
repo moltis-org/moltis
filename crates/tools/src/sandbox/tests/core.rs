@@ -17,7 +17,7 @@ fn test_sandbox_scope_display() {
 
 #[test]
 fn test_docker_hardening_args_prebuilt() {
-    let args = DockerSandbox::hardening_args(true);
+    let args = DockerSandbox::hardening_args(true, BackendKind::Docker);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -44,7 +44,7 @@ fn test_docker_hardening_args_prebuilt() {
 
 #[test]
 fn test_docker_hardening_args_not_prebuilt() {
-    let args = DockerSandbox::hardening_args(false);
+    let args = DockerSandbox::hardening_args(false, BackendKind::Docker);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -67,6 +67,34 @@ fn test_docker_hardening_args_not_prebuilt() {
     assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
     assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
     assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+}
+
+#[test]
+fn test_docker_hardening_args_podman() {
+    let args = DockerSandbox::hardening_args(true, BackendKind::Podman);
+    // Core hardening flags must still be present
+    assert!(args.contains(&"--cap-drop".to_string()));
+    assert!(args.contains(&"ALL".to_string()));
+    assert!(args.contains(&"--security-opt".to_string()));
+    assert!(args.contains(&"no-new-privileges".to_string()));
+    assert!(args.contains(&"--read-only".to_string()));
+    assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
+    assert!(args.contains(&"/run:rw,nosuid,size=64m".to_string()));
+    let hostname_pos = args
+        .iter()
+        .position(|a| a == "--hostname")
+        .expect("--hostname flag missing");
+    assert_eq!(
+        args[hostname_pos + 1],
+        "sandbox",
+        "--hostname value should be 'sandbox'"
+    );
+    // Sysfs tmpfs overlays must NOT be present — Podman's tmpcopyup breaks
+    // these under --cap-drop ALL.
+    assert!(!args.contains(&"/sys/firmware:ro,nosuid".to_string()));
+    assert!(!args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
+    assert!(!args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
+    assert!(!args.contains(&"/sys/class/block:ro,nosuid".to_string()));
 }
 
 #[test]

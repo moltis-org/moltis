@@ -137,7 +137,7 @@ pub(super) async fn setup_required_page_accessible_for_remote() {
 #[tokio::test]
 pub(super) async fn setup_required_redirects_to_login_after_setup() {
     let (addr, store, _state) = start_proxied_server().await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
 
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -172,7 +172,7 @@ pub(super) async fn setup_required_redirects_to_login_after_setup() {
 #[tokio::test]
 pub(super) async fn onboarding_requires_auth_after_setup() {
     let (addr, store, _state) = start_proxied_server().await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
 
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -208,7 +208,7 @@ pub(super) async fn onboarding_requires_auth_after_setup() {
 #[tokio::test]
 pub(super) async fn onboarding_accessible_with_session_after_setup() {
     let (addr, store, _state) = start_proxied_server().await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
     let token = store.create_session().await.unwrap();
 
     let client = reqwest::Client::builder()
@@ -242,7 +242,7 @@ pub(super) async fn onboarding_accessible_with_session_after_setup() {
 #[tokio::test]
 pub(super) async fn onboarding_remains_accessible_after_auth_reset_when_onboarded() {
     let (addr, store, _state) = start_server_with_onboarding(true, true).await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
     store.reset_all().await.unwrap();
 
     let client = reqwest::Client::builder()
@@ -275,8 +275,9 @@ pub(super) async fn onboarding_remains_accessible_after_auth_reset_when_onboarde
 #[tokio::test]
 pub(super) async fn setup_endpoint_rejected_after_setup_complete() {
     let (addr, store, _state) = start_proxied_server().await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
     let token = store.create_session().await.unwrap();
+    let new_password = generated_password();
 
     let client = reqwest::Client::new();
 
@@ -285,7 +286,7 @@ pub(super) async fn setup_endpoint_rejected_after_setup_complete() {
         .post(format!("http://{addr}/api/auth/setup"))
         .header("Cookie", format!("moltis_session={token}"))
         .header("Content-Type", "application/json")
-        .body(r#"{"password":"evil-new-password"}"#)
+        .body(json_password(&new_password))
         .send()
         .await
         .unwrap();
@@ -301,7 +302,7 @@ pub(super) async fn setup_endpoint_rejected_after_setup_complete() {
 #[tokio::test]
 pub(super) async fn authenticated_api_endpoint_not_rate_limited() {
     let (addr, store) = start_auth_server().await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
     let token = store.create_session().await.unwrap();
 
     let client = reqwest::Client::new();
@@ -327,6 +328,7 @@ pub(super) async fn authenticated_api_endpoint_not_rate_limited() {
 #[tokio::test]
 pub(super) async fn password_change_initializes_vault() {
     let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let new_password = generated_password();
 
     // Vault starts uninitialized.
     assert_eq!(
@@ -339,7 +341,7 @@ pub(super) async fn password_change_initializes_vault() {
     let resp = client
         .post(format!("http://{addr}/api/auth/password/change"))
         .header("Content-Type", "application/json")
-        .body(r#"{"new_password":"newpass12345678"}"#)
+        .body(json_new_password(&new_password))
         .send()
         .await
         .unwrap();
@@ -364,7 +366,7 @@ pub(super) async fn password_change_initializes_vault() {
 
     // Password should be set.
     assert!(store.has_password().await.unwrap());
-    assert!(store.verify_password("newpass12345678").await.unwrap());
+    assert!(store.verify_password(&new_password).await.unwrap());
 }
 
 /// Setting a password via /api/auth/password/change when the vault is already
@@ -373,9 +375,11 @@ pub(super) async fn password_change_initializes_vault() {
 #[tokio::test]
 pub(super) async fn password_change_on_initialized_vault_no_recovery_key() {
     let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let existing_password = generated_password();
+    let new_password = generated_password();
 
     // Pre-initialize the vault to simulate a previous setup.
-    let _rk = vault.initialize("oldpass123").await.unwrap();
+    let _rk = vault.initialize(&existing_password).await.unwrap();
     assert_eq!(
         vault.status().await.unwrap(),
         moltis_vault::VaultStatus::Unsealed
@@ -386,7 +390,7 @@ pub(super) async fn password_change_on_initialized_vault_no_recovery_key() {
     let resp = client
         .post(format!("http://{addr}/api/auth/password/change"))
         .header("Content-Type", "application/json")
-        .body(r#"{"new_password":"newpass12345678"}"#)
+        .body(json_new_password(&new_password))
         .send()
         .await
         .unwrap();
@@ -410,7 +414,8 @@ pub(super) async fn password_change_on_initialized_vault_no_recovery_key() {
 #[tokio::test]
 pub(super) async fn sealed_vault_allows_bootstrap() {
     let (addr, _store, _state, vault) = start_localhost_server_with_vault().await;
-    let _rk = vault.initialize("testpass12345").await.unwrap();
+    let password = generated_password();
+    let _rk = vault.initialize(&password).await.unwrap();
     vault.seal().await;
 
     let blocked_resp = reqwest::get(format!("http://{addr}/api/skills"))
@@ -440,7 +445,8 @@ pub(super) async fn sealed_vault_allows_session_history() {
         )
         .await
         .unwrap();
-    let _rk = vault.initialize("testpass12345").await.unwrap();
+    let password = generated_password();
+    let _rk = vault.initialize(&password).await.unwrap();
     vault.seal().await;
 
     let blocked_resp = reqwest::get(format!("http://{addr}/api/skills"))
@@ -586,7 +592,7 @@ pub(super) async fn start_server_with_onboarding(
 #[tokio::test]
 pub(super) async fn local_api_during_onboarding_bypasses_auth() {
     let (addr, store, _state) = start_server_with_onboarding(false, false).await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
 
     let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
         .await
@@ -604,7 +610,7 @@ pub(super) async fn local_api_during_onboarding_bypasses_auth() {
 #[tokio::test]
 pub(super) async fn local_api_after_onboarding_requires_auth() {
     let (addr, store, _state) = start_server_with_onboarding(true, false).await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
 
     let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
         .await
@@ -622,7 +628,7 @@ pub(super) async fn local_api_after_onboarding_requires_auth() {
 #[tokio::test]
 pub(super) async fn remote_api_during_onboarding_requires_auth() {
     let (addr, store, _state) = start_server_with_onboarding(false, true).await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
 
     let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
         .await
@@ -641,7 +647,7 @@ pub(super) async fn remote_api_during_onboarding_requires_auth() {
 #[tokio::test]
 pub(super) async fn local_privileged_api_during_onboarding_requires_auth() {
     let (addr, store, _state) = start_server_with_onboarding(false, false).await;
-    store.set_initial_password("testpass12345").await.unwrap();
+    set_initial_test_password(&store).await;
 
     // /api/config is not in the onboarding bypass allowlist.
     let resp = reqwest::get(format!("http://{addr}/api/config"))

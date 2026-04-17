@@ -38,5 +38,7 @@ fi
 if [[ "${1:-}" == "--watch" ]]; then
   exec $TAILWIND -i input.css -o ../src/assets/style.css --watch
 else
-  exec $TAILWIND -i input.css -o ../src/assets/style.css --minify
+  # Unminified so the committed output is diffable (one rule per line).
+  # Release builds compress assets via include_dir! and HTTP gzip anyway.
+  exec $TAILWIND -i input.css -o ../src/assets/style.css
 fi

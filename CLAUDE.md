@@ -74,10 +74,11 @@ release mode embeds via `include_dir!` with versioned URLs.
 - **Always use Tailwind classes** instead of inline `style="..."`.
 - Reuse CSS classes from `components.css`: `provider-btn`, `provider-btn-secondary`, `provider-btn-danger`.
 - Match button heights/text sizes when elements sit together.
-- **Rebuild Tailwind** after adding new classes:
+- **Rebuild Tailwind** after adding new classes and **commit the output**:
   ```bash
-  cd crates/web/ui && npx tailwindcss -i input.css -o ../src/assets/style.css --minify
+  cd crates/web/ui && npx tailwindcss -i input.css -o ../src/assets/style.css
   ```
+  `style.css` is checked in (unminified, one rule per line) so `cargo build` works without Node.js and diffs merge cleanly.
 
 ### Selection Cards
 

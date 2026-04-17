@@ -365,8 +365,10 @@ test.describe("Session management", () => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
-		await expectRpcOk(page, "sessions.clear_all", {});
 
+		// Skip clear_all — the test uses unique session-key selectors so
+		// leftover sessions from prior tests do not interfere, and the RPC
+		// can time out under CI load when many sessions have accumulated.
 		await createSession(page);
 		const sessionPath = new URL(page.url()).pathname;
 		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");

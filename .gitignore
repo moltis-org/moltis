@@ -23,7 +23,6 @@ crates/web/ui/playwright-report/
 crates/web/ui/test-results/
 website/node_modules/
 website/.playwright-mcp/
-crates/web/src/assets/style.css
 crates/web/src/assets/js/vendor/shiki.mjs
 crates/gateway/ui/node_modules/
 crates/gateway/ui/playwright-report/

@@ -120,10 +120,10 @@ hardening flags by default:
 | `--tmpfs /run:rw,nosuid,size=64m` | Writable tmpfs for runtime files |
 | `--read-only` | Read-only root filesystem (prebuilt images only) |
 | `--hostname sandbox` | Prevents host hostname leakage |
-| `--tmpfs /sys/firmware:ro,nosuid` | Masks BIOS/UEFI firmware data |
-| `--tmpfs /sys/class/dmi:ro,nosuid` | Masks system serial numbers and identifiers |
-| `--tmpfs /sys/devices/virtual/dmi:ro,nosuid` | Masks DMI attributes |
-| `--tmpfs /sys/class/block:ro,nosuid` | Masks block device info (disk models, LUKS UUIDs) |
+| `--tmpfs /sys/firmware:ro,nosuid` | Masks BIOS/UEFI firmware data (Docker only) |
+| `--tmpfs /sys/class/dmi:ro,nosuid` | Masks system serial numbers and identifiers (Docker only) |
+| `--tmpfs /sys/devices/virtual/dmi:ro,nosuid` | Masks DMI attributes (Docker only) |
+| `--tmpfs /sys/class/block:ro,nosuid` | Masks block device info (Docker only) |
 
 The `--read-only` flag is applied only to prebuilt sandbox images (where
 packages are already baked in). Non-prebuilt images need a writable root
@@ -133,6 +133,13 @@ The `/sys` tmpfs overlays prevent host hardware metadata (serial numbers, disk
 models, LUKS UUIDs) from being visible inside the container. Note that
 `tools.fs.deny_paths` only restricts Moltis file-access tools — these kernel
 filesystem masks prevent leakage via shell commands as well.
+
+> **Podman note:** The sysfs tmpfs overlays are applied on Docker only. Podman's
+> OCI runtime performs "tmpcopyup" when mounting tmpfs over sysfs paths, which
+> fails under `--cap-drop ALL` because some sysfs files are permission-denied
+> even for root. Podman masks `/sys/firmware` via its built-in OCI
+> `MaskedPaths`; `/sys/class/dmi`, `/sys/devices/virtual/dmi`, and
+> `/sys/class/block` remain readable inside the container on Podman.
 
 ## WASM Sandbox (Wasmtime + WASI)
 

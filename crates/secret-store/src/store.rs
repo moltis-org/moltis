@@ -184,7 +184,18 @@ pub async fn decrypt_secret_fields<C: moltis_vault::Cipher>(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
+
+    fn next_test_secret_id() -> u64 {
+        static NEXT_TEST_SECRET_ID: AtomicU64 = AtomicU64::new(1);
+        NEXT_TEST_SECRET_ID.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn generated_secret_value() -> String {
+        format!("s{:016x}", next_test_secret_id())
+    }
 
     #[cfg(feature = "vault")]
     async fn test_vault() -> moltis_vault::Vault<moltis_vault::XChaCha20Poly1305Cipher> {
@@ -209,14 +220,16 @@ mod tests {
         let vault = moltis_vault::Vault::with_cipher(pool, moltis_vault::XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        vault.initialize("test-password").await.unwrap();
+        let password = generated_secret_value();
+        vault.initialize(&password).await.unwrap();
         vault
     }
 
     #[test]
     fn plaintext_detection_accepts_legacy_strings() {
+        let token = generated_secret_value();
         let config = serde_json::json!({
-            "token": "secret-token",
+            "token": token,
             "room_policy": "allowlist"
         });
 
@@ -228,9 +241,11 @@ mod tests {
     #[tokio::test]
     async fn encrypt_and_decrypt_round_trip_secret_fields() {
         let vault = test_vault().await;
+        let token = generated_secret_value();
+        let password = generated_secret_value();
         let mut config = serde_json::json!({
-            "token": "secret-token",
-            "password": "hunter2",
+            "token": token.clone(),
+            "password": password.clone(),
             "room_policy": "allowlist"
         });
 
@@ -255,16 +270,17 @@ mod tests {
         .await
         .unwrap();
         assert!(decrypted);
-        assert_eq!(config["token"], "secret-token");
-        assert_eq!(config["password"], "hunter2");
+        assert_eq!(config["token"], token);
+        assert_eq!(config["password"], password);
     }
 
     #[cfg(feature = "vault")]
     #[tokio::test]
     async fn encrypt_skips_already_tagged_fields() {
         let vault = test_vault().await;
+        let token = generated_secret_value();
         let ciphertext = vault
-            .encrypt_string("secret-token", "channel:telegram:bot1:token")
+            .encrypt_string(&token, "channel:telegram:bot1:token")
             .await
             .unwrap();
         let mut config = serde_json::json!({

@@ -430,6 +430,80 @@ pub async fn prepare_gateway(
                 },
             ),
         );
+
+        // Slack slash command webhook -- receives /command payloads.
+        let slack_cmd_plugin = Arc::clone(&slack_webhook_plugin);
+        let state_for_slack_cmd = Arc::clone(&state);
+        app = app.route(
+            "/api/channels/slack/{account_id}/commands",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&slack_cmd_plugin);
+                    let gw_state = Arc::clone(&state_for_slack_cmd);
+                    async move {
+                        // Get the verifier from the plugin.
+                        let verifier = {
+                            let p = plugin.read().await;
+                            p.channel_webhook_verifier(&account_id)
+                        };
+                        let Some(verifier) = verifier else {
+                            return (
+                                StatusCode::NOT_FOUND,
+                                Json(serde_json::json!({ "ok": false, "error": "unknown Slack account" })),
+                            )
+                                .into_response();
+                        };
+
+                        // Run the middleware pipeline.
+                        match moltis_gateway::channel_webhook_middleware::channel_webhook_gate(
+                            verifier.as_ref(),
+                            &gw_state.channel_webhook_dedup,
+                            &gw_state.channel_webhook_rate_limiter,
+                            &account_id,
+                            &headers,
+                            &body,
+                        ) {
+                            Err(rejection) => {
+                                crate::channel_webhook_middleware::rejection_into_response(
+                                    rejection,
+                                )
+                            },
+                            Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => {
+                                // Slash commands display the response body in
+                                // Slack, so return an empty 200 for deduped
+                                // requests instead of JSON the user would see.
+                                StatusCode::OK.into_response()
+                            },
+                            Ok((verified, moltis_channels::ChannelWebhookDedupeResult::New)) => {
+                                // Dispatch to Slack plugin with verified body.
+                                let result = {
+                                    let p = plugin.read().await;
+                                    p.ingest_verified_command_webhook(
+                                        &account_id,
+                                        &verified.body,
+                                    )
+                                    .await
+                                };
+                                match result {
+                                    Ok(response_text) => (
+                                        StatusCode::OK,
+                                        response_text,
+                                    )
+                                        .into_response(),
+                                    Err(e) => (
+                                        StatusCode::BAD_REQUEST,
+                                        Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+                                    )
+                                        .into_response(),
+                                }
+                            },
+                        }
+                    }
+                },
+            ),
+        );
     }
 
     // -- Generic webhook ingress ------------------------------------------------

@@ -277,6 +277,62 @@ pub async fn handle_verified_interaction_webhook(
     Ok(())
 }
 
+/// Handle an already-verified slash command webhook request.
+///
+/// Slack sends slash commands as `application/x-www-form-urlencoded` with
+/// fields: `command`, `text`, `user_id`, `channel_id`, etc.
+/// Returns the response text to send back to the user.
+pub async fn handle_verified_command_webhook(
+    account_id: &str,
+    body: &[u8],
+    accounts: &AccountStateMap,
+) -> moltis_channels::Result<String> {
+    let body_str = std::str::from_utf8(body)
+        .map_err(|e| moltis_channels::Error::invalid_input(format!("invalid utf-8: {e}")))?;
+
+    let command = extract_form_field(body_str, "command").unwrap_or_default();
+    let text = extract_form_field(body_str, "text").unwrap_or_default();
+    let user_id = extract_form_field(body_str, "user_id").unwrap_or_default();
+    let channel_id = extract_form_field(body_str, "channel_id").unwrap_or_default();
+
+    if command.is_empty() {
+        return Err(moltis_channels::Error::invalid_input(
+            "missing command field in slash command payload",
+        ));
+    }
+
+    let full_command = format!("{command} {text}").trim().to_string();
+
+    let event_sink = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts.get(account_id).and_then(|s| s.event_sink.clone())
+    };
+
+    if let Some(sink) = event_sink {
+        let reply_to = ChannelReplyTarget {
+            channel_type: ChannelType::Slack,
+            account_id: account_id.to_string(),
+            chat_id: channel_id,
+            message_id: None,
+            thread_id: None,
+        };
+        let sender = if user_id.is_empty() {
+            None
+        } else {
+            Some(user_id.as_str())
+        };
+        match sink.dispatch_command(&full_command, reply_to, sender).await {
+            Ok(response_text) => Ok(response_text),
+            Err(e) => {
+                debug!(account_id, %full_command, "command dispatch failed: {e}");
+                Ok(format!("Error: {e}"))
+            },
+        }
+    } else {
+        Ok("Channel not configured".to_string())
+    }
+}
+
 /// Dispatch an event_callback payload to the appropriate handler.
 async fn dispatch_event_callback(
     account_id: &str,
@@ -452,15 +508,20 @@ pub async fn handle_interaction_webhook(
     Ok(())
 }
 
-/// Extract the `payload` field from a `application/x-www-form-urlencoded` body.
-fn extract_form_payload(body: &str) -> Option<String> {
+/// Extract a named field from a `application/x-www-form-urlencoded` body.
+fn extract_form_field(body: &str, name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
     for pair in body.split('&') {
-        if let Some(value) = pair.strip_prefix("payload=") {
-            // URL-decode the value.
+        if let Some(value) = pair.strip_prefix(prefix.as_str()) {
             return url_decode(value);
         }
     }
     None
+}
+
+/// Extract the `payload` field from a `application/x-www-form-urlencoded` body.
+fn extract_form_payload(body: &str) -> Option<String> {
+    extract_form_field(body, "payload")
 }
 
 /// Simple percent-decoding for URL-encoded strings.
@@ -560,5 +621,70 @@ mod tests {
     fn extract_form_payload_missing() {
         let body = "token=abc&other=val";
         assert!(extract_form_payload(body).is_none());
+    }
+
+    #[test]
+    fn extract_form_field_finds_named_field() {
+        let body = "token=abc&command=%2Fnew&text=hello+world&user_id=U123";
+        assert_eq!(
+            extract_form_field(body, "command"),
+            Some("/new".to_string())
+        );
+        assert_eq!(
+            extract_form_field(body, "text"),
+            Some("hello world".to_string())
+        );
+        assert_eq!(
+            extract_form_field(body, "user_id"),
+            Some("U123".to_string())
+        );
+        assert!(extract_form_field(body, "missing").is_none());
+    }
+
+    #[test]
+    fn extract_form_field_does_not_match_prefix_of_other_field() {
+        let body = "user_id=U123&user_name=roadrunner";
+        assert_eq!(
+            extract_form_field(body, "user_id"),
+            Some("U123".to_string())
+        );
+        assert_eq!(
+            extract_form_field(body, "user_name"),
+            Some("roadrunner".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_verified_command_missing_command_field() {
+        let accounts: AccountStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let body = b"text=hello&user_id=U123&channel_id=C456";
+        let result = handle_verified_command_webhook("acct1", body, &accounts).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("missing command field"), "error: {err}");
+    }
+
+    #[tokio::test]
+    async fn handle_verified_command_no_event_sink() {
+        let accounts: AccountStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        {
+            let mut accts = accounts.write().unwrap();
+            accts.insert("acct1".to_string(), AccountState {
+                account_id: "acct1".to_string(),
+                config: SlackAccountConfig::default(),
+                message_log: None,
+                event_sink: None,
+                cancel: tokio_util::sync::CancellationToken::new(),
+                bot_user_id: Some("B123".to_string()),
+                pending_threads: std::collections::HashMap::new(),
+            });
+        }
+
+        let body = b"command=%2Fnew&text=&user_id=U123&channel_id=C456";
+        let result = handle_verified_command_webhook("acct1", body, &accounts).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Channel not configured");
     }
 }

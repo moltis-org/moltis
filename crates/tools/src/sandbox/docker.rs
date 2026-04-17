@@ -33,13 +33,23 @@ use {
     },
 };
 
+/// Distinguishes Docker from Podman for behaviour that differs between the two
+/// OCI runtimes (hardening flags, host-gateway resolution, etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BackendKind {
+    Docker,
+    Podman,
+}
+
 /// Docker/Podman-based sandbox implementation.
 ///
 /// The `cli` field selects the container CLI binary (`"docker"` or `"podman"`).
 /// Podman's CLI is a drop-in replacement for Docker, so both backends share
-/// this single implementation.
+/// this single implementation.  `kind` carries the typed backend identity for
+/// behaviour branching without string comparisons.
 pub struct DockerSandbox {
     pub config: SandboxConfig,
+    kind: BackendKind,
     cli: &'static str,
     backend_label: &'static str,
 }
@@ -48,6 +58,7 @@ impl DockerSandbox {
     pub fn new(config: SandboxConfig) -> Self {
         Self {
             config,
+            kind: BackendKind::Docker,
             cli: "docker",
             backend_label: "docker",
         }
@@ -56,6 +67,7 @@ impl DockerSandbox {
     pub fn podman(config: SandboxConfig) -> Self {
         Self {
             config,
+            kind: BackendKind::Podman,
             cli: "podman",
             backend_label: "podman",
         }
@@ -138,7 +150,7 @@ impl DockerSandbox {
     /// Podman uses a bridge whose gateway we can query via
     /// `podman network inspect`.
     pub(crate) fn resolve_host_gateway(&self) -> String {
-        if self.cli != "podman" {
+        if self.kind != BackendKind::Podman {
             return "host-gateway".to_string();
         }
 
@@ -179,7 +191,7 @@ impl DockerSandbox {
     /// `is_prebuilt` controls whether `--read-only` is applied: prebuilt images
     /// already have packages baked in so the root FS can be read-only, while
     /// non-prebuilt images need a writable root for `apt-get` provisioning.
-    pub(crate) fn hardening_args(is_prebuilt: bool) -> Vec<String> {
+    pub(crate) fn hardening_args(is_prebuilt: bool, kind: BackendKind) -> Vec<String> {
         let mut args = vec![
             // --- Capability / privilege ---
             "--cap-drop".to_string(),
@@ -196,19 +208,28 @@ impl DockerSandbox {
             // and the `hostname` command do not reveal the host identity.
             "--hostname".to_string(),
             "sandbox".to_string(),
-            // Mask /sys subtrees that expose host hardware identifiers
-            // (serial numbers, BIOS/UEFI data, disk models, LUKS UUIDs).
-            // Empty read-only tmpfs overlays hide the underlying sysfs entries
-            // and work identically on Docker and Podman.
-            "--tmpfs".to_string(),
-            "/sys/firmware:ro,nosuid".to_string(),
-            "--tmpfs".to_string(),
-            "/sys/class/dmi:ro,nosuid".to_string(),
-            "--tmpfs".to_string(),
-            "/sys/devices/virtual/dmi:ro,nosuid".to_string(),
-            "--tmpfs".to_string(),
-            "/sys/class/block:ro,nosuid".to_string(),
         ];
+        // Mask /sys subtrees that expose host hardware identifiers
+        // (serial numbers, BIOS/UEFI data, disk models, LUKS UUIDs).
+        // Empty read-only tmpfs overlays hide the underlying sysfs entries.
+        //
+        // Podman is excluded: its OCI runtime performs "tmpcopyup" on sysfs
+        // tmpfs mounts, copying directory contents into the tmpfs first.
+        // With --cap-drop ALL some sysfs files are permission-denied even for
+        // root, causing the mount (and container startup) to fail.  Podman
+        // already masks /sys/firmware via its built-in OCI MaskedPaths.
+        if kind != BackendKind::Podman {
+            args.extend([
+                "--tmpfs".to_string(),
+                "/sys/firmware:ro,nosuid".to_string(),
+                "--tmpfs".to_string(),
+                "/sys/class/dmi:ro,nosuid".to_string(),
+                "--tmpfs".to_string(),
+                "/sys/devices/virtual/dmi:ro,nosuid".to_string(),
+                "--tmpfs".to_string(),
+                "/sys/class/block:ro,nosuid".to_string(),
+            ]);
+        }
         if is_prebuilt {
             args.push("--read-only".to_string());
         }
@@ -321,7 +342,7 @@ impl Sandbox for DockerSandbox {
         }
 
         args.extend(self.resource_args());
-        args.extend(Self::hardening_args(is_prebuilt));
+        args.extend(Self::hardening_args(is_prebuilt, self.kind));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
 
