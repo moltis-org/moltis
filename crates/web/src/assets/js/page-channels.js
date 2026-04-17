@@ -1435,10 +1435,13 @@ function AddMatrixModal() {
 							if (channels.some((ch) => ch.account_id === accountId && ch.status === "connected")) {
 								clearInterval(oidcPollRef.current);
 								oidcPollRef.current = null;
-								oidcWaiting.value = false;
-								showAddMatrix.value = false;
-								resetForm();
-								loadChannels();
+								// Wait for ownership bootstrap to finish before refreshing.
+								setTimeout(() => {
+									oidcWaiting.value = false;
+									showAddMatrix.value = false;
+									resetForm();
+									loadChannels();
+								}, 3000);
 							}
 						});
 					}, 1000);

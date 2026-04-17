@@ -3201,8 +3201,11 @@ function MatrixForm({ onConnected, error, setError }) {
 							if (channels.some((ch) => ch.account_id === accountId && ch.status === "connected")) {
 								clearInterval(oidcPollRef.current);
 								oidcPollRef.current = null;
-								setOidcWaiting(false);
-								onConnected(accountId.trim(), "matrix");
+								// Wait for ownership bootstrap to finish before continuing.
+								setTimeout(() => {
+									setOidcWaiting(false);
+									onConnected(accountId.trim(), "matrix");
+								}, 3000);
 							}
 						});
 					}, 1000);

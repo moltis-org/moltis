@@ -606,10 +606,19 @@ impl ChannelPlugin for MatrixPlugin {
         };
         client::sync_once_and_spawn_loop(&mx_client, &account_id, &self.accounts, cancel).await?;
 
+        // Read back any ownership error so the UI can show it immediately.
+        let ownership_error = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts
+                .get(&account_id)
+                .and_then(|s| s.ownership_startup_error.clone())
+        };
+
         Ok(serde_json::json!({
             "ok": true,
             "account_id": account_id,
             "user_id": bot_user_id.to_string(),
+            "ownership_error": ownership_error,
         }))
     }
 }
