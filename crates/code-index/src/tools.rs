@@ -278,8 +278,9 @@ impl AgentTool for CodebaseStatusTool {
 
 /// Register all code-index tools into a [`ToolRegistry`].
 ///
-/// Only call this when the `qmd` feature is enabled — the tools require
-/// a QMD-backed [`CodeIndex`].
+/// Call this when any backend is configured (QMD or builtin).
+/// Tools gracefully degrade to `BackendUnavailable` errors if
+/// the backend is config-only.
 pub fn register_tools(
     registry: &mut moltis_agents::tool_registry::ToolRegistry,
     index: Arc<CodeIndex>,

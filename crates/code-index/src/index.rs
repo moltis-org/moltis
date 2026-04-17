@@ -627,19 +627,43 @@ impl CodeIndex {
             let chunks: Vec<StoreChunk> = if let Some(emb) = embedder {
                 let texts: Vec<String> = raw_chunks.iter().map(|c| c.content.clone()).collect();
                 match emb.embed_batch(&texts).await {
-                    Ok(embeddings) => raw_chunks
-                        .into_iter()
-                        .zip(embeddings.into_iter())
-                        .enumerate()
-                        .map(|(idx, (chunk, embedding))| StoreChunk {
-                            file_path: chunk.file_path.clone(),
-                            chunk_index: idx,
-                            content: chunk.content,
-                            embedding: Some(embedding),
-                            start_line: chunk.start_line,
-                            end_line: chunk.end_line,
-                        })
-                        .collect(),
+                    Ok(embeddings) => {
+                        if embeddings.len() != raw_chunks.len() {
+                            #[cfg(feature = "tracing")]
+                            warn!(
+                                expected = raw_chunks.len(),
+                                actual = embeddings.len(),
+                                path = %file.relative_path.display(),
+                                "embed_batch returned mismatched count, indexing without embeddings"
+                            );
+                            raw_chunks
+                                .into_iter()
+                                .enumerate()
+                                .map(|(idx, chunk)| StoreChunk {
+                                    file_path: chunk.file_path.clone(),
+                                    chunk_index: idx,
+                                    content: chunk.content,
+                                    embedding: None,
+                                    start_line: chunk.start_line,
+                                    end_line: chunk.end_line,
+                                })
+                                .collect()
+                        } else {
+                            raw_chunks
+                                .into_iter()
+                                .zip(embeddings.into_iter())
+                                .enumerate()
+                                .map(|(idx, (chunk, embedding))| StoreChunk {
+                                    file_path: chunk.file_path.clone(),
+                                    chunk_index: idx,
+                                    content: chunk.content,
+                                    embedding: Some(embedding),
+                                    start_line: chunk.start_line,
+                                    end_line: chunk.end_line,
+                                })
+                                .collect()
+                        }
+                    }
                     Err(e) => {
                         #[cfg(feature = "tracing")]
                         warn!(

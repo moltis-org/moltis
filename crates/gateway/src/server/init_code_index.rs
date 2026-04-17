@@ -52,6 +52,12 @@ pub(crate) async fn init_code_index(
             return Arc::new(moltis_code_index::CodeIndex::new(code_index_config, qmd));
         }
 
+        #[cfg(feature = "code-index-builtin")]
+        info!(
+            "code-index: QMD binary not found, trying builtin backend"
+        );
+
+        #[cfg(not(feature = "code-index-builtin"))]
         warn!(
             "code-index: QMD binary not found, falling back to config-only mode \
              (search unavailable until QMD is installed)"

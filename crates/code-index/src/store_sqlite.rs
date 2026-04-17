@@ -24,6 +24,56 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .map_err(|e| Error::IndexStore(format!("code-index migration failed: {e}")))
 }
 
+/// Escape a user query for safe use as an FTS5 MATCH expression.
+///
+/// FTS5 has its own query language (supports AND, OR, NOT, NEAR, phrase literals).
+/// Passing raw input causes parse errors on unbalanced quotes or boolean operators.
+/// We quote the entire query as a phrase literal, escaping internal double-quotes.
+fn escape_fts5_query(query: &str) -> String {
+    let escaped = query.replace('"', "\"\"");
+    format!("\"{escaped}\"")
+}
+
+#[cfg(test)]
+mod fts5_tests {
+    use super::escape_fts5_query;
+
+    #[test]
+    fn normal_query() {
+        assert_eq!(escape_fts5_query("hello world"), "\"hello world\"");
+    }
+
+    #[test]
+    fn query_with_quotes() {
+        assert_eq!(
+            escape_fts5_query("find the \"auth\" middleware"),
+            "\"find the \"\"auth\"\" middleware\""
+        );
+    }
+
+    #[test]
+    fn query_with_boolean_ops() {
+        // Quoted as phrase literal — operators become literal text
+        assert_eq!(
+            escape_fts5_query("hello AND world OR NOT"),
+            "\"hello AND world OR NOT\""
+        );
+    }
+
+    #[test]
+    fn empty_query() {
+        assert_eq!(escape_fts5_query(""), "\"\"");
+    }
+
+    #[test]
+    fn query_with_backslash() {
+        // Backslashes pass through — FTS5 phrase literals do not escape them.
+        let input = r"path	oile";
+        let expected = r#""path	oile""#;
+        assert_eq!(escape_fts5_query(input), expected);
+    }
+}
+
 /// SQLite-backed code index store.
 pub struct SqliteCodeIndexStore {
     pool: SqlitePool,
@@ -211,7 +261,10 @@ impl CodeIndexStore for SqliteCodeIndexStore {
     ) -> Result<Vec<SearchResult>> {
         let mut conn = self.conn().await?;
 
-        // FTS5 query with project filter via JOIN
+        // FTS5 query with project filter via JOIN.
+        // Query is escaped as a phrase literal to prevent FTS5 parse errors
+        // on unbalanced quotes or boolean operators from LLM-generated input.
+        let safe_query = escape_fts5_query(query);
         let rows = sqlx::query(
             r#"
             SELECT
@@ -223,12 +276,12 @@ impl CodeIndexStore for SqliteCodeIndexStore {
             JOIN code_chunks_fts fts ON c.id = fts.rowid
             WHERE c.project_id = ?
                 AND code_chunks_fts MATCH ?
-            ORDER BY rank
+            ORDER BY fts.rank
             LIMIT ?
             "#,
         )
         .bind(project_id)
-        .bind(query)
+        .bind(&safe_query)
         .bind(limit as i64)
         .fetch_all(&mut *conn)
         .await
