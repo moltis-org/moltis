@@ -149,13 +149,36 @@ impl CodeIndexConfig {
     }
 
     /// Check whether a relative path matches any skip pattern.
+    ///
+    /// Matches at any directory depth — `vendor` matches both `vendor/foo.rs`
+    /// and `src/vendor/foo.rs`. Patterns are treated as path segments unless
+    /// they already contain a `/`.
     pub fn path_skipped(&self, relative_path: &str) -> bool {
         let path_lower = relative_path.to_ascii_lowercase();
         // Normalize separators.
         let path_forward = path_lower.replace('\\', "/");
         self.skip_paths
             .iter()
-            .any(|pattern| path_forward.starts_with(&pattern.to_ascii_lowercase()))
+            .any(|pattern| {
+                // Strip trailing slashes so "vendor/" is treated as "vendor" for
+                // segment matching.
+                let p = pattern.trim_end_matches('/').to_ascii_lowercase();
+                // Exact prefix match (handles both "vendor/foo" and "vendor/").
+                if path_forward.starts_with(&p)
+                    || path_forward.starts_with(&format!("{p}/"))
+                {
+                    return true;
+                }
+                // Segment match: check if any path component equals the pattern.
+                // This catches "src/vendor/foo.rs" when pattern is "vendor".
+                if !p.contains('/') {
+                    path_forward
+                        .split('/')
+                        .any(|segment| segment == p.as_str())
+                } else {
+                    false
+                }
+            })
     }
 
     /// Return a [`FilterConfig`](crate::filter::FilterConfig) for the file watcher.
@@ -204,6 +227,9 @@ mod tests {
         assert!(config.path_skipped("node_modules/react/index.js"));
         assert!(config.path_skipped("target/debug/moltis"));
         assert!(!config.path_skipped("src/main.rs"));
+        // Nested path matching — pattern at non-root depth.
+        assert!(config.path_skipped("src/vendor/lib/foo.rs"));
+        assert!(config.path_skipped("packages/node_modules/pkg/index.js"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod discover;
 pub mod error;
 pub mod filter;
 pub mod index;
+#[cfg(feature = "tracing")]
 pub mod log;
 pub mod snapshot_store;
 pub mod store;
@@ -39,6 +40,7 @@ pub mod tools;
 // Re-exports for convenience.
 pub use {
     config::CodeIndexConfig,
+    delta::{FileMeta, HashSnapshot},
     error::{Error, Result},
     index::CodeIndex,
     types::{IndexStatus, SearchResult},
@@ -57,6 +59,7 @@ pub fn sanitize_project_id(project_id: &str) -> String {
         })
         .collect()
 }
+
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]

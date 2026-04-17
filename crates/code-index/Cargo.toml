@@ -26,6 +26,7 @@ serde            = { workspace = true }
 serde_json       = { workspace = true }
 sha2             = { workspace = true }
 sqlx             = { optional = true, workspace = true }
+tempfile         = { workspace = true }
 thiserror        = { workspace = true }
 time             = { workspace = true }
 tokio            = { workspace = true, features = ["sync"], optional = true }
@@ -40,7 +41,6 @@ metrics          = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

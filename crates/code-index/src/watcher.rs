@@ -16,6 +16,7 @@ use {
     tokio::sync::mpsc,
 };
 
+#[cfg(feature = "tracing")]
 use crate::log::{debug, info};
 
 use crate::{filter::FilterConfig, types::Language};
@@ -89,6 +90,7 @@ impl FileWatcher {
 
         debouncer.watch(&watch_dir, RecursiveMode::Recursive)?;
 
+        #[cfg(feature = "tracing")]
         info!(
             project_id = %pid,
             path = %watch_dir.display(),
@@ -100,6 +102,7 @@ impl FileWatcher {
             loop {
                 tokio::select! {
                     _ = cancel_clone.cancelled() => {
+                        #[cfg(feature = "tracing")]
                         debug!(project_id = %pid, "file watcher stopping");
                         break;
                     }
@@ -125,6 +128,7 @@ impl FileWatcher {
 
     /// Stop the watcher.
     pub fn stop(&self) {
+        #[cfg(feature = "tracing")]
         info!(project_id = %self.project_id, "stopping file watcher");
         self.cancel.cancel();
     }
@@ -168,6 +172,7 @@ impl FileWatcher {
             .collect();
 
         if !indexable.is_empty() {
+            #[cfg(feature = "tracing")]
             debug!(
                 project_id,
                 count = indexable.len(),

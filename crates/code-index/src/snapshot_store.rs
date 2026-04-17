@@ -4,8 +4,9 @@
 //! Uses atomic writes (write to temp, rename over target) to prevent partial-read corruption.
 //! Project IDs are sanitized against path traversal before use as filenames.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
+#[cfg(feature = "tracing")]
 use crate::log::debug;
 
 use crate::{
@@ -44,10 +45,12 @@ impl SnapshotStore {
     /// Load the most recent snapshot for a project.
     ///
     /// Returns `Ok(None)` if no snapshot file exists (first run or deleted).
-    /// Returns `Err` only for I/O or parse failures on an existing file.
+    /// If the file exists but uses an outdated snapshot format, returns
+    /// `Ok(None)` to trigger a full reindex.
     pub fn load(&self, project_id: &str) -> Result<Option<HashSnapshot>> {
         let path = self.project_path(project_id)?;
         if !path.exists() {
+            #[cfg(feature = "tracing")]
             debug!(project_id, "no snapshot file found, starting fresh");
             return Ok(None);
         }
@@ -56,12 +59,21 @@ impl SnapshotStore {
                 "failed to read snapshot for project {project_id}: {e}"
             ))
         })?;
-        let snapshot: HashMap<String, String> = serde_json::from_str(&data).map_err(|e| {
-            Error::Store(format!(
-                "failed to parse snapshot for project {project_id}: {e}"
-            ))
-        })?;
-        Ok(Some(snapshot))
+
+        // Try deserializing as the current format (HashMap<String, FileMeta>).
+        // If that fails, try the legacy format (HashMap<String, String>) and
+        // discard it — a full reindex is cheaper than migration logic.
+        match serde_json::from_str::<HashSnapshot>(&data) {
+            Ok(snapshot) => Ok(Some(snapshot)),
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                debug!(
+                    project_id,
+                    "snapshot format outdated, will trigger full reindex"
+                );
+                Ok(None)
+            },
+        }
     }
 
     /// Save a snapshot for a project.
@@ -85,29 +97,27 @@ impl SnapshotStore {
             ))
         })?;
 
-        // Write to temp file with PID suffix to avoid concurrent-save races,
-        // then rename atomically.
-        let temp_path = path.with_file_name(format!(
-            "{}.{}.tmp",
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("snapshot"),
-            std::process::id(),
-        ));
-        std::fs::write(&temp_path, &json).map_err(|e| {
+        // Write to a temp file in the same directory (guaranteed same filesystem
+        // for atomic rename), then persist over the target.
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let mut temp_file = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
+            Error::Store(format!(
+                "failed to create temp snapshot for project {project_id}: {e}"
+            ))
+        })?;
+        use std::io::Write;
+        temp_file.write_all(json.as_bytes()).map_err(|e| {
             Error::Store(format!(
                 "failed to write temp snapshot for project {project_id}: {e}"
             ))
         })?;
-
-        std::fs::rename(&temp_path, &path).map_err(|e| {
-            // Best-effort cleanup of temp file on rename failure.
-            let _ = std::fs::remove_file(&temp_path);
+        temp_file.persist(&path).map_err(|e| {
             Error::Store(format!(
                 "failed to commit snapshot for project {project_id}: {e}"
             ))
         })?;
 
+        #[cfg(feature = "tracing")]
         debug!(project_id, entries = snapshot.len(), "snapshot saved");
         Ok(())
     }
@@ -119,6 +129,7 @@ impl SnapshotStore {
         let path = self.project_path(project_id)?;
         match std::fs::remove_file(&path) {
             Ok(()) => {
+                #[cfg(feature = "tracing")]
                 debug!(project_id, "snapshot deleted");
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -169,6 +180,15 @@ fn sanitize_project_id(id: &str) -> Result<&str> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::delta::FileMeta;
+
+    fn fake_meta(hash: &str) -> FileMeta {
+        FileMeta {
+            content_hash: hash.to_string(),
+            modified_time: 1000,
+            size: 42,
+        }
+    }
 
     #[test]
     fn test_sanitize_rejects_traversal() {
@@ -202,9 +222,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = SnapshotStore::new(tmp.path().to_path_buf());
 
-        let mut snapshot = HashMap::new();
-        snapshot.insert("src/main.rs".into(), "abc123".into());
-        snapshot.insert("src/lib.rs".into(), "def456".into());
+        let mut snapshot = HashSnapshot::new();
+        snapshot.insert("src/main.rs".into(), fake_meta("abc123"));
+        snapshot.insert("src/lib.rs".into(), fake_meta("def456"));
 
         store.save("test-project", &snapshot).unwrap();
 
@@ -229,12 +249,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = SnapshotStore::new(tmp.path().to_path_buf());
 
-        let mut s1 = HashMap::new();
-        s1.insert("a.rs".into(), "111".into());
+        let mut s1 = HashSnapshot::new();
+        s1.insert("a.rs".into(), fake_meta("111"));
         store.save("proj", &s1).unwrap();
 
-        let mut s2 = HashMap::new();
-        s2.insert("b.rs".into(), "222".into());
+        let mut s2 = HashSnapshot::new();
+        s2.insert("b.rs".into(), fake_meta("222"));
         store.save("proj", &s2).unwrap();
 
         let loaded = store.load("proj").unwrap().unwrap();
@@ -247,7 +267,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = SnapshotStore::new(tmp.path().to_path_buf());
 
-        let snapshot = HashMap::from([("a.rs".into(), "111".into())]);
+        let snapshot = HashSnapshot::from([("a.rs".into(), fake_meta("111"))]);
         store.save("proj", &snapshot).unwrap();
         assert!(store.load("proj").unwrap().is_some());
 

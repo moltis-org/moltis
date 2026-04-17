@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use gix::bstr::ByteSlice;
 
+#[cfg(feature = "tracing")]
 use crate::log::{debug, info};
 
 use crate::error::{Error, Result};
@@ -32,6 +33,7 @@ pub fn discover_tracked_files(repo_dir: &Path) -> Result<Vec<PathBuf>> {
         })?
         .to_path_buf();
 
+    #[cfg(feature = "tracing")]
     info!(
         work_dir = %work_dir.display(),
         "discovered git repository for code indexing"
@@ -55,6 +57,7 @@ pub fn discover_tracked_files(repo_dir: &Path) -> Result<Vec<PathBuf>> {
 
         // Skip submodule entries.
         if module_paths.iter().any(|mp| rel_path.starts_with(mp)) {
+            #[cfg(feature = "tracing")]
             debug!(path = %rel_path.display(), "skipping submodule path");
             continue;
         }
@@ -69,6 +72,7 @@ pub fn discover_tracked_files(repo_dir: &Path) -> Result<Vec<PathBuf>> {
         }
     }
 
+    #[cfg(feature = "tracing")]
     debug!(count = tracked.len(), "enumerated git-tracked files");
 
     Ok(tracked)

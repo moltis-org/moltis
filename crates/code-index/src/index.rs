@@ -3,9 +3,11 @@ use std::path::Path;
 #[cfg(feature = "file-watcher")]
 use std::sync::Arc;
 
-#[cfg(any(feature = "builtin", feature = "file-watcher"))]
-use crate::log::{debug, info, warn};
+#[cfg(feature = "tracing")]
 use tracing::instrument;
+
+#[cfg(feature = "tracing")]
+use crate::log::{debug, info, warn};
 
 use crate::{
     config::CodeIndexConfig,
@@ -149,7 +151,7 @@ impl CodeIndex {
     /// On first run (no snapshot), performs a full reindex. On subsequent runs,
     /// computes a delta from the previous snapshot and only processes changed files.
     /// Pass `force = true` to force a full reindex regardless.
-    #[instrument(skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(skip(self)))]
     pub async fn index_project(
         &self,
         project_id: &str,
@@ -162,9 +164,29 @@ impl CodeIndex {
             .unwrap_or_else(|e| e.into_inner())
             .insert(project_id.to_string(), project_dir.to_path_buf());
 
-        let tracked = discover_tracked_files(project_dir)
-            .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
-        let filtered = filter_tracked_files(project_dir, &tracked, &self.config)?;
+        // Discover + filter are blocking filesystem I/O — offload to blocking
+        // thread when a tokio runtime is available (builtin / file-watcher).
+        #[cfg(any(feature = "builtin", feature = "file-watcher"))]
+        let (_tracked, filtered) = tokio::task::spawn_blocking({
+            let project_dir = project_dir.to_path_buf();
+            let config = self.config.clone();
+            move || {
+                let tracked = discover_tracked_files(&project_dir)
+                    .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+                let filtered = filter_tracked_files(&project_dir, &tracked, &config)?;
+                Ok::<_, Error>((tracked, filtered))
+            }
+        })
+        .await
+        .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))??;
+
+        #[cfg(not(any(feature = "builtin", feature = "file-watcher")))]
+        let (_tracked, filtered) = {
+            let tracked = discover_tracked_files(project_dir)
+                .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+            let filtered = filter_tracked_files(project_dir, &tracked, &self.config)?;
+            (tracked, filtered)
+        };
         #[cfg(not(any(feature = "builtin", feature = "qmd")))]
         let _filtered = filtered;
         #[cfg(not(any(feature = "builtin", feature = "qmd")))]
@@ -221,7 +243,7 @@ impl CodeIndex {
     }
 
     /// Search the code index for a project.
-    #[instrument(skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(skip(self)))]
     pub async fn search(
         &self,
         project_id: &str,
@@ -283,7 +305,7 @@ impl CodeIndex {
     }
 
     /// Get the index status for a project.
-    #[instrument(skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(skip(self)))]
     pub async fn status(&self, project_id: &str) -> Result<IndexStatus> {
         match &self.backend {
             Backend::ConfigOnly => Err(Error::BackendUnavailable(
@@ -336,6 +358,7 @@ impl CodeIndex {
 
             tokio::spawn(async move {
                 if let Err(e) = idx.reindex_files(&pid, &proj_dir, &paths).await {
+                    #[cfg(feature = "tracing")]
                     warn!(project_id = %pid, error = %e, "watcher reindex failed");
                 }
             });
@@ -356,6 +379,7 @@ impl CodeIndex {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(watcher);
+        #[cfg(feature = "tracing")]
         info!(project_id, "file watcher registered");
         Ok(())
     }
@@ -390,7 +414,7 @@ impl CodeIndex {
     /// Reads each file, chunks it, generates embeddings if available,
     /// and upserts into the store. Files that no longer exist on disk are skipped.
     #[cfg(feature = "builtin")]
-    #[instrument(skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(skip(self)))]
     pub async fn reindex_files(
         &self,
         project_id: &str,
@@ -429,6 +453,8 @@ impl CodeIndex {
         self.index_files_builtin(project_id, &file_refs, store.as_ref(), embedder.as_deref())
             .await?;
 
+        #[cfg(feature = "tracing")]
+
         debug!(project_id, count = files.len(), "watcher reindex completed");
         Ok(())
     }
@@ -447,6 +473,7 @@ impl CodeIndex {
         store: &dyn CodeIndexStore,
         embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
     ) -> Result<IndexStatus> {
+        #[cfg(feature = "tracing")]
         info!(
             project_id,
             total = filtered.len(),
@@ -480,6 +507,8 @@ impl CodeIndex {
                 }
             })?;
 
+        #[cfg(feature = "tracing")]
+
         info!(
             project_id,
             added = delta.added.len(),
@@ -505,6 +534,7 @@ impl CodeIndex {
                     project_id: project_id.to_string(),
                     message: format!("failed to delete removed file chunks: {e}"),
                 })?;
+            #[cfg(feature = "tracing")]
             debug!(path = %removed_path, "deleted chunks for removed file");
         }
 
@@ -580,6 +610,7 @@ impl CodeIndex {
             let content = match tokio::fs::read_to_string(&file.path).await {
                 Ok(c) => c,
                 Err(e) => {
+                    #[cfg(feature = "tracing")]
                     warn!(
                         path = %file.relative_path.display(),
                         error = %e,
@@ -610,6 +641,7 @@ impl CodeIndex {
                         })
                         .collect(),
                     Err(e) => {
+                        #[cfg(feature = "tracing")]
                         warn!(
                             path = %file.relative_path.display(),
                             error = %e,
@@ -657,6 +689,8 @@ impl CodeIndex {
             }
         }
 
+        #[cfg(feature = "tracing")]
+
         info!(project_id, indexed, errors, "file batch indexed (builtin)");
 
         Ok(())
@@ -700,6 +734,7 @@ impl CodeIndex {
                 })?
             },
             Err(e) => {
+                #[cfg(feature = "tracing")]
                 warn!(error = %e, "query embedding failed, falling back to keyword results");
                 return Ok(keyword_results.into_iter().take(limit).collect());
             },

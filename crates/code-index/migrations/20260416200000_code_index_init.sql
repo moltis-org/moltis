@@ -19,8 +19,12 @@ CREATE INDEX IF NOT EXISTS idx_chunks_project ON code_chunks(project_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_file ON code_chunks(project_id, file_path);
 
 -- FTS5 virtual table for keyword search (porter stemmer).
+-- External content table avoids storing content twice — FTS5 reads from
+-- `code_chunks` using `content_rowid` and the `content` column is looked
+-- up automatically via the `content=` directive.
 CREATE VIRTUAL TABLE IF NOT EXISTS code_chunks_fts USING fts5(
     content,
+    content=code_chunks,
     content_rowid=rowid,
     tokenize='porter'
 );
@@ -36,4 +40,11 @@ CREATE TRIGGER IF NOT EXISTS code_chunks_fts_delete
 AFTER DELETE ON code_chunks
 BEGIN
     DELETE FROM code_chunks_fts WHERE rowid = OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS code_chunks_fts_update
+AFTER UPDATE ON code_chunks
+BEGIN
+    DELETE FROM code_chunks_fts WHERE rowid = OLD.id;
+    INSERT INTO code_chunks_fts(rowid, content) VALUES (NEW.id, NEW.content);
 END;

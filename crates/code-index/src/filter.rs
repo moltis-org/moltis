@@ -7,6 +7,7 @@ use std::{fs, path::Path};
 
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "tracing")]
 use crate::log::{debug, info, trace};
 
 use crate::{
@@ -51,6 +52,7 @@ pub fn filter_tracked_files(
 
         // 1. Path skip check (cheapest — no I/O).
         if config.path_skipped(&path_str) {
+            #[cfg(feature = "tracing")]
             debug!(path = %path_str, "skipped: path exclusion");
             skipped_path += 1;
             continue;
@@ -60,6 +62,7 @@ pub fn filter_tracked_files(
         let effective_ext = effective_extension(rel_path);
 
         if !config.extension_allowed(effective_ext) {
+            #[cfg(feature = "tracing")]
             trace!(path = %path_str, ext = %effective_ext, "skipped: extension not allowed");
             skipped_extension += 1;
             continue;
@@ -70,12 +73,14 @@ pub fn filter_tracked_files(
         let metadata = match fs::metadata(&abs_path) {
             Ok(m) => m,
             Err(e) => {
+                #[cfg(feature = "tracing")]
                 debug!(path = %path_str, error = %e, "skipped: cannot read metadata");
                 continue;
             },
         };
         let size = metadata.len();
         if size > config.max_file_size_bytes {
+            #[cfg(feature = "tracing")]
             debug!(
                 path = %path_str,
                 size,
@@ -88,6 +93,7 @@ pub fn filter_tracked_files(
 
         // 4. Binary detection (read first 8 KiB, check for null bytes).
         if config.skip_binary && is_binary_file(&abs_path, size) {
+            #[cfg(feature = "tracing")]
             debug!(path = %path_str, "skipped: binary content detected");
             skipped_binary += 1;
             continue;
@@ -103,6 +109,7 @@ pub fn filter_tracked_files(
         });
     }
 
+    #[cfg(feature = "tracing")]
     info!(
         accepted = accepted.len(),
         skipped_extension, skipped_size, skipped_binary, skipped_path, "file filtering complete"
@@ -144,7 +151,7 @@ pub fn content_hash(path: &Path) -> Result<String> {
 /// Determine the effective file extension for extension and language detection.
 ///
 /// For files with a normal extension (e.g. `main.rs` → `"rs"`), returns it as-is.
-/// For known extensionless filenames (Dockerfile, Makefile, CMakeLists.txt),
+/// For known extensionless filenames (Dockerfile, Makefile),
 /// returns a synthetic extension mapping them to their language.
 pub fn effective_extension(path: &Path) -> &str {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -159,7 +166,6 @@ pub fn effective_extension(path: &Path) -> &str {
     match file_name.to_ascii_lowercase().as_str() {
         "dockerfile" | "containerfile" => "dockerfile",
         "makefile" | "gnumakefile" => "mk",
-        "cmakelists.txt" => "cmake",
         _ => "",
     }
 }
