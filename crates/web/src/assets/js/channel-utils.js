@@ -73,7 +73,8 @@ export function normalizeMatrixOwnershipMode(mode) {
 }
 
 export function matrixOwnershipModeGuidance(authMode, ownershipMode) {
-	if (normalizeMatrixAuthMode(authMode) !== "password") {
+	var mode = normalizeMatrixAuthMode(authMode);
+	if (mode !== "password" && mode !== "oidc") {
 		return "Access token auth always stays user-managed because it reuses an existing Matrix session instead of giving Moltis full control of the account's encryption state.";
 	}
 	return normalizeMatrixOwnershipMode(ownershipMode) === "moltis_owned"

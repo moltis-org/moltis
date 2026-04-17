@@ -3203,7 +3203,7 @@ function MatrixForm({ onConnected, error, setError }) {
 		var config = {
 			homeserver: homeserver.trim(),
 			ownership_mode:
-				normalizeMatrixAuthMode(authMode) === "password" ? normalizeMatrixOwnershipMode(ownershipMode) : "user_managed",
+				normalizeMatrixAuthMode(authMode) === "password" || normalizeMatrixAuthMode(authMode) === "oidc" ? normalizeMatrixOwnershipMode(ownershipMode) : "user_managed",
 			dm_policy: dmPolicy,
 			room_policy: roomPolicy,
 			mention_mode: mentionMode,

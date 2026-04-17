@@ -181,9 +181,9 @@ function MatrixOwnershipCard({ channel, matrixStatus }) {
 				? "This account already has partial Matrix secure-backup state. Finish or repair it in Element, or switch this channel to user-managed mode."
 				: ownershipIssue === "generic_blocked"
 					? "Moltis could not take ownership of this Matrix account automatically. Repair the account in Element or switch this channel to user-managed mode."
-					: authMode === "password"
+					: authMode === "password" || authMode === "oidc"
 						? matrixOwnershipModeGuidance(authMode, ownershipMode)
-						: "Access token auth is always user-managed. If you want encrypted Matrix chats, reconnect this channel with password auth so Moltis can create its own device.";
+						: "Access token auth is always user-managed. If you want encrypted Matrix chats, reconnect this channel with OIDC or password auth so Moltis can create its own device.";
 	var detailTitle =
 		ownershipIssue === "approval_required"
 			? "Browser approval pending"
@@ -1432,7 +1432,7 @@ function AddMatrixModal() {
 
 		var addConfig = {
 			homeserver: homeserver,
-			ownership_mode: authMode === "password" ? normalizeMatrixOwnershipMode(ownershipModeDraft.value) : "user_managed",
+			ownership_mode: authMode === "password" || authMode === "oidc" ? normalizeMatrixOwnershipMode(ownershipModeDraft.value) : "user_managed",
 			dm_policy: form.querySelector("[data-field=dmPolicy]").value,
 			room_policy: form.querySelector("[data-field=roomPolicy]").value,
 			mention_mode: form.querySelector("[data-field=mentionMode]").value,
