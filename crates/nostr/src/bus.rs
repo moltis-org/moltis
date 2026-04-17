@@ -1,8 +1,9 @@
 //! Nostr relay subscription loop — inbound DM pipeline.
 //!
-//! Subscribes to kind:4 (NIP-04 encrypted DMs) addressed to the bot's pubkey.
-//! Events flow through dedup, self-message filtering, access control, and
-//! decryption before being dispatched to the gateway via `ChannelEventSink`.
+//! Subscribes to kind:4 (NIP-04 encrypted DMs) and kind:1059 (NIP-59 gift
+//! wraps) addressed to the bot's pubkey. Events flow through dedup,
+//! self-message filtering, access control, and decryption/unwrapping before
+//! being dispatched to the gateway via `ChannelEventSink`.
 
 use std::sync::{Arc, RwLock};
 
@@ -32,9 +33,10 @@ const OTP_CHALLENGE_MSG: &str = "You are not on the allowlist. A PIN challenge h
 
 /// Run the relay subscription loop for a single Nostr account.
 ///
-/// Subscribes to NIP-04 DMs (kind:4) targeted at `bot_pubkey` and dispatches
-/// inbound messages to the gateway. Runs until `cancel` is triggered or the
-/// relay pool shuts down (which triggers an auto-disable request).
+/// Subscribes to NIP-04 DMs (kind:4) and NIP-59 gift wraps (kind:1059)
+/// targeted at `bot_pubkey` and dispatches inbound messages to the gateway.
+/// Runs until `cancel` is triggered or the relay pool shuts down (which
+/// triggers an auto-disable request).
 pub async fn run_subscription_loop(
     client: Client,
     keys: Keys,
@@ -50,10 +52,16 @@ pub async fn run_subscription_loop(
         u64::try_from(::time::OffsetDateTime::now_utc().unix_timestamp()).unwrap_or_default();
     let since = Timestamp::from(now_secs);
 
+    // Gift wraps have randomly tweaked timestamps (0–2 days), so use a wider
+    // window for the relay filter. The staleness check in handle_event uses
+    // the rumor's actual created_at for gift wraps, filtering old kind:4
+    // messages that happen to fall in this window.
+    let gift_wrap_since = Timestamp::from(now_secs.saturating_sub(172_800));
+
     let filter = Filter::new()
-        .kind(Kind::EncryptedDirectMessage)
+        .kinds([Kind::EncryptedDirectMessage, Kind::GiftWrap])
         .pubkey(bot_pubkey)
-        .since(since);
+        .since(gift_wrap_since);
 
     let npub = bot_pubkey
         .to_bech32()
@@ -61,12 +69,11 @@ pub async fn run_subscription_loop(
     tracing::info!(
         account_id,
         pubkey = %npub,
-        "starting Nostr DM subscription"
+        "starting Nostr DM subscription (kind:4 + kind:1059)"
     );
 
     let mut seen = SeenTracker::new();
 
-    // Subscribe (single filter)
     if let Err(e) = client.subscribe(filter, None).await {
         tracing::error!(account_id, "failed to subscribe: {e}");
         return;
@@ -131,8 +138,9 @@ async fn handle_event(
     account_id: &str,
     event_sink: &Arc<dyn moltis_channels::ChannelEventSink>,
 ) {
-    // 1. Skip non-DM events
-    if event.kind != Kind::EncryptedDirectMessage {
+    // 1. Kind gate — accept kind:4 (legacy NIP-04) and kind:1059 (NIP-59 gift wrap)
+    let is_gift_wrap = event.kind == Kind::GiftWrap;
+    if event.kind != Kind::EncryptedDirectMessage && !is_gift_wrap {
         return;
     }
 
@@ -141,30 +149,65 @@ async fn handle_event(
         return;
     }
 
-    // 3. Skip self-messages
-    if event.pubkey == *bot_pubkey {
+    // 3. Extract sender, plaintext, and created_at based on kind.
+    //    Gift wraps hide the real sender inside the sealed rumor; kind:4
+    //    exposes it as event.pubkey.
+    let (sender_pubkey, plaintext, event_time) = if is_gift_wrap {
+        match crate::gift_wrap::unwrap_gift_wrap(keys, event).await {
+            Ok(result) => result,
+            Err(e) => {
+                #[cfg(feature = "metrics")]
+                counter!(nostr_metrics::DECRYPT_ERRORS_TOTAL).increment(1);
+                tracing::warn!(
+                    account_id,
+                    event_id = %event.id,
+                    "gift unwrap failed: {e}"
+                );
+                return;
+            },
+        }
+    } else {
+        // Kind:4 — decrypt NIP-04, fall back to NIP-44
+        let text = match try_decrypt(keys, &event.pubkey, &event.content) {
+            Some(t) => t,
+            None => {
+                #[cfg(feature = "metrics")]
+                counter!(nostr_metrics::DECRYPT_ERRORS_TOTAL).increment(1);
+                tracing::warn!(
+                    account_id,
+                    event_id = %event.id,
+                    "decrypt failed (NIP-04 and NIP-44)"
+                );
+                return;
+            },
+        };
+        (event.pubkey, text, event.created_at)
+    };
+
+    // 4. Skip self-messages
+    if sender_pubkey == *bot_pubkey {
         return;
     }
 
-    // 4. Skip stale events
-    if event.created_at < since {
+    // 5. Skip stale events (gift wraps use rumor's created_at, not the
+    //    randomly tweaked outer timestamp)
+    if event_time < since {
         return;
     }
 
-    let sender_hex = event.pubkey.to_hex();
-    let sender_npub = event
-        .pubkey
+    let sender_hex = sender_pubkey.to_hex();
+    let sender_npub = sender_pubkey
         .to_bech32()
         .unwrap_or_else(|_| sender_hex.clone());
 
-    // 5. Read config fields (drop guard before any .await).
+    // 6. Read config fields (drop guard before any .await).
     let (dm_policy, otp_self_approval) = {
         let cfg = config.read().unwrap_or_else(|e| e.into_inner());
         (cfg.dm_policy.clone(), cfg.otp_self_approval)
     };
 
-    // 5a. OTP verification — if this sender has a pending challenge, decrypt
-    //     first to check if the message is a 6-digit code, and verify it.
+    // 6a. OTP verification — if this sender has a pending challenge, check
+    //     if the plaintext is a 6-digit code and verify it.
     //     This must run BEFORE the access-control gate because the sender is
     //     not yet on the allowlist when they reply with the OTP code.
     let has_pending = {
@@ -172,32 +215,30 @@ async fn handle_event(
         guard.has_pending(&sender_hex)
     };
     if has_pending {
-        if let Some(plaintext) = try_decrypt(keys, &event.pubkey, &event.content) {
-            let trimmed = plaintext.trim();
-            if trimmed.len() == 6 && trimmed.chars().all(|c| c.is_ascii_digit()) {
-                handle_otp_verification(
-                    otp,
-                    client,
-                    keys,
-                    &event.pubkey,
-                    account_id,
-                    &sender_hex,
-                    &sender_npub,
-                    trimmed,
-                    event_sink,
-                )
-                .await;
-                return;
-            }
+        let trimmed = plaintext.trim();
+        if trimmed.len() == 6 && trimmed.chars().all(|c| c.is_ascii_digit()) {
+            handle_otp_verification(
+                otp,
+                client,
+                keys,
+                &sender_pubkey,
+                account_id,
+                &sender_hex,
+                &sender_npub,
+                trimmed,
+                event_sink,
+            )
+            .await;
+            return;
         }
         // Non-code reply while challenge pending — silently ignore.
         return;
     }
 
-    // 5b. Normal access-control gate (scope the guard so it drops before any .await).
+    // 6b. Normal access-control gate (scope the guard so it drops before any .await).
     let access_result = {
         let allowed = cached_allowlist.read().unwrap_or_else(|e| e.into_inner());
-        access::check_dm_access(&event.pubkey, &dm_policy, &allowed)
+        access::check_dm_access(&sender_pubkey, &dm_policy, &allowed)
     };
 
     match &access_result {
@@ -217,7 +258,7 @@ async fn handle_event(
                 handle_otp_challenge(
                     client,
                     keys,
-                    &event.pubkey,
+                    &sender_pubkey,
                     otp,
                     account_id,
                     &sender_hex,
@@ -235,24 +276,6 @@ async fn handle_event(
             return;
         },
     }
-
-    // 6. Decrypt content — try NIP-04 first, fall back to NIP-44
-    let plaintext = match nip04::decrypt(keys.secret_key(), &event.pubkey, &event.content) {
-        Ok(text) => text,
-        Err(_nip04_err) => match nip44::decrypt(keys.secret_key(), &event.pubkey, &event.content) {
-            Ok(text) => text,
-            Err(nip44_err) => {
-                #[cfg(feature = "metrics")]
-                counter!(nostr_metrics::DECRYPT_ERRORS_TOTAL).increment(1);
-                tracing::warn!(
-                    account_id,
-                    event_id = %event.id,
-                    "decrypt failed (NIP-04 and NIP-44): {nip44_err}"
-                );
-                return;
-            },
-        },
-    };
 
     // 7. Size validation — truncate at a safe UTF-8 boundary
     let text = if plaintext.len() > MAX_MESSAGE_BYTES {
@@ -356,15 +379,11 @@ async fn handle_otp_verification(
         ),
     };
 
-    // Send the reply to the sender.
-    if let Ok(encrypted) = nip04::encrypt(keys.secret_key(), sender_pubkey, reply_text) {
-        let tag = nostr_sdk::prelude::Tag::public_key(*sender_pubkey);
-        let builder =
-            nostr_sdk::prelude::EventBuilder::new(Kind::EncryptedDirectMessage, &encrypted)
-                .tag(tag);
-        if let Err(e) = client.send_event_builder(builder).await {
-            tracing::warn!(account_id, "failed to send OTP verification reply: {e}");
-        }
+    // Send the reply to the sender via gift wrap.
+    if let Err(e) =
+        crate::gift_wrap::send_gift_wrapped_dm(client, keys, sender_pubkey, reply_text).await
+    {
+        tracing::warn!(account_id, "failed to send OTP verification reply: {e}");
     }
 
     // Emit resolution event for admin UI.
@@ -404,17 +423,16 @@ async fn handle_otp_challenge(
 
     match init_result {
         OtpInitResult::Created(code) => {
-            // Send challenge prompt to the sender via encrypted DM.
-            if let Ok(encrypted) =
-                nip04::encrypt(keys.secret_key(), sender_pubkey, OTP_CHALLENGE_MSG)
+            // Send challenge prompt to the sender via gift wrap.
+            if let Err(e) = crate::gift_wrap::send_gift_wrapped_dm(
+                client,
+                keys,
+                sender_pubkey,
+                OTP_CHALLENGE_MSG,
+            )
+            .await
             {
-                let tag = nostr_sdk::prelude::Tag::public_key(*sender_pubkey);
-                let builder =
-                    nostr_sdk::prelude::EventBuilder::new(Kind::EncryptedDirectMessage, &encrypted)
-                        .tag(tag);
-                if let Err(e) = client.send_event_builder(builder).await {
-                    tracing::warn!(account_id, "failed to send OTP challenge DM: {e}");
-                }
+                tracing::warn!(account_id, "failed to send OTP challenge DM: {e}");
             }
 
             // Emit OTP challenge event for the admin UI.

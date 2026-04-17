@@ -207,7 +207,7 @@ jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
 llama-cpp-2        = "0.1"
 matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
 mockito            = "1.7"
-nostr-sdk          = { features = ["nip04", "nip44"], version = "0.44" }
+nostr-sdk          = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
 open               = "5.3"
 rand               = "0.10"
 regex              = "1"

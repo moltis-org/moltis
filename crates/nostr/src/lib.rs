@@ -2,6 +2,7 @@ pub mod access;
 pub mod bus;
 pub mod config;
 pub mod error;
+pub mod gift_wrap;
 pub mod keys;
 pub mod outbound;
 pub mod plugin;
