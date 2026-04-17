@@ -20,6 +20,7 @@ moltis-agents    = { optional = true, workspace = true }
 moltis-memory    = { optional = true, workspace = true }
 moltis-qmd       = { optional = true, workspace = true }
 moltis-config    = { workspace = true }
+moltis-splitter  = { workspace = true }
 moltis-tools     = { workspace = true }
 notify-debouncer-full = { optional = true, workspace = true }
 serde            = { workspace = true }

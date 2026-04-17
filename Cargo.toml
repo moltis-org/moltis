@@ -104,6 +104,7 @@ members = [
   "crates/signal",
   "crates/skills",
   "crates/slack",
+  "crates/splitter",
   "crates/swift-bridge",
   "crates/tailscale",
   "crates/telegram",
@@ -368,6 +369,7 @@ moltis-sessions         = { path = "crates/sessions" }
 moltis-signal           = { path = "crates/signal" }
 moltis-skills           = { path = "crates/skills" }
 moltis-slack            = { path = "crates/slack" }
+moltis-splitter         = { path = "crates/splitter" }
 moltis-swift-bridge     = { path = "crates/swift-bridge" }
 moltis-tailscale        = { path = "crates/tailscale" }
 moltis-telegram         = { path = "crates/telegram" }

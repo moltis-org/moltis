@@ -598,9 +598,9 @@ impl CodeIndex {
         store: &dyn CodeIndexStore,
         embedder: Option<&dyn moltis_memory::embeddings::EmbeddingProvider>,
     ) -> Result<()> {
-        use crate::{chunker::CodeChunker, store::CodeChunk as StoreChunk};
+        use crate::{chunker, store::CodeChunk as StoreChunk};
 
-        let chunker = CodeChunker::new(self.config.chunker());
+        let config = self.config.chunker();
         let mut indexed = 0u64;
         let mut errors = 0u64;
 
@@ -621,7 +621,13 @@ impl CodeIndex {
                 },
             };
 
-            let raw_chunks = chunker.chunk(&content, &file.relative_path.display().to_string());
+            let extension = file.language.primary_extension();
+            let raw_chunks = chunker::chunk(
+                &content,
+                &file.relative_path.display().to_string(),
+                extension,
+                &config,
+            );
 
             // Generate embeddings for chunks if embedder is available.
             let chunks: Vec<StoreChunk> = if let Some(emb) = embedder {

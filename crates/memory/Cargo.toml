@@ -4,27 +4,25 @@ name              = "moltis-memory"
 version.workspace = true
 
 [features]
-default = ["code-splitter", "file-watcher"]
-# Core code-splitting with common languages.
-code-splitter = ["code-splitter-base", "lang-go", "lang-javascript", "lang-python", "lang-rust"]
-# Internal base feature — enables text-splitter dep.
-code-splitter-base = ["dep:text-splitter"]
-# Individual language grammars (each pulls in code-splitter-base).
-lang-bash       = ["code-splitter-base", "dep:tree-sitter-bash"]
-lang-c          = ["code-splitter-base", "dep:tree-sitter-c"]
-lang-cpp        = ["code-splitter-base", "dep:tree-sitter-cpp"]
-lang-css        = ["code-splitter-base", "dep:tree-sitter-css"]
-lang-go         = ["code-splitter-base", "dep:tree-sitter-go"]
-lang-html       = ["code-splitter-base", "dep:tree-sitter-html"]
-lang-java       = ["code-splitter-base", "dep:tree-sitter-java"]
-lang-javascript = ["code-splitter-base", "dep:tree-sitter-javascript"]
-lang-json       = ["code-splitter-base", "dep:tree-sitter-json"]
-lang-markdown   = ["code-splitter-base", "dep:tree-sitter-md"]
-lang-python     = ["code-splitter-base", "dep:tree-sitter-python"]
-lang-ruby       = ["code-splitter-base", "dep:tree-sitter-ruby"]
-lang-rust       = ["code-splitter-base", "dep:tree-sitter-rust"]
-lang-toml       = ["code-splitter-base", "dep:tree-sitter-toml-ng"]
-lang-typescript = ["code-splitter-base", "dep:tree-sitter-typescript"]
+default = ["file-watcher"]
+# Re-export code-splitter features from moltis-splitter for downstream compatibility.
+code-splitter      = ["moltis-splitter/code-splitter"]
+code-splitter-base = ["moltis-splitter/code-splitter-base"]
+lang-bash          = ["moltis-splitter/lang-bash"]
+lang-c             = ["moltis-splitter/lang-c"]
+lang-cpp           = ["moltis-splitter/lang-cpp"]
+lang-css           = ["moltis-splitter/lang-css"]
+lang-go            = ["moltis-splitter/lang-go"]
+lang-html          = ["moltis-splitter/lang-html"]
+lang-java          = ["moltis-splitter/lang-java"]
+lang-javascript    = ["moltis-splitter/lang-javascript"]
+lang-json          = ["moltis-splitter/lang-json"]
+lang-markdown      = ["moltis-splitter/lang-markdown"]
+lang-python        = ["moltis-splitter/lang-python"]
+lang-ruby          = ["moltis-splitter/lang-ruby"]
+lang-rust          = ["moltis-splitter/lang-rust"]
+lang-toml          = ["moltis-splitter/lang-toml"]
+lang-typescript    = ["moltis-splitter/lang-typescript"]
 # Existing features.
 file-watcher     = ["dep:notify-debouncer-full"]
 local-embeddings = ["dep:llama-cpp-2"]
@@ -41,6 +39,7 @@ llama-cpp-2            = { optional = true, workspace = true }
 moltis-agents          = { workspace = true }
 moltis-common          = { workspace = true }
 moltis-metrics         = { optional = true, workspace = true }
+moltis-splitter        = { workspace = true }
 moltis-tools           = { workspace = true }
 notify-debouncer-full  = { optional = true, workspace = true }
 reqwest                = { workspace = true }
@@ -50,24 +49,8 @@ serde_json             = { workspace = true }
 thiserror              = { workspace = true }
 sha2                   = { workspace = true }
 sqlx                   = { workspace = true }
-text-splitter          = { optional = true, workspace = true }
 tokio                  = { workspace = true }
 tracing                = { workspace = true }
-tree-sitter-bash       = { optional = true, workspace = true }
-tree-sitter-c          = { optional = true, workspace = true }
-tree-sitter-cpp        = { optional = true, workspace = true }
-tree-sitter-css        = { optional = true, workspace = true }
-tree-sitter-go         = { optional = true, workspace = true }
-tree-sitter-html       = { optional = true, workspace = true }
-tree-sitter-java       = { optional = true, workspace = true }
-tree-sitter-javascript = { optional = true, workspace = true }
-tree-sitter-json       = { optional = true, workspace = true }
-tree-sitter-md         = { optional = true, workspace = true }
-tree-sitter-python     = { optional = true, workspace = true }
-tree-sitter-ruby       = { optional = true, workspace = true }
-tree-sitter-rust       = { optional = true, workspace = true }
-tree-sitter-toml-ng    = { optional = true, workspace = true }
-tree-sitter-typescript = { optional = true, workspace = true }
 walkdir                = { workspace = true }
 
 [dev-dependencies]
