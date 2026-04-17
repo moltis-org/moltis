@@ -20,7 +20,7 @@ docker run -d \
 
 Open https://localhost:13131 in your browser and configure your LLM provider to start chatting.
 
-For unattended bootstraps, add `MOLTIS_PASSWORD`, `MOLTIS_PROVIDER`, and
+For unattended bootstraps, add `MOLTIS_TOKEN`, `MOLTIS_PROVIDER`, and
 `MOLTIS_API_KEY` before first start. That pre-configures auth plus one LLM
 provider so you can skip the browser setup wizard entirely.
 
@@ -70,6 +70,7 @@ Moltis uses two directories that should be persisted:
 |------|----------|
 | `/home/moltis/.config/moltis` | Configuration files: `moltis.toml`, `credentials.json`, `mcp-servers.json` |
 | `/home/moltis/.moltis` | Runtime data: databases, sessions, memory files, logs |
+| `/home/moltis/.npm` | npm cache (used by stdio-based MCP servers) |
 
 You can use named volumes (as shown above) or bind mounts to local directories
 for easier access to configuration files:
@@ -160,7 +161,7 @@ the Docker socket mount for sandboxed command execution.
 
 Key points:
 
-- Set `MOLTIS_PASSWORD` in the Coolify UI before first deploy.
+- Set `MOLTIS_TOKEN` in the Coolify UI before first deploy.
 - Set `SERVICE_FQDN_MOLTIS_13131` to your app domain.
 - Keep Moltis in `--no-tls` mode behind Coolify's reverse proxy. If requests
   are redirected to `:13131`, check that TLS is disabled in Moltis.
@@ -252,6 +253,7 @@ sudo systemctl enable --now podman.socket
 |----------|-------------|
 | `MOLTIS_CONFIG_DIR` | Override config directory (default: `~/.config/moltis`) |
 | `MOLTIS_DATA_DIR` | Override data directory (default: `~/.moltis`) |
+| `MOLTIS_NO_TLS` | Disable TLS (serve plain HTTP) — equivalent to `--no-tls` |
 
 Example:
 
@@ -285,7 +287,7 @@ services:
   moltis:
     image: ghcr.io/moltis-org/moltis:latest
     environment:
-      MOLTIS_PASSWORD: "change-me"
+      MOLTIS_TOKEN: "change-me"
       MOLTIS_PROVIDER: "openai"
       MOLTIS_API_KEY: "sk-..."
 ```
