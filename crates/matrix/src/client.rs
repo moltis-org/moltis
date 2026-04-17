@@ -540,13 +540,35 @@ async fn ensure_oidc_owned_encryption_state(
         }
     }
 
-    if let Err(error) = ensure_own_device_is_cross_signed(client).await {
-        warn!(
+    let cross_signing_complete = cross_signing_is_complete(client).await;
+    let device_verified = own_device_is_cross_signed_by_owner(client)
+        .await
+        .unwrap_or(false);
+    info!(
+        account_id,
+        cross_signing_complete,
+        device_verified,
+        "matrix OIDC ownership state before self-sign attempt"
+    );
+
+    match ensure_own_device_is_cross_signed(client).await {
+        Ok(()) => info!(account_id, "matrix OIDC device self-sign succeeded"),
+        Err(error) => warn!(
             account_id,
             error = %error,
             "matrix OIDC device self-signing failed"
-        );
+        ),
     }
+
+    let device_verified_after = own_device_is_cross_signed_by_owner(client)
+        .await
+        .unwrap_or(false);
+    info!(
+        account_id,
+        device_verified_before = device_verified,
+        device_verified_after,
+        "matrix OIDC device verification result"
+    );
 
     if ownership_is_ready(client).await.unwrap_or(false) {
         info!(account_id, "matrix OIDC ownership bootstrap complete");
