@@ -234,26 +234,25 @@ impl TaskStore {
     }
 
     /// List tasks across every known list.
-    async fn list_all_tasks(
-        &self,
-        status_filter: Option<&TaskStatus>,
-    ) -> crate::Result<Vec<Task>> {
+    async fn list_all_tasks(&self, status_filter: Option<&TaskStatus>) -> crate::Result<Vec<Task>> {
         let ids = self.list_ids().await?;
-        let mut all: Vec<Task> = Vec::new();
+        // Collect as (list_id, numeric_id, task) for stable cross-list ordering.
+        let mut all: Vec<(&str, u64, Task)> = Vec::new();
         let lists = self.lists.read().await;
         for id in &ids {
             let Some(list) = lists.get(id) else {
                 continue;
             };
-            all.extend(
-                list.tasks
-                    .values()
-                    .filter(|t| status_filter.is_none_or(|s| &t.status == s))
-                    .cloned(),
-            );
+            for task in list
+                .tasks
+                .values()
+                .filter(|t| status_filter.is_none_or(|s| &t.status == s))
+            {
+                all.push((id, task.id.parse::<u64>().unwrap_or(0), task.clone()));
+            }
         }
-        all.sort_by_key(|t| t.id.parse::<u64>().unwrap_or(0));
-        Ok(all)
+        all.sort_by_key(|(list_id, num, _)| (list_id.to_string(), *num));
+        Ok(all.into_iter().map(|(_, _, t)| t).collect())
     }
 
     pub async fn get(&self, list_id: &str, task_id: &str) -> crate::Result<Option<Task>> {
@@ -397,7 +396,7 @@ impl AgentTool for TaskListTool {
                 },
                 "list_id": {
                     "type": "string",
-                    "description": "Task list identifier. Use \"*\" to list across all lists, or omit for \"default\". Use the \"list_lists\" action to discover available lists."
+                    "description": "Task list identifier. Use \"*\" (or omit) to list across all lists. Pass a specific ID to scope to one list."
                 },
                 "id": {
                     "type": "string",
@@ -448,7 +447,10 @@ impl AgentTool for TaskListTool {
                 let status = str_param(&params, "status")
                     .map(str::parse::<TaskStatus>)
                     .transpose()?;
-                let effective_id = if list_id == "default" && params.get("list_id").is_none() && params.get("listId").is_none() {
+                let effective_id = if list_id == "default"
+                    && params.get("list_id").is_none()
+                    && params.get("listId").is_none()
+                {
                     // When list_id is truly omitted, default to "*" so agents
                     // see tasks from all lists without guessing.
                     "*"
