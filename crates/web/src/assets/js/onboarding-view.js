@@ -3382,7 +3382,7 @@ function MatrixForm({ onConnected, error, setError }) {
 		</div>
 		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
 		${error && html`<${ErrorPanel} message=${error} />`}
-		<button key="matrix-submit" type="submit" class="provider-btn" disabled=${saving || oidcWaiting}>${matrixSubmitLabel(saving, oidcWaiting, authMode)}</button>
+		<button key="matrix-submit" type="submit" class="provider-btn" disabled=${saving || oidcWaiting}><span>${matrixSubmitLabel(saving, oidcWaiting, authMode)}</span></button>
 	</form>`;
 }
 
