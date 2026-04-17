@@ -470,11 +470,12 @@ pub async fn prepare_gateway(
                                     rejection,
                                 )
                             },
-                            Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => (
-                                StatusCode::OK,
-                                Json(serde_json::json!({ "ok": true, "deduplicated": true })),
-                            )
-                                .into_response(),
+                            Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => {
+                                // Slash commands display the response body in
+                                // Slack, so return an empty 200 for deduped
+                                // requests instead of JSON the user would see.
+                                StatusCode::OK.into_response()
+                            },
                             Ok((verified, moltis_channels::ChannelWebhookDedupeResult::New)) => {
                                 // Dispatch to Slack plugin with verified body.
                                 let result = {

@@ -323,7 +323,10 @@ pub async fn handle_verified_command_webhook(
         };
         match sink.dispatch_command(&full_command, reply_to, sender).await {
             Ok(response_text) => Ok(response_text),
-            Err(e) => Ok(format!("Error: {e}")),
+            Err(e) => {
+                debug!(account_id, %full_command, "command dispatch failed: {e}");
+                Ok(format!("Error: {e}"))
+            },
         }
     } else {
         Ok("Channel not configured".to_string())
