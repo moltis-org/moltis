@@ -3238,8 +3238,8 @@ function MatrixForm({ onConnected, error, setError }) {
 			<span>2. OIDC is the default for modern homeservers. Use Password for encrypted chats on older servers, or Access Token for plain traffic</span>
 			<span>3. Moltis generates the local account ID automatically from the Matrix user or homeserver</span>
 		</div>
-		<div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 flex flex-col gap-1">
-			<span class="font-medium text-emerald-50">Encrypted chats require password auth</span>
+		<div class="rounded-md border border-emerald-600/30 bg-emerald-50 p-3 text-xs text-emerald-900 flex flex-col gap-1">
+			<span class="font-medium text-emerald-800">Encrypted chats require password auth</span>
 			<span>${MATRIX_ENCRYPTION_GUIDANCE}</span>
 		</div>
 		<div>
@@ -3260,7 +3260,7 @@ function MatrixForm({ onConnected, error, setError }) {
 			<div class="text-xs text-[var(--muted)] mt-1">${matrixAuthModeGuidance(authMode)}</div>
 		</div>
 		${oidcWaiting && html`
-			<div class="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-3 text-xs text-blue-100 flex items-center gap-2">
+			<div class="rounded-md border border-blue-600/30 bg-blue-50 px-3 py-3 text-xs text-blue-900 flex items-center gap-2">
 				<span class="animate-spin inline-block w-4 h-4 border-2 border-blue-300 border-t-transparent rounded-full"></span>
 				<span>Waiting for OIDC authentication... Complete the login in the browser window that opened.</span>
 			</div>

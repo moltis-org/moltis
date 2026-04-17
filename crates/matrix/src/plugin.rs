@@ -169,134 +169,6 @@ impl MatrixPlugin {
         self
     }
 
-    /// Start the OIDC login flow for a new Matrix account.
-    ///
-    /// Builds a Matrix client, discovers OIDC metadata, registers dynamically,
-    /// and returns an authorization URL. The pre-auth client is stored in
-    /// `AccountStateMap` so `oidc_complete` can finish the flow.
-    pub async fn oidc_start(
-        &self,
-        account_id: &str,
-        config: serde_json::Value,
-        redirect_uri: &str,
-    ) -> ChannelResult<serde_json::Value> {
-        let cfg = parse_account_config(config)?;
-        if cfg.homeserver.is_empty() {
-            return Err(ChannelError::invalid_input("homeserver URL is required"));
-        }
-        let redirect_url: url::Url = redirect_uri
-            .parse()
-            .map_err(|error| ChannelError::external("matrix oidc parse redirect uri", error))?;
-
-        let mx_client = client::build_client(account_id, &cfg).await?;
-        let pending = crate::oidc::start_oidc_login(
-            &mx_client,
-            account_id,
-            &redirect_url,
-            cfg.device_id.as_deref(),
-        )
-        .await?;
-
-        let csrf_state = pending.state.clone();
-        let auth_url = pending.auth_url.clone();
-
-        // Store the pending state so oidc_complete can find it.
-        {
-            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let state = accounts
-                .entry(account_id.to_string())
-                .or_insert_with(|| AccountState {
-                    account_id: account_id.to_string(),
-                    config: cfg.clone(),
-                    client: mx_client.clone(),
-                    message_log: self.message_log.clone(),
-                    event_sink: self.event_sink.clone(),
-                    cancel: CancellationToken::new(),
-                    bot_user_id: String::new(),
-                    ownership_startup_error: None,
-                    initial_sync_complete: AtomicBool::new(false),
-                    pending_identity_reset: Mutex::new(None),
-                    otp: Mutex::new(OtpState::new(cfg.otp_cooldown_secs)),
-                    verification: Mutex::new(Default::default()),
-                    oidc_pending: Mutex::new(None),
-                });
-            let mut oidc_pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
-            *oidc_pending = Some(crate::state::OidcPendingState {
-                client: mx_client,
-                csrf_state: csrf_state.clone(),
-            });
-        }
-
-        Ok(serde_json::json!({
-            "auth_url": auth_url,
-            "state": csrf_state,
-        }))
-    }
-
-    /// Complete the OIDC login after the user authenticated in the browser.
-    ///
-    /// Finds the pending state by CSRF token, finishes the login, and
-    /// promotes the account to active (with event handlers and sync loop).
-    pub async fn oidc_complete(
-        &self,
-        csrf_state: &str,
-        callback_url: &str,
-    ) -> ChannelResult<serde_json::Value> {
-        // Find the account with the matching CSRF state.
-        let (account_id, mx_client) = {
-            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-            let mut found = None;
-            for (aid, state) in accounts.iter() {
-                let pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
-                if pending.as_ref().is_some_and(|p| p.csrf_state == csrf_state) {
-                    found = Some((aid.clone(), pending.as_ref().map(|p| p.client.clone())));
-                    break;
-                }
-            }
-            let (aid, client_opt) = found.ok_or_else(|| {
-                ChannelError::invalid_input("no pending OIDC login matches this state token")
-            })?;
-            (
-                aid,
-                client_opt.ok_or_else(|| {
-                    ChannelError::invalid_input("pending OIDC state has no client")
-                })?,
-            )
-        };
-
-        let authenticated =
-            crate::oidc::finish_oidc_login(&mx_client, &account_id, callback_url).await?;
-        let bot_user_id = authenticated.user_id.clone();
-
-        // Clear the pending state and update the account.
-        {
-            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
-            if let Some(state) = accounts.get_mut(&account_id) {
-                let mut oidc_pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
-                *oidc_pending = None;
-                state.bot_user_id = bot_user_id.to_string();
-                state.config.user_id = Some(bot_user_id.to_string());
-            }
-        }
-
-        // Register event handlers and start the sync loop.
-        client::register_event_handlers(&mx_client, &account_id, &self.accounts, &bot_user_id);
-        let cancel = {
-            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-            accounts
-                .get(&account_id)
-                .map(|s| s.cancel.clone())
-                .unwrap_or_default()
-        };
-        client::sync_once_and_spawn_loop(&mx_client, &account_id, &self.accounts, cancel).await?;
-
-        Ok(serde_json::json!({
-            "ok": true,
-            "account_id": account_id,
-            "user_id": bot_user_id.to_string(),
-        }))
-    }
-
     /// List pending OTP challenges for a specific account.
     pub fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
@@ -590,6 +462,122 @@ impl ChannelPlugin for MatrixPlugin {
 
     fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
         Some(self)
+    }
+
+    async fn oidc_start(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+        redirect_uri: &str,
+    ) -> ChannelResult<serde_json::Value> {
+        let cfg = parse_account_config(config)?;
+        if cfg.homeserver.is_empty() {
+            return Err(ChannelError::invalid_input("homeserver URL is required"));
+        }
+        let redirect_url: url::Url = redirect_uri
+            .parse()
+            .map_err(|error| ChannelError::external("matrix oidc parse redirect uri", error))?;
+
+        let mx_client = client::build_client(account_id, &cfg).await?;
+        let pending = crate::oidc::start_oidc_login(
+            &mx_client,
+            account_id,
+            &redirect_url,
+            cfg.device_id.as_deref(),
+        )
+        .await?;
+
+        let csrf_state = pending.state.clone();
+        let auth_url = pending.auth_url.clone();
+
+        // Store the pending state so oidc_complete can find it.
+        {
+            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+            let state = accounts
+                .entry(account_id.to_string())
+                .or_insert_with(|| AccountState {
+                    account_id: account_id.to_string(),
+                    config: cfg.clone(),
+                    client: mx_client.clone(),
+                    message_log: self.message_log.clone(),
+                    event_sink: self.event_sink.clone(),
+                    cancel: CancellationToken::new(),
+                    bot_user_id: String::new(),
+                    ownership_startup_error: None,
+                    initial_sync_complete: AtomicBool::new(false),
+                    pending_identity_reset: Mutex::new(None),
+                    otp: Mutex::new(OtpState::new(cfg.otp_cooldown_secs)),
+                    verification: Mutex::new(Default::default()),
+                    oidc_pending: Mutex::new(None),
+                });
+            let mut oidc_pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
+            *oidc_pending = Some(crate::state::OidcPendingState {
+                client: mx_client,
+                csrf_state: csrf_state.clone(),
+            });
+        }
+
+        Ok(serde_json::json!({
+            "auth_url": auth_url,
+            "state": csrf_state,
+        }))
+    }
+
+    async fn oidc_complete(
+        &self,
+        csrf_state: &str,
+        callback_url: &str,
+    ) -> ChannelResult<serde_json::Value> {
+        let (account_id, mx_client) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let mut found = None;
+            for (aid, state) in accounts.iter() {
+                let pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
+                if pending.as_ref().is_some_and(|p| p.csrf_state == csrf_state) {
+                    found = Some((aid.clone(), pending.as_ref().map(|p| p.client.clone())));
+                    break;
+                }
+            }
+            let (aid, client_opt) = found.ok_or_else(|| {
+                ChannelError::invalid_input("no pending OIDC login matches this state token")
+            })?;
+            (
+                aid,
+                client_opt.ok_or_else(|| {
+                    ChannelError::invalid_input("pending OIDC state has no client")
+                })?,
+            )
+        };
+
+        let authenticated =
+            crate::oidc::finish_oidc_login(&mx_client, &account_id, callback_url).await?;
+        let bot_user_id = authenticated.user_id.clone();
+
+        {
+            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(state) = accounts.get_mut(&account_id) {
+                let mut oidc_pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
+                *oidc_pending = None;
+                state.bot_user_id = bot_user_id.to_string();
+                state.config.user_id = Some(bot_user_id.to_string());
+            }
+        }
+
+        client::register_event_handlers(&mx_client, &account_id, &self.accounts, &bot_user_id);
+        let cancel = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts
+                .get(&account_id)
+                .map(|s| s.cancel.clone())
+                .unwrap_or_default()
+        };
+        client::sync_once_and_spawn_loop(&mx_client, &account_id, &self.accounts, cancel).await?;
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "account_id": account_id,
+            "user_id": bot_user_id.to_string(),
+        }))
     }
 }
 

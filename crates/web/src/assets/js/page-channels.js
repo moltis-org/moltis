@@ -417,8 +417,8 @@ function ChannelCard(props) {
     ${
 			channelType(ch.type) === "matrix" &&
 			pendingVerifications.length > 0 &&
-			html`<div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-		      <div class="font-medium text-emerald-50">Verification pending</div>
+			html`<div class="rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+		      <div class="font-medium text-emerald-800">Verification pending</div>
 		      ${pendingVerifications.map(
 						(prompt) => html`<div class="mt-1">
 							<div>With ${prompt.other_user_id}</div>
@@ -1486,8 +1486,8 @@ function AddMatrixModal() {
 	          <div class="text-xs text-[var(--muted)]">3. Moltis generates the local account ID automatically from the Matrix user or homeserver</div>
 	        </div>
 	      </div>
-	      <div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-	        <div class="font-medium text-emerald-50">Encrypted chats require password auth</div>
+	      <div class="rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+	        <div class="font-medium text-emerald-800">Encrypted chats require password auth</div>
 	        <div>${MATRIX_ENCRYPTION_GUIDANCE}</div>
 	      </div>
 	      <${ConnectionModeHint} type="matrix" />
@@ -1512,8 +1512,8 @@ function AddMatrixModal() {
 	      </select>
 	      <div class="text-xs text-[var(--muted)]">${matrixAuthModeGuidance(authModeDraft.value)}</div>
 	      ${oidcWaiting.value && html`
-	        <div class="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-3 text-xs text-blue-100 flex items-center gap-2">
-	          <span class="animate-spin inline-block w-4 h-4 border-2 border-blue-300 border-t-transparent rounded-full"></span>
+	        <div class="rounded-md border border-blue-600/30 bg-blue-50 px-3 py-3 text-xs text-blue-900 flex items-center gap-2">
+	          <span class="animate-spin inline-block w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></span>
 	          <span>Waiting for OIDC authentication... Complete the login in the browser window that opened.</span>
 	        </div>
 	      `}
@@ -2209,8 +2209,8 @@ function EditChannelModal() {
 				}
 	      ${
 					isMatrix &&
-					html`<div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-				        <div class="font-medium text-emerald-50">Encrypted chats require password auth</div>
+					html`<div class="rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+				        <div class="font-medium text-emerald-800">Encrypted chats require password auth</div>
 				        <div>${MATRIX_ENCRYPTION_GUIDANCE}</div>
 				      </div>`
 				}
