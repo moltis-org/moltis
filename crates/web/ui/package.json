@@ -1,21 +1,39 @@
 {
   "private": true,
+  "type": "module",
   "scripts": {
-    "build": "tailwindcss -i input.css -o ../src/assets/style.css --minify",
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "build:css": "tailwindcss -i input.css -o ../src/assets/css/style.css",
     "build:shiki": "node build-shiki.mjs",
-    "watch": "tailwindcss -i input.css -o ../src/assets/style.css --watch",
+    "build:sw": "esbuild src/sw.ts --bundle --format=esm --outfile=../src/assets/sw.js",
+    "build:all": "npm run build && npm run build:css && npm run build:sw",
+    "watch:css": "tailwindcss -i input.css -o ../src/assets/css/style.css --watch",
+    "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
     "e2e:debug": "playwright test --debug",
     "e2e:install": "playwright install chromium"
   },
+  "dependencies": {
+    "@preact/signals": "^2.0.0",
+    "i18next": "^24.2.2",
+    "luxon": "^3.5.0",
+    "preact": "^10.25.0",
+    "pretty-bytes": "^6.1.1",
+    "uplot": "^1.6.31"
+  },
   "devDependencies": {
     "@playwright/test": "^1.50.0",
+    "@preact/preset-vite": "^2.9.0",
     "@tailwindcss/cli": "^4.1.0",
+    "@types/luxon": "^3.4.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "esbuild": "^0.25.0",
     "shiki": "^3.0.0",
-    "tailwindcss": "^4.1.0"
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.1.0"
   }
 }
