@@ -558,14 +558,35 @@ async fn ensure_oidc_owned_encryption_state(
         .await;
     wait_for_e2ee_state_to_settle(client).await;
 
-    let cross_signing_complete = cross_signing_is_complete(client).await;
+    let cross_signing_status = client.encryption().cross_signing_status().await;
+    let cross_signing_complete = cross_signing_status
+        .as_ref()
+        .is_some_and(|s| s.is_complete());
+    let has_master = cross_signing_status.as_ref().is_some_and(|s| s.has_master);
+    let has_self_signing = cross_signing_status
+        .as_ref()
+        .is_some_and(|s| s.has_self_signing);
+    let has_user_signing = cross_signing_status
+        .as_ref()
+        .is_some_and(|s| s.has_user_signing);
     let device_verified = own_device_is_cross_signed_by_owner(client)
         .await
         .unwrap_or(false);
+    let own_device_exists = client
+        .encryption()
+        .get_own_device()
+        .await
+        .ok()
+        .flatten()
+        .is_some();
     info!(
         account_id,
         cross_signing_complete,
+        has_master,
+        has_self_signing,
+        has_user_signing,
         device_verified,
+        own_device_exists,
         "matrix OIDC ownership state before self-sign attempt"
     );
 
