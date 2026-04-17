@@ -8,7 +8,7 @@ use {
         },
     },
     std::collections::BTreeSet,
-    tracing::warn,
+    tracing::debug,
 };
 
 /// Prune `required` entries that reference properties not defined in `properties`.
@@ -239,23 +239,44 @@ impl Transform for OpenAiSchemaSubsetTransform {
     }
 }
 
-fn canonicalize_schema_for_openai_compat(schema: &serde_json::Value) -> serde_json::Value {
-    // Strip `$schema` so `SchemaDocument::from_json()` doesn't reject
-    // non-2020-12 drafts (e.g. draft-07 from Attio MCP tools, issue #743).
-    // Draft-07 and 2020-12 share enough structural keywords that
-    // canonicalization works; remaining differences (`definitions` vs
-    // `$defs`, tuple `items` vs `prefixItems`) are handled by schemars
-    // transforms downstream. `$schema` itself is later stripped by
-    // `OpenAiSchemaSubsetTransform` anyway.
-    let mut input = schema.clone();
-    if let Some(obj) = input.as_object_mut() {
-        obj.remove("$schema");
+/// Recursively strip `$schema` from all levels of a JSON value.
+///
+/// `json_schema_ast` validates `$schema` at every nesting level (properties,
+/// definitions, `$defs`, etc.) and rejects non-Draft-2020-12 URIs. MCP tools
+/// may embed `$schema` in nested definitions (issue #760), so root-only
+/// stripping is insufficient.
+fn strip_schema_keyword_recursive(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(obj) => {
+            obj.remove("$schema");
+            for v in obj.values_mut() {
+                strip_schema_keyword_recursive(v);
+            }
+        },
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                strip_schema_keyword_recursive(item);
+            }
+        },
+        _ => {},
     }
+}
+
+fn canonicalize_schema_for_openai_compat(schema: &serde_json::Value) -> serde_json::Value {
+    // Recursively strip `$schema` so `SchemaDocument::from_json()` doesn't
+    // reject non-2020-12 drafts (e.g. draft-07 from Attio MCP tools,
+    // issue #743, #760). Draft-07 and 2020-12 share enough structural
+    // keywords that canonicalization works; remaining differences
+    // (`definitions` vs `$defs`, tuple `items` vs `prefixItems`) are
+    // handled by schemars transforms downstream. `$schema` itself is later
+    // stripped by `OpenAiSchemaSubsetTransform` anyway.
+    let mut input = schema.clone();
+    strip_schema_keyword_recursive(&mut input);
 
     let document = match SchemaDocument::from_json(&input) {
         Ok(document) => document,
         Err(error) => {
-            warn!(
+            debug!(
                 error = %error,
                 "openai tool schema failed Draft 2020-12 preflight; using raw schema for best-effort normalization"
             );
@@ -264,7 +285,7 @@ fn canonicalize_schema_for_openai_compat(schema: &serde_json::Value) -> serde_js
     };
 
     if let Err(error) = document.root() {
-        warn!(
+        debug!(
             error = %error,
             "openai tool schema failed canonical AST resolution; using raw schema for best-effort normalization"
         );
@@ -275,7 +296,7 @@ fn canonicalize_schema_for_openai_compat(schema: &serde_json::Value) -> serde_js
         .canonical_schema_json()
         .map_or_else(
             |error| {
-                warn!(
+                debug!(
                     error = %error,
                     "openai tool schema canonicalization was unavailable; using raw schema for best-effort normalization"
                 );

@@ -923,6 +923,102 @@ fn responses_tools_draft07_attio_schema_normalized() {
     assert_eq!(params["type"], "object");
 }
 
+/// Issue #760: draft-07 schemas with `$schema` inside nested `definitions`
+/// must go through full canonicalization, not fall back to best-effort
+/// normalization (which logs a WARN on every call). The `$schema` stripping
+/// must be recursive (not root-only) so that `validate_schema_dialects`
+/// inside `json_schema_ast` doesn't reject the schema at a nested pointer.
+///
+/// We detect the fallback path by checking for a canonicalization side-effect:
+/// `lower_boolean_and_null_types` converts `type: "boolean"` to `enum:
+/// [false, true]`, which only happens during canonicalization.
+#[test]
+fn sanitize_draft07_nested_definitions_schema_canonicalized() {
+    let mut schema = serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "definitions": {
+            "Threshold": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean" },
+                    "value": { "type": "integer" }
+                },
+                "required": ["enabled", "value"]
+            }
+        },
+        "properties": {
+            "name": { "type": "string" },
+            "verbose": { "type": "boolean" },
+            "threshold": { "$ref": "#/definitions/Threshold" }
+        },
+        "required": ["name"]
+    });
+
+    sanitize_schema_for_openai_compat(&mut schema);
+    let encoded = schema.to_string();
+
+    // `$schema` must be stripped at all levels.
+    assert!(
+        !encoded.contains("$schema"),
+        "$schema should be removed from all levels, got: {encoded}"
+    );
+    // Root type preserved.
+    assert_eq!(schema["type"], "object");
+    // `name` property type preserved.
+    assert_eq!(schema["properties"]["name"]["type"], "string");
+
+    // Canonicalization lowers `type: "boolean"` → `enum: [false, true]`.
+    // If this enum is present, canonicalization ran (not the fallback path
+    // that would emit a WARN log).
+    let verbose_enum = schema["properties"]["verbose"]["enum"].as_array();
+    assert!(
+        verbose_enum.is_some(),
+        "boolean property should have enum after canonicalization (proves no WARN fallback), got: {}",
+        schema["properties"]["verbose"]
+    );
+}
+
+/// Issue #760: draft-07 schemas must go through full canonicalization (not
+/// just the best-effort fallback). Canonicalization lowers `type: "boolean"`
+/// to `enum: [false, true]` — if this enum is present after sanitization,
+/// it proves the schema was canonicalized rather than falling through to
+/// the raw-schema fallback path.
+#[test]
+fn sanitize_draft07_schema_uses_canonicalization_not_fallback() {
+    let mut schema = serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "verbose": { "type": "boolean" },
+            "name": { "type": "string" }
+        }
+    });
+
+    sanitize_schema_for_openai_compat(&mut schema);
+
+    // Canonicalization lowers `type: "boolean"` → `enum: [false, true]`,
+    // then `RestoreEnumTypeTransform` re-adds `type: "boolean"`. The
+    // presence of `enum` proves canonicalization ran (the fallback path
+    // would leave `type: "boolean"` unchanged without an `enum`).
+    assert_eq!(
+        schema["properties"]["verbose"]["type"], "boolean",
+        "type must be restored after canonicalization"
+    );
+    let Some(verbose_enum) = schema["properties"]["verbose"]["enum"].as_array() else {
+        panic!(
+            "boolean property should have enum after canonicalization (proves non-fallback path), got: {}",
+            schema["properties"]["verbose"]
+        );
+    };
+    assert_eq!(
+        verbose_enum.len(),
+        2,
+        "boolean enum should have [false, true]"
+    );
+}
+
 /// Issue #712: enum-only schemas (no `type` key) must also get null
 /// appended. Canonicalization can strip the redundant `"type": "string"`
 /// leaving just `{"enum": [...]}` — the final fallback in make_nullable
