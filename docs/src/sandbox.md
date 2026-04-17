@@ -137,8 +137,9 @@ filesystem masks prevent leakage via shell commands as well.
 > **Podman note:** The sysfs tmpfs overlays are applied on Docker only. Podman's
 > OCI runtime performs "tmpcopyup" when mounting tmpfs over sysfs paths, which
 > fails under `--cap-drop ALL` because some sysfs files are permission-denied
-> even for root. Podman already masks `/sys/firmware` via its built-in OCI
-> `MaskedPaths`, so the remaining exposure is minimal.
+> even for root. Podman masks `/sys/firmware` via its built-in OCI
+> `MaskedPaths`; `/sys/class/dmi`, `/sys/devices/virtual/dmi`, and
+> `/sys/class/block` remain readable inside the container on Podman.
 
 ## WASM Sandbox (Wasmtime + WASI)
 

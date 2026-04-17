@@ -17,7 +17,7 @@ fn test_sandbox_scope_display() {
 
 #[test]
 fn test_docker_hardening_args_prebuilt() {
-    let args = DockerSandbox::hardening_args(true, "docker");
+    let args = DockerSandbox::hardening_args(true, BackendKind::Docker);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -44,7 +44,7 @@ fn test_docker_hardening_args_prebuilt() {
 
 #[test]
 fn test_docker_hardening_args_not_prebuilt() {
-    let args = DockerSandbox::hardening_args(false, "docker");
+    let args = DockerSandbox::hardening_args(false, BackendKind::Docker);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -71,7 +71,7 @@ fn test_docker_hardening_args_not_prebuilt() {
 
 #[test]
 fn test_docker_hardening_args_podman() {
-    let args = DockerSandbox::hardening_args(true, "podman");
+    let args = DockerSandbox::hardening_args(true, BackendKind::Podman);
     // Core hardening flags must still be present
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
