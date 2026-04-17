@@ -251,6 +251,12 @@ pub(crate) async fn maybe_take_matrix_account_ownership(
         return OwnershipAttemptResult::default();
     }
 
+    // OIDC sessions don't have a password — bootstrap cross-signing
+    // without UIAA password auth (MAS handles auth via OAuth).
+    if matches!(auth_mode(config), Ok(AuthMode::Oidc)) {
+        return ensure_oidc_owned_encryption_state(client, account_id).await;
+    }
+
     match ensure_moltis_owned_encryption_state(client, account_id, config).await {
         Ok(Some(handle)) => {
             let startup_error = ownership_approval_message(&handle);
@@ -404,6 +410,94 @@ async fn ensure_moltis_owned_encryption_state(
     }
 
     Ok(None)
+}
+
+/// OIDC ownership: bootstrap cross-signing without a password.
+///
+/// MAS handles authentication via OAuth, so `bootstrap_cross_signing_if_needed(None)`
+/// works without UIAA password auth. If MAS requires browser approval for a
+/// cross-signing reset, we return the handle for the user to approve.
+#[instrument(skip(client), fields(account_id))]
+async fn ensure_oidc_owned_encryption_state(
+    client: &Client,
+    account_id: &str,
+) -> OwnershipAttemptResult {
+    // Bootstrap cross-signing without password auth.
+    if let Err(error) = client
+        .encryption()
+        .bootstrap_cross_signing_if_needed(None)
+        .await
+    {
+        // If UIAA is needed, try reset_identity which may return an OAuth approval handle.
+        if let Some(handle) = client
+            .encryption()
+            .recovery()
+            .reset_identity()
+            .await
+            .ok()
+            .flatten()
+        {
+            match handle.auth_type() {
+                CrossSigningResetAuthType::OAuth(_) => {
+                    let startup_error = ownership_approval_message(&handle);
+                    warn!(
+                        account_id,
+                        error = startup_error,
+                        "matrix OIDC ownership needs browser approval"
+                    );
+                    return OwnershipAttemptResult {
+                        startup_error: Some(startup_error),
+                        pending_identity_reset: Some(handle),
+                    };
+                },
+                CrossSigningResetAuthType::Uiaa(_) => {
+                    // OIDC sessions can't provide UIAA password auth.
+                    warn!(
+                        account_id,
+                        error = %error,
+                        "matrix OIDC ownership bootstrap failed (UIAA required but no password available)"
+                    );
+                    return OwnershipAttemptResult {
+                        startup_error: Some(format!(
+                            "cross-signing bootstrap needs password auth: {error}"
+                        )),
+                        pending_identity_reset: None,
+                    };
+                },
+            }
+        }
+
+        warn!(
+            account_id,
+            error = %error,
+            "matrix OIDC cross-signing bootstrap failed"
+        );
+        return OwnershipAttemptResult {
+            startup_error: Some(error.to_string()),
+            pending_identity_reset: None,
+        };
+    }
+
+    wait_for_e2ee_state_to_settle(client).await;
+
+    if let Err(error) = ensure_own_device_is_cross_signed(client).await {
+        warn!(
+            account_id,
+            error = %error,
+            "matrix OIDC device self-signing failed"
+        );
+    }
+
+    if ownership_is_ready(client).await.unwrap_or(false) {
+        info!(account_id, "matrix OIDC ownership bootstrap complete");
+    } else {
+        info!(
+            account_id,
+            "matrix OIDC ownership bootstrap partial — device may need verification in Element"
+        );
+    }
+
+    OwnershipAttemptResult::default()
 }
 
 async fn enable_password_backed_recovery(client: &Client, password: &str) -> ChannelResult<String> {
