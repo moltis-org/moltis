@@ -591,7 +591,12 @@ async fn ensure_oidc_owned_encryption_state(
     );
 
     match ensure_own_device_is_cross_signed(client).await {
-        Ok(()) => info!(account_id, "matrix OIDC device self-sign succeeded"),
+        Ok(()) => {
+            // Signature uploaded to server — sync to update local crypto store.
+            let _ = client.sync_once(SyncSettings::default()).await;
+            wait_for_e2ee_state_to_settle(client).await;
+            info!(account_id, "matrix OIDC device self-sign succeeded");
+        },
         Err(error) => warn!(
             account_id,
             error = %error,
