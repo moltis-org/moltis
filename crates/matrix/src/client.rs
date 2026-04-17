@@ -883,14 +883,26 @@ pub(crate) async fn sync_once_and_spawn_loop(
     };
     if let Some(ownership_attempt) = ownership_startup_error {
         let ownership_attempt = ownership_attempt.await;
-        let mut guard = accounts.write().unwrap_or_else(|error| error.into_inner());
-        if let Some(state) = guard.get_mut(account_id) {
-            state.ownership_startup_error = ownership_attempt.startup_error;
-            let mut pending_identity_reset = state
-                .pending_identity_reset
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            *pending_identity_reset = ownership_attempt.pending_identity_reset;
+        let event_sink = {
+            let mut guard = accounts.write().unwrap_or_else(|error| error.into_inner());
+            let sink = guard.get(account_id).and_then(|s| s.event_sink.clone());
+            if let Some(state) = guard.get_mut(account_id) {
+                state.ownership_startup_error = ownership_attempt.startup_error;
+                let mut pending_identity_reset = state
+                    .pending_identity_reset
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                *pending_identity_reset = ownership_attempt.pending_identity_reset;
+            }
+            sink
+        };
+        // Notify the UI that the channel status changed (ownership result).
+        if let Some(sink) = event_sink {
+            sink.emit(moltis_channels::ChannelEvent::StatusChanged {
+                channel_type: moltis_channels::ChannelType::Matrix,
+                account_id: account_id.to_string(),
+            })
+            .await;
         }
     }
     info!(

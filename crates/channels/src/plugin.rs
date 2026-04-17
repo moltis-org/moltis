@@ -351,6 +351,11 @@ pub enum ChannelEvent {
         account_id: String,
         reason: String,
     },
+    /// Channel account status changed (e.g. ownership bootstrap complete).
+    StatusChanged {
+        channel_type: ChannelType,
+        account_id: String,
+    },
 }
 
 /// Sink for channel events — the gateway provides the concrete implementation.

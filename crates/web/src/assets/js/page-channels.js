@@ -1435,13 +1435,10 @@ function AddMatrixModal() {
 							if (channels.some((ch) => ch.account_id === accountId && ch.status === "connected")) {
 								clearInterval(oidcPollRef.current);
 								oidcPollRef.current = null;
-								// Wait for ownership bootstrap to finish before refreshing.
-								setTimeout(() => {
-									oidcWaiting.value = false;
-									showAddMatrix.value = false;
-									resetForm();
-									loadChannels();
-								}, 3000);
+								oidcWaiting.value = false;
+								showAddMatrix.value = false;
+								resetForm();
+								loadChannels();
 							}
 						});
 					}, 1000);
@@ -2431,7 +2428,7 @@ function handleChannelEvent(p) {
 		loadChannels();
 	}
 	handleWhatsAppPairingEvent(p);
-	if (p.kind === "pairing_complete" || p.kind === "account_disabled") {
+	if (p.kind === "pairing_complete" || p.kind === "account_disabled" || p.kind === "status_changed") {
 		loadChannels();
 	}
 	var selected = parseSenderSelectionKey(sendersAccount.value || "");
