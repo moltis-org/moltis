@@ -1388,7 +1388,7 @@ function AddMatrixModal() {
 
 		// OIDC flow: start browser-based auth instead of direct connect.
 		if (authMode === "oidc") {
-			var redirectUri = window.location.origin + "/api/oauth/callback";
+			var redirectUri = window.location.origin + "/auth/callback";
 			sendRpc("channels.oauth_start", {
 				account_id: accountId,
 				homeserver: homeserver,

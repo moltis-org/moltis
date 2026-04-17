@@ -3161,7 +3161,7 @@ function MatrixForm({ onConnected, error, setError }) {
 
 		// OIDC flow: start browser-based auth.
 		if (normalizeMatrixAuthMode(authMode) === "oidc") {
-			var redirectUri = window.location.origin + "/api/oauth/callback";
+			var redirectUri = window.location.origin + "/auth/callback";
 			sendRpc("channels.oauth_start", {
 				account_id: accountId,
 				homeserver: homeserver.trim(),

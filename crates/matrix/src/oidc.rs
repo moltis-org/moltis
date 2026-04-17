@@ -146,31 +146,11 @@ async fn load_oidc_session(account_id: &str) -> ChannelResult<Option<PersistedOi
     }
 }
 
-/// Rewrite the redirect URI for MAS compatibility.
-///
-/// Matrix Authentication Service follows RFC 8252 and requires loopback
-/// redirect URIs to use `http://` (not `https://`). When the web UI is served
-/// over TLS on localhost/loopback, we rewrite the scheme to `http` so MAS
-/// accepts the dynamic client registration.
-fn normalize_redirect_uri(redirect_uri: &Url) -> Url {
-    let host = redirect_uri.host_str().unwrap_or_default();
-    let is_loopback =
-        host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost");
-    if is_loopback && redirect_uri.scheme() == "https" {
-        let mut normalized = redirect_uri.clone();
-        let _ = normalized.set_scheme("http");
-        normalized
-    } else {
-        redirect_uri.clone()
-    }
-}
-
 /// Project URL used as `client_uri` during OIDC dynamic client registration.
 /// MAS validates this URL and rejects loopback addresses for native apps.
 const MOLTIS_CLIENT_URI: &str = "https://moltis.org/";
 
 fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
-    let normalized = normalize_redirect_uri(redirect_uri);
     let client_uri_url: Url = MOLTIS_CLIENT_URI
         .parse()
         .map_err(|error| ChannelError::external("matrix oidc parse client uri", error))?;
@@ -178,7 +158,7 @@ fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
     Ok(ClientMetadata::new(
         ApplicationType::Native,
         vec![OAuthGrantType::AuthorizationCode {
-            redirect_uris: vec![normalized],
+            redirect_uris: vec![redirect_uri.clone()],
         }],
         client_uri,
     ))
@@ -202,7 +182,6 @@ pub(crate) async fn start_oidc_login(
         .await
         .map_err(|error| ChannelError::external("matrix oidc server metadata discovery", error))?;
 
-    let normalized_redirect = normalize_redirect_uri(redirect_uri);
     let metadata = build_client_metadata(redirect_uri)?;
     let raw_metadata: Raw<ClientMetadata> = Raw::new(&metadata)
         .map_err(|error| ChannelError::external("matrix oidc serialize client metadata", error))?;
@@ -216,7 +195,7 @@ pub(crate) async fn start_oidc_login(
     let OAuthAuthorizationData { url, state } = client
         .oauth()
         .login(
-            normalized_redirect,
+            redirect_uri.clone(),
             device_id_owned,
             Some(registration_data),
             None,
@@ -413,53 +392,8 @@ mod tests {
     }
 
     #[test]
-    fn normalize_redirect_rewrites_https_localhost_to_http() {
-        let url: Url = "https://localhost:52979/api/oauth/callback"
-            .parse()
-            .unwrap_or_else(|error| panic!("{error}"));
-        let normalized = normalize_redirect_uri(&url);
-        assert_eq!(
-            normalized.as_str(),
-            "http://localhost:52979/api/oauth/callback"
-        );
-    }
-
-    #[test]
-    fn normalize_redirect_rewrites_https_127_0_0_1_to_http() {
-        let url: Url = "https://127.0.0.1:9000/callback"
-            .parse()
-            .unwrap_or_else(|error| panic!("{error}"));
-        let normalized = normalize_redirect_uri(&url);
-        assert_eq!(normalized.as_str(), "http://127.0.0.1:9000/callback");
-    }
-
-    #[test]
-    fn normalize_redirect_preserves_http_localhost() {
-        let url: Url = "http://localhost:8080/api/oauth/callback"
-            .parse()
-            .unwrap_or_else(|error| panic!("{error}"));
-        let normalized = normalize_redirect_uri(&url);
-        assert_eq!(
-            normalized.as_str(),
-            "http://localhost:8080/api/oauth/callback"
-        );
-    }
-
-    #[test]
-    fn normalize_redirect_preserves_non_loopback_https() {
-        let url: Url = "https://moltis.example.com/api/oauth/callback"
-            .parse()
-            .unwrap_or_else(|error| panic!("{error}"));
-        let normalized = normalize_redirect_uri(&url);
-        assert_eq!(
-            normalized.as_str(),
-            "https://moltis.example.com/api/oauth/callback"
-        );
-    }
-
-    #[test]
-    fn build_client_metadata_normalizes_https_localhost_redirect_and_client_uri() {
-        let redirect: Url = "https://localhost:52979/api/oauth/callback"
+    fn build_client_metadata_uses_project_url_for_client_uri() {
+        let redirect: Url = "https://localhost:52979/auth/callback"
             .parse()
             .unwrap_or_else(|error| panic!("{error}"));
         let metadata = build_client_metadata(&redirect).unwrap_or_else(|error| panic!("{error}"));
@@ -467,13 +401,12 @@ mod tests {
             OAuthGrantType::AuthorizationCode { redirect_uris } => {
                 assert_eq!(
                     redirect_uris[0].as_str(),
-                    "http://localhost:52979/api/oauth/callback",
-                    "redirect_uri should be rewritten to http for loopback"
+                    "https://localhost:52979/auth/callback",
+                    "redirect_uri should be passed through unchanged"
                 );
             },
             other => panic!("expected AuthorizationCode, got {other:?}"),
         }
-        // client_uri should be the project URL, not localhost
         assert_eq!(
             metadata.client_uri.get(None).map(|u| u.as_str()),
             Some(MOLTIS_CLIENT_URI),
