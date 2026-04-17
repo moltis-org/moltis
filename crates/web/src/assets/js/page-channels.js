@@ -284,6 +284,19 @@ function MatrixOwnershipCard({ channel, matrixStatus }) {
 				<div class="mt-1">${detailText}</div>
 			</div>`
 		}
+		${
+			ownershipIssue === "none" && ownershipMode === "moltis_owned" && !deviceVerified &&
+			html`<div class="mt-2 flex flex-wrap gap-2">
+				<button
+					type="button"
+					class="provider-btn provider-btn-sm"
+					onClick=${retryOwnershipSetup}
+					disabled=${retryingOwnership.value}>
+					${retryingOwnership.value ? "Verifying\u2026" : "Retry device verification"}
+				</button>
+				${retryOwnershipError.value && html`<div class="text-xs text-[var(--error)]">${retryOwnershipError.value}</div>`}
+			</div>`
+		}
 	</div>`;
 }
 
