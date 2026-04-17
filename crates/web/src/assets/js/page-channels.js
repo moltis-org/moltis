@@ -1389,10 +1389,30 @@ function AddMatrixModal() {
 		// OIDC flow: start browser-based auth instead of direct connect.
 		if (authMode === "oidc") {
 			var redirectUri = window.location.origin + "/auth/callback";
+			var oidcConfig = {
+				homeserver: homeserver,
+				ownership_mode: normalizeMatrixOwnershipMode(ownershipModeDraft.value),
+				dm_policy: form.querySelector("[data-field=dmPolicy]").value,
+				room_policy: form.querySelector("[data-field=roomPolicy]").value,
+				mention_mode: form.querySelector("[data-field=mentionMode]").value,
+				auto_join: form.querySelector("[data-field=autoJoin]").value,
+				user_allowlist: userAllowlistItems.value,
+				room_allowlist: roomAllowlistItems.value,
+				otp_self_approval: otpSelfApprovalDraft.value,
+				otp_cooldown_secs: normalizeMatrixOtpCooldown(otpCooldownDraft.value),
+			};
+			if (deviceDisplayNameDraft.value.trim()) oidcConfig.device_display_name = deviceDisplayNameDraft.value.trim();
+			if (addModel.value) {
+				oidcConfig.model = addModel.value;
+				var found = modelsSig.value.find((x) => x.id === addModel.value);
+				if (found?.provider) oidcConfig.model_provider = found.provider;
+			}
+			Object.assign(oidcConfig, advancedPatch.value);
 			sendRpc("channels.oauth_start", {
 				account_id: accountId,
 				homeserver: homeserver,
 				redirect_uri: redirectUri,
+				config: oidcConfig,
 			}).then((res) => {
 				if (res?.ok && res.payload?.auth_url) {
 					oidcWaiting.value = true;

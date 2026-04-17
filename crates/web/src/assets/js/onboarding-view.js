@@ -3161,10 +3161,25 @@ function MatrixForm({ onConnected, error, setError }) {
 		// OIDC flow: start browser-based auth.
 		if (normalizeMatrixAuthMode(authMode) === "oidc") {
 			var redirectUri = window.location.origin + "/auth/callback";
+			var oidcConfig = {
+				homeserver: homeserver.trim(),
+				ownership_mode: normalizeMatrixOwnershipMode(ownershipMode),
+				dm_policy: dmPolicy,
+				room_policy: roomPolicy,
+				mention_mode: mentionMode,
+				auto_join: autoJoin,
+				otp_self_approval: otpSelfApproval,
+				otp_cooldown_secs: normalizeMatrixOtpCooldown(otpCooldown),
+				user_allowlist: splitLines(userAllowlist),
+				room_allowlist: splitLines(roomAllowlist),
+			};
+			if (deviceDisplayName.trim()) oidcConfig.device_display_name = deviceDisplayName.trim();
+			Object.assign(oidcConfig, advancedPatch.value);
 			sendRpc("channels.oauth_start", {
 				account_id: accountId,
 				homeserver: homeserver.trim(),
 				redirect_uri: redirectUri,
+				config: oidcConfig,
 			}).then((res) => {
 				if (res?.ok && res.payload?.auth_url) {
 					setOidcWaiting(true);

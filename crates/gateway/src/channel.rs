@@ -815,11 +815,17 @@ impl ChannelService for LiveChannelService {
             return Err("redirect_uri is required".into());
         }
 
-        let config = serde_json::json!({
-            "homeserver": homeserver,
-            "auth_mode": "oidc",
-            "access_token": "",
-        });
+        // Merge caller-provided config (ownership_mode, policies, etc.) with
+        // the required OIDC fields.
+        let mut config = params
+            .get("config")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        if let Some(obj) = config.as_object_mut() {
+            obj.insert("homeserver".into(), homeserver.into());
+            obj.insert("auth_mode".into(), "oidc".into());
+            obj.entry("access_token").or_insert_with(|| "".into());
+        }
 
         let plugin_lock = self
             .registry
