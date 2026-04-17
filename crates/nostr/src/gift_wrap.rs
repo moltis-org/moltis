@@ -7,6 +7,10 @@ use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Timestamp, 
 
 use crate::error::Error;
 
+/// Gift wrap timestamps are randomly tweaked by 0–2 days (per NIP-59), so
+/// relay filters need a wider `since` window to avoid missing recent wraps.
+pub const TIMESTAMP_WINDOW_SECS: u64 = ::time::Duration::days(2).whole_seconds() as u64;
+
 /// Send a gift-wrapped DM (NIP-17/NIP-59, kind:1059) to the recipient.
 ///
 /// Uses `EventBuilder::private_msg` to create a sealed, gift-wrapped event

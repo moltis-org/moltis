@@ -52,14 +52,18 @@ pub async fn run_subscription_loop(
         u64::try_from(::time::OffsetDateTime::now_utc().unix_timestamp()).unwrap_or_default();
     let since = Timestamp::from(now_secs);
 
-    // Gift wraps have randomly tweaked timestamps (0–2 days), so use a wider
-    // window for the relay filter. The staleness check in handle_event uses
-    // the rumor's actual created_at for gift wraps, filtering old kind:4
-    // messages that happen to fall in this window.
-    let gift_wrap_since = Timestamp::from(now_secs.saturating_sub(172_800));
+    // Two separate filters: kind:4 uses `since` (now), kind:1059 uses a wider
+    // window because gift wrap timestamps are randomly tweaked by 0–2 days.
+    let gift_wrap_since =
+        Timestamp::from(now_secs.saturating_sub(crate::gift_wrap::TIMESTAMP_WINDOW_SECS));
 
-    let filter = Filter::new()
-        .kinds([Kind::EncryptedDirectMessage, Kind::GiftWrap])
+    let nip04_filter = Filter::new()
+        .kind(Kind::EncryptedDirectMessage)
+        .pubkey(bot_pubkey)
+        .since(since);
+
+    let gift_wrap_filter = Filter::new()
+        .kind(Kind::GiftWrap)
         .pubkey(bot_pubkey)
         .since(gift_wrap_since);
 
@@ -74,9 +78,11 @@ pub async fn run_subscription_loop(
 
     let mut seen = SeenTracker::new();
 
-    if let Err(e) = client.subscribe(filter, None).await {
-        tracing::error!(account_id, "failed to subscribe: {e}");
-        return;
+    for filter in [nip04_filter, gift_wrap_filter] {
+        if let Err(e) = client.subscribe(filter, None).await {
+            tracing::error!(account_id, "failed to subscribe: {e}");
+            return;
+        }
     }
 
     let mut notifications = client.notifications();

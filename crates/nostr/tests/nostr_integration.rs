@@ -290,7 +290,7 @@ async fn send_and_receive_gift_wrapped_dm() {
     let since = Timestamp::from(
         u64::try_from(::time::OffsetDateTime::now_utc().unix_timestamp())
             .unwrap_or_default()
-            .saturating_sub(172_800),
+            .saturating_sub(moltis_nostr::gift_wrap::TIMESTAMP_WINDOW_SECS),
     );
     let filter = Filter::new()
         .kind(Kind::GiftWrap)
