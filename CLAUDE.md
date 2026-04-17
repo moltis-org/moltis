@@ -229,6 +229,9 @@ New crate: add `run_migrations()` to `lib.rs`, call from `server.rs` in dependen
 ## Git Workflow
 
 Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): description`
+- Prefer descriptive commit subjects over terse "change stuff" summaries.
+- For bug fixes, behavioral changes, and non-obvious refactors, include a commit body that explains the concrete problem, the root cause, and why the chosen fix is correct.
+- Write commit messages so `git log` is useful without opening the diff first.
 **No `Co-Authored-By` trailers.** Update `README.md` features list with `feat` commits.
 
 ### Releases
@@ -286,6 +289,8 @@ Exact commands (must match `local-validate.sh`):
 
 Required sections: `## Summary`, `## Validation` (checkboxes, split into `### Completed` / `### Remaining`
 with exact commands), `## Manual QA`. Include concrete test steps.
+- Do not prefix GitHub PR titles with `[codex]`.
+- Prefer normal human-readable PR titles, ideally aligned with the conventional-commit summary.
 
 ## Code Quality Checklist
 

@@ -789,6 +789,50 @@ fn test_memory_save_hint_injected_when_tool_registered() {
 }
 
 #[test]
+fn test_memory_forget_hint_injected_when_tool_registered() {
+    let tools = registry_with_tools(&["memory_forget"]);
+    let prompt = build_system_prompt_with_session_runtime(
+        &tools,
+        true,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(prompt.contains("## Long-Term Memory"));
+    assert!(prompt.contains("MUST call `memory_forget`"));
+}
+
+#[test]
+fn test_memory_delete_hint_injected_when_tool_registered() {
+    let tools = registry_with_tools(&["memory_delete"]);
+    let prompt = build_system_prompt_with_session_runtime(
+        &tools,
+        true,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(prompt.contains("## Long-Term Memory"));
+    assert!(prompt.contains("Use `memory_delete` only when"));
+}
+
+#[test]
 fn test_memory_save_hint_absent_without_tool() {
     let tools = ToolRegistry::new();
     let prompt = build_system_prompt_with_session_runtime(
@@ -832,6 +876,36 @@ fn test_memory_search_and_save_hints_both_present() {
     assert!(prompt.contains("Likes coffee"));
     assert!(prompt.contains("memory_search"));
     assert!(prompt.contains("MUST call `memory_save`"));
+}
+
+#[test]
+fn test_memory_search_save_forget_and_delete_hints_all_present() {
+    let tools = registry_with_tools(&[
+        "memory_search",
+        "memory_save",
+        "memory_forget",
+        "memory_delete",
+    ]);
+    let memory = "## User Facts\n- Likes coffee";
+    let prompt = build_system_prompt_with_session_runtime(
+        &tools,
+        true,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(memory),
+        None,
+    );
+    assert!(prompt.contains("memory_search"));
+    assert!(prompt.contains("MUST call `memory_save`"));
+    assert!(prompt.contains("MUST call `memory_forget`"));
+    assert!(prompt.contains("Use `memory_delete` only when"));
 }
 
 #[test]

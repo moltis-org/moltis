@@ -227,14 +227,28 @@ build-test: build-css
     #!/usr/bin/env bash
     set -euo pipefail
     echo "==> Building all workspace targets (bins + tests)..."
-    cargo +{{nightly_toolchain}} build --workspace --all-features --all-targets
+    if [ "$(uname -s)" = "Darwin" ]; then
+        cargo +{{nightly_toolchain}} build --workspace --all-targets --exclude moltis-providers --exclude moltis-gateway
+        cargo +{{nightly_toolchain}} build -p moltis-providers --all-targets --features local-llm-metal
+        cargo +{{nightly_toolchain}} build -p moltis-gateway --all-targets --features local-llm-metal
+    else
+        cargo +{{nightly_toolchain}} build --workspace --all-features --all-targets
+    fi
     echo "==> Build complete. Running Rust tests and E2E tests in parallel..."
 
     RUST_LOG="$(mktemp)"
     E2E_LOG="$(mktemp)"
     trap 'rm -f "${RUST_LOG}" "${E2E_LOG}"' EXIT
 
-    cargo +{{nightly_toolchain}} nextest run --all-features > "${RUST_LOG}" 2>&1 &
+    if [ "$(uname -s)" = "Darwin" ]; then
+        (
+            cargo +{{nightly_toolchain}} nextest run --workspace --exclude moltis-providers --exclude moltis-gateway
+            cargo +{{nightly_toolchain}} nextest run -p moltis-providers --features local-llm-metal
+            cargo +{{nightly_toolchain}} nextest run -p moltis-gateway --features local-llm-metal
+        ) > "${RUST_LOG}" 2>&1 &
+    else
+        cargo +{{nightly_toolchain}} nextest run --all-features > "${RUST_LOG}" 2>&1 &
+    fi
     TEST_PID=$!
 
     (cd crates/web/ui && npm run e2e) > "${E2E_LOG}" 2>&1 &
@@ -307,7 +321,7 @@ test:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" = "Darwin" ]; then
-        cargo +{{nightly_toolchain}} nextest run --workspace --all-features --exclude moltis-providers --exclude moltis-gateway
+        cargo +{{nightly_toolchain}} nextest run --workspace --exclude moltis-providers --exclude moltis-gateway
         cargo +{{nightly_toolchain}} nextest run -p moltis-providers --features local-llm-metal
         cargo +{{nightly_toolchain}} nextest run -p moltis-gateway --features local-llm-metal
     else

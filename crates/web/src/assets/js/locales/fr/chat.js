@@ -38,6 +38,13 @@ export default {
 	mcpDisabledTooltip: "MCP tools disabled \u2014 click to enable for this session",
 	mcpToggleTooltip: "Toggle MCP tools for this session",
 
+	// ── Reasoning toggle ─────────────────────────────────────
+	reasoningTooltip: "Effort de raisonnement",
+	reasoningOff: "Désactivé",
+	reasoningLow: "Faible",
+	reasoningMedium: "Moyen",
+	reasoningHigh: "Élevé",
+
 	// ── Debug panel ──────────────────────────────────────────
 	debugTooltip: "Show context debug info",
 	debugLabel: "Debug",

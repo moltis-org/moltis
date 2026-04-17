@@ -147,6 +147,7 @@ pub async fn prepare_gateway_core(
         ProviderRegistry::from_config_with_static_catalogs(
             &effective_providers,
             &config_env_overrides,
+            moltis_providers::extract_cw_overrides(&config.models),
         ),
     ));
     {
@@ -286,6 +287,7 @@ pub async fn prepare_gateway_core(
         deploy_platform.clone(),
     )
     .with_env_overrides(config_env_overrides.clone())
+    .with_global_cw_overrides(moltis_providers::extract_cw_overrides(&config.models))
     .with_error_parser(crate::chat_error::parse_chat_error)
     .with_callback_bind_addr(bind.to_string());
     provider_setup.set_priority_models(live_model_service.priority_models_handle());

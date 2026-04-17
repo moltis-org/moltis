@@ -249,6 +249,17 @@ pub struct MoltisConfig {
     pub cron: CronConfig,
     pub caldav: CalDavConfig,
     pub webhooks: WebhooksConfig,
+    /// Per-model overrides that apply across all providers.
+    ///
+    /// Keys are normalized model IDs. Provider-scoped overrides
+    /// (`[providers.<name>.models.<id>]`) take precedence over these.
+    ///
+    /// ```toml
+    /// [models.claude-opus-4-6]
+    /// context_window = 1_000_000
+    /// ```
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub models: HashMap<String, ModelOverride>,
     /// Upstream HTTP/SOCKS proxy for all outbound requests.
     ///
     /// Supports `http://`, `https://`, `socks5://`, and `socks5h://` schemes.

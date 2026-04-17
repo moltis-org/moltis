@@ -41,6 +41,7 @@ llama-cpp-2            = { optional = true, workspace = true }
 moltis-agents          = { workspace = true }
 moltis-common          = { workspace = true }
 moltis-metrics         = { optional = true, workspace = true }
+moltis-tools           = { workspace = true }
 notify-debouncer-full  = { optional = true, workspace = true }
 reqwest                = { workspace = true }
 secrecy                = { workspace = true }

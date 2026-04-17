@@ -1,9 +1,12 @@
 /// Agent tools for memory search, retrieval, and persistence.
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use {async_trait::async_trait, moltis_agents::tool_registry::AgentTool, serde_json::json};
 
-use crate::runtime::MemoryRuntime;
+use crate::{
+    runtime::MemoryRuntime,
+    writer::{remove_exact_text, validate_memory_path},
+};
 
 /// Tool: search memory with a natural language query.
 pub struct MemorySearchTool {
@@ -189,6 +192,9 @@ impl AgentTool for MemorySaveTool {
             .ok_or_else(|| anyhow::anyhow!("missing 'content' parameter"))?;
         let file = params["file"].as_str().unwrap_or("MEMORY.md");
         let append = params["append"].as_bool().unwrap_or(true);
+        let checkpoint_id = checkpoint_memory_path(self.manager.as_ref(), file, "memory_save")
+            .await?
+            .id;
 
         let result = self.manager.write_memory(file, content, append).await?;
 
@@ -196,8 +202,145 @@ impl AgentTool for MemorySaveTool {
             "saved": true,
             "path": file,
             "bytes_written": result.bytes_written,
+            "checkpointId": result.checkpoint_id.or(Some(checkpoint_id)),
         }))
     }
+}
+
+/// Tool: delete or remove exact text from long-term memory files.
+pub struct MemoryDeleteTool {
+    manager: Arc<dyn MemoryRuntime>,
+}
+
+impl MemoryDeleteTool {
+    pub fn new(manager: Arc<dyn MemoryRuntime>) -> Self {
+        Self { manager }
+    }
+}
+
+#[async_trait]
+impl AgentTool for MemoryDeleteTool {
+    fn name(&self) -> &str {
+        "memory_delete"
+    }
+
+    fn description(&self) -> &str {
+        "Forget saved memory by removing exact text from a memory file or deleting the file entirely. Updates the index immediately."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "file": {
+                    "type": "string",
+                    "description": "Target file: MEMORY.md, memory.md, or memory/<name>.md"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Exact text snippet to remove from the file. Required unless delete_file is true."
+                },
+                "delete_file": {
+                    "type": "boolean",
+                    "description": "Delete the whole file instead of removing exact text.",
+                    "default": false
+                },
+                "all_matches": {
+                    "type": "boolean",
+                    "description": "Remove every exact match of text instead of only the first match.",
+                    "default": false
+                },
+                "delete_if_empty": {
+                    "type": "boolean",
+                    "description": "Delete the file if removing text leaves only whitespace.",
+                    "default": true
+                }
+            },
+            "required": ["file"]
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let file = params["file"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing 'file' parameter"))?;
+        let delete_file = params["delete_file"].as_bool().unwrap_or(false);
+        let text = params["text"].as_str();
+        let all_matches = params["all_matches"].as_bool().unwrap_or(false);
+        let delete_if_empty = params["delete_if_empty"].as_bool().unwrap_or(true);
+
+        if delete_file == text.is_some() {
+            anyhow::bail!("provide either 'text' or delete_file=true");
+        }
+
+        let path = resolve_memory_tool_path(self.manager.as_ref(), file)?;
+        let checkpoint_id = checkpoint_memory_path(self.manager.as_ref(), file, "memory_delete")
+            .await?
+            .id;
+
+        if delete_file {
+            let file_existed = tokio::fs::try_exists(&path).await?;
+            if file_existed {
+                tokio::fs::remove_file(&path).await?;
+            }
+            let index_removed = self.manager.remove_path(&path).await?;
+            return Ok(json!({
+                "deleted": true,
+                "path": file,
+                "file_deleted": file_existed,
+                "file_existed": file_existed,
+                "index_removed": index_removed,
+                "bytes_written": 0,
+                "checkpointId": checkpoint_id,
+            }));
+        }
+
+        let existing = tokio::fs::read_to_string(&path).await.map_err(|error| {
+            anyhow::anyhow!("failed to read memory file '{}': {error}", path.display())
+        })?;
+        let removal = remove_exact_text(&existing, text.unwrap_or_default(), all_matches)?;
+        let file_deleted = delete_if_empty && removal.content.trim().is_empty();
+
+        if file_deleted {
+            tokio::fs::remove_file(&path).await?;
+            self.manager.remove_path(&path).await?;
+        } else {
+            tokio::fs::write(&path, &removal.content).await?;
+            self.manager.sync_path(&path).await?;
+        }
+
+        Ok(json!({
+            "deleted": true,
+            "path": file,
+            "file_deleted": file_deleted,
+            "matches_removed": removal.matches_removed,
+            "bytes_written": if file_deleted { 0 } else { removal.content.len() },
+            "checkpointId": checkpoint_id,
+        }))
+    }
+}
+
+fn resolve_memory_tool_path(manager: &dyn MemoryRuntime, file: &str) -> anyhow::Result<PathBuf> {
+    let data_dir = manager
+        .data_dir()
+        .ok_or_else(|| anyhow::anyhow!("memory writes are disabled (no data_dir configured)"))?;
+    validate_memory_path(data_dir, file)
+}
+
+async fn checkpoint_memory_path(
+    manager: &dyn MemoryRuntime,
+    file: &str,
+    reason: &str,
+) -> anyhow::Result<moltis_tools::checkpoints::CheckpointRecord> {
+    let path = resolve_memory_tool_path(manager, file)?;
+    let data_dir = manager
+        .data_dir()
+        .ok_or_else(|| anyhow::anyhow!("memory writes are disabled (no data_dir configured)"))?;
+    let checkpoints = moltis_tools::checkpoints::CheckpointManager::new(data_dir.to_path_buf());
+    checkpoints
+        .checkpoint_path(&path, reason)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -475,6 +618,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_memory_delete_tool_schema() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (manager, _tmp) = rt.block_on(setup_manager());
+        let tool = MemoryDeleteTool::new(manager);
+        assert_eq!(tool.name(), "memory_delete");
+        let schema = tool.parameters_schema();
+        assert!(schema["properties"]["file"].is_object());
+        assert!(schema["properties"]["text"].is_object());
+        assert!(schema["properties"]["delete_file"].is_object());
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("file"))
+        );
+    }
+
     /// Default append mode: two writes produce both contents in the file.
     #[tokio::test]
     async fn test_memory_save_append_default() {
@@ -488,12 +649,14 @@ mod tests {
             .unwrap();
         assert_eq!(r1["saved"], json!(true));
         assert_eq!(r1["path"], json!("MEMORY.md"));
+        assert!(r1["checkpointId"].is_string());
 
         let r2 = tool
             .execute(json!({ "content": "Second memory about database." }))
             .await
             .unwrap();
         assert_eq!(r2["saved"], json!(true));
+        assert!(r2["checkpointId"].is_string());
 
         let content = std::fs::read_to_string(data_dir.join("MEMORY.md")).unwrap();
         assert!(content.contains("First memory"), "should have first write");
@@ -711,6 +874,94 @@ mod tests {
         assert!(
             retrieved.contains("jazz era"),
             "round-trip text should contain saved content, got: {retrieved}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_memory_delete_removes_exact_text_and_reindexes() {
+        let (manager, tmp) = setup_manager().await;
+        let data_dir = tmp.path().to_path_buf();
+        std::fs::write(
+            data_dir.join("MEMORY.md"),
+            "User likes spicy food.\nUser likes board games.\n",
+        )
+        .unwrap();
+        manager.sync().await.unwrap();
+
+        let delete_tool = MemoryDeleteTool::new(manager.clone());
+        let search_tool = MemorySearchTool::new(manager.clone());
+        let result = delete_tool
+            .execute(json!({
+                "file": "MEMORY.md",
+                "text": "User likes spicy food.\n",
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["deleted"], json!(true));
+        assert_eq!(result["matches_removed"], json!(1));
+        assert_eq!(result["file_deleted"], json!(false));
+        assert!(result["checkpointId"].is_string());
+
+        let updated = std::fs::read_to_string(data_dir.join("MEMORY.md")).unwrap();
+        assert!(!updated.contains("spicy food"));
+        assert!(updated.contains("board games"));
+
+        let search = search_tool
+            .execute(json!({ "query": "spicy food", "limit": 5 }))
+            .await
+            .unwrap();
+        let items = search["results"].as_array().unwrap();
+        assert!(
+            items.iter().all(|item| !item["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("spicy food")),
+            "removed memory should not remain searchable"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_memory_delete_deletes_file_when_requested() {
+        let (manager, tmp) = setup_manager().await;
+        let data_dir = tmp.path().to_path_buf();
+        std::fs::write(data_dir.join("memory").join("notes.md"), "temporary note").unwrap();
+        manager.sync().await.unwrap();
+
+        let delete_tool = MemoryDeleteTool::new(manager.clone());
+        let result = delete_tool
+            .execute(json!({
+                "file": "memory/notes.md",
+                "delete_file": true,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["deleted"], json!(true));
+        assert_eq!(result["file_deleted"], json!(true));
+        assert!(result["checkpointId"].is_string());
+        assert!(!data_dir.join("memory").join("notes.md").exists());
+        let search = manager.search("temporary note", 5).await.unwrap();
+        assert!(
+            search.is_empty(),
+            "deleted file should be removed from search results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_memory_delete_rejects_ambiguous_request() {
+        let (manager, _tmp) = setup_manager().await;
+        let tool = MemoryDeleteTool::new(manager);
+        let result = tool
+            .execute(json!({
+                "file": "MEMORY.md",
+                "text": "hello",
+                "delete_file": true,
+            }))
+            .await;
+        assert!(
+            result.is_err(),
+            "request should choose exactly one delete mode"
         );
     }
 }

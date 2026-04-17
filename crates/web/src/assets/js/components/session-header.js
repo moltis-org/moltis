@@ -12,6 +12,7 @@ import {
 	clearActiveSession,
 	fetchSessions,
 	isArchivableSession,
+	removeSessionFromClientState,
 	setSessionActiveRunId,
 	setSessionReplying,
 	switchSession,
@@ -200,29 +201,47 @@ export function SessionHeader({
 		var currentSession = sessionStore.getByKey(currentKey);
 		var msgCount = currentSession ? currentSession.messageCount || 0 : 0;
 		var nextKey = nextSessionKey(currentKey);
-		var doDelete = () => {
-			sendRpc("sessions.delete", { key: currentKey }).then((res) => {
-				if (res && !res.ok && res.error && res.error.indexOf("uncommitted changes") !== -1) {
+		var canOptimisticallyDelete = !(currentSession && currentSession.worktree_branch);
+		var applyDeletedState = () => {
+			removeSessionFromClientState(currentKey, { nextKey: nextKey });
+			switchSession(nextKey);
+		};
+		var runDelete = (force) => {
+			var request = { key: currentKey };
+			if (force) request.force = true;
+			var optimisticApplied = false;
+			if (canOptimisticallyDelete && !force) {
+				applyDeletedState();
+				optimisticApplied = true;
+			}
+			sendRpc("sessions.delete", request).then((res) => {
+				var err = res?.error?.message || res?.error || "";
+				if (res && !res.ok && typeof err === "string" && err.indexOf("uncommitted changes") !== -1) {
+					fetchSessions();
 					confirmDialog("Worktree has uncommitted changes. Force delete?").then((yes) => {
 						if (!yes) return;
-						sendRpc("sessions.delete", { key: currentKey, force: true }).then(() => {
-							switchSession(nextKey);
-							fetchSessions();
-						});
+						runDelete(true);
 					});
 					return;
 				}
-				switchSession(nextKey);
+				if (res && !res.ok) {
+					showToast(err || "Failed to delete session", "error");
+					fetchSessions();
+					return;
+				}
+				if (!optimisticApplied) {
+					applyDeletedState();
+				}
 				fetchSessions();
 			});
 		};
 		var isUnmodifiedFork = currentSession && currentSession.forkPoint != null && msgCount <= currentSession.forkPoint;
 		if (msgCount > 0 && !isUnmodifiedFork) {
 			confirmDialog("Delete this session?").then((yes) => {
-				if (yes) doDelete();
+				if (yes) runDelete(false);
 			});
 		} else {
-			doDelete();
+			runDelete(false);
 		}
 	}, [currentKey, onBeforeDelete, sessionDataVersion]);
 

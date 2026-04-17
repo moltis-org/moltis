@@ -164,7 +164,7 @@ function SessionItem({ session, activeKey, depth, keyMap, refreshing }) {
 	// updatedAt, label) change. Badge updates come from badgeCount
 	// signal read inside SessionIcon.
 	var replying = session.replying.value;
-	session.dataVersion.value;
+	void session.dataVersion.value;
 	// Unread tint: true when not viewing this session and there are messages
 	// beyond what we last saw (badgeCount is reactive, triggers re-render).
 	var badge = session.badgeCount.value;

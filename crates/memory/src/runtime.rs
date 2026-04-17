@@ -15,6 +15,8 @@ pub type DynMemoryRuntime = Arc<dyn MemoryRuntime>;
 pub trait MemoryRuntime: MemoryWriter + Send + Sync {
     fn backend_name(&self) -> &'static str;
 
+    fn data_dir(&self) -> Option<&Path>;
+
     fn has_embeddings(&self) -> bool;
 
     fn citation_mode(&self) -> CitationMode;
@@ -24,6 +26,8 @@ pub trait MemoryRuntime: MemoryWriter + Send + Sync {
     async fn sync(&self) -> anyhow::Result<SyncReport>;
 
     async fn sync_path(&self, path: &Path) -> anyhow::Result<bool>;
+
+    async fn remove_path(&self, path: &Path) -> anyhow::Result<bool>;
 
     async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>>;
 
@@ -36,6 +40,10 @@ pub trait MemoryRuntime: MemoryWriter + Send + Sync {
 impl MemoryRuntime for MemoryManager {
     fn backend_name(&self) -> &'static str {
         "builtin"
+    }
+
+    fn data_dir(&self) -> Option<&Path> {
+        MemoryManager::data_dir(self)
     }
 
     fn has_embeddings(&self) -> bool {
@@ -56,6 +64,10 @@ impl MemoryRuntime for MemoryManager {
 
     async fn sync_path(&self, path: &Path) -> anyhow::Result<bool> {
         MemoryManager::sync_path(self, path).await
+    }
+
+    async fn remove_path(&self, path: &Path) -> anyhow::Result<bool> {
+        MemoryManager::remove_path(self, path).await
     }
 
     async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {

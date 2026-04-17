@@ -170,7 +170,7 @@ clap = { features = ["derive", "env"], version = "4" }
 # Database
 sqlx = { features = ["migrate", "runtime-tokio", "sqlite"], version = "0.8" }
 # HTTP client
-reqwest = { features = ["json", "multipart", "query", "socks", "stream", "form"], version = "0.13" }
+reqwest = { features = ["form", "json", "multipart", "query", "socks", "stream"], version = "0.13" }
 # UUID
 uuid = { features = ["v4"], version = "1" }
 # Async
@@ -207,7 +207,7 @@ jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
 llama-cpp-2        = "0.1"
 matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
 mockito            = "1.7"
-nostr-sdk          = { features = ["nip04", "nip44"], version = "0.44" }
+nostr-sdk          = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
 open               = "5.3"
 rand               = "0.10"
 regex              = "1"

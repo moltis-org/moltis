@@ -732,6 +732,101 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             message: "port is 0; a random port will be assigned at startup".into(),
         });
     }
+
+    // Validate global model overrides.
+    // Negative values are rejected by u32 deserialization (type error),
+    // so we only need to guard zero and unusually large values here.
+    for (model_id, override_cfg) in &config.models {
+        validate_context_window(
+            override_cfg.context_window,
+            &format!("models.{model_id}.context_window"),
+            diagnostics,
+        );
+    }
+
+    // Validate provider-scoped model overrides.
+    for (provider_name, provider_entry) in &config.providers.providers {
+        for (model_id, override_cfg) in &provider_entry.model_overrides {
+            validate_context_window(
+                override_cfg.context_window,
+                &format!("providers.{provider_name}.model_overrides.{model_id}.context_window"),
+                diagnostics,
+            );
+        }
+    }
+
+    // tools: overflow_ratio must not be zero (budget becomes 0, every iteration fails)
+    if config.tools.preemptive_overflow_ratio == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: "preemptive_overflow_ratio = 0 means the overflow budget is always \
+                      0 tokens; the agent loop will fail immediately on every iteration"
+                .into(),
+        });
+    }
+
+    // tools: ratio fields should not exceed 100 (percentages)
+    if config.tools.tool_result_compaction_ratio > 100 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.tool_result_compaction_ratio".into(),
+            message: format!(
+                "tool_result_compaction_ratio ({}) exceeds 100 — compaction will trigger on every iteration regardless of context usage",
+                config.tools.tool_result_compaction_ratio
+            ),
+        });
+    }
+    if config.tools.preemptive_overflow_ratio > 100 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: format!(
+                "preemptive_overflow_ratio ({}) exceeds 100 — overflow protection will always trigger",
+                config.tools.preemptive_overflow_ratio
+            ),
+        });
+    }
+
+    // tools: overflow_ratio must be greater than compaction_ratio
+    if config.tools.tool_result_compaction_ratio > 0
+        && config.tools.preemptive_overflow_ratio <= config.tools.tool_result_compaction_ratio
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: format!(
+                "preemptive_overflow_ratio ({}) should be greater than tool_result_compaction_ratio ({}) to avoid context overflow on every iteration",
+                config.tools.preemptive_overflow_ratio, config.tools.tool_result_compaction_ratio
+            ),
+        });
+    }
+}
+
+/// Validate a `context_window` override value (optional field).
+fn validate_context_window(value: Option<u32>, path: &str, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(cw) = value else {
+        return;
+    };
+    if cw == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: path.into(),
+            message: "context_window must be at least 1".into(),
+        });
+    } else if cw > 10_000_000 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: path.into(),
+            message: format!("context_window is {cw}, which is unusually large (> 10M)"),
+        });
+    }
 }
 
 /// Check that file paths referenced in TLS config exist on disk.

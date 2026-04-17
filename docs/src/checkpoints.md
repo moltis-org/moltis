@@ -12,6 +12,8 @@ Current built-in checkpoint coverage includes:
 - `delete_skill`
 - `write_skill_files`
 - `memory_save`
+- `memory_forget`
+- `memory_delete`
 - the silent pre-compaction memory flush
 
 Each mutation creates a manifest-backed snapshot in `~/.moltis/checkpoints/`

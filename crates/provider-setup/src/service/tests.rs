@@ -1,10 +1,18 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use {super::*, moltis_config::schema::ProviderEntry, moltis_oauth::OAuthTokens};
+use {
+    super::*,
+    crate::{KeyStore, known_providers::AuthType},
+    moltis_config::schema::{ProviderEntry, ProvidersConfig},
+    moltis_oauth::{OAuthTokens, TokenStore},
+    moltis_providers::ProviderRegistry,
+    moltis_service_traits::{NoopProviderSetupService, ProviderSetupService},
+    std::{collections::HashMap, sync::Arc},
+    tokio::sync::RwLock,
+};
 
 #[tokio::test]
 async fn noop_service_returns_empty() {
-    use moltis_service_traits::NoopProviderSetupService;
     let svc = NoopProviderSetupService;
     let result = svc.available().await.unwrap();
     assert_eq!(result, serde_json::json!([]));
@@ -14,6 +22,7 @@ async fn noop_service_returns_empty() {
 async fn remove_key_rejects_unknown_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -26,6 +35,7 @@ async fn remove_key_rejects_unknown_provider() {
 async fn remove_key_rejects_missing_params() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     assert!(svc.remove_key(serde_json::json!({})).await.is_err());
@@ -35,6 +45,7 @@ async fn remove_key_rejects_missing_params() {
 async fn disabled_provider_is_not_reported_configured() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let provider = known_providers()
@@ -57,6 +68,7 @@ async fn disabled_provider_is_not_reported_configured() {
 async fn live_service_lists_providers() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc.available().await.unwrap();
@@ -78,6 +90,7 @@ async fn live_service_lists_providers() {
 async fn available_marks_provider_configured_from_generic_provider_env() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None)
         .with_env_overrides(HashMap::from([
@@ -107,6 +120,7 @@ async fn available_marks_provider_configured_from_generic_provider_env() {
 async fn available_hides_unconfigured_providers_not_in_offered_list() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let config = ProvidersConfig {
         offered: vec!["openai".into()],
@@ -135,6 +149,7 @@ async fn available_hides_unconfigured_providers_not_in_offered_list() {
 async fn available_respects_offered_order() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let config = ProvidersConfig {
         offered: vec!["github-copilot".into(), "openai".into(), "anthropic".into()],
@@ -173,6 +188,7 @@ async fn available_respects_offered_order() {
 async fn available_accepts_offered_provider_aliases() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let config = ProvidersConfig {
         offered: vec!["claude".into()],
@@ -198,6 +214,7 @@ async fn available_accepts_offered_provider_aliases() {
 async fn available_hides_configured_provider_outside_offered() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let mut config = ProvidersConfig {
         offered: vec!["openai".into()],
@@ -251,21 +268,11 @@ async fn available_includes_subscription_provider_with_oauth_token_outside_offer
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
-    let svc = LiveProviderSetupService {
-        registry,
-        config: Arc::new(Mutex::new(config)),
-        broadcaster: Arc::new(OnceCell::new()),
-        token_store,
-        key_store,
-        pending_oauth: Arc::new(RwLock::new(HashMap::new())),
-        deploy_platform: None,
-        priority_models: None,
-        registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
-        env_overrides: HashMap::new(),
-        error_parser: default_error_parser,
-        callback_bind_addr: "127.0.0.1".to_string(),
-    };
+    let mut svc = LiveProviderSetupService::new(registry, config, None);
+    svc.token_store = token_store;
+    svc.key_store = key_store;
 
     let result = svc.available().await.unwrap();
     let arr = result
@@ -308,21 +315,10 @@ async fn available_includes_configured_custom_provider_outside_offered() {
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
-    let svc = LiveProviderSetupService {
-        registry,
-        config: Arc::new(Mutex::new(config)),
-        broadcaster: Arc::new(OnceCell::new()),
-        token_store: TokenStore::new(),
-        key_store,
-        pending_oauth: Arc::new(RwLock::new(HashMap::new())),
-        deploy_platform: None,
-        priority_models: None,
-        registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
-        env_overrides: HashMap::new(),
-        error_parser: default_error_parser,
-        callback_bind_addr: "127.0.0.1".to_string(),
-    };
+    let mut svc = LiveProviderSetupService::new(registry, config, None);
+    svc.key_store = key_store;
 
     let result = svc.available().await.expect("providers.available");
     let arr = result
@@ -348,6 +344,7 @@ async fn available_includes_configured_custom_provider_outside_offered() {
 async fn available_includes_default_base_urls() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc.available().await.unwrap();
@@ -390,6 +387,7 @@ async fn available_includes_default_base_urls() {
 async fn save_key_rejects_unknown_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -402,6 +400,7 @@ async fn save_key_rejects_unknown_provider() {
 async fn save_key_rejects_missing_params() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     assert!(svc.save_key(serde_json::json!({})).await.is_err());
@@ -416,6 +415,7 @@ async fn save_key_rejects_missing_params() {
 async fn oauth_start_rejects_unknown_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -428,6 +428,7 @@ async fn oauth_start_rejects_unknown_provider() {
 async fn oauth_start_ignores_redirect_uri_override_for_registered_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
 
@@ -467,6 +468,7 @@ async fn oauth_start_ignores_redirect_uri_override_for_registered_provider() {
 async fn oauth_start_stores_pending_state_for_registered_redirect_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
 
@@ -506,6 +508,7 @@ async fn oauth_start_stores_pending_state_for_registered_redirect_provider() {
 async fn oauth_complete_accepts_callback_input_parameter() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
 
@@ -526,6 +529,7 @@ async fn oauth_complete_accepts_callback_input_parameter() {
 async fn oauth_complete_rejects_provider_mismatch_without_consuming_state() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
 
@@ -591,6 +595,7 @@ async fn oauth_complete_rejects_provider_mismatch_without_consuming_state() {
 async fn oauth_status_returns_not_authenticated() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -605,6 +610,7 @@ async fn oauth_status_returns_not_authenticated() {
 async fn save_key_accepts_new_providers() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let _svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
 
@@ -636,6 +642,7 @@ async fn save_key_accepts_new_providers() {
 async fn available_includes_new_providers() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc.available().await.unwrap();
@@ -671,6 +678,7 @@ async fn available_includes_new_providers() {
 async fn available_hides_local_providers_on_cloud() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(
         registry,
@@ -711,6 +719,7 @@ async fn available_hides_local_providers_on_cloud() {
 async fn available_shows_all_providers_locally() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc.available().await.unwrap();
@@ -739,6 +748,7 @@ async fn available_shows_all_providers_locally() {
 async fn validate_key_rejects_unknown_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -752,6 +762,7 @@ async fn validate_key_rejects_unknown_provider() {
 async fn validate_key_rejects_missing_provider_param() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc.validate_key(serde_json::json!({})).await;
@@ -768,6 +779,7 @@ async fn validate_key_rejects_missing_provider_param() {
 async fn validate_key_rejects_missing_api_key_for_api_key_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -781,6 +793,7 @@ async fn validate_key_rejects_missing_api_key_for_api_key_provider() {
 async fn validate_key_allows_missing_api_key_for_ollama() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -814,6 +827,7 @@ async fn validate_key_ollama_without_model_returns_discovered_models() {
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -866,6 +880,7 @@ async fn validate_key_ollama_reports_uninstalled_model() {
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -927,6 +942,7 @@ async fn validate_key_ollama_with_model_returns_model_list() {
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -977,6 +993,7 @@ async fn validate_key_custom_provider_without_model_returns_discovered_models() 
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -1035,6 +1052,7 @@ async fn validate_key_custom_provider_uses_saved_base_url_when_request_omits_it(
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     svc.key_store
@@ -1086,6 +1104,7 @@ async fn validate_key_custom_provider_discovery_error_returns_invalid() {
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -1157,6 +1176,7 @@ async fn validate_key_custom_provider_returns_discovered_models_without_probing(
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc
@@ -1191,6 +1211,7 @@ async fn validate_key_custom_provider_connection_refused_returns_error() {
 
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
+        HashMap::new(),
     )));
     let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
     let result = svc

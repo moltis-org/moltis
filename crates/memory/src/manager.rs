@@ -200,6 +200,19 @@ impl MemoryManager {
         self.sync_file(path, &path_str, &mut report).await
     }
 
+    /// Remove a file path from the memory index after the backing file is gone.
+    pub async fn remove_path(&self, path: &Path) -> anyhow::Result<bool> {
+        let path_str = path.to_string_lossy().to_string();
+        let had_file = self.store.get_file(&path_str).await?.is_some();
+        let had_chunks = !self.store.get_chunks_for_file(&path_str).await?.is_empty();
+        self.store.delete_chunks_for_file(&path_str).await?;
+        self.store.delete_file(&path_str).await?;
+        if had_file || had_chunks {
+            info!(path = %path_str, "memory: removed file from index");
+        }
+        Ok(had_file || had_chunks)
+    }
+
     /// Sync a single file. Returns true if it was updated. Accumulates cache stats in `report`.
     async fn sync_file(
         &self,

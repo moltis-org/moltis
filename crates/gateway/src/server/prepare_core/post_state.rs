@@ -489,6 +489,7 @@ pub(super) async fn complete_startup(
         let state_for_startup_discovery = Arc::clone(&state);
         let provider_config_for_startup_discovery = effective_providers.clone();
         let provider_config_for_registry_rebuild = provider_config_for_startup_discovery.clone();
+        let global_cw_overrides = moltis_providers::extract_cw_overrides(&config.models);
         let env_overrides_for_startup_discovery = config_env_overrides.clone();
         tokio::spawn(async move {
             let startup_discovery_started = std::time::Instant::now();
@@ -513,6 +514,7 @@ pub(super) async fn complete_startup(
                     &provider_config_for_registry_rebuild,
                     &env_overrides_for_startup_discovery,
                     &prefetched,
+                    global_cw_overrides.clone(),
                 )
             })
             .await
@@ -799,6 +801,14 @@ pub(super) async fn complete_startup(
             )));
             tool_registry.register(Box::new(moltis_memory::tools::MemorySaveTool::new(
                 Arc::clone(mm),
+            )));
+            tool_registry.register(Box::new(moltis_memory::tools::MemoryDeleteTool::new(
+                Arc::clone(mm),
+            )));
+            tool_registry.register(Box::new(moltis_chat::MemoryForgetTool::new(
+                Arc::clone(mm),
+                Arc::clone(&registry),
+                Arc::clone(&session_metadata),
             )));
         }
 

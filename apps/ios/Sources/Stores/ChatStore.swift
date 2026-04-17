@@ -16,7 +16,7 @@ final class ChatStore: ObservableObject {
     private let liveActivityManager = LiveActivityManager.shared
     private var currentRunId: String?
     private var streamingMessageId: UUID?
-    private var userMessageText: String?
+    private var pendingUserMessageEcho: (sessionKey: String, text: String)?
 
     init(connectionStore: ConnectionStore) {
         self.connectionStore = connectionStore
@@ -29,7 +29,7 @@ final class ChatStore: ObservableObject {
         guard !text.isEmpty else { return }
 
         draftMessage = ""
-        userMessageText = text
+        pendingUserMessageEcho = (sessionKey: currentSessionKey, text: text)
 
         // Add user message locally
         let userMessage = ChatMessage(role: .user, text: text)
@@ -49,6 +49,7 @@ final class ChatStore: ObservableObject {
             ]
             _ = try await wsClient.send(method: "chat.send", params: params)
         } catch {
+            pendingUserMessageEcho = nil
             logger.error("Failed to send message: \(error.localizedDescription)")
             messages.append(ChatMessage(role: .error, text: error.localizedDescription))
             liveActivityManager.endActivity(success: false)
@@ -112,6 +113,25 @@ final class ChatStore: ObservableObject {
         guard let state = payload.state else { return }
 
         switch state {
+        case .userMessage:
+            guard let text = payload.text, !text.isEmpty else { return }
+            let sessionKey = payload.sessionKey ?? currentSessionKey
+            let shouldSuppressEcho =
+                pendingUserMessageEcho?.sessionKey == sessionKey &&
+                pendingUserMessageEcho?.text == text &&
+                messages.last?.role == .user &&
+                messages.last?.text == text
+            if shouldSuppressEcho {
+                pendingUserMessageEcho = nil
+            } else if sessionKey == currentSessionKey {
+                messages.append(ChatMessage(role: .user, text: text))
+            }
+            connectionStore?.sessionStore.updatePreview(
+                for: sessionKey,
+                preview: text,
+                model: nil
+            )
+
         case .thinking:
             currentRunId = payload.runId
             isStreaming = true

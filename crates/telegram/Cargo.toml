@@ -11,14 +11,14 @@ moltis-channels   = { workspace = true }
 moltis-common     = { workspace = true }
 moltis-media      = { workspace = true }
 moltis-metrics    = { optional = true, workspace = true }
+pdf-extract       = { workspace = true }
 rand              = { workspace = true }
 reqwest           = { workspace = true }
 secrecy           = { workspace = true }
 serde             = { workspace = true }
 serde_json        = { workspace = true }
-pdf-extract       = { workspace = true }
-tempfile          = { workspace = true }
 teloxide          = { workspace = true }
+tempfile          = { workspace = true }
 thiserror         = { workspace = true }
 tokio             = { workspace = true }
 tokio-util        = { workspace = true }

@@ -5,6 +5,10 @@ use std::collections::HashSet;
 /// For schemas using `"type": "string"` (or any single type), this converts to
 /// `"type": ["string", "null"]`. For schemas using `anyOf`/`oneOf`, it appends
 /// a `{"type": "null"}` variant. Already-nullable schemas are left unchanged.
+///
+/// For enum-only schemas (no `type` key — common after canonicalization strips
+/// redundant type annotations), `null` is appended directly to the enum array
+/// so the model can omit the field (issue #712).
 fn make_nullable(schema: &mut serde_json::Value) {
     let Some(obj) = schema.as_object_mut() else {
         return;
@@ -29,6 +33,12 @@ fn make_nullable(schema: &mut serde_json::Value) {
             new_arr.push(serde_json::json!("null"));
             obj.insert("type".to_string(), serde_json::Value::Array(new_arr));
         }
+
+        // If the schema also constrains values with `enum`, add null there
+        // too. Without this the type says "nullable" but the enum doesn't
+        // include null, causing LLMs to send the literal string "null"
+        // instead of JSON null (issue #712).
+        add_null_to_enum(obj);
         return;
     }
 
@@ -42,6 +52,21 @@ fn make_nullable(schema: &mut serde_json::Value) {
             }
             return;
         }
+    }
+
+    // Enum-only schemas (no `type`, no `anyOf`/`oneOf`). Schema
+    // canonicalization can strip the redundant `"type": "string"` when an
+    // `enum` already constrains the allowed values, leaving just
+    // `{"enum": [...]}`. Appending `null` to the enum is sufficient.
+    add_null_to_enum(obj);
+}
+
+/// Append `null` to an `enum` array if present and not already included.
+fn add_null_to_enum(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    if let Some(enum_values) = obj.get_mut("enum").and_then(|v| v.as_array_mut())
+        && !enum_values.iter().any(|v| v.is_null())
+    {
+        enum_values.push(serde_json::Value::Null);
     }
 }
 

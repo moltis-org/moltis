@@ -16,6 +16,7 @@ import {
 } from "./media-drop.js";
 import { bindModelComboEvents, setSessionModel } from "./models.js";
 import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "./nodes-selector.js";
+import { bindReasoningToggle, unbindReasoningToggle } from "./reasoning-toggle.js";
 import { registerPrefix, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -30,6 +31,7 @@ import {
 	switchSession,
 } from "./sessions.js";
 import * as S from "./state.js";
+import { modelStore } from "./stores/model-store.js";
 import { sessionStore } from "./stores/session-store.js";
 import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
@@ -1157,10 +1159,10 @@ function normalizeOutgoingText(text, hasImages) {
 }
 
 function applySelectedModelToChatParams(chatParams) {
-	var selectedModel = S.selectedModelId;
-	if (!selectedModel) return;
-	chatParams.model = selectedModel;
-	setSessionModel(S.activeSessionKey, selectedModel);
+	var effectiveId = modelStore.effectiveModelId.value;
+	if (!effectiveId) return;
+	chatParams.model = effectiveId;
+	setSessionModel(S.activeSessionKey, effectiveId);
 }
 
 function handleChatSendRpcResponse(res, userEl) {
@@ -1297,6 +1299,16 @@ var chatPageHTML =
 	'<div id="modelDropdown" class="model-dropdown hidden">' +
 	'<input id="modelSearchInput" type="text" placeholder="Search models\u2026" class="model-search-input" autocomplete="off" />' +
 	'<div id="modelDropdownList" class="model-dropdown-list"></div>' +
+	"</div>" +
+	"</div>" +
+	'<div id="reasoningCombo" class="model-combo hidden">' +
+	'<button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort">' +
+	'<span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span>' +
+	'<span id="reasoningComboLabel">Off</span>' +
+	'<span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>' +
+	"</button>" +
+	'<div id="reasoningDropdown" class="model-dropdown hidden">' +
+	'<div id="reasoningDropdownList" class="model-dropdown-list"></div>' +
 	"</div>" +
 	"</div>" +
 	'<div id="nodeCombo" class="model-combo hidden">' +
@@ -1586,6 +1598,8 @@ function initializeChatControls() {
 	S.setModelDropdownList(S.$("modelDropdownList"));
 	bindModelComboEvents();
 
+	bindReasoningToggle();
+
 	S.setNodeCombo(S.$("nodeCombo"));
 	S.setNodeComboBtn(S.$("nodeComboBtn"));
 	S.setNodeComboLabel(S.$("nodeComboLabel"));
@@ -1722,6 +1736,7 @@ registerPrefix(
 	function teardownChat() {
 		teardownVoiceInput();
 		teardownMediaDrop();
+		unbindReasoningToggle();
 		unbindNodeEvents();
 		slashHideMenu();
 		if (chatMoreModalKeydownHandler) {

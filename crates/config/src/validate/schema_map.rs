@@ -30,6 +30,8 @@ pub(super) fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let model_override = || Struct(HashMap::from([("context_window", Leaf)]));
+
     let provider_entry = || {
         Struct(HashMap::from([
             ("enabled", Leaf),
@@ -45,6 +47,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("cache_retention", Leaf),
             ("strict_tools", Leaf),
             ("policy", tool_policy_entry()),
+            ("model_overrides", Map(Box::new(model_override()))),
         ]))
     };
 
@@ -218,6 +221,9 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("registry_mode", Leaf),
             ("agent_loop_detector_window", Leaf),
             ("agent_loop_detector_strip_tools_on_second_fire", Leaf),
+            ("tool_result_compaction_ratio", Leaf),
+            ("preemptive_overflow_ratio", Leaf),
+            ("compaction_min_iterations", Leaf),
         ]))
     };
 
@@ -677,6 +683,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ),
             ])),
         ),
+        ("models", Map(Box::new(model_override()))),
     ]))
 }
 

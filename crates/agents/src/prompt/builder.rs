@@ -27,7 +27,7 @@ const EXEC_ROUTING_GUIDANCE_SANDBOX: &str = "Execution routing:\n\
 - In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
 - Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
 - With `workspace_mount=ro`, sandbox commands may read mounted files but cannot modify them.\n\
-- For durable long-term memory writes, prefer `memory_save` over shell writes to `MEMORY.md` or `memory/*.md`.\n";
+- For durable long-term memory mutations, prefer `memory_save`, `memory_forget`, or `memory_delete` over shell writes to `MEMORY.md` or `memory/*.md`.\n";
 const EXEC_ROUTING_SANDBOX_CLOSING: &str = "- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
 const EXEC_ROUTING_GUIDANCE_HOST_ONLY: &str = "Execution routing:\n\
 - `exec` runs on the host and may require approval.\n";
@@ -455,8 +455,16 @@ fn append_memory_section(
     let has_tool_search = has_tool_schema(tool_schemas, "tool_search");
     let has_memory_search = has_tool_schema(tool_schemas, "memory_search");
     let has_memory_save = has_tool_schema(tool_schemas, "memory_save");
+    let has_memory_forget = has_tool_schema(tool_schemas, "memory_forget");
+    let has_memory_delete = has_tool_schema(tool_schemas, "memory_delete");
     let memory_content = memory_text.filter(|text| !text.is_empty());
-    if memory_content.is_none() && !has_memory_search && !has_memory_save && !has_tool_search {
+    if memory_content.is_none()
+        && !has_memory_search
+        && !has_memory_save
+        && !has_memory_forget
+        && !has_memory_delete
+        && !has_tool_search
+    {
         return;
     }
 
@@ -500,9 +508,27 @@ fn append_memory_section(
             "`memory_search` and do not consume prompt space.\n",
         ));
     }
-    if has_tool_search && !has_memory_search && !has_memory_save {
+    if has_memory_forget {
         prompt.push_str(concat!(
-            "\nMemory tools (`memory_search`, `memory_save`) are available but must be ",
+            "\n**When the user asks you to forget or remove saved memory in natural language, ",
+            "you MUST call `memory_forget`.** ",
+            "It searches memory, chooses the matching saved chunk, and deletes the exact stored text safely.\n",
+        ));
+    }
+    if has_memory_delete {
+        prompt.push_str(concat!(
+            "\nUse `memory_delete` only when you already know the exact file and exact snippet ",
+            "to remove, or when you need to delete a whole `memory/<name>.md` file directly.\n",
+        ));
+    }
+    if has_tool_search
+        && !has_memory_search
+        && !has_memory_save
+        && !has_memory_forget
+        && !has_memory_delete
+    {
+        prompt.push_str(concat!(
+            "\nMemory tools (`memory_search`, `memory_save`, `memory_forget`, `memory_delete`) are available but must be ",
             "activated first. Use `tool_search(query=\"memory\")` to discover them, ",
             "then `tool_search(name=\"memory_search\")` to activate.\n",
         ));

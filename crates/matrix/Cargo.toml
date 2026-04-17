@@ -29,7 +29,7 @@ metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio    = { workspace = true }
+tokio    = { features = ["test-util"], workspace = true }
 
 [lints]
 workspace = true

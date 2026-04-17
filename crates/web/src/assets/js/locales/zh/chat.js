@@ -38,6 +38,13 @@ export default {
 	mcpDisabledTooltip: "MCP 工具已禁用 \u2014 点击为此会话启用",
 	mcpToggleTooltip: "切换此会话的 MCP 工具",
 
+	// ── Reasoning toggle ─────────────────────────────────────
+	reasoningTooltip: "推理深度",
+	reasoningOff: "关闭",
+	reasoningLow: "低",
+	reasoningMedium: "中",
+	reasoningHigh: "高",
+
 	// ── Debug panel ──────────────────────────────────────────
 	debugTooltip: "显示上下文调试信息",
 	debugLabel: "调试",

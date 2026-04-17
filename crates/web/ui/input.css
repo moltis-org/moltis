@@ -1113,6 +1113,15 @@
     color: var(--text);
     outline: none;
   }
+  #reasoningCombo .model-combo-btn {
+    max-width: none;
+    width: auto;
+    justify-content: flex-start;
+  }
+  #reasoningCombo .model-dropdown {
+    width: auto;
+    min-width: 100px;
+  }
   .model-combo-chevron {
     flex-shrink: 0;
     opacity: 0.6;
@@ -1930,6 +1939,10 @@
   .icon-sparkles {
     -webkit-mask-image: url("./icons/masks/mask-459dd5c95de89b9a.svg");
     mask-image: url("./icons/masks/mask-459dd5c95de89b9a.svg");
+  }
+  .icon-brain {
+    -webkit-mask-image: url("./icons/masks/mask-brain.svg");
+    mask-image: url("./icons/masks/mask-brain.svg");
   }
   .icon-users {
     -webkit-mask-image: url("./icons/masks/mask-7ed2efa252c839cf.svg");

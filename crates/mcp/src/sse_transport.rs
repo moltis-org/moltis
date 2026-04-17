@@ -482,13 +482,12 @@ impl McpTransport for SseTransport {
         match req.send().await {
             Ok(resp) => {
                 self.store_session_id_from_response(&resp).await;
-                if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-                    return true;
-                }
-                // Any successful response means the server is reachable —
-                // Streamable HTTP servers may reply with application/json
-                // rather than text/event-stream, which is equally valid.
-                resp.status().is_success()
+                // Any HTTP response proves the server is reachable.
+                // Non-success statuses (401, 403, 405) are common for
+                // Streamable HTTP servers where GET is optional (MCP spec)
+                // or auth headers differ between GET and POST. Only true
+                // network errors (connection refused, timeout, DNS) mean dead.
+                true
             },
             Err(_) => false,
         }
@@ -900,6 +899,83 @@ mod tests {
         let transport = SseTransport::new(&server.url()).unwrap();
         let resp = transport.request("initialize", None).await.unwrap();
         assert!(resp.result.is_some());
+    }
+
+    // ── is_alive health-check tests (issue #732) ──────────────────────
+
+    #[tokio::test]
+    async fn test_is_alive_200_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"ok":true}"#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    #[tokio::test]
+    async fn test_is_alive_401_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(401)
+            .with_header("www-authenticate", r#"Bearer realm="test""#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    /// Streamable HTTP servers may not support GET (it's optional in the MCP
+    /// spec). A 405 response proves the server is reachable and alive.
+    #[tokio::test]
+    async fn test_is_alive_405_method_not_allowed_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(405)
+            .with_header("allow", "POST, DELETE")
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    /// A 403 Forbidden from the health check still proves the server is
+    /// reachable — it just refused the request. The server is alive.
+    #[tokio::test]
+    async fn test_is_alive_403_forbidden_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(403)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    /// A 400 Bad Request still proves the server endpoint is alive.
+    #[tokio::test]
+    async fn test_is_alive_400_bad_request_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(400)
+            .with_body(r#"{"error":"bad request"}"#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
     }
 
     #[tokio::test]

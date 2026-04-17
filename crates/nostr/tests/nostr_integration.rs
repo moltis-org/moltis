@@ -230,3 +230,120 @@ fn nip44_encrypt_decrypt_round_trip() {
 
     assert_eq!(decrypted, plaintext);
 }
+
+// ── NIP-59 Gift Wrap round-trip (local, no relay) ──────────
+
+#[tokio::test]
+async fn nip59_gift_wrap_round_trip() {
+    let sender_keys = Keys::generate();
+    let receiver_keys = Keys::generate();
+
+    let text = "NIP-59 gift wrap test";
+    let event = EventBuilder::private_msg(&sender_keys, receiver_keys.public_key(), text, [])
+        .await
+        .expect("create gift wrap");
+
+    assert_eq!(event.kind, Kind::GiftWrap);
+
+    let unwrapped = moltis_nostr::gift_wrap::unwrap_gift_wrap(&receiver_keys, &event)
+        .await
+        .expect("unwrap gift wrap");
+
+    assert_eq!(unwrapped.0, sender_keys.public_key());
+    assert_eq!(unwrapped.1, text);
+}
+
+// ── NIP-59 Gift Wrap DM via relay ──────────────────────────
+
+#[tokio::test]
+#[ignore]
+async fn send_and_receive_gift_wrapped_dm() {
+    let sender_key = match sender_secret() {
+        Some(k) => k,
+        None => {
+            println!("NOSTR_TEST_SENDER_KEY not set — skipping");
+            return;
+        },
+    };
+
+    // Set up bot (receiver)
+    let bot_keys = moltis_nostr::keys::derive_keys(&bot_secret()).unwrap();
+    let bot_pubkey = bot_keys.public_key();
+    let bot_client = Client::new(bot_keys.clone());
+    let mut notifications = bot_client.notifications();
+    for relay in DEFAULT_RELAYS {
+        let _ = bot_client.add_relay(*relay).await;
+    }
+    bot_client.connect().await;
+
+    // Set up sender
+    let sender_keys = moltis_nostr::keys::derive_keys(&sender_key).unwrap();
+    let sender_client = Client::new(sender_keys.clone());
+    for relay in DEFAULT_RELAYS {
+        let _ = sender_client.add_relay(*relay).await;
+    }
+    sender_client.connect().await;
+
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    // Subscribe bot to gift wraps
+    let since = Timestamp::from(
+        u64::try_from(::time::OffsetDateTime::now_utc().unix_timestamp())
+            .unwrap_or_default()
+            .saturating_sub(moltis_nostr::gift_wrap::TIMESTAMP_WINDOW_SECS),
+    );
+    let filter = Filter::new()
+        .kind(Kind::GiftWrap)
+        .pubkey(bot_pubkey)
+        .since(since);
+    bot_client.subscribe(filter, None).await.expect("subscribe");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Send gift-wrapped DM
+    let test_msg = format!("gift wrap test {}", Timestamp::now().as_secs());
+    let gift_event = EventBuilder::private_msg(&sender_keys, bot_pubkey, &test_msg, [])
+        .await
+        .expect("create gift wrap");
+
+    sender_client
+        .send_event(&gift_event)
+        .await
+        .expect("send gift wrap");
+
+    println!("Sent gift-wrapped DM: {test_msg}");
+
+    // Wait for bot to receive
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut received = false;
+
+    while tokio::time::Instant::now() < deadline {
+        tokio::select! {
+            Ok(notification) = notifications.recv() => {
+                if let RelayPoolNotification::Event { event, .. } = notification
+                    && event.kind == Kind::GiftWrap
+                {
+                    let (sender, content, _ts) =
+                        moltis_nostr::gift_wrap::unwrap_gift_wrap(&bot_keys, &event)
+                            .await
+                            .expect("unwrap");
+                    if sender == sender_keys.public_key() {
+                        println!("Received gift-wrapped DM: {content}");
+                        assert_eq!(content, test_msg);
+                        received = true;
+                        break;
+                    }
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+    }
+
+    assert!(
+        received,
+        "bot must receive gift-wrapped DM within 30 seconds"
+    );
+
+    bot_client.disconnect().await;
+    sender_client.disconnect().await;
+}

@@ -10,9 +10,16 @@ firecrawl     = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).
 # See moltis-org/moltis#657. Default-on; build with
 # --no-default-features to omit them from minimal builds.
-fs-tools      = ["dep:globset", "dep:grep-matcher", "dep:grep-regex", "dep:grep-searcher", "dep:ignore", "dep:pdf-extract"]
-metrics       = ["dep:moltis-metrics"]
-wasm          = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
+fs-tools = [
+  "dep:globset",
+  "dep:grep-matcher",
+  "dep:grep-regex",
+  "dep:grep-searcher",
+  "dep:ignore",
+  "dep:pdf-extract",
+]
+metrics = ["dep:moltis-metrics"]
+wasm = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
 [dependencies]
 anyhow                = { workspace = true }
@@ -29,7 +36,6 @@ ignore                = { optional = true, workspace = true }
 image                 = { workspace = true }
 ipnet                 = { workspace = true }
 moltis-agents         = { workspace = true }
-pdf-extract           = { optional = true, workspace = true }
 moltis-browser        = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
@@ -40,6 +46,7 @@ moltis-network-filter = { workspace = true }
 moltis-providers      = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
+pdf-extract           = { optional = true, workspace = true }
 regex                 = { workspace = true }
 reqwest               = { features = ["blocking"], workspace = true }
 secrecy               = { workspace = true }
@@ -48,8 +55,8 @@ serde_json            = { workspace = true }
 sha2                  = { workspace = true }
 shell-words           = { optional = true, workspace = true }
 sqlx                  = { workspace = true }
-tempfile              = { workspace = true }
 tar                   = { workspace = true }
+tempfile              = { workspace = true }
 thiserror             = { workspace = true }
 time                  = { workspace = true }
 tokio                 = { workspace = true }

@@ -29,6 +29,7 @@ import {
 import { attachMessageVoiceControl } from "./message-voice.js";
 import { restoreNodeSelection } from "./nodes-selector.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
+import { restoreReasoningFromModelId } from "./reasoning-toggle.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { settingsPath } from "./routes.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -527,6 +528,23 @@ export function clearSessionHistoryCache(key) {
 	clearHistoryPaginationState(key);
 }
 
+export function removeSessionFromClientState(key, options) {
+	var opts = options || {};
+	if (!key) return false;
+	var removedActive = sessionStore.activeSessionKey.value === key;
+	var removed = sessionStore.remove(key);
+	if (!removed) return false;
+	var nextKey = opts.nextKey || sessionStore.activeSessionKey.value || "main";
+	if (removedActive && nextKey !== sessionStore.activeSessionKey.value) sessionStore.setActive(nextKey);
+	clearSessionHistoryCache(key);
+	S.setSessions(S.sessions.filter((session) => session.key !== key));
+	renderSessionList();
+	if (!removedActive) return true;
+	S.setActiveSessionKey(nextKey);
+	if (opts.navigateIfActive && location.pathname.startsWith("/chats/")) navigate(sessionPath(nextKey));
+	return true;
+}
+
 // ── New session button ──────────────────────────────────────
 var newSessionBtn = S.$("newSessionBtn");
 newSessionBtn.addEventListener("click", () => {
@@ -606,12 +624,14 @@ function restoreSessionState(entry, projectId) {
 	localStorage.setItem("moltis-project", effectiveProjectId);
 	updateSessionProjectSelect(effectiveProjectId);
 	if (entry.model) {
-		modelStore.select(entry.model);
+		// Strip any @reasoning-* suffix and restore the toggle state
+		var baseModelId = restoreReasoningFromModelId(entry.model);
+		modelStore.select(baseModelId);
 		// Dual-write to state.js for backward compat
-		S.setSelectedModelId(entry.model);
-		localStorage.setItem("moltis-model", entry.model);
-		var found = modelStore.getById(entry.model);
-		if (S.modelComboLabel) S.modelComboLabel.textContent = found ? found.displayName || found.id : entry.model;
+		S.setSelectedModelId(baseModelId);
+		localStorage.setItem("moltis-model", baseModelId);
+		var found = modelStore.getById(baseModelId);
+		if (S.modelComboLabel) S.modelComboLabel.textContent = found ? found.displayName || found.id : baseModelId;
 	}
 	updateSandboxUI(entry.sandbox_enabled !== false);
 	updateSandboxImageUI(entry.sandbox_image || null);

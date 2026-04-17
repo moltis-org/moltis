@@ -19,7 +19,12 @@ import { initInstallBanner } from "./pwa-install.js";
 import { mount, navigate, registerPage, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
-import { clearSessionHistoryCache, fetchSessions, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
+import {
+	fetchSessions,
+	refreshWelcomeCardIfNeeded,
+	removeSessionFromClientState,
+	renderSessionList,
+} from "./sessions.js";
 import * as S from "./state.js";
 import { modelStore } from "./stores/model-store.js";
 import { projectStore } from "./stores/project-store.js";
@@ -124,20 +129,7 @@ function upsertSessionFromEvent(entry) {
 }
 
 function removeSessionFromEvent(sessionKey) {
-	if (!sessionKey) return false;
-	var removedActive = sessionStore.activeSessionKey.value === sessionKey;
-	var removed = sessionStore.remove(sessionKey);
-	if (!removed) return false;
-	clearSessionHistoryCache(sessionKey);
-	S.setSessions(S.sessions.filter((session) => session.key !== sessionKey));
-	renderSessionList();
-	if (!removedActive) return true;
-	var nextKey = sessionStore.activeSessionKey.value || "main";
-	S.setActiveSessionKey(nextKey);
-	if (location.pathname.startsWith("/chats/")) {
-		navigate(sessionPath(nextKey));
-	}
-	return true;
+	return removeSessionFromClientState(sessionKey, { navigateIfActive: true });
 }
 
 onEvent("session", (payload) => {

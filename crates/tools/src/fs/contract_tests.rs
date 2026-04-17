@@ -13,10 +13,14 @@ use {
         sandbox::{Sandbox, SandboxConfig, SandboxId, SandboxRouter, types::BuildImageResult},
     },
     async_trait::async_trait,
+    moltis_agents::tool_registry::ToolRegistry,
     serde_json::json,
-    std::sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+    std::{
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
     },
 };
 

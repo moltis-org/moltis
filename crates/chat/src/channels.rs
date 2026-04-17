@@ -1002,6 +1002,8 @@ fn format_tool_status_message(tool_name: &str, arguments: &Value) -> String {
             }
         },
         "memory_search" => "🧠 Searching memory...".to_string(),
+        "memory_delete" => "🧠 Removing memory snippet...".to_string(),
+        "memory_forget" => "🧠 Forgetting memory...".to_string(),
         "memory_store" => "🧠 Storing to memory...".to_string(),
         _ => format!("🔧 {}", tool_name),
     }

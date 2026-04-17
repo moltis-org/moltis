@@ -4,7 +4,7 @@ import { sendRpc } from "./helpers.js";
 import { t } from "./i18n.js";
 import { showModelNotice } from "./page-chat.js";
 import * as S from "./state.js";
-import { modelStore } from "./stores/model-store.js";
+import { modelStore, REASONING_SEP } from "./stores/model-store.js";
 
 function setSessionModel(sessionKey, modelId) {
 	sendRpc("sessions.patch", { key: sessionKey, model: modelId });
@@ -84,6 +84,14 @@ function buildModelItem(m, currentId) {
 		meta.appendChild(prov);
 	}
 
+	if (m.supportsReasoning) {
+		var brainIcon = document.createElement("span");
+		brainIcon.className = "icon icon-xs icon-brain";
+		brainIcon.title = "Supports reasoning";
+		brainIcon.style.cssText = "opacity:0.5;flex-shrink:0;";
+		meta.appendChild(brainIcon);
+	}
+
 	if (m.unsupported) {
 		var badge = document.createElement("span");
 		badge.className = "model-item-unsupported";
@@ -103,6 +111,8 @@ export function renderModelList(query) {
 	var q = query.toLowerCase();
 	var allModels = modelStore.models.value;
 	var filtered = allModels.filter((m) => {
+		// Hide @reasoning-* virtual variants — the reasoning toggle handles these.
+		if (m.id.indexOf(REASONING_SEP) !== -1) return false;
 		var label = (m.displayName || m.id).toLowerCase();
 		var provider = (m.provider || "").toLowerCase();
 		return !q || label.indexOf(q) !== -1 || provider.indexOf(q) !== -1 || m.id.toLowerCase().indexOf(q) !== -1;

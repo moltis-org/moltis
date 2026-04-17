@@ -1353,6 +1353,8 @@ fn sanitize_tool_name_noop_on_real_tool_names() {
         "web_search",
         "web_fetch",
         "memory_save",
+        "memory_forget",
+        "memory_delete",
         "memory_search",
         "file_read",
         "file_write",
@@ -1412,6 +1414,8 @@ fn sanitize_tool_name_strips_prefix_and_suffix() {
 fn sanitize_tool_name_preserves_legitimate_underscores() {
     assert_eq!(sanitize_tool_name("web_search"), "web_search");
     assert_eq!(sanitize_tool_name("memory_save"), "memory_save");
+    assert_eq!(sanitize_tool_name("memory_forget"), "memory_forget");
+    assert_eq!(sanitize_tool_name("memory_delete"), "memory_delete");
     assert_eq!(sanitize_tool_name("spawn_agent"), "spawn_agent");
     assert_eq!(sanitize_tool_name("get_user_location"), "get_user_location");
 }

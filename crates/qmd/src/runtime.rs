@@ -146,6 +146,10 @@ impl MemoryRuntime for QmdMemoryRuntime {
         "qmd"
     }
 
+    fn data_dir(&self) -> Option<&Path> {
+        self.fallback.data_dir()
+    }
+
     fn has_embeddings(&self) -> bool {
         !self.disable_rag
     }
@@ -168,6 +172,12 @@ impl MemoryRuntime for QmdMemoryRuntime {
         let changed = self.fallback.sync_path(path).await?;
         self.refresh_qmd_index().await?;
         Ok(changed)
+    }
+
+    async fn remove_path(&self, path: &Path) -> anyhow::Result<bool> {
+        let removed = self.fallback.remove_path(path).await?;
+        self.refresh_qmd_index().await?;
+        Ok(removed)
     }
 
     async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {

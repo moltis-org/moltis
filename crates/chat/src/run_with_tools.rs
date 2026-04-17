@@ -111,6 +111,7 @@ pub(crate) async fn run_with_tools(
         install_agent_scoped_memory_tools(
             &mut filtered_registry,
             manager,
+            Arc::clone(&provider),
             agent_id,
             persona.config.memory.style,
             persona.config.memory.agent_write_mode,

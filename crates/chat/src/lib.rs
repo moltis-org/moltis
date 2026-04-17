@@ -16,6 +16,7 @@ pub mod error;
 pub mod runtime;
 
 pub use {
+    memory_tools::MemoryForgetTool,
     models::{DisabledModelsStore, LiveModelService, UnsupportedModelInfo},
     runtime::{ChatRuntime, TtsOverride},
     service::{ActiveToolCall, LiveChatService},

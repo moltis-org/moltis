@@ -19,6 +19,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260417.01] - 2026-04-17
+### Added
+- [web] Add reasoning effort toggle to chat toolbar (#750)
+
+
+### Fixed
+- [providers] Sanitize MCP tool schemas regardless of JSON Schema draft (#746)
+- [node-host] Install rustls CryptoProvider before wss:// connections (#749)
+- [providers] Prune orphaned required entries from tool schemas (#751)
+- [web] Satisfy biome and format gates
+- [testing] Avoid CUDA features in Darwin test recipes
+- [web] Stabilize session delete flow
+- [ci] Harden linux dependency installer
+
+## [20260416.02] - 2026-04-16
+### Added
+- [providers] Configurable context windows + oldest-first compaction (#737)
+
+
+### Changed
+- [tests] Split oversized Rust test modules
+
+
+### Fixed
+- [ci] Repair MCP e2e and iOS chat event handling
+- [providers] Detect Grok 3/4 as reasoning-capable models (#741)
+- [nostr] Replace tokio RwLock with std RwLock to prevent panic (#742)
+- [providers] Restore type annotations stripped by schema canonicalization (#740)
+- [ci] Retry Linux dependency installs and align Darwin validation
+- [ci] Install openssh client in Linux build container
+
+## [20260415.01] - 2026-04-15
+### Added
+- Allow GUIDELINES.md file override for hardcoded tool guidelines
+- [channels] Add WhatsApp to default offered channels
+- [whatsapp] Auto-approve owner, set device name, wrap buttons
+- [whatsapp] Handle PairSuccess event for instant QR dismissal
+- [whatsapp] Make Account ID optional, default to "main"
+- [web] Add Slack channel to onboarding wizard
+
+
+### Changed
+- Clean up provider tests and onboarding UI
+- Move implementation code out of mod.rs and lib.rs (#731)
+
+
+### Removed
+- [web] Remove duplicate assets warn import
+
+
+### Fixed
+- [graphql] Make sessionKey required for all chat operations
+- [graphql] Address PR review — harden subscription filter and tests
+- [onboarding] Show version in server footer
+- [web] Prefer embedded assets over stale share dir
+- [chat] Preserve sender names in user messages
+- [providers] Address sender-name review feedback
+- Move return inside empty-guard in append_guidelines_section (PR 714 review)
+- [providers] Skip strict tool schemas for Google/Gemini via OpenRouter (#716)
+- [providers] Also detect googleapis.com URLs for non-strict tools
+- [providers] Collapse type arrays in strict mode patching (#716)
+- [whatsapp] Upgrade whatsapp-rust ecosystem 0.2 → 0.5
+- [whatsapp] Use time crate for timestamps, fix DashMap sync key ordering
+- [whatsapp] Add QR code polling fallback for pairing
+- [whatsapp] Skip duplicate account start, add QR polling e2e test
+- [whatsapp] Use res.payload not res.result for QR polling
+- [whatsapp] Render QR code as SVG in polling response
+- [whatsapp] Skip history sync on pairing
+- [whatsapp] Detect pairing completion via polling
+- [channels] Add missing useRef import in page-channels.js
+- [whatsapp] Set OS name to Moltis, add no-sync hints
+- [whatsapp] Fix mangled no-sync hints in onboarding view
+- [whatsapp] Auto-approve both PN and LID JIDs, add debug logging
+- [whatsapp] Fix QR code not displaying when Account ID is empty
+- [whatsapp] Instant pairing feedback and owner auto-approve
+- [whatsapp] Subscribe to channel events in onboarding WS
+- [whatsapp] Only auto-approve owner PN JID, not LID
+- [whatsapp] Use PN JID for self-chat replies instead of LID
+- [whatsapp] Show phone number in self-chat footer instead of LID
+- [channels] Don't drop channel_user WS broadcast
+- [whatsapp] Use bare phone number as self-chat session ID
+- [agents] Strip trailing stop tokens leaked by LLMs as content
+- [agents] Address PR review comments
+- [providers] Repair openai compat CI regressions (#722)
+- [agents] Collapse nested if per clippy collapsible_if lint
+- [web] Restore setup onboarding alias
+- [providers] Add null to enum arrays for nullable optional props (#724)
+- [mcp] Treat any HTTP response as alive in health check (#732) (#733)
+- [chat] Broadcast user_message event so API-sent messages appear in web UI (#734)
+
 ## [20260414.02] - 2026-04-14
 ### Changed
 - [node-exec] Merge node exec types into owners

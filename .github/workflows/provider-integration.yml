@@ -324,6 +324,83 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  ollama-qwen-live-e2e:
+    name: Ollama Qwen Live E2E
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+    env:
+      MOLTIS_E2E_OLLAMA_QWEN_LIVE: "1"
+      MOLTIS_E2E_OLLAMA_QWEN_MODEL: qwen2.5:0.5b
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ollama-qwen-live-e2e-v1
+          cache-all-crates: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config curl zstd
+
+      - name: Install Ollama
+        env:
+          OLLAMA_VERSION: v0.20.7
+          OLLAMA_TARBALL: ollama-linux-amd64.tar.zst
+          OLLAMA_TARBALL_SHA256: 193c41ffee30411a76af4484dae9cdd4c2d6f8f877b7096925c36f2489af131f
+        run: |
+          curl -fsSL -o ollama.tar.zst "https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/${OLLAMA_TARBALL}"
+          echo "${OLLAMA_TARBALL_SHA256}  ollama.tar.zst" | sha256sum -c -
+          sudo tar --use-compress-program=unzstd -C /usr -xf ollama.tar.zst
+          ollama --version
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci
+
+      - name: Build Tailwind CSS
+        run: |
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
+          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
+
+      - name: Build moltis binary
+        run: cargo build --bin moltis
+
+      - name: Install Playwright browsers
+        working-directory: crates/web/ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Ollama Qwen live E2E
+        working-directory: crates/web/ui
+        env:
+          CI: "true"
+        run: npx playwright test --project=ollama-qwen-live e2e/specs/ollama-qwen-live.spec.js
+
+      - name: Upload Ollama Qwen live E2E results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ollama-qwen-live-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            crates/web/ui/playwright-report/
+            crates/web/ui/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   summary:
     name: Integration Summary
     runs-on: ubuntu-latest
@@ -333,6 +410,7 @@ jobs:
       - provider-tests
       - provider-e2e-scenarios
       - openai-live-e2e
+      - ollama-qwen-live-e2e
     if: always()
     steps:
       - name: Report

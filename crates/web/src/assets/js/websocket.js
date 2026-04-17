@@ -455,6 +455,34 @@ function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
 	}
 }
 
+// Handle user messages broadcast by the backend after persisting a message
+// sent via the GraphQL API, mobile app, or any non-web-UI client.
+// The originating web client already rendered the message optimistically,
+// so we skip rendering when the broadcast's seq matches a seq this client
+// has already sent (seq <= S.chatSeq).
+function handleChatUserMessage(p, isActive, isChatPage, eventSession) {
+	// Suppress the echo for the originating client.
+	if (p.seq !== undefined && p.seq !== null && p.seq <= S.chatSeq) return;
+
+	bumpSessionCount(eventSession, 1);
+	cacheSessionHistoryMessage(
+		eventSession,
+		{
+			role: "user",
+			content: p.text || "",
+			created_at: Date.now(),
+		},
+		p.messageIndex,
+	);
+	if (!isActive) {
+		setSessionUnread(eventSession, true);
+	}
+	if (!(isChatPage && isActive)) return;
+	// Safe: renderMarkdown calls esc() first — all user input is
+	// HTML-escaped before formatting tags are applied.
+	chatAddMsg("user", renderMarkdown(p.text || ""), true);
+}
+
 // Safe: renderMarkdown calls esc() first — all user input is HTML-escaped before
 // being passed to innerHTML. This is the standard rendering path for chat messages.
 function setSafeMarkdownHtml(el, text) {
@@ -1055,6 +1083,7 @@ var chatHandlers = {
 	tool_call_start: handleChatToolCallStart,
 	tool_call_end: handleChatToolCallEnd,
 	channel_user: handleChatChannelUser,
+	user_message: handleChatUserMessage,
 	delta: handleChatDelta,
 	final: handleChatFinal,
 	auto_compact: handleChatAutoCompact,

@@ -235,6 +235,14 @@ mod tests {
             "Save information to long-term memory",
         )));
         registry.register(Box::new(DummyTool::new(
+            "memory_forget",
+            "Forget information from long-term memory using natural language",
+        )));
+        registry.register(Box::new(DummyTool::new(
+            "memory_delete",
+            "Delete information from long-term memory",
+        )));
+        registry.register(Box::new(DummyTool::new(
             "browser_navigate",
             "Navigate browser to a URL",
         )));
@@ -244,7 +252,7 @@ mod tests {
     #[test]
     fn wrap_registry_lazy_contains_only_tool_search() {
         let full = build_full_registry();
-        assert_eq!(full.list_names().len(), 5);
+        assert_eq!(full.list_names().len(), 7);
 
         let lazy = wrap_registry_lazy(full);
         let names = lazy.list_names();
@@ -264,13 +272,15 @@ mod tests {
             .unwrap();
 
         let results = result["results"].as_array().unwrap();
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 4);
         let names: Vec<&str> = results
             .iter()
             .map(|r| r["name"].as_str().unwrap())
             .collect();
         assert!(names.contains(&"memory_search"));
         assert!(names.contains(&"memory_save"));
+        assert!(names.contains(&"memory_forget"));
+        assert!(names.contains(&"memory_delete"));
     }
 
     #[tokio::test]

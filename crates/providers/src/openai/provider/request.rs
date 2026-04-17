@@ -2,9 +2,16 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::warn;
 
-use moltis_agents::model::ChatMessage;
+use {crate::raw_model_id, moltis_agents::model::ChatMessage};
 
 use super::OpenAiProvider;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SystemMessageRewriteStrategy {
+    None,
+    MergeLeadingSystem,
+    InlineIntoFirstUser,
+}
 
 impl OpenAiProvider {
     /// Returns `true` when this provider targets an Anthropic model via
@@ -117,18 +124,60 @@ impl OpenAiProvider {
             || self.base_url.to_ascii_lowercase().contains("minimax")
     }
 
-    /// For providers that reject `role: "system"` in the messages array,
-    /// extract all system messages from `body["messages"]`, join their
-    /// content, and prepend it to the first user message.
+    fn is_custom_openai_compatible_provider(&self) -> bool {
+        self.provider_name.starts_with("custom-")
+    }
+
+    fn is_alibaba_qwen_backend(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("alibaba-coding")
+            || self.provider_name.eq_ignore_ascii_case("alibaba")
+            || self.provider_name.eq_ignore_ascii_case("dashscope-coding")
+            || self.base_url.contains("dashscope.aliyuncs.com")
+            || self.base_url.contains("alibabacloud.com")
+    }
+
+    fn is_qwen_single_system_backend(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("ollama")
+            || self.provider_name.to_ascii_lowercase().contains("ollama")
+            || self.is_custom_openai_compatible_provider()
+            || self.is_alibaba_qwen_backend()
+    }
+
+    /// Some backends ship chat templates that only accept a single system
+    /// message at the front of the conversation. Qwen-based OpenAI-compatible
+    /// backends commonly behave this way (e.g. llama.cpp chat templates).
+    fn requires_single_leading_system_message(&self) -> bool {
+        raw_model_id(&self.model)
+            .to_ascii_lowercase()
+            .contains("qwen")
+            && self.is_qwen_single_system_backend()
+    }
+
+    fn system_message_rewrite_strategy(&self) -> SystemMessageRewriteStrategy {
+        if self.rejects_system_role() {
+            return SystemMessageRewriteStrategy::InlineIntoFirstUser;
+        }
+        if self.requires_single_leading_system_message() {
+            return SystemMessageRewriteStrategy::MergeLeadingSystem;
+        }
+        SystemMessageRewriteStrategy::None
+    }
+
+    /// Rewrite system messages for providers with stricter chat template rules.
     ///
     /// MiniMax's `/v1/chat/completions` endpoint returns error 2013 for
     /// `role: "system"` entries and silently ignores a top-level `"system"`
     /// field. The only reliable way to deliver the system prompt is to
     /// inline it into the first user message.
     ///
+    /// Qwen-based OpenAI-compatible backends often only accept a single system
+    /// message at the very front. For those, join all system messages with
+    /// blank lines and emit exactly one leading `role: "system"` message.
+    ///
     /// Must be called on the request body **after** it is fully assembled.
     pub(super) fn apply_system_prompt_rewrite(&self, body: &mut serde_json::Value) {
-        if !self.rejects_system_role() {
+        let rewrite_strategy = self.system_message_rewrite_strategy();
+        if matches!(rewrite_strategy, SystemMessageRewriteStrategy::None) {
             return;
         }
         let Some(messages) = body
@@ -145,7 +194,10 @@ impl OpenAiProvider {
                 {
                     system_parts.push(content.to_string());
                 } else if msg.get("content").is_some() {
-                    warn!("MiniMax system message has non-string content; it will be dropped");
+                    warn!(
+                        ?rewrite_strategy,
+                        "system message has non-string content; it will be dropped"
+                    );
                 }
                 return false;
             }
@@ -155,6 +207,20 @@ impl OpenAiProvider {
             return;
         }
         let system_text = system_parts.join("\n\n");
+
+        if matches!(
+            rewrite_strategy,
+            SystemMessageRewriteStrategy::MergeLeadingSystem
+        ) {
+            messages.insert(
+                0,
+                serde_json::json!({
+                    "role": "system",
+                    "content": system_text,
+                }),
+            );
+            return;
+        }
 
         // Find the first user message and prepend system content to it.
         let system_block =
@@ -346,4 +412,146 @@ fn assign_openai_tool_call_id(
     used_tool_call_ids.insert(candidate.clone());
     remapped_tool_call_ids.insert(raw.to_string(), candidate.clone());
     candidate
+}
+
+#[cfg(test)]
+mod tests {
+    use secrecy::Secret;
+
+    use super::*;
+
+    fn provider(model: &str, provider_name: &str, base_url: &str) -> OpenAiProvider {
+        OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            model.to_string(),
+            base_url.to_string(),
+            provider_name.to_string(),
+        )
+    }
+
+    fn body_messages(body: &serde_json::Value) -> &[serde_json::Value] {
+        let Some(messages) = body.get("messages").and_then(serde_json::Value::as_array) else {
+            panic!("messages should be an array");
+        };
+        messages
+    }
+
+    #[test]
+    fn system_message_rewrite_qwen_merges_multiple_messages_into_one_leading_message() {
+        let provider = provider(
+            "qwen3:0.6b",
+            "custom-ollama-qwen",
+            "http://127.0.0.1:11435/v1",
+        );
+        let mut body = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "system", "content": "The current user datetime is 2026-04-15 18:22:00 UTC."},
+                {"role": "user", "content": "what time is it?"}
+            ]
+        });
+
+        provider.apply_system_prompt_rewrite(&mut body);
+
+        let messages = body_messages(&body);
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(
+            messages[0]["content"],
+            "You are a helpful assistant.\n\nThe current user datetime is 2026-04-15 18:22:00 UTC."
+        );
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[3]["role"], "user");
+    }
+
+    #[test]
+    fn system_message_rewrite_minimax_inlines_messages_into_first_user_message() {
+        let provider = provider("MiniMax-M2.7", "minimax", "https://api.minimax.io/v1");
+        let mut body = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "hello"},
+                {"role": "system", "content": "The current user datetime is 2026-04-15 18:22:00 UTC."}
+            ]
+        });
+
+        provider.apply_system_prompt_rewrite(&mut body);
+
+        let messages = body_messages(&body);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(
+            messages[0]["content"],
+            "[System Instructions]\nYou are a helpful assistant.\n\nThe current user datetime is 2026-04-15 18:22:00 UTC.\n[End System Instructions]\n\nhello"
+        );
+    }
+
+    #[test]
+    fn system_message_rewrite_default_openai_request_is_unchanged() {
+        let provider = provider("gpt-4o-mini", "openai", "https://api.openai.com/v1");
+        let mut body = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "sys1"},
+                {"role": "user", "content": "hello"},
+                {"role": "system", "content": "sys2"}
+            ]
+        });
+
+        provider.apply_system_prompt_rewrite(&mut body);
+
+        let messages = body_messages(&body);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "system");
+    }
+
+    #[test]
+    fn system_message_rewrite_qwen_model_on_openai_provider_is_unchanged() {
+        let provider = provider("qwen3-coder-plus", "openai", "https://api.openai.com/v1");
+        let mut body = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "sys1"},
+                {"role": "user", "content": "hello"},
+                {"role": "system", "content": "sys2"}
+            ]
+        });
+
+        provider.apply_system_prompt_rewrite(&mut body);
+
+        let messages = body_messages(&body);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "sys1");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "system");
+        assert_eq!(messages[2]["content"], "sys2");
+    }
+
+    #[test]
+    fn system_message_rewrite_alibaba_qwen_merges_multiple_messages_into_one_leading_message() {
+        let provider = provider(
+            "qwen3.5-plus",
+            "alibaba-coding",
+            "https://coding-intl.dashscope.aliyuncs.com/v1",
+        );
+        let mut body = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "sys1"},
+                {"role": "user", "content": "hello"},
+                {"role": "system", "content": "sys2"}
+            ]
+        });
+
+        provider.apply_system_prompt_rewrite(&mut body);
+
+        let messages = body_messages(&body);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "sys1\n\nsys2");
+        assert_eq!(messages[1]["role"], "user");
+    }
 }

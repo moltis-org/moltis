@@ -107,6 +107,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 #   strict_tools - Force strict/non-strict tool schemas (default: auto-detect per provider)
 #   policy    - Per-provider tool policy override (allow/deny lists)
+#   model_overrides.<model_id>.context_window - Override context window for a specific model
 
 [providers]
 offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
@@ -128,6 +129,8 @@ offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", 
 # cache_retention = "short"                    # Prompt caching: "none" | "short" | "long"
 # policy.deny = ["exec"]                       # Deny specific tools when using this provider
 # policy.allow = []                            # Restrict to only these tools (empty = all allowed)
+# [providers.anthropic.model_overrides.claude-opus-4-6]
+# context_window = 1_000_000                   # Provider-scoped model override
 
 # ── OpenAI ────────────────────────────────────────────────────
 [providers.openai]
@@ -200,6 +203,18 @@ models = ["kimi-k2.5"]                        # Preferred models shown first
 
 [providers.local-llm]
 # models = ["qwen2.5-coder-7b-q4_k_m"]        # Optional; configure local models in onboarding
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODEL OVERRIDES (GLOBAL)
+# ══════════════════════════════════════════════════════════════════════════════
+# Override context window sizes for specific models across all providers.
+# Provider-scoped overrides ([providers.<name>.model_overrides.<id>]) take precedence.
+#
+# [models.claude-opus-4-6]
+# context_window = 1_000_000                  # Override the built-in heuristic
+#
+# [models.glm-5-turbo]
+# context_window = 200_000
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHAT SETTINGS
@@ -317,6 +332,9 @@ max_tool_result_bytes = 50000     # Max bytes per tool result before truncation 
 # registry_mode = "full"          # "full" = all schemas every turn, "lazy" = tool_search discovery
 agent_loop_detector_window = 3    # Fire intervention after N identical failing tool calls in a row (0 = disable)
 agent_loop_detector_strip_tools_on_second_fire = true  # On second consecutive fire, strip tool schemas for one turn to force a text response
+tool_result_compaction_ratio = 75     # % of context_window before oldest tool results are compacted (0 = disable)
+preemptive_overflow_ratio = 90        # % of context_window before hard ContextWindowExceeded error
+compaction_min_iterations = 3         # Min loop iterations before per-iteration compaction can fire
 
 # ── Maps ─────────────────────────────────────────────────────────────────────
 
@@ -852,8 +870,9 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 
 [channels]
 # Which channel types appear in the web UI's "+ Add Channel" menu.
-# Default: ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr"]
-# offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr"]
+# Default: ["telegram", "msteams", "discord", "slack", "matrix", "nostr"]
+# Add "whatsapp" to enable it in the UI.
+# offered = ["telegram", "msteams", "discord", "slack", "matrix", "nostr", "whatsapp"]
 
 # WhatsApp linked-device accounts
 # [channels.whatsapp.my-bot]

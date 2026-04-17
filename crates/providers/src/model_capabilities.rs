@@ -1,10 +1,64 @@
 //! Model capability heuristics: context window, tool support, vision, reasoning.
 
-use crate::model_id::capability_model_id;
+use {crate::model_id::capability_model_id, moltis_config::schema::ModelOverride};
+
+/// Extract a `HashMap<String, u32>` of model ID → context window from
+/// a `HashMap<String, ModelOverride>`, filtering out entries without a
+/// `context_window` value.
+#[must_use]
+pub fn extract_cw_overrides(
+    overrides: &std::collections::HashMap<String, ModelOverride>,
+) -> std::collections::HashMap<String, u32> {
+    overrides
+        .iter()
+        .filter_map(|(k, v)| v.context_window.map(|cw| (k.clone(), cw)))
+        .collect()
+}
 
 /// Return the known context window size (in tokens) for a model ID.
 /// Falls back to 200,000 for unknown models.
+#[must_use]
 pub fn context_window_for_model(model_id: &str) -> u32 {
+    context_window_for_model_inner(model_id)
+}
+
+/// Return the context window size for a model ID, respecting config overrides.
+///
+/// Precedence (highest to lowest):
+/// 1. Provider-scoped config override (`provider_overrides[model_id].context_window`)
+/// 2. Global config override (`global_overrides[model_id].context_window`)
+/// 3. Hardcoded heuristic ([`context_window_for_model_inner`])
+///
+/// Both override maps use the **normalized** model ID (after
+/// [`capability_model_id`] processing) as the lookup key.
+///
+/// Note: This function accepts `HashMap<String, u32>` (not the config crate's
+/// `ModelOverride`) to keep the providers crate independent of the config crate.
+/// Callers are responsible for extracting the `u32` from `ModelOverride.context_window`.
+///
+/// When no config is provided, this is equivalent to [`context_window_for_model`].
+#[must_use]
+pub fn context_window_for_model_with_config(
+    model_id: &str,
+    global_overrides: &std::collections::HashMap<String, u32>,
+    provider_overrides: &std::collections::HashMap<String, u32>,
+) -> u32 {
+    let normalized = capability_model_id(model_id);
+
+    // 1. Provider-scoped override (highest precedence)
+    if let Some(&cw) = provider_overrides.get(normalized) {
+        return cw;
+    }
+    // 2. Global override
+    if let Some(&cw) = global_overrides.get(normalized) {
+        return cw;
+    }
+    // 3. Hardcoded heuristic
+    context_window_for_model_inner(model_id)
+}
+
+/// Inner heuristic — kept private so callers go through the public wrappers.
+fn context_window_for_model_inner(model_id: &str) -> u32 {
     let model_id = capability_model_id(model_id);
     // Codestral has the largest window at 256k.
     if model_id.starts_with("codestral") {
@@ -210,6 +264,10 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
     }
     // DeepSeek R1 / reasoning models
     if id.contains("deepseek-r1") || id.contains("deepseek-reasoner") {
+        return true;
+    }
+    // xAI Grok 3+ reasoning models (Grok 3, Grok 3 Mini, Grok 4 series)
+    if id.starts_with("grok-3") || id.starts_with("grok-4") {
         return true;
     }
     false
@@ -501,6 +559,23 @@ mod tests {
         assert!(supports_reasoning_for_model("gpt-5"));
         assert!(supports_reasoning_for_model("gpt-5-mini"));
         assert!(supports_reasoning_for_model("gpt-5.2"));
+        // xAI Grok reasoning models
+        assert!(supports_reasoning_for_model("grok-3"));
+        assert!(supports_reasoning_for_model("grok-3-latest"));
+        assert!(supports_reasoning_for_model("grok-3-mini"));
+        assert!(supports_reasoning_for_model("grok-3-mini-latest"));
+        assert!(supports_reasoning_for_model("grok-4-0420"));
+        assert!(supports_reasoning_for_model("grok-4"));
+        // OpenRouter-style namespaced Grok model IDs
+        assert!(supports_reasoning_for_model(
+            "custom-openrouter::xai/grok-4-0420"
+        ));
+        assert!(supports_reasoning_for_model(
+            "custom-openrouter::xai/grok-3-mini"
+        ));
+        // Grok 2 does NOT support reasoning
+        assert!(!supports_reasoning_for_model("grok-2"));
+        assert!(!supports_reasoning_for_model("grok-2-latest"));
 
         // Models that don't support reasoning
         assert!(!supports_reasoning_for_model("gemini-2.0-flash"));
@@ -656,5 +731,150 @@ mod tests {
         assert!(supports_vision_for_model("custom-gpt-4o-wrapper"));
         assert!(supports_vision_for_model("not-gemini-model"));
         assert!(supports_vision_for_model("totally-new-model-2026"));
+    }
+
+    // ── Config override tests ─────────────────────────────────────────────
+
+    fn empty_map() -> std::collections::HashMap<String, u32> {
+        std::collections::HashMap::new()
+    }
+
+    #[test]
+    fn config_override_returns_heuristic_when_no_overrides() {
+        // With empty overrides, should behave identically to the heuristic.
+        assert_eq!(
+            context_window_for_model_with_config(
+                "claude-sonnet-4-20250514",
+                &empty_map(),
+                &empty_map()
+            ),
+            200_000,
+        );
+        assert_eq!(
+            context_window_for_model_with_config("gpt-4o", &empty_map(), &empty_map()),
+            128_000,
+        );
+        assert_eq!(
+            context_window_for_model_with_config("some-unknown-model", &empty_map(), &empty_map()),
+            200_000,
+        );
+    }
+
+    #[test]
+    fn global_override_takes_precedence_over_heuristic() {
+        let mut global = empty_map();
+        global.insert("claude-opus-4-6".into(), 1_000_000);
+        assert_eq!(
+            context_window_for_model_with_config("claude-opus-4-6", &global, &empty_map()),
+            1_000_000,
+        );
+    }
+
+    #[test]
+    fn provider_override_takes_precedence_over_global() {
+        let mut global = empty_map();
+        global.insert("glm-5-turbo".into(), 150_000);
+        let mut provider = empty_map();
+        provider.insert("glm-5-turbo".into(), 200_000);
+        assert_eq!(
+            context_window_for_model_with_config("glm-5-turbo", &global, &provider),
+            200_000, // provider-scoped wins
+        );
+    }
+
+    #[test]
+    fn config_override_uses_normalized_model_id() {
+        let mut global = empty_map();
+        // The override key should match the *normalized* ID
+        global.insert("gpt-5.2".into(), 256_000);
+        assert_eq!(
+            context_window_for_model_with_config(
+                "custom-openrouter::openai/gpt-5.2@reasoning-high",
+                &global,
+                &empty_map(),
+            ),
+            256_000,
+        );
+    }
+
+    #[test]
+    fn config_override_does_not_affect_other_models() {
+        let mut global = empty_map();
+        global.insert("claude-opus-4-6".into(), 1_000_000);
+        // Claude Sonnet should still use heuristic
+        assert_eq!(
+            context_window_for_model_with_config("claude-sonnet-4-20250514", &global, &empty_map()),
+            200_000,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_cw_overrides {
+    use {super::*, std::collections::HashMap};
+
+    /// Verify provider-scoped override wins over global and heuristic.
+    #[test]
+    fn provider_override_wins() {
+        let global: HashMap<String, u32> = vec![("claude-sonnet-4-20250514".into(), 300_000)]
+            .into_iter()
+            .collect();
+        let provider: HashMap<String, u32> = vec![("claude-sonnet-4-20250514".into(), 999_000)]
+            .into_iter()
+            .collect();
+
+        let cw =
+            context_window_for_model_with_config("claude-sonnet-4-20250514", &global, &provider);
+        assert_eq!(cw, 999_000);
+    }
+
+    /// Verify global override wins over heuristic when no provider override.
+    #[test]
+    fn global_override_wins_over_heuristic() {
+        let global: HashMap<String, u32> = vec![("claude-sonnet-4-20250514".into(), 500_000)]
+            .into_iter()
+            .collect();
+        let provider: HashMap<String, u32> = HashMap::new();
+
+        let cw =
+            context_window_for_model_with_config("claude-sonnet-4-20250514", &global, &provider);
+        assert_eq!(cw, 500_000);
+    }
+
+    /// Verify empty maps fall through to heuristic.
+    #[test]
+    fn empty_maps_use_heuristic() {
+        let cw = context_window_for_model_with_config(
+            "claude-sonnet-4-20250514",
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        // Heuristic for claude-* is 200_000
+        assert_eq!(cw, 200_000);
+    }
+
+    /// Verify extract_cw_overrides filters out None entries.
+    #[test]
+    fn extract_cw_overrides_filters_none() {
+        use moltis_config::schema::ModelOverride;
+
+        let mut overrides = HashMap::new();
+        overrides.insert("claude-opus-4-20250514".into(), ModelOverride {
+            context_window: Some(1_000_000),
+        });
+        overrides.insert("gpt-4o".into(), ModelOverride {
+            context_window: None,
+        });
+
+        let extracted = extract_cw_overrides(&overrides);
+        assert_eq!(extracted.len(), 1);
+        assert_eq!(extracted.get("claude-opus-4-20250514"), Some(&1_000_000));
+    }
+
+    /// Verify extract_cw_overrides returns empty map for empty input.
+    #[test]
+    fn extract_cw_overrides_empty() {
+        let extracted = extract_cw_overrides(&HashMap::new());
+        assert!(extracted.is_empty());
     }
 }
