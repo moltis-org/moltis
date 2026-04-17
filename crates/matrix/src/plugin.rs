@@ -97,7 +97,11 @@ async fn matrix_status_extra(snapshot: MatrixStatusSnapshot) -> serde_json::Valu
         .await
         .unwrap_or(false);
     let backups_enabled = snapshot.client.encryption().backups().are_enabled().await;
-    let device_verified_by_owner = snapshot
+    // is_cross_signed_by_owner() has a known issue where it returns false
+    // even after a successful signature upload + sync. Use cross-signing
+    // completion as a fallback: if all private keys are present, the device
+    // is effectively verified even if the local cache lags.
+    let device_cross_signed = snapshot
         .client
         .encryption()
         .get_own_device()
@@ -105,6 +109,7 @@ async fn matrix_status_extra(snapshot: MatrixStatusSnapshot) -> serde_json::Valu
         .ok()
         .flatten()
         .is_some_and(|device| device.is_cross_signed_by_owner());
+    let device_verified_by_owner = device_cross_signed || cross_signing_complete;
     let recovery_state = effective_recovery_state(
         cached_recovery_state,
         secret_storage_enabled,

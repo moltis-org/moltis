@@ -558,61 +558,13 @@ async fn ensure_oidc_owned_encryption_state(
         .await;
     wait_for_e2ee_state_to_settle(client).await;
 
-    let cross_signing_status = client.encryption().cross_signing_status().await;
-    let cross_signing_complete = cross_signing_status
-        .as_ref()
-        .is_some_and(|s| s.is_complete());
-    let has_master = cross_signing_status.as_ref().is_some_and(|s| s.has_master);
-    let has_self_signing = cross_signing_status
-        .as_ref()
-        .is_some_and(|s| s.has_self_signing);
-    let has_user_signing = cross_signing_status
-        .as_ref()
-        .is_some_and(|s| s.has_user_signing);
-    let device_verified = own_device_is_cross_signed_by_owner(client)
-        .await
-        .unwrap_or(false);
-    let own_device_exists = client
-        .encryption()
-        .get_own_device()
-        .await
-        .ok()
-        .flatten()
-        .is_some();
-    info!(
-        account_id,
-        cross_signing_complete,
-        has_master,
-        has_self_signing,
-        has_user_signing,
-        device_verified,
-        own_device_exists,
-        "matrix OIDC ownership state before self-sign attempt"
-    );
-
-    match ensure_own_device_is_cross_signed(client).await {
-        Ok(()) => {
-            // Signature uploaded to server — sync to update local crypto store.
-            let _ = client.sync_once(SyncSettings::default()).await;
-            wait_for_e2ee_state_to_settle(client).await;
-            info!(account_id, "matrix OIDC device self-sign succeeded");
-        },
-        Err(error) => warn!(
+    if let Err(error) = ensure_own_device_is_cross_signed(client).await {
+        warn!(
             account_id,
             error = %error,
             "matrix OIDC device self-signing failed"
-        ),
+        );
     }
-
-    let device_verified_after = own_device_is_cross_signed_by_owner(client)
-        .await
-        .unwrap_or(false);
-    info!(
-        account_id,
-        device_verified_before = device_verified,
-        device_verified_after,
-        "matrix OIDC device verification result"
-    );
 
     if ownership_is_ready(client).await.unwrap_or(false) {
         info!(account_id, "matrix OIDC ownership bootstrap complete");
