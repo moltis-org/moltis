@@ -1632,7 +1632,7 @@ function AddMatrixModal() {
 					advancedConfigPatch.value = value;
 				}} />
 	      ${error.value && html`<div class="text-xs text-[var(--error)] py-1">${error.value}</div>`}
-	      <button class="provider-btn" onClick=${onSubmit} disabled=${saving.value || oidcWaiting.value}><span>${saving.value ? "Connecting\u2026" : oidcWaiting.value ? "Waiting for OIDC\u2026" : authModeDraft.value === "oidc" ? "Authenticate with OIDC" : "Connect Matrix"}</span></button>
+	      <button key=${`mx-${saving.value}-${oidcWaiting.value}`} class="provider-btn" onClick=${onSubmit} disabled=${saving.value || oidcWaiting.value}>${saving.value ? "Connecting\u2026" : oidcWaiting.value ? "Waiting for OIDC\u2026" : authModeDraft.value === "oidc" ? "Authenticate with OIDC" : "Connect Matrix"}</button>
 	    </div>
 	  </${Modal}>`;
 }
