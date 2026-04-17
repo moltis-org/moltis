@@ -11,6 +11,12 @@ use moltis_qmd::{QmdCollection, QmdManagerConfig};
 
 use crate::config::CodeIndexConfig;
 
+// P2 will use Error, Result, and IndexStatus when wiring the full backend.
+#[allow(unused_imports)]
+use crate::error::Result;
+#[allow(unused_imports)]
+use crate::types::IndexStatus;
+
 /// Build QMD collection configurations for a project.
 ///
 /// Creates one [`QmdCollection`] per extension in the allowlist, each
