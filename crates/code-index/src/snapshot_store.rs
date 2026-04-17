@@ -86,17 +86,21 @@ impl SnapshotStore {
             ))
         })?;
 
-        // Write to temp file (PID-suffixed to avoid race under concurrent saves), then rename atomically.
-        let temp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
-        std::fs::write(&temp_path, &json).map_err(|e| {
+        // Write to a temp file in the same directory (guaranteed same filesystem
+        // for atomic rename), then persist over the target.
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let mut temp_file = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
+            Error::Store(format!(
+                "failed to create temp snapshot for project {project_id}: {e}"
+            ))
+        })?;
+        use std::io::Write;
+        temp_file.write_all(json.as_bytes()).map_err(|e| {
             Error::Store(format!(
                 "failed to write temp snapshot for project {project_id}: {e}"
             ))
         })?;
-
-        std::fs::rename(&temp_path, &path).map_err(|e| {
-            // Best-effort cleanup of temp file on rename failure.
-            let _ = std::fs::remove_file(&temp_path);
+        temp_file.persist(&path).map_err(|e| {
             Error::Store(format!(
                 "failed to commit snapshot for project {project_id}: {e}"
             ))

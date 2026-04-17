@@ -158,7 +158,7 @@ pub fn content_hash(path: &Path) -> Result<String> {
 /// Determine the effective file extension for extension and language detection.
 ///
 /// For files with a normal extension (e.g. `main.rs` → `"rs"`), returns it as-is.
-/// For known extensionless filenames (Dockerfile, Makefile, CMakeLists.txt),
+/// For known extensionless filenames (Dockerfile, Makefile),
 /// returns a synthetic extension mapping them to their language.
 pub fn effective_extension(path: &Path) -> &str {
     let ext = path
@@ -179,7 +179,6 @@ pub fn effective_extension(path: &Path) -> &str {
     match file_name.to_ascii_lowercase().as_str() {
         "dockerfile" | "containerfile" => "dockerfile",
         "makefile" | "gnumakefile" => "mk",
-        "cmakelists.txt" => "cmake",
         _ => "",
     }
 }
