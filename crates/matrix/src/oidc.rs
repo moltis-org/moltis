@@ -165,17 +165,16 @@ fn normalize_redirect_uri(redirect_uri: &Url) -> Url {
     }
 }
 
+/// Project URL used as `client_uri` during OIDC dynamic client registration.
+/// MAS validates this URL and rejects loopback addresses for native apps.
+const MOLTIS_CLIENT_URI: &str = "https://moltis.org/";
+
 fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
-    // client_uri must be a valid URL with a path — append "/" if origin-only.
-    let mut client_uri_url: Url = redirect_uri
-        .origin()
-        .unicode_serialization()
-        .parse()
-        .or_else(|_| "http://localhost".parse())
-        .map_err(|error| ChannelError::external("matrix oidc parse origin url", error))?;
-    client_uri_url.set_path("/");
-    let client_uri = Localized::new(client_uri_url, std::iter::empty());
     let normalized = normalize_redirect_uri(redirect_uri);
+    let client_uri_url: Url = MOLTIS_CLIENT_URI
+        .parse()
+        .map_err(|error| ChannelError::external("matrix oidc parse client uri", error))?;
+    let client_uri = Localized::new(client_uri_url, std::iter::empty());
     Ok(ClientMetadata::new(
         ApplicationType::Native,
         vec![OAuthGrantType::AuthorizationCode {
@@ -459,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn build_client_metadata_normalizes_https_localhost_redirect() {
+    fn build_client_metadata_normalizes_https_localhost_redirect_and_client_uri() {
         let redirect: Url = "https://localhost:52979/api/oauth/callback"
             .parse()
             .unwrap_or_else(|error| panic!("{error}"));
@@ -474,6 +473,12 @@ mod tests {
             },
             other => panic!("expected AuthorizationCode, got {other:?}"),
         }
+        // client_uri should be the project URL, not localhost
+        assert_eq!(
+            metadata.client_uri.get(None).map(|u| u.as_str()),
+            Some(MOLTIS_CLIENT_URI),
+            "client_uri should be the project URL"
+        );
     }
 
     #[test]
