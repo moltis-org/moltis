@@ -496,9 +496,7 @@ function AuthStep({ onNext, skippable }) {
 				</div>
 				${error && html`<${ErrorPanel} message=${error} />`}
 				<div class="flex flex-wrap items-center gap-3 mt-1">
-					<button type="submit" class="provider-btn" disabled=${optPwSaving}>
-						${optPwSaving ? "Setting\u2026" : "Set password & continue"}
-					</button>
+					<button key=${`pw-${optPwSaving}`} type="submit" class="provider-btn" disabled=${optPwSaving}>${optPwSaving ? "Setting\u2026" : "Set password & continue"}</button>
 					<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${() => {
 						ensureWsConnected();
 						onNext();
@@ -563,9 +561,7 @@ function AuthStep({ onNext, skippable }) {
 			${originsHint && html`<div class="text-xs text-[var(--muted)]">Passkeys will work when visiting: ${originsHint}</div>`}
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex flex-wrap items-center gap-3 mt-1">
-				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>
-					${saving ? "Registering\u2026" : "Register passkey"}
-				</button>
+				<button key=${`pk-${saving}`} type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>${saving ? "Registering\u2026" : "Register passkey"}</button>
 				${
 					skippable
 						? html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>`
@@ -607,9 +603,7 @@ function AuthStep({ onNext, skippable }) {
 				</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex flex-wrap items-center gap-3 mt-1">
-				<button type="submit" class="provider-btn" disabled=${saving}>
-					${saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
-				</button>
+				<button key=${`auth-${saving}`} type="submit" class="provider-btn" disabled=${saving}>${saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}</button>
 				${
 					skippable
 						? html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>${t("common:actions.skip")}</button>`
@@ -724,9 +718,7 @@ function IdentityStep({ onNext, onBack }) {
 						? html`<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>${t("common:actions.back")}</button>`
 						: null
 				}
-				<button type="submit" class="provider-btn" disabled=${saving}>
-					${saving ? "Saving\u2026" : "Continue"}
-				</button>
+				<button key=${`id-${saving}`} type="submit" class="provider-btn" disabled=${saving}>${saving ? "Saving\u2026" : "Continue"}</button>
 			</div>
 		</form>
 	</div>`;
@@ -934,7 +926,7 @@ function OnboardingProviderRow({
 				}
 				${error ? html`<${ErrorPanel} message=${error} />` : null}
 				<div class="flex items-center gap-2 mt-1">
-					<button type="submit" class="provider-btn provider-btn-sm" disabled=${phase === "validating"}>${phase === "validating" ? "Saving\u2026" : "Save"}</button>
+					<button key=${`prov-${phase}`} type="submit" class="provider-btn provider-btn-sm" disabled=${phase === "validating"}>${phase === "validating" ? "Saving\u2026" : "Save"}</button>
 					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure} disabled=${phase === "validating"}>Cancel</button>
 				</div>
 				${phase === "validating" ? html`<div class="text-xs text-[var(--muted)] mt-1">Discovering available models\u2026</div>` : null}
@@ -977,7 +969,7 @@ function OnboardingProviderRow({
 				<div class="text-xs text-[var(--muted)]">${selectedModels.size === 0 ? "No models selected" : `${selectedModels.size} model${selectedModels.size > 1 ? "s" : ""} selected`}</div>
 				${error ? html`<${ErrorPanel} message=${error} />` : null}
 				<div class="flex items-center gap-2 mt-1">
-					<button type="button" class="provider-btn provider-btn-sm" disabled=${selectedModels.size === 0 || savingModels} onClick=${onSaveModels}>${savingModels ? "Saving\u2026" : "Save"}</button>
+					<button key=${`models-${savingModels}`} type="button" class="provider-btn provider-btn-sm" disabled=${selectedModels.size === 0 || savingModels} onClick=${onSaveModels}>${savingModels ? "Saving\u2026" : "Save"}</button>
 					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure} disabled=${savingModels}>Cancel</button>
 				</div>
 				${savingModels ? html`<div class="text-xs text-[var(--muted)] mt-1">Saving credentials and validating selected models\u2026</div>` : null}
@@ -1940,7 +1932,7 @@ function OnboardingVoiceRow({
 				${provider.hint ? html`<div class="text-xs text-[var(--accent)]">${provider.hint}</div>` : null}
 				${error ? html`<${ErrorPanel} message=${error} />` : null}
 				<div class="flex items-center gap-2 mt-1">
-					<button type="submit" class="provider-btn provider-btn-sm" disabled=${saving}>${saving ? "Saving\u2026" : "Save"}</button>
+					<button key=${`voice-${saving}`} type="submit" class="provider-btn provider-btn-sm" disabled=${saving}>${saving ? "Saving\u2026" : "Save"}</button>
 					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure}>Cancel</button>
 				</div>
 			</form>`
@@ -2815,7 +2807,7 @@ function TelegramForm({ onConnected, error, setError }) {
 		</div>
 		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
 		${error && html`<${ErrorPanel} message=${error} />`}
-		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
+		<button key=${`tg-${saving}`} type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
 	</form>`;
 }
 
@@ -2984,7 +2976,7 @@ function TeamsForm({ onConnected, error, setError }) {
 		}
 		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
 		${error && html`<${ErrorPanel} message=${error} />`}
-		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Teams"}</button>
+		<button key=${`teams-${saving}`} type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Teams"}</button>
 	</form>`;
 }
 
@@ -3104,7 +3096,7 @@ function DiscordForm({ onConnected, error, setError }) {
 		</div>
 		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
 		${error && html`<${ErrorPanel} message=${error} />`}
-		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
+		<button key=${`disc-${saving}`} type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
 	</form>`;
 }
 
@@ -3566,7 +3558,7 @@ function WhatsAppForm({ onConnected, error, setError }) {
 		</div>
 		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
 		${error && html`<${ErrorPanel} message=${error} />`}
-		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Starting\u2026" : "Start Pairing"}</button>
+		<button key=${`wa-${saving}`} type="submit" class="provider-btn" disabled=${saving}>${saving ? "Starting\u2026" : "Start Pairing"}</button>
 	</form>`;
 }
 
@@ -3711,9 +3703,7 @@ function NostrForm({ onConnected, error, setError }) {
 		<${AdvancedConfigPatchField} value=${advancedConfig}
 			onInput=${(value) => setAdvancedConfig(value)} />
 		${error && html`<div class="text-xs text-[var(--error)]">${error}</div>`}
-		<button type="submit" class="provider-btn self-start" disabled=${saving}>
-			${saving ? "Connecting\u2026" : "Connect Nostr"}
-		</button>
+		<button key=${`nostr-${saving}`} type="submit" class="provider-btn self-start" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Nostr"}</button>
 	</form>`;
 }
 
@@ -3866,7 +3856,7 @@ function SlackForm({ onConnected, error, setError }) {
 		</div>
 		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
 		${error && html`<${ErrorPanel} message=${error} />`}
-		<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Slack"}</button>
+		<button key=${`slack-${saving}`} type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Slack"}</button>
 	</form>`;
 }
 
@@ -4208,8 +4198,7 @@ function OpenClawImportStep({ onNext, onBack }) {
 		}
 		<div class="flex flex-wrap items-center gap-3 mt-1">
 			${onBack ? html`<button class="provider-btn provider-btn-secondary" onClick=${onBack} disabled=${importing}>Back</button>` : null}
-			<button class="provider-btn" onClick=${doImport} disabled=${!anySelected || importing}>
-				${importing ? "Importing\u2026" : "Import Selected"}
+			<button key=${`import-${importing}`} class="provider-btn" onClick=${doImport} disabled=${!anySelected || importing}>${importing ? "Importing\u2026" : "Import Selected"}
 			</button>
 			<button
 				class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline"
