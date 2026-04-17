@@ -18,7 +18,7 @@ use {
     secrecy::ExposeSecret,
     serde::Deserialize,
     tokio_util::sync::CancellationToken,
-    tracing::{error, info, instrument, warn},
+    tracing::{info, instrument, warn},
 };
 
 use moltis_channels::{Error as ChannelError, Result as ChannelResult};
@@ -668,12 +668,18 @@ pub(crate) async fn sync_once_and_spawn_loop(
                     if start.elapsed() >= HEALTHY_THRESHOLD {
                         backoff = std::time::Duration::from_secs(5);
                     }
-                    error!(
+                    warn!(
                         account_id = %account_id_for_sync,
                         "matrix sync loop ended unexpectedly, retrying in {:?}",
                         backoff,
                     );
-                    tokio::time::sleep(backoff).await;
+                    tokio::select! {
+                        () = tokio::time::sleep(backoff) => {}
+                        () = cancel.cancelled() => {
+                            info!(account_id = %account_id_for_sync, "matrix sync loop cancelled during backoff");
+                            break;
+                        }
+                    }
                     backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
                 () = cancel.cancelled() => {
