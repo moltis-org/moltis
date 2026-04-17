@@ -371,17 +371,18 @@ impl ChannelPlugin for MatrixPlugin {
             (state.client.clone(), state.config.clone(), pending_handle)
         };
 
-        let pending_handle = pending_handle.ok_or_else(|| {
-            ChannelError::invalid_input("matrix account has no pending ownership approval to retry")
-        })?;
-
-        pending_handle.reset(None).await.map_err(|error| {
-            ChannelError::external("matrix recovery reset identity approval", error)
-        })?;
-        client
-            .encryption()
-            .wait_for_e2ee_initialization_tasks()
-            .await;
+        // If there's a pending handle (from the same session), use it.
+        // Otherwise (e.g. after restart), re-trigger ownership bootstrap
+        // which will call reset_identity() again to get a fresh handle.
+        if let Some(handle) = pending_handle {
+            handle.reset(None).await.map_err(|error| {
+                ChannelError::external("matrix recovery reset identity approval", error)
+            })?;
+            client
+                .encryption()
+                .wait_for_e2ee_initialization_tasks()
+                .await;
+        }
 
         let ownership_attempt =
             client::maybe_take_matrix_account_ownership(&client, account_id, &config).await;

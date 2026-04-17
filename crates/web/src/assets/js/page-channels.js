@@ -271,7 +271,7 @@ function MatrixOwnershipCard({ channel, matrixStatus }) {
 				<div class="mt-2 text-[11px] text-sky-800">Make sure the browser page is signed into <span class="font-mono text-sky-800">${matrixStatus?.user_id || "the Matrix bot account"}</span>.</div>
 				${
 					retryOwnershipError.value &&
-					html`<div class="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-100">
+					html`<div class="mt-2 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-amber-900">
 						${retryOwnershipError.value}
 					</div>`
 				}
@@ -279,8 +279,8 @@ function MatrixOwnershipCard({ channel, matrixStatus }) {
 		}
 		${
 			detailTitle &&
-			html`<div class="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-100">
-				<div class="font-medium text-amber-50">${detailTitle}</div>
+			html`<div class="mt-2 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-amber-900">
+				<div class="font-medium text-amber-800">${detailTitle}</div>
 				<div class="mt-1">${detailText}</div>
 			</div>`
 		}
@@ -931,7 +931,7 @@ function AddTeamsModal() {
 	      ${
 					!(tsLoading.value || (tsStatus.value?.mode === "funnel" && tsStatus.value?.url)) &&
 					html`
-	        <div class="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex flex-col gap-2">
+	        <div class="rounded-md border border-amber-600/30 bg-amber-50 p-3 text-xs flex flex-col gap-2">
 	          <span class="font-medium text-[var(--text-strong)]">Public URL required</span>
 	          <span class="text-[var(--muted)]">Teams sends messages to your server via webhook. Your Moltis instance must be reachable over HTTPS.</span>
 	          ${
