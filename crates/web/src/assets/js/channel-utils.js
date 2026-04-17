@@ -8,7 +8,7 @@ import { sendRpc } from "./helpers.js";
 export var MATRIX_DOCS_URL = "https://docs.moltis.org/matrix.html";
 export var MATRIX_DEFAULT_HOMESERVER = "https://matrix.org";
 export var MATRIX_ENCRYPTION_GUIDANCE =
-	"Encrypted Matrix chats require Password auth. Access token auth can connect for plain Matrix traffic, but it reuses an existing Matrix session without that device's private encryption keys, so Moltis cannot reliably decrypt encrypted chats. Use Password so Moltis creates and persists its own Matrix device keys, then finish Element verification in the same Matrix DM or room by sending `verify yes`, `verify no`, `verify show`, or `verify cancel` as normal chat messages.";
+	"Encrypted Matrix chats require OIDC or Password auth. Access token auth can connect for plain Matrix traffic, but it reuses an existing Matrix session without that device's private encryption keys, so Moltis cannot reliably decrypt encrypted chats. Use OIDC (recommended) or Password so Moltis creates and persists its own Matrix device keys, then finish Element verification in the same Matrix DM or room by sending `verify yes`, `verify no`, `verify show`, or `verify cancel` as normal chat messages.";
 export function matrixAuthModeGuidance(authMode) {
 	var mode = normalizeMatrixAuthMode(authMode);
 	if (mode === "password") {

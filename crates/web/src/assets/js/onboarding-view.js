@@ -3239,7 +3239,7 @@ function MatrixForm({ onConnected, error, setError }) {
 			<span>3. Moltis generates the local account ID automatically from the Matrix user or homeserver</span>
 		</div>
 		<div class="rounded-md border border-emerald-600/30 bg-emerald-50 p-3 text-xs text-emerald-900 flex flex-col gap-1">
-			<span class="font-medium text-emerald-800">Encrypted chats require password auth</span>
+			<span class="font-medium text-emerald-800">Encrypted chats require OIDC or Password auth</span>
 			<span>${MATRIX_ENCRYPTION_GUIDANCE}</span>
 		</div>
 		<div>

@@ -1487,7 +1487,7 @@ function AddMatrixModal() {
 	        </div>
 	      </div>
 	      <div class="rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-	        <div class="font-medium text-emerald-800">Encrypted chats require password auth</div>
+	        <div class="font-medium text-emerald-800">Encrypted chats require OIDC or Password auth</div>
 	        <div>${MATRIX_ENCRYPTION_GUIDANCE}</div>
 	      </div>
 	      <${ConnectionModeHint} type="matrix" />
@@ -2210,7 +2210,7 @@ function EditChannelModal() {
 	      ${
 					isMatrix &&
 					html`<div class="rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-				        <div class="font-medium text-emerald-800">Encrypted chats require password auth</div>
+				        <div class="font-medium text-emerald-800">Encrypted chats require OIDC or Password auth</div>
 				        <div>${MATRIX_ENCRYPTION_GUIDANCE}</div>
 				      </div>`
 				}

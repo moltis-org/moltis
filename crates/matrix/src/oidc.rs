@@ -146,18 +146,40 @@ async fn load_oidc_session(account_id: &str) -> ChannelResult<Option<PersistedOi
     }
 }
 
+/// Rewrite the redirect URI for MAS compatibility.
+///
+/// Matrix Authentication Service follows RFC 8252 and requires loopback
+/// redirect URIs to use `http://` (not `https://`). When the web UI is served
+/// over TLS on localhost/loopback, we rewrite the scheme to `http` so MAS
+/// accepts the dynamic client registration.
+fn normalize_redirect_uri(redirect_uri: &Url) -> Url {
+    let host = redirect_uri.host_str().unwrap_or_default();
+    let is_loopback =
+        host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost");
+    if is_loopback && redirect_uri.scheme() == "https" {
+        let mut normalized = redirect_uri.clone();
+        let _ = normalized.set_scheme("http");
+        normalized
+    } else {
+        redirect_uri.clone()
+    }
+}
+
 fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
-    let origin_url: Url = redirect_uri
+    // client_uri must be a valid URL with a path — append "/" if origin-only.
+    let mut client_uri_url: Url = redirect_uri
         .origin()
         .unicode_serialization()
         .parse()
         .or_else(|_| "http://localhost".parse())
         .map_err(|error| ChannelError::external("matrix oidc parse origin url", error))?;
-    let client_uri = Localized::new(origin_url, std::iter::empty());
+    client_uri_url.set_path("/");
+    let client_uri = Localized::new(client_uri_url, std::iter::empty());
+    let normalized = normalize_redirect_uri(redirect_uri);
     Ok(ClientMetadata::new(
         ApplicationType::Native,
         vec![OAuthGrantType::AuthorizationCode {
-            redirect_uris: vec![redirect_uri.clone()],
+            redirect_uris: vec![normalized],
         }],
         client_uri,
     ))
@@ -181,6 +203,7 @@ pub(crate) async fn start_oidc_login(
         .await
         .map_err(|error| ChannelError::external("matrix oidc server metadata discovery", error))?;
 
+    let normalized_redirect = normalize_redirect_uri(redirect_uri);
     let metadata = build_client_metadata(redirect_uri)?;
     let raw_metadata: Raw<ClientMetadata> = Raw::new(&metadata)
         .map_err(|error| ChannelError::external("matrix oidc serialize client metadata", error))?;
@@ -194,7 +217,7 @@ pub(crate) async fn start_oidc_login(
     let OAuthAuthorizationData { url, state } = client
         .oauth()
         .login(
-            redirect_uri.clone(),
+            normalized_redirect,
             device_id_owned,
             Some(registration_data),
             None,
@@ -387,6 +410,69 @@ mod tests {
                 );
             },
             other => panic!("expected AuthorizationCode grant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalize_redirect_rewrites_https_localhost_to_http() {
+        let url: Url = "https://localhost:52979/api/oauth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        let normalized = normalize_redirect_uri(&url);
+        assert_eq!(
+            normalized.as_str(),
+            "http://localhost:52979/api/oauth/callback"
+        );
+    }
+
+    #[test]
+    fn normalize_redirect_rewrites_https_127_0_0_1_to_http() {
+        let url: Url = "https://127.0.0.1:9000/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        let normalized = normalize_redirect_uri(&url);
+        assert_eq!(normalized.as_str(), "http://127.0.0.1:9000/callback");
+    }
+
+    #[test]
+    fn normalize_redirect_preserves_http_localhost() {
+        let url: Url = "http://localhost:8080/api/oauth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        let normalized = normalize_redirect_uri(&url);
+        assert_eq!(
+            normalized.as_str(),
+            "http://localhost:8080/api/oauth/callback"
+        );
+    }
+
+    #[test]
+    fn normalize_redirect_preserves_non_loopback_https() {
+        let url: Url = "https://moltis.example.com/api/oauth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        let normalized = normalize_redirect_uri(&url);
+        assert_eq!(
+            normalized.as_str(),
+            "https://moltis.example.com/api/oauth/callback"
+        );
+    }
+
+    #[test]
+    fn build_client_metadata_normalizes_https_localhost_redirect() {
+        let redirect: Url = "https://localhost:52979/api/oauth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        let metadata = build_client_metadata(&redirect).unwrap_or_else(|error| panic!("{error}"));
+        match &metadata.grant_types[0] {
+            OAuthGrantType::AuthorizationCode { redirect_uris } => {
+                assert_eq!(
+                    redirect_uris[0].as_str(),
+                    "http://localhost:52979/api/oauth/callback",
+                    "redirect_uri should be rewritten to http for loopback"
+                );
+            },
+            other => panic!("expected AuthorizationCode, got {other:?}"),
         }
     }
 
