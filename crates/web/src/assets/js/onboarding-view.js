@@ -3108,6 +3108,13 @@ function DiscordForm({ onConnected, error, setError }) {
 	</form>`;
 }
 
+function matrixSubmitLabel(saving, oidcWaiting, authMode) {
+	if (saving) return "Connecting\u2026";
+	if (oidcWaiting) return "Waiting for OIDC\u2026";
+	if (authMode === "oidc") return "Authenticate with OIDC";
+	return "Connect Matrix";
+}
+
 function MatrixForm({ onConnected, error, setError }) {
 	var [homeserver, setHomeserver] = useState(MATRIX_DEFAULT_HOMESERVER);
 	var [authMode, setAuthMode] = useState("oidc");
@@ -3375,7 +3382,7 @@ function MatrixForm({ onConnected, error, setError }) {
 		</div>
 		<${AdvancedConfigPatchField} value=${advancedConfig} onInput=${setAdvancedConfig} />
 		${error && html`<${ErrorPanel} message=${error} />`}
-		<button type="submit" class="provider-btn" disabled=${saving || oidcWaiting}>${saving ? "Connecting\u2026" : oidcWaiting ? "Waiting for OIDC\u2026" : authMode === "oidc" ? "Authenticate with OIDC" : "Connect Matrix"}</button>
+		<button key="matrix-submit" type="submit" class="provider-btn" disabled=${saving || oidcWaiting}>${matrixSubmitLabel(saving, oidcWaiting, authMode)}</button>
 	</form>`;
 }
 
