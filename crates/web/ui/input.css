@@ -920,6 +920,8 @@
     transition: opacity 0.15s;
     color: #fff;
     background: var(--accent-dim);
+    position: relative;
+    isolation: isolate;
   }
   .provider-btn:hover {
     background: var(--accent);
