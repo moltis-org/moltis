@@ -603,7 +603,7 @@ impl ChannelStatus for MatrixPlugin {
                     prompts
                 };
                 (
-                    state.client.matrix_auth().logged_in(),
+                    state.client.user_id().is_some(),
                     state.bot_user_id.clone(),
                     MatrixStatusSnapshot {
                         client: state.client.clone(),

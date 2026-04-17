@@ -3184,7 +3184,7 @@ function MatrixForm({ onConnected, error, setError }) {
 						fetchChannelStatus().then((statusRes) => {
 							if (!statusRes?.ok) return;
 							var channels = statusRes.payload?.channels || [];
-							if (channels.some((ch) => ch.account_id === accountId && ch.connected)) {
+							if (channels.some((ch) => ch.account_id === accountId && ch.status === "connected")) {
 								clearInterval(oidcPollRef.current);
 								oidcPollRef.current = null;
 								setOidcWaiting(false);
