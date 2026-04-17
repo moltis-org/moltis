@@ -3911,6 +3911,7 @@ function ChannelStep({ onNext, onBack }) {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Connect a Channel</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Connect a messaging channel so you can chat from your phone or team workspace. You can set this up later in Channels.</p>
 		<${ChannelStorageNotice} />
+		<div key=${`${phase}-${selectedType || "none"}`}>
 		${phase === "select" && html`<${ChannelTypeSelector} onSelect=${onSelectType} offered=${offered} />`}
 		${phase === "form" && selectedType === "telegram" && html`<${TelegramForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "whatsapp" && html`<${WhatsAppForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
@@ -3920,6 +3921,7 @@ function ChannelStep({ onNext, onBack }) {
 		${phase === "form" && selectedType === "matrix" && html`<${MatrixForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "form" && selectedType === "nostr" && html`<${NostrForm} onConnected=${onConnected} error=${error} setError=${setError} />`}
 		${phase === "success" && html`<${ChannelSuccess} channelName=${connectedName} channelType=${connectedType} onAnother=${onAnother} />`}
+		</div>
 		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button type="button" class="provider-btn provider-btn-secondary" onClick=${showBackSelector ? () => setPhase("select") : onBack}>${t("common:actions.back")}</button>
 			${phase === "success" && html`<button type="button" class="provider-btn" onClick=${onNext}>${t("common:actions.continue")}</button>`}
