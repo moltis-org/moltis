@@ -70,7 +70,6 @@ pub fn filter_tracked_files(
             match file_name.to_ascii_lowercase().as_str() {
                 "dockerfile" | "containerfile" => "dockerfile",
                 "makefile" | "gnumakefile" => "mk",
-                "cmakelists.txt" => "cmake",
                 _ => "",
             }
         } else {
