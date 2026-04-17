@@ -18,7 +18,7 @@ use {
     secrecy::ExposeSecret,
     serde::Deserialize,
     tokio_util::sync::CancellationToken,
-    tracing::{info, instrument, warn},
+    tracing::{error, info, instrument, warn},
 };
 
 use moltis_channels::{Error as ChannelError, Result as ChannelResult};
@@ -657,12 +657,29 @@ pub(crate) async fn sync_once_and_spawn_loop(
     let account_id_for_sync = account_id.to_string();
     let client_for_sync = client.clone();
     tokio::spawn(async move {
-        tokio::select! {
-            _ = client_for_sync.sync(SyncSettings::default()) => {
-                warn!(account_id = %account_id_for_sync, "matrix sync loop ended unexpectedly");
-            }
-            () = cancel.cancelled() => {
-                info!(account_id = %account_id_for_sync, "matrix sync loop cancelled");
+        let mut backoff = std::time::Duration::from_secs(5);
+        const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+        const HEALTHY_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(60);
+
+        loop {
+            let start = tokio::time::Instant::now();
+            tokio::select! {
+                _ = client_for_sync.sync(SyncSettings::default()) => {
+                    if start.elapsed() >= HEALTHY_THRESHOLD {
+                        backoff = std::time::Duration::from_secs(5);
+                    }
+                    error!(
+                        account_id = %account_id_for_sync,
+                        "matrix sync loop ended unexpectedly, retrying in {:?}",
+                        backoff,
+                    );
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                }
+                () = cancel.cancelled() => {
+                    info!(account_id = %account_id_for_sync, "matrix sync loop cancelled");
+                    break;
+                }
             }
         }
     });
