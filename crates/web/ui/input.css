@@ -917,17 +917,15 @@
     font-size: 0.8rem;
     font-weight: 500;
     cursor: pointer;
-    transition: opacity 0.15s;
+    transition: background 0.15s;
     color: #fff;
     background: var(--accent-dim);
-    position: relative;
-    isolation: isolate;
   }
   .provider-btn:hover {
     background: var(--accent);
   }
   .provider-btn:disabled {
-    opacity: 0.4;
+    background: color-mix(in srgb, var(--accent-dim) 50%, transparent);
     cursor: default;
   }
   .provider-btn-secondary {
