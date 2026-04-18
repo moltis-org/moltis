@@ -67,10 +67,10 @@ pub struct Task {
     pub blocked_by: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,
-    /// Which list this task belongs to. Populated when returned from
-    /// cross-list queries (wildcard `list_id="*"`). Empty string for
-    /// single-list responses.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// Which list this task belongs to. Always populated since creation
+    /// associates tasks with a list. Persisted to disk as part of the
+    /// task JSON; deserialization defaults to empty for legacy files.
+    #[serde(default)]
     pub list_id: String,
 }
 
@@ -187,6 +187,11 @@ impl TaskStore {
 
     /// Return all list IDs that have persisted files or contain tasks.
     /// Filters out phantom in-memory lists created by failed lookups.
+    ///
+    /// Note: this scans the filesystem and holds a read lock, so results
+    /// may be stale if a concurrent write creates or deletes a list file
+    /// between the directory scan and the filter. This is acceptable for
+    /// a discovery API — callers should not assume strong consistency.
     pub async fn list_ids(&self) -> crate::Result<Vec<String>> {
         // Ensure every persisted list is loaded.
         if self.data_dir.exists() {
