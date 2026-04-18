@@ -45,6 +45,7 @@ Per preset (`[agents.presets.<name>]`):
 - `tools.allow`, `tools.deny`
 - `system_prompt_suffix`
 - `max_iterations`, `timeout_secs`
+- `reasoning_effort` (`low`, `medium`, `high`) — TOML presets only
 - `sessions.*` access policy
 - `memory.scope`, `memory.max_lines`
 - `delegate_only`
