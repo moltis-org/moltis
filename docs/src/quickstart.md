@@ -20,12 +20,7 @@ brew install moltis-org/tap/moltis
 moltis
 ```
 
-You'll see output like:
-
-```
-🚀 Moltis gateway starting...
-🌐 Open http://localhost:13131 in your browser
-```
+Moltis starts and logs the bound address/port. Open it in your browser.
 
 ## 3. Configure a Provider
 
@@ -43,10 +38,10 @@ You need an LLM provider configured to chat. The fastest options:
 
 Or configure via the web UI: **Settings** → **Providers** → enter your API key.
 
-### Option B: OAuth (Codex / Copilot)
+### Option B: OAuth (Codex, Copilot, Kimi)
 
 1. In Moltis, go to **Settings** → **Providers**
-2. Click **OpenAI Codex** or **GitHub Copilot** → **Connect**
+2. Click **OpenAI Codex**, **GitHub Copilot**, or **Kimi Code** → **Connect**
 3. Complete the OAuth flow
 
 ### Option C: Local LLM (Offline)
@@ -135,10 +130,10 @@ Add knowledge by placing Markdown files in `~/.moltis/memory/`.
 
 | Command | Description |
 |---------|-------------|
-| `/new` | Start a new session |
-| `/model <name>` | Switch models |
-| `/clear` | Clear chat history |
-| `/help` | Show available commands |
+| `/clear` | Clear conversation history |
+| `/compact` | Summarize conversation to save tokens |
+| `/context` | Show session context and project info |
+| `/sh` | Enter command mode (`/sh off` or Esc to exit) |
 
 ## File Locations
 
