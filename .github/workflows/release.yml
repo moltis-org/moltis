@@ -83,7 +83,7 @@ jobs:
         with:
           version: "2.4.6"
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: biome ci crates/web/src/assets/js/
+        run: biome ci crates/web/ui/src/ crates/web/ui/e2e/
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: ./scripts/i18n-check.sh
 

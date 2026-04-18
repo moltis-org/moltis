@@ -127,12 +127,12 @@ assets (JS, CSS, icons), and the axum routes that serve them. It injects its
 routes into the gateway via the `RouteEnhancer` composition pattern, keeping
 web UI concerns separate from API and agent logic in the gateway.
 
-### 7. Frontend (`crates/web/src/assets/js/`)
+### 7. Frontend (`crates/web/ui/src/`)
 
-The JavaScript frontend handles streaming via WebSocket:
+The TypeScript frontend handles streaming via WebSocket:
 
-1. **websocket.js** - Receives WebSocket frames and dispatches to handlers
-2. **events.js** - Event bus for distributing events to components
+1. **websocket.ts** - Receives WebSocket frames and dispatches to handlers
+2. **events.ts** - Event bus for distributing events to components
 3. **state.js** - Manages streaming state (`streamText`, `streamEl`)
 
 When a `delta` event arrives:

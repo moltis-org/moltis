@@ -172,7 +172,7 @@ elif command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
 else
   fmt_cmd="cargo +${nightly_toolchain} fmt --all -- --check"
 fi
-biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/web/src/assets/js/}"
+biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/web/ui/src/ crates/web/ui/e2e/}"
 i18n_cmd="${LOCAL_VALIDATE_I18N_CMD:-./scripts/i18n-check.sh}"
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --min-severity high}"
 if [[ -n "${LOCAL_VALIDATE_LINT_CMD:-}" ]]; then
