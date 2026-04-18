@@ -15,11 +15,11 @@ Configure providers through the web UI or directly in configuration files.
 | **DeepSeek** | `deepseek` | `DEEPSEEK_API_KEY` | Streaming, tools, model discovery |
 | **Mistral** | `mistral` | `MISTRAL_API_KEY` | Streaming, tools, model discovery |
 | **Groq** | `groq` | `GROQ_API_KEY` | Streaming |
-| **xAI (Grok)** | `xai` | `XAI_API_KEY` | Streaming |
+| **xAI (Grok)** | `xai` | `XAI_API_KEY` | Streaming, reasoning |
 | **OpenRouter** | `openrouter` | `OPENROUTER_API_KEY` | Streaming, tools, model discovery |
 | **Cerebras** | `cerebras` | `CEREBRAS_API_KEY` | Streaming, tools, model discovery |
 | **MiniMax** | `minimax` | `MINIMAX_API_KEY` | Streaming, tools |
-| **Moonshot (Kimi)** | `moonshot` | `MOONSHOT_API_KEY` | Streaming, tools, model discovery |
+| **Moonshot (Kimi)** | `moonshot` | `MOONSHOT_API_KEY` | Streaming, tools, vision, reasoning, model discovery |
 | **Venice** | `venice` | `VENICE_API_KEY` | Streaming, tools, model discovery |
 | **Z.AI (Zhipu)** | `zai` | `Z_API_KEY` | Streaming, tools, model discovery |
 | **Z.AI Coding Plan** | `zai-code` | `Z_CODE_API_KEY` | Streaming, tools, model discovery (Coding plan billing endpoint) |
@@ -79,7 +79,7 @@ stream_transport = "sse"              # "sse", "websocket", or "auto"
 
 [providers.gemini]
 enabled = true
-models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+models = ["gemini-2.5-flash-preview-05-20", "gemini-3-flash-preview", "gemini-2.0-flash"]
 # api_key = "..."                     # Or set GEMINI_API_KEY / GOOGLE_API_KEY env var
 # fetch_models = true                 # Discover models from the API
 # base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
@@ -102,6 +102,7 @@ Each provider supports these options:
 | `stream_transport` | `"sse"` | `"sse"`, `"websocket"`, or `"auto"` |
 | `alias` | — | Custom label for metrics |
 | `tool_mode` | `"auto"` | `"auto"`, `"native"`, `"text"`, or `"off"` |
+| `context_window` | — | Override context window size for specific models |
 
 ## Provider Setup
 
@@ -116,10 +117,10 @@ Google Gemini uses an API key from [Google AI Studio](https://aistudio.google.co
 ```toml
 [providers.gemini]
 enabled = true
-models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+models = ["gemini-2.5-flash-preview-05-20", "gemini-3-flash-preview", "gemini-2.0-flash"]
 ```
 
-Gemini supports native tool calling, vision/multimodal inputs, streaming, and automatic model discovery.
+Gemini supports native tool calling, vision/multimodal inputs, streaming, reasoning, and automatic model discovery.
 
 ### Anthropic
 
