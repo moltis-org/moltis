@@ -257,12 +257,12 @@ function LogsPage(): VNode {
 			})
 			.catch(() => undefined);
 		refetch();
-		S.setLogsEventHandler(((entry: unknown) => {
+		S.setLogsEventHandler((entry: unknown) => {
 			if (paused.value) return;
 			const e = entry as LogEntry;
 			if (!matchesFilter(e)) return;
 			appendEntry(e);
-		}) as unknown as () => void);
+		});
 		return () => S.setLogsEventHandler(null);
 	}, []);
 

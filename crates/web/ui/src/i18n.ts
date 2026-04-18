@@ -123,7 +123,8 @@ export function init(): Promise<void> {
 		.then(() => {
 			// Ensure i18next is set to the detected locale after bundles load.
 			if (i18next.language !== locale.value) {
-				return i18next.changeLanguage(locale.value) as unknown as undefined;
+				// Discard the TFunction return; we only need the side-effect.
+				return void i18next.changeLanguage(locale.value);
 			}
 		})
 		.then(() => {

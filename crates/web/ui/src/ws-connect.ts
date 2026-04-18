@@ -147,7 +147,11 @@ export function connectWs(opts: ConnectOptions): void {
 			}
 		}
 		if (frame.type === "res" && frame.id && S.pending[frame.id]) {
-			S.pending[frame.id](frame as unknown as RpcResponse);
+			S.pending[frame.id]({
+				ok: frame.ok ?? false,
+				payload: frame.payload,
+				error: frame.error as RpcResponse["error"],
+			});
 			delete S.pending[frame.id];
 			return;
 		}

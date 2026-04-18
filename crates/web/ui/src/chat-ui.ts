@@ -102,7 +102,7 @@ export function stripChannelPrefix(text: string): string {
 	return text.replace(/^\[Telegram(?:\s+from\s+[^\]]+)?\]\s*/, "");
 }
 
-interface ChannelFooterInfo {
+export interface ChannelFooterInfo {
 	channel_type?: string;
 	username?: string;
 	sender_name?: string;

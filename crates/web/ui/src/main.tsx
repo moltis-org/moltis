@@ -31,17 +31,6 @@ import { insertSessionInOrder, sessionStore } from "./stores/session-store";
 import { initTheme, injectMarkdownStyles } from "./theme";
 import { connect } from "./websocket";
 
-// Extend Window for E2E test access.
-declare global {
-	interface Window {
-		__moltis_stores: {
-			sessionStore: typeof sessionStore;
-			modelStore: typeof modelStore;
-			projectStore: typeof projectStore;
-		};
-	}
-}
-
 // Expose stores on window for E2E test access.
 window.__moltis_stores = { sessionStore, modelStore, projectStore };
 

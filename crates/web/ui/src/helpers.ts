@@ -83,6 +83,8 @@ interface MapPoint {
 
 interface AgentEntry {
 	id?: string;
+	name?: string;
+	emoji?: string;
 	is_default?: boolean;
 	[key: string]: unknown;
 }

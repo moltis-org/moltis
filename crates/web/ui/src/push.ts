@@ -118,7 +118,7 @@ export async function subscribeToPush(): Promise<PushResult> {
 		// Subscribe to push
 		const subscription = await registration.pushManager.subscribe({
 			userVisibleOnly: true,
-			applicationServerKey: urlBase64ToUint8Array(key) as unknown as ArrayBuffer,
+			applicationServerKey: urlBase64ToUint8Array(key).buffer as ArrayBuffer,
 		});
 
 		// Send subscription to server

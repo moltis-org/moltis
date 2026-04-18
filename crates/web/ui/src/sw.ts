@@ -3,6 +3,8 @@
 
 /// <reference lib="webworker" />
 
+// Service Worker global: `self` is Window in DOM lib but ServiceWorkerGlobalScope at runtime.
+// The double cast is unavoidable when both DOM and WebWorker types coexist in tsconfig.
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 const CACHE_NAME = "moltis-v2";

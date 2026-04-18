@@ -25,10 +25,10 @@ interface ConfiguredModelEntry {
 	authType?: string;
 	preferred?: boolean;
 	recommended?: boolean;
-	createdAt?: number;
+	createdAt?: number | null;
 	disabled?: boolean;
 	unsupported?: boolean;
-	unsupportedReason?: string;
+	unsupportedReason?: string | null;
 	supportsTools?: boolean;
 	providerOnly?: boolean;
 	[key: string]: unknown;
@@ -160,7 +160,7 @@ function fetchProviders(): Promise<void> {
 
 			let models: ConfiguredModelEntry[] = [];
 			if (modelsRes?.ok) {
-				models = ((modelsRes.payload as unknown as ConfiguredModelEntry[]) || []).map((m) => ({
+				models = (modelsRes.payload || []).map((m) => ({
 					...m,
 					providerDisplayName: providerMeta.get(m.provider)?.displayName || m.provider,
 					authType: providerMeta.get(m.provider)?.authType || "api-key",

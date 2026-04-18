@@ -18,7 +18,6 @@ import {
 	switchSession,
 } from "../sessions";
 import { sessionStore } from "../stores/session-store";
-import type { SessionMeta } from "../types";
 import { ComboSelect, confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui";
 
 // ── Types ────────────────────────────────────────────────────
@@ -157,7 +156,7 @@ export function SessionHeader({
 	const isCron = currentKey.startsWith("cron:");
 	const canRename = !(isMain || isCron);
 	const canStop = !isCron && replying;
-	const canArchive = !!session && isArchivableSession(session as unknown as SessionMeta);
+	const canArchive = !!session && isArchivableSession(session.toMeta());
 	const showArchivedSessions = sessionStore.showArchivedSessions.value;
 	const currentAgentId = session?.agent_id || defaultAgentId || "main";
 	const currentNodeId = session?.node_id || "";
@@ -264,7 +263,7 @@ export function SessionHeader({
 				optimisticApplied = true;
 			}
 			sendRpc("sessions.delete", request).then((res) => {
-				const err = (res?.error as { message?: string })?.message || (res?.error as unknown as string) || "";
+				const err = res?.error?.message || (typeof res?.error === "string" ? String(res.error) : "") || "";
 				if (res && !res.ok && typeof err === "string" && err.indexOf("uncommitted changes") !== -1) {
 					fetchSessions();
 					confirmDialog("Worktree has uncommitted changes. Force delete?").then((yes) => {

@@ -243,12 +243,12 @@ function NetworkAuditPage(): VNode {
 
 	useEffect(() => {
 		refetch();
-		S.setNetworkAuditEventHandler(((entry: unknown) => {
+		S.setNetworkAuditEventHandler((entry: unknown) => {
 			if (paused.value) return;
 			const e = entry as AuditEntry;
 			if (!matchesFilter(e)) return;
 			appendEntry(e);
-		}) as unknown as () => void);
+		});
 		return () => S.setNetworkAuditEventHandler(null);
 	}, []);
 

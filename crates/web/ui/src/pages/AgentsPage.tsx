@@ -12,6 +12,7 @@ import { parseAgentsListPayload, sendRpc } from "../helpers";
 import { navigate } from "../router";
 import { settingsPath } from "../routes";
 import { fetchSessions } from "../sessions";
+import { targetValue } from "../typed-events";
 import { confirmDialog } from "../ui";
 
 // ── Types ───────────────────────────────────────────────────
@@ -210,7 +211,13 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 						type="text"
 						className="provider-key-input"
 						value={id}
-						onInput={(e) => setId((e.target as HTMLInputElement).value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+						onInput={(e) =>
+							setId(
+								targetValue(e)
+									.toLowerCase()
+									.replace(/[^a-z0-9-]/g, ""),
+							)
+						}
 						placeholder="e.g. writer, coder, researcher"
 						maxLength={50}
 					/>
@@ -223,7 +230,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 					type="text"
 					className="provider-key-input"
 					value={name}
-					onInput={(e) => setName((e.target as HTMLInputElement).value)}
+					onInput={(e) => setName(targetValue(e))}
 					placeholder="Creative Writer"
 				/>
 			</label>
@@ -239,7 +246,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 					type="text"
 					className="provider-key-input"
 					value={theme}
-					onInput={(e) => setTheme((e.target as HTMLInputElement).value)}
+					onInput={(e) => setTheme(targetValue(e))}
 					placeholder={"wise owl, chill fox, witty robot\u2026"}
 				/>
 			</label>
@@ -249,7 +256,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 				<textarea
 					className="provider-key-input"
 					value={soul}
-					onInput={(e) => setSoul((e.target as HTMLTextAreaElement).value)}
+					onInput={(e) => setSoul(targetValue(e))}
 					placeholder={"You are a creative writing assistant\u2026"}
 					rows={4}
 					style={{ resize: "vertical", fontFamily: "var(--font-mono)", fontSize: "0.75rem" }}
@@ -273,7 +280,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 						<textarea
 							className="provider-key-input"
 							value={presetToml}
-							onInput={(e) => setPresetToml((e.target as HTMLTextAreaElement).value)}
+							onInput={(e) => setPresetToml(targetValue(e))}
 							placeholder={PRESET_TOML_PLACEHOLDER}
 							rows={6}
 							style={{
@@ -447,7 +454,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 				if (res?.ok) {
 					const parsed = parseAgentsListPayload(res.payload as Parameters<typeof parseAgentsListPayload>[0]);
 					setDefaultId(parsed.defaultId);
-					setAgents(parsed.agents as unknown as AgentPersona[]);
+					setAgents(parsed.agents.map((a) => ({ ...a, id: a.id || "", name: a.name || a.id || "" }) as AgentPersona));
 				} else {
 					setError(res?.error?.message || "Failed to load agents");
 				}

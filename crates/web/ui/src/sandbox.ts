@@ -96,9 +96,8 @@ export function bindSandboxToggleEvents(): void {
 			key: S.activeSessionKey,
 			sandboxEnabled: newVal,
 		}).then((res) => {
-			const payload = res as unknown as Record<string, unknown>;
-			if (payload?.result) {
-				updateSandboxUI((payload.result as Record<string, unknown>).sandbox_enabled as boolean);
+			if (res?.payload?.result) {
+				updateSandboxUI(res.payload.result.sandbox_enabled as boolean);
 			} else {
 				updateSandboxUI(newVal);
 			}
@@ -266,9 +265,8 @@ function selectImage(tag: string | null): void {
 		key: S.activeSessionKey,
 		sandboxImage: value,
 	}).then((res) => {
-		const payload = res as unknown as Record<string, unknown>;
-		if (payload?.result) {
-			updateSandboxImageUI((payload.result as Record<string, unknown>).sandbox_image as string);
+		if (res?.payload?.result) {
+			updateSandboxImageUI(res.payload.result.sandbox_image as string);
 		} else {
 			updateSandboxImageUI(tag);
 		}

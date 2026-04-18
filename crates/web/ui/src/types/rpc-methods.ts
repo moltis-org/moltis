@@ -12,11 +12,11 @@ import type { SessionMeta } from "./session";
 /** Maps every RPC method to its response payload type. */
 export interface RpcMethodMap {
 	// ── Agent / Identity ────────────────────────────────────────
-	"agent.identity.get": unknown;
-	"agent.identity.update": unknown;
+	"agent.identity.get": Record<string, unknown>;
+	"agent.identity.update": Record<string, unknown>;
 	"agents.delete": unknown;
-	"agents.identity.get": unknown;
-	"agents.identity.update": unknown;
+	"agents.identity.get": Record<string, unknown>;
+	"agents.identity.update": Record<string, unknown>;
 	"agents.identity.update_soul": unknown;
 	"agents.list": unknown;
 	"agents.preset.get": unknown;
@@ -138,10 +138,10 @@ export interface RpcMethodMap {
 	// ── Sessions ────────────────────────────────────────────────
 	"sessions.clear_all": unknown;
 	"sessions.delete": unknown;
-	"sessions.patch": unknown;
+	"sessions.patch": { result?: Record<string, unknown> };
 	"sessions.search": SessionMeta[];
 	"sessions.switch": unknown;
-	"sessions.voice.generate": unknown;
+	"sessions.voice.generate": { audio?: string };
 
 	// ── Skills ──────────────────────────────────────────────────
 	"skills.emergency_disable": unknown;

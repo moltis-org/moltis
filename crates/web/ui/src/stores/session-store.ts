@@ -155,6 +155,35 @@ export class Session {
 		this.activeRunId.value = null;
 		this.lastToolOutput.value = "";
 	}
+
+	/** Return a plain SessionMeta snapshot of this session's server fields. */
+	toMeta(): SessionMeta {
+		return {
+			id: 0,
+			key: this.key,
+			label: this.label,
+			model: this.model,
+			provider: this.provider,
+			createdAt: this.createdAt,
+			updatedAt: this.updatedAt,
+			messageCount: this.messageCount,
+			lastSeenMessageCount: this.lastSeenMessageCount,
+			projectId: this.projectId,
+			sandbox_enabled: this.sandbox_enabled,
+			sandbox_image: this.sandbox_image,
+			worktree_branch: this.worktree_branch,
+			channelBinding: this.channelBinding,
+			activeChannel: this.activeChannel,
+			parentSessionKey: this.parentSessionKey,
+			forkPoint: this.forkPoint,
+			mcpDisabled: this.mcpDisabled,
+			preview: this.preview,
+			archived: this.archived,
+			agent_id: this.agent_id,
+			node_id: this.node_id,
+			version: this.version,
+		};
+	}
 }
 
 // ── Store signals ────────────────────────────────────────────

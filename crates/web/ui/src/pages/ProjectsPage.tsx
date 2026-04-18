@@ -11,10 +11,10 @@ import { registerPage } from "../router";
 import { routes } from "../routes";
 import * as S from "../state";
 import { projects as projectsSig } from "../stores/project-store";
+import type { ProjectInfo } from "../types";
 import { ConfirmDialog, requestConfirm } from "../ui";
 
-interface Project {
-	id: string;
+interface Project extends ProjectInfo {
 	label: string;
 	directory: string;
 	system_prompt?: string | null;
@@ -368,12 +368,14 @@ function ProjectsPageComponent(): VNode {
 			danger: true,
 		}).then((yes) => {
 			if (!yes) return;
-			const ids = (projectsSig.value as unknown as Project[]).map((p) => p.id);
+			const ids = projectsSig.value.map((p) => p.id);
 			if (ids.length === 0) return;
 			clearing.value = true;
 			let chain = Promise.resolve();
 			for (const id of ids) {
-				chain = chain.then(() => sendRpc("projects.delete", { id: id }) as unknown as Promise<void>);
+				chain = chain.then(() => {
+					sendRpc("projects.delete", { id: id });
+				});
 			}
 			chain
 				.then(() => fetchProjects())
@@ -383,7 +385,7 @@ function ProjectsPageComponent(): VNode {
 		});
 	}
 
-	const list = projectsSig.value as unknown as Project[];
+	const list = projectsSig.value as Project[];
 	const clearDisabled = clearing.value || detecting.value || list.length === 0;
 
 	return (
