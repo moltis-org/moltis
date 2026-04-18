@@ -5,81 +5,66 @@ untrusted code until reviewed.
 
 ## Trust Lifecycle
 
-Installed marketplace skills/plugins now use a trust gate:
+Installed skills use a trust gate with three fields per skill:
 
-- `installed` - repo is on disk
-- `trusted` - you explicitly marked the skill as reviewed
+- `trusted` - you explicitly marked the skill as reviewed (defaults to `true`
+  for backward compatibility with pre-trust-gate manifests)
 - `enabled` - skill is active for agent use
+- `quarantined` - repo-level flag; blocks all skills until explicitly cleared
 
 You cannot enable untrusted skills.
 
-Portable bundle imports add one more step:
+## Skill Sources
 
-- `quarantined` - imported from a portable bundle and blocked from enable until explicitly cleared
+Skills are discovered from four source types:
 
-Imported bundles keep provenance metadata (original source, commit SHA when
-available, bundle path, export time) so you can review where they came from
-before clearing quarantine.
+| Source | Location | Description |
+|--------|----------|-------------|
+| `Project` | `<data_dir>/.moltis/skills/` | Project-local skills |
+| `Personal` | `<data_dir>/skills/` | Personal skills across projects |
+| `Plugin` | Plugin directory | Bundled with a plugin repo |
+| `Registry` | Installed repos | Installed from a registry (e.g. skills.sh) |
 
-The Skills page exposes these bundle flows directly:
+## Prompt Injection Scanning
 
-- import a `.tar.gz` bundle from disk
-- export an installed repo back to a portable bundle
-- clear quarantine after reviewing provenance and contents
+When a skill is read via `read_skill`, its body is scanned for known
+prompt-injection patterns (e.g. "ignore previous instructions", "system
+prompt:"). Matches are logged as warnings but never block the read.
 
-## Provenance Pinning
+Patterns are case-insensitive and kept conservative to minimize false positives.
 
-Moltis records a pinned `commit_sha` for installed repos:
+## Portable Bundle Import/Export
 
-- via `git rev-parse HEAD` after clone
-- via GitHub commits API for tarball fallback installs
+Installed repos can be exported to `.tar.gz` bundles and re-imported:
 
-The Skills UI shows a short SHA to help review provenance.
+- Bundles include a `bundle.json` manifest with repo metadata and provenance
+- Imported bundles are automatically quarantined (`quarantined = true`)
+- All skills in a quarantined repo start as `trusted=false, enabled=false`
+- Use `skills.repos.unquarantine` to clear quarantine after reviewing contents
+- Bundle archives reject symlinks, hard links, and path traversal attempts
 
-## Re-Trust on Drift
+Imported repos keep provenance metadata (`RepoProvenance`):
 
-If local repo HEAD changes from the pinned `commit_sha`:
+- `original_source` - original repo source identifier
+- `original_commit_sha` - commit SHA at export time (when available)
+- `imported_from` - path of the imported bundle
+- `exported_at_ms` - export timestamp
 
-- all skills in that repo are auto-marked `trusted=false`
-- all skills in that repo are auto-disabled
-- re-enable is blocked until explicit trust is granted again
+## Provenance
 
-The UI/API mark this state as `source changed`.
+Installed repos record a `commit_sha` pinned at install time. The Skills UI
+shows a short SHA to help review provenance.
 
-## Dependency Install Guardrails
+## Live Skill Watching
 
-`skills.install_dep` now includes hard gates:
-
-- explicit `confirm=true` required
-- host installs blocked when sandbox mode is off (unless explicit override)
-- suspicious command chains are blocked by default (for example `curl ... | sh`,
-  base64 decode chains, quarantine bypass)
-
-For high-risk overrides, require manual review before using
-`allow_risky_install=true`.
-
-## Emergency Kill Switch
-
-Use `skills.emergency_disable` to disable all installed third-party skills and
-plugins immediately.
-
-- Available in RPC and Skills UI action button
-- Intended for incident response and containment
-
-## Security Audit Log
-
-Security-sensitive skill/plugin actions are appended to:
-
-`~/.moltis/logs/security-audit.jsonl`
-
-Logged events include installs, removals, trust changes, enable/disable,
-dependency install attempts, and source drift detection.
+A filesystem watcher monitors skill directories for `SKILL.md` and
+`skills-manifest.json` changes. When a skill file is modified, the gateway
+broadcasts a `skills.changed` event so the agent reloads without restart.
 
 ## Recommended Production Policy
 
 1. Keep sandbox enabled (`tools.exec.sandbox.mode = "all"`).
 2. Keep approval mode at least `on-miss`.
-3. Review SKILL.md and linked scripts before trust.
+3. Review SKILL.md and linked scripts before trusting.
 4. Prefer pinned, known repos over ad-hoc installs.
-5. Monitor `security-audit.jsonl` for unusual events.
-6. Keep imported bundles quarantined until you review their contents locally.
+5. Keep imported bundles quarantined until you review their contents locally.
