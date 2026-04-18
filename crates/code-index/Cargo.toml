@@ -35,10 +35,6 @@ tokio-util       = { workspace = true, optional = true }
 tracing          = { workspace = true, optional = true }
 metrics          = { workspace = true, optional = true }
 
-# Future dependencies (add when wiring P5+ features):
-# moltis-memory    = { workspace = true }
-# moltis-projects  = { workspace = true }
-# regex            = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

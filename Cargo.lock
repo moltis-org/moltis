@@ -8184,7 +8184,9 @@ dependencies = [
 name = "moltis-splitter"
 version = "0.1.0"
 dependencies = [
+ "metrics 0.24.3",
  "text-splitter",
+ "tracing",
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-cpp",

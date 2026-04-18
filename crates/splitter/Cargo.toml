@@ -5,7 +5,9 @@ name              = "moltis-splitter"
 version.workspace = true
 
 [features]
-default = ["code-splitter"]
+default = ["code-splitter", "tracing"]
+tracing = ["dep:tracing"]
+metrics = ["dep:metrics"]
 # Core code-splitting with common languages.
 code-splitter = ["code-splitter-base", "lang-go", "lang-javascript", "lang-python", "lang-rust"]
 # Internal base feature — enables text-splitter dep.
@@ -29,6 +31,8 @@ lang-typescript = ["code-splitter-base", "dep:tree-sitter-typescript"]
 
 [dependencies]
 text-splitter          = { optional = true, workspace = true }
+tracing                = { workspace = true, optional = true }
+metrics                = { workspace = true, optional = true }
 tree-sitter-bash       = { optional = true, workspace = true }
 tree-sitter-c          = { optional = true, workspace = true }
 tree-sitter-cpp        = { optional = true, workspace = true }

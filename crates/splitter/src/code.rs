@@ -28,7 +28,8 @@ pub(crate) fn try_code_split(
         .map(|(byte_offset, chunk_text)| {
             let start_line = text[..byte_offset].matches('\n').count() + 1;
             let newlines_in_chunk = chunk_text.matches('\n').count();
-            let end_line = start_line + newlines_in_chunk;
+            // If chunk ends with newline, it doesn't represent a real content line.
+            let end_line = start_line + newlines_in_chunk - chunk_text.ends_with('\n') as usize;
 
             Chunk {
                 text: chunk_text.to_string(),
