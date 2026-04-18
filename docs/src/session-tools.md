@@ -4,9 +4,40 @@ Session tools enable persistent, asynchronous coordination between agent session
 
 ## Available Tools
 
+### `sessions_create`
+
+Create a new session or resolve an existing one by key. Optionally set label,
+model, project, and inherit agent persona from another session.
+
+Input:
+
+```json
+{
+  "key": "agent:research:main",
+  "label": "Research Agent",
+  "model": "claude-sonnet-4-20250514",
+  "project_id": null,
+  "inherit_agent_from": null
+}
+```
+
+### `sessions_delete`
+
+Delete a session and its message history. Deleting the main session is not
+allowed.
+
+Input:
+
+```json
+{
+  "key": "agent:research:main",
+  "force": false
+}
+```
+
 ### `sessions_list`
 
-List sessions visible to the current policy.
+List sessions visible to the current policy. Supports optional text filter.
 
 Input:
 
@@ -19,7 +50,7 @@ Input:
 
 ### `sessions_history`
 
-Read message history from a target session.
+Read paginated message history from a target session.
 
 Input:
 
@@ -63,13 +94,17 @@ Configure policy in a preset to control what sessions a sub-agent can access:
 
 ```toml
 [agents.presets.coordinator]
-tools.allow = ["sessions_list", "sessions_history", "sessions_search", "sessions_send", "task_list", "spawn_agent"]
-sessions.can_send = true
+tools.allow = ["sessions_list", "sessions_history", "sessions_search", "sessions_send", "sessions_create", "sessions_delete", "task_list", "spawn_agent"]
+
+[agents.presets.coordinator.sessions]
+can_send = true
 
 [agents.presets.observer]
 tools.allow = ["sessions_list", "sessions_history", "sessions_search"]
-sessions.key_prefix = "agent:research:"
-sessions.can_send = false
+
+[agents.presets.observer.sessions]
+key_prefix = "agent:research:"
+can_send = false
 ```
 
 Policy fields:
