@@ -2,6 +2,8 @@
 
 use {
     async_trait::async_trait,
+    std::collections::HashSet,
+    tokio::sync::Mutex,
     tracing::{debug, info, warn},
 };
 
@@ -52,6 +54,9 @@ pub struct DockerSandbox {
     kind: BackendKind,
     cli: &'static str,
     backend_label: &'static str,
+    /// Container names that have already been provisioned in this process.
+    /// Prevents repeated `apt-get install` runs on the same container.
+    provisioned: Mutex<HashSet<String>>,
 }
 
 impl DockerSandbox {
@@ -61,6 +66,7 @@ impl DockerSandbox {
             kind: BackendKind::Docker,
             cli: "docker",
             backend_label: "docker",
+            provisioned: Mutex::new(HashSet::new()),
         }
     }
 
@@ -70,6 +76,7 @@ impl DockerSandbox {
             kind: BackendKind::Podman,
             cli: "podman",
             backend_label: "podman",
+            provisioned: Mutex::new(HashSet::new()),
         }
     }
 
@@ -266,6 +273,7 @@ impl DockerSandbox {
 
     async fn resolve_local_image(&self, requested_image: &str) -> Result<String> {
         if sandbox_image_exists(self.cli, requested_image).await {
+            debug!(image = requested_image, "sandbox image found locally");
             return Ok(requested_image.to_string());
         }
 
@@ -318,6 +326,7 @@ impl Sandbox for DockerSandbox {
         if let Ok(output) = check {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout.trim() == "true" {
+                debug!(container = %name, "sandbox container already running");
                 return Ok(());
             }
         }
@@ -326,8 +335,10 @@ impl Sandbox for DockerSandbox {
         let requested_image = image_override.unwrap_or_else(|| self.image());
         let image = self.resolve_local_image(requested_image).await?;
         let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
+        debug!(container = %name, %image, is_prebuilt, "resolved sandbox image");
 
         // Start a new container.
+        info!(container = %name, %image, "starting new sandbox container");
         let mut args = vec![
             "run".to_string(),
             "-d".to_string(),
@@ -366,7 +377,16 @@ impl Sandbox for DockerSandbox {
         // Skip provisioning if the image is a pre-built instance sandbox image
         // (packages are already baked in — including /home/sandbox from the Dockerfile).
         if !is_prebuilt {
-            provision_packages(self.cli, &name, &self.config.packages).await?;
+            let already_provisioned = self.provisioned.lock().await.contains(&name);
+            if already_provisioned {
+                debug!(
+                    container = %name,
+                    "skipping provisioning, already completed for container"
+                );
+            } else {
+                provision_packages(self.cli, &name, &self.config.packages).await?;
+                self.provisioned.lock().await.insert(name);
+            }
         }
 
         Ok(())
@@ -418,7 +438,15 @@ impl Sandbox for DockerSandbox {
 
         let output = output?;
         if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                tag,
+                stdout = %tail_lines(&stdout, 20),
+                stderr = %stderr.trim(),
+                "{} build failed",
+                self.cli,
+            );
             return Err(Error::message(format!(
                 "{} build failed for {tag}: {}",
                 self.cli,
@@ -426,6 +454,8 @@ impl Sandbox for DockerSandbox {
             )));
         }
 
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        debug!(tag, output = %tail_lines(&stdout, 20), "docker build output");
         info!(tag, "pre-built sandbox image ready");
         Ok(Some(BuildImageResult { tag, built: true }))
     }
@@ -543,6 +573,7 @@ impl Sandbox for DockerSandbox {
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
         let name = self.container_name(id);
+        self.provisioned.lock().await.remove(&name);
         let _ = tokio::process::Command::new(self.cli)
             .args(["rm", "-f", &name])
             .output()
@@ -652,4 +683,17 @@ pub(crate) fn podman_resolve_host_ip() -> Option<String> {
     } else {
         Some(gateway)
     }
+}
+
+/// Return the last `n` lines of `text`, or the full text if it has fewer lines.
+fn tail_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= n {
+        return text.to_string();
+    }
+    format!(
+        "... [{} lines truncated]\n{}",
+        lines.len() - n,
+        lines[lines.len() - n..].join("\n")
+    )
 }

@@ -1,6 +1,6 @@
 //! Host package provisioning (Debian/Ubuntu apt-get).
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use {
     super::containers::{container_exec_shell_args, is_cli_available},
@@ -24,15 +24,26 @@ pub(crate) async fn provision_packages(
         .args(container_exec_shell_args(
             cli,
             container_name,
-            format!("apt-get update -qq && apt-get install -y -qq {pkg_list} 2>&1 | tail -5"),
+            format!("apt-get update -qq && apt-get install -y -qq {pkg_list}"),
         ))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .output()
         .await?;
-    if !output.status.success() {
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.trim().is_empty() {
+            let tail = tail_lines(&stdout, 20);
+            debug!(container = container_name, output = %tail, "package provisioning output");
+        }
+    } else {
+        let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         warn!(
             container = container_name,
-            %stderr,
+            exit_code = output.status.code().unwrap_or(-1),
+            stdout = %tail_lines(&stdout, 20),
+            stderr = %stderr.trim(),
             "package provisioning failed (non-fatal)"
         );
     }
@@ -314,4 +325,17 @@ pub async fn provision_host_packages(packages: &[String]) -> Result<Option<HostP
             }))
         },
     }
+}
+
+/// Return the last `n` lines of `text`, or the full text if it has fewer lines.
+fn tail_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= n {
+        return text.to_string();
+    }
+    format!(
+        "... [{} lines truncated]\n{}",
+        lines.len() - n,
+        lines[lines.len() - n..].join("\n")
+    )
 }
