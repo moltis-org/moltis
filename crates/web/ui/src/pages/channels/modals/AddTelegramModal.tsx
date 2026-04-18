@@ -122,8 +122,9 @@ export function AddTelegramModal(): VNode {
 					<div className="flex items-center gap-1.5 text-xs py-1">
 						<span className="text-[var(--muted)]">Chat with your bot:</span>
 						<a
-							href={`https://t.me/${accountDraft.value.trim()}`}
+							href={`https://t.me/${encodeURIComponent(accountDraft.value.trim())}`}
 							target="_blank"
+							rel="noopener noreferrer"
 							className="text-[var(--accent)] underline"
 						>
 							t.me/{accountDraft.value.trim()}

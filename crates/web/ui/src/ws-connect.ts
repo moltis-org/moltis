@@ -159,7 +159,7 @@ export function connectWs(opts: ConnectOptions): void {
 				window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
 			}
 		}
-		if (frame.type === "res" && frame.id && Object.prototype.hasOwnProperty.call(S.pending, frame.id)) {
+		if (frame.type === "res" && frame.id && Object.hasOwn(S.pending, frame.id)) {
 			S.pending[frame.id]({
 				ok: frame.ok ?? false,
 				payload: frame.payload,
@@ -203,19 +203,19 @@ export function connectWs(opts: ConnectOptions): void {
 
 /** Handle server-initiated RPC request (v4). */
 function handleServerRequest(ws: WebSocket, frame: WsRpcFrame): void {
-	const handler = serverRequestHandlers[frame.method!];
-	if (!handler) {
-		// Unknown method — send error response.
+	const method = frame.method ?? "";
+	if (!Object.hasOwn(serverRequestHandlers, method)) {
 		ws.send(
 			JSON.stringify({
 				type: "res",
 				id: frame.id,
 				ok: false,
-				error: { code: "UNKNOWN_METHOD", message: `no handler for ${frame.method}` },
+				error: { code: "UNKNOWN_METHOD", message: `no handler for ${method}` },
 			}),
 		);
 		return;
 	}
+	const handler = serverRequestHandlers[method];
 	Promise.resolve()
 		.then(() => handler(frame.params || {}))
 		.then((result) => {
