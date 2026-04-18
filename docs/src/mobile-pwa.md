@@ -127,18 +127,16 @@ Clicking a notification will open or focus the app and navigate to the relevant 
 
 ### Feature Flag
 
-Push notifications are controlled by the `push-notifications` feature flag, which is enabled by default. To disable:
-
-```toml
-# In your Cargo.toml or when building
-[dependencies]
-moltis-gateway = { default-features = false, features = ["web-ui", "tls"] }
-```
-
-Or build without the feature:
+Push notifications are controlled by the `push-notifications` feature flag, which is enabled by default in the CLI crate. To disable, build with the `lightweight` feature set (which omits push and other integrations):
 
 ```bash
-cargo build --no-default-features --features web-ui,tls,tailscale,file-watcher
+cargo build --no-default-features --features lightweight
+```
+
+Or selectively exclude it while keeping other defaults:
+
+```bash
+cargo build --no-default-features --features web-ui,tls,push-notifications=false
 ```
 
 ### Data Storage
