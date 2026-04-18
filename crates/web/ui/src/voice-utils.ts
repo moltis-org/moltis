@@ -40,8 +40,18 @@ interface SaveVoiceKeyOptions {
 /**
  * Save an API key (and optional settings) for a voice provider.
  */
+interface VoiceKeyPayload {
+	provider: string;
+	api_key: string;
+	voice?: string;
+	voiceId?: string;
+	model?: string;
+	languageCode?: string;
+	baseUrl?: string;
+}
+
 export function saveVoiceKey(providerId: string, apiKey: string, opts?: SaveVoiceKeyOptions): Promise<unknown> {
-	const payload: Record<string, unknown> = { provider: providerId, api_key: apiKey };
+	const payload: VoiceKeyPayload = { provider: providerId, api_key: apiKey };
 	if (opts?.voice) {
 		payload.voice = opts.voice;
 		payload.voiceId = opts.voice;
@@ -62,8 +72,17 @@ interface SaveVoiceSettingsOptions {
 /**
  * Save non-secret voice provider settings.
  */
+interface VoiceSettingsPayload {
+	provider: string;
+	voice?: string;
+	voiceId?: string;
+	model?: string;
+	languageCode?: string;
+	baseUrl?: string;
+}
+
 export function saveVoiceSettings(providerId: string, opts?: SaveVoiceSettingsOptions): Promise<unknown> {
-	const payload: Record<string, unknown> = { provider: providerId };
+	const payload: VoiceSettingsPayload = { provider: providerId };
 	if (opts?.voice) {
 		payload.voice = opts.voice;
 		payload.voiceId = opts.voice;

@@ -243,14 +243,22 @@ function AuthStep({ onNext, skippable }: { onNext: () => void; skippable: boolea
 	useEffect(() => {
 		fetch("/api/auth/status")
 			.then((r) => r.json())
-			.then((data: Record<string, unknown>) => {
-				if (data.setup_code_required) setCodeRequired(true);
-				if (data.localhost_only) setLocalhostOnly(true);
-				if (data.webauthn_available) setWebauthnAvailable(true);
-				if (data.passkey_origins) setPasskeyOrigins(data.passkey_origins as string[]);
-				if (data.setup_complete) setSetupComplete(true);
-				setLoading(false);
-			})
+			.then(
+				(data: {
+					setup_code_required?: boolean;
+					localhost_only?: boolean;
+					webauthn_available?: boolean;
+					passkey_origins?: string[];
+					setup_complete?: boolean;
+				}) => {
+					if (data.setup_code_required) setCodeRequired(true);
+					if (data.localhost_only) setLocalhostOnly(true);
+					if (data.webauthn_available) setWebauthnAvailable(true);
+					if (data.passkey_origins) setPasskeyOrigins(data.passkey_origins);
+					if (data.setup_complete) setSetupComplete(true);
+					setLoading(false);
+				},
+			)
 			.catch(() => setLoading(false));
 	}, []);
 
@@ -347,7 +355,17 @@ function AuthStep({ onNext, skippable }: { onNext: () => void; skippable: boolea
 			})
 			.then(({ cred, challengeId }) => {
 				const attestation = cred.response as AuthenticatorAttestationResponse;
-				const body: Record<string, unknown> = {
+				const body: {
+					challenge_id: string;
+					name: string;
+					credential: {
+						id: string;
+						rawId: string;
+						type: string;
+						response: { attestationObject: string; clientDataJSON: string };
+					};
+					setup_code?: string;
+				} = {
 					challenge_id: challengeId,
 					name: passkeyName.trim() || detectPasskeyName(cred),
 					credential: {
@@ -1046,13 +1064,21 @@ function modelBelongsToProvider(providerName: string, mdl: ModelSelectorRow): bo
 	return modelPrefix === needle;
 }
 
-function toModelSelectorRow(modelRow: Record<string, unknown>): ModelSelectorRow {
+interface RawModelRow {
+	id: string;
+	displayName?: string;
+	provider?: string;
+	supportsTools?: boolean;
+	createdAt?: number;
+}
+
+function toModelSelectorRow(modelRow: RawModelRow): ModelSelectorRow {
 	return {
-		id: modelRow.id as string,
-		displayName: (modelRow.displayName as string) || (modelRow.id as string),
-		provider: modelRow.provider as string | undefined,
-		supportsTools: modelRow.supportsTools as boolean | undefined,
-		createdAt: (modelRow.createdAt as number) || 0,
+		id: modelRow.id,
+		displayName: modelRow.displayName || modelRow.id,
+		provider: modelRow.provider,
+		supportsTools: modelRow.supportsTools,
+		createdAt: modelRow.createdAt || 0,
 	};
 }
 
@@ -1127,7 +1153,7 @@ function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => 
 	}
 
 	async function loadModelsForProvider(providerName: string): Promise<ModelSelectorRow[]> {
-		const modelsRes = await sendRpc<Record<string, unknown>[]>("models.list", {});
+		const modelsRes = await sendRpc<RawModelRow[]>("models.list", {});
 		const allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
 		return allModels.filter((m) => modelBelongsToProvider(providerName, toModelSelectorRow(m))).map(toModelSelectorRow);
 	}

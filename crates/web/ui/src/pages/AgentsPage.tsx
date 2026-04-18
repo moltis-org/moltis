@@ -133,8 +133,15 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 		});
 	}, [isEdit, agent?.id]);
 
-	function buildParams(): Record<string, unknown> {
-		const base: Record<string, unknown> = {
+	interface AgentParams {
+		name: string;
+		emoji: string | null;
+		theme: string | null;
+		id?: string;
+	}
+
+	function buildParams(): AgentParams {
+		const base: AgentParams = {
 			name: name.trim(),
 			emoji: emoji.trim() || null,
 			theme: theme.trim() || null,

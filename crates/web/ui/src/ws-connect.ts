@@ -3,13 +3,17 @@ import { localizeRpcError, nextId, sendRpc } from "./helpers";
 import { getPreferredLocale } from "./i18n";
 import * as S from "./state";
 import type { RpcResponse } from "./types";
+import type { WsFrame as EventWsFrame } from "./types/ws-events";
 
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastOpts: ConnectOptions | null = null;
 let authRedirectPending = false;
 
+/** Server-request handler: receives arbitrary params, returns arbitrary result. */
+type ServerRequestHandler = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+
 /** Registry of server-request handlers keyed by method name (v4 bidir RPC). */
-const serverRequestHandlers: Record<string, (params: Record<string, unknown>) => Promise<Record<string, unknown>>> = {};
+const serverRequestHandlers: Record<string, ServerRequestHandler> = {};
 
 function resolveLocale(): string {
 	return getPreferredLocale();
@@ -37,19 +41,21 @@ interface HelloPayload {
 	[key: string]: unknown;
 }
 
-/** RPC frame received over the WebSocket. */
-interface WsFrame {
+/** Error detail inside a raw WebSocket frame (before localisation). */
+interface WsFrameError {
+	code?: string;
+	message?: string;
+}
+
+/** RPC frame received over the WebSocket (superset of event WsFrame). */
+interface WsRpcFrame {
 	type: string;
 	id?: string;
 	method?: string;
 	params?: Record<string, unknown>;
 	ok?: boolean;
 	payload?: HelloPayload | Record<string, unknown>;
-	error?: {
-		code?: string;
-		message?: string;
-		[key: string]: unknown;
-	};
+	error?: WsFrameError;
 	event?: string;
 	stream?: unknown;
 	done?: unknown;
@@ -60,9 +66,9 @@ interface WsFrame {
 
 /** Options for connectWs. */
 export interface ConnectOptions {
-	onFrame?: (frame: WsFrame) => void;
+	onFrame?: (frame: EventWsFrame) => void;
 	onConnected?: (hello: HelloPayload) => void | Promise<void>;
-	onHandshakeFailed?: (frame: WsFrame) => void;
+	onHandshakeFailed?: (frame: WsRpcFrame) => void;
 	onDisconnected?: (wasConnected: boolean) => void;
 	backoff?: Partial<BackoffConfig>;
 }
@@ -73,10 +79,7 @@ export interface ConnectOptions {
  * @param handler - returns result or throws
  * @returns unregister function
  */
-export function onServerRequest(
-	method: string,
-	handler: (params: Record<string, unknown>) => Promise<Record<string, unknown>>,
-): () => void {
+export function onServerRequest(method: string, handler: ServerRequestHandler): () => void {
 	serverRequestHandlers[method] = handler;
 	return function off(): void {
 		delete serverRequestHandlers[method];
@@ -96,16 +99,28 @@ export function connectWs(opts: ConnectOptions): void {
 
 	ws.onopen = (): void => {
 		const id = nextId();
-		(S.pending as Record<string, (value: WsFrame) => void>)[id] = (frame: WsFrame): void => {
-			const hello = frame?.ok && frame.payload;
-			if (hello && (hello as HelloPayload).type === "hello-ok") {
-				S.setConnected(true);
-				S.setReconnectDelay(1000);
-				if (opts.onConnected) opts.onConnected(hello as HelloPayload);
+		// The handshake callback receives an RpcResponse from the pending map.
+		// The payload is a HelloPayload on success.
+		S.pending[id] = (res: RpcResponse): void => {
+			if (res.ok && res.payload) {
+				const hello = res.payload as HelloPayload;
+				if (hello.type === "hello-ok") {
+					S.setConnected(true);
+					S.setReconnectDelay(1000);
+					if (opts.onConnected) opts.onConnected(hello);
+					return;
+				}
+			}
+			S.setConnected(false);
+			if (opts.onHandshakeFailed) {
+				opts.onHandshakeFailed({
+					type: "res",
+					ok: res.ok,
+					payload: res.payload as HelloPayload | Record<string, unknown>,
+					error: res.error,
+				});
 			} else {
-				S.setConnected(false);
-				if (opts.onHandshakeFailed) opts.onHandshakeFailed(frame);
-				else ws.close();
+				ws.close();
 			}
 		};
 		ws.send(
@@ -129,14 +144,14 @@ export function connectWs(opts: ConnectOptions): void {
 	};
 
 	ws.onmessage = (evt: MessageEvent): void => {
-		let frame: WsFrame;
+		let frame: WsRpcFrame;
 		try {
 			frame = JSON.parse(evt.data as string);
 		} catch {
 			return;
 		}
 		if (frame?.type === "res" && frame.error) {
-			frame.error = localizeRpcError(frame.error) as typeof frame.error;
+			frame.error = localizeRpcError(frame.error) as WsFrameError;
 			// When an RPC response indicates auth failure, trigger the
 			// auth-status-changed flow so the UI redirects to login
 			// instead of showing stale/broken data. Use a flag to
@@ -160,7 +175,8 @@ export function connectWs(opts: ConnectOptions): void {
 			handleServerRequest(ws, frame);
 			return;
 		}
-		if (opts.onFrame) opts.onFrame(frame);
+		// Non-RPC frames are event broadcasts; cast to the event-specific shape.
+		if (opts.onFrame) opts.onFrame(frame as unknown as EventWsFrame);
 	};
 
 	ws.onclose = (): void => {
@@ -188,7 +204,7 @@ export function connectWs(opts: ConnectOptions): void {
 }
 
 /** Handle server-initiated RPC request (v4). */
-function handleServerRequest(ws: WebSocket, frame: WsFrame): void {
+function handleServerRequest(ws: WebSocket, frame: WsRpcFrame): void {
 	const handler = serverRequestHandlers[frame.method!];
 	if (!handler) {
 		// Unknown method — send error response.
@@ -226,6 +242,12 @@ export function subscribeEvents(events: string[]): Promise<unknown> {
 	return sendRpc("subscribe", { events: events });
 }
 
+/** Shape of the /api/auth/status JSON response. */
+interface AuthStatusResponse {
+	authenticated?: boolean;
+	setup_required?: boolean;
+}
+
 /**
  * When the WebSocket never opened, check `/api/auth/status` to see if
  * the failure was an auth rejection. Redirect to login/onboarding when
@@ -233,11 +255,11 @@ export function subscribeEvents(events: string[]): Promise<unknown> {
  */
 function checkAuthOrReconnect(opts: ConnectOptions, backoff: BackoffConfig): void {
 	fetch("/api/auth/status")
-		.then((r) => (r.ok ? (r.json() as Promise<Record<string, unknown>>) : null))
+		.then((r) => (r.ok ? (r.json() as Promise<AuthStatusResponse>) : null))
 		.then((auth) => {
-			if ((auth as Record<string, unknown> | null)?.setup_required) {
+			if (auth?.setup_required) {
 				window.location.assign("/onboarding");
-			} else if (auth && !(auth as Record<string, unknown>).authenticated) {
+			} else if (auth && !auth.authenticated) {
 				window.location.assign("/login");
 			} else {
 				scheduleReconnect(() => connectWs(opts), backoff);

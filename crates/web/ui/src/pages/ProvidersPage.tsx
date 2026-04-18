@@ -92,18 +92,29 @@ function countUniqueProviders(models: ConfiguredModelEntry[]): number {
 	return new Set(models.map((m) => m.provider)).size;
 }
 
-function progressFromPayload(payload: Record<string, unknown> | null | undefined): DetectProgressData {
+function progressFromPayload(payload: Partial<DetectProgressData> | null | undefined): DetectProgressData {
 	return {
-		total: (payload?.total as number) || 0,
-		checked: (payload?.checked as number) || 0,
-		supported: (payload?.supported as number) || 0,
-		unsupported: (payload?.unsupported as number) || 0,
-		errors: (payload?.errors as number) || 0,
+		total: payload?.total || 0,
+		checked: payload?.checked || 0,
+		supported: payload?.supported || 0,
+		unsupported: payload?.unsupported || 0,
+		errors: payload?.errors || 0,
 	};
 }
 
+interface ModelsUpdatedEvent {
+	phase?: string;
+	total?: number;
+	checked?: number;
+	supported?: number;
+	unsupported?: number;
+	errors?: number;
+	summary?: DetectSummaryData & DetectProgressData;
+	error?: string;
+}
+
 function handleModelsUpdatedEvent(payload: unknown): void {
-	const data = payload as Record<string, unknown> | null;
+	const data = payload as ModelsUpdatedEvent | null;
 	if (!data?.phase) return;
 	if (data.phase === "start") {
 		detectingModels.value = true;
@@ -120,8 +131,8 @@ function handleModelsUpdatedEvent(payload: unknown): void {
 	if (data.phase === "complete") {
 		detectingModels.value = false;
 		if (data.summary) {
-			detectSummary.value = data.summary as DetectSummaryData;
-			detectProgress.value = progressFromPayload(data.summary as Record<string, unknown>);
+			detectSummary.value = data.summary;
+			detectProgress.value = progressFromPayload(data.summary);
 		}
 		return;
 	}
@@ -129,14 +140,14 @@ function handleModelsUpdatedEvent(payload: unknown): void {
 		detectingModels.value = false;
 		detectError.value = t("providers:detectionCancelled");
 		if (data.summary) {
-			detectSummary.value = data.summary as DetectSummaryData;
-			detectProgress.value = progressFromPayload(data.summary as Record<string, unknown>);
+			detectSummary.value = data.summary;
+			detectProgress.value = progressFromPayload(data.summary);
 		}
 		return;
 	}
 	if (data.phase === "error") {
 		detectingModels.value = false;
-		detectError.value = (data.error as string) || t("providers:modelDetectionFailed");
+		detectError.value = data.error || t("providers:modelDetectionFailed");
 	}
 }
 
@@ -208,12 +219,16 @@ async function runDetectAllModels(): Promise<void> {
 			detectingModels.value = false;
 			return;
 		}
-		const resPayload = res.payload as Record<string, unknown> | undefined;
+		interface DetectSupportedPayload extends DetectSummaryData {
+			skipped?: boolean;
+		}
+
+		const resPayload = res.payload as DetectSupportedPayload | undefined;
 		if (resPayload?.skipped) {
 			detectingModels.value = false;
 			return;
 		}
-		detectSummary.value = (resPayload as DetectSummaryData) || null;
+		detectSummary.value = resPayload || null;
 		detectProgress.value = progressFromPayload(resPayload);
 		await Promise.all([fetchModels(), fetchProviders()]);
 		const p = detectProgress.value;

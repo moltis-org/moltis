@@ -229,13 +229,23 @@ function populateImageDropdown(): void {
 	addImageOption(dropdown, DEFAULT_IMAGE, !S.sessionSandboxImage);
 
 	// Fetch cached images
+	interface CachedImage {
+		tag: string;
+		skill_name?: string;
+		size?: string;
+	}
+
+	interface CachedImagesResponse {
+		images?: CachedImage[];
+	}
+
 	fetch("/api/images/cached")
 		.then((r) => r.json())
-		.then((data: Record<string, unknown>) => {
-			const images = (data.images || []) as Array<Record<string, unknown>>;
+		.then((data: CachedImagesResponse) => {
+			const images = data.images || [];
 			for (const img of images) {
 				const isCurrent = S.sessionSandboxImage === img.tag;
-				addImageOption(dropdown, img.tag as string, isCurrent, `${img.skill_name} (${img.size})`);
+				addImageOption(dropdown, img.tag, isCurrent, `${img.skill_name} (${img.size})`);
 			}
 			requestAnimationFrame(positionImageDropdown);
 		})

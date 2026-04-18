@@ -29,9 +29,9 @@ async function checkSttStatus(): Promise<void> {
 		updateMicButton();
 		return;
 	}
-	const res = await sendRpc("stt.status", {});
+	const res = await sendRpc<{ configured?: boolean }>("stt.status", {});
 	if (res?.ok && res.payload) {
-		sttConfigured = (res.payload as Record<string, unknown>).configured === true;
+		sttConfigured = res.payload.configured === true;
 	} else {
 		sttConfigured = false;
 	}
@@ -256,7 +256,10 @@ function sendTranscribedMessage(text: string, audioFilename: string | null): voi
 	}
 
 	// Send the message
-	const chatParams: Record<string, unknown> = { text: text, _input_medium: "voice" };
+	const chatParams: { text: string; _input_medium: string; _audio_filename?: string; model?: string } = {
+		text: text,
+		_input_medium: "voice",
+	};
 	if (audioFilename) {
 		chatParams._audio_filename = audioFilename;
 	}
@@ -297,14 +300,22 @@ async function transcribeAudio(): Promise<void> {
 			headers: { "Content-Type": blob.type || "audio/webm" },
 			body: blob,
 		});
-		const res: Record<string, unknown> = await resp.json();
+		interface TranscriptionUploadResponse {
+			ok?: boolean;
+			transcription?: { text?: string };
+			filename?: string;
+			transcriptionError?: string;
+			error?: string;
+		}
+
+		const res: TranscriptionUploadResponse = await resp.json();
 
 		micBtn?.classList.remove("transcribing");
 		micBtn!.title = t("chat:micTooltip");
 
-		if (res.ok && (res.transcription as Record<string, unknown> | undefined)?.text) {
-			const text = String((res.transcription as Record<string, unknown>).text).trim();
-			const audioFilename = typeof res.filename === "string" ? (res.filename as string).trim() : "";
+		if (res.ok && res.transcription?.text) {
+			const text = String(res.transcription.text).trim();
+			const audioFilename = typeof res.filename === "string" ? res.filename.trim() : "";
 			if (text) {
 				cleanupTranscribingState();
 				sendTranscribedMessage(text, audioFilename || null);

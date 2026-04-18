@@ -68,13 +68,59 @@ interface ChannelExtra {
 	qr_svg?: string;
 }
 
+/** Channel config fields (union of all channel types). */
+interface ChannelConfig {
+	// Common
+	token?: string;
+	dm_policy?: string;
+	mention_mode?: string;
+	allowlist?: string[];
+	model?: string;
+	model_provider?: string;
+	// Teams
+	app_id?: string;
+	app_password?: string;
+	webhook_secret?: string;
+	stream_mode?: string;
+	reply_style?: string;
+	welcome_card?: boolean;
+	bot_name?: string;
+	// Slack
+	bot_token?: string;
+	app_token?: string;
+	connection_mode?: string;
+	group_policy?: string;
+	signing_secret?: string;
+	channel_allowlist?: string[];
+	// Matrix
+	homeserver?: string;
+	user_id?: string;
+	password?: string | null;
+	access_token?: string;
+	device_id?: string;
+	device_display_name?: string | null;
+	ownership_mode?: string;
+	room_policy?: string;
+	auto_join?: string;
+	user_allowlist?: string[];
+	room_allowlist?: string[];
+	otp_self_approval?: boolean;
+	otp_cooldown_secs?: number;
+	// Nostr
+	secret_key?: string;
+	relays?: string[];
+	allowed_pubkeys?: string[];
+	// Advanced config patch pass-through
+	[key: string]: unknown;
+}
+
 interface Channel {
 	type: string;
 	account_id: string;
 	name?: string;
 	details?: string;
 	status?: string;
-	config?: Record<string, unknown>;
+	config?: ChannelConfig;
 	sessions?: ChannelSession[];
 	extra?: ChannelExtra;
 }
@@ -411,7 +457,7 @@ function MatrixOwnershipCard({ channel, matrixStatus }: MatrixOwnershipCardProps
 interface AdvancedConfigPatchFieldProps {
 	value: string;
 	onInput: (value: string) => void;
-	currentConfig?: Record<string, unknown> | null;
+	currentConfig?: ChannelConfig | null;
 }
 
 function AdvancedConfigPatchField({ value, onInput, currentConfig = null }: AdvancedConfigPatchFieldProps): VNode {
@@ -926,7 +972,7 @@ function AddTelegramModal(): VNode {
 		}
 		error.value = "";
 		saving.value = true;
-		const addConfig: Record<string, unknown> = {
+		const addConfig: ChannelConfig = {
 			token: credential,
 			dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement).value,
 			mention_mode: (form.querySelector("[data-field=mentionMode]") as HTMLSelectElement).value,
@@ -1115,7 +1161,7 @@ function AddTeamsModal(): VNode {
 		}
 		error.value = "";
 		saving.value = true;
-		const addConfig: Record<string, unknown> = {
+		const addConfig: ChannelConfig = {
 			app_id: accountId,
 			app_password: credential,
 			dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement).value,
@@ -1299,7 +1345,7 @@ function AddDiscordModal(): VNode {
 		}
 		error.value = "";
 		saving.value = true;
-		const addConfig: Record<string, unknown> = {
+		const addConfig: ChannelConfig = {
 			token: credential,
 			dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement).value,
 			mention_mode: (form.querySelector("[data-field=mentionMode]") as HTMLSelectElement).value,
@@ -1428,7 +1474,7 @@ function AddSlackModal(): VNode {
 		}
 		error.value = "";
 		saving.value = true;
-		const addConfig: Record<string, unknown> = {
+		const addConfig: ChannelConfig = {
 			bot_token: botToken,
 			app_token: appTokenDraft.value.trim(),
 			connection_mode: connectionMode.value,
@@ -1615,7 +1661,7 @@ function AddMatrixModal(): VNode {
 		}
 		error.value = "";
 		saving.value = true;
-		const addConfig: Record<string, unknown> = {
+		const addConfig: ChannelConfig = {
 			homeserver,
 			ownership_mode: authMode === "password" ? normalizeMatrixOwnershipMode(ownershipModeDraft.value) : "user_managed",
 			dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement).value,
@@ -1915,7 +1961,7 @@ function AddNostrModal(): VNode {
 			.split(",")
 			.map((r) => r.trim())
 			.filter(Boolean);
-		const addConfig: Record<string, unknown> = {
+		const addConfig: ChannelConfig = {
 			secret_key: secretKey,
 			relays,
 			dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement).value,
@@ -2038,7 +2084,7 @@ function AddWhatsAppModal(): VNode {
 		waPairingError.value = null;
 		waPairingAccountId.value = accountId;
 
-		const addConfig: Record<string, unknown> = {
+		const addConfig: ChannelConfig = {
 			dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || "open",
 			allowlist: allowlistItems.value,
 		};
@@ -2221,14 +2267,14 @@ function EditChannelModal(): VNode | null {
 	const isMatrix = chType === "matrix";
 	const isNostr = chType === "nostr";
 
-	function addModelToConfig(config: Record<string, unknown>): void {
+	function addModelToConfig(config: ChannelConfig): void {
 		if (!editModel.value) return;
 		config.model = editModel.value;
 		const found = modelsSig.value.find((x) => x.id === editModel.value);
 		if (found?.provider) config.model_provider = found.provider;
 	}
 
-	function addChannelCredentials(config: Record<string, unknown>, form: HTMLElement): void {
+	function addChannelCredentials(config: ChannelConfig, form: HTMLElement): void {
 		if (isTeams) {
 			config.app_id = cfg.app_id || ch?.account_id;
 			config.app_password = editCredential.value || cfg.app_password || "";
@@ -2260,8 +2306,8 @@ function EditChannelModal(): VNode | null {
 		}
 	}
 
-	function buildUpdateConfig(form: HTMLElement): Record<string, unknown> {
-		const updateConfig: Record<string, unknown> = {};
+	function buildUpdateConfig(form: HTMLElement): ChannelConfig {
+		const updateConfig: ChannelConfig = {};
 		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || "open";
 		updateConfig.allowlist = allowlistItems.value;
 		if (isMatrix) {

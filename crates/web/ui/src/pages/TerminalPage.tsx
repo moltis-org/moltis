@@ -56,13 +56,24 @@ interface WindowsPayload {
 	windowId?: string;
 }
 
-type TerminalCtorType = new (opts: Record<string, unknown>) => XtermInstance;
+interface XtermOptions {
+	convertEol?: boolean;
+	disableStdin?: boolean;
+	cursorBlink?: boolean;
+	scrollback?: number;
+	fontFamily?: string;
+	fontSize?: number;
+	lineHeight?: number;
+	theme?: Record<string, string>;
+}
+
+type TerminalCtorType = new (opts: XtermOptions) => XtermInstance;
 type FitAddonCtorType = new () => FitAddonInstance;
 
 interface XtermInstance {
 	cols: number;
 	rows: number;
-	options: Record<string, unknown>;
+	options: { theme?: Record<string, string>; [key: string]: unknown };
 	buffer: { active: { baseY: number; viewportY: number } };
 	parser: { registerOscHandler: (code: number, handler: () => boolean) => { dispose: () => void } };
 	loadAddon: (addon: FitAddonInstance) => void;
@@ -184,9 +195,16 @@ function setControlsEnabled(enabled: boolean): void {
 function setInstallActionsVisible(visible: boolean): void { if (hintActionsEl) hintActionsEl.hidden = !visible; }
 function setWindowControlsEnabled(): void { if (newTabBtn) newTabBtn.disabled = !(tmuxPersistenceEnabled && terminalAvailable) || creatingWindow; }
 
+interface RawWindowPayload {
+	id?: string;
+	index?: number;
+	name?: string;
+	active?: boolean;
+}
+
 function normalizeWindowPayload(payloadWindow: unknown): WindowInfo | null {
 	if (!(payloadWindow && typeof payloadWindow === "object")) return null;
-	const pw = payloadWindow as Record<string, unknown>;
+	const pw = payloadWindow as RawWindowPayload;
 	const id = typeof pw.id === "string" ? pw.id.trim() : "";
 	if (!id) return null;
 	const index = Number(pw.index);
@@ -369,8 +387,8 @@ function clearOscStabilityGuards(): void {
 async function ensureXtermModules(): Promise<void> {
 	if (TerminalCtorRef && FitAddonCtorRef) return;
 	const [xtermMod, fitAddonMod] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]);
-	TerminalCtorRef = (xtermMod as Record<string, unknown>).Terminal as TerminalCtorType;
-	FitAddonCtorRef = (fitAddonMod as Record<string, unknown>).FitAddon as FitAddonCtorType;
+	TerminalCtorRef = (xtermMod as unknown as { Terminal: TerminalCtorType }).Terminal;
+	FitAddonCtorRef = (fitAddonMod as unknown as { FitAddon: FitAddonCtorType }).FitAddon;
 }
 
 function queueInput(data: string): void {
