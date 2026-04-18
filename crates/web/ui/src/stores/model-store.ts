@@ -59,7 +59,8 @@ export function setAll(arr: ModelInfo[]): void {
 
 /** Fetch models from the server via RPC. */
 export function fetch(): Promise<void> {
-	return sendRpc("models.list", {}).then((res: RpcResponse<ModelInfo[]>) => {
+	return sendRpc("models.list", {}).then((r) => {
+		const res = r as RpcResponse<ModelInfo[]>;
 		if (!res?.ok) return;
 		setAll(res.payload || []);
 		if (models.value.length === 0) return;

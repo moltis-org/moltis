@@ -2,6 +2,7 @@
 import { localizeRpcError, nextId, sendRpc } from "./helpers";
 import { getPreferredLocale } from "./i18n";
 import * as S from "./state";
+import type { RpcResponse } from "./types";
 
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastOpts: ConnectOptions | null = null;
@@ -55,12 +56,7 @@ interface WsFrame {
 	channel?: unknown;
 }
 
-/** Stream metadata extracted from an event frame. */
-interface StreamMeta {
-	stream: unknown;
-	done: unknown;
-	channel: unknown;
-}
+
 
 /** Options for connectWs. */
 export interface ConnectOptions {
@@ -100,7 +96,7 @@ export function connectWs(opts: ConnectOptions): void {
 
 	ws.onopen = (): void => {
 		const id = nextId();
-		S.pending[id] = (frame: WsFrame): void => {
+		(S.pending as Record<string, (value: WsFrame) => void>)[id] = (frame: WsFrame): void => {
 			const hello = frame?.ok && frame.payload;
 			if (hello && (hello as HelloPayload).type === "hello-ok") {
 				S.setConnected(true);
@@ -140,18 +136,18 @@ export function connectWs(opts: ConnectOptions): void {
 			return;
 		}
 		if (frame?.type === "res" && frame.error) {
-			frame.error = localizeRpcError(frame.error);
+			frame.error = localizeRpcError(frame.error) as typeof frame.error;
 			// When an RPC response indicates auth failure, trigger the
 			// auth-status-changed flow so the UI redirects to login
 			// instead of showing stale/broken data. Use a flag to
 			// avoid dispatching multiple times when several RPCs fail.
-			if (frame.error.code === "UNAUTHORIZED" && !authRedirectPending) {
+			if (frame.error?.code === "UNAUTHORIZED" && !authRedirectPending) {
 				authRedirectPending = true;
 				window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
 			}
 		}
 		if (frame.type === "res" && frame.id && S.pending[frame.id]) {
-			S.pending[frame.id](frame);
+			S.pending[frame.id](frame as unknown as RpcResponse);
 			delete S.pending[frame.id];
 			return;
 		}
@@ -167,7 +163,7 @@ export function connectWs(opts: ConnectOptions): void {
 		const wasConnected = S.connected;
 		S.setConnected(false);
 		for (const id in S.pending) {
-			S.pending[id]({ ok: false, error: { message: "WebSocket disconnected" } } as WsFrame);
+			S.pending[id]({ ok: false, error: { code: "DISCONNECTED", message: "WebSocket disconnected" } });
 			delete S.pending[id];
 		}
 		if (opts.onDisconnected) opts.onDisconnected(wasConnected);

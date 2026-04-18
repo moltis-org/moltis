@@ -95,9 +95,10 @@ export function bindSandboxToggleEvents(): void {
 		sendRpc("sessions.patch", {
 			key: S.activeSessionKey,
 			sandboxEnabled: newVal,
-		}).then((res: Record<string, unknown>) => {
-			if (res?.result) {
-				updateSandboxUI((res.result as Record<string, unknown>).sandbox_enabled as boolean);
+		}).then((res) => {
+			const payload = res as unknown as Record<string, unknown>;
+			if (payload?.result) {
+				updateSandboxUI((payload.result as Record<string, unknown>).sandbox_enabled as boolean);
 			} else {
 				updateSandboxUI(newVal);
 			}
@@ -264,9 +265,10 @@ function selectImage(tag: string | null): void {
 	sendRpc("sessions.patch", {
 		key: S.activeSessionKey,
 		sandboxImage: value,
-	}).then((res: Record<string, unknown>) => {
-		if (res?.result) {
-			updateSandboxImageUI((res.result as Record<string, unknown>).sandbox_image as string);
+	}).then((res) => {
+		const payload = res as unknown as Record<string, unknown>;
+		if (payload?.result) {
+			updateSandboxImageUI((payload.result as Record<string, unknown>).sandbox_image as string);
 		} else {
 			updateSandboxImageUI(tag);
 		}

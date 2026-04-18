@@ -5,9 +5,9 @@
 // highlighting is applied after the stream completes or when
 // history messages are loaded.
 
-import type { HighlighterGeneric } from "shiki";
+import type { BundledLanguage, BundledTheme, HighlighterGeneric } from "shiki";
 
-let highlighter: HighlighterGeneric<string, string> | null = null;
+let highlighter: HighlighterGeneric<BundledLanguage, BundledTheme> | null = null;
 let highlighterInitPromise: Promise<void> | null = null;
 const languageLoadPromises: Map<string, Promise<void>> = new Map();
 
@@ -15,7 +15,7 @@ const languageLoadPromises: Map<string, Promise<void>> = new Map();
  * Initialize the Shiki highlighter. Call once at app startup (fire-and-forget).
  * Safe to call multiple times -- subsequent calls are no-ops.
  */
-export async function initHighlighter(): Promise<HighlighterGeneric<string, string> | null> {
+export async function initHighlighter(): Promise<HighlighterGeneric<BundledLanguage, BundledTheme> | null> {
 	if (highlighter) return highlighter;
 	if (highlighterInitPromise) {
 		await highlighterInitPromise;
@@ -27,6 +27,7 @@ export async function initHighlighter(): Promise<HighlighterGeneric<string, stri
 			// Load only themes at startup; grammars are loaded on demand per language.
 			highlighter = await shiki.createHighlighter({
 				themes: ["github-dark", "github-light"],
+				langs: [],
 			});
 		} catch (err) {
 			console.warn("[shiki] failed to initialize highlighter:", err);

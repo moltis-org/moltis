@@ -76,9 +76,9 @@ export function updateIdentity(
   }
   const params = { ...fields, agent_id: agentId };
   return sendRpc("agents.identity.update", params).then(
-    (res: RpcResponse) => {
-      if (res?.ok || !isMissingMethodError(res)) return res;
-      return sendRpc("agent.identity.update", fields);
+    (res) => {
+      if (res?.ok || !isMissingMethodError(res as RpcResponse)) return res as RpcResponse;
+      return sendRpc("agent.identity.update", fields) as unknown as Promise<RpcResponse>;
     },
-  );
+  ) as unknown as Promise<RpcResponse>;
 }

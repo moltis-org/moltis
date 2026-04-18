@@ -10,7 +10,6 @@ import { t } from "../i18n";
 import { fetchModels } from "../models";
 import { updateNavCount } from "../nav-counts";
 import { testModel } from "../provider-validation";
-// @ts-expect-error -- providers module not yet migrated to TS
 import { openModelSelectorForProvider, openProviderModal } from "../providers";
 import { connected } from "../signals";
 import * as S from "../state";

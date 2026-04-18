@@ -8,29 +8,8 @@
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import {
-	addChannel,
-	buildTeamsEndpoint,
-	channelStorageNote,
-	defaultTeamsBaseUrl,
-	deriveMatrixAccountId,
-	fetchChannelStatus,
-	generateWebhookSecretHex,
-	MATRIX_DEFAULT_HOMESERVER,
-	MATRIX_DOCS_URL,
-	MATRIX_ENCRYPTION_GUIDANCE,
-	matrixAuthModeGuidance,
-	matrixCredentialLabel,
-	matrixCredentialPlaceholder,
-	matrixOwnershipModeGuidance,
-	normalizeMatrixAuthMode,
-	normalizeMatrixOtpCooldown,
-	normalizeMatrixOwnershipMode,
-	parseChannelConfigPatch,
-	validateChannelFields,
-} from "./channel-utils";
 import { EmojiPicker } from "./emoji-picker";
-import { eventListeners, onEvent } from "./events";
+import { eventListeners } from "./events";
 import { get as getGon, refresh as refreshGon } from "./gon";
 import { modelVersionScore, sendRpc } from "./helpers";
 import { t } from "./i18n";
@@ -45,18 +24,6 @@ import {
 	testModel,
 	validateProviderKey,
 } from "./provider-validation";
-import * as S from "./state";
-import { fetchPhrase } from "./tts-phrases";
-import {
-	decodeBase64Safe,
-	fetchVoiceProviders,
-	saveVoiceKey,
-	saveVoiceSettings,
-	testTts,
-	toggleVoiceProvider,
-	transcribeAudio,
-	VOICE_COUNTERPART_IDS,
-} from "./voice-utils";
 import { connectWs, subscribeEvents } from "./ws-connect";
 
 // ── Types ────────────────────────────────────────────────────
@@ -120,126 +87,12 @@ interface LocalModel {
 	suggested?: boolean;
 }
 
-interface VoiceProvider {
-	id: string;
-	name: string;
-	available: boolean;
-	enabled?: boolean;
-	category?: string;
-	keySource?: string;
-	description?: string;
-	keyUrl?: string;
-	keyUrlLabel?: string;
-	keyPlaceholder?: string;
-	hint?: string;
-	capabilities?: { baseUrl?: boolean };
-	settings?: { baseUrl?: string };
-}
-
-interface VoiceProviders {
-	tts: VoiceProvider[];
-	stt: VoiceProvider[];
-}
-
-interface VoiceTesting {
-	id: string;
-	type: string;
-	phase: string;
-}
-
-interface VoiceTestResult {
-	success?: boolean;
-	text?: string | null;
-	error?: string | null;
-}
-
-interface ChannelStatusEntry {
-	type: string;
-	account_id: string;
-	name?: string;
-	status: string;
-	extra?: { qr_data?: string; qr_svg?: string };
-}
-
-interface SummaryData {
-	identity: IdentityInfo | null;
-	mem: MemInfo | null;
-	update: UpdateInfo | null;
-	voiceEnabled: boolean;
-	providers: ProviderInfo[];
-	channels: ChannelStatusEntry[];
-	tailscale: TailscaleStatus | null;
-	voice: VoiceProviders | null;
-	sandbox: { backend?: string } | null;
-}
-
 interface IdentityInfo {
 	user_name?: string;
 	name?: string;
 	emoji?: string;
 	theme?: string;
 	[key: string]: unknown;
-}
-
-interface MemInfo {
-	process?: number;
-	available?: number;
-	total?: number;
-}
-
-interface UpdateInfo {
-	available?: boolean;
-	latest_version?: string;
-	release_url?: string;
-}
-
-interface TailscaleStatus {
-	installed?: boolean;
-	tailscale_up?: boolean;
-	mode?: string;
-	url?: string;
-	passkey_warning?: string;
-	[key: string]: unknown;
-}
-
-interface NgrokStatus {
-	enabled?: boolean;
-	public_url?: string;
-	domain?: string;
-	authtoken_source?: string;
-	passkey_warning?: string;
-	[key: string]: unknown;
-}
-
-interface OpenClawScan {
-	detected?: boolean;
-	home_dir?: string;
-	identity_available?: boolean;
-	identity_agent_name?: string;
-	identity_theme?: string;
-	providers_available?: boolean;
-	skills_count?: number;
-	memory_available?: boolean;
-	memory_files_count?: number;
-	channels_available?: boolean;
-	telegram_accounts?: number;
-	discord_accounts?: number;
-	unsupported_channels?: string[];
-	sessions_count?: number;
-	workspace_files_available?: boolean;
-	workspace_files_found?: string[];
-	agents?: Array<{ openclaw_id: string; name?: string; is_default?: boolean; theme?: string }>;
-}
-
-interface ImportResult {
-	categories?: Array<{
-		category: string;
-		status: string;
-		items_imported: number;
-		items_skipped: number;
-		warnings?: string[];
-	}>;
-	todos?: Array<{ feature: string; description: string }>;
 }
 
 interface KeyHelp {
@@ -300,36 +153,6 @@ function ErrorPanel({ message }: { message: string }): VNode {
 	);
 }
 
-function ChannelStorageNotice(): VNode {
-	return (
-		<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)]">
-			<span className="font-medium text-[var(--text-strong)]">Storage note.</span> {channelStorageNote()}
-		</div>
-	);
-}
-
-function AdvancedConfigPatchField({ value, onInput }: { value: string; onInput: (v: string) => void }): VNode {
-	return (
-		<details className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3">
-			<summary className="cursor-pointer text-xs font-medium text-[var(--text-strong)]">Advanced Config JSON</summary>
-			<div className="mt-3 flex flex-col gap-2">
-				<div className="text-xs text-[var(--muted)]">
-					Optional JSON object merged on top of the form before save. Use this for channel-specific settings that do not have dedicated fields yet.
-				</div>
-				<div>
-					<label className="text-xs text-[var(--muted)] mb-1 block">Advanced config JSON patch (optional)</label>
-					<textarea
-						name="channel_advanced_config"
-						className="provider-key-input w-full min-h-[140px] font-mono text-xs"
-						value={value}
-						onInput={(e) => onInput((e.target as HTMLTextAreaElement).value)}
-						placeholder='{"reply_to_message": true}'
-					></textarea>
-				</div>
-			</div>
-		</details>
-	);
-}
 
 interface StepIndicatorProps {
 	steps: string[];
@@ -798,10 +621,10 @@ function IdentityStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => 
 		refreshGon().then(() => {
 			if (cancelled) return;
 			const refreshed = (getGon("identity") as IdentityInfo) || {};
-			if (refreshed.user_name) setUserName((prev) => prev || refreshed.user_name || "");
-			if (refreshed.name) setName((prev) => (prev && prev !== "Moltis" ? prev : refreshed.name || ""));
-			if (refreshed.emoji) setEmoji((prev) => (prev && prev !== "\u{1f916}" ? prev : refreshed.emoji || ""));
-			if (refreshed.theme) setTheme((prev) => prev || refreshed.theme || "");
+			if (refreshed.user_name) setUserName((prev: string) => prev || refreshed.user_name || "");
+			if (refreshed.name) setName((prev: string) => (prev && prev !== "Moltis" ? prev : refreshed.name || ""));
+			if (refreshed.emoji) setEmoji((prev: string) => (prev && prev !== "\u{1f916}" ? prev : refreshed.emoji || ""));
+			if (refreshed.theme) setTheme((prev: string) => prev || refreshed.theme || "");
 		});
 		return () => { cancelled = true; };
 	}, []);
@@ -1362,7 +1185,7 @@ function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => 
 			setProbeResults((prev) => {
 				const next = new Map(prev);
 				if (isModelServiceNotConfigured(result.error || "")) next.delete(modelId);
-				else next.set(modelId, result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") });
+				else next.set(modelId, result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") as string | undefined });
 				return next;
 			});
 		});

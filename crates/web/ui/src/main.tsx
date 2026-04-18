@@ -171,7 +171,7 @@ try {
 	// Non-fatal — update indicator is cosmetic.
 }
 gon.onChange("update", showUpdateBanner as (v: unknown) => void);
-onEvent("update.available", showUpdateBanner);
+onEvent("update.available", showUpdateBanner as (payload: unknown) => void);
 initUpdateBannerDismiss();
 showVaultBanner(gon.get("vault_status") as string | null);
 gon.onChange("vault_status", showVaultBanner as (v: unknown) => void);
@@ -194,7 +194,8 @@ function removeSessionFromEvent(sessionKey: string): boolean {
 	return removeSessionFromClientState(sessionKey, { navigateIfActive: true });
 }
 
-onEvent("session", (payload: Record<string, unknown>) => {
+onEvent("session", (_payload: unknown) => {
+	const payload = _payload as Record<string, unknown>;
 	if (!payload?.kind) return;
 	if (payload.kind === "deleted") {
 		if (!removeSessionFromEvent(payload.sessionKey as string)) {
@@ -237,7 +238,7 @@ function applyMemory(mem: MemInfo | null): void {
 
 applyMemory(gon.get("mem") as MemInfo | null);
 gon.onChange("mem", applyMemory as (v: unknown) => void);
-onEvent("tick", (payload: Record<string, unknown>) => applyMemory(payload.mem as MemInfo | null));
+onEvent("tick", (_payload: unknown) => { const payload = _payload as Record<string, unknown>; applyMemory(payload.mem as MemInfo | null); });
 
 // Logout button — wire up click handler once.
 const logoutBtn = document.getElementById("logoutBtn");
@@ -388,8 +389,8 @@ function clearSensitiveData(): void {
 	S.setProjects([]);
 
 	// Clear identity from gon so sidebar/header no longer shows it
-	gon.set("identity", null);
-	gon.set("sessions_recent", null);
+	gon.set("identity", null as unknown as import("./types/gon").ResolvedIdentity);
+	gon.set("sessions_recent", null as unknown as import("./types").SessionMeta[]);
 	// Signal vault sealed so SessionList shows the correct placeholder
 	gon.set("vault_status", "sealed");
 }

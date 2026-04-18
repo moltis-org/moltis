@@ -139,8 +139,8 @@ export function init(): Promise<void> {
  *
  * Namespace can be specified with colon prefix or via the `ns` option.
  */
-export function t(key: string, opts?: Record<string, unknown>): string {
-	return i18next.t(key, opts);
+export function t(key: string, opts?: string | Record<string, unknown>): string {
+	return i18next.t(key, opts as Record<string, unknown>);
 }
 
 export function hasTranslation(key: string, opts?: Record<string, unknown>): boolean {

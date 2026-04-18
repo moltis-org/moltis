@@ -12,7 +12,7 @@ import { effect } from "@preact/signals";
 import { render } from "preact";
 import { chatAddMsg, chatAddMsgWithImages, updateCommandInputUI } from "../chat-ui";
 import { highlightCodeBlocks } from "../code-highlight";
-import { SessionHeader } from "../components/session-header";
+import { SessionHeader } from "../components/SessionHeader";
 import { formatBytes, formatTokens, renderMarkdown, sendRpc, warmAudioPlayback } from "../helpers";
 import {
 	clearPendingImages,
@@ -212,13 +212,13 @@ function slashHideMenu(): void {
 
 function slashSelectItem(idx: number): void {
 	if (!slashMenuItems[idx]) return;
-	S.chatInput.value = `/${slashMenuItems[idx].name}`;
+	(S.chatInput as HTMLTextAreaElement).value = `/${slashMenuItems[idx].name}`;
 	slashHideMenu();
 	sendChat();
 }
 
 function slashHandleInput(): void {
-	const val = S.chatInput.value;
+	const val = (S.chatInput as HTMLTextAreaElement).value;
 	if (val.indexOf("/") === 0 && val.indexOf(" ") === -1) {
 		slashShowMenu(val);
 	} else {
@@ -1035,7 +1035,7 @@ function tryHandleLocalSlashCommand(text: string, hasImages: boolean): boolean {
 	if (text.charAt(0) !== "/" || hasImages) return false;
 	const slash = parseSlashCommand(text);
 	if (!(slash && shouldHandleSlashLocally(slash.name, slash.args))) return false;
-	S.chatInput.value = "";
+	(S.chatInput as HTMLTextAreaElement).value = "";
 	chatAutoResize();
 	slashHideMenu();
 	handleSlashCommand(slash.name, slash.args);
@@ -1050,9 +1050,9 @@ function rememberChatHistory(text: string): void {
 }
 
 function resetComposerAfterSend(): void {
-	S.setChatHistoryIdx(-1); S.setChatHistoryDraft(""); S.chatInput.value = "";
+	S.setChatHistoryIdx(-1); S.setChatHistoryDraft(""); (S.chatInput as HTMLTextAreaElement).value = "";
 	chatAutoResize();
-	if (window.innerWidth < 768) S.chatInput.blur();
+	if (window.innerWidth < 768) S.chatInput!.blur();
 }
 
 function normalizeOutgoingText(text: string, hasImages: boolean): string {
@@ -1091,7 +1091,7 @@ function buildChatMessage(text: string, seq: number, displayText?: string): { pa
 }
 
 function sendChat(): void {
-	const text = S.chatInput.value.trim();
+	const text = (S.chatInput as HTMLTextAreaElement).value.trim();
 	const hasImages = hasPendingImages();
 	if (!((text || hasImages) && S.connected)) return;
 	warmAudioPlayback();
@@ -1135,9 +1135,9 @@ function chatAutoResize(): void {
 
 function handleHistoryUp(): void {
 	if (S.chatHistory.length === 0) return;
-	if (S.chatHistoryIdx === -1) { S.setChatHistoryDraft(S.chatInput.value); S.setChatHistoryIdx(S.chatHistory.length - 1); }
+	if (S.chatHistoryIdx === -1) { S.setChatHistoryDraft((S.chatInput as HTMLTextAreaElement).value); S.setChatHistoryIdx(S.chatHistory.length - 1); }
 	else if (S.chatHistoryIdx > 0) S.setChatHistoryIdx(S.chatHistoryIdx - 1);
-	S.chatInput.value = S.chatHistory[S.chatHistoryIdx];
+	(S.chatInput as HTMLTextAreaElement).value = S.chatHistory[S.chatHistoryIdx];
 	chatAutoResize();
 }
 
@@ -1145,8 +1145,8 @@ function handleHistoryDown(): void {
 	if (S.chatHistoryIdx === -1) return;
 	if (S.chatHistoryIdx < S.chatHistory.length - 1) {
 		S.setChatHistoryIdx(S.chatHistoryIdx + 1);
-		S.chatInput.value = S.chatHistory[S.chatHistoryIdx];
-	} else { S.setChatHistoryIdx(-1); S.chatInput.value = S.chatHistoryDraft; }
+		(S.chatInput as HTMLTextAreaElement).value = S.chatHistory[S.chatHistoryIdx];
+	} else { S.setChatHistoryIdx(-1); (S.chatInput as HTMLTextAreaElement).value = S.chatHistoryDraft; }
 	chatAutoResize();
 }
 
@@ -1263,15 +1263,16 @@ function bindDeleteAllSessions(closeChatMore: (() => void) | null): void {
 }
 
 function bindChatComposer(): void {
-	S.chatInput.addEventListener("input", () => { chatAutoResize(); slashHandleInput(); });
-	S.chatInput.addEventListener("keydown", (e: KeyboardEvent) => {
+	const chatInput = S.chatInput as HTMLTextAreaElement;
+	chatInput.addEventListener("input", () => { chatAutoResize(); slashHandleInput(); });
+	chatInput.addEventListener("keydown", (e: KeyboardEvent) => {
 		if (slashHandleKeydown(e)) return;
-		if (e.key === "Escape" && S.commandModeEnabled && !S.chatInput.value.trim()) { e.preventDefault(); setCommandMode(false); return; }
+		if (e.key === "Escape" && S.commandModeEnabled && !chatInput.value.trim()) { e.preventDefault(); setCommandMode(false); return; }
 		if (e.key === "Enter" && !e.shiftKey && !(e as any).isComposing) { e.preventDefault(); sendChat(); return; }
-		if (e.key === "ArrowUp" && S.chatInput.selectionStart === 0 && !e.shiftKey) { e.preventDefault(); handleHistoryUp(); return; }
-		if (e.key === "ArrowDown" && S.chatInput.selectionStart === S.chatInput.value.length && !e.shiftKey) { e.preventDefault(); handleHistoryDown(); }
+		if (e.key === "ArrowUp" && chatInput.selectionStart === 0 && !e.shiftKey) { e.preventDefault(); handleHistoryUp(); return; }
+		if (e.key === "ArrowDown" && chatInput.selectionStart === chatInput.value.length && !e.shiftKey) { e.preventDefault(); handleHistoryDown(); }
 	});
-	S.chatSendBtn.addEventListener("click", sendChat);
+	S.chatSendBtn!.addEventListener("click", sendChat);
 }
 
 function initializeChatControls(): void {
@@ -1310,9 +1311,10 @@ function bindContextModals(): { debugModal: HTMLElement | null; fullContextModal
 
 function syncModelComboLabel(): void {
 	if (!(S.models.length > 0 && S.modelComboLabel)) return;
-	const found = S.models.find((m: any) => m.id === S.selectedModelId);
+	const models = S.models as Array<{ id: string; displayName?: string }>;
+	const found = models.find((m) => m.id === S.selectedModelId);
 	if (found) { S.modelComboLabel.textContent = found.displayName || found.id; return; }
-	if (S.models[0]) S.modelComboLabel.textContent = S.models[0].displayName || S.models[0].id;
+	if (models[0]) S.modelComboLabel.textContent = models[0].displayName || models[0].id;
 }
 
 function resolveInitialSessionKey(sessionKeyFromUrl: string | null): string {
@@ -1324,19 +1326,19 @@ function resolveInitialSessionKey(sessionKeyFromUrl: string | null): string {
 
 function startInitialChatSession(sessionKey: string): void {
 	if (!S.connected) return;
-	S.chatSendBtn.disabled = false;
+	(S.chatSendBtn as HTMLButtonElement).disabled = false;
 	switchSession(sessionKey);
 }
 
 function initializeChatMediaDrop(): void {
 	if (window.innerWidth < 768) return;
 	const inputArea = S.chatInput?.closest(".px-4.py-3");
-	initMediaDrop(S.chatMsgBox, inputArea as HTMLElement | null);
+	initMediaDrop(S.chatMsgBox!, inputArea as HTMLElement);
 }
 
 registerPrefix(
-	routes.chats,
-	function initChat(container: HTMLElement, sessionKeyFromUrl: string | null) {
+	routes.chats!,
+	function initChat(container: HTMLElement, sessionKeyFromUrl?: string | null) {
 		container.style.cssText = "position:relative";
 		// Safe: chatPageHTML is a static hardcoded template with no user input.
 		// This is a compile-time constant defined above -- no dynamic or user data.
@@ -1363,13 +1365,13 @@ registerPrefix(
 		S.$("fullContextBtn")?.addEventListener("click", toggleFullContextPanel);
 
 		syncModelComboLabel();
-		const sessionKey = resolveInitialSessionKey(sessionKeyFromUrl);
+		const sessionKey = resolveInitialSessionKey(sessionKeyFromUrl ?? null);
 		startInitialChatSession(sessionKey);
 		bindChatComposer();
-		S.chatMsgBox.addEventListener("copy", handleChatCopy);
+		S.chatMsgBox!.addEventListener("copy", handleChatCopy);
 		initVoiceInput(S.$("micBtn") as HTMLButtonElement | null);
 		initializeChatMediaDrop();
-		S.chatInput.focus();
+		S.chatInput!.focus();
 	},
 	function teardownChat() {
 		teardownVoiceInput(); teardownMediaDrop(); unbindReasoningToggle(); unbindNodeEvents(); slashHideMenu();

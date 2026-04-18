@@ -3,7 +3,7 @@
 
 /// <reference lib="webworker" />
 
-declare const self: ServiceWorkerGlobalScope;
+const sw = self as unknown as ServiceWorkerGlobalScope;
 
 const CACHE_NAME = "moltis-v2";
 const STATIC_ASSETS: string[] = [
@@ -19,18 +19,18 @@ const STATIC_ASSETS: string[] = [
 ];
 
 // Install event - cache static assets
-self.addEventListener("install", (event: ExtendableEvent) => {
+sw.addEventListener("install", (event: ExtendableEvent) => {
 	event.waitUntil(
 		caches.open(CACHE_NAME).then((cache) => {
 			return cache.addAll(STATIC_ASSETS);
 		}),
 	);
 	// Activate immediately
-	self.skipWaiting();
+	sw.skipWaiting();
 });
 
 // Activate event - clean up old caches
-self.addEventListener("activate", (event: ExtendableEvent) => {
+sw.addEventListener("activate", (event: ExtendableEvent) => {
 	event.waitUntil(
 		caches.keys().then((cacheNames) => {
 			return Promise.all(
@@ -41,11 +41,11 @@ self.addEventListener("activate", (event: ExtendableEvent) => {
 		}),
 	);
 	// Take control of all pages immediately
-	self.clients.claim();
+	sw.clients.claim();
 });
 
 // Fetch event - network first for API, cache first for assets
-self.addEventListener("fetch", (event: FetchEvent) => {
+sw.addEventListener("fetch", (event: FetchEvent) => {
 	const url = new URL(event.request.url);
 
 	// Skip WebSocket requests
@@ -122,7 +122,7 @@ self.addEventListener("fetch", (event: FetchEvent) => {
 });
 
 // Push notification event
-self.addEventListener("push", (event: PushEvent) => {
+sw.addEventListener("push", (event: PushEvent) => {
 	let data: Record<string, unknown> = {};
 	try {
 		data = event.data ? event.data.json() : {};
@@ -130,7 +130,7 @@ self.addEventListener("push", (event: PushEvent) => {
 		data = { body: event.data ? event.data.text() : "New message from moltis" };
 	}
 
-	const options: NotificationOptions = {
+	const options: NotificationOptions & { actions?: Array<{ action: string; title: string }>; vibrate?: number[] } = {
 		body: (data.body as string) || "New response available",
 		icon: "/assets/icons/icon-192.png",
 		badge: "/assets/icons/icon-72.png",
@@ -148,12 +148,12 @@ self.addEventListener("push", (event: PushEvent) => {
 	};
 
 	event.waitUntil(
-		self.registration.showNotification((data.title as string) || "moltis", options),
+		sw.registration.showNotification((data.title as string) || "moltis", options),
 	);
 });
 
 // Notification click event
-self.addEventListener("notificationclick", (event: NotificationEvent) => {
+sw.addEventListener("notificationclick", (event: NotificationEvent) => {
 	event.notification.close();
 
 	if (event.action === "dismiss") {
@@ -163,7 +163,7 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
 	const urlToOpen = (event.notification.data?.url as string) || "/chats";
 
 	event.waitUntil(
-		self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+		sw.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
 			// Try to focus an existing window
 			for (const client of clientList) {
 				if (client.url.includes(self.location.origin) && "focus" in client) {
@@ -177,14 +177,14 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
 				}
 			}
 			// No existing window, open a new one
-			return self.clients.openWindow(urlToOpen);
+			return sw.clients.openWindow(urlToOpen);
 		}),
 	);
 });
 
 // Handle messages from the main app
-self.addEventListener("message", (event: ExtendableMessageEvent) => {
+sw.addEventListener("message", (event: ExtendableMessageEvent) => {
 	if (event.data && event.data.type === "SKIP_WAITING") {
-		self.skipWaiting();
+		sw.skipWaiting();
 	}
 });

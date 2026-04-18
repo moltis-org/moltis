@@ -20,7 +20,8 @@ export function setAll(arr: ProjectInfo[]): void {
 
 /** Fetch projects from the server via RPC. */
 export function fetch(): Promise<void> {
-	return sendRpc("projects.list", {}).then((res: RpcResponse<ProjectInfo[]>) => {
+	return sendRpc("projects.list", {}).then((r) => {
+		const res = r as RpcResponse<ProjectInfo[]>;
 		if (!res?.ok) return;
 		setAll(res.payload || []);
 	});

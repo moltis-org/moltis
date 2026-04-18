@@ -8,7 +8,7 @@ interface ErrorCardData {
 	title: string;
 	detail?: string;
 	provider?: string;
-	resetsAt?: number;
+	resetsAt?: number | null;
 }
 
 interface ImageAttachment {
@@ -352,10 +352,10 @@ export function updateCommandInputUI(): void {
 		prompt.setAttribute("aria-hidden", S.commandModeEnabled ? "false" : "true");
 	}
 	if (S.commandModeEnabled) {
-		S.chatInput.placeholder = "Run shell command\u2026";
+		(S.chatInput as HTMLTextAreaElement).placeholder = "Run shell command\u2026";
 		S.chatInput.setAttribute("aria-label", "Command input");
 	} else {
-		S.chatInput.placeholder = "Type a message...";
+		(S.chatInput as HTMLTextAreaElement).placeholder = "Type a message...";
 		S.chatInput.setAttribute("aria-label", "Chat input");
 	}
 	updateTokenBar();

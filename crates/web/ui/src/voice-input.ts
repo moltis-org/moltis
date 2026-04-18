@@ -267,9 +267,9 @@ function sendTranscribedMessage(text: string, audioFilename: string | null): voi
 	bumpSessionCount(S.activeSessionKey, 1);
 	seedSessionPreviewFromUserText(S.activeSessionKey, text);
 	setSessionReplying(S.activeSessionKey, true);
-	sendRpc("chat.send", chatParams).then((sendRes: Record<string, unknown>) => {
+	sendRpc("chat.send", chatParams).then((sendRes) => {
 		if (sendRes && !sendRes.ok && sendRes.error) {
-			chatAddMsg("error", (sendRes.error as Record<string, unknown>).message as string || "Request failed");
+			chatAddMsg("error", sendRes.error?.message || "Request failed");
 		}
 	});
 }

@@ -25,7 +25,8 @@ export function setAll(arr: NodeInfo[]): void {
 
 /** Fetch connected nodes from the server via RPC. */
 export function fetch(): Promise<void> {
-	return sendRpc("node.list", {}).then((res: RpcResponse<NodeInfo[]>) => {
+	return sendRpc("node.list", {}).then((r) => {
+		const res = r as RpcResponse<NodeInfo[]>;
 		if (!res?.ok) return;
 		setAll(res.payload || []);
 	});

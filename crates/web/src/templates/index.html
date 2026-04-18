@@ -38,23 +38,6 @@
 <link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
 <meta name="build-ts" content="{{ build_ts }}">
 <script nonce="{{ nonce }}">window.__MOLTIS__={{ gon_json|safe }};</script>
-<script nonce="{{ nonce }}" type="importmap">
-{
-  "imports": {
-    "preact": "{{ asset_prefix }}js/vendor/preact.mjs",
-    "preact/hooks": "{{ asset_prefix }}js/vendor/preact-hooks.mjs",
-    "@preact/signals": "{{ asset_prefix }}js/vendor/preact-signals.mjs",
-    "htm/preact": "{{ asset_prefix }}js/vendor/htm-preact.mjs",
-    "luxon": "{{ asset_prefix }}js/vendor/luxon.mjs",
-    "uplot": "{{ asset_prefix }}js/vendor/uplot.mjs",
-    "pretty-bytes": "{{ asset_prefix }}js/vendor/pretty-bytes.mjs",
-    "@xterm/xterm": "{{ asset_prefix }}js/vendor/xterm.mjs",
-    "@xterm/addon-fit": "{{ asset_prefix }}js/vendor/xterm-addon-fit.mjs",
-    "i18next": "{{ asset_prefix }}js/vendor/i18next.mjs",
-    "shiki": "{{ shiki_url }}"
-  }
-}
-</script>
 <link rel="stylesheet" href="{{ asset_prefix }}css/base.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/layout.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/chat.css">
@@ -63,45 +46,7 @@
 <link rel="stylesheet" href="{{ asset_prefix }}css/vendor/xterm.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/uplot.css">
 <link rel="stylesheet" href="{{ asset_prefix }}style.css">
-<link rel="modulepreload" href="{{ asset_prefix }}js/app.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/pwa.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/pwa-install.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/mobile.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/state.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/theme.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/helpers.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/events.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/router.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/websocket.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/sessions.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/session-search.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/models.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/projects.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/project-combo.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/providers.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/chat-ui.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/icons.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/sandbox.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/nav-counts.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/logs-alert.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-chat.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-crons.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-projects.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-providers.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-channels.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-logs.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-skills.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-mcp.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-hooks.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-settings.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-images.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/emoji-picker.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact-hooks.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact-signals.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/htm-preact.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/luxon.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/time-format.js">
+<link rel="modulepreload" href="{{ asset_prefix }}dist/main.js">
 </head>
 <body>
 
@@ -497,6 +442,6 @@ endpoint = "http://localhost:8000"</code>
   </div>
 </template>
 
-<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/app.js"></script>
+<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}dist/main.js"></script>
 </body>
 </html>

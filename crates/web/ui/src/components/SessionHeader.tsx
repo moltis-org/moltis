@@ -18,6 +18,7 @@ import {
 	switchSession,
 } from "../sessions";
 import { sessionStore } from "../stores/session-store";
+import type { SessionMeta } from "../types";
 import { ComboSelect, confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui";
 
 // ── Types ────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ export function SessionHeader({
 	const isCron = currentKey.startsWith("cron:");
 	const canRename = !(isMain || isCron);
 	const canStop = !isCron && replying;
-	const canArchive = !!session && isArchivableSession(session);
+	const canArchive = !!session && isArchivableSession(session as unknown as SessionMeta);
 	const showArchivedSessions = sessionStore.showArchivedSessions.value;
 	const currentAgentId = session?.agent_id || defaultAgentId || "main";
 	const currentNodeId = session?.node_id || "";
@@ -222,7 +223,7 @@ export function SessionHeader({
 
 	const onKeyDown = useCallback(
 		(e: KeyboardEvent) => {
-			if (e.key === "Enter" && !(e as InputEvent).isComposing) {
+			if (e.key === "Enter" && !e.isComposing) {
 				e.preventDefault();
 				commitRename();
 			}
@@ -263,7 +264,7 @@ export function SessionHeader({
 				optimisticApplied = true;
 			}
 			sendRpc("sessions.delete", request).then((res) => {
-				const err = (res?.error as { message?: string })?.message || (res?.error as string) || "";
+				const err = (res?.error as { message?: string })?.message || (res?.error as unknown as string) || "";
 				if (res && !res.ok && typeof err === "string" && err.indexOf("uncommitted changes") !== -1) {
 					fetchSessions();
 					confirmDialog("Worktree has uncommitted changes. Force delete?").then((yes) => {

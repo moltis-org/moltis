@@ -96,10 +96,10 @@ export function setCachedChannels(v: unknown | null): void {
 export let sandboxInfo: unknown | null = null;
 
 // Logs
-export let logsEventHandler: (() => void) | null = null;
+export let logsEventHandler: ((payload?: unknown) => void) | null = null;
 
 // Network audit
-export let networkAuditEventHandler: (() => void) | null = null;
+export let networkAuditEventHandler: ((payload?: unknown) => void) | null = null;
 export let unseenErrors = 0;
 export let unseenWarns = 0;
 
@@ -298,10 +298,10 @@ export function setRefreshChannelsPage(v: (() => void) | null): void {
 export function setChannelEventUnsub(v: (() => void) | null): void {
 	channelEventUnsub = v;
 }
-export function setLogsEventHandler(v: (() => void) | null): void {
+export function setLogsEventHandler(v: ((payload?: unknown) => void) | null): void {
 	logsEventHandler = v;
 }
-export function setNetworkAuditEventHandler(v: (() => void) | null): void {
+export function setNetworkAuditEventHandler(v: ((payload?: unknown) => void) | null): void {
 	networkAuditEventHandler = v;
 }
 export function setUnseenErrors(v: number): void {

@@ -59,7 +59,7 @@ export function startProviderOAuth(providerName: string): Promise<OAuthStartResu
 	return sendRpc("providers.oauth.start", {
 		provider: providerName,
 		redirectUri: `${window.location.origin}/auth/callback`,
-	}).then(normalizeOAuthStartResponse);
+	}).then((res) => normalizeOAuthStartResponse(res as RpcResponse<OAuthStartPayload>));
 }
 
 export function completeProviderOAuth(providerName: string, callback: string): Promise<RpcResponse> {

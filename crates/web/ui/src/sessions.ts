@@ -43,7 +43,7 @@ import {
 	replaceSessionHistory,
 	upsertSessionHistoryMessage,
 } from "./stores/session-history-cache";
-import { insertSessionInOrder, sessionStore } from "./stores/session-store";
+import { Session, insertSessionInOrder, sessionStore } from "./stores/session-store";
 import { confirmDialog } from "./ui";
 import type { HistoryMessage, RpcResponse, SessionMeta } from "./types";
 
@@ -138,7 +138,7 @@ interface AssistantMsg extends HistoryMessage {
 	requestInputTokens?: number;
 }
 
-interface UserMsg extends HistoryMessage {
+interface UserMsg extends Omit<HistoryMessage, "content"> {
 	content?: string | unknown[];
 	channel?: {
 		channel_type?: string;
@@ -205,7 +205,7 @@ export function fetchSessions(): void {
 
 	void fetchSessionListPage({ limit: refreshLimit })
 		.then((page) => {
-			const merged = mergeSessionListPage(S.sessions, page.sessions, false);
+			const merged = mergeSessionListPage(S.sessions as SessionMeta[], page.sessions, false);
 			applySessionList(merged);
 			applySessionListPaging(page);
 		})
@@ -230,7 +230,7 @@ function toValidCursor(value: unknown): number | null {
 function parseSessionListPayload(payload: unknown): SessionListPage {
 	if (Array.isArray(payload)) {
 		return {
-			sessions: payload,
+			sessions: payload as SessionMeta[],
 			hasMore: false,
 			nextCursor: null,
 			total: payload.length,
@@ -364,7 +364,7 @@ async function loadMoreSessionsPage(): Promise<void> {
 			cursor: sessionListPaging.nextCursor as number,
 			limit: SESSION_LIST_PAGE_LIMIT,
 		});
-		const merged = mergeSessionListPage(S.sessions, page.sessions, true);
+		const merged = mergeSessionListPage(S.sessions as SessionMeta[], page.sessions, true);
 		applySessionList(merged);
 		if (page.sessions.length === 0) {
 			applySessionListPaging({
@@ -430,7 +430,7 @@ export function markSessionLocallyCleared(key: string): void {
 		session.dataVersion.value++;
 	}
 
-	const legacy = S.sessions.find((s: SessionMeta) => s.key === key);
+	const legacy = (S.sessions as SessionMeta[]).find((s) => s.key === key);
 	if (legacy) {
 		legacy.messageCount = 0;
 		legacy.lastSeenMessageCount = 0;
@@ -438,7 +438,7 @@ export function markSessionLocallyCleared(key: string): void {
 		legacy.updatedAt = now;
 		legacy._localUnread = false;
 		legacy._replying = false;
-		const legacyVersion = Number.isInteger(legacy.version) ? legacy.version : 0;
+		const legacyVersion = Number.isInteger(legacy.version) ? (legacy.version as number) : 0;
 		legacy.version = legacyVersion + 1;
 	}
 }
@@ -484,14 +484,14 @@ export function setSessionReplying(key: string, replying: boolean): void {
 	const session = sessionStore.getByKey(key);
 	if (session) session.replying.value = replying;
 	// Dual-write: update plain S.sessions object
-	const entry = S.sessions.find((s: SessionMeta) => s.key === key);
+	const entry = (S.sessions as SessionMeta[]).find((s) => s.key === key);
 	if (entry) entry._replying = replying;
 }
 
 export function setSessionActiveRunId(key: string, runId: string | null): void {
 	const session = sessionStore.getByKey(key);
 	if (session) session.activeRunId.value = runId || null;
-	const entry = S.sessions.find((s: SessionMeta) => s.key === key);
+	const entry = (S.sessions as SessionMeta[]).find((s) => s.key === key);
 	if (entry) (entry as SessionMeta & { _activeRunId?: string | null })._activeRunId = runId || null;
 }
 
@@ -500,7 +500,7 @@ export function setSessionUnread(key: string, unread: boolean): void {
 	const session = sessionStore.getByKey(key);
 	if (session) session.localUnread.value = unread;
 	// Dual-write: update plain S.sessions object
-	const entry = S.sessions.find((s: SessionMeta) => s.key === key);
+	const entry = (S.sessions as SessionMeta[]).find((s) => s.key === key);
 	if (entry) entry._localUnread = unread;
 }
 
@@ -512,7 +512,7 @@ export function bumpSessionCount(key: string, increment: number): void {
 	}
 
 	// Dual-write: update the underlying S.sessions data.
-	const entry = S.sessions.find((s: SessionMeta) => s.key === key);
+	const entry = (S.sessions as SessionMeta[]).find((s) => s.key === key);
 	if (entry) {
 		entry.messageCount = (entry.messageCount || 0) + increment;
 		if (key === S.activeSessionKey) {
@@ -534,7 +534,7 @@ export function seedSessionPreviewFromUserText(key: string, text: string): void 
 		session.dataVersion.value++;
 	}
 
-	const entry = S.sessions.find((s: SessionMeta) => s.key === key);
+	const entry = (S.sessions as SessionMeta[]).find((s) => s.key === key);
 	if (entry && !entry.preview) {
 		entry.preview = preview;
 		entry.updatedAt = now;
@@ -653,7 +653,7 @@ export function removeSessionFromClientState(
 	const nextKey = opts.nextKey || sessionStore.activeSessionKey.value || "main";
 	if (removedActive && nextKey !== sessionStore.activeSessionKey.value) sessionStore.setActive(nextKey);
 	clearSessionHistoryCache(key);
-	S.setSessions(S.sessions.filter((session: SessionMeta) => session.key !== key));
+	S.setSessions((S.sessions as SessionMeta[]).filter((session) => session.key !== key));
 	renderSessionList();
 	if (!removedActive) return true;
 	S.setActiveSessionKey(nextKey);
@@ -751,7 +751,7 @@ function restoreSessionState(entry: SessionMeta, projectId?: string): void {
 	}
 	updateSandboxUI(entry.sandbox_enabled !== false);
 	updateSandboxImageUI(entry.sandbox_image || null);
-	const sandboxRuntimeAvailable = (S.sandboxInfo?.backend || "none") !== "none";
+	const sandboxRuntimeAvailable = ((S.sandboxInfo as Record<string, unknown> | null)?.backend || "none") !== "none";
 	const effectiveSandboxRoute = entry.sandbox_enabled !== false && sandboxRuntimeAvailable;
 	S.setSessionExecMode(effectiveSandboxRoute ? "sandbox" : "host");
 	S.setSessionExecPromptSymbol(effectiveSandboxRoute || S.hostExecIsRoot ? "#" : "$");
@@ -879,10 +879,10 @@ function renderHistoryAssistantMessage(msg: AssistantMsg): HTMLElement | null {
 			footerEl: footer,
 			sessionKey: S.activeSessionKey,
 			text: msg.content || "",
-			runId: msg.run_id || null,
+			runId: msg.run_id || undefined,
 			messageIndex: msg.historyIndex,
-			audioPath: msg.audio || null,
-			audioWarning: null,
+			audioPath: msg.audio || undefined,
+			audioWarning: undefined,
 			forceAction: false,
 			autoplayOnGenerate: true,
 		});
@@ -910,7 +910,7 @@ function renderHistoryToolResult(msg: ToolResultMsg): HTMLElement {
 	if (statusEl) statusEl.remove();
 
 	// Set command summary from arguments.
-	const cmd = toolCallSummary(msg.tool_name, msg.arguments);
+	const cmd = toolCallSummary(msg.tool_name, msg.arguments as Parameters<typeof toolCallSummary>[1]);
 	(card.querySelector("[data-cmd]") as HTMLElement).textContent = ` ${cmd}`;
 
 	// Set success/error CSS class (replace the default "running" class).
@@ -1203,7 +1203,7 @@ function renderWelcomeAgentPicker(
 			container.classList.add("hidden");
 			return;
 		}
-		const parsed = parseAgentsListPayload(res.payload);
+		const parsed = parseAgentsListPayload(res.payload as Parameters<typeof parseAgentsListPayload>[0]);
 		const agents = (parsed.agents || []) as AgentInfo[];
 		const defaultId = (parsed.defaultId || "main") as string;
 		const effectiveActive = activeAgentId || defaultId;
@@ -1319,9 +1319,9 @@ function ensureSessionInClientStore(key: string, entry: SessionMeta, projectId?:
 	const createdSession = sessionStore.upsert(created);
 
 	// Keep state.js mirror in sync for legacy call sites.
-	const inLegacy = S.sessions.some((s: SessionMeta) => s.key === key);
+	const inLegacy = (S.sessions as SessionMeta[]).some((s) => s.key === key);
 	if (!inLegacy) {
-		S.setSessions(insertSessionInOrder(S.sessions, created));
+		S.setSessions(insertSessionInOrder(S.sessions as Session[], new Session(created)));
 	}
 	return createdSession;
 }
@@ -1390,7 +1390,7 @@ function resetSwitchViewState(): void {
 function syncHistoryState(key: string, history: HistoryMessage[], historyTailIndex: number, totalCountHint: number | null): void {
 	const loadedCount = Array.isArray(history) ? history.length : 0;
 	const sessionEntry = sessionStore.getByKey(key);
-	const legacy = S.sessions.find((s: SessionMeta) => s.key === key);
+	const legacy = (S.sessions as SessionMeta[]).find((s) => s.key === key);
 	const existingCount = Number.isInteger(sessionEntry?.messageCount) ? sessionEntry!.messageCount! : 0;
 	const legacyCount = Number.isInteger(legacy?.messageCount) ? legacy!.messageCount! : 0;
 	const hintedCount = Number.isInteger(totalCountHint) ? totalCountHint! : 0;

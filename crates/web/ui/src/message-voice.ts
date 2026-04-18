@@ -7,7 +7,7 @@ async function isTtsEnabled(): Promise<boolean> {
 	if (cachedTtsEnabled !== null) return cachedTtsEnabled;
 	if (!pendingStatus) {
 		pendingStatus = sendRpc("tts.status", {})
-			.then((res: Record<string, unknown>) => {
+			.then((res) => {
 				cachedTtsEnabled = !!(res?.ok && (res.payload as Record<string, unknown> | undefined)?.enabled === true);
 				return cachedTtsEnabled;
 			})
@@ -124,7 +124,7 @@ export async function attachMessageVoiceControl(options: AttachMessageVoiceContr
 
 		actionBtn!.disabled = true;
 		actionBtn!.textContent = "Voicing...";
-		const result: Record<string, unknown> = await sendRpc("sessions.voice.generate", params);
+		const result = await sendRpc("sessions.voice.generate", params) as unknown as Record<string, unknown>;
 		if (!(result?.ok && (result.payload as Record<string, unknown> | undefined)?.audio)) {
 			actionBtn!.disabled = false;
 			actionBtn!.textContent = "Retry voice";

@@ -2,7 +2,7 @@
 
 import { sendRpc } from "./helpers";
 import { t } from "./i18n";
-import { showModelNotice } from "./page-chat";
+import { showModelNotice } from "./pages/ChatPage";
 import * as S from "./state";
 import { modelStore, REASONING_SEP } from "./stores/model-store";
 import type { ModelInfo } from "./types";
@@ -28,7 +28,7 @@ export function fetchModels(): Promise<void> {
 		// If the dropdown is currently open, re-render to reflect updated flags
 		// (for example when a model becomes unsupported via a WS event).
 		if (S.modelDropdown && !S.modelDropdown.classList.contains("hidden")) {
-			const query = S.modelSearchInput ? S.modelSearchInput.value.trim() : "";
+			const query = S.modelSearchInput ? (S.modelSearchInput as HTMLInputElement).value.trim() : "";
 			renderModelList(query);
 		}
 	});
@@ -126,7 +126,10 @@ export function renderModelList(query: string): void {
 		return;
 	}
 	const currentId = modelStore.selectedModelId.value;
-	const lastPreferredIdx = filtered.findLastIndex((m) => m.preferred);
+	let lastPreferredIdx = -1;
+	for (let i = filtered.length - 1; i >= 0; i--) {
+		if (filtered[i].preferred) { lastPreferredIdx = i; break; }
+	}
 	filtered.forEach((m, idx) => {
 		S.modelDropdownList!.appendChild(buildModelItem(m, currentId));
 

@@ -31,8 +31,8 @@ import { t } from "./i18n";
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert";
 import { attachMessageVoiceControl } from "./message-voice";
 import { fetchModels } from "./models";
-import { prefetchChannels } from "./page-channels";
-import { maybeRefreshFullContext, renderCompactCard, sendChat } from "./page-chat";
+import { prefetchChannels } from "./pages/ChannelsPage";
+import { maybeRefreshFullContext, renderCompactCard } from "./pages/ChatPage";
 import { fetchProjects } from "./projects";
 import { currentPage, currentPrefix, mount, navigate } from "./router";
 import {
@@ -230,14 +230,7 @@ interface AuthCredentialsPayload {
 	reason?: string;
 }
 
-interface HelloPayload {
-	type: string;
-	server: {
-		version: string;
-		[key: string]: unknown;
-	};
-	[key: string]: unknown;
-}
+
 
 interface WsFrame {
 	type: string;
@@ -673,7 +666,7 @@ function handleChatChannelUser(p: ChatPayload, isActive: boolean, isChatPage: bo
 		el = chatAddMsg("user", renderMarkdown(cleanText), true);
 	}
 	if (el && p.channel) {
-		appendChannelFooter(el, p.channel);
+		appendChannelFooter(el, p.channel as unknown as Parameters<typeof appendChannelFooter>[1]);
 	}
 }
 
@@ -817,8 +810,8 @@ function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eventSessi
 		text: p.text || "",
 		runId: p.runId,
 		messageIndex: p.messageIndex,
-		audioPath: p.audio || null,
-		audioWarning: p.audioWarning || null,
+		audioPath: p.audio || undefined,
+		audioWarning: p.audioWarning || undefined,
 		forceAction: p.replyMedium === "voice" && !p.audio,
 		autoplayOnGenerate: true,
 	});
@@ -852,9 +845,9 @@ function handleChatFinal(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 				requestOutputTokens: p.requestOutputTokens,
 				requestCacheReadTokens: p.requestCacheReadTokens,
 				requestCacheWriteTokens: p.requestCacheWriteTokens,
-				reasoning: p.reasoning || null,
-				audio: p.audio || null,
-				run_id: p.runId || null,
+				reasoning: p.reasoning || undefined,
+				audio: p.audio || undefined,
+				run_id: p.runId || undefined,
 				created_at: Date.now(),
 			},
 			p.messageIndex,
@@ -1122,7 +1115,7 @@ function handleChatError(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 	removeThinking();
 	clearStaleRunningToolCards();
 	if (p.error?.title) {
-		chatAddErrorCard(localizeStructuredError(p.error));
+		chatAddErrorCard(localizeStructuredError(p.error) as Parameters<typeof chatAddErrorCard>[0]);
 	} else {
 		chatAddErrorMsg(p.message || "unknown");
 	}
@@ -1137,7 +1130,8 @@ function handleChatError(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 				btn.disabled = true;
 				btn.textContent = t("errors:chat.continuing", "Continuing...");
 				(S.chatInput as HTMLInputElement).value = t("errors:chat.continueMessage", "Please continue where you left off.");
-				sendChat();
+				// Trigger send by clicking the chat send button (sendChat is local to ChatPage)
+				(S.chatSendBtn as HTMLButtonElement)?.click();
 			};
 			const body = lastCard.querySelector(".error-body");
 			if (body) body.appendChild(btn);
@@ -1180,9 +1174,9 @@ function cacheAbortedPartial(eventSession: string, p: ChatPayload, abortSession:
 			durationMs: partial?.durationMs || 0,
 			requestInputTokens: partial?.requestInputTokens,
 			requestOutputTokens: partial?.requestOutputTokens,
-			reasoning: partial?.reasoning || null,
-			audio: partial?.audio || null,
-			run_id: partial?.run_id || p.runId || null,
+			reasoning: partial?.reasoning || undefined,
+			audio: partial?.audio || undefined,
+			run_id: partial?.run_id || p.runId || undefined,
 			created_at: partial?.created_at || Date.now(),
 		},
 		p.messageIndex,
@@ -1216,8 +1210,8 @@ function renderAbortedPartialInDom(eventSession: string, p: ChatPayload, partial
 			durationMs: partial?.durationMs || 0,
 			replyMedium: p.replyMedium || "text",
 			text: partialState.partialText,
-			audio: partial?.audio || null,
-			audioWarning: null,
+			audio: partial?.audio || undefined,
+			audioWarning: undefined,
 			runId: p.runId,
 			messageIndex: p.messageIndex,
 			sessionKey: eventSession,
@@ -1356,7 +1350,7 @@ function handleApprovalEvent(payload: ApprovalPayload): void {
 }
 
 function handleLogEntry(payload: LogEntryPayload): void {
-	if (S.logsEventHandler) S.logsEventHandler(payload as never);
+	if (S.logsEventHandler) S.logsEventHandler(payload);
 	if (currentPage !== "/logs") {
 		const ll = (payload.level || "").toUpperCase();
 		if (ll === "ERROR") {
@@ -1616,7 +1610,7 @@ function handleLocationRequest(payload: LocationRequestPayload): void {
 }
 
 function handleNetworkAuditEntry(payload: Record<string, unknown>): void {
-	if (S.networkAuditEventHandler) S.networkAuditEventHandler(payload as never);
+	if (S.networkAuditEventHandler) S.networkAuditEventHandler(payload);
 }
 
 function handleAuthCredentialsChanged(payload: AuthCredentialsPayload): void {
@@ -1633,7 +1627,7 @@ const eventHandlers: Record<string, (payload: Record<string, unknown>, streamMet
 	chat: handleChatEvent as (payload: Record<string, unknown>) => void,
 	error: handleWsError as (payload: Record<string, unknown>) => void,
 	"auth.credentials_changed": handleAuthCredentialsChanged as (payload: Record<string, unknown>) => void,
-	"exec.approval.requested": handleApprovalEvent as (payload: Record<string, unknown>) => void,
+	"exec.approval.requested": handleApprovalEvent as unknown as (payload: Record<string, unknown>) => void,
 	"logs.entry": handleLogEntry as (payload: Record<string, unknown>) => void,
 	"sandbox.prepare": handleSandboxPrepare as (payload: Record<string, unknown>) => void,
 	"sandbox.image.build": handleSandboxImageBuild as (payload: Record<string, unknown>) => void,
@@ -1654,7 +1648,7 @@ function dispatchFrame(frame: WsFrame): void {
 			: null;
 	const listeners = eventListeners[frame.event || ""] || [];
 	listeners.forEach((h) => {
-		h(frame.payload || {}, streamMeta as unknown);
+		h(frame.payload || {});
 	});
 	const handler = eventHandlers[frame.event || ""];
 	if (handler) handler(frame.payload || {}, streamMeta);
