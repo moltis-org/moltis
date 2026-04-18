@@ -11,17 +11,18 @@ How Moltis compares to other open-source AI agent frameworks.
 | | [OpenClaw](https://github.com/openclaw/openclaw) | [PicoClaw](https://github.com/sipeed/picoclaw) | [NanoClaw](https://github.com/qwibitai/nanoclaw) | [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | **Moltis** |
 |---|---|---|---|---|---|
 | Language | TypeScript | Go | TypeScript | Rust | **Rust** |
-| Agent loop | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~5K LoC** |
-| Full codebase | — | — | — | 1,000+ tests | **~200K LoC** (3,100+ tests) |
-| Runtime | Node.js + npm | Single binary | Node.js | Single binary (3.4 MB) | **Single binary (44 MB)** |
+| Agent loop | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~4K LoC** |
+| Full codebase | — | — | — | 1,000+ tests | **~300K LoC** (3,400+ tests) |
+| Runtime | Node.js + npm | Single binary | Node.js | Single binary (3.4 MB) | **Single binary** |
 | Sandbox | App-level | — | Docker | Docker | **Docker + Apple Container** |
 | Memory safety | GC | GC | GC | Ownership | **Ownership, zero `unsafe`\*** |
 | Auth | Basic | API keys | None | Token + OAuth | **Password + Passkey + API keys** |
-| Voice I/O | Plugin | — | — | — | **Built-in (15+ providers)** |
+| Voice I/O | Plugin | — | — | — | **Built-in (5 TTS + 9 STT)** |
 | MCP | Yes | — | — | — | **Yes (stdio + HTTP/SSE)** |
-| Hooks | Yes (limited) | — | — | — | **15 event types** |
+| Hooks | Yes (limited) | — | — | — | **17 event types** |
 | Skills | Yes (store) | Yes | Yes | Yes | **Yes (+ OpenClaw Store)** |
 | Memory/RAG | Plugin | — | Per-group | SQLite + FTS | **SQLite + FTS + vector** |
+| Channels | — | — | — | 7 | **7 (Telegram, Discord, Slack, Teams, WhatsApp, Matrix, Nostr)** |
 
 \* `unsafe` is denied workspace-wide in Moltis. The only exceptions are opt-in
 FFI wrappers behind the `local-embeddings` feature flag, not part of the core.
@@ -60,17 +61,17 @@ FTS search. The focus is on minimal footprint and broad platform support.
 ### Moltis — Auditable persistent agent server
 
 Moltis prioritizes auditability, durable agent workflows, and defense in depth. The core agent engine
-(runner + provider model) is ~5K lines; the core (excluding the optional web UI)
-is ~196K lines across 46 modular crates, each independently auditable. Key
+(runner + provider model) is ~4K lines; the core (excluding the optional web UI)
+is ~300K lines across 57 modular crates, each independently auditable. Key
 differences from ZeroClaw:
 
-- **Larger binary (44 MB)** in exchange for built-in voice I/O, browser
+- **Larger binary** in exchange for built-in voice I/O, browser
   automation, web UI, and MCP support
 - **Apple Container support** in addition to Docker
 - **WebAuthn passkey authentication** — not just tokens
 - **Cross-session recall tools** for finding earlier work without dumping raw history
 - **Automatic checkpoints** before built-in skill and memory mutations
-- **15 lifecycle hook events** with circuit breaker and dry-run mode
+- **17 lifecycle hook events** with circuit breaker and dry-run mode
 - **Built-in web UI** with real-time streaming, settings management, and
   session branching
 
@@ -91,7 +92,7 @@ differences from ZeroClaw:
 
 | Metric | OpenClaw | PicoClaw | ZeroClaw | **Moltis** |
 |--------|----------|----------|----------|------------|
-| Binary / dist size | ~28 MB (node_modules) | <10 MB | 3.4 MB | 44 MB |
+| Binary / dist size | ~28 MB (node_modules) | <10 MB | 3.4 MB | ~40 MB |
 | Cold start | >30s | <1s | <10ms | ~1s |
 | RAM (idle) | >100 MB | <10 MB | <5 MB | ~30 MB |
 | Min hardware | Modern desktop | $10 SBC (RISC-V) | $10 SBC | Raspberry Pi 4+ |
@@ -117,12 +118,13 @@ startup, and broad channel support without a web UI.
 **Choose Moltis if** you want:
 - A single auditable Rust binary with built-in web UI
 - A persistent agent with cross-session recall and restoreable built-in edits
-- Voice I/O with 15+ providers (8 TTS + 7 STT)
+- Voice I/O with 5 TTS + 9 STT providers
 - MCP server support (stdio + HTTP/SSE)
 - WebAuthn passkey authentication
 - Apple Container sandbox support (macOS native)
-- 15 lifecycle hook events with circuit breaker
+- 17 lifecycle hook events with circuit breaker
 - Embeddings-powered long-term memory with hybrid search
+- 7 channel integrations (Telegram, Discord, Slack, Teams, WhatsApp, Matrix, Nostr)
 - Cron scheduling, browser automation, and Tailscale integration
 
 ## Links
