@@ -70,11 +70,18 @@ TypeScript/TSX source in `crates/web/ui/src/`, built with Vite to `crates/web/sr
 CSS and static assets in `crates/web/src/assets/`. Release mode embeds via `include_dir!`.
 The `dist/` output is committed so `cargo build` works without Node.js.
 
+- **File size limit: 1,500 lines** (same rule as Rust). Split large files into modules by domain.
+  - Pages: extract sections/modals into `pages/sections/`, `pages/channels/`, `pages/chat/`, etc.
+  - Utilities: extract sub-modules into sibling directories (`providers/`, `sessions/`, `ws/`).
+  - Keep shared signals, types, and re-exports in the main file; move logic into sub-modules.
 - **Always** run `biome check --write` when TS/TSX files change.
 - **Rebuild after changes**: `cd crates/web/ui && npm run build` (Vite) and commit `dist/`.
 - All UI code is **TypeScript** with **JSX** (Preact). No HTM tagged templates.
 - Add typed Props interfaces for all Preact components.
 - Use `@preact/signals` with generic type parameters: `signal<string[]>([])`.
+- Prefer typed interfaces over `Record<string, unknown>` — define concrete shapes where property access is known.
+- Use `targetValue(e)` / `targetChecked(e)` from `typed-events.ts` for form event handlers.
+- No `any` types — use `unknown` with type guards or specific interfaces.
 - **Always use Tailwind classes** instead of inline `style="..."`.
 - Reuse CSS classes from `components.css`: `provider-btn`, `provider-btn-secondary`, `provider-btn-danger`.
 - Match button heights/text sizes when elements sit together.

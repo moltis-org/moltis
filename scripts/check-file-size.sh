@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail if any Rust source file exceeds MAX_LINES (unless allowlisted).
+# Fail if any Rust or TypeScript source file exceeds MAX_LINES (unless allowlisted).
 # Allowlisted files are tracked for decomposition — remove entries as they're split.
 
 set -euo pipefail
@@ -30,9 +30,11 @@ while IFS=$'\t' read -r lines file; do
   echo "FAIL: $rel ($lines lines > $MAX_LINES)"
   violations=$((violations + 1))
 done < <(
-  find . -name '*.rs' \
+  find . \( -name '*.rs' -o -name '*.ts' -o -name '*.tsx' \) \
     -not -path './target/*' \
     -not -path './.claude/*' \
+    -not -path '*/node_modules/*' \
+    -not -path '*/e2e/*' \
     -print0 \
   | xargs -0 wc -l \
   | awk -v max="$MAX_LINES" '$2 != "total" && $1 > max { printf "%d\t%s\n", $1, $2 }' \
@@ -46,4 +48,4 @@ if [[ $violations -gt 0 ]]; then
   exit 1
 fi
 
-echo "All Rust files within $MAX_LINES-line limit ($(allowlisted_count) allowlisted)."
+echo "All Rust and TypeScript files within $MAX_LINES-line limit ($(allowlisted_count) allowlisted)."
