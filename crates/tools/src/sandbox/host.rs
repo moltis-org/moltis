@@ -3,7 +3,10 @@
 use tracing::{debug, info, warn};
 
 use {
-    super::containers::{container_exec_shell_args, is_cli_available},
+    super::{
+        containers::{container_exec_shell_args, is_cli_available},
+        types::tail_lines,
+    },
     crate::error::Result,
 };
 
@@ -325,17 +328,4 @@ pub async fn provision_host_packages(packages: &[String]) -> Result<Option<HostP
             }))
         },
     }
-}
-
-/// Return the last `n` lines of `text`, or the full text if it has fewer lines.
-fn tail_lines(text: &str, n: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.len() <= n {
-        return text.to_string();
-    }
-    format!(
-        "... [{} lines truncated]\n{}",
-        lines.len() - n,
-        lines[lines.len() - n..].join("\n")
-    )
 }

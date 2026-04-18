@@ -25,6 +25,19 @@ pub(crate) fn truncate_output_for_display(output: &mut String, max_output_bytes:
     output.push_str("\n... [output truncated]");
 }
 
+/// Return the last `n` lines of `text`, or the full text if it has fewer lines.
+pub(crate) fn tail_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= n {
+        return text.to_string();
+    }
+    format!(
+        "... [{} lines truncated]\n{}",
+        lines.len() - n,
+        lines[lines.len() - n..].join("\n")
+    )
+}
+
 /// Default container image used when none is configured.
 pub const DEFAULT_SANDBOX_IMAGE: &str = "ubuntu:25.10";
 

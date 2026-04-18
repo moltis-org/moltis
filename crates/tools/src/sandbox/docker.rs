@@ -20,7 +20,7 @@ use {
         },
         types::{
             BuildImageResult, DEFAULT_SANDBOX_IMAGE, NetworkPolicy, SANDBOX_HOME_DIR, Sandbox,
-            SandboxConfig, SandboxId, WorkspaceMount, canonical_sandbox_packages,
+            SandboxConfig, SandboxId, WorkspaceMount, canonical_sandbox_packages, tail_lines,
             truncate_output_for_display,
         },
     },
@@ -56,7 +56,7 @@ pub struct DockerSandbox {
     backend_label: &'static str,
     /// Container names that have already been provisioned in this process.
     /// Prevents repeated `apt-get install` runs on the same container.
-    provisioned: Mutex<HashSet<String>>,
+    pub(crate) provisioned: Mutex<HashSet<String>>,
 }
 
 impl DockerSandbox {
@@ -377,15 +377,25 @@ impl Sandbox for DockerSandbox {
         // Skip provisioning if the image is a pre-built instance sandbox image
         // (packages are already baked in — including /home/sandbox from the Dockerfile).
         if !is_prebuilt {
-            let already_provisioned = self.provisioned.lock().await.contains(&name);
-            if already_provisioned {
+            let needs_provisioning = {
+                let mut provisioned = self.provisioned.lock().await;
+                if provisioned.contains(&name) {
+                    false
+                } else {
+                    provisioned.insert(name.clone());
+                    true
+                }
+            };
+            if needs_provisioning {
+                if let Err(e) = provision_packages(self.cli, &name, &self.config.packages).await {
+                    self.provisioned.lock().await.remove(&name);
+                    return Err(e);
+                }
+            } else {
                 debug!(
                     container = %name,
                     "skipping provisioning, already completed for container"
                 );
-            } else {
-                provision_packages(self.cli, &name, &self.config.packages).await?;
-                self.provisioned.lock().await.insert(name);
             }
         }
 
@@ -683,17 +693,4 @@ pub(crate) fn podman_resolve_host_ip() -> Option<String> {
     } else {
         Some(gateway)
     }
-}
-
-/// Return the last `n` lines of `text`, or the full text if it has fewer lines.
-fn tail_lines(text: &str, n: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.len() <= n {
-        return text.to_string();
-    }
-    format!(
-        "... [{} lines truncated]\n{}",
-        lines.len() - n,
-        lines[lines.len() - n..].join("\n")
-    )
 }

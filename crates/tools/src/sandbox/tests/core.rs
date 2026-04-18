@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use super::*;
+use {super::*, crate::sandbox::types::tail_lines};
 
 #[test]
 fn test_sandbox_mode_display() {
@@ -551,4 +551,78 @@ async fn test_docker_list_files_remaps_mounted_workspace_paths() {
         guest_root.join("todo.txt").display().to_string(),
     ]);
     assert!(!files.truncated);
+}
+
+#[tokio::test]
+async fn test_provisioning_guard_skips_second_call() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let name = "moltis-sandbox-test-guard";
+
+    // First insertion succeeds.
+    {
+        let mut guard = docker.provisioned.lock().await;
+        assert!(!guard.contains(name));
+        guard.insert(name.to_string());
+    }
+
+    // Second check shows already provisioned.
+    {
+        let guard = docker.provisioned.lock().await;
+        assert!(guard.contains(name));
+    }
+}
+
+#[tokio::test]
+async fn test_provisioning_guard_cleared_on_cleanup_entry() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let name = "moltis-sandbox-test-cleanup";
+
+    // Mark as provisioned.
+    docker.provisioned.lock().await.insert(name.to_string());
+    assert!(docker.provisioned.lock().await.contains(name));
+
+    // Simulate cleanup clearing the entry.
+    docker.provisioned.lock().await.remove(name);
+    assert!(!docker.provisioned.lock().await.contains(name));
+}
+
+#[tokio::test]
+async fn test_provisioning_guard_independent_containers() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+
+    docker
+        .provisioned
+        .lock()
+        .await
+        .insert("container-a".to_string());
+
+    let guard = docker.provisioned.lock().await;
+    assert!(guard.contains("container-a"));
+    assert!(!guard.contains("container-b"));
+}
+
+#[test]
+fn test_tail_lines_fewer_than_n() {
+    let text = "line1\nline2\nline3";
+    assert_eq!(tail_lines(text, 5), text);
+}
+
+#[test]
+fn test_tail_lines_exact_n() {
+    let text = "line1\nline2\nline3";
+    assert_eq!(tail_lines(text, 3), text);
+}
+
+#[test]
+fn test_tail_lines_more_than_n() {
+    let text = "line1\nline2\nline3\nline4\nline5";
+    let result = tail_lines(text, 2);
+    assert!(result.starts_with("... [3 lines truncated]"));
+    assert!(result.contains("line4\nline5"));
+    assert!(!result.contains("line3"));
+}
+
+#[test]
+fn test_tail_lines_empty() {
+    assert_eq!(tail_lines("", 5), "");
 }
