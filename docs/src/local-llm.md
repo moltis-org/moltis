@@ -46,9 +46,8 @@ Models are organized by memory tiers based on your system RAM:
 | Tier | RAM | Recommended Models |
 |------|-----|-------------------|
 | **Tiny** | 4GB | Qwen 2.5 Coder 1.5B, Llama 3.2 1B |
-| **Small** | 8GB | Qwen 2.5 Coder 3B, Llama 3.2 3B |
-| **Medium** | 16GB | Qwen 2.5 Coder 7B, Llama 3.1 8B |
-| **Large** | 32GB+ | Qwen 2.5 Coder 14B, DeepSeek Coder V2 Lite |
+| **Small** | 8GB | Qwen 2.5 Coder 7B, Llama 3.2 3B, DeepSeek Coder 6.7B |
+| **Medium** | 12–16GB | Qwen 2.5 Coder 14B, Llama 3.1 8B, Mistral 7B, Codestral 22B |
 
 Moltis automatically detects your system memory and suggests appropriate models
 in the UI.
@@ -193,6 +192,7 @@ detects the correct template for registered models:
 
 - **ChatML** — Qwen, many instruction-tuned models
 - **Llama 3** — Meta's Llama 3.x family
+- **Mistral** — Mistral, Codestral models
 - **DeepSeek** — DeepSeek Coder models
 
 For custom models, the template is auto-detected from the model metadata when
