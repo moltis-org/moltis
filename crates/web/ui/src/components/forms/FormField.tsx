@@ -186,19 +186,14 @@ interface CheckboxFieldProps {
 	className?: string;
 }
 
-export function CheckboxField({
-	label,
-	checked,
-	onChange,
-	id,
-	help,
-	disabled,
-	className,
-}: CheckboxFieldProps): VNode {
+export function CheckboxField({ label, checked, onChange, id, help, disabled, className }: CheckboxFieldProps): VNode {
 	const fieldId = id ?? `field-${label.toLowerCase().replace(/\s+/g, "-")}`;
 
 	return (
-		<label htmlFor={fieldId} className={className ?? "flex items-center gap-2 text-sm text-[var(--text)] cursor-pointer mb-2"}>
+		<label
+			htmlFor={fieldId}
+			className={className ?? "flex items-center gap-2 text-sm text-[var(--text)] cursor-pointer mb-2"}
+		>
 			<input
 				id={fieldId}
 				type="checkbox"

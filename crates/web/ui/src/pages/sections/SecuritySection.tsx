@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { DangerZone, EmptyState, ListItem, Loading } from "../../components/forms";
 import { refresh as refreshGon } from "../../gon";
 import { detectPasskeyName } from "../../passkey-detect";
 import { targetValue } from "../../typed-events";
@@ -439,7 +440,7 @@ export function SecuritySection(): VNode {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
-				<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+				<Loading />
 			</div>
 		);
 	}
@@ -656,14 +657,14 @@ export function SecuritySection(): VNode {
 					</div>
 				) : null}
 				{pkLoading ? (
-					<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+					<Loading />
 				) : (
 					<>
 						{passkeys.length > 0 ? (
 							<div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
-								{passkeys.map((pk) => (
-									<div className="provider-item" style={{ marginBottom: 0 }} key={pk.id}>
-										{editingPk === pk.id ? (
+								{passkeys.map((pk) =>
+									editingPk === pk.id ? (
+										<div className="provider-item" style={{ marginBottom: 0 }} key={pk.id}>
 											<form
 												style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1 }}
 												onSubmit={(e: Event) => {
@@ -689,39 +690,34 @@ export function SecuritySection(): VNode {
 													Cancel
 												</button>
 											</form>
-										) : (
-											<>
-												<div style={{ flex: 1, minWidth: 0 }}>
-													<div className="provider-item-name" style={{ fontSize: ".85rem" }}>
-														{pk.name}
-													</div>
-													<div style={{ fontSize: ".7rem", color: "var(--muted)", marginTop: "2px" }}>
-														<time dateTime={pk.created_at}>{pk.created_at}</time>
-													</div>
-												</div>
-												<div style={{ display: "flex", gap: "4px" }}>
-													<button
-														className="provider-btn provider-btn-sm provider-btn-secondary"
-														onClick={() => onStartRename(pk.id, pk.name)}
-													>
-														Rename
-													</button>
-													<button
-														className="provider-btn provider-btn-sm provider-btn-danger"
-														onClick={() => onRemovePasskey(pk.id)}
-													>
-														Remove
-													</button>
-												</div>
-											</>
-										)}
-									</div>
-								))}
+										</div>
+									) : (
+										<ListItem
+											key={pk.id}
+											name={pk.name}
+											meta={<time dateTime={pk.created_at}>{pk.created_at}</time>}
+											actions={[
+												<button
+													key="rename"
+													className="provider-btn provider-btn-sm provider-btn-secondary"
+													onClick={() => onStartRename(pk.id, pk.name)}
+												>
+													Rename
+												</button>,
+												<button
+													key="remove"
+													className="provider-btn provider-btn-sm provider-btn-danger"
+													onClick={() => onRemovePasskey(pk.id)}
+												>
+													Remove
+												</button>,
+											]}
+										/>
+									),
+								)}
 							</div>
 						) : (
-							<div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0 12px" }}>
-								No passkeys registered.
-							</div>
+							<EmptyState message="No passkeys registered." />
 						)}
 						<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
 							<input
@@ -757,7 +753,7 @@ export function SecuritySection(): VNode {
 					<code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>connect</code> handshake.
 				</p>
 				{akLoading ? (
-					<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+					<Loading />
 				) : (
 					<>
 						{akNew ? (
@@ -788,21 +784,11 @@ export function SecuritySection(): VNode {
 						{apiKeys.length > 0 ? (
 							<div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
 								{apiKeys.map((ak) => (
-									<div className="provider-item" style={{ marginBottom: 0 }} key={ak.id}>
-										<div style={{ flex: 1, minWidth: 0 }}>
-											<div className="provider-item-name" style={{ fontSize: ".85rem" }}>
-												{ak.label}
-											</div>
-											<div
-												style={{
-													fontSize: ".7rem",
-													color: "var(--muted)",
-													marginTop: "2px",
-													display: "flex",
-													gap: "12px",
-													flexWrap: "wrap",
-												}}
-											>
+									<ListItem
+										key={ak.id}
+										name={ak.label}
+										meta={
+											<span style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
 												<span style={{ fontFamily: "var(--font-mono)" }}>{ak.key_prefix}...</span>
 												<span>
 													<time dateTime={ak.created_at}>{ak.created_at}</time>
@@ -812,18 +798,18 @@ export function SecuritySection(): VNode {
 												) : (
 													<span style={{ color: "var(--accent)" }}>Full access</span>
 												)}
-											</div>
-										</div>
-										<button className="provider-btn provider-btn-danger" onClick={() => onRevokeApiKey(ak.id)}>
-											Revoke
-										</button>
-									</div>
+											</span>
+										}
+										actions={
+											<button className="provider-btn provider-btn-danger" onClick={() => onRevokeApiKey(ak.id)}>
+												Revoke
+											</button>
+										}
+									/>
 								))}
 							</div>
 						) : (
-							<div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0 12px" }}>
-								No API keys.
-							</div>
+							<EmptyState message="No API keys." />
 						)}
 						<div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
 							<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -909,10 +895,7 @@ export function SecuritySection(): VNode {
 
 			{/* Danger zone (only when auth has been set up) */}
 			{setupComplete ? (
-				<div style={{ maxWidth: "600px", marginTop: "8px", borderTop: "1px solid var(--error)", paddingTop: "16px" }}>
-					<h3 className="text-sm font-medium" style={{ color: "var(--error)", marginBottom: "8px" }}>
-						Danger Zone
-					</h3>
+				<DangerZone>
 					<div
 						style={{
 							padding: "12px 16px",
@@ -964,7 +947,7 @@ export function SecuritySection(): VNode {
 							</button>
 						)}
 					</div>
-				</div>
+				</DangerZone>
 			) : (
 				""
 			)}

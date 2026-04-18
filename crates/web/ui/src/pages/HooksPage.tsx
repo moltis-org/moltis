@@ -4,6 +4,7 @@ import { signal, useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { Loading } from "../components/forms";
 import { onEvent } from "../events";
 import { sendRpc } from "../helpers";
 import { updateNavCount } from "../nav-counts";
@@ -416,7 +417,7 @@ function HooksPageComponent(): VNode {
 				</div>
 
 				{loading.value && hooks.value.length === 0 ? (
-					<div className="p-6 text-center text-[var(--muted)] text-sm">Loading hooks{"\u2026"}</div>
+					<Loading message="Loading hooks..." className="p-6 text-center text-[var(--muted)] text-sm" />
 				) : null}
 			</div>
 			<Toasts />

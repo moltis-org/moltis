@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { Badge, EmptyState, Loading } from "../../components/forms";
 import * as gon from "../../gon";
 import { localizedApiErrorMessage } from "../../helpers";
 import { targetChecked, targetValue } from "../../typed-events";
@@ -489,9 +490,9 @@ export function SshSection(): VNode {
 
 					<div className="mt-4 flex flex-col gap-2">
 						{loadingSsh ? (
-							<div className="text-xs text-[var(--muted)]">Loading keys{"\u2026"}</div>
+							<Loading message="Loading keys..." />
 						) : keys.length === 0 ? (
-							<div className="text-xs text-[var(--muted)]">No managed SSH keys yet.</div>
+							<EmptyState message="No managed SSH keys yet." />
 						) : (
 							keys.map((entry) => (
 								<div className="provider-item items-start gap-4" key={entry.id}>
@@ -630,23 +631,21 @@ export function SshSection(): VNode {
 
 					<div className="flex flex-col gap-2">
 						{loadingSsh ? (
-							<div className="text-xs text-[var(--muted)]">Loading targets{"\u2026"}</div>
+							<Loading message="Loading targets..." />
 						) : targets.length === 0 ? (
-							<div className="text-xs text-[var(--muted)]">No SSH targets configured.</div>
+							<EmptyState message="No SSH targets configured." />
 						) : (
 							targets.map((entry) => (
 								<div className="provider-item" key={entry.id}>
 									<div className="flex-1 min-w-0">
 										<div className="provider-item-name flex items-center gap-2 flex-wrap">
 											<span>{entry.label}</span>
-											{entry.is_default ? <span className="provider-item-badge configured">Default</span> : null}
-											<span className="provider-item-badge muted">
-												{entry.auth_mode === "managed" ? "Managed key" : "System SSH"}
-											</span>
+											{entry.is_default ? <Badge label="Default" variant="configured" /> : null}
+											<Badge label={entry.auth_mode === "managed" ? "Managed key" : "System SSH"} />
 											{entry.known_host ? (
-												<span className="provider-item-badge configured">Host pinned</span>
+												<Badge label="Host pinned" variant="configured" />
 											) : (
-												<span className="provider-item-badge warning">Uses global known_hosts</span>
+												<Badge label="Uses global known_hosts" variant="warning" />
 											)}
 										</div>
 										<div className="text-xs text-[var(--muted)] break-all">

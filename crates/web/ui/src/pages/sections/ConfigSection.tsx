@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { Loading } from "../../components/forms";
 import { sendRpc } from "../../helpers";
 import { connected } from "../../signals";
 import { targetChecked, targetValue } from "../../typed-events";
@@ -88,7 +89,7 @@ export function GraphqlSection(): VNode {
 	if (!connected.value) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<div className="text-xs text-[var(--muted)]">Connecting{"\u2026"}</div>
+				<Loading message="Connecting..." />
 			</div>
 		);
 	}
@@ -96,7 +97,7 @@ export function GraphqlSection(): VNode {
 	if (loadingConfig) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<div className="text-xs text-[var(--muted)]">Loading...</div>
+				<Loading />
 			</div>
 		);
 	}
@@ -405,7 +406,7 @@ export function ConfigSection(): VNode {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
-				<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+				<Loading />
 			</div>
 		);
 	}

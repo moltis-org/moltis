@@ -2,7 +2,16 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { SectionHeading, StatusMessage, SubHeading, useSaveState } from "../../components/forms";
+import {
+	Badge,
+	EmptyState,
+	ListItem,
+	Loading,
+	SectionHeading,
+	StatusMessage,
+	SubHeading,
+	useSaveState,
+} from "../../components/forms";
 import * as gon from "../../gon";
 import { localizedApiErrorMessage } from "../../helpers";
 import { targetValue } from "../../typed-events";
@@ -162,16 +171,16 @@ export function EnvironmentSection(): VNode {
 			) : null}
 
 			{envLoading ? (
-				<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+				<Loading />
 			) : (
 				<>
 					{/* Existing variables */}
 					<div style={{ maxWidth: "600px" }}>
 						{envVars.length > 0 ? (
 							<div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
-								{envVars.map((v) => (
-									<div className="provider-item" style={{ marginBottom: 0 }} key={v.id}>
-										{updateId === v.id ? (
+								{envVars.map((v) =>
+									updateId === v.id ? (
+										<div className="provider-item" style={{ marginBottom: 0 }} key={v.id}>
 											<form
 												style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1 }}
 												onSubmit={(e: Event) => {
@@ -180,11 +189,7 @@ export function EnvironmentSection(): VNode {
 												}}
 											>
 												<code style={{ fontSize: "0.8rem", fontFamily: "var(--font-mono)" }}>{v.key}</code>
-												{v.encrypted ? (
-													<span className="provider-item-badge configured">Encrypted</span>
-												) : (
-													<span className="provider-item-badge muted">Plaintext</span>
-												)}
+												{v.encrypted ? <Badge label="Encrypted" variant="configured" /> : <Badge label="Plaintext" />}
 												<input
 													type="password"
 													className="provider-key-input"
@@ -205,57 +210,42 @@ export function EnvironmentSection(): VNode {
 													Cancel
 												</button>
 											</form>
-										) : (
-											<>
-												<div style={{ flex: 1, minWidth: 0 }}>
-													<div
-														className="provider-item-name"
-														style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-													>
-														{v.key}
-														{v.encrypted ? (
-															<span className="provider-item-badge configured" style={{ marginLeft: "6px" }}>
-																Encrypted
-															</span>
-														) : (
-															<span className="provider-item-badge muted" style={{ marginLeft: "6px" }}>
-																Plaintext
-															</span>
-														)}
-													</div>
-													<div
-														style={{
-															fontSize: ".7rem",
-															color: "var(--muted)",
-															marginTop: "2px",
-															display: "flex",
-															gap: "12px",
-														}}
-													>
-														<span>{"\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}</span>
-														<time dateTime={v.updated_at}>{v.updated_at}</time>
-													</div>
-												</div>
-												<div style={{ display: "flex", gap: "4px" }}>
-													<button className="provider-btn provider-btn-sm" onClick={() => onStartUpdate(v.id)}>
-														Update
-													</button>
-													<button
-														className="provider-btn provider-btn-sm provider-btn-danger"
-														onClick={() => onDelete(v.id)}
-													>
-														Delete
-													</button>
-												</div>
-											</>
-										)}
-									</div>
-								))}
+										</div>
+									) : (
+										<ListItem
+											key={v.id}
+											name={<span style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}>{v.key}</span>}
+											badges={[
+												v.encrypted ? <Badge label="Encrypted" variant="configured" /> : <Badge label="Plaintext" />,
+											]}
+											meta={
+												<span style={{ display: "flex", gap: "12px" }}>
+													<span>{"\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}</span>
+													<time dateTime={v.updated_at}>{v.updated_at}</time>
+												</span>
+											}
+											actions={[
+												<button
+													key="update"
+													className="provider-btn provider-btn-sm"
+													onClick={() => onStartUpdate(v.id)}
+												>
+													Update
+												</button>,
+												<button
+													key="delete"
+													className="provider-btn provider-btn-sm provider-btn-danger"
+													onClick={() => onDelete(v.id)}
+												>
+													Delete
+												</button>,
+											]}
+										/>
+									),
+								)}
 							</div>
 						) : (
-							<div className="text-xs text-[var(--muted)]" style={{ padding: "12px 0" }}>
-								No environment variables set.
-							</div>
+							<EmptyState message="No environment variables set." />
 						)}
 					</div>
 

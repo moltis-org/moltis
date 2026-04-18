@@ -35,10 +35,7 @@ interface SubHeadingProps {
 
 export function SubHeading({ title, className }: SubHeadingProps): VNode {
 	return (
-		<h3
-			className={className ?? "text-sm font-medium text-[var(--text-strong)]"}
-			style={{ marginBottom: "8px" }}
-		>
+		<h3 className={className ?? "text-sm font-medium text-[var(--text-strong)]"} style={{ marginBottom: "8px" }}>
 			{title}
 		</h3>
 	);
@@ -71,20 +68,12 @@ export function SaveButton({
 	danger,
 	className,
 }: SaveButtonProps): VNode {
-	const btnClass = [
-		danger ? "provider-btn provider-btn-danger" : "provider-btn",
-		className ?? "",
-	]
+	const btnClass = [danger ? "provider-btn provider-btn-danger" : "provider-btn", className ?? ""]
 		.filter(Boolean)
 		.join(" ");
 
 	return (
-		<button
-			type={type}
-			className={btnClass}
-			disabled={saving || disabled}
-			onClick={onClick}
-		>
+		<button type={type} className={btnClass} disabled={saving || disabled} onClick={onClick}>
 			{saving ? savingLabel : saved ? savedLabel : label}
 		</button>
 	);
@@ -133,7 +122,7 @@ interface StatusMessageProps {
 }
 
 export function StatusMessage({ error, success, className }: StatusMessageProps): VNode | null {
-	if (!error && !success) return null;
+	if (!(error || success)) return null;
 	const color = error ? "var(--error)" : "var(--accent)";
 	const text = error ?? success;
 	return (
@@ -152,9 +141,7 @@ interface SettingsCardProps {
 
 export function SettingsCard({ children, className }: SettingsCardProps): VNode {
 	return (
-		<div
-			className={className ?? "bg-[var(--surface)] border border-[var(--border)] rounded-lg p-4 mb-4"}
-		>
+		<div className={className ?? "bg-[var(--surface)] border border-[var(--border)] rounded-lg p-4 mb-4"}>
 			{children}
 		</div>
 	);

@@ -6,6 +6,7 @@
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { Loading } from "../components/forms";
 import { EmojiPicker } from "../emoji-picker";
 import { refresh as refreshGon } from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
@@ -519,7 +520,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 	if (isLoading) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+				<Loading />
 			</div>
 		);
 	}
