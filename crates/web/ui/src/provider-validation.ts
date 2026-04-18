@@ -127,7 +127,7 @@ export async function validateProviderKey(
 	if (model) payload.model = model;
 	if (requestId) payload.requestId = requestId;
 
-	const res: RpcResponse<ValidateKeyPayload> = await sendRpc("providers.validate_key", payload);
+	const res = (await sendRpc("providers.validate_key", payload)) as RpcResponse<ValidateKeyPayload>;
 	if (!res?.ok) {
 		return {
 			valid: false,
@@ -208,7 +208,7 @@ export function saveProviderKey(
 }
 
 export async function validateProviderConnection(providerName: string): Promise<ValidateConnectionResult> {
-	const res: RpcResponse<DetectPayload> = await sendRpc("models.detect_supported", {
+	const res = await sendRpc("models.detect_supported", {
 		provider: providerName,
 		reason: "provider_credentials_validation",
 	});
@@ -220,7 +220,7 @@ export async function validateProviderConnection(providerName: string): Promise<
 		};
 	}
 
-	const payload = res.payload || {};
+	const payload = (res.payload || {}) as DetectPayload;
 	const total = payload.total || 0;
 	const supported = payload.supported || 0;
 	const unsupported = payload.unsupported || 0;

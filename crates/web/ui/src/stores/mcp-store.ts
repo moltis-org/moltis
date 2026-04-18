@@ -6,7 +6,7 @@
 import { signal } from "@preact/signals";
 import { sendRpc } from "../helpers";
 import { updateNavCount } from "../nav-counts";
-import type { McpServerInfo, RpcResponse } from "../types";
+import type { McpServerInfo } from "../types";
 
 // ── Signals ──────────────────────────────────────────────────
 export const servers = signal<McpServerInfo[]>([]);
@@ -22,8 +22,8 @@ export async function refresh(): Promise<void> {
 			servers.value = (await res.json()) || [];
 		}
 	} catch {
-		const rpc: RpcResponse<McpServerInfo[]> = await sendRpc("mcp.list", {});
-		if (rpc.ok) servers.value = rpc.payload || [];
+		const rpc = await sendRpc("mcp.list", {});
+		if (rpc.ok) servers.value = (rpc.payload as McpServerInfo[]) || [];
 	}
 	loading.value = false;
 	updateNavCount("mcp", servers.value.filter((s) => s.state === "running").length);

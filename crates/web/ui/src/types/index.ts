@@ -37,7 +37,34 @@ export type { ModelInfo, ReasoningSuffix } from "./model";
 
 export type { RpcError, RpcFrame, RpcResponse } from "./rpc";
 
+export type { RpcMethod, RpcMethodMap } from "./rpc-methods";
+
 export type { SessionMeta } from "./session";
+export type {
+	AbortedPartialState,
+	ApprovalPayload,
+	AuthCredentialsPayload,
+	ChannelInfo as WsChannelInfo,
+	ChatError,
+	ChatPayload,
+	CompactPayload,
+	LocalLlmDownloadPayload,
+	LocationRequestPayload,
+	LogEntryPayload,
+	MapLinks,
+	MapPoint,
+	ModelsUpdatedPayload,
+	PartialMessage,
+	SandboxPhasePayload,
+	StreamMeta,
+	ToolCallPayload,
+	ToolError,
+	ToolResult,
+	WsErrorPayload,
+	WsEventPayloadMap,
+	WsFrame,
+} from "./ws-events";
+export { WsEventName } from "./ws-events";
 
 // ── Additional UI types not backed by a specific Rust struct ──
 
